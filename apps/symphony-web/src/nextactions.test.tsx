@@ -1,7 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readGuards, readRefusal } from "./guards";
 import {
   type Action,
+  guardsAlone,
   isStale,
   keyFor,
   missing,
@@ -24,7 +26,7 @@ import {
 import { Failure } from "./request";
 import { field } from "./shared";
 import { type Asked, asking, CASES, elementOf, type Found, fire, reply, server } from "./testing";
-import type { WorkflowPlace } from "./wire";
+import type { WorkflowGuardRefusal, WorkflowPlace, WorkflowTaskGuards } from "./wire";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -34,6 +36,11 @@ const OFFER = readOffer(CASES.samples.nextActions) as Offer;
 const BOARD = readBoard(CASES.samples.workflow);
 const [PASS, REWORK] = OFFER.actions as [Action, Action];
 const AT: WorkflowPlace = { phase: "review", state: "awaiting", revision: 7 };
+const GUARDS = readGuards(CASES.samples.taskGuards) as WorkflowTaskGuards;
+const REFUSAL = readRefusal(CASES.samples.guardRefusal) as WorkflowGuardRefusal;
+/** Pass review as a preview lists it for the owner once its guard is all that holds it. */
+const HELD: Action = { ...PASS, unavailable: ["guard_unavailable"] };
+const GUARDED: Offer = { ...OFFER, actions: [HELD, REWORK] };
 
 describe("the next actions a read offers", () => {
   it("are each edge's label, destination, inputs and why it is unavailable", () => {
@@ -116,6 +123,14 @@ describe("an unavailable action", () => {
         { kind: "system_capability", capability: "land_tasks" },
       ]),
     ).toBe("the executor or the land tasks capability");
+  });
+
+  it("leaves its guards to their rows, and is its guards' alone when nothing else holds it", () => {
+    expect(unavailableWords(HELD)).toBe("waits on its guard: needs the reviewer");
+    expect(unavailableWords(HELD, true)).toBe("");
+    const both = { ...PASS, unavailable: ["guard_unavailable", "unauthorized"] };
+    expect(unavailableWords(both, true)).toBe("not the owner's to take: needs the reviewer");
+    expect([HELD, both, REWORK].map(guardsAlone)).toEqual([true, false, false]);
   });
 
   it("says a code it does not know once, and no one where none is named", () => {
@@ -217,8 +232,52 @@ describe("reading the actions", () => {
       board: null,
       offer: null,
       refused: "Forbidden: next actions are the local owner's (the server answered 403)",
+      guards: null,
     });
     expect(asked).toHaveLength(3);
+  });
+
+  it("reads the task's guards where the workflow declares one or an action says one holds it", async () => {
+    const guarded = structuredClone(CASES.samples.workflow) as {
+      workflow: { definition: { guards: unknown[] } };
+    };
+    guarded.workflow.definition.guards = [{ id: "release_signoff", adapter: "release" }];
+    expect(readBoard(guarded)?.guarded).toBe(true);
+    expect(BOARD?.guarded).toBe(false);
+    const asked = server();
+    const read = readActions("design~policy", "w/b", new AbortController().signal, now);
+    await asking(asked, 1);
+    asked[0]?.answer(reply(200, guarded));
+    await asking(asked, 2);
+    asked[1]?.answer(reply(200, CASES.samples.nextActions));
+    await asking(asked, 3);
+    expect(asked[2]?.url).toBe("/@design~policy/api/workflow-guards?slug=w%2Fb");
+    // A read with no answer is asked again, and it alone.
+    asked[2]?.answer(reply(503, { error: "the board is slow" }));
+    await asking(asked, 4);
+    expect(asked[3]?.url).toBe(asked[2]?.url);
+    asked[3]?.answer(reply(200, CASES.samples.taskGuards));
+    expect((await read)?.guards).toEqual(GUARDS);
+
+    // The board's read failed for good: an action a guard holds still asks for the guards, whose
+    // refusal leaves the actions drawn without them.
+    const held = { ...(CASES.samples.nextActions as object), actions: [] as unknown[] };
+    held.actions = [
+      {
+        ...(field(CASES.samples.nextActions, "actions") as object[])[0],
+        unavailable: ["guard_unavailable"],
+      },
+    ];
+    const other = readActions("", "w/b", new AbortController().signal, now);
+    await asking(asked, 5);
+    asked[4]?.answer(reply(400, { error: "no" }));
+    await asking(asked, 6);
+    asked[5]?.answer(reply(200, held));
+    await asking(asked, 7);
+    expect(asked[6]?.url).toBe("/api/workflow-guards?slug=w%2Fb");
+    asked[6]?.answer(reply(403, { error: "Forbidden" }));
+    expect(await other).toMatchObject({ board: null, guards: null, refused: "" });
+    expect(asked).toHaveLength(7);
   });
 
   it("says an answer it cannot read, and is none once the page has gone", async () => {
@@ -272,6 +331,31 @@ describe("taking an action", () => {
       said: "Send back was not taken: stale_task: the task is at revision 8, not 7",
       moved: true,
       sent: null,
+      guard: null,
+    });
+  });
+
+  it("keeps the guard a refusal names beside its words, and says it short", async () => {
+    const asked = server();
+    const taken = take("", "w/b", "symphony", GUARDED, HELD, {}, null);
+    await asking(asked, 1);
+    const error = "guard_unavailable: release_signoff refused it";
+    asked[0]?.answer(reply(400, { error, guard: CASES.samples.guardRefusal }));
+    expect(await taken).toEqual({
+      done: false,
+      next: null,
+      said: "Pass review was not taken: release signoff holds it",
+      moved: false,
+      sent: null,
+      guard: { refusal: REFUSAL, said: error },
+    });
+    // A guard the page cannot read is no guard: the refusal's own words are said.
+    const unread = take("", "w/b", "symphony", GUARDED, HELD, {}, null);
+    await asking(asked, 2);
+    asked[1]?.answer(reply(400, { error, guard: { guard: 7 } }));
+    expect(await unread).toMatchObject({
+      said: `Pass review was not taken: ${error}`,
+      guard: null,
     });
   });
 
@@ -311,7 +395,7 @@ describe("the part drawn", () => {
   const view = (props: Partial<NextActionsViewProps> = {}) =>
     NextActionsView({
       place: AT,
-      read: { board: BOARD, offer: OFFER, refused: "" },
+      read: { board: BOARD, offer: OFFER, refused: "", guards: null },
       values: {},
       busy: "",
       checking: false,
@@ -367,6 +451,59 @@ describe("the part drawn", () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 
+  describe("of a task with guards", () => {
+    const read: Read = { board: BOARD, offer: GUARDED, refused: "", guards: GUARDS };
+    const refused = { edge: "pass", revision: 7, tried: { refusal: REFUSAL, said: "", at: 0 } };
+
+    it("draws the guards that let it in over the actions, and an action's under it", () => {
+      const drawn = markup({ slug: "w/b", read });
+      expect(drawn.indexOf('data-guards="entry"')).toBeLessThan(drawn.indexOf("flow-actions"));
+      expect(drawn).toContain('Let in by <a href="#timeline">Submit · revision 7 · ');
+      expect(drawn).toContain('aria-label="Pass review needs"');
+      expect(drawn).toContain('data-guard="release_signoff" data-state="no word yet"');
+      // Its guard is all that holds it and this host asks its authority: the owner's to take.
+      expect(elementOf(view({ read }), button("Pass review"))?.props.disabled).toBe(false);
+      expect(drawn).not.toContain("waits on its guard");
+      // Send back carries no guard, and draws no box.
+      expect(drawn.match(/class="guard-box"/g)).toHaveLength(2);
+      expect(drawn).toContain("nothing on this page approves");
+    });
+
+    it("holds an action whose authority this app cannot ask, with the command to copy", () => {
+      const authorities = GUARDS.authorities.map((one) => ({ ...one, asked_here: false }));
+      const apart: Read = { ...read, guards: { ...GUARDS, authorities } };
+      expect(elementOf(view({ read: apart }), button("Pass review"))?.props.disabled).toBe(true);
+      const drawn = markup({ slug: "w/b", read: apart });
+      expect(drawn).toContain('data-state="not from here"');
+      expect(drawn).toContain(
+        "<code>just tasks workflow apply w/b pass --revision 7 --attestation FILE</code>",
+      );
+      // Something else holds it too: its line says that, the guard's row the guard.
+      const both = { ...HELD, unavailable: ["guard_unavailable", "unauthorized"] };
+      const held = markup({ read: { ...read, offer: { ...GUARDED, actions: [both] } } });
+      expect(held).toContain("not the owner&#x27;s to take: needs the reviewer");
+      expect(held).toContain('data-state="no word yet"');
+    });
+
+    it("says the last refusal in its guard's row until the task moves", () => {
+      const drawn = markup({ read, refused });
+      expect(drawn).toContain('data-guard="release_signoff" data-state="refused"');
+      expect(drawn).toContain('<a href="/task/w/a">task w/a</a>');
+      const moved = markup({ read, refused: { ...refused, revision: 6 } });
+      expect(moved).toContain('data-state="no word yet"');
+      const other = markup({ read, refused: { ...refused, edge: "rework" } });
+      expect(other).toContain('data-state="no word yet"');
+    });
+
+    it("draws the actions as they were where the guards could not be read", () => {
+      const drawn = markup({ read: { ...read, guards: null } });
+      expect(drawn).not.toContain("guard-box");
+      expect(drawn).toContain("waits on its guard: needs the reviewer");
+      const held = view({ read: { ...read, guards: null } });
+      expect(elementOf(held, button("Pass review"))?.props.disabled).toBe(true);
+    });
+  });
+
   it("says a resume, a recovery by hand, a refusal and an offer of none", () => {
     const place: WorkflowPlace = {
       phase: "build",
@@ -376,11 +513,13 @@ describe("the part drawn", () => {
       manual: { trigger: "release", holder: "amber", role: "executor" },
     };
     const none = { ...OFFER, snapshot: { ...OFFER.snapshot, task_revision: 2 }, actions: [] };
-    const drawn = markup({ place, read: { board: BOARD, offer: none, refused: "" } });
+    const drawn = markup({ place, read: { board: BOARD, offer: none, refused: "", guards: null } });
     expect(drawn).toContain("At <b>Build · Blocked</b> · resumes at Build · Available");
     expect(drawn).toContain("amber left its executor");
     expect(drawn).toContain("No action is open now");
-    const refused = markup({ read: { board: null, offer: null, refused: "Forbidden" } });
+    const refused = markup({
+      read: { board: null, offer: null, refused: "Forbidden", guards: null },
+    });
     expect(refused).toContain("At <b>review · awaiting</b>");
     expect(refused).toContain("No actions: Forbidden");
     expect(markup({ read: null })).toContain('aria-busy="true"');
