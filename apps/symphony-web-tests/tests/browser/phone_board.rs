@@ -172,8 +172,14 @@ fn a_phones_first_screen_says_how_much_is_under_way_builds_and_tests_among_it() 
             "at {width} px the row is on the first screen, every count whole"
         );
         fits(&mut page);
-        for (stage, status) in [("build", "build"), ("test", "test"), ("in_progress", "in_progress")] {
-            page.eval(&format!("document.querySelector('.under-way [data-stage={stage}]').click()"));
+        for (stage, status) in [
+            ("build", "build"),
+            ("test", "test"),
+            ("in_progress", "in_progress"),
+        ] {
+            page.eval(&format!(
+                "document.querySelector('.under-way [data-stage={stage}]').click()"
+            ));
             assert!(
                 page.wait_for(&format!("JSON.stringify({MOUNTED}) === JSON.stringify([{}]) && document.querySelector('.waiting-columns .taskcard') !== null", json!(status)), SHOWN),
                 "at {width} px {stage}'s count showed {}",
