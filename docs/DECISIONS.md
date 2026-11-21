@@ -5,6 +5,33 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
+## Needs your decision
+
+### Settings page
+
+- [ ] **settings-board-store** — Your note on **settings-page-project-save** adds a place for settings: the board's database, read first, with the settings file used where it has no entry. Which preferences should the Settings page keep there? A: only those with no key in a file (whether a plugin's entry is on, a person's own choices later); a model, a limit or Herdr on or off is committed, as you approved. B: every preference the page changes is kept in the board first and holds at once; beside it a "make it the project's" control commits it, as you approved, and clears the board's entry. C: none. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/settings-page#What the board keeps]]
+  [2026-11-21 10:20] agent — Posted for the board task `app/settings-page`, round two. Base: today the board's database holds no setting; a value comes from the default, `symphony.toml` or `symphony.local.toml`.
+
+    **The order a value is read in:** the default, the committed file, the board, then the local file by hand. A board never told anything has no entries, so a fresh clone and a project that never opens the page behave as now.
+
+    **Never there:** a setting that runs a command or decides what lands, by the line you approved on **settings-page-shape**.
+
+    **Why B.** It behaves the same in three cases A does not: where lands go by pull request (a committed change waits for its delivery, a stored one holds at once), on a hosted board (no checkout to commit from), and for a change you mean to try before making it the project's. Each stored change keeps a record of what, from what and when. Under B the page stops writing `symphony.local.toml`; that file stays the override by hand.
+
+    **What B costs.** A new table, so a move of the board's layout with its release run. And a stored value is not in a clone: two machines of one project can differ until it is made the project's, as with a local file today. The page says where each value comes from.
+
+    **Earlier verdicts checked.** **settings-page-project-save** (A, with your note) decides the commit's route and that the database is a place; it does not say which preferences go there. **schema-landing-then-release** and **live-board-schema-moves** decide how a layout move lands, which B follows. None decides this.
+- [ ] **settings-agent-off** — The page you approved has a switch for Claude Code and one for Codex, and today neither can be off: one setting picks which a launch starts, a launch may still name either, and both agents' files are installed in every project. What should off mean? A: the board refuses to launch it and the pages stop offering it; its files stay installed, so on again is the switch alone. B: as A, and `symphony init` takes its files out of the project (rules, hooks, skill links), which is a landed change. C: the pages stop offering it, and a launch that names it still starts it. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/settings-page#Turning an agent off]]
+  [2026-11-21 10:20] agent — Posted for the board task `app/settings-page`, round two. Base: today `[agents.launch] default` is `"codex"` or `"claude"`, and nothing refuses the other.
+
+    **Under every option** the launch default cannot be turned off (the switch says to pick another first), the page says whether the program is on this machine, and off can hold for the project or for one machine.
+
+    **Why A.** Off should stop agents being started, which C does not. B makes on and off a change of committed files, so a switch becomes a landing, to remove files that do nothing while the agent is never launched.
+
+    **What each costs.** A: one setting, one refusal in the launch, the switch. B: A, and init learning to leave out and take out one agent's files. C: the switch alone.
+
+    **Earlier verdicts checked.** **settings-page-shape** (B) gives the agents a switch and does not say what off does. None decides this.
+
 ## Auto-approved: spot-check
 
 ### Releases
@@ -41,6 +68,7 @@ their dated history work is in [REVIEW](REVIEW.md).
     **Earlier verdicts checked.** **hosted-ingress-boundary** (B) says where a hosted server checks who visits, not what a page may write. **project-workflow-shape** and **configurable-workflow-activation** decide the workflow's settings, which B only shows. None decides a Settings page.
   [2026-11-20 06:56] agent — B on a phone, and the page the three pictures are of: ![Option B on a phone](analysis/settings-page/proposed-phone.webp) [Open the mockup](analysis/settings-page/mockup.html).
   [2026-11-20 06:40] owner · approved — B
+  [2026-11-21 10:20] agent — Recorded: B. Settled by it without a card: GitHub's settings decide what lands, so its row shows the state and why and files a task for on and for off; the page is at `settings` under the project, in the header after Reports. [[analysis/settings-page#Settled by the answered cards]]
 - [x] **settings-page-project-save** — If the Settings page may change a preference for the whole project (a model, a limit, Herdr on or off), the change is to a committed file. How does it reach main? A: as your answers on cards do: the page commits it straight to main, after the settings check passes on the result; where a project lands by pull request it is kept and delivered as a document save is. B: always a task: the page files one with the change, and it lands on the settings check when its orchestrator lands it. C: the page writes nothing committed and shows the command to run. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/settings-page#What a save writes]]
   [2026-11-20 06:55] agent — Posted for the board task `app/settings-page`. Base: today such a change is an edit or `just symphony-cli model`, then a task that lands on `just settings-check` green with no reviewer.
 
@@ -54,6 +82,7 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **Earlier verdicts checked.** **github-outbound-pr-delivery** and **github-delivery-proof-setup** decide that a land may be delivered by pull request; A follows what document saves do there and changes none of it. None decides how a settings change lands from a page.
   [2026-11-20 06:39] owner · approved — A, but some things could also just be in symphony's DB too. And a fallback mechanism could exist where when missing db entries, the settings file are used.
+  [2026-11-21 10:20] agent — Recorded: A, a project-wide change is committed straight to main after the settings check. Your note is taken as you wrote it: the board's database is a place of its own, read before the settings file, and the file is used where it has no entry. It never holds a setting that runs a command or decides what lands. Which preferences go there is not said by the note, so it is asked on **settings-board-store**. [[analysis/settings-page#What the board keeps]]
 - [x] **settings-page-entries** — You expect more things to turn on and off than the four you named. Where does the page's list come from? A: the Symphony holds it: the page knows GitHub, the agents, Herdr and the plugins by name, and a new one is new page code. B: each thing describes itself in one small shape (its name, its state and why, what it needs, its settings and whether each is a preference or reviewed), and the page draws whatever is described; the Symphony's own first, then programs like the GitHub exchange and a project's plugins. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/settings-page#What makes an entry]]
   [2026-11-20 06:55] agent — Posted for the board task `app/settings-page`. Base: today nothing lists these; GitHub says its state in `symphony-github status`, the agents and Herdr in `just tasks limits` and the agents page.
 
@@ -65,6 +94,7 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **Earlier verdicts checked.** **kit-new-block-version** decides how the kit takes a new block, which B's seam would follow. **plugin-delivery-choice** decides how a plugin is delivered, not what it may describe. None decides this.
   [2026-11-20 06:38] owner · approved — B
+  [2026-11-21 10:20] agent — Recorded: B. The Symphony's own entries are built in that shape first, with the page's reading half, filed as `app/settings-page-reads`; programs and plugins follow once it has held.
 
 ### Task timeline
 
