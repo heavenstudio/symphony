@@ -197,10 +197,10 @@ describe("the dev server's shell", () => {
     ]);
   });
 
-  it("is refused from a shell.js without its one manifest line", () => {
+  it("is refused from a shell.ts without its one manifest line", () => {
     for (const source of ["navigate();", `${SOURCE}\nconst modules = __MODULES__;`]) {
       expect(() => devShell(BUILT, KINDS, BASE, CACHE, source)).toThrow(
-        "the checkout's shell.js needs its manifest line",
+        "the checkout's shell.ts needs its manifest line",
       );
     }
   });
@@ -305,9 +305,9 @@ function response() {
 }
 
 const SOURCES = {
-  cache: "/checkout/apps/symphony-web/shell/cache.js",
-  shell: "/checkout/apps/symphony-web/shell/shell.js",
-  read: (path: string) => (path.endsWith("cache.js") ? CACHE : SOURCE),
+  cache: "/checkout/apps/symphony-web/shell/cache.ts",
+  shell: "/checkout/apps/symphony-web/shell/shell.ts",
+  read: (path: string) => (path.endsWith("cache.ts") ? CACHE : SOURCE),
 };
 
 describe("the dev server's shell middleware", () => {
@@ -370,10 +370,10 @@ describe("the dev server's shell middleware", () => {
         async () => new Response(BUILT),
         {
           read: () => {
-            throw new Error("ENOENT: shell.js");
+            throw new Error("ENOENT: shell.ts");
           },
         },
-        "ENOENT: shell.js",
+        "ENOENT: shell.ts",
       ],
       [
         async () => new Response(BUILT),

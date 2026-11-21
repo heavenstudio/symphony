@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import FIXTURE from "../../../crates/symphony-api/fixtures/task-timeline.json";
 import {
@@ -70,16 +71,10 @@ import { moment } from "./words";
 
 /**
  * The text of the style sheet `name`, beside this file. Vitest empties every CSS import, `?raw`
- * among them, while its `css` option processes none, so the sheet is read through Node's own
- * `fs`, which this package takes no types of.
+ * among them, while its `css` option processes none, so the sheet is read through Node's own `fs`.
  */
 function sheet(name: string): string {
-  const { process } = globalThis as unknown as {
-    process: {
-      getBuiltinModule(id: "node:fs"): { readFileSync(path: URL, encoding: "utf8"): string };
-    };
-  };
-  return process.getBuiltinModule("node:fs").readFileSync(new URL(name, import.meta.url), "utf8");
+  return readFileSync(new URL(name, import.meta.url), "utf8");
 }
 
 const CSS = sheet("./timeline.css");

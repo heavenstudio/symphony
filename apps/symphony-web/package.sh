@@ -74,16 +74,15 @@ mv "$stage/third-party.txt" "$stage/assets/$notice"
 # The shell's hash includes the page module manifest: a new module changes Board.build, while
 # returning to any unchanged kind still uses its immutable browser-cache entries. The manifest
 # keeps its own first line, `const modules = …;`, which readers of a build look for; the rest,
-# the client cache's store (`shell/cache.js`, which every page kind shares) and then the shell,
-# is minified (every first visit loads it) by the minifier Vite ships (shell/minify.js).
-if [ "$(grep -cx 'const modules = __MODULES__;' shell/shell.js)" != 1 ]; then
-    echo "symphony-web: shell/shell.js needs its manifest line, const modules = __MODULES__;" >&2
+# the client cache's store (`shell/cache.ts`, which every page kind shares) and then the shell,
+# each with its types stripped, is minified (every first visit loads it) by the minifier Vite
+# ships (shell/minify.ts).
+if [ "$(grep -cx 'const modules = __MODULES__;' shell/shell.ts)" != 1 ]; then
+    echo "symphony-web: shell/shell.ts needs its manifest line, const modules = __MODULES__;" >&2
     exit 2
 fi
-{
-    cat shell/cache.js
-    grep -vx 'const modules = __MODULES__;' shell/shell.js
-} | bash "$here/npm.sh" run --silent minify > "$stage/shell.min.js"
+grep -vx 'const modules = __MODULES__;' shell/shell.ts \
+    | bash "$here/npm.sh" run --silent minify -- shell/cache.ts - > "$stage/shell.min.js"
 {
     printf 'const modules = %s;\n' "$(jq -c . <<< "$manifest")"
     cat "$stage/shell.min.js"

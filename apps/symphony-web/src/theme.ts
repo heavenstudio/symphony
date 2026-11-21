@@ -1,6 +1,6 @@
 // A project's look on this device: a shadcn registry theme is data, and its `cssVars` apply to
 // every page of the project. The stylesheet it makes is kept on the device (`studio.cssVars`),
-// which the shell applies before any page draws (assets/shell.js), and installed at once.
+// which the shell applies before any page draws (shell/shell.ts), and installed at once.
 
 import { absentOr, isRecord, isText, mapOf } from "./blocks-read";
 import { codePointOrder, trimmed } from "./panel-model";

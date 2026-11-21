@@ -8,14 +8,98 @@
 // format its client was built with (symphony_api::CACHE_FORMAT): a store written under another is
 // cleared when it opens, and a part written under another is a miss. Nothing here throws into
 // the page: without IndexedDB every read misses and nothing is kept.
-window.symphonyCache = (() => {
+//
+// The shell's script is this file and then shell.ts, each with its types stripped on its own
+// (strip.ts), as one module (package.sh): a name this one declared at its top, the shell's could
+// not, and it declares none.
+
+/** The database's stores: the items, their parts, and the format they were kept under. */
+type StoreName = "items" | "parts" | "meta";
+
+/** The stores one transaction opened, by name. */
+type Stores = Record<StoreName, IDBObjectStore>;
+
+/** An item as kept, under its key: its project's, then its own id. */
+interface Item {
+  key: string;
+  project: string;
+  kind: string;
+  /** When it was last used (ms). */
+  used: number;
+  /** Its visits, each halving every `HALF_LIFE`, as of `used`. */
+  score: number;
+  /** When a visited page's first keep counted the visit that opened it, until that visit comes. */
+  counted?: number | undefined;
+  visited: boolean;
+  pinned: boolean;
+  /** The sum of its parts' sizes. */
+  size: number;
+}
+
+/** A part of an item as kept, under its item's key and its own name. */
+interface Part {
+  key: string;
+  format: number;
+  etag: string;
+  value: unknown;
+  size: number;
+  saved: number;
+}
+
+/** A part as `read` gives it. */
+export interface Kept {
+  value: unknown;
+  etag: string;
+  saved: number;
+}
+
+/** A read ahead of an item's part: its name and the address it is read from. */
+export type Ahead = [part: string, url: string];
+
+/** The store the page kinds reach as `symphonyCache` (apps/symphony-web/src/cache.ts). */
+export interface Store {
+  read(format: number, project: string, id: string, part: string): Promise<Kept | null>;
+  keep(
+    format: number,
+    project: string,
+    id: string,
+    kind: string,
+    part: string,
+    etag: string,
+    value: unknown,
+    size: number | undefined,
+    ahead: boolean,
+  ): Promise<boolean | null>;
+  ahead(
+    fetch: typeof window.fetch,
+    project: string,
+    id: string,
+    kind: string,
+    reads: Ahead[],
+  ): Promise<void>;
+  visit(
+    format: number,
+    project: string,
+    id: string,
+    kind: string,
+    pinned: boolean,
+  ): Promise<boolean | null>;
+  forget(format: number, project: string, id: string): Promise<boolean | null>;
+}
+
+declare const window: Window & typeof globalThis & { symphonyCache: Store };
+
+window.symphonyCache = ((): Store => {
   const MB = 1e6,
     DAY = 864e5;
   // Each project's caps by kind of item, [items, bytes, whether visits weigh]: 8 MB a project
   // together. Its tasks are the ones opened last; its documents are weighed by their visits. The
   // board's reads are outside them (docs/analysis/client-cache.md, "Caps"), held by the origin's
   // bytes alone. Then the age past which an item goes.
-  const CAPS = { task: [30, 2 * MB, false], document: [20, 6 * MB, true] };
+  const CAPS: Record<string, [count: number, bytes: number, weighed: boolean]> = {
+    task: [30, 2 * MB, false],
+    document: [20, 6 * MB, true],
+  };
   const ORIGIN = 32 * MB,
     AGE = 14 * DAY;
   // A visit counts one, halving every three days: the documents opened often and lately stay
@@ -25,8 +109,8 @@ window.symphonyCache = (() => {
   // within how long of a page's first keep its visit comes.
   const OPENING = 500,
     VISIT = 6e4;
-  let opened, named;
-  let checked = new Map();
+  let opened: Promise<IDBDatabase | null> | undefined, named: number | undefined;
+  let checked = new Map<number, Promise<IDBDatabase | null>>();
   // The transactions open now, and whether the page is away: left (`pagehide`, into its
   // back/forward cache or for good) or frozen (Chrome's `freeze`), and not shown or resumed
   // since. A page away runs none of its callbacks, so a transaction it left between two of them
@@ -37,12 +121,13 @@ window.symphonyCache = (() => {
   // (apps/symphony-web/src/feed.ts). What an aborted keep would have kept the next keep of it keeps; a page
   // back checks the format again, as a check cut short by its going, or asked while it was away,
   // gave it no store.
-  const running = new Set();
+  const running = new Set<IDBTransaction>();
   let away = false;
-  for (const [target, leaving, returning] of [
+  const turns: [EventTarget, string, string][] = [
     [window, "pagehide", "pageshow"],
     [document, "freeze", "resume"],
-  ]) {
+  ];
+  for (const [target, leaving, returning] of turns) {
     target.addEventListener(leaving, () => {
       away = true;
       for (const transaction of running) {
@@ -63,11 +148,12 @@ window.symphonyCache = (() => {
 
   // Each name with its length first, so no item's key begins another's: the parts of an item are
   // the keys that begin with its key, and a part's name begins with a digit.
-  const key = (...names) => names.map((name) => `${name.length}:${name}`).join("");
-  const decayed = (item, now) => item.score * 2 ** (-Math.max(0, now - item.used) / HALF_LIFE);
+  const key = (...names: string[]) => names.map((name) => `${name.length}:${name}`).join("");
+  const decayed = (item: Item, now: number) =>
+    item.score * 2 ** (-Math.max(0, now - item.used) / HALF_LIFE);
 
-  function open() {
-    opened ??= new Promise((resolve) => {
+  function open(): Promise<IDBDatabase | null> {
+    opened ??= new Promise<IDBDatabase | null>((resolve) => {
       let late = false;
       // biome-ignore lint/style/noRestrictedGlobals: no-timed-waits baseline: the store's deadline on its open, OPENING, in the shell's own script, which cannot take src/timing.ts's deadline
       const deadline = setTimeout(() => {
@@ -106,36 +192,41 @@ window.symphonyCache = (() => {
 
   // The store, once a store of another format is cleared. The format the page's own code named
   // last is the one a read ahead keeps under (`ahead`).
-  function ready(format) {
+  function ready(format: number): Promise<IDBDatabase | null> {
     named = format;
-    if (!checked.has(format)) {
-      checked.set(
-        format,
-        open().then(
-          (db) =>
-            db &&
-            run(db, ["meta", "items", "parts"], (stores, give) => {
-              stores.meta.get("format").onsuccess = (event) => {
-                if (event.target.result !== format) {
-                  stores.items.clear();
-                  stores.parts.clear();
-                  stores.meta.put(format, "format");
-                }
-                give(db);
-              };
-            }),
-        ),
+    let store = checked.get(format);
+    if (!store) {
+      store = open().then(
+        (db) =>
+          db &&
+          run<IDBDatabase>(db, ["meta", "items", "parts"], (stores, give) => {
+            const stored = stores.meta.get("format");
+            stored.onsuccess = () => {
+              if (stored.result !== format) {
+                stores.items.clear();
+                stores.parts.clear();
+                stores.meta.put(format, "format");
+              }
+              give(db);
+            };
+          }),
       );
+      checked.set(format, store);
     }
-    return checked.get(format);
+    return store;
   }
 
   // `work` in one transaction over `names`: what it gives once that commits, or null when it
   // fails (a full disk aborts it, and so does the page going away) or the page is away.
-  function run(db, names, work, mode = "readwrite") {
+  function run<T>(
+    db: IDBDatabase,
+    names: StoreName[],
+    work: (stores: Stores, give: (value: T) => void) => void,
+    mode: IDBTransactionMode = "readwrite",
+  ): Promise<T | null> {
     if (away) return Promise.resolve(null);
-    return new Promise((resolve) => {
-      let given = null;
+    return new Promise<T | null>((resolve) => {
+      let given: T | null = null;
       const transaction = db.transaction(names, mode);
       running.add(transaction);
       transaction.oncomplete = () => {
@@ -147,7 +238,7 @@ window.symphonyCache = (() => {
         resolve(null);
       };
       work(
-        Object.fromEntries(names.map((name) => [name, transaction.objectStore(name)])),
+        Object.fromEntries(names.map((name) => [name, transaction.objectStore(name)])) as Stores,
         (value) => {
           given = value;
         },
@@ -156,12 +247,17 @@ window.symphonyCache = (() => {
   }
 
   // `ready` and `run` never reject: each failure gives null.
-  async function within(format, names, work, mode) {
+  async function within<T>(
+    format: number,
+    names: StoreName[],
+    work: (stores: Stores, give: (value: T) => void) => void,
+    mode?: IDBTransactionMode,
+  ): Promise<T | null> {
     const db = await ready(format);
     return db ? run(db, names, work, mode) : null;
   }
 
-  function drop(stores, id) {
+  function drop(stores: Stores, id: string) {
     stores.items.delete(id);
     // Every part of the item: the keys from `id` and a digit up to `id` and the code unit
     // after the digits.
@@ -174,33 +270,32 @@ window.symphonyCache = (() => {
   // documents visited most (the least and least lately visited goes first), and the origin the
   // items used last. `items` come in key order and the sort is stable, so items ranked alike go
   // by key.
-  function plan(items, now) {
+  function plan(items: Item[], now: number): Set<string> {
     const gone = new Set(
       items
         .filter((item) => now - item.used > AGE || item.size > (CAPS[item.kind]?.[1] ?? ORIGIN))
         .map((item) => item.key),
     );
-    const ranked = (rank) =>
+    const ranked = (rank: (item: Item) => number) =>
       items
         .filter((item) => !gone.has(item.key))
-        .map((item) => [item, rank(item)])
+        .map((item): [Item, number] => [item, rank(item)])
         .sort(
           ([a, x], [b, y]) =>
-            a.pinned - b.pinned || a.visited - b.visited || x - y || a.used - b.used,
+            +a.pinned - +b.pinned || +a.visited - +b.visited || x - y || a.used - b.used,
         )
         .map(([item]) => item);
     const recent = ranked(() => 0),
       visited = ranked((item) => decayed(item, now));
-    const trim = (order, count, bytes, among) => {
+    const trim = (order: Item[], count: number, bytes: number, among: (item: Item) => boolean) => {
       const left = order.filter((item) => !gone.has(item.key) && among(item));
       let size = left.reduce((sum, item) => sum + item.size, 0);
-      for (
-        let at = 0, n = left.length;
-        at < left.length && (n > count || size > bytes);
-        at += 1, n -= 1
-      ) {
-        gone.add(left[at].key);
-        size -= left[at].size;
+      let n = left.length;
+      for (const item of left) {
+        if (n <= count && size <= bytes) break;
+        gone.add(item.key);
+        size -= item.size;
+        n -= 1;
       }
     };
     for (const project of new Set(recent.map((item) => item.project))) {
@@ -219,9 +314,10 @@ window.symphonyCache = (() => {
 
   // Drop what `plan` names, then give whether `id` is still kept. An item last used by a clock
   // ahead of this one is used now: it decays and ages from here.
-  function evict(stores, now, id, give) {
-    stores.items.getAll().onsuccess = (event) => {
-      const items = event.target.result;
+  function evict(stores: Stores, now: number, id: string, give: (kept: boolean) => void) {
+    const all = stores.items.getAll();
+    all.onsuccess = () => {
+      const items: Item[] = all.result;
       for (const item of items.filter((item) => item.used > now)) {
         item.used = now;
         stores.items.put(item);
@@ -235,7 +331,7 @@ window.symphonyCache = (() => {
   // A new item: one read ahead (`ahead`), unvisited, or a visited page's. A visited page's first
   // keep and its visit come in either order, so its item counts the visit that opened the page
   // from the first of them (`counted`), and ranks the same whichever that is.
-  const fresh = (id, project, kind, now, ahead) => ({
+  const fresh = (id: string, project: string, kind: string, now: number, ahead: boolean): Item => ({
     key: id,
     project,
     kind,
@@ -250,19 +346,34 @@ window.symphonyCache = (() => {
   // Keep `value`, answered with `etag`, as `part` of the item. `size` is its JSON's length,
   // measured here when not given. Gives whether the item is still kept once the caps hold. A read
   // ahead (`ahead`) never replaces what a visit kept: the page was opened meanwhile.
-  function keep(format, project, id, kind, part, etag, value, size, ahead) {
+  function keep(
+    format: number,
+    project: string,
+    id: string,
+    kind: string,
+    part: string,
+    etag: string,
+    value: unknown,
+    size: number | undefined,
+    ahead: boolean,
+  ): Promise<boolean | null> {
     const now = Date.now();
-    return within(format, ["items", "parts"], (stores, give) => {
+    return within<boolean>(format, ["items", "parts"], (stores, give) => {
       // Inside the transaction's guard: a value with no JSON keeps nothing.
-      size ??= JSON.stringify(value).length;
+      const measured = size ?? JSON.stringify(value).length;
       const itemKey = key(project, id),
         partKey = itemKey + key(part);
-      stores.items.get(itemKey).onsuccess = (event) => {
-        if (ahead && event.target.result?.visited) return give(true);
-        const kept = event.target.result ?? fresh(itemKey, project, kind, now, ahead);
-        stores.parts.get(partKey).onsuccess = (event) => {
-          kept.size += size - (event.target.result?.size ?? 0);
-          stores.parts.put({ key: partKey, format, etag, value, size, saved: now });
+      const item = stores.items.get(itemKey);
+      item.onsuccess = () => {
+        const found: Item | undefined = item.result;
+        if (ahead && found?.visited) return give(true);
+        const kept = found ?? fresh(itemKey, project, kind, now, ahead);
+        const stored = stores.parts.get(partKey);
+        stored.onsuccess = () => {
+          const before: Part | undefined = stored.result;
+          kept.size += measured - (before?.size ?? 0);
+          const written: Part = { key: partKey, format, etag, value, size: measured, saved: now };
+          stores.parts.put(written);
           stores.items.put(kept);
           evict(stores, now, itemKey, give);
         };
@@ -274,12 +385,13 @@ window.symphonyCache = (() => {
     // `part` of `item` as kept: { value, etag, saved }, or null. A part saved by a clock ahead
     // of this one was saved now, as far as the page says.
     read: (format, project, id, part) =>
-      within(
+      within<Kept>(
         format,
         ["parts"],
         (stores, give) => {
-          stores.parts.get(key(project, id, part)).onsuccess = (event) => {
-            const kept = event.target.result;
+          const stored = stores.parts.get(key(project, id, part));
+          stored.onsuccess = () => {
+            const kept: Part | undefined = stored.result;
             if (kept?.format === format)
               give({ value: kept.value, etag: kept.etag, saved: Math.min(kept.saved, Date.now()) });
           };
@@ -287,7 +399,7 @@ window.symphonyCache = (() => {
         "readonly",
       ),
     keep,
-    // Read the item ahead of its visit (shell.js, `ahead`): each of `reads`, [part, url], with
+    // Read the item ahead of its visit (shell.ts, `ahead`): each of `reads`, [part, url], with
     // `fetch` at the lowest priority, marked as a prefetch and naming the tag kept for its part,
     // so an unchanged one costs no body; what the server sends is kept unvisited. Nothing for
     // an item a visit kept, nor before the page's own code named its format. Every answer's
@@ -295,33 +407,35 @@ window.symphonyCache = (() => {
     // read, and one left unread stays in flight for as long as the page is open.
     ahead: async (fetch, project, id, kind, reads) => {
       const format = named;
-      const tags =
-        format === undefined
-          ? null
-          : await within(
-              format,
-              ["items", "parts"],
-              (stores, give) => {
-                const itemKey = key(project, id),
-                  tags = {};
-                stores.items.get(itemKey).onsuccess = (event) => {
-                  if (event.target.result?.visited) return;
-                  let left = reads.length;
-                  for (const [part] of reads) {
-                    stores.parts.get(itemKey + key(part)).onsuccess = (event) => {
-                      const kept = event.target.result;
-                      tags[part] = kept?.format === format ? kept.etag : "";
-                      if (--left === 0) give(tags);
-                    };
-                  }
-                };
-              },
-              "readonly",
-            );
+      if (format === undefined) return;
+      const tags = await within<Record<string, string>>(
+        format,
+        ["items", "parts"],
+        (stores, give) => {
+          const itemKey = key(project, id),
+            tags: Record<string, string> = {};
+          const item = stores.items.get(itemKey);
+          item.onsuccess = () => {
+            const found: Item | undefined = item.result;
+            if (found?.visited) return;
+            let left = reads.length;
+            for (const [part] of reads) {
+              const stored = stores.parts.get(itemKey + key(part));
+              stored.onsuccess = () => {
+                const kept: Part | undefined = stored.result;
+                tags[part] = kept?.format === format ? kept.etag : "";
+                if (--left === 0) give(tags);
+              };
+            }
+          };
+        },
+        "readonly",
+      );
       if (!tags) return;
       for (const [part, url] of reads) {
-        const headers = { Purpose: "prefetch" };
-        if (tags[part]) headers["If-None-Match"] = tags[part];
+        const headers: Record<string, string> = { Purpose: "prefetch" };
+        const tag = tags[part];
+        if (tag) headers["If-None-Match"] = tag;
         try {
           const response = await fetch(url, { priority: "low", cache: "no-store", headers });
           if (response.status === 200)
@@ -346,12 +460,13 @@ window.symphonyCache = (() => {
     // marks a project's entrypoint page, kept while its project has room.
     visit: (format, project, id, kind, pinned) => {
       const now = Date.now();
-      return within(format, ["items", "parts"], (stores, give) => {
+      return within<boolean>(format, ["items", "parts"], (stores, give) => {
         const itemKey = key(project, id);
-        stores.items.get(itemKey).onsuccess = (event) => {
-          const kept = event.target.result ?? fresh(itemKey, project, kind, now, false);
+        const item = stores.items.get(itemKey);
+        item.onsuccess = () => {
+          const kept: Item = item.result ?? fresh(itemKey, project, kind, now, false);
           // The visit a first keep counted a moment ago adds nothing more.
-          const counted = now - kept.counted < VISIT;
+          const counted = kept.counted !== undefined && now - kept.counted < VISIT;
           delete kept.counted;
           Object.assign(kept, {
             score: decayed(kept, now) + (counted ? 0 : 1),
@@ -366,7 +481,7 @@ window.symphonyCache = (() => {
     },
     // Drop the item and every part of it: one the client could not read, say.
     forget: (format, project, id) =>
-      within(format, ["items", "parts"], (stores, give) => {
+      within<boolean>(format, ["items", "parts"], (stores, give) => {
         drop(stores, key(project, id));
         give(true);
       }),

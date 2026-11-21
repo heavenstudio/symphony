@@ -54,7 +54,7 @@ project's pin ([when a landing owes one](docs/CHECKS.md#what-a-landing-tells-a-c
   route in every link and on the wire. Its reads, saves and commits name the file `Project::file`
   maps it to, and every walk goes through `Project::walk`, so what an entrypoint leaves out is
   never listed or read. The Symphony's own routes (`symphony_api::SYMPHONY_ROUTES`, which
-  `assets/shell.js` repeats) win over every entrypoint.
+  `apps/symphony-web/shell/shell.ts` repeats) win over every entrypoint.
 - **The one server** serves every project the machine folder's registry holds, each under
   `/<id>/`. It is the server of the release installed on the machine (`current`) while every
   registered project's plugins answer from a process, which any host serves, and a project's build
