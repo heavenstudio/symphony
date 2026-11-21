@@ -185,9 +185,10 @@ absence grants nothing, and a live board's move is the owner's call.
 repository's board, and 42 s back ([the rehearsal](#the-rehearsal-2026-11-19)), and 74 s for the
 board itself on a machine loaded far past its cores
 ([its move](#this-repositorys-board-moved-2026-11-21)). The Symphony's pages say it is held for
-a while longer: a page's reader that found the board held tries it again only after a wait that
-doubles from 1 s to 60 s (`apps/symphony-server/src/live/retry.rs`), so they went on saying so for
-about 100 s past the board's own release. The copy into PostgreSQL is ended at 270 s by its server, thirty
+a while longer: a page's reader that found the board held then tried it again only after a wait
+that doubled from 1 s to 60 s (`apps/symphony-server/src/live/retry.rs`), so they went on saying so
+for about 100 s past the board's own release. Since, a reader refused by a hold tries again at its
+first tick or page request after the release. The copy into PostgreSQL is ended at 270 s by its server, thirty
 short of the 300 s its caller waits ([TASKS](../TASKS.md#a-board-that-was-copied-or-restored)).
 
 ## The rehearsal, 2026-11-19

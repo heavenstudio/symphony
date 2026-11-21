@@ -9,6 +9,8 @@ use std::path::Path;
 impl Hub {
     /// One due worker attempt, including opening a missing store. A failed read drops that store
     /// but keeps this operation's streak across reopening; startup and recurring ticks share it.
+    /// One refused while the board is held is due at the first tick after its release
+    /// ([`super::retry`]).
     pub(super) fn board_tick(
         &self,
         board: &mut Option<symphony_board::Store>,
@@ -17,7 +19,7 @@ impl Hub {
         self.board_retry
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .run(&self.retry_clock, || {
+            .run_unless_released(&self.retry_clock, &|| self.board_held(), || {
                 if board.is_none() {
                     *board = self.reconnect(connect);
                 }
@@ -72,6 +74,17 @@ impl Hub {
                 None
             }
         }
+    }
+
+    /// Whether the board's database is held stopped now ([`symphony_board::server::Home::held`]),
+    /// read from the hold's file in the repository this hub is held to, as the reach that refuses
+    /// a held board reads it: no board is reached or started. Never for a folder no repository held.
+    pub(super) fn board_held(&self) -> bool {
+        self.repository.as_ref().is_some_and(|common| {
+            symphony_board::server::Home::in_common(common, None)
+                .held()
+                .is_some()
+        })
     }
 
     /// Keep `line`, what the pages say of a replay under way, or none: whether it changed.

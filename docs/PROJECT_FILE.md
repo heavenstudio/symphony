@@ -192,6 +192,9 @@ neither serves no `.html` file, as its patterns serve none they leave out.
 | `tokens` | none | `[theme.tokens]`: the package's tokens set over, by name (`primary = "#a33"`) |
 | `layouts` | none | `[theme.layouts]`: a variant for each region, `header` (`default`, `compact`) and `home` (`default`, `focus`) |
 
+The tokens by name, with what each colours, and a whole example with and without a plugin are in
+[Writing a plugin and a theme](PLUGIN_WRITING.md#a-theme).
+
 ## `[agents]`
 
 | Key | Default | What it sets |

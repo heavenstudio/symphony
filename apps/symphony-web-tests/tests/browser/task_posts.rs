@@ -53,8 +53,10 @@ fn a_post_naming_components_draws_its_words_once_and_an_unknown_element_its_cont
     for id in [2, 3] {
         page.reveal(&format!("#message-{id}"));
     }
+    // Shown, not only mounted: the thread stays hidden under its ghost until it settles, and
+    // hidden words have no `innerText`.
     assert!(page.wait_for(
-        "document.querySelectorAll('#task-thread .entry.agent').length === 2",
+        "document.querySelectorAll('#task-thread .entry.agent').length === 2 && document.querySelector('#task-thread').closest('.settle').dataset.settled === 'true'",
         SHOWN
     ));
     let drawn = page.eval(

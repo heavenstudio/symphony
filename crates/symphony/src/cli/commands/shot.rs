@@ -14,8 +14,8 @@ use symphony_args::{Flag, parse};
 use symphony_chrome::{Chrome, Leash, Request};
 
 const USAGE: &str = "usage: symphony shot [-h] URL --out FILE.png [--wait-for CSS] [--timeout SECS] \
-[--size WxH | --phone] [--full-page] [--scheme light|dark] [--report] [--attach] [--click CSS] \
-[--type CSS=TEXT] [--key NAME] [--hover CSS] [--eval JS] [--pause MS] [--shot FILE.png] …";
+[--size WxH | --phone] [--full-page] [--scheme light|dark] [--clock SECS] [--report] [--attach] \
+[--click CSS] [--type CSS=TEXT] [--key NAME] [--hover CSS] [--eval JS] [--pause MS] [--shot FILE.png] …";
 const HELP: &str =
     "A page as an agent sees it: a private headless Chrome opens URL, waits until the page
 has drawn (its document loaded, a Symphony page's own navigation ready, no region still loading,
@@ -48,6 +48,11 @@ options:
                        at 3x, mobile
   --full-page          capture the whole page rather than the viewport
   --scheme light|dark  the colour scheme the page is told the system prefers
+  --clock SECS         the moment the page reads as now, held still: whole seconds since
+                       1970-01-01 UTC, which every Date of the page and of its frames in its
+                       own process says for as long as the shot lasts (its timers run on), so
+                       a page that draws an age or a time is the same picture on any day; the
+                       zone its times are said in stays the TZ of the environment
   --report             print, as JSON, the console errors and failed requests seen, a frame's
                        (one Chrome runs in a process of its own too) naming its address, the
                        dialogs dismissed (each one's kind, text and document), and the
@@ -173,12 +178,14 @@ struct Shot {
     view: View,
     full_page: bool,
     scheme: Option<Scheme>,
+    /// The moment the page reads as now, in seconds since 1970-01-01 UTC.
+    clock: Option<u64>,
     report: bool,
     attach: bool,
     steps: Vec<Step>,
 }
 
-const FLAGS: [Flag; 16] = [
+const FLAGS: [Flag; 17] = [
     Flag {
         name: "--out",
         value: true,
@@ -205,6 +212,10 @@ const FLAGS: [Flag; 16] = [
     },
     Flag {
         name: "--scheme",
+        value: true,
+    },
+    Flag {
+        name: "--clock",
         value: true,
     },
     Flag {
@@ -308,6 +319,7 @@ fn read(args: &[String]) -> Result<Option<Shot>, String> {
     let mut phone = false;
     let mut full_page = false;
     let mut scheme = None;
+    let mut clock = None;
     let mut report = false;
     let mut attach = false;
     let mut steps = Vec::new();
@@ -329,6 +341,7 @@ fn read(args: &[String]) -> Result<Option<Shot>, String> {
                     }
                 });
             }
+            "--clock" => clock = Some(moment(value)?),
             "--report" => report = true,
             "--attach" => attach = true,
             "--wait-for" => steps.push(Step::WaitFor(selector(name, value)?)),
@@ -369,6 +382,7 @@ fn read(args: &[String]) -> Result<Option<Shot>, String> {
         view,
         full_page,
         scheme,
+        clock,
         report,
         attach,
         steps,
@@ -395,6 +409,35 @@ fn seconds(value: &str) -> Result<Duration, String> {
         .ok_or_else(|| {
             format!("argument --timeout: invalid SECS {value:?}: a positive number of seconds")
         })
+}
+
+/// The seconds since 1970-01-01 UTC `--clock` names: digits alone, and few enough that the page's
+/// Date holds the moment (it keeps 8.64e15 ms either side of 1970).
+fn moment(value: &str) -> Result<u64, String> {
+    value
+        .parse::<u64>()
+        .ok()
+        .filter(|seconds| value.bytes().all(|byte| byte.is_ascii_digit()) && *seconds <= CLOCK_MOST)
+        .ok_or_else(|| {
+            format!("argument --clock: invalid SECS {value:?}: whole seconds since 1970-01-01 UTC")
+        })
+}
+
+/// The last second a page's Date holds.
+const CLOCK_MOST: u64 = 8_640_000_000_000;
+
+/// The script that holds a document's clock at `seconds`, run before any of its own: `Date.now()`
+/// and a Date made with no argument say that moment, and every other use of Date is the browser's
+/// own (a Date made from a time, `Date.parse`, `Date.UTC`, `instanceof`).
+fn held_clock(seconds: u64) -> String {
+    format!(
+        "(() => {{ const at = {seconds} * 1000; const Real = Date; \
+         function Held(...given) {{ \
+         if (!new.target) return new Real(at).toString(); \
+         return Reflect.construct(Real, given.length === 0 ? [at] : given, new.target); }} \
+         Object.setPrototypeOf(Held, Real); Held.prototype = Real.prototype; \
+         Held.now = () => at; globalThis.Date = Held; }})()"
+    )
 }
 
 fn dimensions(value: &str) -> Result<(u32, u32), String> {
@@ -617,7 +660,8 @@ fn not_loaded(url: &str, wait: Wait, late: bool, why: &str) -> String {
     format!("{url} did not load: {why}")
 }
 
-/// The viewport, the colour scheme and, for a report, the console's domains, before the page loads.
+/// The viewport, the colour scheme, the clock held and, for a report, the console's domains, before
+/// the page loads.
 fn prepare(chrome: &mut Chrome, shot: &Shot, wait: Wait) -> Result<(), String> {
     let late = || format!("the browser did not answer within {}", wait.said());
     let view = match shot.view {
@@ -654,6 +698,16 @@ fn prepare(chrome: &mut Chrome, shot: &Shot, wait: Wait) -> Result<(), String> {
                 json!({"features": [{"name": "prefers-color-scheme", "value": value}]}),
             ),
             "setting the colour scheme",
+            late,
+        )?;
+    }
+    if let Some(seconds) = shot.clock {
+        said(
+            chrome.call(
+                "Page.addScriptToEvaluateOnNewDocument",
+                json!({"source": held_clock(seconds)}),
+            ),
+            "holding the page's clock",
             late,
         )?;
     }

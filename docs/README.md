@@ -18,7 +18,8 @@ are under [Design and history](#design-and-history).
 ## Using it
 
 - [Concept review](REVIEW.md) — review cards, comments, questions and the owner queue.
-- [Task board](TASKS.md) — the board, sessions, roles and agent communication.
+- [Task board](TASKS.md) — the board, sessions, roles and agent communication; the pages are
+  [the task board](product/BOARD.md) and [a task's page](product/TASK.md).
 - [The project file](PROJECT_FILE.md) — `symphony.toml`: every table and key a project can set,
   with its default.
 - [Releases](RELEASES.md) — taking a release on a project, then how a release is cut by the
@@ -33,6 +34,9 @@ are under [Design and history](#design-and-history).
 
 ## Extending it
 
+- [Writing a plugin and a theme](PLUGIN_WRITING.md) — a first plugin from nothing: its crate, its
+  code and test, its settings, its component in a document and how to see it drawn; a theme's
+  tokens by name, in the project file alone and from a plugin.
 - [Plugin protocol](PLUGIN_PROTOCOL.md) — a plugin answering from a process of its own: the
   setting, the seams it answers, its process, its commands, a register read in one request, the
   line, each call's minor, the versions and the wire's shape.
