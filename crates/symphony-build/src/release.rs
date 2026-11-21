@@ -429,7 +429,10 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
     let mut cause = None;
     let mut hosted_only = false;
     // A project file that does not load says no cadence: the count is not made as if it said the
-    // default, no build of the tip is started, and the run below stops red saying why.
+    // default. A count runs on the build the main checkout links, which may be older than the
+    // file a landing just changed, so it is a build of the tip that says whether the file loads
+    // ([`hand_off`]); the run below stops red only where that build is this one, or none is made.
+    let unread_count = parsed.flag("--due") && repo.unread.is_some();
     if parsed.flag("--due") && repo.unread.is_none() {
         if let [slug, landed] = &parsed.positionals[..] {
             let _ = writeln!(out, "release: {slug} landed ({})", short(landed));
@@ -499,7 +502,14 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
             ),
         );
     }
-    if options.cause.is_some()
+    if unread_count && !driven() {
+        let _ = writeln!(
+            out,
+            "release: this build cannot load the project file, which a landing may have written \
+             for a newer one: a build of the tip reads it"
+        );
+    }
+    if (options.cause.is_some() || unread_count)
         && let Some(code) = hand_off(&repo, &options, args, out)
     {
         return code;
@@ -557,7 +567,9 @@ fn note(out: &mut dyn Write, noted: &[String]) {
 /// wait on its lock), and this process becomes that build, with `args` as given. None when the run
 /// goes on here: this is that build already, the tip holds no `tools/rs-bin.sh`, or the checkout or
 /// the build failed, which is said and which the run then meets as it would. An exit code when a
-/// run holds the lock: the count waits for it and nothing more runs.
+/// run holds the lock: the count waits for it and nothing more runs. A count over a project file
+/// its build cannot load is handed over the same way, undone: the tip's build counts if it loads
+/// the file, and stops red if it cannot either.
 fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write) -> Option<i32> {
     use std::os::unix::process::CommandExt as _;
     if driven() {
@@ -756,8 +768,8 @@ fn repo(at: &Path) -> Result<Repo, String> {
 fn unread(main: &Path, problem: &str) -> String {
     format!(
         "the project file {} does not load, so nothing says what a run verifies, releases or \
-         refreshes, and none is run as if its settings were unset: {problem}. `just settings-check` \
-         reads it the same way",
+         refreshes, and none is run as if its settings were unset: {problem}. The settings check \
+         reads it the same way (docs/PROJECT_FILE.md, \"The settings check\")",
         main.join(symphony::project::FILE).display()
     )
 }

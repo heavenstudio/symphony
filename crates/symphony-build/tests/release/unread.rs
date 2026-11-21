@@ -2,10 +2,14 @@
 //! what is wrong with it: a `[releases]` key mistyped, a value of the wrong type or a file that
 //! does not parse never leaves a run going with those settings unset, its checks dropped. The run
 //! checks nothing, tags nothing and files `tests/release-red-run`, which the run after the file is
-//! put right closes. A land's count (`--due`) stops the same way without counting, `--status`
-//! says it and runs nothing, and `--schedule`, `--drop` and `--github` refuse.
+//! put right closes. A land's count (`--due`) does not count over it and hands over to a build of
+//! the tip, as its own build may be older than the file: that build counts, or stops red when it
+//! cannot load it either, as the count does where no such build is made. `--status` says it and
+//! runs nothing, and `--schedule`, `--drop` and `--github` refuse.
 
-use std::path::PathBuf;
+use std::fs;
+use std::os::unix::fs::PermissionsExt as _;
+use std::path::{Path, PathBuf};
 
 use super::{Fixture, NOW};
 
@@ -135,4 +139,99 @@ fn a_lands_count_over_it_stops_red_without_counting_and_the_other_commands_say_o
         assert!(err.contains(&said), "{args:?}: {err}");
     }
     assert!(fixture.remote_tags().is_empty() && !ran.exists());
+}
+
+/// Write `text` as the executable `path`.
+fn program(path: &Path, text: &str) {
+    fs::write(path, text).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// Land a launcher at the tip that names `build` as the tip's build, and a project file the
+/// count's build cannot load.
+fn tip_builds(fixture: &Fixture, build: &Path) {
+    fs::create_dir_all(fixture.main.join("tools")).unwrap();
+    program(
+        &fixture.main.join("tools/rs-bin.sh"),
+        &format!("#!/bin/sh\necho '{}'\n", build.display()),
+    );
+    land(
+        fixture,
+        &Fixture::project_file("a_key_of_a_newer_build = 1\n"),
+    );
+}
+
+#[test]
+fn a_count_whose_build_cannot_load_the_file_hands_over_to_the_tips_and_stops_nothing_itself() {
+    let (fixture, ran, check) = fixture();
+    // The tip's build, a stand-in for one that knows the key: it says how it was run and ends.
+    let newer = fixture.root.join("newer-build");
+    let asked = fixture.root.join("asked.log");
+    program(
+        &newer,
+        &format!(
+            "#!/bin/sh\necho \"$* driven by $SYMPHONY_RELEASE_DRIVER\" >> '{}'\n",
+            asked.display()
+        ),
+    );
+    tip_builds(&fixture, &newer);
+    let landed = super::git(&fixture.main, &["rev-parse", "HEAD"]);
+    let args = ["--check", check.as_str(), "--due", "tools/last", &landed];
+    let (code, out, err) = fixture.release_at(NOW, &args);
+    assert_eq!(code, 0, "stdout:\n{out}\nstderr:\n{err}");
+    assert!(
+        out.contains("release: this build cannot load the project file"),
+        "{out}"
+    );
+    assert!(
+        out.contains(&format!(
+            "release: the run goes on from {}, built in its own checkout\n",
+            newer.display()
+        )),
+        "{out}"
+    );
+    // The count as given, to that build, and nothing judged by the older one.
+    assert_eq!(
+        fs::read_to_string(&asked).unwrap(),
+        format!("release {} driven by {}\n", args.join(" "), newer.display())
+    );
+    assert!(!err.contains("does not load"), "nothing stops here: {err}");
+    assert!(
+        fixture.runs().is_empty(),
+        "no run stopped in the count's build"
+    );
+    assert!(fixture.reds().is_empty(), "and no red");
+    assert!(!ran.exists());
+    assert!(!fixture.records().join("running.json").exists());
+}
+
+#[test]
+fn a_tips_build_that_cannot_load_it_either_stops_red_once_and_hands_over_no_further() {
+    let (fixture, ran, check) = fixture();
+    // The tip's build is this test's own, to which the key is as unknown: asked once.
+    let built = fixture.root.join("built.log");
+    let tip = fixture.root.join("tip-build");
+    program(
+        &tip,
+        &format!(
+            "#!/bin/sh\necho built >> '{}'\nexec '{}' \"$@\"\n",
+            built.display(),
+            super::BIN
+        ),
+    );
+    tip_builds(&fixture, &tip);
+    let landed = super::git(&fixture.main, &["rev-parse", "HEAD"]);
+    let args = ["--check", check.as_str(), "--due", "tools/last", &landed];
+    let (code, out, err) = fixture.release_at(NOW, &args);
+    assert_eq!(code, 1, "stdout:\n{out}\nstderr:\n{err}");
+    assert_eq!(fs::read_to_string(&built).unwrap(), "built\n", "once");
+    let said = format!("the project file {} does not load", file(&fixture));
+    assert!(
+        err.contains(&said) && err.contains("a_key_of_a_newer_build"),
+        "{err}"
+    );
+    assert!(!out.contains("landings"), "nothing is counted: {out}");
+    assert_eq!(fixture.runs().len(), 1, "one run, the tip build's");
+    assert_eq!(fixture.reds().keys().collect::<Vec<_>>(), [RED]);
+    assert!(!ran.exists(), "no check ran");
 }

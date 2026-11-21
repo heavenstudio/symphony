@@ -373,8 +373,12 @@ checkout's `symphony.toml` as [the settings check](PROJECT_FILE.md#the-settings-
 that does not parse, or names a table, a key or a value the Symphony does not know, is not the
 plain project to it, as it is to a page that must still draw. A run over such a file stops before
 it fetches or checks anything ([stopped short](#the-release-run), step 6), saying the file and
-what is wrong with it, and a land's count (`--due`) stops the same way without counting, so a
-mistyped key never leaves a run going with its check or its cadence unsaid. `--status` says it
+what is wrong with it, so a mistyped key never leaves a run going with its check or its cadence
+unsaid. A land's count (`--due`) does not count over such a file, and does not judge it either:
+it runs on the build the main checkout links, which a landing that adds a key may be newer than,
+so it hands over to a build of the tip as a due count does ([the count](#the-count)), which
+counts if it loads the file and stops red if it cannot; the count stops red in its own build only
+where no such build is made (the tip holds no `tools/rs-bin.sh`, or it does not build). `--status` says it
 first and prints the rest; `--schedule`, `--drop` and `--github` refuse, naming it.
 
 1. **The candidate.** It fetches `origin/main` (`--remote` and `--branch` name another remote and
