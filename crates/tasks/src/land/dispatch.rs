@@ -359,6 +359,35 @@ fn acting(task: Option<&Task>, journal: &Journal) -> String {
         .map_or_else(|| journal.by.clone(), str::to_string)
 }
 
+/// What the watcher's last round said of each armed task: a round that comes to the same says
+/// nothing, so a task that waits days for its approve costs the log one line and not one a round,
+/// and what the log gains follows what changed, never how long the watcher ran.
+#[derive(Default)]
+pub(super) struct Told(std::collections::BTreeMap<String, Vec<u8>>);
+
+impl Told {
+    /// Only the tasks in `armed` kept: one armed no more is forgotten, so armed again it is said
+    /// again, and what is kept is no more than what is armed.
+    pub(super) fn keep(&mut self, armed: &[&str]) {
+        self.0.retain(|slug, _| armed.contains(&slug.as_str()));
+    }
+
+    /// Whether `said`, all a round wrote of `slug`, differs from its round before: kept as its
+    /// last from now on.
+    pub(super) fn news(&mut self, slug: &str, said: Vec<u8>) -> bool {
+        if self.0.get(slug) == Some(&said) {
+            return false;
+        }
+        self.0.insert(slug.to_string(), said);
+        true
+    }
+
+    /// What the last round that said anything of `slug` said.
+    pub(super) fn last(&self, slug: &str) -> &[u8] {
+        self.0.get(slug).map_or(&[], Vec::as_slice)
+    }
+}
+
 /// How a watcher runs: its clock, its rest and, for a test, how many rounds it makes at most.
 pub struct Watching<'a> {
     /// What answers the delivery's verbs in place of the command `[land] delivery` names: a test's.
@@ -375,7 +404,9 @@ pub struct Watching<'a> {
 /// `tasks land --watch`: while any task is armed at the host, or merged there with its land not
 /// ended, a round of each ([`Landing::watched`]) every `[land] watch_seconds`, ended once none is;
 /// the line it ends with. One runs per project:
-/// a watcher that finds another running ends at once.
+/// a watcher that finds another running ends at once. A round writes to `out` what it came to for
+/// a task only where that differs from its round before ([`Told`]): `out` is the watcher's log,
+/// which is set aside past its limit only when a watcher starts.
 ///
 /// # Errors
 ///
@@ -405,6 +436,7 @@ pub fn watch(
         return Ok(format!("{running} runs already: nothing started"));
     };
     let mut round = 0;
+    let mut told = Told::default();
     loop {
         let mut journals = armed(&folder);
         if journals.is_empty() {
@@ -433,6 +465,11 @@ pub fn watch(
             });
         }
         round += 1;
+        let slugs: Vec<&str> = journals
+            .iter()
+            .map(|journal| journal.slug.as_str())
+            .collect();
+        told.keep(&slugs);
         for journal in journals {
             let task = store.get(&journal.slug).ok();
             let actor = acting(task.as_ref(), &journal);
@@ -446,14 +483,17 @@ pub fn watch(
                 watching.transport,
                 (watching.clock)(),
             );
-            let _ = out.write_all(&said);
             let line = match ended {
                 Ok(line) => line,
                 Err(Stop::Refused(line)) => line,
                 Err(Stop::Board(error)) => format!("{}: the board failed: {error}", journal.slug),
             };
-            let _ = writeln!(out, "{line}");
-            let _ = out.flush();
+            said.extend_from_slice(line.as_bytes());
+            said.push(b'\n');
+            if told.news(&journal.slug, said) {
+                let _ = out.write_all(told.last(&journal.slug));
+                let _ = out.flush();
+            }
         }
         let settings = super::Settings::of(&main).unwrap_or_default();
         (watching.rest)(settings.watch);
