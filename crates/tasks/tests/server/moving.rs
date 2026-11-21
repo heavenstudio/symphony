@@ -445,6 +445,36 @@ fn a_board_at_another_schema_is_not_moved() {
     home.release(HANDLE, None).unwrap();
 }
 
+#[test]
+fn a_board_at_another_schema_on_postgresql_is_not_moved_back() {
+    let b = Board::new("move-schema-pg");
+    let home = b.home();
+    b.seeded();
+    b.move_to(&home, Engine::PostgreSql).unwrap();
+    let newer = Schema::this_build().then_each("DEFINE TABLE fixture_next;", "");
+    b.store_as(&Opening::write().at(newer).migrating().leave_behind());
+    let refused = refusal(b.move_to(&home, Engine::SurrealDb));
+    assert!(refused.contains("a move migrates nothing"), "{refused}");
+    assert!(
+        refused.contains("It is on PostgreSQL as it was, and its hold is released"),
+        "{refused}"
+    );
+    assert_eq!(home.backend().unwrap(), Engine::PostgreSql);
+    assert!(b.dir().join("postgresql").is_dir());
+    assert!(!b.dir().join("moving").exists() && !b.dir().join("data").exists());
+    assert_eq!(home.held(), None);
+    assert_eq!(b.moved().len(), 1, "only the first move kept a store");
+
+    // The caller's own hold is left standing by a move that is refused.
+    home.postgresql(&programs()).hold(HANDLE, "a move").unwrap();
+    let held = refusal(b.move_to(&home, Engine::SurrealDb));
+    assert!(held.contains("as it was, and still held"), "{held}");
+    assert_eq!(home.held().map(|hold| hold.by), Some(HANDLE.into()));
+    home.release(HANDLE, None).unwrap();
+    assert_eq!(home.backend().unwrap(), Engine::PostgreSql);
+    assert!(!b.dir().join("moving").exists() && !b.dir().join("data").exists());
+}
+
 /// A switch that a test cut is refused to everything but its holder's next move.
 fn stands(b: &Board, home: &Home) {
     let unsettled = "until its holder settles it";
