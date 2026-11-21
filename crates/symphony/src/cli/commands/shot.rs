@@ -419,9 +419,7 @@ fn moment(value: &str) -> Result<u64, String> {
         .ok()
         .filter(|seconds| value.bytes().all(|byte| byte.is_ascii_digit()) && *seconds <= CLOCK_MOST)
         .ok_or_else(|| {
-            format!(
-                "argument --clock: invalid SECS {value:?}: whole seconds since 1970-01-01 UTC"
-            )
+            format!("argument --clock: invalid SECS {value:?}: whole seconds since 1970-01-01 UTC")
         })
 }
 

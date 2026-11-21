@@ -137,10 +137,21 @@ fn a_clock_is_whole_seconds_since_1970_the_last_one_given() {
     let held = shot(&["about:blank", "--out", "x.png", "--clock", "1772443800"]);
     assert_eq!(held.clock, Some(1_772_443_800));
     // The first second and the last a page's Date holds.
-    assert_eq!(shot(&["about:blank", "--out", "x.png", "--clock", "0"]).clock, Some(0));
+    assert_eq!(
+        shot(&["about:blank", "--out", "x.png", "--clock", "0"]).clock,
+        Some(0)
+    );
     let last = shot(&["about:blank", "--out", "x.png", "--clock=8640000000000"]);
     assert_eq!(last.clock, Some(8_640_000_000_000));
-    let twice = shot(&["about:blank", "--out", "x.png", "--clock", "1", "--clock", "2"]);
+    let twice = shot(&[
+        "about:blank",
+        "--out",
+        "x.png",
+        "--clock",
+        "1",
+        "--clock",
+        "2",
+    ]);
     assert_eq!(twice.clock, Some(2));
 }
 
@@ -148,7 +159,10 @@ fn a_clock_is_whole_seconds_since_1970_the_last_one_given() {
 fn the_held_clock_is_one_script_naming_its_moment_in_milliseconds() {
     let script = held_clock(1_772_443_800);
     assert!(script.contains("const at = 1772443800 * 1000;"), "{script}");
-    assert!(script.starts_with("(() => {") && script.ends_with("})()"), "{script}");
+    assert!(
+        script.starts_with("(() => {") && script.ends_with("})()"),
+        "{script}"
+    );
     assert!(!script.contains('\n'), "{script}");
 }
 

@@ -497,7 +497,13 @@ fn a_shot_with_a_clock_holds_the_pages_now_still_and_leaves_every_other_date_alo
     // Without one the page's clock is the machine's: this run's, within a day.
     let output = shot(
         &chrome,
-        &[page, "--out", picture.to_str().unwrap(), "--eval", "Date.now()"],
+        &[
+            page,
+            "--out",
+            picture.to_str().unwrap(),
+            "--eval",
+            "Date.now()",
+        ],
     )
     .output()
     .unwrap();
@@ -507,7 +513,10 @@ fn a_shot_with_a_clock_holds_the_pages_now_still_and_leaves_every_other_date_alo
         .unwrap()
         .as_millis() as f64;
     let read = printed(&output)[0].as_f64().unwrap();
-    assert!((now - read).abs() < 86_400_000.0, "now {now}, the page's {read}");
+    assert!(
+        (now - read).abs() < 86_400_000.0,
+        "now {now}, the page's {read}"
+    );
 }
 
 /// A page whose region on the screen, in a box that clips it, says it is busy (`aria-busy`, as a
