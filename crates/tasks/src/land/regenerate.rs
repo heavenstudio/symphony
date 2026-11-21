@@ -553,6 +553,19 @@ pub fn run_by(
     out: &mut dyn Write,
     transport: Option<&dyn Transport>,
 ) -> Result<String, String> {
+    run_with_clock(store, env, out, transport, &std::time::Instant::now)
+}
+
+/// [`run_by`] with the monotonic clock its command timeouts read, as [`super::land_with_clock`]
+/// gives a land: a test holds time still through the round's git steps and advances it once the
+/// command it means to expire runs.
+pub fn run_with_clock(
+    store: &Store,
+    env: &Env,
+    out: &mut dyn Write,
+    transport: Option<&dyn Transport>,
+    now: &(dyn Fn() -> std::time::Instant + Sync),
+) -> Result<String, String> {
     let common = crate::git::common_dir(&env.cwd).map_err(|e| e.to_string())?;
     let main = trigger::main_checkout(&common)
         .ok_or_else(|| format!("{} has no main checkout to regenerate on", common.display()))?
@@ -609,7 +622,7 @@ pub fn run_by(
             folder: folder.clone(),
             log,
             interrupts: interrupts.as_ref(),
-            now: &std::time::Instant::now,
+            now,
             recorder: None,
             named: false,
             transport,
