@@ -8,6 +8,7 @@ mod board_beat;
 mod common;
 #[path = "../../../../tools/test-support/script_board.rs"]
 mod fixture_script;
+mod installed_skills;
 mod installer;
 mod lifetime;
 mod named_recipes;
