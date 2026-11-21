@@ -72,7 +72,9 @@ is in, and `store/raw.rs` (`Store::raw`) a board's rows as a test sets and reads
 ([the seam](#the-stores-statements-live-in-one-place)). `pg.rs` is the PostgreSQL client. `schema.rs` is the tables, the indexes, the version and its migration
 steps; `live.rs` which builds may move a project's live board, and `live/seen.rs` the highest schema
 it was seen at. `rpc.rs` (with `rpc/read.rs`) and `cbor.rs` are the client: SurrealDB's RPC in CBOR
-over plain HTTP.
+over plain HTTP. `db.rs` is what both clients answer in, why a query gave no results (`DbError`)
+and the names that need no quoting (`plain`), and `store/reading.rs` the variables of a read of
+tasks, which each database's statements name alike: neither belongs to an engine.
 
 ### Reaching a board
 

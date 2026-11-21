@@ -13,8 +13,8 @@ use super::postgres::{self, Pg};
 use super::statement::Statement;
 use super::surreal as sql;
 use super::{Error, Failure, REFUSED, Store};
+use crate::db::DbError;
 use crate::pg;
-use crate::rpc::DbError;
 use crate::schema;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -377,21 +377,21 @@ mod tests {
         let says = |answer: Value| decode::<Answer>(answer).unwrap_err();
         assert_eq!(
             says(json!({"name": "a"})),
-            "SurrealDB: an answer not in the board's shape: missing field `at`"
+            "the board's database: an answer not in the board's shape: missing field `at`"
         );
         assert_eq!(
             says(json!({"name": "a", "at": 1, "since": 0})),
-            "SurrealDB: an answer not in the board's shape: unknown field `since`, expected one \
+            "the board's database: an answer not in the board's shape: unknown field `since`, expected one \
              of `name`, `at`, `until`"
         );
         assert_eq!(
             says(json!({"name": 1, "at": 1})),
-            "SurrealDB: an answer not in the board's shape: invalid type: number, expected a string"
+            "the board's database: an answer not in the board's shape: invalid type: number, expected a string"
         );
         // A struct's fields in an array's order are no answer the board's database gives.
         assert_eq!(
             says(json!(["a", 1])),
-            "SurrealDB: an answer not in the board's shape: invalid type: sequence, expected \
+            "the board's database: an answer not in the board's shape: invalid type: sequence, expected \
              struct Answer"
         );
     }

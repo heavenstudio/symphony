@@ -494,7 +494,7 @@ on_both! {
 fn schema_26_gains_the_guards_kinds_and_alters_the_check_once(backend: Backend) {
     let db = board(backend);
     let six = "'active', 'definition', 'activation', 'event', 'receipt', 'intent'";
-    let authority = |db: &Database| -> Result<(), symphony_board::rpc::DbError> {
+    let authority = |db: &Database| -> Result<(), symphony_board::db::DbError> {
         match db {
             Database::SurrealDb(client) => client
                 .query(

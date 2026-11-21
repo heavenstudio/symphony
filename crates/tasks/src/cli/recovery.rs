@@ -65,7 +65,7 @@ fn authority(env: &Env, acts: bool) -> Result<(FileAuthority, String), String> {
         );
     }
     let database = env.var("TASKS_DATABASE").unwrap_or(DATABASE);
-    if !crate::rpc::plain(database) {
+    if !crate::db::plain(database) {
         return Err(format!(
             "TASKS_DATABASE={database:?} is not a plain name for a database"
         ));

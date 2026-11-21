@@ -73,10 +73,10 @@ fn beats_refresh_cached_health_without_the_shared_counter_board_write(backend: B
     );
     match f.store.database() {
         symphony_board::Database::SurrealDb(client) => assert_eq!(client.query(
-            "BEGIN TRANSACTION; UPDATE session:worker SET last_seen += 1; THROW 'rolled-back-beat'; COMMIT TRANSACTION;", json!({})), Err(symphony_board::rpc::DbError::Thrown("rolled-back-beat".into()))),
+            "BEGIN TRANSACTION; UPDATE session:worker SET last_seen += 1; THROW 'rolled-back-beat'; COMMIT TRANSACTION;", json!({})), Err(symphony_board::db::DbError::Thrown("rolled-back-beat".into()))),
         symphony_board::Database::PostgreSql(client) => {
             let why = client.simple("BEGIN; UPDATE session SET last_seen = last_seen + 1 WHERE handle = 'worker'; DO $test$ BEGIN RAISE EXCEPTION 'rolled-back-beat'; END $test$; COMMIT;").unwrap_err();
-            assert_eq!(why, symphony_board::rpc::DbError::Thrown("rolled-back-beat".into()));
+            assert_eq!(why, symphony_board::db::DbError::Thrown("rolled-back-beat".into()));
             client.simple("ROLLBACK").unwrap();
         }
     }

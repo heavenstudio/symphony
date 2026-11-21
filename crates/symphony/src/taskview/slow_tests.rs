@@ -49,7 +49,7 @@ fn a_page_whose_read_is_answered_late_twice_says_the_board_is_slow_not_unreachab
     let (status, said) = read_failure(&failed, UNREACHABLE);
     assert_eq!(status, 504, "{said}");
     assert!(
-        said.starts_with("the task board is slow: SurrealDB: RPC query at "),
+        said.starts_with("the task board is slow: the board's database: RPC query at "),
         "{said}"
     );
     assert!(
@@ -77,7 +77,7 @@ fn a_page_whose_read_is_answered_late_twice_says_the_board_is_slow_not_unreachab
     let (status, said) = read_failure(&failed.to_string(), UNREACHABLE);
     assert_eq!(status, 503, "{said}");
     assert!(
-        said.starts_with("the task board cannot be reached: SurrealDB: the server at "),
+        said.starts_with("the task board cannot be reached: the board's database: the server at "),
         "{said}"
     );
     assert!(said.ends_with("the request was not sent"), "{said}");
