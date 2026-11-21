@@ -8,8 +8,9 @@ project's board to one repository on GitHub.com, and it does three things, each 
   [its steps](#the-issue-exchange).
 - **Delivery by pull request.** A task's move to review opens a pull request for it, writes its
   evidence there as checks and turns on GitHub's auto-merge, and GitHub squashes it once the
-  evidence stands, in place of a land merging and pushing the default branch itself. It needs one GitHub App installed on the repository, with no administration, and
-  one ruleset on its default branch, verified by someone who administers the repository:
+  evidence stands, in place of a land merging and pushing the default branch itself. It needs one
+  GitHub App installed on the repository, with no administration, and one ruleset on its default
+  branch, verified by someone who administers the repository:
   [its steps](#delivery-by-pull-request).
 - **GitHub Releases.** A release run publishes a GitHub Release for each tag it pushes, its text
   the release's notes. It needs the exchange's one token with contents read and write, and is
