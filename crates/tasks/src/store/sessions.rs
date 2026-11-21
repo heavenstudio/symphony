@@ -231,7 +231,7 @@ impl Store {
     /// moving under it is not waited for: the recorder says it again at its next time.
     pub(crate) fn seen_once(&self, handle: &str) -> Result<(), Error> {
         let vars = self.acting(handle, (self.clock)(), json!({}));
-        match self.transact::<Value>(both(&sql::touch(), pg::touch()), vars) {
+        match self.transact::<Value>(both(sql::touch(), pg::touch()), vars) {
             Ok(_) => Ok(()),
             Err(Failure::Again) => Err(Error::Db("the board moved under it".into())),
             Err(Failure::Stop(error)) => Err(error),
