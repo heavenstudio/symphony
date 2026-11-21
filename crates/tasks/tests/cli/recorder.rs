@@ -28,6 +28,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use symphony_api::{End, RunLine};
 use symphony_board::cli::Env;
 use symphony_board::cli::machine_work::recorded::{self, Phase, Record, Step};
+use symphony_board::health::LIVE_SECONDS;
 use symphony_board::stamps::read;
 use symphony_board::sys::{Child, Command, Stdio, output, wait_output};
 
@@ -1676,6 +1677,138 @@ fn the_next_run_finishes_work_whose_recorder_died_and_keeps_both_in_the_history(
     assert_eq!(history[1].exit_code, Some(0));
     assert!(!recorded::read(&folders.work).uncertain);
     // The command itself ran on, unrecorded, and ends as it would have.
+    fs::write(&release, "").unwrap();
+    assert!(started.wait().unwrap().success());
+}
+
+/// Past the lost line.
+const GONE: f64 = crate::common::GONE + 100.0;
+
+/// The health the board reads of `handle` by `case`'s clock.
+fn health(case: &Case, handle: &str) -> &'static str {
+    case.store().session(handle).unwrap().health.as_str()
+}
+
+/// `handle` as the board last saw it [`GONE`] ago, whatever beat for it since.
+fn unseen(case: &Case, handle: &str) {
+    let then = crate::common::NOW - GONE;
+    let store = case.store();
+    let row = store.raw().row("session", handle);
+    row.set(serde_json::json!({"last_seen": then})).unwrap();
+}
+
+/// `handle` once the board reads it live by `case`'s clock: a wait on the recorder's word, which
+/// comes within its own twenty seconds, with a backstop only a stall reaches.
+#[track_caller]
+fn until_live(case: &Case, handle: &str, work: &Path) {
+    let backstop = test_time::backstop(Duration::from_secs(120));
+    test_time::until_true(format!("{handle} read live"), backstop, || {
+        health(case, handle) == "live"
+    })
+    .unwrap_or_else(|stall| panic!("{stall}: it reads {}; {}", health(case, handle), holds(work)));
+}
+
+/// An orchestrator, and two workers the board last saw [`GONE`] ago, each executing a task of its
+/// own: the orchestrator, the workers and their tasks.
+fn two_gone_quiet(case: &Case) -> (String, [(String, &'static str); 2]) {
+    let then = ago(case, GONE);
+    let orchestrator = case.register("orchestrator");
+    let workers = ["tools/quiet", "tools/beside"].map(|slug| {
+        let worker = then.register("worker");
+        then.ok(&worker, &["create", slug, "Quiet"]);
+        then.ok(&worker, &["claim", slug]);
+        (worker, slug)
+    });
+    (orchestrator, workers)
+}
+
+/// The tasks a PULL lists orphaned for `orchestrator`, by `case`'s clock.
+fn orphaned(case: &Case, orchestrator: &str) -> Vec<String> {
+    let said = case.ok(orchestrator, &["pull"]);
+    said.lines()
+        .filter_map(|line| line.trim_start().strip_prefix("in_progress_orphaned "))
+        .filter_map(|rest| rest.split_whitespace().nth(1).map(str::to_owned))
+        .collect()
+}
+
+/// The health `slug`'s executor reads on the task itself, by `case`'s clock.
+fn executor(case: &Case, slug: &str) -> &'static str {
+    let task = case.store().get(slug).unwrap();
+    let role = task.roles.iter().find(|role| role.role == "executor");
+    role.unwrap().health.as_str()
+}
+
+/// An agent waiting on its own build or test makes no tool call. While the run its record names
+/// it for goes on, its recorder says it is there: it reads live, on its task too, and a PULL does
+/// not list its task orphaned, however long ago its last call was. A session working beside it,
+/// in the same folder, that the record does not name is kept by nothing. From the run's end it
+/// ages as from any last sign of life: live, then stale, then lost.
+#[test]
+fn a_session_reads_live_while_its_own_recorded_run_goes_on_and_ages_from_its_end() {
+    let case = Case::new();
+    let (orchestrator, [(worker, quiet), (other, beside)]) = two_gone_quiet(&case);
+    assert_eq!((health(&case, &worker), health(&case, &other)), ("lost", "lost"));
+    assert_eq!(orphaned(&case, &orchestrator), [beside, quiet]);
+    let folders = Folders::new("recorder-session-seen");
+    let (release, pid) = (folders.dir.join("release"), folders.dir.join("pid"));
+    let command = until_released(&release, &pid);
+    let mut recorder = spawn(&mut tasks(
+        &case,
+        &folders,
+        Some(&worker),
+        &run_args("test", "long", &command),
+    ));
+    let running = folders.once(Step::Running);
+    assert_eq!(running.handle.as_deref(), Some(worker.as_str()));
+    until_live(&case, &worker, &folders.work);
+    assert_eq!(executor(&case, quiet), "live");
+    assert_eq!(orphaned(&case, &orchestrator), [beside]);
+    assert_eq!((health(&case, &other), executor(&case, beside)), ("lost", "lost"));
+    // Its end is said too, whenever it comes: seen long ago again, it is seen as the run ends.
+    unseen(&case, &worker);
+    assert_eq!(health(&case, &worker), "lost");
+    fs::write(&release, "").unwrap();
+    assert!(recorder.wait().unwrap().success());
+    folders.once(Step::Finished);
+    until_live(&case, &worker, &folders.work);
+    // Nothing says it after that: it ages from the run's end.
+    let later = |seconds: f64| ago(&case, -seconds);
+    assert_eq!(health(&later(LIVE_SECONDS), &worker), "live");
+    assert_eq!(health(&later(LIVE_SECONDS + 1.0), &worker), "stale");
+    let gone = later(crate::common::GONE);
+    assert_eq!((health(&gone, &worker), executor(&gone, quiet)), ("lost", "lost"));
+    assert_eq!(orphaned(&gone, &orchestrator), [beside, quiet]);
+}
+
+/// A run whose recorder died keeps no one live: its command runs on, its record unfinished with
+/// nobody holding its lease, and its session ages from the last time its recorder said it.
+#[test]
+fn a_run_whose_recorder_died_keeps_its_session_live_no_longer() {
+    let case = Case::new();
+    let (orchestrator, [(worker, quiet), (_, beside)]) = two_gone_quiet(&case);
+    let folders = Folders::new("recorder-session-died");
+    let (release, pid) = (folders.dir.join("release"), folders.dir.join("pid"));
+    let command = until_released(&release, &pid);
+    let mut started = spawn(&mut tasks(
+        &case,
+        &folders,
+        Some(&worker),
+        &run_args("test", "long", &command),
+    ));
+    let running = folders.once(Step::Running);
+    until_live(&case, &worker, &folders.work);
+    let recorder = libc::pid_t::try_from(running.pid).unwrap();
+    // SAFETY: the recorder of the operation this test started.
+    assert_eq!(unsafe { libc::kill(recorder, libc::SIGKILL) }, 0);
+    test_time::until_true("the recorder gone after its kill", patience(), || {
+        !alive(recorder)
+    })
+    .unwrap();
+    assert!(alive(written_pid(&pid)), "its command runs on");
+    let gone = ago(&case, -crate::common::GONE);
+    assert_eq!(health(&ago(&case, -LIVE_SECONDS - 1.0), &worker), "stale");
+    assert_eq!((health(&gone, &worker), executor(&gone, quiet)), ("lost", "lost"));
+    assert_eq!(orphaned(&gone, &orchestrator), [beside, quiet]);
     fs::write(&release, "").unwrap();
     assert!(started.wait().unwrap().success());
 }
