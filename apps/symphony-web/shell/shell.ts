@@ -846,6 +846,7 @@ const SYMPHONY_ROUTES = [
   "queue",
   "reports",
   "runs",
+  "settings",
   "api",
   "assets",
   "static",
@@ -919,7 +920,13 @@ function route(path: string): string | null {
   const clean = path.replace(/\/$/, "");
   if (clean === "tasks" || clean === "task") return "board";
   if (path.startsWith("task/")) return "task";
-  if (clean === "queue" || clean === "reports" || clean === "runs" || clean === "agents")
+  if (
+    clean === "queue" ||
+    clean === "reports" ||
+    clean === "runs" ||
+    clean === "settings" ||
+    clean === "agents"
+  )
     return clean;
   const view = project();
   const pages = (view.nav || []).map((item) => item.href.replace(/^\/+|\/+$/g, "")).filter(Boolean);

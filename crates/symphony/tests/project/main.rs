@@ -20,5 +20,6 @@ mod no_documents;
 mod offers;
 mod reference;
 mod seams;
+mod settings;
 
 use common::Tree;

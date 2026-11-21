@@ -1,0 +1,229 @@
+/* The Settings page (settings.tsx): its head, what does not load, what each tag means, the files
+   read, then a panel a part, an entry a block of it and a setting a line.
+   A scope and a class wear their colour on a tag that says its word, never on colour alone. */
+.settings {
+  display: grid;
+  gap: var(--sp-5);
+  min-width: 0;
+}
+.settings-head h1 {
+  margin: 0;
+  font-size: var(--fs-2xl);
+  line-height: 1.2;
+}
+.settings-sub {
+  margin: 4px 0 0;
+  color: var(--muted-foreground);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.settings-error,
+.settings-problems {
+  margin: 0;
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid color-mix(in srgb, var(--dislike) 45%, transparent);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--dislike) 7%, transparent);
+  overflow-wrap: anywhere;
+}
+.settings-problems h2 {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-md);
+}
+.settings-problems ul {
+  margin: 0;
+  padding-left: 1.2em;
+  font-size: var(--fs-sm);
+}
+.settings-legend,
+.settings-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted-foreground);
+  font-size: var(--fs-xs);
+}
+.settings-files {
+  font-family: var(--font-mono);
+}
+.settings-legend li,
+.settings-files li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.settings-section {
+  min-width: 0;
+}
+.settings-section h2 {
+  margin: 0;
+  font-size: var(--fs-lg);
+}
+.settings-panel {
+  margin-top: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--card);
+  min-width: 0;
+}
+.settings-ghost {
+  display: grid;
+  gap: var(--sp-5);
+}
+.settings-ghost-panel {
+  height: 9rem;
+  margin-top: 0;
+  background: var(--muted);
+}
+.setting-entry {
+  padding: var(--sp-4);
+  min-width: 0;
+}
+.setting-entry + .setting-entry {
+  border-top: 1px solid var(--border);
+}
+.setting-entry-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-2) var(--sp-4);
+}
+.setting-entry-head h3 {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+.setting-state {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.setting-state[data-on="true"] {
+  color: var(--like);
+}
+.setting-state[data-on="false"] {
+  color: var(--muted-foreground);
+}
+.setting-about {
+  margin: 2px 0 0;
+  color: var(--muted-foreground);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.setting-needs {
+  margin: var(--sp-2) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.setting-needs li {
+  display: flex;
+  gap: 6px;
+}
+.setting-mark {
+  flex: none;
+  width: 1em;
+  font-weight: 700;
+  text-align: center;
+}
+.setting-needs li[data-met="true"] .setting-mark {
+  color: var(--like);
+}
+.setting-needs li[data-met="false"] .setting-mark {
+  color: var(--question);
+}
+.setting-from {
+  display: block;
+  margin: 3px 0 0;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+.setting-list {
+  margin: var(--sp-3) 0 0;
+}
+.setting-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 4px var(--sp-4);
+  padding: var(--sp-2) 0;
+  border-top: 1px dashed var(--border);
+}
+.setting-row dt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-size: var(--fs-sm);
+  min-width: 0;
+}
+.setting-name {
+  overflow-wrap: anywhere;
+}
+.setting-row dd {
+  margin: 0;
+  min-width: 0;
+}
+.setting-value {
+  display: inline-block;
+  max-width: 100%;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.setting-sentence {
+  margin: 0;
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.setting-choices {
+  margin-left: 8px;
+  color: var(--muted-foreground);
+  font-size: var(--fs-xs);
+}
+.setting-tag {
+  --c: var(--muted-foreground);
+  flex: none;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--c) 40%, transparent);
+  border-radius: var(--r-pill);
+  color: var(--c);
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.setting-tag[data-scope="project"] {
+  --c: var(--decision);
+}
+.setting-tag[data-scope="machine"] {
+  --c: var(--question);
+}
+.setting-tag[data-scope="device"] {
+  --c: var(--like);
+}
+.setting-tag[data-scope="reviewed"] {
+  --c: var(--dislike);
+}
+@media (max-width: 640px) {
+  .setting-entry {
+    padding: var(--sp-3);
+  }
+  .setting-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -90,8 +90,8 @@ html { scroll-padding-bottom:calc(var(--dock) + 8px); }
      back from the header around it. */
   .app-pages { order:10; flex-basis:100%; gap:0; overflow-x:auto; padding:4px; margin:0 -4px; }
   /* The narrowest padding, which the spread widens with whatever room the row has, and a size
-     that follows the window from 390 wide down to 320, so the Symphony's seven pages show whole
-     at both; a project's own beyond them scroll. */
+     that follows the window from 390 wide down to 320, so seven of the Symphony's eight pages
+     show whole at both; the eighth and a project's own beyond them scroll. */
   .app-pages > a { flex:1 0 auto; text-align:center; padding:6px 2.5px; font-size:clamp(.71875rem,3.6vw,.8125rem); }
   .app-pages > a:only-child { flex:none; }
   /* The marks are read here alone: a desk's row scrolls nowhere. */

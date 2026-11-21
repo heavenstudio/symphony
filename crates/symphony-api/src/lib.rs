@@ -59,6 +59,7 @@ pub mod reports;
 mod runs;
 pub mod runs_rollup;
 mod schema_updates;
+pub mod settings;
 mod task_diff;
 mod task_queries;
 mod task_stage;
@@ -83,6 +84,10 @@ pub use runs::{
 pub use runs_rollup::{RUNS_DAY_SCHEMA, RUNS_ROLLUP, RunsDay};
 pub use schema_updates::{
     SCHEMA_UPDATES_PATH, SCHEMA_UPDATES_SHOWN, SchemaUpdate, SchemaUpdates, UpdateState, UpdateTime,
+};
+pub use settings::{
+    EntryNeed, EntryState, SETTINGS_PATH, Setting, SettingClass, SettingKind, SettingScope,
+    SettingSource, SettingsEntry, SettingsFile, SettingsPage, SettingsSection,
 };
 pub use task_diff::{
     TASK_DIFF_FILE_PATH, TASK_DIFF_PATH, TaskDiff, TaskDiffFile, TaskDiffPatch, TaskDiffSource,

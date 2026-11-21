@@ -2,7 +2,7 @@
 
 The Symphony's web client in React and TypeScript, built by Vite: every page and everything a
 page mounts. Its page kinds are the review queue (`/queue`), Reports (`/reports`), Runs (`/runs`),
-home (`/`, the kind `review`), the documents (`/docs/`, each document, folder and HTML document an
+Settings (`/settings`), home (`/`, the kind `review`), the documents (`/docs/`, each document, folder and HTML document an
 entrypoint serves, the kind `docs`), the task board (`/tasks`, the kind `board`), the agents page
 (`/agents`) and a task's page with its timeline (`/task/SLUG`, the kind `task`); the menus (a
 select's popup and the picture viewer, the persistent kind `overlay`) and the panel (the chat and
@@ -123,7 +123,7 @@ string, a character or a comment cuts it short (the reader's tests, which `just 
 of that crate's (a rule ported from the retired client) is held by its unit tests and the browser tests.
 
 A read is checked where it arrives (`readQueue`, `readPageBoard`, `readReports`, `readRunsPage`,
-`document-read.ts`, of the checks `blocks-read.ts` exports): a guard checks the fields the page
+`readSettings`, `document-read.ts`, of the checks `blocks-read.ts` exports): a guard checks the fields the page
 draws, each of its type, and nothing else, so a field a newer server adds, or one it drops that
 the page does not draw, changes nothing, as a serde read skips
 unknown fields. A kind of block, text span or media the client does not know passes too, its
@@ -426,6 +426,19 @@ shown, `whenShown` in `feed.ts`), so `runs.test.tsx` runs them with no timer. No
 on the device but the filters. The steps are bars on the run's span drawn as boxes
 (`stepBars`), with no chart; Trends, a chart of the roll-up, will share `chart.tsx` with
 Reports. Times are in UTC.
+
+## Settings
+
+`src/settings.tsx` draws `/settings`, the kind `settings`, in the frame, with no feed of its own
+([PROJECT_FILE](../../docs/PROJECT_FILE.md#the-settings-page)). It reads `/api/settings` once
+(`openSettings`), and again after each of the feed's waits only while no answer came (`tryAgain`),
+under its mount's signal; a `404` ends it. The page knows no entry by name: the server describes
+every thing in one shape and `Entry` draws each, its settings a line apiece (`Row`) with the
+value, a tag for the scope that wrote it (project, this machine, this device or default, the
+word said and never the colour alone), a `reviewed` tag for that class, and under it the key and
+where the value stands. A setting said as a sentence is drawn as its text. It writes nothing and
+offers no control, which `settings.test.tsx` and the browser test hold for every entry of the
+wire's sample; nothing is kept on the device.
 
 ## The agents page
 
@@ -848,8 +861,8 @@ What holds on every page, and each page's contract where its section above names
   and one that takes the focus, is brought whole into view; an edge fades only while the row
   continues past it, the row itself and no colour over it; and a choice not whole in the row's
   window is drawn as its empty shape, so no label is read in part
-  (`apps/symphony-web-tests/tests/browser/phone_labels.rs`, at 320 and 390 px). The Symphony's
-  seven pages fit at both widths, and below 375 px the bell is drawn alone, leaving the first row
+  (`apps/symphony-web-tests/tests/browser/phone_labels.rs`, at 320 and 390 px). The first
+  seven of the Symphony's eight pages show whole at both widths and the row scrolls to the rest, and below 375 px the bell is drawn alone, leaving the first row
   to the project's name. The
   complete wait-kind strip filters to one paged list across stages; there is no Blocked column,
   sign-off lane, Status select or column pager. Search and the finished window remain.

@@ -56,6 +56,7 @@ pub mod render;
 pub mod renderers;
 pub mod reports;
 pub mod save;
+pub mod settings;
 pub use symphony_schema as schema;
 pub mod taskcli;
 pub mod taskview;

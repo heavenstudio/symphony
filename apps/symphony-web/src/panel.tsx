@@ -380,8 +380,8 @@ function ownLayer(route: Route): boolean {
 }
 
 /** What the panel's media layer answers for on `route`: the chat's pictures on every page, and on
- * a page with no media layer of its own (the task board, the agents page, the queue, Reports and
- * Runs) the page's media and the chat's mockups and viewers too. Elsewhere the page's own layer
+ * a page with no media layer of its own (the task board, the agents page, the queue, Reports,
+ * Runs and Settings) the page's media and the chat's mockups and viewers too. Elsewhere the page's own layer
  * runs every mockup and viewer on it, the chat's among them, once. */
 export function reachOf(route: Route): Reach {
   return ownLayer(route) ? CHAT_REACH : WHOLE_REACH;

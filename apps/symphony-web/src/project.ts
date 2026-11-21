@@ -144,6 +144,7 @@ export function ownPages(view: ProjectView): [string, string][] {
     [documentsHref(view), PAGE_NAMES.DOCS],
     ["/tasks", PAGE_NAMES.BOARD],
     ["/reports", PAGE_NAMES.REPORTS],
+    ["/settings", PAGE_NAMES.SETTINGS],
     ["/runs", PAGE_NAMES.RUNS],
     ["/agents", PAGE_NAMES.AGENTS],
   ];
@@ -180,6 +181,7 @@ export function headerLinks(view: ProjectView, path: string, document: boolean):
     document && plugin === undefined,
     path === "tasks" || path.startsWith("task/"),
     path === "reports",
+    path === "settings",
     path === "runs",
     path === "agents",
   ];
