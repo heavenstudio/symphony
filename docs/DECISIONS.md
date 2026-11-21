@@ -5,6 +5,70 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
+## Needs your decision
+
+### People and sign-in
+
+- [ ] **owning-group-how-named** — A card or a task is owned by a group, as you said. Something must say which group. A: whoever posts it writes the group on it. B: the board reads it from where the thing is (a card's document folder, a task's area), and nothing is written. C: the place gives the group, and a name written on the card overrides it. Recommended: C. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Which group a thing belongs to]]
+  [2026-11-21 17:32] agent — Posted for the board task `app/users-and-identity`, from your comment on the analysis: "there can be an engineering group -> people there would get 'notified' and assigned to resolve." A concept: nothing is built by this card.
+
+    ![Which group owns a card or a task](analysis/users-and-identity/owning-group.svg)
+
+    **Base (today).** A card belongs to nobody but you. It has a document, whose first folder under `docs/` already sorts your queue (design, engineering). A task has a name whose first part is its area (`app/`, `tools/`). Neither says who decides it.
+
+    **A, written on it.**
+    - Whoever posts a card or files a task names its group, or its one person.
+    - One with none goes to the board's default group.
+
+    **B, read from where it is.**
+    - The board keeps a map of places to groups: a folder of documents, a task's area.
+    - Nothing is written on a card. Changing the map moves everything there at once.
+
+    **C, the place, unless named.**
+    - The map gives the group.
+    - A name written on the card or the task overrides it, and the card shows which of the two gave its group.
+
+    **Under every option** any member can hand a thing to another group, and the board records who did. With one group on a board the three are the same.
+
+    **Why C.** Agents post most cards. Under A each must choose a group every time, and one that chooses wrong sends the card to people who cannot answer it. Under B a design question raised in an engineering document goes to engineering with no way to say otherwise. C needs nothing written in the usual case and has a way out for the other. Its cost is two rules where A and B have one.
+
+    **Earlier verdicts checked.**
+    - **people-kept-where** (B) keeps a board's groups with the board. It does not say which group a card belongs to.
+    - **group-card-who-decides** was rejected; **group-answer-settles** asks who in a group decides, not which group.
+
+    Neither decides this.
+- [ ] **public-name-where-declared** — You said a person needs an id outside the database, to sign their comments and decisions. That is a short public name (`ana`), written on lines that are files in git. Something must say that `ana` is a name and whose. A: a committed file of the project lists the names and nothing else; each board keeps privately which sign-in a name belongs to. B: each board keeps its own names and nothing is committed. C: the name is taken from the sign-in itself, such as the part of an email before the @. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Where public names are declared]]
+  [2026-11-21 17:32] agent — Posted for the board task `app/users-and-identity`, from your note on **people-kept-where**: "There should however be some 'non db id' in use to identify people in their comments and interactions (who decided things for example). So there will be some information that isn't the the DB only." A concept: nothing is built by this card.
+
+    ![Where a person's public name is declared](analysis/users-and-identity/public-name.svg)
+
+    **Base (today).** One name, `owner`, fixed in the code.
+
+    **A, a file of the project.**
+    - A committed list of names and nothing else: no sign-in, no group, nothing a person may do.
+    - Each board keeps, privately, which sign-in a name belongs to and what that person may do there.
+    - Every board and every clone reads one list. A retired name stays in it, so it is never given again.
+    - A new name is a landing. Adding a person from a People page would file it, and the person reads meanwhile.
+
+    **B, each board's own.**
+    - A board keeps its names with its people. Nothing is committed.
+    - The least to build, and enough while a project has one board.
+    - With two boards, each can give `ana` to a different person, and a line signed `ana` may be either.
+
+    **C, taken from the sign-in.**
+    - The name is made from what the sign-in service says. Nothing is declared.
+    - Part of a sign-in is then committed. Two people can come out as one name, an address handed to someone new gives them an old name, and a change of service renames everybody.
+
+    **Under every option** a name once used is never given to another, the lines already written as `owner` stay, and a machine with nobody named keeps writing as `owner`.
+
+    **Why A.** The record is the project's, so the list of who may be named in it is the project's too. A name gives no power, so landing one lets nobody in: the board still decides what `ana` may do. You spoke of several boards for one project, which is where B breaks.
+
+    **Earlier verdicts checked.**
+    - **people-kept-where** (B) keeps people, groups and what each may do with the board and in no repository, and your note adds that some id is not in the database only. It does not say where that id is declared. A commits a name alone, none of what B keeps out of a repository.
+    - **sign-in-service-shipped** (B) says how a person signs in, not what they are called in the record.
+
+    Neither decides this.
+
 ## Auto-approved: spot-check
 
 ### Releases
@@ -26,70 +90,6 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
 
 ## Waiting on an agent
-
-### People and sign-in
-
-- [x] **group-answer-settles** — Replaces: group-card-who-decides. The same choice, as authorization alone: it is about people the board already knows, however they signed in, and no sign-in service has a part in it. A card or a task is owned by a group (engineering, design) or by one person, and its members are told. What is left to choose is whose answer settles a card its group owns. A: any one member; the first answer decides and a later one from any member overrides it. B: the one member it is assigned to; the others comment. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Who in a group decides]]
-  [2026-11-21 17:29] agent — Posted for the board task `app/users-and-identity`. You approved A on **group-card-who-decides** at 17:22 and rejected the card at 17:25 for mixing authentication with authorization. Your note says where signing in belongs and nothing about whose answer settles a card, so A is not carried and the choice is asked again. A concept: nothing is built by this card.
-
-    ![Speaking, deciding and directing agents are three separate things](analysis/users-and-identity/people-and-agents.svg)
-
-    **Base (today).** One owner. Whatever you answer decides, and a later word of yours overrides an earlier one.
-
-    **A, any one member.**
-    - Every member is told and has the card in their queue.
-    - The first answer decides, under that member's name, and the card leaves the others' queues.
-    - A later word from any member overrides it, as your own later word does today. Both stay in the card's history.
-    - A member can take a card. That shows the others who is on it, and locks nothing.
-
-    **B, the one member it is assigned to.**
-    - The card goes to one member: whoever takes it first, or the next in turn.
-    - Only that member's answer decides. The others comment.
-    - If that member is away, the card waits until someone hands it to another.
-
-    A group of one is the same under both, so this machine sees neither.
-
-    **Why A.** Nothing waits on a person who is away, and no rule is needed for handing a card on. B puts one accountable name on a decision before it is made; under A the name is there once it is made.
-
-    **Earlier verdicts checked.**
-    - **people-kept-where** (B) says where people are kept, per board. It does not say who in a group decides.
-    - **revision-bound-project-guards** (B) covers an approval that must be several people's. This card is about one answer being enough, and whose.
-
-    Neither decides this.
-  [2026-11-21 17:32] owner · approved — A
-- [x] **sign-in-service-shipped** — Follows identity-provider-how-added, where you chose B: signing in is done by a separate program, the server's plugin, outside the Symphony's core. You added that it could use OAuth 2 and hand over signed header data, which the core only verifies. What is left to choose is what the Symphony ships of that program. A: nothing; it ships the core's check and the format, and a project puts an OAuth 2 proxy it already has in front. B: as A, and it also ships a sign-in service of its own, which any other can replace. C: the service stands beside the server, not in front; the browser signs in there once and carries a signed token. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#What the Symphony ships for signing in]]
-  [2026-11-21 17:29] agent — Base: today the Symphony ships nothing for signing in. This Mac's server asks Tailscale whether an address is a machine of the tailnet, and reads nothing about whose.
-
-    **What your words settle, under every option.** Signing in is one thing and what a person may do is another: ![Signing in is outside the core; what a person may do is the board's](analysis/users-and-identity/authn-authz.svg)
-  [2026-11-21 17:29] agent — Posted for the board task `app/users-and-identity`, from your B on **identity-provider-how-added** and your note on **group-card-who-decides**: "Something should authenticate it, and give symphony the user's auth data. This could probably leverage OAuth 2 here. And this should be some plugin that happens outside of the core". A concept: nothing is built by this card. What stands outside the core under each option: ![The Symphony ships the check alone, under A](analysis/users-and-identity/sign-in-a.svg) ![The Symphony also ships a sign-in service of its own, under B](analysis/users-and-identity/sign-in-b.svg) ![The service stands beside the server, under C](analysis/users-and-identity/sign-in-c.svg)
-
-    **A, the check alone.**
-    - The Symphony ships the core's check and a document of the signed data it accepts.
-    - A project puts a service it already has in front, such as the OAuth 2 proxy a company runs. That service signs a header on each request.
-    - The Symphony writes no sign-in code. Nothing works for several people until someone sets a proxy up.
-
-    **B, and a service of ours.**
-    - Everything in A.
-    - The Symphony also ships a sign-in service: a separate program, outside the core, that stands in front, does OAuth 2 with Google or GitHub and signs the same header.
-    - It works once a client id is set. Any other service that signs the same way replaces it.
-    - The sign-in code is the Symphony's to keep safe. A mistake in it is outside the core.
-
-    **C, beside, not in front.**
-    - The browser is sent to the service once, signs in, and comes back with a signed token it shows the server itself.
-    - No program sits in the path of each request.
-    - The core gains the redirect, a cookie and sign-out, which is part of a session.
-
-    **Under every option.** The core holds no password and no client secret, and trusts only what a key in the server's own settings verifies. The service is the server's plugin, never a project's: a project's `symphony.toml` names neither it nor the key. On this Mac, Tailscale is the service, and a machine with one person needs none.
-
-    **Why B.** The check and the format are built first under A and B alike, and a hosted board behind a company's proxy needs nothing more. The service of ours is what makes "some plugin" true for a project with no proxy to bring, and it is added without touching the core. C moves part of the session into the core, which is the mixing you turned down.
-
-    **Earlier verdicts checked.**
-    - **identity-provider-how-added** (B) makes the provider a separate program anyone writes. It does not say whether the Symphony ships one, or whether it stands in front or beside.
-    - **hosted-ingress-boundary** (B) put the hosted checks in an adapter inside the server. That is the core's check here.
-    - **people-kept-where** (B) keeps people with the board. It says what a person may do, not how they sign in.
-
-    None decides this.
-  [2026-11-21 17:31] owner · approved — B
 
 ### Task timeline
 
@@ -462,6 +462,71 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### People and sign-in
 
+- [r] **group-answer-settles** — Replaces: group-card-who-decides. The same choice, as authorization alone: it is about people the board already knows, however they signed in, and no sign-in service has a part in it. A card or a task is owned by a group (engineering, design) or by one person, and its members are told. What is left to choose is whose answer settles a card its group owns. A: any one member; the first answer decides and a later one from any member overrides it. B: the one member it is assigned to; the others comment. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Who in a group decides]]
+  [2026-11-21 17:29] agent — Posted for the board task `app/users-and-identity`. You approved A on **group-card-who-decides** at 17:22 and rejected the card at 17:25 for mixing authentication with authorization. Your note says where signing in belongs and nothing about whose answer settles a card, so A is not carried and the choice is asked again. A concept: nothing is built by this card.
+
+    ![Speaking, deciding and directing agents are three separate things](analysis/users-and-identity/people-and-agents.svg)
+
+    **Base (today).** One owner. Whatever you answer decides, and a later word of yours overrides an earlier one.
+
+    **A, any one member.**
+    - Every member is told and has the card in their queue.
+    - The first answer decides, under that member's name, and the card leaves the others' queues.
+    - A later word from any member overrides it, as your own later word does today. Both stay in the card's history.
+    - A member can take a card. That shows the others who is on it, and locks nothing.
+
+    **B, the one member it is assigned to.**
+    - The card goes to one member: whoever takes it first, or the next in turn.
+    - Only that member's answer decides. The others comment.
+    - If that member is away, the card waits until someone hands it to another.
+
+    A group of one is the same under both, so this machine sees neither.
+
+    **Why A.** Nothing waits on a person who is away, and no rule is needed for handing a card on. B puts one accountable name on a decision before it is made; under A the name is there once it is made.
+
+    **Earlier verdicts checked.**
+    - **people-kept-where** (B) says where people are kept, per board. It does not say who in a group decides.
+    - **revision-bound-project-guards** (B) covers an approval that must be several people's. This card is about one answer being enough, and whose.
+
+    Neither decides this.
+  [2026-11-21 17:32] owner · approved — A
+  [2026-11-21 17:32] agent — Recorded, A: any one member's answer settles what their group owns, a later word from any member overrides it, and both stay in the history. What it means for the rules that say "the owner" (the owner stamp, an approved card deciding a later one) is in [[analysis/users-and-identity#Who in a group decides]].
+  [2026-11-21 17:32] agent · resolved
+- [r] **sign-in-service-shipped** — Follows identity-provider-how-added, where you chose B: signing in is done by a separate program, the server's plugin, outside the Symphony's core. You added that it could use OAuth 2 and hand over signed header data, which the core only verifies. What is left to choose is what the Symphony ships of that program. A: nothing; it ships the core's check and the format, and a project puts an OAuth 2 proxy it already has in front. B: as A, and it also ships a sign-in service of its own, which any other can replace. C: the service stands beside the server, not in front; the browser signs in there once and carries a signed token. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#What the Symphony ships for signing in]]
+  [2026-11-21 17:29] agent — Base: today the Symphony ships nothing for signing in. This Mac's server asks Tailscale whether an address is a machine of the tailnet, and reads nothing about whose.
+
+    **What your words settle, under every option.** Signing in is one thing and what a person may do is another: ![Signing in is outside the core; what a person may do is the board's](analysis/users-and-identity/authn-authz.svg)
+  [2026-11-21 17:29] agent — Posted for the board task `app/users-and-identity`, from your B on **identity-provider-how-added** and your note on **group-card-who-decides**: "Something should authenticate it, and give symphony the user's auth data. This could probably leverage OAuth 2 here. And this should be some plugin that happens outside of the core". A concept: nothing is built by this card. What stands outside the core under each option: ![The Symphony ships the check alone, under A](analysis/users-and-identity/sign-in-a.svg) ![The Symphony also ships a sign-in service of its own, under B](analysis/users-and-identity/sign-in-b.svg) ![The service stands beside the server, under C](analysis/users-and-identity/sign-in-c.svg)
+
+    **A, the check alone.**
+    - The Symphony ships the core's check and a document of the signed data it accepts.
+    - A project puts a service it already has in front, such as the OAuth 2 proxy a company runs. That service signs a header on each request.
+    - The Symphony writes no sign-in code. Nothing works for several people until someone sets a proxy up.
+
+    **B, and a service of ours.**
+    - Everything in A.
+    - The Symphony also ships a sign-in service: a separate program, outside the core, that stands in front, does OAuth 2 with Google or GitHub and signs the same header.
+    - It works once a client id is set. Any other service that signs the same way replaces it.
+    - The sign-in code is the Symphony's to keep safe. A mistake in it is outside the core.
+
+    **C, beside, not in front.**
+    - The browser is sent to the service once, signs in, and comes back with a signed token it shows the server itself.
+    - No program sits in the path of each request.
+    - The core gains the redirect, a cookie and sign-out, which is part of a session.
+
+    **Under every option.** The core holds no password and no client secret, and trusts only what a key in the server's own settings verifies. The service is the server's plugin, never a project's: a project's `symphony.toml` names neither it nor the key. On this Mac, Tailscale is the service, and a machine with one person needs none.
+
+    **Why B.** The check and the format are built first under A and B alike, and a hosted board behind a company's proxy needs nothing more. The service of ours is what makes "some plugin" true for a project with no proxy to bring, and it is added without touching the core. C moves part of the session into the core, which is the mixing you turned down.
+
+    **Earlier verdicts checked.**
+    - **identity-provider-how-added** (B) makes the provider a separate program anyone writes. It does not say whether the Symphony ships one, or whether it stands in front or beside.
+    - **hosted-ingress-boundary** (B) put the hosted checks in an adapter inside the server. That is the core's check here.
+    - **people-kept-where** (B) keeps people with the board. It says what a person may do, not how they sign in.
+
+    None decides this.
+  [2026-11-21 17:31] owner · approved — B
+  [2026-11-21 17:32] agent — Recorded, B. The core's check and the header's format are built first, which is all a hosted board behind a company's proxy needs; the Symphony's own sign-in service follows as a separate program in front, outside the core, replaceable by any other that signs the same header. What follows is in [[analysis/users-and-identity#What the Symphony ships for signing in]]. One cost the card did not state: the header's format becomes a contract the Symphony keeps stable across releases, since other services sign it too.
+  [2026-11-21 17:32] agent · resolved
 - [r] **identity-provider-how-added** — Replaces: identity-provider-plug. The same choice, with pictures. An identity provider does one thing: it tells the server who is asking. What that person may do is the board's to say. You expected the provider to be a plugin; the choice is how one is added. A: providers are part of the server, and the Symphony ships two. B: a provider is a separate program the server asks, which anyone writes; it is the server's plugin, never a project's. C: the Symphony signs people in itself, with Google or GitHub. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#How a provider plugs in]]
   [2026-11-21 10:22] agent — Base: today, the server asks only whether a browser's address is this machine or a machine of the tailnet. Whose machine it is, is not read. ![Today: everyone the gate lets in writes as the one owner](analysis/users-and-identity/today.svg)
 

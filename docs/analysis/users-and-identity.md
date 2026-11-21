@@ -21,8 +21,8 @@ Read at `59538b83e`. The links name the modules and documents read.
 - **Signing in and what a person may do are two things, kept apart.** Authentication is a service
   outside the core. Authorization is the board's ([the picture](#the-shape-proposed)).
 - **A group owns what waits to be decided.** A card or a task belongs to a group, or to one
-  person. Its members are told, and they resolve it. Whose answer settles it is
-  [asked](#who-in-a-group-decides).
+  person. Its members are told, and any one of them settles it
+  ([decided](#who-in-a-group-decides)).
 - **Three things one owner does today come apart.** Speaking to people, deciding, and directing
   agents are held separately. Anyone on a board speaks to anyone, anywhere. The words of someone
   who may not direct agents reach no agent until someone who may passes them on
@@ -31,7 +31,8 @@ Read at `59538b83e`. The links name the modules and documents read.
   and answers only them. A shared agent is the board's, and works for whoever may direct agents.
 - **The core signs nobody in.** A sign-in service, a plugin of the server and never of a project,
   does that, with OAuth 2, and hands the Symphony signed data saying who the person is. The core
-  only verifies it ([how](#how-a-provider-plugs-in)).
+  only verifies it ([how](#how-a-provider-plugs-in)). The Symphony ships one such service, and
+  any other that signs the same way replaces it.
 - **A machine with one person changes in nothing.** With nobody named on a board, the person at
   the machine holds everything there, as today.
 
@@ -192,8 +193,37 @@ core, since the core then runs and waits on nothing.
   same machine and not as a signed header: the one place the core asks instead of verifying, as
   the gate does today. A request from the machine itself is the machine's person.
 
-What the owner's words leave open is what the Symphony ships of the service
-([this round](#what-the-symphony-ships-for-signing-in)).
+### What the Symphony ships for signing in
+
+The core's check, and a sign-in service of its own
+([its card](../DECISIONS.md#sign-in-service-shipped), B).
+
+![B: and a sign-in service of its own](users-and-identity/sign-in-b.svg)
+
+- **The check and the format come first.** The core verifies a signed header, and a document
+  says what the header holds and how it is signed. A hosted board behind a company's OAuth 2
+  proxy needs nothing more, and is the first thing that works.
+- **Then a sign-in service of the Symphony's.** A separate program, outside the core, that
+  stands in front of the server, does OAuth 2 with Google or GitHub, keeps the client secret and
+  the session, and signs the same header. It works once a client id is set.
+- **Any other replaces it.** A service that signs the same header is taken as the Symphony's own
+  is. The format is therefore a contract the Symphony keeps stable across releases.
+- **It stands in front, not beside.** Every request passes through it. The core gains no
+  redirect, cookie or sign-out.
+
+What follows:
+
+- **The service is a package of its own**, which the core does not link, as the GitHub issue
+  exchange is a program no other package builds with. Its sign-in code is the Symphony's to keep
+  safe, and a mistake in it is outside the core.
+- **A key pair joins the two.** The service signs with a private key only it holds; the server's
+  settings name the public key. Nothing in a project's `symphony.toml` names either.
+- **The server must be reachable only through the service** where one is used, or a request could
+  skip it. The signature is what the core trusts, so a request that skipped it carries none and
+  is refused; the hosted design sets out the same boundary.
+
+The two other ways drawn for the card, the check alone and a service beside the server, are in
+[the pictures](users-and-identity/sign-in-a.svg) [kept with it](users-and-identity/sign-in-c.svg).
 
 ### Where people are kept
 
@@ -251,6 +281,35 @@ An approval that must be several people's (two of three, a named sign-off) is no
 workflow guard is that, kept in the project's own ledger
 ([its card](../DECISIONS.md#revision-bound-project-guards)).
 
+### Who in a group decides
+
+Any one member ([its card](../DECISIONS.md#group-answer-settles), A). This is authorization
+alone: it concerns people the board already knows, however they signed in.
+
+- **Every member is told** when a card their group owns is posted, and has it in their queue.
+- **The first answer decides**, under that member's name. The card then leaves the others'
+  queues.
+- **A later word from any member overrides it**, as the owner's own later word does today. Both
+  stay in the card's history, each with its name.
+- **A member can take a card.** That shows the others who is on it. It locks nothing: another
+  member can still answer.
+
+What follows for the rules that say "the owner":
+
+- **The `owner` stamp** on a task is the approve of any one member of the group the task belongs
+  to, naming the tip, under that member's name.
+- **An approved card decides a later one** whoever of its group approved it. An agent checking
+  earlier verdicts reads the verdict, not who gave it.
+- **A line no commit has yet** keeps its worktree from being removed, whoever's line it is.
+- **Two members who disagree** override each other in turn, and nothing stops them but the
+  history showing it. A decision that must be several people's stays a workflow guard's
+  ([its card](../DECISIONS.md#revision-bound-project-guards)); one that must be one person's is
+  a thing owned by that person, not by a group.
+- **An agent already acting** on an answer when another member overrides it is where it is today
+  when the owner changes their mind: the later word is a new ask.
+
+A group of one is a single owner, so a machine with one person sees none of this.
+
 ### Words without agent reach
 
 Nothing reaches an agent until someone passes it on
@@ -285,81 +344,9 @@ What follows:
 
 ## This round
 
-Two choices, each a card.
-
-### What the Symphony ships for signing in
-
-**Base.** Nothing. The local server asks Tailscale whether an address is a machine of the
-tailnet. The hosted seam is a Rust trait a consuming host implements, and no service ships.
-
-The core verifies signed data under every option ([above](#how-a-provider-plugs-in)). The choice
-is what stands outside it.
-
-![A: the Symphony ships the check alone](users-and-identity/sign-in-a.svg)
-
-- **A, the check alone.** The Symphony ships the core's check and a document of the signed data
-  it accepts. A project puts a service it already has in front: an OAuth 2 proxy of the kind
-  companies run, which signs a header. The Symphony writes no sign-in code at all. Nothing works
-  for several people until someone sets such a proxy up.
-
-![B: and a sign-in service of its own](users-and-identity/sign-in-b.svg)
-
-- **B, and a service of ours.** As A, and the Symphony also ships a sign-in service: a separate
-  program, outside the core, that stands in front, does OAuth 2 with Google or GitHub and signs
-  the same header. It works once a client id is set. Any other service that signs the same way
-  replaces it. The sign-in code is then the Symphony's to keep safe, though a mistake in it is
-  outside the core.
-
-![C: the service beside, not in front](users-and-identity/sign-in-c.svg)
-
-- **C, beside, not in front.** The service does not carry every request. The browser is sent to
-  it once, signs in, and comes back with a signed token it then shows the server itself. Nothing
-  sits in the path of each request. But the core gains the redirect, a cookie and sign-out,
-  which is part of a session, and the hosted design's signed header is no longer the one form.
-
-**Recommended: B, built as A first.** The check and the format are the first build under both,
-and a hosted board behind a company's proxy needs nothing more. The service of ours is what makes
-"a plugin" true for a project with no proxy to bring, and it is added without touching the core.
-C saves a hop and moves part of the session into the core, which is the mixing the owner turned
-down.
-
-### Who in a group decides
-
-Asked again, as authorization alone: it concerns only people the board already knows, however
-they signed in. The owner chose A and then rejected the card for mixing sign-in into the
-concept, so A is not carried.
-
-**Base.** One owner: whatever they answer decides, and a later word of theirs overrides an
-earlier one.
-
-A card owned by a group reaches every member. The choice is whose answer settles it.
-
-- **A, any one member.** Every member is told and has it in their queue. The first answer
-  decides, under that member's name, and the card leaves the others' queues. A later word from
-  any member overrides it, as the owner's own later word does today, and both stay in the card's
-  history. A member can take a card, which shows the others who is on it and locks nothing.
-- **B, the one member it is assigned to.** A card goes to one member: whoever takes it first, or
-  the next in turn. Only that member's answer decides; the others comment. A card whose member
-  is away waits until someone hands it to another.
-
-A group of one is the same under both, so a machine with one person sees neither.
-
-What A would mean for the rules that say "the owner":
-
-- **The `owner` stamp** on a task is the approve of any one member of the group the task belongs
-  to, naming the tip, under that member's name.
-- **An approved card decides a later one** whoever of its group approved it.
-- **Two members who disagree** override each other in turn, and nothing stops them but the
-  history showing it. A decision that must be several people's stays a workflow guard's
-  ([its card](../DECISIONS.md#revision-bound-project-guards)).
-
-**Recommended: A.** Nothing waits on a person who is away, and it needs no rule for handing a
-card on. B fits a team that wants one accountable name on each decision before it is made; under
-A the name is there too, once it is made.
-
-## Next round, drafted
-
-Written out and not carded: each is put to the owner once this round is answered.
+Two choices, each a card. Both follow
+from what is settled: a group owns a thing, so something must say which group; and a person's
+name is on every line they write, so something must say whose name is whose.
 
 ### Which group a thing belongs to
 
@@ -437,9 +424,6 @@ way.
   to the session and the project, all as [hosted ingress](hosted-ingress.md#browser-behavior)
   sets out. The Symphony stores no session.
 
-Under C of [this round's choice](#what-the-symphony-ships-for-signing-in) the core would keep a
-cookie and a sign-out of its own, and this section would grow by that much.
-
 ## Agents beside people
 
 An agent stays an agent: a principal of its own kind, which no claim turns into a person, so it
@@ -479,8 +463,8 @@ Each step can ship alone, and a machine with one person sees none of them.
 5. **Speaking apart from directing agents.** A person's words reach people always. The board
    holds the words of someone who may not direct agents, and passing them on makes them an ask.
 6. **The signed word verified.** The core's check of a sign-in service's signed data, and hosted
-   saves through the same writes as local ones. A sign-in service of the Symphony's own after
-   it, if one is shipped.
+   saves through the same writes as local ones. Then the Symphony's own sign-in service, a
+   separate program in front.
 7. **Shared agents' hosts**, then a board's agent credentials.
 
 With nobody named on a board, the person at the machine holds every power there and is its
