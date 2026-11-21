@@ -2313,7 +2313,10 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   which answers it once that land advanced the candidate; one covered by any other landing has
   its fix on main and not in the candidate, which is dropped. A red fixed outside this
   repository is answered by its task cancelled, saying where; one done otherwise waits for its
-  land.
+  land. Where a pull request delivers it ([below](#a-land-delivered-by-a-pull-request)), a fix
+  that changes what the client is built from is the one branch that merges main before its land:
+  once from a second head, after the head that commits its own outputs is approved
+  ([RELEASES](RELEASES.md#the-release-candidate)).
 - **Merged and checked.** In a worktree of its own (`land` in the project's `[agents]
   worktrees`, else `symphony/tasks/land/worktree`), never the main checkout: one `--no-ff`
   merge commit, "Merge branch 'SLUG'", committed through the project's git hooks, those git
@@ -2602,7 +2605,9 @@ makes no merge and no push of the default branch: the host of the project's repo
 the task's head into one commit there, and the main checkout follows it. A head that imports the
 project's upstream is the one exception, merged there by a merge commit
 ([below](#an-import-delivered-by-a-pull-request)). With no such key the land is the one above, and
-nothing here is reached. This repository sets none.
+nothing here is reached. This repository sets one: its tasks are delivered to
+`heavenstudio/symphony` by [`symphony-github deliver`](GITHUB.md#delivering-a-land), built in the
+main checkout ([AGENTS](../AGENTS.md#this-repository-as-its-own-project)).
 
 Nobody lands a task there, so an approve of one names no landing to run: it says that the task is
 done on the board and not on the default branch until the host merges it, that the host merges
