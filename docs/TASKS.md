@@ -2101,8 +2101,9 @@ reason with no words is refused. A move to blocked names what it waits on as wel
 task's branch, named as its slug, on the default branch. `just tasks claim` says so of a top-level
 task (a slice works on its parent's branch, and an instruction subtask's slug is none), an approve
 of one says that the task is done on the board but not on the default branch until it lands, and
-the line that lands it (or the project's own `land`), an approve of a subtask that its work lands
-with the task it is under, and a land
+the line that lands it (or the project's own `land`), or, where the project
+[delivers by pull request](#a-land-delivered-by-a-pull-request), that the host merges it, an
+approve of a subtask that its work lands with the task it is under, and a land
 with no branch so named names the branch whose tip is the commit the approve names, and the rename
 (`git branch -m BRANCH SLUG`). It is the convention a project gets without configuring anything, and a lower level
 replaces a higher one: a project's own `land` recipe replaces it, everywhere. It runs only as `just land`, whose recipe sets `SYMPHONY_LAND`: `tasks
@@ -2590,6 +2591,13 @@ the task's head into one commit there, and the main checkout follows it. A head 
 project's upstream is the one exception, merged there by a merge commit
 ([below](#an-import-delivered-by-a-pull-request)). With no such key the land is the one above, and
 nothing here is reached. This repository sets none.
+
+Nobody lands a task there, so an approve of one names no landing to run: it says that the task is
+done on the board and not on the default branch until the host merges it, that the host merges
+its pull request once its checks pass (named by its number, repository and address once a
+dispatch bound one, from its journal) and the board closes the task, and names `just land SLUG
+--as HANDLE` only as what settles it by hand. A project whose `land` is a recipe of its own keeps
+the line of [the default landing](#the-default-landing).
 
 The board names no host. The command is the project's own program, run in the main checkout as
 `COMMAND VERB --request FILE`, FILE one JSON object and its standard output another whose `state`
