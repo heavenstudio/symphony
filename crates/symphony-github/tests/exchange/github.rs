@@ -84,6 +84,9 @@ pub(crate) struct Actions {
     pub(crate) listed: bool,
     /// The reads of a run that still answer it in progress.
     pub(crate) pending: usize,
+    /// Whether a dispatch's answer names the run it made (`workflow_run_id`), as GitHub's newer
+    /// answer does; otherwise it answers 204 with nothing and the run is looked for.
+    pub(crate) named: bool,
     /// How the next run ends.
     pub(crate) conclusion: &'static str,
     /// Fields laid over the run a dispatch makes: what a test has GitHub say of it.
@@ -141,6 +144,7 @@ impl Fake {
                 runs: Vec::new(),
                 listed: true,
                 pending: 0,
+                named: false,
                 conclusion: "success",
                 over: json!({}),
                 jobs: Vec::new(),
@@ -849,7 +853,11 @@ impl Inner {
                     made[field] = value.clone();
                 }
                 actions.runs.push(made);
-                answer(204, &Value::Null)
+                if actions.named {
+                    answer(200, &json!({"workflow_run_id": run}))
+                } else {
+                    answer(204, &Value::Null)
+                }
             }
             ("GET", ["actions", "runs", run]) => {
                 let Some(found) = (actions.runs.iter()).find(|held| held["id"] == number(run))

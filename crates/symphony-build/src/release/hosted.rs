@@ -301,7 +301,31 @@ impl Hosting<'_> {
         let text = |value: &Value| value.as_str().unwrap_or_default().to_string();
         match text(&answer["state"]).as_str() {
             "ended" => {}
-            state @ ("refused" | "unavailable" | "late") => {
+            // The command's own wait ended first: the run's time is up all the same, so the check
+            // is timed out and nothing is verified here.
+            "late" => {
+                let why = text(&answer["why"]);
+                let mut ran = Ran::never(step, log, String::new());
+                ran.error = None;
+                ran.seconds = started.took().seconds;
+                ran.timed_out = true;
+                if let Ok(mut file) = fs::OpenOptions::new().append(true).open(log) {
+                    use std::io::Write as _;
+                    let _ = writeln!(
+                        file,
+                        "(stopped after {:.0} s: {why}; a run it started on GitHub is left to \
+                         end, and writes nothing)",
+                        ran.seconds
+                    );
+                }
+                let judged = Hosted {
+                    judged: "GitHub".into(),
+                    why: Some(format!("its run there had not ended in time: {why}")),
+                    ..Hosted::here(&step.name, "")
+                };
+                return Judged::There(Box::new(ran), judged);
+            }
+            state @ ("refused" | "unavailable") => {
                 return Judged::Here(format!("{state}: {}", text(&answer["why"])));
             }
             other => return Judged::Here(format!("the command answered the state {other:?}")),

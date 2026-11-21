@@ -318,3 +318,79 @@ fn the_workflow_main_commits_names_its_plan_job_and_artifacts_as_they_are_read_h
         assert!(workflow.contains(&said), "{said:?} in {}", file.display());
     }
 }
+
+/// What [`Hosting::verify`] judged for the command `command`, with the run's time up at `until`.
+fn judged_by(tree: &Tree, command: &[&str], bound: crate::release::group::Bound<'_>) -> Judged {
+    let command: Vec<String> = command.iter().map(ToString::to_string).collect();
+    let commit = "c".repeat(40);
+    let hosting = Hosting {
+        root: &tree.root,
+        main: &tree.root,
+        command: &command,
+        commit: &commit,
+        tip: &commit,
+        remote: "origin",
+        branch: "main",
+        by: "release-run",
+    };
+    let (name, command) = crate::release::VERIFY;
+    hosting.verify(
+        &Step::shell(name, command),
+        &tree.root,
+        &tree.root.join("verify.log"),
+        Within::bound(bound),
+    )
+}
+
+/// The check timed out on GitHub's side, asked there and never verified here.
+fn timed_out(judged: Judged, why: &str, log: &str) {
+    let Judged::There(ran, hosted) = judged else {
+        panic!("a run whose time is up is verified nowhere else");
+    };
+    assert!(ran.timed_out && !ran.interrupted && !ran.green(), "{ran:?}");
+    assert_eq!(ran.error, None);
+    assert_eq!(hosted.judged, "GitHub");
+    assert_eq!(hosted.run, None);
+    assert_eq!(hosted.why.as_deref(), Some(why));
+    assert_eq!(
+        hosted.said(),
+        format!("verify asked of GitHub: {why}"),
+        "never said as verified"
+    );
+    assert!(
+        log.contains("a run it started on GitHub is left to end, and writes nothing"),
+        "{log}"
+    );
+}
+
+// The bound is past before the command starts, so no load decides which ends first.
+#[test]
+fn a_command_still_waiting_when_the_runs_time_is_up_is_the_check_timed_out_and_nothing_here() {
+    let tree = Tree::new();
+    let past = crate::release::group::Bound::until(std::time::Instant::now());
+    let judged = judged_by(&tree, &["sleep", "600"], past);
+    let log = fs::read_to_string(tree.root.join("verify.log")).unwrap();
+    timed_out(
+        judged,
+        "its run there had not ended when this run stopped",
+        &log,
+    );
+    assert!(log.contains("the run's time was up"), "{log}");
+}
+
+#[test]
+fn a_command_that_answers_late_is_the_check_timed_out_and_nothing_here() {
+    let tree = Tree::new();
+    let script = r#"echo '{"state":"late","why":"the run 9000 had not ended within 60 s"}'"#;
+    let judged = judged_by(&tree, &["sh", "-c", script, "adapter"], far());
+    let log = fs::read_to_string(tree.root.join("verify.log")).unwrap();
+    timed_out(
+        judged,
+        "its run there had not ended in time: the run 9000 had not ended within 60 s",
+        &log,
+    );
+    assert!(
+        log.contains("the run 9000 had not ended within 60 s; a run it started"),
+        "{log}"
+    );
+}

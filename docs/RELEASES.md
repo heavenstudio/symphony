@@ -828,8 +828,9 @@ waits for its answer within the run's time.
   GitHub: WHY`), verifies here as a project without the command does, and its record says which
   judged and why.
 - **The run's time.** The command is told the time the run has left. When that ends while GitHub
-  is waited for, the check is red as any check stopped at the run's time is, nothing is verified
-  here, and the workflow run is left to end: it writes nothing.
+  is waited for, whether the run stops the command or the command answers `late` first, the check
+  is red as any check stopped at the run's time is, nothing is verified here, and the workflow
+  run is left to end: it writes nothing. The run says `verify asked of GitHub: WHY`.
 
 **What stays here:** the lock, the candidate and its record, the reds, the tag and its push, the
 publication on crates.io, the GitHub Release, the install, the boards, `current` and the wait for

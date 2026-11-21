@@ -40,7 +40,6 @@ here='{folder}'
 cat "$3" >> "$here/asked.jsonl"
 pwd >> "$here/cwd.log"
 if [ -e "$here/fails" ]; then echo "symphony-github: no working directory" >&2; exit 2; fi
-if [ -e "$here/sleeps" ]; then sleep 600; fi
 commit=$(sed -n 's/.*"commit":"\([^"]*\)".*/\1/p' "$3")
 to=$(sed -n 's/.*"folder":"\([^"]*\)".*/\1/p' "$3")
 cp -R "$here/downloads/." "$to/"
@@ -422,10 +421,6 @@ fn what_is_no_believed_result_is_said_and_the_commit_is_verified_here() {
             "refused: turned off: the committed settings do not say".into(),
         ),
         (
-            json!({"state": "late", "why": "the run 9000 had not ended within 60 s"}),
-            "late: the run 9000 had not ended within 60 s".into(),
-        ),
-        (
             json!({"state": "published"}),
             "the command answered the state \"published\"".into(),
         ),
@@ -563,15 +558,16 @@ fn a_check_named_by_hand_and_a_project_that_names_no_command_ask_nothing() {
 /// A day after [`NOW`], so a second release takes the next day's name.
 const DAY_AFTER: f64 = 86_400.0;
 
+// The time ending under the command itself is a unit test of the bound (hosted_tests.rs), where no
+// load decides which ends first; here the command's own wait ends, which is the same red.
 #[test]
-fn a_run_whose_time_ends_while_github_is_waited_for_is_red_and_verifies_nothing_here() {
+fn a_run_github_had_not_ended_in_time_is_red_and_verifies_nothing_here() {
     let (fixture, stand) = fixture();
-    fs::write(stand.folder.join("sleeps"), "").unwrap();
-    let (code, out, err) = fixture.release_at(NOW, &["--timeout", "3"]);
-    assert_ne!(code, 0, "{out}\n{err}");
+    stand.answer(&json!({"state": "late", "why": "the run 9000 had not ended within 60 s"}));
+    let out = fixture.run(NOW, &[], 1);
     assert!(
         out.contains("release: verify red (timed out: stopped after "),
-        "{out}\n{err}"
+        "{out}"
     );
     assert!(
         !ran_here(&fixture),
@@ -579,7 +575,8 @@ fn a_run_whose_time_ends_while_github_is_waited_for_is_red_and_verifies_nothing_
     );
     assert!(
         out.contains(
-            "release: verify asked of GitHub: its run there had not ended when this run stopped"
+            "release: verify asked of GitHub: its run there had not ended in time: the run 9000 \
+             had not ended within 60 s"
         ),
         "{out}"
     );
@@ -594,9 +591,7 @@ fn a_run_whose_time_ends_while_github_is_waited_for_is_red_and_verifies_nothing_
     assert_eq!(run["hosted"][0]["judged"], "GitHub");
     let log = read(run["checks"][0]["log"].as_str().unwrap());
     assert!(
-        log.contains(
-            "the run's time was up; a run it started on GitHub is left to end, and writes nothing"
-        ),
+        log.contains("a run it started on GitHub is left to end, and writes nothing"),
         "{log}"
     );
 }

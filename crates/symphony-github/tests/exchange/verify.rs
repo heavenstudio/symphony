@@ -394,6 +394,50 @@ fn a_run_github_says_is_anothers_is_not_believed() {
     }
 }
 
+// A run the workflow's list names is found by its title, so one titled for another commit is
+// never taken; the run a dispatch's own answer names is read as it is, and its title judged.
+#[test]
+fn a_run_the_dispatch_names_is_read_without_a_search_and_believed_only_titled_for_the_commit() {
+    let named = rig("verify-named");
+    named.github.actions(|actions| actions.named = true);
+    let answer = ask(&named, &request(&named));
+    assert_eq!(answer["state"], "ended", "{answer}");
+    assert_eq!(answer["run"]["id"], 9000);
+    let lists = (named.github.asked().iter())
+        .filter(|(_, path, _)| path.contains("/actions/workflows/release-verify.yml/runs"))
+        .count();
+    assert_eq!(
+        lists,
+        1,
+        "the list before the start alone: {:?}",
+        named.github.asked()
+    );
+
+    let rig = rig("verify-named-other");
+    rig.github.actions(|actions| {
+        actions.named = true;
+        actions.over = json!({
+            "display_title": format!("Release verification of {}", "a".repeat(40)),
+        });
+    });
+    let answer = ask(&rig, &request(&rig));
+    stopped(
+        &answer,
+        "refused",
+        "the run 9000 is not believed: it is titled ",
+    );
+    stopped(
+        &answer,
+        "refused",
+        &format!(
+            "not for the commit {}",
+            request(&rig)["commit"].as_str().unwrap()
+        ),
+    );
+    assert!(answer["jobs"].is_null(), "{answer}");
+    assert!(std::fs::read_dir(folder(&rig)).unwrap().next().is_none());
+}
+
 #[test]
 fn a_red_run_is_answered_as_it_ended_each_job_as_github_concluded_it() {
     let rig = rig("verify-red");

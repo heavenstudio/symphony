@@ -69,11 +69,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       # just, fnm for the Node tools/node.sh runs, and PostgreSQL 18 for the board's tests and 16
-      # for the hosted check, as docs/PROJECT_FILE.md and docs/POSTGRESQL.md install them.
+      # for the hosted check, as docs/PROJECT_FILE.md and docs/POSTGRESQL.md install them, and
+      # OpenSSL 3 first on PATH for that check's certificates: the image's own `openssl` is 1.1.1,
+      # whose authority's certificate repeats an extension and is read by no client.
       - name: The tools no pin of the tree holds
         run: |
-          brew install just fnm postgresql@18 postgresql@16
+          brew install just fnm postgresql@18 postgresql@16 openssl@3
           printf '%s/bin\n' "$(brew --prefix postgresql@18)" >>"$GITHUB_PATH"
+          printf '%s/bin\n' "$(brew --prefix openssl@3)" >>"$GITHUB_PATH"
       - name: The toolchain and Node the tree pins
         run: |
           cargo --version
@@ -85,6 +88,8 @@ jobs:
           "$SYMPHONY_CHROME" --version
           postgres --version
           "$(brew --prefix postgresql@16)/bin/postgres" --version
+          command -v openssl
+          openssl version
           just --version
           df -h .
       - name: just verify
