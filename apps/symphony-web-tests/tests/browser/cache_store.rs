@@ -1,7 +1,7 @@
 //! The client cache's store (shell/cache.ts, served here as `/assets/cache.js`) in a real
 //! browser: a kept read comes back under its format and project, another format clears it, and the
 //! approved caps, the age rule and the order decide what goes: the tasks opened last, the documents
-//! visited most (docs/analysis/client-cache.md, "What is kept"; the owner's additions on the board
+//! visited most (docs/engineering/analysis/client-cache.md, "What is kept"; the owner's additions on the board
 //! task perf/client-cache/build), and a read ahead asks at the lowest priority, marked as a
 //! prefetch and naming its tag, keeping what it is sent unvisited; a page going away aborts the
 //! transactions it has open and keeps again once back. The page loads the store alone, its types

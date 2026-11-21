@@ -26,6 +26,8 @@ fn prose_tree() -> Tree {
         "quiet-roads was decided on a Tuesday.\n",
     );
     tree.write("docs/analysis/notes.md", "quiet-roads evidence.\n");
+    tree.write("docs/kappa/analysis/deep.md", "quiet-roads evidence.\n");
+    tree.write("docs/kappa/history/older.md", "quiet-roads, long ago.\n");
     tree
 }
 
@@ -69,6 +71,10 @@ fn registers_code_blocks_history_and_analysis_are_exempt() {
             .iter()
             .any(|(path, _, _)| path == "docs/analysis/notes.md")
     );
+    // An area's own analyses and history are passed over as the first folder's are.
+    assert!(!found.iter().any(|(path, _, _)| {
+        path == "docs/kappa/analysis/deep.md" || path == "docs/kappa/history/older.md"
+    }));
     assert!(!found.iter().any(|(_, line, _)| *line == 5));
 }
 

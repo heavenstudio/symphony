@@ -142,7 +142,7 @@ struct Found {
 
 /// [`sql::SINCE_READ`]'s `answer` for `slugs`, in their order: each one's task and lines, taken apart by
 /// hand as the roll-up's read is ([`line_of`]), so no reader of its own shape is added to the
-/// server's binary (docs/CHECKS.md, size budgets); none for a slug no task has. None for the whole
+/// server's binary (docs/workflow/CHECKS.md, size budgets); none for a slug no task has. None for the whole
 /// when a list does not pair with the slugs or a row lacks a field it must have.
 fn since_taken_apart(slugs: &[String], answer: &Value) -> Option<Vec<Option<Found>>> {
     let tasks = answer.get("tasks")?.as_array()?;

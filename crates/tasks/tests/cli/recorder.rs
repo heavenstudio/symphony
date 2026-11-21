@@ -2315,8 +2315,10 @@ fn the_runs_doc_names_each_field_a_written_line_holds_in_its_order_and_each_end(
         .find(|line| line.contains("\"end\":\""))
         .unwrap();
     let written = keys(end);
-    let doc = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/RUNS.md"))
-        .unwrap();
+    let doc = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/workflow/RUNS.md"),
+    )
+    .unwrap();
     // The example: a line as the recorder writes one, its keys in the order it writes them. A
     // recorder that watches for no lost process writes no `cpu_partial`.
     let example = doc
@@ -2869,7 +2871,7 @@ fn a_file_callers_log_holds_what_the_run_added_to_each_of_its_files_in_turn_and_
     let out = fs::OpenOptions::new().append(true).open(&out_path).unwrap();
     let err = fs::File::create(&err_path).unwrap();
     // The step last: on macOS its recorder reads where the files end once it saw its command end,
-    // so what the run wrote after it at once could be in its log too (docs/RUNS.md, *Logs*).
+    // so what the run wrote after it at once could be in its log too (docs/workflow/RUNS.md, *Logs*).
     let tasks_binary = env!("CARGO_BIN_EXE_tasks");
     let script = format!(
         "printf '\\033[32mout one\\033[0m\\n'; printf 'err one\\n' >&2; echo out two; \

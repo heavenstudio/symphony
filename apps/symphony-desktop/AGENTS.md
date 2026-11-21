@@ -2,7 +2,7 @@
 
 The workspace, the cargo wrapper and the toolchain pin: [the Rust section of the root
 guide](../../AGENTS.md#rust). What the app is for and the choices behind it:
-[the desktop client analysis](../../docs/analysis/desktop-client.md) and its card
+[the desktop client analysis](../../docs/product/analysis/desktop-client.md) and its card
 (`desktop-client`, [DECISIONS](../../docs/DECISIONS.md)).
 
 `symphony-desktop` is the app for the Mac: a thin shell whose windows show each server's own

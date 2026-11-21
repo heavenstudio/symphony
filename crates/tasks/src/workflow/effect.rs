@@ -1,4 +1,4 @@
-//! The boundary of an external effect on a task an active custom workflow holds (docs/WORKFLOW.md,
+//! The boundary of an external effect on a task an active custom workflow holds (docs/workflow/WORKFLOW.md,
 //! "External effects"): a landing, or any other effect a host-verified adapter makes outside the
 //! board. An effect is two edges, a prepare and a finalize, with the adapter's work between them:
 //!

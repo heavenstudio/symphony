@@ -1,4 +1,4 @@
-// The client cache (docs/analysis/client-cache.md): what a page drew, kept on this device in
+// The client cache (docs/engineering/analysis/client-cache.md): what a page drew, kept on this device in
 // IndexedDB, so a return visit draws at once and then asks the server only whether it changed.
 // The page kinds reach it as `symphonyCache` (apps/symphony-web/src/cache.ts): no kind's entry
 // carries IndexedDB.
@@ -94,7 +94,7 @@ window.symphonyCache = ((): Store => {
     DAY = 864e5;
   // Each project's caps by kind of item, [items, bytes, whether visits weigh]: 8 MB a project
   // together. Its tasks are the ones opened last; its documents are weighed by their visits. The
-  // board's reads are outside them (docs/analysis/client-cache.md, "Caps"), held by the origin's
+  // board's reads are outside them (docs/engineering/analysis/client-cache.md, "Caps"), held by the origin's
   // bytes alone. Then the age past which an item goes.
   const CAPS: Record<string, [count: number, bytes: number, weighed: boolean]> = {
     task: [30, 2 * MB, false],

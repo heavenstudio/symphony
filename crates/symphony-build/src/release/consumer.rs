@@ -1,4 +1,4 @@
-//! What a release tells the agent that takes it in a consuming project (docs/RELEASES.md, "Its
+//! What a release tells the agent that takes it in a consuming project (docs/workflow/RELEASES.md, "Its
 //! notes"): what the project does to move from the release before, by section. Two sources, and no
 //! file every branch edits:
 //!
@@ -41,7 +41,7 @@ const GUARDS: &str = ":(glob)**/tests/consumer_api.rs";
 /// is left out of the notes.
 const NONE: &str = "none";
 /// What a check's refusal and the notes' reader are pointed at.
-const WHERE: &str = "docs/RELEASES.md, \"Its notes\"";
+const WHERE: &str = "docs/workflow/RELEASES.md, \"Its notes\"";
 
 /// A tool the repository pins: what the notes call it, the file that pins it and how that file
 /// says the version.
@@ -87,7 +87,7 @@ fn postgres(text: &str) -> Option<String> {
 }
 
 /// The settings reference, whose tables list every key of `symphony.toml` the Symphony reads.
-const SETTINGS: &str = "docs/PROJECT_FILE.md";
+const SETTINGS: &str = "docs/operations/PROJECT_FILE.md";
 
 /// Every key the settings reference `text` lists, each as `[table] key`: a row of a table under
 /// a `## `[table]`` heading, its first cell the key in backticks.
@@ -563,7 +563,7 @@ fn said(history: &[Notes], at: usize, entry: &Entry) -> String {
     }
 }
 
-/// What a board's move from schema `was` to `now` needs of its project (docs/TASKS.md, "Who writes
+/// What a board's move from schema `was` to `now` needs of its project (docs/workflow/TASKS.md, "Who writes
 /// a board").
 fn schema_steps(was: i64, now: i64) -> String {
     format!(
@@ -634,7 +634,7 @@ pub(crate) fn section(history: &[Notes], at: usize) -> Vec<String> {
                 };
                 if !added.is_empty() {
                     said.push(format!(
-                        "Keys read anew (docs/PROJECT_FILE.md says each): {}.",
+                        "Keys read anew (docs/operations/PROJECT_FILE.md says each): {}.",
                         keys(added)
                     ));
                 }

@@ -1,6 +1,6 @@
 //! `tools/check-inputs.sh` on a workspace of the test's own: the digest of what each step of
 //! `just verify` and each lane of its tests reads, by which a release candidate's rerun carries a
-//! green (docs/RELEASES.md, "The rerun"). The scripts are this repository's, as they are; the
+//! green (docs/workflow/RELEASES.md, "The rerun"). The scripts are this repository's, as they are; the
 //! packages are stand-ins of the names the lanes read by, each an empty library with the test
 //! targets its lanes select. A change inside the packages a lane builds with changes its digest,
 //! one outside them leaves it, a change to the check itself or the toolchain changes every one,

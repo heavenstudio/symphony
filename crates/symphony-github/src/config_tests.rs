@@ -120,7 +120,7 @@ fn the_keys_of_three_apps_are_each_refused_by_name_and_say_where_one_app_is() {
             assert!(
                 refused.contains(&format!("{key} is gone: one GitHub App"))
                     && refused.contains("app_id, installation_id and key_file")
-                    && refused.contains("docs/GITHUB_SETUP.md"),
+                    && refused.contains("docs/operations/GITHUB_SETUP.md"),
                 "{text:?}: {refused}"
             );
         }

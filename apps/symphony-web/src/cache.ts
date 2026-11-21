@@ -1,5 +1,5 @@
 // The client cache: what a page drew, kept on this device so a return visit draws at once and then
-// asks the server only whether it changed (docs/analysis/client-cache.md). The store is the shell's
+// asks the server only whether it changed (docs/engineering/analysis/client-cache.md). The store is the shell's
 // (shell/cache.ts, `symphonyCache`), which every page kind shares; this names what
 // is kept, under the wire's CACHE_FORMAT, and reads it back. Without the store (a browser with no
 // IndexedDB) every read misses and nothing is kept.

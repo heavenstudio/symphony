@@ -1,4 +1,4 @@
-//! A held update tried again by the machine's server (docs/RELEASES.md, "A held update tried
+//! A held update tried again by the machine's server (docs/workflow/RELEASES.md, "A held update tried
 //! again"): a registered project's board that a release's refresh left below the schema the release
 //! `current` names serves, its update open in the machine's ledger ([`super::updates`]), is judged
 //! again at each round of the server's idle sweep for that project, by the refresh's own writer

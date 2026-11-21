@@ -1,4 +1,4 @@
-//! An execution attempt's ending proposed to the workflow that holds its task (docs/WORKFLOW.md,
+//! An execution attempt's ending proposed to the workflow that holds its task (docs/workflow/WORKFLOW.md,
 //! "Attempts"), decided by [`crate::workflow::recover::observed`] on admission's one read and
 //! written as the board's recovery service: an automatic edge through the one admission
 //! ([`Store::apply_operation`]'s), any other answer as a holder's recovery is written (`sql::APPLY`).

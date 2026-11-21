@@ -2,7 +2,7 @@
 
 This repository's own standing instructions for an executor, beside the shipped skill, which
 `symphony init` never writes. A rule is said once, in [RULES.md](../../../RULES.md), the
-[root guide](../../../AGENTS.md) or [CHECKS](../../../docs/CHECKS.md): this page holds only
+[root guide](../../../AGENTS.md) or [CHECKS](../../../docs/workflow/CHECKS.md): this page holds only
 what an executor needs that none of them says.
 
 - Read what your tests cover of the code you added, and add the cases they miss: the edge cases

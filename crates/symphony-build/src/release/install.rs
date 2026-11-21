@@ -1,4 +1,4 @@
-//! A green release's install on the machine (docs/RELEASES.md, "The install"), the first step of
+//! A green release's install on the machine (docs/workflow/RELEASES.md, "The install"), the first step of
 //! its refresh, `refresh-install`: the release built once, for every project, and put in the
 //! machine folder, where the recipes of a project with no build of its own find it once `current`
 //! names it.

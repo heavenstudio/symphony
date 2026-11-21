@@ -1,7 +1,7 @@
 //! The symbols a Mach-O executable exports, read from its export trie, the names dyld
 //! could look up in it: the trie its `LC_DYLD_INFO_ONLY` or its `LC_DYLD_EXPORTS_TRIE` points at.
 //! The `links` tests of the shipped binaries' packages read it to hold each binary to the
-//! `-no_exported_symbols` its package's build script links it with (docs/CHECKS.md, "Size budgets").
+//! `-no_exported_symbols` its package's build script links it with (docs/workflow/CHECKS.md, "Size budgets").
 
 /// `LC_DYLD_INFO_ONLY`: the export trie's offset and size are the command's eleventh and twelfth
 /// words.

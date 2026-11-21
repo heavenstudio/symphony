@@ -6,7 +6,7 @@
 //! future to [`tokio::spawn`], costs that again at every call site. [`blocking`] hands tokio one
 //! type for every call, a boxed closure that answers nothing, and keeps the work's answer beside the
 //! task until the task ends; [`task`] boxes a future that answers nothing. What each call compiles
-//! is then its own closure or future and that answer's hand-over alone (docs/CHECKS.md, "Size
+//! is then its own closure or future and that answer's hand-over alone (docs/workflow/CHECKS.md, "Size
 //! budgets").
 
 use std::future::Future;

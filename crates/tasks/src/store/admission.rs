@@ -1,4 +1,4 @@
-//! The one admission of a workflow operation on the board (docs/WORKFLOW.md, "Admission"): the
+//! The one admission of a workflow operation on the board (docs/workflow/WORKFLOW.md, "Admission"): the
 //! active workflow read, a principal's next actions previewed, and an operation applied. Every
 //! surface that moves a task a custom workflow holds (the CLI, the api the app writes through, an
 //! agent) calls [`Store::apply_operation`], with the principal its host bound, never one a request
@@ -113,7 +113,7 @@ struct Found {
     accepted: Option<String>,
 }
 
-/// The accepted outputs of a task a custom workflow holds (docs/WORKFLOW.md, "Accepted outputs"):
+/// The accepted outputs of a task a custom workflow holds (docs/workflow/WORKFLOW.md, "Accepted outputs"):
 /// its own standing, and, where an edge leaving its pair depends on `accepted_output`, each task
 /// it depends on with the output standing for it, which a request taking that edge names.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

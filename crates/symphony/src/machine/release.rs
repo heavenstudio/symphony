@@ -1,4 +1,4 @@
-//! A release installed on the machine (docs/RELEASES.md, "The install"): a folder of its own in the
+//! A release installed on the machine (docs/workflow/RELEASES.md, "The install"): a folder of its own in the
 //! machine folder, `releases/NAME/`, holding the four binaries every project runs (`bin/`), one
 //! build of the client (`client/HASH/`, which a server built the release's way serves from beside
 //! it) and `manifest.json` ([`Manifest`]): the release and its commit, the board schema, the plugin

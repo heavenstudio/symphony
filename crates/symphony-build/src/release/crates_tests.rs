@@ -241,7 +241,7 @@ fn a_changed_package_is_said_with_its_first_files_and_a_count_of_the_rest() {
         changed_line(&few),
         "alpha 1.0.0: on crates.io, and its packaged sources differ from that version's \
          (src/lib.rs changed): a version is published once, so move its version, its line's as \
-         the packages' lines say (docs/RELEASES.md, \"Packages on crates.io\")"
+         the packages' lines say (docs/workflow/RELEASES.md, \"Packages on crates.io\")"
     );
     let many = Changed {
         package: "alpha 1.0.0".into(),

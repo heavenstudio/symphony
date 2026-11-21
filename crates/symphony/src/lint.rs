@@ -12,8 +12,16 @@ use crate::text::{is_word, os_error, read_text, splitlines, strip};
 /// A word the lint found: (path, line, word).
 pub type Finding = (String, usize, String);
 
-/// The ledger and the evidence may say why and when: the first folder under `docs/` exempt.
+/// The ledger and the evidence may say why and when: a folder of either name is exempt, at any
+/// depth under the entrypoint (`docs/workflow/analysis/`).
 const PROSE_EXEMPT: [&str; 2] = ["history", "analysis"];
+
+/// Whether the document at `path` is in a folder the prose rules pass over.
+fn exempt(path: &str) -> bool {
+    let mut folders = path.split('/').skip(1).collect::<Vec<_>>();
+    folders.pop();
+    folders.iter().any(|part| PROSE_EXEMPT.contains(part))
+}
 
 /// Python's `re.escape`: the characters a pattern could read as syntax, each behind a backslash.
 fn re_escape(text: &str) -> String {
@@ -107,12 +115,7 @@ pub fn history_in_prose(root: &Path) -> Result<Vec<Finding>, ReviewError> {
     }
     let mut found = Vec::new();
     for doc in &docs {
-        if doc
-            .path
-            .split('/')
-            .nth(1)
-            .is_some_and(|part| PROSE_EXEMPT.contains(&part))
-        {
+        if exempt(&doc.path) {
             continue;
         }
         let path = root.join(project.file(&doc.path));

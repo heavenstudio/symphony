@@ -32,7 +32,7 @@ serde_json = { workspace = true, features = ["raw_value", "float_roundtrip"] }
 
 [dev-dependencies]
 # The features the server's build unifies on serde_json, so the protocol's tests read and write JSON
-# as the server does (docs/CHECKS.md): above all `arbitrary_precision`, under which serde's buffered
+# as the server does (docs/workflow/CHECKS.md): above all `arbitrary_precision`, under which serde's buffered
 # content loses a fraction. A dev-dependency's features never reach a plugin's build.
 serde_json = { workspace = true, features = ["arbitrary_precision", "float_roundtrip", "preserve_order", "raw_value"] }
 # The tests' waits on a condition, whose backstop only a stall reaches (RULES.md

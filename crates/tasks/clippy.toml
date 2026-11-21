@@ -3,7 +3,7 @@
 
 # A lint may ask for a change to a `pub` signature. Not every caller is in this tree: consuming
 # projects pin some of these packages by git and call a few hundred of their names. The
-# `tests/consumer_api.rs` guards (docs/RELEASES.md, step 4), which this same lint compiles, hold
+# `tests/consumer_api.rs` guards (docs/workflow/RELEASES.md, step 4), which this same lint compiles, hold
 # most of those names by signature, each coerced to its fn pointer type, and some by a call
 # written as a consumer writes it: a lint-driven change to a signature so held fails the gate
 # wherever it would break the consumer's code, and the name keeps its signature under an

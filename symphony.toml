@@ -18,11 +18,11 @@ orchestrator = "fable"
 assessor = "haiku"
 
 # What a generated branch passes before it lands with no reviewer: the check closest to the
-# documents it changes. `just verify` is the release run's (docs/CHECKS.md).
+# documents it changes. `just verify` is the release run's (docs/workflow/CHECKS.md).
 [verdicts]
 check = ["just", "symphony-cli", "docs-audit", "--check"]
 
-# A land is its merge, its move and its push alone (docs/TASKS.md, the default landing): it runs
+# A land is its merge, its move and its push alone (docs/workflow/TASKS.md, the default landing): it runs
 # no check (`check = false`; the docs audit is evidence at the tip, run on main's tip by the
 # regenerator after each round, and part of the release run's `just verify`) and no generator. What
 # the regenerator a land starts makes of main's newest tip
@@ -42,18 +42,18 @@ keys = { "the client distribution" = ["tools/client-key.sh"] }
 
 [board]
 orchestrator_slots = 8
-guide = "docs/TASKS.md"
+guide = "docs/workflow/TASKS.md"
 # What a land starts once the task is closed, with its slug and merge appended: the release
-# cadence, a release run once `[releases] every_landings` tasks have landed (docs/RELEASES.md). The
+# cadence, a release run once `[releases] every_landings` tasks have landed (docs/workflow/RELEASES.md). The
 # count runs the build of `symphony-build` this checkout links, which any `just release` here links
 # or renews (`tools/rs-bin.sh --link symphony-build` by hand), and builds nothing; a due run builds
 # in its own checkout. The release run is `symphony-build`'s, a binary no project is given, never
 # the shipped `symphony`'s.
 on_land = [".target/bin/symphony-build", "release", "--due"]
 # PostgreSQL 18 or later is discovered on PATH; [board] postgresql can name an absolute bin
-# folder instead (docs/PROJECT_FILE.md). Only scratch boards and their tests start it so far.
+# folder instead (docs/operations/PROJECT_FILE.md). Only scratch boards and their tests start it so far.
 
-# A release run every 20 landings, and a green release's refresh of the machine (docs/RELEASES.md).
+# A release run every 20 landings, and a green release's refresh of the machine (docs/workflow/RELEASES.md).
 [releases]
 every_landings = 20
 refresh = true

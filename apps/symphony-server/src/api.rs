@@ -559,7 +559,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             }
         }
         // The board's active custom workflow, and the local owner's next actions on one task it
-        // holds (docs/WORKFLOW.md, "The app"): the board's own reads, the same for every branch.
+        // holds (docs/workflow/WORKFLOW.md, "The app"): the board's own reads, the same for every branch.
         symphony_api::workflow::WORKFLOW_PATH | symphony_api::workflow::WORKFLOW_ACTIONS_PATH => {
             let slug = query(&request, "slug").unwrap_or_default();
             let actions = path == symphony_api::workflow::WORKFLOW_ACTIONS_PATH;

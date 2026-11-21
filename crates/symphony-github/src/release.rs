@@ -1,6 +1,6 @@
 //! `symphony-github release --request FILE`: what answers a release run that publishes a GitHub
 //! Release for a tag it pushed (`[releases] github = ["symphony-github", "release"]`,
-//! docs/RELEASES.md), one JSON object read and one printed. It serves only `enabled` settings
+//! docs/workflow/RELEASES.md), one JSON object read and one printed. It serves only `enabled` settings
 //! whose `releases` is `publish`, to the repository the state is bound to by its number.
 //!
 //! The request names the release's `tag`, the `commit` it tags, the `body` (the release's notes)

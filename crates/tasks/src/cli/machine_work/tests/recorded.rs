@@ -112,7 +112,7 @@ fn quoted(text: &str) -> Vec<String> {
 
 /// A reading is read back as its beat wrote it; a record without one (its recorder watches no
 /// command's processes, or is older) reads as before and writes none. The record's table in
-/// docs/MACHINE_WORK.md names each field a record holds, and its `reading` row each of a reading's.
+/// docs/workflow/MACHINE_WORK.md names each field a record holds, and its `reading` row each of a reading's.
 #[test]
 fn a_reading_reads_back_as_written_is_left_out_when_there_is_none_and_the_doc_names_its_fields() {
     let dir = folder("reading");
@@ -132,7 +132,7 @@ fn a_reading_reads_back_as_written_is_left_out_when_there_is_none_and_the_doc_na
     fs::remove_dir_all(&dir).unwrap();
 
     let doc = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/MACHINE_WORK.md"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/workflow/MACHINE_WORK.md"),
     )
     .unwrap();
     let table = doc.split("**What.**").nth(1).unwrap();

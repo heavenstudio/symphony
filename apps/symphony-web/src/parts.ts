@@ -1,4 +1,4 @@
-// A page's parts, each drawn from a read of its own (docs/analysis/components-draw-when-their-
+// A page's parts, each drawn from a read of its own (docs/design/analysis/components-draw-when-their-
 // data-arrives.md): a component names the part it draws (`usePart`), and the page's one store
 // draws the copy this device kept of it at once, marked stale, reads it naming that copy's tag,
 // one read a key however many components name it, tries a failed read again on the feed's waits

@@ -1406,7 +1406,7 @@ fn writer(line: &Line) -> (u32, f64) {
     }
 }
 
-/// What a reader makes of `hour`'s lines, from one writer or several, as docs/AGENT_ACTIVITY.md
+/// What a reader makes of `hour`'s lines, from one writer or several, as docs/workflow/AGENT_ACTIVITY.md
 /// says: seconds, samples and changes added, peaks the largest, means weighted by `observed_s`,
 /// `started` from the line with the latest `to`; and each line's span and writer.
 #[derive(Debug, PartialEq)]

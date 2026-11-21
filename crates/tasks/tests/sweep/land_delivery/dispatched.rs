@@ -1,4 +1,4 @@
-//! A land dispatched at review (`tasks land SLUG --dispatch`, docs/TASKS.md "A land delivered by
+//! A land dispatched at review (`tasks land SLUG --dispatch`, docs/workflow/TASKS.md "A land delivered by
 //! a pull request"): the head published with its evidence whatever it says and the host's own
 //! merge of it armed, the host merging once `symphony/eligible` is green, and the watcher
 //! (`tasks land --watch`) closing the task once it has, or taking what holds the merge as a

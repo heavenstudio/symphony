@@ -129,7 +129,7 @@ the page does not draw, changes nothing, as a serde read skips
 unknown fields. A kind of block, text span or media the client does not know passes too, its
 fields unread, and is said where it stands as unsupported content (`blocks-read.ts`, `blocks.tsx`,
 `media.tsx`), the rest of the page drawn: the kit's lists grow in a minor, so a newer server may
-send one ([PLUGIN_PROTOCOL](../../docs/PLUGIN_PROTOCOL.md#versions)). A word it does not know (a
+send one ([PLUGIN_PROTOCOL](../../docs/engineering/PLUGIN_PROTOCOL.md#versions)). A word it does not know (a
 figure's size, a tag, a shape) and a kind that is no text still fail the read.
 A read the guard refuses is a failed read, said and retried as any other. A feed
 event of a region or kind the page does not know is not its own, and is left alone.
@@ -175,7 +175,7 @@ not run or finish, and fails the run. Such a file is one whose worker never star
 waits for that (60 s and 90 s, which no setting changes) are reached only by a stall too, and its
 summary leaves the file out of its count.
 What only a browser shows (effects, the feed, the layout, the moves between kinds) is the headless
-browser target's (`apps/symphony-web-tests/tests/browser`, [CHECKS](../../docs/CHECKS.md#the-browser-target-by-page)),
+browser target's (`apps/symphony-web-tests/tests/browser`, [CHECKS](../../docs/workflow/CHECKS.md#the-browser-target-by-page)),
 which drives headless Chrome over its DevTools protocol against the release build, served as the
 server serves it (`just test-rs -p symphony-web-tests --test browser -- FILTER…`: the tests of the
 pages and controls a change touched, never the whole target, which the release run runs). It
@@ -410,7 +410,7 @@ server built before it named any wrote it, is a settings change.
 ## Runs
 
 `src/runs.tsx` draws `/runs`, the kind `runs`, in the frame, with no feed of its own
-([RUNS](../../docs/RUNS.md#the-runs-page)). Now is the machine work (`/api/machine-work`,
+([RUNS](../../docs/workflow/RUNS.md#the-runs-page)). Now is the machine work (`/api/machine-work`,
 `followNow`, every 5 s), read by a guard of the fields it draws (`readNow`) rather than
 `work.ts`, which only the board's kinds import, so this page splits no shared chunk. The list is
 `/api/runs` (`followList`, its first page every 15 s with the last answer's tag), with its
@@ -462,7 +462,7 @@ not change draws nothing again, and typed words live outside the page's markup: 
 editor (`editor.tsx`: a card's verdict under its tap, a message, a comment), a question and its
 follow-ups (`asks.tsx`), each draft saved on this device on every input with its files
 (`attach.tsx`: `POST /api/upload` answers a line for each file, which the posted text carries,
-docs/REVIEW.md, "Attaching files"). A link's excerpt, once opened, draws its
+docs/workflow/REVIEW.md, "Attaching files"). A link's excerpt, once opened, draws its
 blocks whole at once (`ExcerptBody` under `AtOnce`, `viewport.tsx`), no part of it waiting to come
 near the screen: opening it asked for them, and its box, which scrolls, would clip the sentinel's
 look-ahead, leaving a box opened below the screen empty until it was scrolled to. A card's Later
@@ -553,7 +553,7 @@ task and on Refresh, as the feed carries no attempt's change. A cancel, a stop o
 its confirmation, then posts the attempt's revision as read (`/api/attempt-control`) and draws the
 history it answers; a view opens a blank window within the click, cuts its opener and sends it the
 address `/api/attempt-view` resolved, which the page keeps nowhere
-([EXECUTION_ATTEMPTS](../../docs/EXECUTION_ATTEMPTS.md#on-a-tasks-page)).
+([EXECUTION_ATTEMPTS](../../docs/engineering/EXECUTION_ATTEMPTS.md#on-a-tasks-page)).
 
 Last, under the thread's composer, _Tokens and estimated cost_ (`TokensPart`, `src/task-page.tsx`)
 is a closed disclosure, last so it moves nothing that loads (above the thread it pushed the
@@ -638,7 +638,7 @@ What holds on every page, and each page's contract where its section above names
   can end that (`whenFree`: the focus leaving the fields, a busy region, list box or details
   changing, or an element added or removed), never on a timer.
 - **Cache.** What a page drew is kept on the device so a return visit draws at once
-  ([the client cache](../../docs/analysis/client-cache.md)). The store is `shell/cache.ts`
+  ([the client cache](../../docs/engineering/analysis/client-cache.md)). The store is `shell/cache.ts`
   (`window.symphonyCache`), which `package.sh` puts first in the shell's one script: every page
   kind shares it, and it opens every IndexedDB transaction. `src/cache.ts` and
   `src/cache-document.ts` reach it: an
@@ -738,7 +738,7 @@ What holds on every page, and each page's contract where its section above names
   as the server does).
   Once a page has its data, its feed is open and the browser is idle, the shell reads ahead the
   first 8 task and document links on the screen in its `main` (`ahead` in `shell/shell.ts` and
-  `shell/cache.ts`; [Read ahead](../../docs/analysis/client-cache.md#read-ahead)): one after
+  `shell/cache.ts`; [Read ahead](../../docs/engineering/analysis/client-cache.md#read-ahead)): one after
   another, at `priority: "low"`, marked `Purpose: prefetch`, naming any tag kept, and kept
   unvisited. A task is its page and its thread's newest page; a document its first part
   (`/api/document?view=first`: the head, every heading among it, and the leading sections whole
@@ -759,7 +759,7 @@ What holds on every page, and each page's contract where its section above names
   alone was raised since, from 125,000, by the owner on 2026-11-19. Each is raised only by its
   task's orchestrator's recorded decision once the cut came first, naming the constant
   (`just tasks gate SLUG apps/symphony-web-tests/tests/browser/main.rs:NAME --raise NEW`,
-  [TASKS](../../docs/TASKS.md#gate-decisions)), never by an agent's own word.
+  [TASKS](../../docs/workflow/TASKS.md#gate-decisions)), never by an agent's own word.
   A visit counts each response the page loaded at what Chrome's
   network events say it took on the wire, gzip body and response head: the
   HTML, the shell, the kind's scripts, the style sheets, API replies
@@ -829,8 +829,8 @@ What holds on every page, and each page's contract where its section above names
   reduced motion only fades (`apps/symphony-web-tests/tests/browser/polish.rs`).
 - **Task views.** The task board (`/tasks`, `src/board.tsx` over `src/boardlive.tsx`, its cards
   and wait lines in `src/boardwait.tsx`), the agents page ([below](#the-agents-page)) and a task's
-  page ([below](#a-tasks-page); [TASKS](../../docs/TASKS.md#gates) and [the timeline](../../docs/TASKS.md#the-timeline)).
-  The board implements the owner's option B (`docs/analysis/board-design/b-stuck-in-place.html`):
+  page ([below](#a-tasks-page); [TASKS](../../docs/workflow/TASKS.md#gates) and [the timeline](../../docs/workflow/TASKS.md#the-timeline)).
+  The board implements the owner's option B (`docs/product/analysis/board-design/b-stuck-in-place.html`):
   blocked tasks stay first in their original stage, ordered by named wait kind then age, ordinary
   work oldest first, parked last and finished newest first. An unnamed legacy block is ordinary
   work. Lifecycle, Build and Test columns scroll horizontally at a minimum width of 280 px,
@@ -1025,7 +1025,7 @@ What holds on every page, and each page's contract where its section above names
   other file (`KEEP`, `crates/symphony/src/cli/publish.rs`), so an open page's
   deferred import finds its build two publications on. The server embeds every file kept, and
   the size check's client line counts each kept build whole
-  ([CHECKS](../../docs/CHECKS.md#size-budgets)): a change to a module of the chunk every page
+  ([CHECKS](../../docs/workflow/CHECKS.md#size-budgets)): a change to a module of the chunk every page
   imports renames every chunk that imports it, so the build after it shares almost no file with
   the builds before it, and the folder weighs up to `KEEP` builds. Once its build is gone, an
   import that fails asks for the page's own shell past the cache: a 404 loads the
@@ -1145,7 +1145,7 @@ What holds on every page, and each page's contract where its section above names
   response for compatible API callers. Canonical `/docs/` pages use the client;
   old `/app/docs/` and `/doc/docs/` bookmarks redirect there.
   Only Markdown files, HTML documents and folders are client routes; raw files keep normal links.
-  An HTML document (docs/PROJECT_FILE.md "HTML documents") is no fragment: its
+  An HTML document (docs/operations/PROJECT_FILE.md "HTML documents") is no fragment: its
   page loads the file whole into one frame whose sandbox allows its scripts alone
   (`SANDBOX`, `document-page.tsx`; never `allow-same-origin`, top navigation, forms or popups), so it runs
   in an opaque origin with no reach into the app's storage, cookies, feed, API or page. The

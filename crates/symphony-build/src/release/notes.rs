@@ -2,7 +2,7 @@
 //! each said changed or not since the release before it, the checks it passed, the packages it
 //! publishes on crates.io, what a project does to take it ([`super::consumer`]), and the changes on
 //! main since that release. A project's update reads the
-//! schema and the pin to know whether it must update (docs/RELEASES.md), so the message names both
+//! schema and the pin to know whether it must update (docs/workflow/RELEASES.md), so the message names both
 //! by the words "Board schema" and "Pin".
 
 use std::path::Path;

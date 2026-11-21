@@ -1,0 +1,44 @@
+# Operations
+
+Setting the Symphony up and running it: the project file, the board's database, GitHub and the repositories around this one. The other areas are in the [index](../README.md).
+
+- [The project file](PROJECT_FILE.md) — `symphony.toml`: every table and key a project can set,
+  with its default.
+- [PostgreSQL board lifecycle](POSTGRESQL.md) — scratch engine identity, server selection, holds,
+  snapshots, recovery and space reclamation.
+- [Setting up GitHub](GITHUB_SETUP.md) — the optional `symphony-github` from nothing to a check
+  that passes: building it, the token for the issue exchange, the GitHub Apps and rulesets a
+  delivery by pull request needs, in order, and what each failure a newcomer meets says.
+- [GitHub issue exchange and pull request delivery](GITHUB.md) — the reference for that adapter,
+  turned off unless the default branch commits its settings: its settings and token files, its
+  commands, what a reconcile writes, what it keeps, what pauses it, and how a land is delivered
+  and the protection that delivery reads.
+- [Upstream and downstream repositories](UPSTREAM_DOWNSTREAM.md) — the regular import of the
+  public repository into a private copy with its ancestry kept, the export of selected reusable
+  changes back, their checks, refusals and recovery; manual tasks, with PR delivery not enabled.
+
+## Analysis
+
+An analysis holds a proposal and its evidence: an approved design can still await implementation, and its approval alone does not make it current behavior.
+
+- [The board's cutover to PostgreSQL](analysis/board-pg-cutover.md) — the order for moving live
+  boards, one board's move, the way back, what is not built yet and what the move waits for.
+- [The board's store, measured before it moves](analysis/board-store-baseline.md) — what the board
+  costs on SurrealDB, and the meter the two stores are compared by.
+- [Managed PostgreSQL](analysis/hosted-postgresql.md) — the proposed hosted connection, connection
+  budget, database boundary and PostgreSQL 16/18 validation contract.
+- [Where the board's PostgreSQL comes from](analysis/postgresql-binary-source.md) — each place a
+  machine could take its PostgreSQL from, and what each costs.
+- [The read-only window after a schema move](analysis/schema-move-read-only-window.md) — the wait
+  between a landing that moves the board's schema and a release that serves it.
+- [Hosted ingress and board readiness](analysis/hosted-ingress.md) — proposed trusted proxy and
+  visitor admission, project permissions, foreground lifecycle and readiness; the local gate
+  stays.
+- [Optional GitHub integration](analysis/github-integration.md) — tasks exchanged with GitHub
+  issues and work published as pull requests.
+- [Historical personal-path treatment](analysis/github-history-treatment.md) — scratch-only
+  evidence for how the public history's path findings are treated.
+- [Public-readiness audit](analysis/public-readiness.md) — the read-only audit and remediation
+  plan recorded for the GitHub integration.
+- [Tracked media privacy review](analysis/public-media-review.md) — what the tracked pictures show
+  of a person or a machine.

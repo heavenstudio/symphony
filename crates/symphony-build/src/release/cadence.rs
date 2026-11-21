@@ -1,4 +1,4 @@
-//! The release cadence counted in landings (docs/RELEASES.md): a run on main's tip is due once
+//! The release cadence counted in landings (docs/workflow/RELEASES.md): a run on main's tip is due once
 //! `[releases] every_landings` tasks (20 unless the project says) have landed on the default
 //! branch since the last release, or since a later run that checked something, so a red run is
 //! counted from as a release is and never asked for again on every landing after it. A landing is

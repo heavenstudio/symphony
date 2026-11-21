@@ -335,7 +335,7 @@ describe("a task's page", () => {
     expect(drawn).toContain('<span class="by">filed by owner</span>');
     expect(drawn).toContain('<li>part of <a href="/task/fixture">fixture</a></li>');
     expect(drawn).toContain('<li>after <a href="/task/fixture/before">fixture/before</a></li>');
-    expect(drawn).toContain('<li>implements <a href="/docs/TASKS.md">docs/TASKS.md</a></li>');
+    expect(drawn).toContain('<li>implements <a href="/docs/TASKS.md">docs/workflow/TASKS.md</a></li>');
     expect(drawn).toContain(">executor amber");
     expect(drawn).toContain("<h2>Thread</h2>");
   });

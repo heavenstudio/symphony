@@ -2,7 +2,7 @@
 //! answers three of its own: [`review`], the board's reviewer verdicts ([`review_rounds`]), or the
 //! covered close a task is done by instead ([`review_of`]);
 //! [`check`], the project's `[verdicts] check` at the tip, from the run records the board's
-//! recorder keeps (docs/MACHINE_WORK.md), for a branch with work of its own ([`own_commits`]) and
+//! recorder keeps (docs/workflow/MACHINE_WORK.md), for a branch with work of its own ([`own_commits`]) and
 //! never an instruction subtask's; and [`owner`], a card the task posted that waits on the
 //! owner, by the sign-off lane's rule ([`posted_cards`]). A project's plugins answer its own
 //! through the gates seam (`symphony_plugin::Gates`), all asked at once ([`theirs`]), each answer
@@ -365,7 +365,7 @@ pub fn linked_cards<'a>(links: &[String], pending: &'a Pending) -> Vec<&'a Pendi
 }
 
 /// The cards of `cards` the task posted: named whole by one of `texts`, its body and its thread's
-/// lines (the sign-off lane's rule, docs/TASKS.md).
+/// lines (the sign-off lane's rule, docs/workflow/TASKS.md).
 pub fn posted_cards<'a, 't>(
     cards: &[&'a PendingItem],
     mut texts: impl Iterator<Item = &'t str>,

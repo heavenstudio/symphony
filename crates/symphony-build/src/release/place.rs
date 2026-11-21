@@ -1,4 +1,4 @@
-//! Where a run works, and what it may take over there (docs/RELEASES.md). Its checkout is a
+//! Where a run works, and what it may take over there (docs/workflow/RELEASES.md). Its checkout is a
 //! worktree of the repository that the release run made, locked with [`LOCK_REASON`] and marked in its
 //! admin folder with its real path ([`MARK`]). It is outside the main checkout and every other
 //! worktree, and holds none. Anything else found in its place, a link included, is refused and

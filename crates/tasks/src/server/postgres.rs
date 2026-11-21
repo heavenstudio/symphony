@@ -592,7 +592,7 @@ pub fn programs(root: &Path) -> Result<Option<PathBuf>, String> {
 pub const HOSTED_16: &str = "SYMPHONY_POSTGRESQL_16";
 
 /// Where the hosted board's check finds PostgreSQL 16's programs
-/// (docs/POSTGRESQL.md, "A hosted board"): the folder [`HOSTED_16`] names, otherwise Homebrew's
+/// (docs/operations/POSTGRESQL.md, "A hosted board"): the folder [`HOSTED_16`] names, otherwise Homebrew's
 /// keg, which changes no `postgres` on `PATH`. The one rule: the check's servers and the release
 /// run's record of what it ran on both ask here. It inspects nothing and starts nothing.
 pub fn hosted_programs_16() -> PathBuf {

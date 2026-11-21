@@ -1,4 +1,4 @@
-//! The stamps a project's land can require (docs/analysis/needed-stamps.md), and what a task needs
+//! The stamps a project's land can require (docs/workflow/analysis/needed-stamps.md), and what a task needs
 //! of them.
 //!
 //! The catalogue ([`Catalogue`]) is one list: the project's `[stamps]`, a table a stamp, read as

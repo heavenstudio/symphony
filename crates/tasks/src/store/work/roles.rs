@@ -310,7 +310,7 @@ impl Store {
             }
         }
         // A custom workflow's roles on a task it holds go by its position's recovery
-        // (docs/WORKFLOW.md, "Recovery"); the orchestrator's stays the board's.
+        // (docs/workflow/WORKFLOW.md, "Recovery"); the orchestrator's stays the board's.
         let role = match self.released_by_workflow(slug, handle, role)? {
             crate::store::admission::Released::Done(task) => return Ok(*task),
             crate::store::admission::Released::Orchestrator => Some("orchestrator"),

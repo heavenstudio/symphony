@@ -1,4 +1,4 @@
-// The estimated cost each card of the task board shows (docs/TASKS.md, "What the tokens cost"): one
+// The estimated cost each card of the task board shows (docs/workflow/TASKS.md, "What the tokens cost"): one
 // read apart from the board's listings, which carry none of it, of the cards drawn. A card names
 // its task once it has painted, as it comes near the screen (its own effect), and the cards named
 // in one draw are asked for together (`TASK_COSTS_PATH`, at most TASK_COSTS_MOST a read), so the

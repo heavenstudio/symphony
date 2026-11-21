@@ -1119,7 +1119,7 @@ fn a_project_naming_a_linked_plugin_holds_the_switch_the_release_installed_and_c
     let held = format!(
         "shelf names the linked plugin shelf-plugin, and a release's server serves a plugin only \
          from its process: a [plugins.process] command for it in {} lets the release serve every \
-         project (docs/PLUGIN_PROTOCOL.md)",
+         project (docs/engineering/PLUGIN_PROTOCOL.md)",
         shelf.join("symphony.toml").display()
     );
 

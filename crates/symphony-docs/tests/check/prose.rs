@@ -62,6 +62,31 @@ fn registers_code_blocks_history_and_analysis_may_name_a_card() {
 }
 
 #[test]
+fn an_areas_analysis_folder_may_name_a_card_and_a_file_of_that_name_may_not() {
+    let found = lint_tree(
+        "slug-area-analysis",
+        &[
+            (
+                "docs/kappa/analysis/deep.md",
+                Some("# Deep\n\nquiet-roads evidence.\n"),
+            ),
+            (
+                "docs/kappa/analysis.md",
+                Some("# Not a folder\n\nquiet-roads again.\n"),
+            ),
+        ],
+    );
+    let slugs = |path: &str| {
+        found
+            .iter()
+            .filter(|p| p.contains("card slug") && p.contains(path))
+            .count()
+    };
+    assert_eq!(slugs("docs/kappa/analysis/deep.md"), 0, "{found:#?}");
+    assert_eq!(slugs("docs/kappa/analysis.md:3"), 1, "{found:#?}");
+}
+
+#[test]
 fn a_slug_inside_a_longer_word_is_not_a_mention() {
     let found = lint_tree(
         "slug-longer-word",

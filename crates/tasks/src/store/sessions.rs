@@ -391,7 +391,7 @@ impl Store {
     /// person to recover and never moves the task to a pair it does not name.
     pub fn leave(&self, handle: &str) -> Result<(), Error> {
         // What it staffs on a task a custom workflow holds goes first, by each position's
-        // lost-holder recovery (docs/WORKFLOW.md, "Recovery").
+        // lost-holder recovery (docs/workflow/WORKFLOW.md, "Recovery").
         self.recover_leaving(handle)?;
         let body = sql::leave();
         let pg = pg::leave();

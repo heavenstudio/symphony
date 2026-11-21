@@ -1,5 +1,5 @@
 //! Home, the task board and the queue drawn from this device's cache on a return visit
-//! (docs/analysis/client-cache.md, "A return visit, step by step" and "A stale draw"): with the
+//! (docs/engineering/analysis/client-cache.md, "A return visit, step by step" and "A stale draw"): with the
 //! server's reads held back, the page draws what it kept before any answer, marked as possibly out
 //! of date and its actions waiting, then asks whether each kept read changed, a `304` keeping the
 //! copy and a `200` replacing it on the page and on the device. A store of another format, or a

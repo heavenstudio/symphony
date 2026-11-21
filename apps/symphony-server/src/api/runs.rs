@@ -1,4 +1,4 @@
-//! The Runs page's reads (docs/RUNS.md, *The Runs page*): the list of the project's runs
+//! The Runs page's reads (docs/workflow/RUNS.md, *The Runs page*): the list of the project's runs
 //! ([`symphony_api::RUNS_PATH`]) and one run with its steps ([`symphony_api::RUN_PATH`]), from the
 //! day files the board's recorder appends beside its logs in `symphony/runs/`, folded a run at a
 //! time ([`symphony_api::fold`]); never the board, so a board slow or down leaves them as they are.

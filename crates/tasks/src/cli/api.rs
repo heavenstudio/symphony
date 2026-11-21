@@ -591,7 +591,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             let (slug, handle, role): (String, String, Option<String>) = (slug, handle, role);
             shape::task(&board.get()?.release(&slug, &handle, role.as_deref())?)
         }
-        // A custom workflow (docs/WORKFLOW.md): an agent session's reads and operations, the
+        // A custom workflow (docs/workflow/WORKFLOW.md): an agent session's reads and operations, the
         // principal the session the call names, as the local host binds it.
         "workflow_read" => {
             args!();
@@ -628,7 +628,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             let signed: symphony_api::workflow::Signed = signed;
             board.get()?.observe_authority(&signed)?.answer()
         }
-        // A task's execution attempts (docs/EXECUTION_ATTEMPTS.md), read as the board's own
+        // A task's execution attempts (docs/engineering/EXECUTION_ATTEMPTS.md), read as the board's own
         // service under its scope: the project the call runs in, and the board's database.
         "attempts" => {
             args!(slug: need);

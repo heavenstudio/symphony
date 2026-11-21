@@ -50,7 +50,7 @@ back over its board, by `tasks-move`, a program of its own (its --help).
 Each hold and release is a line of symphony/tasks/hold.log. It acts on the
 board of the repository it runs in, never on a server TASKS_SERVER names or
 for a scratch database, which shares the board's server. Only builds that
-carry it honour the hold (docs/TASKS.md). It reads no record of the schema the
+carry it honour the hold (docs/workflow/TASKS.md). It reads no record of the schema the
 board was seen at, so it holds a board that went back as any other: that is
 step 2 of its recovery. A clean stop removes the log segments the store's
 manifest counts as written: on a store that went back, whose manifest counts a
@@ -297,7 +297,7 @@ fn said(home: &Home) -> String {
             running.addr,
             if held.is_some() {
                 ", on held data: one the hold's stop waits for, still closing its store or still \
-                 starting, or one a build that does not honour the hold started (docs/TASKS.md); \
+                 starting, or one a build that does not honour the hold started (docs/workflow/TASKS.md); \
                  wait until it ends before touching the data"
             } else {
                 ""

@@ -4,7 +4,7 @@
 # docs audit, in this checkout alone, its documents, what it delivers and its guides; and the hooks
 # test (crates/symphony/tests/hooks/named_recipes.rs) what it delivers and the strings the binaries
 # print.
-# docs/CHECKS.md, "The recipes a text names", says which texts each judges and which entries each
+# docs/workflow/CHECKS.md, "The recipes a text names", says which texts each judges and which entries each
 # keeps current. A change here changes a check.
 #
 # A line is a list's name and its words; `#` starts a comment:
@@ -37,12 +37,12 @@ own crates/symphony-build/src/release/record.rs release
 own crates/symphony-build/src/release/refresh.rs release
 own crates/symphony-build/src/release/updates.rs release
 own crates/symphony-build/src/release/schedule.rs release
-own docs/CHECKS.md client-check client-lint client-update crates-check semver-check hosted-check lint-rs nextest-setup release settings-check size-check test-rs verify
-own docs/GITHUB.md test-rs
-own docs/POSTGRESQL.md hosted-check lint-rs
-own docs/PLUGIN_PROTOCOL.md test-rs
-own docs/PROJECT_FILE.md settings-check
-own docs/RELEASES.md client-update crates-check semver-check lint-rs nextest-setup release test-rs verify
-own docs/TASKS.md client-update
+own docs/workflow/CHECKS.md client-check client-lint client-update crates-check semver-check hosted-check lint-rs nextest-setup release settings-check size-check test-rs verify
+own docs/operations/GITHUB.md test-rs
+own docs/operations/POSTGRESQL.md hosted-check lint-rs
+own docs/engineering/PLUGIN_PROTOCOL.md test-rs
+own docs/operations/PROJECT_FILE.md settings-check
+own docs/workflow/RELEASES.md client-update crates-check semver-check lint-rs nextest-setup release test-rs verify
+own docs/workflow/TASKS.md client-update
 
-filed docs/CHECKS.md check-fast tools/check-fast
+filed docs/workflow/CHECKS.md check-fast tools/check-fast

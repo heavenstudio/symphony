@@ -44,18 +44,18 @@ The mark records the verdict; the group also depends on who spoke last.
 A plain approval can settle the card. A message, question, rejection or verdict note asks an
 agent for an answer. An answered note on an approved or questioned card can return for another
 approval or comment. A new owner comment can reopen a settled card. The
-[review rules](../REVIEW.md#groups) define the lifecycle; the [queue](QUEUE.md) gathers what
+[review rules](../workflow/REVIEW.md#groups) define the lifecycle; the [queue](QUEUE.md) gathers what
 waits on each person.
 
 ## Notes, files and drafts
 
 Notes show line breaks, paragraphs, emphasis, lists, tables, code, links and media. Raw HTML
 stays literal. Review callouts and unclosed code fences are refused with the draft kept;
-see the [note format](../REVIEW.md#card-history).
+see the [note format](../workflow/REVIEW.md#card-history).
 
 **Attach**, paste or drop adds files as removable chips. A message can be files alone; a verdict
 needs no note. Uploads in progress hold the save. Posted pictures open in the viewer; other
-files are links. [Attachments](../REVIEW.md#attaching-files) gives limits and durability.
+files are links. [Attachments](../workflow/REVIEW.md#attaching-files) gives limits and durability.
 
 Close or Escape keeps the draft on this browser, including across reloads; **Resume draft**
 reopens it and **Discard draft** clears it. The card stays in place while being edited.
@@ -77,7 +77,7 @@ queue.
 Main and a branch can show one card with both copies' dated lines. A page showing main's card
 saves on main; a branch's own proposal saves there. Owner history stays visible after a branch
 finishes, until main carries it or closes the card later. Entries are appended, never
-overwritten. [Concept review](../REVIEW.md#one-app-every-worktree) owns the exact save, commit
+overwritten. [Concept review](../workflow/REVIEW.md#one-app-every-worktree) owns the exact save, commit
 and conflict rules.
 
 ## Settled cards
@@ -123,5 +123,5 @@ or keyboard.
 
 - [Reading a document](DOCUMENT.md): contents, comments, media, versions and branch comparisons.
 - [The review queue](QUEUE.md): what waits on the owner, ordering and Later.
-- [Concept review](../REVIEW.md#start-with-the-decision-register): the exact marks, authority,
+- [Concept review](../workflow/REVIEW.md#start-with-the-decision-register): the exact marks, authority,
   note format, saved history and lifecycle mechanics.

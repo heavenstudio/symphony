@@ -1,6 +1,6 @@
 //! Each call into a project's plugins timed, and under the loopback sent through a JSON round trip
 //! inside the process: what a protocol's seam would cost, measured before any process boundary
-//! exists (`[plugins] timing` and `[plugins] loopback`, docs/PLUGIN_CALLS.md).
+//! exists (`[plugins] timing` and `[plugins] loopback`, docs/engineering/PLUGIN_CALLS.md).
 //!
 //! A measured plugin is the plugin behind a wrapper of the same seams: every call into a seam's
 //! object (a component's render, a card kind's slot, a watch's change…) goes through its

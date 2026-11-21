@@ -2501,7 +2501,7 @@ impl Landing<'_> {
             self.say(&format!("land {slug}: {said}"));
         }
         // The project's `[board] on_land`, detached, and what it said at once: the release
-        // cadence, here (docs/RELEASES.md). It starts after the regenerator, so a run it starts
+        // cadence, here (docs/workflow/RELEASES.md). It starts after the regenerator, so a run it starts
         // finds that one started (`symphony-build release` waits for it).
         if let Ok(common) = crate::git::common_dir(&self.main) {
             match crate::on_land::trigger(self.env, &self.main, &common, slug, merge) {

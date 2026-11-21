@@ -1,4 +1,4 @@
-//! What a run's checks read, and what it ran on (docs/RELEASES.md, "The rerun").
+//! What a run's checks read, and what it ran on (docs/workflow/RELEASES.md, "The rerun").
 //!
 //! **Inputs.** Before its checks a run asks the tree it checks what each of its steps reads: the
 //! script [`SCRIPT`] in the checkout, which prints a line for each check, step or part of a step

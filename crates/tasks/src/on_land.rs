@@ -11,7 +11,7 @@
 //! `symphony-build` its main checkout links (any run of its `release` recipe there links it), as
 //! `release --due`: the release cadence counted in landings, which builds nothing unless a run is
 //! due. A main checkout that links no such build starts nothing, which the log says, and the next
-//! landing's count still counts every landing since the last release (docs/RELEASES.md, the
+//! landing's count still counts every landing since the last release (docs/workflow/RELEASES.md, the
 //! trigger). A board `TASKS_SERVER` names (a
 //! test's) starts none unless `TASKS_ON_LAND=on`; `TASKS_ON_LAND=off` starts none anywhere.
 

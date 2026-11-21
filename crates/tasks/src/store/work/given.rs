@@ -1,4 +1,4 @@
-//! The orchestrator role the board gives, so every open task has an orchestrator (docs/TASKS.md,
+//! The orchestrator role the board gives, so every open task has an orchestrator (docs/workflow/TASKS.md,
 //! "Every open task has an orchestrator"): to a task filed with none ([`Store::give_filed`]), to
 //! the work a leave would leave with none (`Store::leave`), to a task moved out from under its
 //! orchestrator's task, to that one ([`Store::kept_at_move`]), or reopened with none

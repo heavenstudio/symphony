@@ -1,5 +1,5 @@
 //! `symphony-github verify --request FILE`: what answers a release run that verifies its commit
-//! on GitHub's machines (`[releases] hosted = ["symphony-github", "verify"]`, docs/RELEASES.md,
+//! on GitHub's machines (`[releases] hosted = ["symphony-github", "verify"]`, docs/workflow/RELEASES.md,
 //! "On GitHub's runners"), one JSON object read and one printed. It serves only `enabled` settings
 //! whose `verification` is `hosted`, to the repository the state is bound to by its number.
 //!

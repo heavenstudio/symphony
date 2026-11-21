@@ -1,4 +1,4 @@
-//! The schedule entry `--schedule` prints, which the owner installs (docs/RELEASES.md): on macOS a
+//! The schedule entry `--schedule` prints, which the owner installs (docs/workflow/RELEASES.md): on macOS a
 //! launchd agent that runs the release run once a day at a set time (later, on waking, when the Mac
 //! slept through it), elsewhere a crontab line. Either makes the log's folder, then runs `just
 //! release` in the checkout with the `PATH` of the shell that printed it, appending what it prints
@@ -64,7 +64,7 @@ pub(crate) fn entry(
     if !macos {
         // cron reads an unescaped `%` as a new line.
         return format!(
-            "# The Symphony release run (docs/RELEASES.md); install with `crontab -e`.\n\
+            "# The Symphony release run (docs/workflow/RELEASES.md); install with `crontab -e`.\n\
              {minute} {hour} * * * {}\n",
             program(root, log, Some(path)).replace('%', "\\%")
         );
@@ -73,7 +73,7 @@ pub(crate) fn entry(
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- The Symphony release run (docs/RELEASES.md). Install: save this as {plist}, then
+<!-- The Symphony release run (docs/workflow/RELEASES.md). Install: save this as {plist}, then
      launchctl bootstrap gui/$(id -u) {plist}
      Remove: launchctl bootout gui/$(id -u)/{label} -->
 <plist version="1.0">

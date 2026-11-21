@@ -72,8 +72,8 @@ fn each_own_recipe_the_text_names_is_one_of_this_repositorys_and_a_filed_one_is_
         "one of a defaulted argument"
     );
     assert!(rule.installed.contains(&"tasks") && rule.installed.contains(&"land"));
-    let Standing::Entry(at) = rule.standing("docs/CHECKS.md", "check-fast") else {
-        panic!("docs/CHECKS.md names `just check-fast` as filed: {rule:?}");
+    let Standing::Entry(at) = rule.standing("docs/workflow/CHECKS.md", "check-fast") else {
+        panic!("docs/workflow/CHECKS.md names `just check-fast` as filed: {rule:?}");
     };
     assert_eq!(rule.entries[at].task, Some("tools/check-fast"));
 }

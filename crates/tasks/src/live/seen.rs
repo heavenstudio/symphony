@@ -10,7 +10,7 @@
 //! as their project's, `tasks migrate` before it asks where it runs ([`checked`]), the stores that
 //! take its tables as they are ([`checked`], and the heartbeat's [`past_guard`]) and
 //! `tasks-reclaim` ([`went_back_in`]); the Symphony's pages say it on the board's health
-//! ([`Rollback::line_in`]). docs/TASKS.md names each. A board not made yet reads
+//! ([`Rollback::line_in`]). docs/workflow/TASKS.md names each. A board not made yet reads
 //! as below any schema: a store that lost the whole board went back too. Otherwise the store adds
 //! the version it found to the record when it is higher, and the one it migrated to ([`record`]).
 //!
@@ -36,7 +36,7 @@ pub const FILE: &str = "schema-seen.log";
 
 /// Where the recovery of a board that went back is described, and how the owner accepts an older
 /// board: the Symphony's guide to the board, whichever project's board it is.
-pub const RECOVERY: &str = "the Symphony's docs/TASKS.md#a-board-that-went-back";
+pub const RECOVERY: &str = "the Symphony's docs/workflow/TASKS.md#a-board-that-went-back";
 
 /// What a rollback's words begin with after the board's name, which [`Rollback::line_in`] finds.
 const WENT_BACK: &str = " board went back from schema ";
@@ -608,13 +608,13 @@ mod tests {
                  migrate: nothing was read or written. Do not run `just tasks migrate`: it would \
                  write on top of the older state. How to recover the store, and how the owner \
                  accepts an older board they meant, is in the Symphony's \
-                 docs/TASKS.md#a-board-that-went-back",
+                 docs/workflow/TASKS.md#a-board-that-went-back",
                 crate::sys::local_minute(T0)
             )
         );
         let line = "it went back from schema 16 to 13, so what was written since is lost: nothing \
                     was written; do not run `just tasks migrate`; the Symphony's \
-                    docs/TASKS.md#a-board-that-went-back says how to recover it";
+                    docs/workflow/TASKS.md#a-board-that-went-back says how to recover it";
         assert_eq!(Rollback::line_in(&refusal).as_deref(), Some(line));
         // However it is wrapped on the way to the page.
         assert_eq!(
@@ -637,7 +637,7 @@ mod tests {
             Some(
                 "it went back from schema 16 to no board at all, so what was written since is \
                  lost: nothing was written; do not run `just tasks migrate`; the Symphony's \
-                 docs/TASKS.md#a-board-that-went-back says how to recover it"
+                 docs/workflow/TASKS.md#a-board-that-went-back says how to recover it"
             )
         );
         for other in [

@@ -1,4 +1,4 @@
-//! A task page drawn from this device's cache on a return visit (docs/analysis/client-cache.md,
+//! A task page drawn from this device's cache on a return visit (docs/engineering/analysis/client-cache.md,
 //! "A return visit, step by step"; apps/symphony-web/src/task-live.ts). With the server's reads held back, the page
 //! draws the task's brief and its thread's newest messages before any answer, marked as possibly
 //! out of date, its actions waiting and its draft editable. Once the board's version is read it

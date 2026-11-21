@@ -1,4 +1,4 @@
-//! The release's verification on GitHub's machines (docs/RELEASES.md, "On GitHub's runners"):
+//! The release's verification on GitHub's machines (docs/workflow/RELEASES.md, "On GitHub's runners"):
 //! asked of the command `[releases] hosted` names, the GitHub adapter's `symphony-github verify`,
 //! and of nothing while the project names none. No package here builds with the adapter: it is run
 //! as a program, `COMMAND… --request FILE`, in the main checkout, and answers one line of JSON.
@@ -20,7 +20,7 @@
 //! run verifies here as a project without the adapter does. The run's time ending while the
 //! adapter waits is a check stopped at the run's time, as any is.
 //!
-//! A run the hosted clock started (docs/RELEASES.md, "The cadence") is the one run that verifies
+//! A run the hosted clock started (docs/workflow/RELEASES.md, "The cadence") is the one run that verifies
 //! nothing here: what GitHub does not judge of it is judged by no one ([`Hosted::nowhere`]), and
 //! the run ends [`UNJUDGED`], a result that is no red, files nothing and is asked for again once
 //! the clock's interval has passed.

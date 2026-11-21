@@ -5,7 +5,7 @@
 //! A check inherits the run's environment, so its recorder reaches the fixture's scratch board (its
 //! `TASKS_SERVER` and a database of the test's own, never the live board's `tasks`) and takes the
 //! scale of its waits named here ([`SCALE`]), and the script waits long for its recorder's probe
-//! ([`PROBE_WAIT`]): a loaded machine never leaves a check unrecorded (docs/MACHINE_WORK.md, "A
+//! ([`PROBE_WAIT`]): a loaded machine never leaves a check unrecorded (docs/workflow/MACHINE_WORK.md, "A
 //! test's waits"). A recorder grown slow is the board's tests' to turn red.
 //!
 //! A recorder writes its record from a process of its own, after its check ended, for as long as

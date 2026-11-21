@@ -1,5 +1,5 @@
 //! The execution providers a host binary links, installed beside its plugins
-//! ([`docs/EXECUTION_ATTEMPTS.md`](../../../docs/EXECUTION_ATTEMPTS.md#on-a-tasks-page)): each the
+//! ([`docs/engineering/EXECUTION_ATTEMPTS.md`](../../../docs/engineering/EXECUTION_ATTEMPTS.md#on-a-tasks-page)): each the
 //! adapter a project supplies for one provider configuration, with what it can do and the capacity
 //! its attempts share. The server resumes an attempt and resolves a view of its resource only
 //! through the provider its configuration names; a cancel or a stop it records for whichever

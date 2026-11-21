@@ -1,5 +1,5 @@
 //! A task's execution attempts on its page, in the real client, wide and on a phone
-//! (docs/EXECUTION_ATTEMPTS.md, "On a task's page"). A task with attempts draws its history, newest
+//! (docs/engineering/EXECUTION_ATTEMPTS.md, "On a task's page"). A task with attempts draws its history, newest
 //! first, from its own read; a control waits on its confirmation, then posts the attempt's revision
 //! as read and draws the history it answers; a view's address goes to the window the click opened
 //! alone, never into the page or the device; and a task with none loads none of the attempts'

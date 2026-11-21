@@ -1,4 +1,4 @@
-//! `tasks land` delivered by a hosted pull request (`[land] delivery`, docs/TASKS.md "A land
+//! `tasks land` delivered by a hosted pull request (`[land] delivery`, docs/workflow/TASKS.md "A land
 //! delivered by a pull request"), in scratch repositories on a board of their own, the host a
 //! bare repository this file merges in as a host would: what it asks of its transport and in what
 //! order, what refuses before anything is asked, what a lost answer, a wrong commit and a main

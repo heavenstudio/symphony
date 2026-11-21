@@ -1,4 +1,4 @@
-//! Going to an agent's session in its pane (docs/TASKS.md, "Going to a session"). On the machine
+//! Going to an agent's session in its pane (docs/workflow/TASKS.md, "Going to a session"). On the machine
 //! the panes run on, the Herdr app shows the pane and is brought forward: `herdr-app do agent.focus
 //! --terminal T` names the terminal alone, and the app finds the space, tab and pane that hold it
 //! (`pane.focus --terminal T`, the same for a terminal that runs no agent); the app has no URL

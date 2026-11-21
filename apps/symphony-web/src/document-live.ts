@@ -4,7 +4,7 @@
 // at once (`fromDevice`), marked as possibly out of date, then reads the outline naming its copy's
 // tag. A `304` confirms it, at the feed's cursor its header names, and the outline's validators
 // tell which bodies are still current, so only the others are read again
-// (docs/analysis/client-cache.md, "A return visit, step by step"). The page then follows the
+// (docs/engineering/analysis/client-cache.md, "A return visit, step by step"). The page then follows the
 // document's feed, and reads the bodies of the sections that come near the screen.
 //
 // What a page holds is a model (`DocumentLive`, `FolderLive`) its loops change and its component

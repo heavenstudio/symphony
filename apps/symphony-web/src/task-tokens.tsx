@@ -1,6 +1,6 @@
 // The task kind's tokens: what the task's model calls took, its subtasks' with them, and what
 // they cost, estimated at API list prices, all told, by role and by review round, as `tasks show`
-// says them (docs/TASKS.md, "Where the tokens go"). A chunk of its own, which the task page's
+// says them (docs/workflow/TASKS.md, "Where the tokens go"). A chunk of its own, which the task page's
 // disclosure imports as the reader first opens it (`TokensPart`, task-page.tsx), so no first visit
 // carries it. Their part is the page's (task-live.ts's `tokensPart`), asked as the disclosure opens
 // and again when the task changes, never at each heartbeat that adds to it: this chunk imports

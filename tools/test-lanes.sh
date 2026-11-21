@@ -3,7 +3,7 @@
 # and scheduler over the workspace, with Cargo only for doctests and the suites whose process-wide
 # fixture must stay shared.
 # Named LANEs run alone (`build`, `fixture`, `nextest`, a shared target, `libraries`, `doc`), as a
-# release candidate's rerun asks for the lanes whose inputs a fix changed (docs/RELEASES.md, "The
+# release candidate's rerun asks for the lanes whose inputs a fix changed (docs/workflow/RELEASES.md, "The
 # rerun"); the one build and the client are made whatever the lanes. Each lane that ran is listed
 # in lanes.tsv beside the logs as it is told: its name, exit status and seconds, tab-separated, and
 # a run that got through every lane it was asked for says so on its last line.
@@ -17,7 +17,7 @@
 # own timeouts; a doctest or an ignored test (the runner fixture) by Cargo as its lane runs it, over
 # the same build and feature graph; a lane's own line, or a shared-fixture target whole, as that
 # lane alone, its logs in LANES/alone. It exits as the rerun did: 0 when the failure passed alone.
-# The release run reruns its tests' failures so (docs/RELEASES.md, "The release run", step 5).
+# The release run reruns its tests' failures so (docs/workflow/RELEASES.md, "The release run", step 5).
 # The client's build test runs before scheduling because it writes the build folder. Browser
 # tests receive one published client, and tests receive the build's tasks and other binaries.
 # Every concurrent batch keeps a live log in SYMPHONY_TEST_LANE_LOGS (else build/test-lanes).

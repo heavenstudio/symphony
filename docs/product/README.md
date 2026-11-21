@@ -50,8 +50,25 @@ and stops the server it started.
   Chrome update can redraw every picture with no page changed, and the whole set is then retaken
   and committed once.
 - **A task that changes how a page looks retakes its pictures** and commits them with the change:
-  they are the after pictures its evidence shows ([CHECKS](../CHECKS.md#evidence-by-kind-of-change)).
+  they are the after pictures its evidence shows ([CHECKS](../workflow/CHECKS.md#evidence-by-kind-of-change)).
 - **They are committed beside the specs**, so a clone and GitHub show them. A wide picture is
   about 0.1 MB and a phone picture, at three pixels to the point, about 0.3 MB.
 - **A page that shows the time of day or an age** (the home page's greeting, "waiting 39 d") is
   not pictured until its picture can be taken at a fixed time, as it would differ every day.
+
+## Analysis
+
+An analysis holds a proposal and its evidence: an approved design can still await implementation, and its approval alone does not make it current behavior.
+
+- [The agents page, orchestrator-first](analysis/agents-page.md) — three layouts of an Agents page
+  that opens on the orchestrators.
+- [The board at a glance](analysis/board-design.md) — what a board says before anything is opened:
+  what is stuck, on whom it waits and for how long.
+- [Owner asks](analysis/owner-asks.md) — what becomes of what the owner says that waits on an
+  agent's answer.
+- [Reports and monitoring](analysis/reports-and-monitoring.md) — what a project's runs, task pages
+  and reports would show, and where each figure comes from.
+- [Desktop client analysis](analysis/desktop-client.md) — the design and evidence behind the Mac
+  app.
+- [Product documentation review, November 2026](analysis/product-docs-review-2026-11.md) — what a
+  person using the Symphony can read about it, and the form of a spec.

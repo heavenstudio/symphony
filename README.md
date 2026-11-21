@@ -17,22 +17,22 @@ at once.
   question, its options, a recommendation, pictures where the thing is visual. The queue lists
   every card waiting on you, oldest first across the topics; you approve, reject or comment, and
   the verdict is a dated line under the card in the document itself
-  ([the queue](docs/product/QUEUE.md), [review](docs/REVIEW.md)).
+  ([the queue](docs/product/QUEUE.md), [review](docs/workflow/REVIEW.md)).
 - **Documents.** The project's Markdown is served as pages you can comment on block by block,
   with their pictures, HTML mockups, versions and diffs. A branch's documents show what they
   change against main.
 - **A task board.** Agents file tasks with a brief, claim them, post evidence, review one another
   and land approved branches with one command. The board shows who holds what, what is stuck and
   on whom, and each task's page shows its gates, its timeline and its thread
-  ([the board](docs/TASKS.md)).
+  ([the board](docs/workflow/TASKS.md)).
 - **Agents and their sessions.** Who is connected, on which task and branch, whether each is alive,
   and a link into its terminal. What you say on a card or a task reaches the agent that holds it.
 - **Runs and reports.** Every build, test and check an agent runs is recorded, and the reports
   show how work flows: tasks done, lead time, where the hours go
-  ([runs](docs/RUNS.md), [machine work](docs/MACHINE_WORK.md)).
+  ([runs](docs/workflow/RUNS.md), [machine work](docs/workflow/MACHINE_WORK.md)).
 - **Plugins and themes.** A project adds its own card kinds, pages and actions as a plugin, and
-  its own look as a theme ([the project file](docs/PROJECT_FILE.md),
-  [the plugin protocol](docs/PLUGIN_PROTOCOL.md)).
+  its own look as a theme ([the project file](docs/operations/PROJECT_FILE.md),
+  [the plugin protocol](docs/engineering/PLUGIN_PROTOCOL.md)).
 - **One server, many projects.** Each registered project is served under its own address with its
   own documents, board and theme; the front page lists them with what waits on you in each.
 
@@ -63,7 +63,7 @@ their published packages from crates.io:
 cargo install --locked --config profile.release.strip=true --config profile.release.codegen-units=1 symphony-app symphony-board symphony-server
 ```
 
-Each answers `--version`. [RELEASES](docs/RELEASES.md#packages-on-cratesio) lists the packages,
+Each answers `--version`. [RELEASES](docs/workflow/RELEASES.md#packages-on-cratesio) lists the packages,
 versions and installation settings. To build them from source, clone this repository and run:
 
 ```sh
@@ -76,7 +76,7 @@ A source build leaves them in `.target/release/`: put that folder on `PATH`, or 
 In the project's main checkout, a git repository, run `symphony init`. It installs the agents'
 skills, the recipes (`symphony.just`, which the project's justfile imports), the allow rules and
 the hooks, and ends with `Next:`, what it cannot do for you: the project file (its tables and keys
-are in [PROJECT_FILE](docs/PROJECT_FILE.md)), the documents' folder, the links to the builds, the
+are in [PROJECT_FILE](docs/operations/PROJECT_FILE.md)), the documents' folder, the links to the builds, the
 SurrealDB the board runs, the board's making (its first board command, `just tasks list`, makes
 it: the Symphony only reads a board) and the project's registration with the machine's server. Do
 each, then
@@ -103,7 +103,7 @@ once the evidence it writes there as checks allows it. It is not among the packa
 is built from this repository, and delivery needs one GitHub App installed on the repository,
 with no administration, and one ruleset on its default branch, verified by someone who administers
 the repository.
-[Setting up GitHub](docs/GITHUB_SETUP.md) gives every step in order and how to check it works.
+[Setting up GitHub](docs/operations/GITHUB_SETUP.md) gives every step in order and how to check it works.
 
 ## As a library
 
@@ -111,7 +111,7 @@ A project with plugins of its own takes Symphony's versioned libraries from crat
 this repository by Git at a release tag with the selected revision in its Cargo lockfile. Take
 the related packages from one source together; its host supplies its plugins and its own
 verification, approval and landing policy
-([the plugin protocol](docs/PLUGIN_PROTOCOL.md), [releases](docs/RELEASES.md)).
+([the plugin protocol](docs/engineering/PLUGIN_PROTOCOL.md), [releases](docs/workflow/RELEASES.md)).
 
 ## Working on Symphony
 
@@ -129,7 +129,7 @@ export PATH="$(brew --prefix postgresql@18)/bin:$PATH"
 
 An explicit `[board] postgresql` absolute folder in `symphony.toml` overrides discovery. All
 tools come from that one installation; missing tools or an older server fail with setup guidance
-([the project setting](docs/PROJECT_FILE.md#board)). Tests start only their own scratch servers.
+([the project setting](docs/operations/PROJECT_FILE.md#board)). Tests start only their own scratch servers.
 
 ## License
 

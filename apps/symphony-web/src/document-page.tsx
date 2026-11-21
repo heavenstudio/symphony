@@ -931,7 +931,7 @@ export const SANDBOX = "allow-scripts";
  * app's page, under the app's header: its path, as a document's head shows it, over its frame, as
  * wide as the page and as tall as the window below the header, scrolling inside itself. None of the
  * Markdown view's features: no outline, cards, notes, asks, editing, versions, device cache or
- * feed (docs/PROJECT_FILE.md, "HTML documents"). The frame loads the file's own address, the route
+ * feed (docs/operations/PROJECT_FILE.md, "HTML documents"). The frame loads the file's own address, the route
  * with the file's query (`fileAddress`), which the server answers with the file itself under a
  * policy that keeps it to its entrypoint's files and opens no connection
  * (`apps/symphony-server/src/media_files.rs`, `html_document`).

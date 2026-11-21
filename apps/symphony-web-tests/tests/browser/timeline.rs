@@ -1282,7 +1282,7 @@ fn an_answer_for_a_task_the_page_left_never_draws_one_tasks_timeline_in_anothers
 }
 
 /// The pictures a review of the timeline reads beside the approved ones
-/// (docs/analysis/reports-timeline-*.svg): `symphony shot`, the workspace's build run as an agent
+/// (docs/product/analysis/reports-timeline-*.svg): `symphony shot`, the workspace's build run as an agent
 /// runs it, of the pictures' task and of a week-long task of fifty steps on its page from the
 /// stand-in server, at a phone's width and wide, light and dark, and of a phone off its network
 /// failing to read it, into the folder `SYMPHONY_TIMELINE_SHOTS` names. Without it the case takes

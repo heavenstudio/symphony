@@ -3,7 +3,7 @@
 //! limits, its exit status its caller's; and recorded in the work folder ([`recorded`]) while it
 //! runs: queued, running once it started, said again every [`BEAT`] while it runs, then kept in the
 //! history and finished with how it ended. A build or test it records puts the task it ran for in
-//! the board's Build or Test column (docs/MACHINE_WORK.md). A build wrapper runs it by the board's
+//! the board's Build or Test column (docs/workflow/MACHINE_WORK.md). A build wrapper runs it by the board's
 //! binary (`tools/record.sh`, a review callback, the release run): the `tasks` recipe `symphony init`
 //! installs refuses it, as an agent runs `just tasks` unasked and this runs any command.
 //!
@@ -60,7 +60,7 @@
 //! before it hands a build to a `tasks` that may be older than this command.
 //!
 //! An operation is also a run, or a step of one, which the day files keep a line of
-//! ([`crate::runs`], docs/RUNS.md): a step when `--step` names it and it runs inside a run or a step
+//! ([`crate::runs`], docs/workflow/RUNS.md): a step when `--step` names it and it runs inside a run or a step
 //! ([`recorded::PIPELINE_VAR`] names that one's pipeline); a run when `--pipeline` names one and it
 //! runs inside no recorded command; neither otherwise.
 //! Its line says what started it ([`recorded::TRIGGER_VAR`], else its session, else the owner), the
@@ -143,7 +143,7 @@ pub fn help() -> String {
     let versions: Vec<String> = PROBE.lines().map(|line| format!("`{line}`")).collect();
     format!(
         "{USAGE}\nRun COMMAND as it would run alone, its exit status yours, and record it for the\n\
-         board's Build or Test column while it runs (docs/MACHINE_WORK.md). The task is\n\
+         board's Build or Test column while it runs (docs/workflow/MACHINE_WORK.md). The task is\n\
          --task, else $TASKS_TASK, else the one task the session holds. Run it by the\n\
          board's binary (.target/bin/tasks run), as a build wrapper does: `just tasks`,\n\
          which an agent runs unasked, refuses it, since it runs any command.\n\n\
@@ -153,7 +153,7 @@ pub fn help() -> String {
          --label TEXT     how the column names it (default: the command's words)\n  \
          --task SLUG      the task it runs for\n  \
          --as HANDLE      the session it runs for (default: $TASKS_SESSION)\n  \
-         --pipeline NAME  a run of this pipeline, when no recorded command runs it (docs/RUNS.md)\n  \
+         --pipeline NAME  a run of this pipeline, when no recorded command runs it (docs/workflow/RUNS.md)\n  \
          --step NAME      a step of the run that runs it, by this name\n  \
          --commit SHA     the full commit id it checks, when not its checkout's\n  \
          --branch NAME    that commit's branch\n  \

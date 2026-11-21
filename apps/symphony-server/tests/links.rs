@@ -4,7 +4,7 @@
 //! loopback that measures a compiled plugin's calls through the protocol's JSON
 //! (`symphony::plugins::measure`); and on macOS it exports no symbol, as no other code loads it.
 //! The size each would add is the binary's budget's to hold
-//! (docs/CHECKS.md, "Size budgets"). The shelf's server, which installs a plugin, links the
+//! (docs/workflow/CHECKS.md, "Size budgets"). The shelf's server, which installs a plugin, links the
 //! loopback, and so shows what the test looks for is there to find.
 
 use symphony::plugins::measure::READ_AS_ANOTHER;

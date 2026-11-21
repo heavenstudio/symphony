@@ -350,7 +350,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         "claim" => {
             let (slug, actor) = (c.arg("slug"), c.actor()?);
             // A task a custom workflow holds is claimed through its one edge that gives the
-            // executor's role, at the revision read now (docs/WORKFLOW.md, "Operations").
+            // executor's role, at the revision read now (docs/workflow/WORKFLOW.md, "Operations").
             if crate::store::workflow::position_held(&store.get(&slug)?.fields) {
                 let principal = crate::workflow::agent_session(&actor);
                 let host = crate::workflow::Host::local();

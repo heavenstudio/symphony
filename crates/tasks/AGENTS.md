@@ -6,7 +6,7 @@ server it starts in `symphony/tasks/` in the git common dir, and the binaries `t
 the Cargo wrapper and the toolchain pin are [the root guide's](../../AGENTS.md#rust).
 
 This guide is what to know before changing the crate: where each job lives, the invariants a change
-keeps, and how to test against a scratch board. What the board does is [TASKS](../../docs/TASKS.md);
+keeps, and how to test against a scratch board. What the board does is [TASKS](../../docs/workflow/TASKS.md);
 how a module does it is that module's own doc. A behaviour a change makes is said in the TASKS
 section that owns it or in its module's doc, not here: this guide changes when a job moves or an
 invariant does.
@@ -26,14 +26,14 @@ board's first, Python, command line did). Every build of `tasks`, this crate's a
 project's board-only one, is `cli::process_main` and nothing else: a `main` of its own that calls
 `cli::main` delivers in every write and starts no dispatcher (`tests/server/dispatch.rs`).
 `bin/agent-send.rs` is `cli/agent_send.rs`; `bin/tasks-copy.rs` and `bin/tasks-reclaim.rs` say their
-own, and `bin/tasks-move.rs` is `move_cli.rs`: a program apart, so `tasks` links no move. `cli/api.rs` is `tasks api` ([TASKS](../../docs/TASKS.md#the-tasks-api)), `cli/agents.rs` the
-agents API ([TASKS](../../docs/TASKS.md#the-agents-api)), `cli/beat.rs` the heartbeat hook,
+own, and `bin/tasks-move.rs` is `move_cli.rs`: a program apart, so `tasks` links no move. `cli/api.rs` is `tasks api` ([TASKS](../../docs/workflow/TASKS.md#the-tasks-api)), `cli/agents.rs` the
+agents API ([TASKS](../../docs/workflow/TASKS.md#the-agents-api)), `cli/beat.rs` the heartbeat hook,
 `usage.rs` and `usage/transcript.rs` what its beats read of the session's own transcript, kept
 beside the bound keys and never in the database
-([TASKS](../../docs/TASKS.md#where-the-tokens-go)), `usage/price.rs` what those tokens cost at the
+([TASKS](../../docs/workflow/TASKS.md#where-the-tokens-go)), `usage/price.rs` what those tokens cost at the
 price table `usage/prices.toml` every build embeds, whose edit
 `just test-rs -p symphony-board --lib usage::price` reads as the builds do
-([TASKS](../../docs/TASKS.md#what-the-tokens-cost)),
+([TASKS](../../docs/workflow/TASKS.md#what-the-tokens-cost)),
 `cli/attach/` the monitor, `cli/pull.rs` the PULL digest, `cli/commands/wait.rs` `tasks wait`,
 `cli/detached.rs` the detached dispatcher a write starts, and `cli/database.rs`, `cli/snapshot.rs`,
 `cli/schema.rs` and `cli/migrate.rs` the commands of the same names. `--json` prints `serde_json::Value`, its records' fields in `cli/shape.rs`, from `rows.rs`.
@@ -41,16 +41,16 @@ price table `usage/prices.toml` every build embeds, whose edit
 ### The recorder and the runs
 
 `cli/recorder.rs` is the recorder, `tasks run`, which `tools/record.sh` runs
-([MACHINE_WORK](../../docs/MACHINE_WORK.md#recording-builds-and-tests)); `runs.rs`, `runs/` and
-`run_logs.rs` the runs' day files, roll-up and logs ([RUNS](../../docs/RUNS.md)); `recording.rs`
+([MACHINE_WORK](../../docs/workflow/MACHINE_WORK.md#recording-builds-and-tests)); `runs.rs`, `runs/` and
+`run_logs.rs` the runs' day files, roll-up and logs ([RUNS](../../docs/workflow/RUNS.md)); `recording.rs`
 when a server generation's recorders record; `cli/machine_work.rs` and `cli/machine_work/` the build
-and test work the agents view reports ([MACHINE_WORK](../../docs/MACHINE_WORK.md)).
+and test work the agents view reports ([MACHINE_WORK](../../docs/workflow/MACHINE_WORK.md)).
 
 ### The store, its schema and its client
 
 `store/` is `Store`: `work/` the task writes (making, moving, roles, needs, red marks, the
 orchestrator the board gives, covered closes), `messages.rs` threads, inboxes and keyed posts,
-`asks.rs` the owner's asks ([TASKS](../../docs/TASKS.md#asks)), `sessions.rs` sessions and beats,
+`asks.rs` the owner's asks ([TASKS](../../docs/workflow/TASKS.md#asks)), `sessions.rs` sessions and beats,
 `spending.rs` the tokens a beat adds to the `usage` table in its own transaction
 (`Store::agent_beat_spending`; `agent_beat_in` and `Beat` stay as consumers call them),
 `launches.rs` launch records and the session hold, `cap.rs` the slot cap's reads, `history.rs` the
@@ -61,10 +61,10 @@ of its answers, which reads each struct from an object alone (the crate's `objec
 reader of the JSON the board holds as a value and of the text it drops when it cannot read it; a
 read whose refusal a caller is shown stays `serde_json`'s), `writers.rs` the line each program that opens a board to write
 keeps, which `tasks migrate` reads before it moves one
-([TASKS](../../docs/TASKS.md#who-writes-a-board)), `recovery.rs` the recovery generation, the
+([TASKS](../../docs/workflow/TASKS.md#who-writes-a-board)), `recovery.rs` the recovery generation, the
 token and the writes bound to it and the authority a store is handed, with `server/recovery.rs`
 the board home's file of it and `cli/recovery.rs` `tasks recovery`
-([TASKS](../../docs/TASKS.md#a-board-that-was-copied-or-restored)). `lib.rs`'s doc states
+([TASKS](../../docs/workflow/TASKS.md#a-board-that-was-copied-or-restored)). `lib.rs`'s doc states
 the rule of every write. `store/surreal/` is every statement the store sends, a module beside each
 store module, `store/postgres/` its PostgreSQL twin of each one written so far and the board's
 tables there, `store/statement.rs` the pair a call names, `store/database.rs` the database a board
@@ -85,7 +85,7 @@ the live board as the main checkout's build, of what that checkout holds, commit
 target folder; its comments and `tests/launcher.rs` say which runs count as the live board's.
 A reach whose project's folder or repository is gone never walks up to the board above it, and no
 start makes a board's folders at or above its common dir again (`project::held`, `Home::make`;
-[TASKS](../../docs/TASKS.md#board-health)).
+[TASKS](../../docs/workflow/TASKS.md#board-health)).
 
 ### Callbacks, delivery and PULL
 
@@ -98,7 +98,7 @@ listener identity, `store/codex_delivery.rs` and `codex_queue.rs` Codex's queue.
 is the board snapshot a store caches with the board's marker. `cli/attach/events.rs` makes the event
 lines, `cli/attach/panes.rs` the pane watch. `store/unanswered.rs` is the one definition of an
 unanswered post (PULL, recovery and the reap read it). Who hears what:
-[TASKS](../../docs/TASKS.md#sessions).
+[TASKS](../../docs/workflow/TASKS.md#sessions).
 
 ### Terminals and staffing
 
@@ -118,26 +118,26 @@ holder (`holder.rs`), the proof of a head a pull request squashed (`delivered.rs
 sweeps work finishing starts (`trigger.rs`). The lsof scan is the leaf `crates/process-cwd/`.
 `on_review.rs` and `on_land.rs` start `[board] on_review` and `[board] on_land`;
 `cli/commands/finish.rs` is what follows a move. `land.rs` and `land/` are
-`tasks land`, the default landing ([TASKS](../../docs/TASKS.md#the-default-landing)): `needs.rs`
+`tasks land`, the default landing ([TASKS](../../docs/workflow/TASKS.md#the-default-landing)): `needs.rs`
 what it requires, `check_paths.rs` which tests and checks a branch changes, `moving.rs` how it moves
-the main checkout, `regenerate.rs` the regenerator ([TASKS](../../docs/TASKS.md#the-regenerator)).
+the main checkout, `regenerate.rs` the regenerator ([TASKS](../../docs/workflow/TASKS.md#the-regenerator)).
 `adapter.rs` is the land of a task a custom workflow holds, the adapter `default_land` on the
 workflow's external-effect boundary (`workflow/effect.rs` its vocabulary and decisions,
-`store/admission/effects.rs` its three writes, [WORKFLOW](../../docs/WORKFLOW.md#external-effects)).
+`store/admission/effects.rs` its three writes, [WORKFLOW](../../docs/workflow/WORKFLOW.md#external-effects)).
 `delivery.rs` is a land delivered by a hosted pull request and `evidence.rs` the one reading of a
 task's evidence it and `tasks api` go by
-([TASKS](../../docs/TASKS.md#a-land-delivered-by-a-pull-request)).
+([TASKS](../../docs/workflow/TASKS.md#a-land-delivered-by-a-pull-request)).
 `covering.rs` with `store/work/covered.rs` is a close covered by another landing
-([TASKS](../../docs/TASKS.md#a-task-another-landing-covers)). `stamps.rs` and `stamps/read.rs` are
+([TASKS](../../docs/workflow/TASKS.md#a-task-another-landing-covers)). `stamps.rs` and `stamps/read.rs` are
 the stamps' catalogue and readers, `stamps/posted.rs` the cards a branch posted that the `owner`
-stamp's reader reads ([TASKS](../../docs/TASKS.md#needed-stamps)), `gates.rs` with
+stamp's reader reads ([TASKS](../../docs/workflow/TASKS.md#needed-stamps)), `gates.rs` with
 `store/work/gates.rs` and `cli/commands/gate.rs` a task's gate decisions, which `land/needs.rs`
-reads ([TASKS](../../docs/TASKS.md#gate-decisions)), `red.rs` the red mark.
+reads ([TASKS](../../docs/workflow/TASKS.md#gate-decisions)), `red.rs` the red mark.
 
 ### Execution attempts
 
 `execution.rs` and `execution/` are the attempts a project's execution provider runs
-([EXECUTION_ATTEMPTS](../../docs/EXECUTION_ATTEMPTS.md)): `coordinator.rs` admission, controls and
+([EXECUTION_ATTEMPTS](../../docs/engineering/EXECUTION_ATTEMPTS.md)): `coordinator.rs` admission, controls and
 the worker's step, `rules.rs` the transitions it decides on what a write read, `evidence.rs`
 collection, cleanup and eligibility, `record.rs` the row and its facts, `keys.rs` the ids and
 operation keys, `reader.rs` the reads that need no provider, `view.rs` the board scope
@@ -147,16 +147,16 @@ store.
 ### The rules of work
 
 `slots.rs` with `store/cap.rs` is the cap on an orchestrator's open work
-([TASKS](../../docs/TASKS.md#slots)); `orchestration.rs` with `store/work/given.rs` one orchestrator
+([TASKS](../../docs/workflow/TASKS.md#slots)); `orchestration.rs` with `store/work/given.rs` one orchestrator
 per task, and the limit on the open tasks one holds
-([TASKS](../../docs/TASKS.md#the-limit-on-the-tasks-an-orchestrator-holds)); `limits.rs` the project's `[limits]` and the alarm's thresholds, read again when the file
-changes ([TASKS](../../docs/TASKS.md#limits-and-models)); `local.rs` the one reader of the local settings
+([TASKS](../../docs/workflow/TASKS.md#the-limit-on-the-tasks-an-orchestrator-holds)); `limits.rs` the project's `[limits]` and the alarm's thresholds, read again when the file
+changes ([TASKS](../../docs/workflow/TASKS.md#limits-and-models)); `local.rs` the one reader of the local settings
 file over them and over a launch's agent and models
-([PROJECT_FILE](../../docs/PROJECT_FILE.md#the-local-settings-file)); `alarm.rs` and `alarm/` the pipeline
-alarm, `cli/pull/pipeline.rs` as PULL says it ([TASKS](../../docs/TASKS.md#the-pipeline-alarm));
+([PROJECT_FILE](../../docs/operations/PROJECT_FILE.md#the-local-settings-file)); `alarm.rs` and `alarm/` the pipeline
+alarm, `cli/pull/pipeline.rs` as PULL says it ([TASKS](../../docs/workflow/TASKS.md#the-pipeline-alarm));
 `store/work/moves.rs` a move that names where it goes from; `health.rs` a session's health, derived
 and never stored; `stages.rs` where a task's time went
-([TASKS](../../docs/TASKS.md#where-the-time-goes)), `arm.rs` the arm a task is filed on, which
+([TASKS](../../docs/workflow/TASKS.md#where-the-time-goes)), `arm.rs` the arm a task is filed on, which
 `stats` groups by; `reports.rs` the board's part of the day files.
 
 ### The database server
@@ -171,7 +171,7 @@ server selection, `export.rs` what a refresh reads of a running board, and
 the machine's own from `[board] postgresql` or discovered on `PATH`, which `Home` starts and stops
 for the board whose identity names it, on a socket under `/tmp` and no TCP;
 `postgres/lifecycle.rs` its hold, stopped-cluster snapshot, recovery into a scratch home or over
-its own board, and vacuum ([POSTGRESQL](../../docs/POSTGRESQL.md)). `moving.rs` moves a board's
+its own board, and vacuum ([POSTGRESQL](../../docs/operations/POSTGRESQL.md)). `moving.rs` moves a board's
 store between the engines and holds the journalled switch a restore over a board shares; a
 table added to the board is placed as copied, carried or left in `store/copy.rs`, whose test
 fails on one that is none, since a move would drop it. `port.rs` is a child
@@ -180,7 +180,7 @@ server's loopback port.
 `pg.rs` is the socket client of that PostgreSQL. `pg/external.rs` is the hosted board's settings,
 `[board.external_postgresql]`, which every build reads and judges, and `pg/hosted.rs` the hosted
 client, compiled only with the `hosted-postgresql` feature
-([a hosted board](../../docs/POSTGRESQL.md#a-hosted-board)): `hosted/secret.rs` reads the
+([a hosted board](../../docs/operations/POSTGRESQL.md#a-hosted-board)): `hosted/secret.rs` reads the
 references and judges the URL, `hosted/session.rs` is one verified connection and the one place
 a driver's or a server's error becomes a refusal, `hosted/pool.rs` the process's bounded pool.
 A change there keeps four things: no refusal carries a driver's or a server's own words (they
@@ -193,9 +193,9 @@ as they are. PostgreSQL 16 has an analyzer of its own (`store/postgres/schema/si
 proved on both by `tests/hosted/analyzer.rs`. The feature's tests are `just hosted-check`, which
 no `just test-rs` of the default build runs.
 `board_health.rs` is the query log and the hour the Symphony serves
-([TASKS](../../docs/TASKS.md#board-health)). The owner's side is TASKS's [stuck
-servers](../../docs/TASKS.md#stuck-servers) and [a board that went
-back](../../docs/TASKS.md#a-board-that-went-back).
+([TASKS](../../docs/workflow/TASKS.md#board-health)). The owner's side is TASKS's [stuck
+servers](../../docs/workflow/TASKS.md#stuck-servers) and [a board that went
+back](../../docs/workflow/TASKS.md#a-board-that-went-back).
 
 ### Search
 
@@ -230,7 +230,7 @@ Each is stated in full where it points.
 The live board is one database many builds open at once: main's, the shared server's, a consuming
 project's pinned one, every worktree's. Only a build the default branch says is its own moves it
 forward, a process Cargo runs is refused it before anything is read, and a board binary run from a
-linked worktree runs main's build there (`live.rs`; [TASKS](../../docs/TASKS.md#where-it-lives);
+linked worktree runs main's build there (`live.rs`; [TASKS](../../docs/workflow/TASKS.md#where-it-lives);
 `tests/cli/main_only.rs` holds every entry on a scratch repository). A new way into the board (a
 binary, a command, an API) goes through `cli::writable_board` and `Reached::opening`, so the rule
 and the rollback record (`live/seen.rs`) hold for it; `cli::board_client` is kept, with its
@@ -240,7 +240,7 @@ scratch board.
 
 ### The schema moves forward, and older builds keep reading
 
-The board is a contract ([CHECKS](../../docs/CHECKS.md#the-board-is-a-contract)): `schema::VERSION`
+The board is a contract ([CHECKS](../../docs/workflow/CHECKS.md#the-board-is-a-contract)): `schema::VERSION`
 counts breaking steps alone, and a step that only adds is an additive step on it
 (`schema::ADDED`, each with the tables it defines and why it is additive), which leaves the version
 as it is. A breaking step is a new version, migrated once, in one transaction, by main's build at
@@ -298,19 +298,19 @@ and a change keeps what it reads:
   one ahead whose `meta:schema` record lets it: a writer's, an unchecked store's, a copy's staging
   and a recovery's rebind are held to their own schema, and the last two, with the dump, to their
   own additive steps exactly (`store/transaction.rs`'s `Run`;
-  `tests/store/compatible_ahead.rs`, [CHECKS](../../docs/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)).
+  `tests/store/compatible_ahead.rs`, [CHECKS](../../docs/workflow/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)).
 
 ### Its contracts
 
-`tasks api` is a contract ([TASKS](../../docs/TASKS.md#the-tasks-api)): within a major a method, an
+`tasks api` is a contract ([TASKS](../../docs/workflow/TASKS.md#the-tasks-api)): within a major a method, an
 argument or an answer's field is added, never removed, renamed or changed in meaning, an argument
 added has a default, and each addition raises `MINOR`. `tests/cli/api/contract.rs` holds the calls a
 registered project's programs make; a call such a program starts making is added there. The names
-consumers call are held by `tests/consumer_api.rs` ([RELEASES](../../docs/RELEASES.md)), and one
+consumers call are held by `tests/consumer_api.rs` ([RELEASES](../../docs/workflow/RELEASES.md)), and one
 changes only with a consumer release plan (the crate's `clippy.toml` says why
 `avoid-breaking-exported-api` is off).
 
-For those Rust calls, the [two-release rule](../../docs/CHECKS.md#consumer-api-changes) keeps the
+For those Rust calls, the [two-release rule](../../docs/workflow/CHECKS.md#consumer-api-changes) keeps the
 working old item without `#[deprecated]` beside its replacement for a release. Removal is a
 separate later task with read-only consumer migration evidence and the compile list updated.
 That Rust compatibility rule is separate from the `tasks api` version contract above.
@@ -400,7 +400,7 @@ hang, and that call is the owner's. Every start, stop, hold, release and reclaim
 lock; a start outside a scratch place snapshots the store first, and one that replays keeps it on
 every board; a replay's server is never the board's. Never set
 `SURREAL_SURREALKV_ENABLE_VLOG=false`: a store with values in its log then cannot read them.
-(`server.rs` and `server/`; the owner's side in [TASKS](../../docs/TASKS.md#stuck-servers).)
+(`server.rs` and `server/`; the owner's side in [TASKS](../../docs/workflow/TASKS.md#stuck-servers).)
 
 ### A terminal closes only on information
 
@@ -430,7 +430,7 @@ accident, its checks being the gate. The approve that counts is one rule, `Held:
 `Store::verdict`, the land, the assessor's `needs` and staffing's reviewer pick share, and the land
 goes by the stamps through `land/needs.rs` over the readers of `stamps/read.rs`, which the task page
 draws too, never a copy. Its steps and their order are `land.rs`'s doc and
-[TASKS](../../docs/TASKS.md#the-default-landing).
+[TASKS](../../docs/workflow/TASKS.md#the-default-landing).
 
 ### Queries keep their indexes
 
@@ -445,7 +445,7 @@ reads that are one plain list of rows (`listed`, `list_of`) answer an item a row
 times its size, and keeps until its command ends. A thread, several threads, the task tree, an
 inbox's lines since its last look, the open asks and the list of every session
 (`sessions::sessions`) are still one value; a new read of a list that grows with the board is
-written as `Pg::Listed` ([the measurement](../../docs/analysis/board-store-baseline.md#postgresqls-memory-peak-measured-2026-11-18)).
+written as `Pg::Listed` ([the measurement](../../docs/operations/analysis/board-store-baseline.md#postgresqls-memory-peak-measured-2026-11-18)).
 
 ### Time in tests
 
@@ -456,7 +456,7 @@ alone, and these are seconds (`Env::seconds`): `TASKS_RECORDER_PROBE_WAIT`, `TAS
 short; every other test gives it a backstop. Where a test must act only after the product did
 something on a thread of its own, the product leaves a mark it reads only when set
 (`TASKS_RUN_END_MARK`). The rule is RULES.md `tests/no-test-fails-on-load`; the helpers
-`crates/test-time` ([CHECKS](../../docs/CHECKS.md#time-in-tests)).
+`crates/test-time` ([CHECKS](../../docs/workflow/CHECKS.md#time-in-tests)).
 
 ## Testing against a scratch board
 
@@ -480,7 +480,7 @@ ends with the process that started it (`server/scratch.rs`), and a fixture repos
 own project, so no test reaches the board around it. The PostgreSQL tests (`tests/server/postgres.rs`)
 run the machine's PostgreSQL 18 or later, from this repository's `symphony.toml` (`[board]
 postgresql`) or the first executable `postgres` on `PATH`, with `initdb`, `pg_ctl` and `psql` in
-that same folder ([setup](../../docs/PROJECT_FILE.md#board)). An invalid override or incompatible
+that same folder ([setup](../../docs/operations/PROJECT_FILE.md#board)). An invalid override or incompatible
 installation fails; each server runs on a scratch board of its own, started and stopped by the test.
 The hosted board's tests (`tests/hosted/`, `just hosted-check`) start PostgreSQL 16 and 18 servers
 of their own with TLS on a loopback port (`tests/hosted/cluster.rs`): 18 found the same way, 16 in
@@ -537,7 +537,7 @@ the board commands they run, as the `tasks` binary) on a scratch board whose ser
 starts, reporting each command's cost and the server's CPU, memory and bytes; a change of the
 store, its settings or its engine runs it on both sides the same day, from one export and one
 build of `tasks`, and what the store cost before any such change is
-[the store's baseline](../../docs/analysis/board-store-baseline.md). An example's tests run only
+[the store's baseline](../../docs/operations/analysis/board-store-baseline.md). An example's tests run only
 when named: `just test-rs -p symphony-board --example board_load`. Which tests a change runs, and
 the evidence its kind asks for:
-[CHECKS](../../docs/CHECKS.md#picking-the-focused-set).
+[CHECKS](../../docs/workflow/CHECKS.md#picking-the-focused-set).

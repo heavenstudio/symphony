@@ -217,7 +217,7 @@ pub struct AgentSaid {
     pub text: String,
 }
 
-/// Where an agent's Go to session control goes (docs/TASKS.md, "Going to a session"): a session
+/// Where an agent's Go to session control goes (docs/workflow/TASKS.md, "Going to a session"): a session
 /// the server knows a way into, by its web address, its pane on the server's machine, or both.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]

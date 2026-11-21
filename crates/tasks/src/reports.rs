@@ -225,7 +225,7 @@ fn is_claim(line: &Line) -> bool {
 /// wait by its end. The review rounds the day's `changes` and `approve` verdicts ended are the
 /// answer, by their number, kept in order as found. Each task's review subtasks are found among
 /// `replayed` by a scan: a few hundred tasks an hour, where a map would cost the server's binary
-/// its own (docs/CHECKS.md, size budgets).
+/// its own (docs/workflow/CHECKS.md, size budgets).
 fn happened(replayed: &[Replayed], hours: &mut [ReportHour], start: f64, until: f64) -> Vec<Round> {
     let mut rounds: Vec<Round> = Vec::new();
     for task in replayed {
@@ -435,7 +435,7 @@ fn placed(
 
 /// `seconds` more under `id` and `label` in `spent`, kept in order of ID and then label: a list
 /// searched rather than a map, which would cost the server's binary its own tree code
-/// (docs/CHECKS.md, size budgets).
+/// (docs/workflow/CHECKS.md, size budgets).
 fn spend(spent: &mut Vec<Spent>, id: &str, label: &str, seconds: f64) {
     let at = spent.partition_point(|kept| (kept.id.as_str(), kept.label.as_str()) < (id, label));
     match spent.get_mut(at) {
@@ -464,7 +464,7 @@ pub(crate) fn spread(values: Vec<f64>) -> Option<Spread> {
 /// to `until` that does not add up across hours: the lead time of the tasks its hours count done,
 /// each once at its last close. The longest in their status are kept in order as they are found,
 /// ten at most, rather than all sorted: a sort costs the server's binary a sort of its own for each
-/// kind of list (docs/CHECKS.md, size budgets).
+/// kind of list (docs/workflow/CHECKS.md, size budgets).
 fn day_flow(replayed: &[Replayed], top: bool, start: f64, until: f64) -> DayFlow {
     let mut leads = Vec::new();
     let mut longest: Vec<Sitting> = Vec::new();
@@ -566,7 +566,7 @@ pub fn write(folder: &Path, day: &ReportDay) -> Result<(), String> {
 
 /// Whether the day file of `day` (`YYYY-MM-DD`) in `folder` is final ([`ReportDay::closed`]): false
 /// when there is none or it does not read. It is read as any JSON is, for its one field: a reader
-/// of the day file's shape would cost the server's binary its own (docs/CHECKS.md, size budgets).
+/// of the day file's shape would cost the server's binary its own (docs/workflow/CHECKS.md, size budgets).
 pub fn closed(folder: &Path, day: &str) -> bool {
     std::fs::read(folder.join(symphony_api::report_file(day)))
         .ok()

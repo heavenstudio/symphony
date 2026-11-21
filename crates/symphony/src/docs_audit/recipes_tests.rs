@@ -208,6 +208,8 @@ fn the_audit_judges_the_documents_what_the_symphony_delivers_and_its_guides() {
         "docs/CHECKS.md",
         "docs/sub/GUIDE.md",
         "docs/analysis.md",
+        "docs/workflow/analysis.md",
+        "docs/workflow/analysisx/one.md",
         "docs/historyx.md",
     ] {
         assert!(audited(file) && !beside_documents(file), "{file}");
@@ -229,6 +231,8 @@ fn the_audit_judges_the_documents_what_the_symphony_delivers_and_its_guides() {
     for file in [
         "docs/DECISIONS.md",
         "docs/analysis/one.md",
+        "docs/workflow/analysis/one.md",
+        "docs/workflow/analysis/deep/one.md",
         "docs/history/README.md",
         "docs/history/deep/old.md",
         "docs/picture.png",

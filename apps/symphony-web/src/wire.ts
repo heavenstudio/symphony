@@ -88,7 +88,7 @@ export type ProjectView = {
    */
   register: string;
   /**
-   * The review guide as a link names it, by its route (`docs/REVIEW.md`); empty when the
+   * The review guide as a link names it, by its route (`docs/workflow/REVIEW.md`); empty when the
    * project has none, and the home then offers no link to one.
    */
   guide?: string;
@@ -548,7 +548,7 @@ export type RunLine = {
   cpu_s: number | null;
   /**
    * Beside `cpu_s`, whether its recorder knows it leaves out CPU the command's processes took
-   * (`true`), saw no such loss (`false`), or could not watch for one (absent): docs/RUNS.md.
+   * (`true`), saw no such loss (`false`), or could not watch for one (absent): docs/workflow/RUNS.md.
    */
   cpu_partial?: boolean | null;
   /**
@@ -775,7 +775,7 @@ export type WaitingBoard = {
   /**
    * The active custom workflow's activation generation: absent on a board whose own writers keep
    * its tasks, so a page draws a workflow's phases and states only where one is active, and
-   * reads its definition again when it changes (docs/WORKFLOW.md, "The app").
+   * reads its definition again when it changes (docs/workflow/WORKFLOW.md, "The app").
    */
   workflow?: number | null;
 };
@@ -820,7 +820,7 @@ export type Task = {
   /**
    * The status a task the board holds blocked was blocked from, where it is known. A block that
    * names nothing is not blocked on the wire: the task is sent in that status, `from` beside it,
-   * and its [`WaitsOn`] says no reason is recorded (docs/TASKS.md, what a task waits on).
+   * and its [`WaitsOn`] says no reason is recorded (docs/workflow/TASKS.md, what a task waits on).
    */
   from?: string | null;
   /**
@@ -1419,7 +1419,7 @@ export type DocumentOutline = {
   /**
    * The hash of each card's thread, by the card's slug, as a section's `hash` is taken. A thread
    * is no part of its card section's `hash`, so a client that keeps a card's body and thread on
-   * the device tells by this whether the thread changed since (docs/analysis/client-cache.md,
+   * the device tells by this whether the thread changed since (docs/engineering/analysis/client-cache.md,
    * "What is kept").
    */
   thread_hashes?: { [key in string]: string };

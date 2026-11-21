@@ -1302,7 +1302,7 @@ impl Change {
     /// custom workflow's edges alone do to a task it holds. The orchestrator's role and a
     /// reservation are the board's coordination, which its writers keep: a launch reserves the
     /// work it starts a session for, and admission honours the reservation, and consumes it, when
-    /// that session takes the edge (docs/WORKFLOW.md, "Operations").
+    /// that session takes the edge (docs/workflow/WORKFLOW.md, "Operations").
     fn moves_or_staffs(&self) -> bool {
         let staffing = |role: &str| role != "orchestrator" && role != "reserved";
         self.status.is_some()

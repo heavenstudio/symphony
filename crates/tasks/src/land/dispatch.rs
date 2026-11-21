@@ -1,6 +1,6 @@
 //! A land dispatched at review: where the project delivers by pull request (`[land] delivery`,
 //! [`super::delivery`]), the host merges a task's head once its evidence stands, and no land here
-//! waits for it (docs/TASKS.md, "A land dispatched at review").
+//! waits for it (docs/workflow/TASKS.md, "A land dispatched at review").
 //!
 //! A task's move to review, and every board write after it that can change its evidence (an
 //! assessment, a verdict, a gate decision, a move), starts `tasks land SLUG --dispatch` detached

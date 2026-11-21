@@ -1,4 +1,4 @@
-// An agent's Go to session control (docs/TASKS.md, "Going to a session"), which the agents page's
+// An agent's Go to session control (docs/workflow/TASKS.md, "Going to a session"), which the agents page's
 // rows and a task's role chips draw: an ordinary link to its session's web address; for a page on
 // the server's machine, a button that has the Herdr app show its pane; for a page anywhere else, a
 // button that shows the pane's screen, read only. A subagent's goes to its parent's session and says

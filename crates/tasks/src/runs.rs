@@ -1,4 +1,4 @@
-//! A project's runs as the board's recorder keeps them (docs/RUNS.md): the day files
+//! A project's runs as the board's recorder keeps them (docs/workflow/RUNS.md): the day files
 //! `symphony/runs/YYYY-MM-DD.jsonl` in the git common dir, one [`symphony_api::RunLine`] a line. A
 //! recorded operation that is a run, or a step of one ([`recorded::Run`]), appends a start line when
 //! its command starts and an end line when it ends, each to the file of the UTC day it says. Lines

@@ -1,4 +1,4 @@
-//! What a land requires of a task (docs/analysis/needed-stamps.md, "The land's check"): the stamps
+//! What a land requires of a task (docs/workflow/analysis/needed-stamps.md, "The land's check"): the stamps
 //! it needs at its branch's tip, each read there by the board's own reader ([`crate::stamps::read`]),
 //! never a copy of one.
 //!

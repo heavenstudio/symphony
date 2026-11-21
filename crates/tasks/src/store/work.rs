@@ -459,7 +459,7 @@ impl Store {
     }
 
     /// The session and the task a run started at `place` is for, as a recorder takes them, in one
-    /// read of the board that writes nothing (docs/MACHINE_WORK.md, "For which task"):
+    /// read of the board that writes nothing (docs/workflow/MACHINE_WORK.md, "For which task"):
     ///
     /// 1. the handle `place` names, and the task it holds, else its branch's;
     /// 2. else the one live session whose in-process binding (the beat hook's) places its last tool
@@ -988,7 +988,7 @@ impl Store {
     /// offered where an edge leaving its position gives the executor's role, nobody there holds it,
     /// and admission's preview shows nothing stopping `handle` taking that edge now
     /// ([`Store::workflow_actions`]): its reservations, dependencies and authority are the edge's,
-    /// never the board's own claim's (docs/WORKFLOW.md, "Operations").
+    /// never the board's own claim's (docs/workflow/WORKFLOW.md, "Operations").
     pub fn next_for(&self, handle: &str) -> Result<Option<Task>, Error> {
         let view = self.retrying(|| self.shown(&Which::Pullable(handle)))?;
         let me = view

@@ -3,7 +3,7 @@
 # a test goes through tools/record.sh (sourced: one shell fewer), which records it for the board when
 # a recorder answers and otherwise execs it as it is; anything else is Cargo exec'd directly. Run by
 # itself, not inside a recipe's run, a build is a run of the pipeline build (a clippy one of lint)
-# and a test one of test (docs/RUNS.md).
+# and a test one of test (docs/workflow/RUNS.md).
 set -euo pipefail
 root="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 if [ ! -f "$root/Cargo.toml" ]; then

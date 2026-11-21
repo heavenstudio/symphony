@@ -1,4 +1,4 @@
-//! An execution attempt under a custom workflow, on each database (docs/WORKFLOW.md, "Attempts"):
+//! An execution attempt under a custom workflow, on each database (docs/workflow/WORKFLOW.md, "Attempts"):
 //! activation waits for a task's live attempt to drain or be cancelled, never rebinding it; the
 //! attempt keeps where its task stood when it was admitted, and its ending, proposed by the
 //! coordinator as the board's recovery service, moves the task from there alone: by the

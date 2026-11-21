@@ -13,7 +13,7 @@ const PAGE: usize = 30;
 
 /// The column of a task a custom workflow holds: this, then its phase's ID. A phase's ID is the
 /// project's own and may be any board status's word, so a phase's column never takes a status's
-/// key, and a phase named for Build or Test never takes the process overlays' (docs/WORKFLOW.md,
+/// key, and a phase named for Build or Test never takes the process overlays' (docs/workflow/WORKFLOW.md,
 /// "The app").
 pub(super) const PHASE: &str = "phase:";
 
@@ -39,7 +39,7 @@ pub(super) fn status_argument(request: &Request) -> Result<(), String> {
 }
 
 /// Whether `id` is a workflow ID's shape: a lowercase ASCII letter, then lowercase letters, digits,
-/// `_` and `-` (docs/WORKFLOW.md, "Definition format 1").
+/// `_` and `-` (docs/workflow/WORKFLOW.md, "Definition format 1").
 pub(super) fn workflow_id(id: &str) -> bool {
     id.starts_with(|c: char| c.is_ascii_lowercase())
         && id
@@ -273,7 +273,7 @@ fn project(
     }
     // `work=0`: the reader has the machine's work from `/api/machine-work` and the feed. Its
     // recorders' heartbeats move it every sample, so a listing without it keeps one validator
-    // while its tasks and counts stand (docs/analysis/client-cache.md).
+    // while its tasks and counts stand (docs/engineering/analysis/client-cache.md).
     let without_work = query(request, "work").as_deref() == Some("0");
     let next = tasks.tasks.last().map(|task| {
         serde_json::to_string(&(

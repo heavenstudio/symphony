@@ -18,7 +18,7 @@
 //! be able to do. Who else bypasses each is what someone who administers the repository verified
 //! with their own gh CLI ([`crate::rulesets`]), kept in the state ([`Verified`]), and it is taken
 //! only while the ruleset's `updated_at` is still the instant verified. A ruleset changed since,
-//! in its enforcement or its bypass list, which each move `updated_at` (docs/GITHUB.md, "Who
+//! in its enforcement or its bypass list, which each move `updated_at` (docs/operations/GITHUB.md, "Who
 //! bypasses the rules"), is not known to hold anyone until it is verified again.
 //!
 //! It passes only what it read whole. A rule counts as holding everyone only when it comes from
@@ -45,7 +45,7 @@
 //! Classic branch protection is not read: it can add to what the rules require and never take
 //! from it, and reading it asks for administration, which the token must not have.
 //!
-//! What no read here establishes is said in docs/GITHUB.md, "The protection a delivery needs":
+//! What no read here establishes is said in docs/operations/GITHUB.md, "The protection a delivery needs":
 //! which App a token is of, that no administrator edits a rule between this read and GitHub's
 //! own act, and how GitHub applies two rulesets together.
 
@@ -120,7 +120,7 @@ pub enum Bypass {
 
 /// What a person runs to verify the rulesets again, said where one is not known.
 pub const VERIFY: &str = "who administers the repository verifies them with `symphony-github \
-                          rulesets --verify` (docs/GITHUB_SETUP.md)";
+                          rulesets --verify` (docs/operations/GITHUB_SETUP.md)";
 
 /// A policy that passed: a digest of everything read, which another policy does not share.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -262,7 +262,7 @@ fn refused(wanted: &Wanted<'_>, missing: &[String]) -> Value {
         "state": "refused", "kind": "policy",
         "why": format!(
             "the protection of {} does not hold a delivery to its evidence ({} missing): {}. \
-             Nothing was pushed or merged; a repository administrator puts it right (docs/GITHUB.md, \
+             Nothing was pushed or merged; a repository administrator puts it right (docs/operations/GITHUB.md, \
              \"The protection a delivery needs\")",
             wanted.base,
             missing.len(),

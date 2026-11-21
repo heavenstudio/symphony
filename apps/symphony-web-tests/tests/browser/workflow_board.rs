@@ -1,4 +1,4 @@
-//! A custom workflow in the real client, wide and on a phone (docs/WORKFLOW.md, "The app"). The
+//! A custom workflow in the real client, wide and on a phone (docs/workflow/WORKFLOW.md, "The app"). The
 //! board's columns are its phases by their order (Build, then two review stages, Review and
 //! Verify), a phone's tabs the phases by their phone order, each held card names its place, and a
 //! state chip filters the board by it. The task page offers the server's next actions, one of them

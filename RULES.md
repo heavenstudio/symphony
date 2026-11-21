@@ -10,7 +10,7 @@ the package guides. A consuming project's landing, stamps, certificates and gate
 ### `workflow/parent-feature-delivery`
 
 A top-level task owns one feature branch and one delivery cycle; its
-[subtasks](docs/TASKS.md#subtasks) are small slices of it, not releases. One agent carries the
+[subtasks](docs/workflow/TASKS.md#subtasks) are small slices of it, not releases. One agent carries the
 feature unless another, on disjoint files, demonstrably shortens it. A slice commits into the
 feature branch, runs only its focused checks and closes with
 `just tasks done SLUG "integration commit and focused result"`; only the parent goes to review,
@@ -30,31 +30,31 @@ such as before and after screenshots of a changed page. What it needs to land is
 assessment's: an assessor, which neither filed, orchestrates nor executed it, reads its diff when
 it is filed and each time it moves to review, before any reviewer, and writes the stamps it needs
 from the project's catalogue (`just tasks stamps`: its tests green at the tip, a fresh reviewer's
-approve, pictures, the owner's approve; [TASKS](docs/TASKS.md#needed-stamps)), a reviewer's approve
+approve, pictures, the owner's approve; [TASKS](docs/workflow/TASKS.md#needed-stamps)), a reviewer's approve
 alone with none written. Where it needs review, its reviewer reads the task's recorded runs at
 the tip and builds or runs nothing they cover (`workflow/no-second-build-in-review`), judges whether the evidence is good enough for the change's risk, and its approve, a verdict on
 the task itself and never a review subtask, is that stamp. The land lands the task once every
 stamp it needs stands on its tip, and refuses naming who gives a missing one. A slice's evidence is
 judged in its parent's review. Higher risk asks for stronger evidence, never for the whole suite. No task runs `just verify`,
-whatever a brief asks: it is the release run's (`just release`, [RELEASES](docs/RELEASES.md)), on
+whatever a brief asks: it is the release run's (`just release`, [RELEASES](docs/workflow/RELEASES.md)), on
 main's tip, and a red release run is filed as a task naming the commits since the last green one.
 A run starts once `[releases] every_landings` tasks have landed (the cadence, started by the land
 itself), and each day once the owner installs its schedule, so a break no task's focused tests
 reach is found within that many landings. Evidence by kind of change, how to pick the tests and
-worked examples: [CHECKS](docs/CHECKS.md).
+worked examples: [CHECKS](docs/workflow/CHECKS.md).
 
 ### `workflow/never-chase-main`
 
 A task merges main into its branch once: when its work is complete and it is about to ask for
 review, so the review is of the change on main as it is. It runs its closest tests again at that
 tip, posts the evidence naming it and moves to review
-([after main moves](docs/CHECKS.md#after-main-moves)). From then on it never merges main because
+([after main moves](docs/workflow/CHECKS.md#after-main-moves)). From then on it never merges main because
 main moved. Main always moves: a task that fetches main, builds and measures finds main moved
 again by the time that ends, a loop with no end, and each merge after an approve asks for a fresh
 one, but the one merge of main that settles a land's conflict where every conflicted path is a
 document (a `*.md` file that is no skill, guide or rules) and changes nothing else: its approve
 stands over that merge, and it lands on its tests green at the merged tip
-([the default landing](docs/TASKS.md#the-default-landing)). It lands once its stamps stand on
+([the default landing](docs/workflow/TASKS.md#the-default-landing)). It lands once its stamps stand on
 its tip and it merges without conflict. It merges main
 again only when its land reports a conflict, or when a reviewer asks for it by naming what main
 gained that breaks the change or that the change breaks. A reviewer never sends a branch back
@@ -66,7 +66,7 @@ once, at the review tip, never again for each new main. A release candidate's fi
 
 What a task built and ran while it was made is not built or run again to review it. Its
 executor's builds and tests are recorded with the commit they ran at
-([MACHINE_WORK](docs/MACHINE_WORK.md#recording-builds-and-tests)), and the recorded runs at its
+([MACHINE_WORK](docs/workflow/MACHINE_WORK.md#recording-builds-and-tests)), and the recorded runs at its
 tip are its evidence: a stamp stands on evidence of work already done, a build, a test run, a
 review, so that a task is quick to land. A reviewer takes a green recorded run at the tip as
 run. It reads the diff against the record, judges whether those runs cover the change, and
@@ -74,7 +74,7 @@ builds or runs only what the record does not cover and reading cannot settle: a 
 with the smallest target that answers it; a mutation, to see that a test can fail; a run the
 executor left out. A run the evidence claims and no record at the tip shows is the executor's
 to make, asked for in a changes. What changes do to each other once they are on main is the
-release run's to find, on the candidate it holds ([RELEASES](docs/RELEASES.md)), never a
+release run's to find, on the candidate it holds ([RELEASES](docs/workflow/RELEASES.md)), never a
 review's.
 
 ### `workflow/fast-bugfixes`
@@ -123,14 +123,14 @@ turn it green (an assertion widened, a timeout or a budget raised, a test ignore
 the release run): a fix that must change one says on its thread why the code was not the thing to
 fix, and a fresh reviewer judges that. A budget or a cap that gives way, a red's or any task's,
 gives way by its orchestrator's decision recorded on the task (`just tasks gate`,
-[TASKS](docs/TASKS.md#gate-decisions)), once the cut came first, never by its executor's or its
+[TASKS](docs/workflow/TASKS.md#gate-decisions)), once the cut came first, never by its executor's or its
 reviewer's word, and lands at the number decided, or lowered below the default branch's. Its
 assessor reads what its fix needs at review (`workflow/evidence-is-the-gate`): a fix that
 changes none of the project's tests and checks
-(`[land] check_paths`, [TASKS](docs/TASKS.md#the-default-landing)) needs its tests, the failing
+(`[land] check_paths`, [TASKS](docs/workflow/TASKS.md#the-default-landing)) needs its tests, the failing
 tests unchanged and green at its tip, and one that changes a test, a check, a budget or a run step
 needs a fresh reviewer's approve as well. A red run holds its commit as the release candidate, so the release is that commit and
-its reds' fixes alone however fast main moves ([RELEASES](docs/RELEASES.md#the-release-candidate)):
+its reds' fixes alone however fast main moves ([RELEASES](docs/workflow/RELEASES.md#the-release-candidate)):
 its red's fix starts at the local branch `release-candidate`, never at main, merges that branch
 again before review (but where a pull request delivers the land and the candidate advanced to a
 delivered head, which no delivery merges: there it never merges `release-candidate`, and one not
@@ -140,7 +140,7 @@ sources make when it changes what the client is built from; its task's text says
 request delivers the land, such a fix of the client is approved naming that commit whatever its
 assessment names, then merges main once, keeping main's side of every generated path, and that
 merge is approved again and delivered, the candidate taking the commit approved before it
-([RELEASES](docs/RELEASES.md#the-release-candidate)). Its own land
+([RELEASES](docs/workflow/RELEASES.md#the-release-candidate)). Its own land
 moves the candidate, and the land that answers the last red starts the candidate's rerun. A red
 whose fix landed with another red's task is closed as covered by that landing, which answers it
 once that land advanced the candidate; closing one as covered by any other landing drops the
@@ -191,9 +191,9 @@ without `#[deprecated]`: a consumer's lint denies warnings. A separate task may 
 a later release, with concrete read-only evidence that consumers have migrated, updating the
 consumer-API compile guards with it. Review checks a removal or signature change against those
 guards; kit and helper major-version requirements still apply. The procedure and evidence are in
-[CHECKS](docs/CHECKS.md#consumer-api-changes), from
+[CHECKS](docs/workflow/CHECKS.md#consumer-api-changes), from
 [its card](docs/DECISIONS.md#consumer-api-break-release), alongside the current
-[release contract](docs/RELEASES.md#the-release-run).
+[release contract](docs/workflow/RELEASES.md#the-release-run).
 
 ### `code/no-timed-waits`
 
@@ -270,12 +270,12 @@ its task's thread, with the promise it guards and why no CPU bound, count, wait 
 can stand in for it; the orchestrator puts it to the owner, and it leaves `just verify` only on the
 owner's word. Until then it stays and runs. A test the owner lets go on such a proposal moves to a
 recipe a quiet machine runs, which still runs it, and none leaves before that recipe exists;
-docs/CHECKS.md lists each with its promise and the owner's word. No budget or tolerance is widened
+docs/workflow/CHECKS.md lists each with its promise and the owner's word. No budget or tolerance is widened
 to pass. The workspace's one helper is `crates/test-time` (`cpu`, `wait::until`); how to use it:
-[CHECKS](docs/CHECKS.md#time-in-tests).
+[CHECKS](docs/workflow/CHECKS.md#time-in-tests).
 
 The release run reruns each test that failed in it alone, one at a time, in the same checkout and
-over the same build, up to 12 (docs/RELEASES.md, "The release run", step 5). One that passes alone
+over the same build, up to 12 (docs/workflow/RELEASES.md, "The release run", step 5). One that passes alone
 is no red and holds no release: the run files one p1 task for all such tests of it, which finds
 why, then fixes the code or the runner, rewrites the test on a condition, a count, CPU time or an
 injected clock, or discards it with one line on its thread. One that fails again is red, its task
@@ -311,7 +311,7 @@ not write, execute or request the work. Once it approves, nothing is queued for 
 
 Only the owner approves a design document or a card; an agent never marks its own output
 approved, and answers a callout with a nested `[!resolved]` note under it
-([REVIEW](docs/REVIEW.md#commenting-in-place)).
+([REVIEW](docs/workflow/REVIEW.md#commenting-in-place)).
 
 ### `workflow/approval-goes-with-the-ask`
 
@@ -335,7 +335,7 @@ is not an answer.
 A card is not put to the owner, or is auto-approved if already posted, when its answer is not a
 real choice: an orchestrator triages the register for such cards, so the owner is not asked what
 is already decided. It marks one `[a]` with a dated
-`agent · auto-approved — <letter>: <basis>` line ([REVIEW](docs/REVIEW.md)) when the owner's own
+`agent · auto-approved — <letter>: <basis>` line ([REVIEW](docs/workflow/REVIEW.md)) when the owner's own
 words, quoted in the basis, already decide it, or when the card's own evidence leaves one option
 standing (the others measured wrong, or against something the owner said). A card the owner
 approved is such words for a later card only when the choice it approved already answers what the
@@ -367,7 +367,7 @@ recorded as answered on the card the owner approved, never asked; one already po
 auto-approved (`review/auto-approve-what-is-decided`). A design review that asks for a new owner
 card says which earlier verdict it checked and why that does not decide it. Only the owner's own
 words decide; a question of theirs decides nothing
-([REVIEW](docs/REVIEW.md#before-a-card-goes-to-the-owner)).
+([REVIEW](docs/workflow/REVIEW.md#before-a-card-goes-to-the-owner)).
 
 ### `docs/cards-clear-and-concise`
 
@@ -376,13 +376,13 @@ question. It opens with what changes for the owner, in one or two plain sentence
 option, written for someone who has not read the internals: a card the owner cannot follow loses
 their judgement, which is what it was for, and they may hand the choice back rather than make it.
 Detail the decision does not need goes in a linked file, and pictures go where the thing judged is
-visual ([REVIEW](docs/REVIEW.md#writing-a-card)).
+visual ([REVIEW](docs/workflow/REVIEW.md#writing-a-card)).
 
 ### `docs/one-decision-per-card`
 
 A card asks one decision. A detail that carries choices of its own, its own A, B or C, is a card
 of its own that links the first, so no verdict has to decide several things at once
-([REVIEW](docs/REVIEW.md#writing-a-card)).
+([REVIEW](docs/workflow/REVIEW.md#writing-a-card)).
 
 ## Documents
 
@@ -400,7 +400,7 @@ A document under `docs/` describes intent, behaviour and options, and a guide (`
 The owner's exact words and the dated history of who decided what, and when, live in the decision
 register (`docs/DECISIONS.md`, each card's dated lines) and on task threads; a document whose
 reason matters links its card, `[its card](DECISIONS.md#SLUG)`
-([REVIEW](docs/REVIEW.md#slugs-in-prose)). The register and `docs/history/` are the records that
+([REVIEW](docs/workflow/REVIEW.md#slugs-in-prose)). The register and `docs/history/` are the records that
 keep them: the words the guides and documents once quoted are in
 [owner-words](docs/history/owner-words.md). `crates/symphony/tests/hooks/owner_words.rs` fails on
 the owner's words in a guide or a document in the shapes the guides gave them: the owner, the
@@ -472,9 +472,9 @@ by hand ([its card](docs/DECISIONS.md#consumer-manifest-line)).
 Nothing is pushed but main, by the land, and a release's tag, by the release run
 ([AGENTS.md](AGENTS.md#this-repository-as-its-own-project)): nothing else of a task, its branch
 included. A project that sets `[land] delivery` has its land's program push the task's branch
-for its pull request ([TASKS](docs/TASKS.md#a-land-delivered-by-a-pull-request)); this repository
+for its pull request ([TASKS](docs/workflow/TASKS.md#a-land-delivered-by-a-pull-request)); this repository
 sets none. A consuming project's branch is pushed only on the owner's word naming that push; a
-release's refresh makes none and moves no pin ([the refresh](docs/RELEASES.md#the-refresh)).
+release's refresh makes none and moves no pin ([the refresh](docs/workflow/RELEASES.md#the-refresh)).
 
 ### `delete-by-name`
 
