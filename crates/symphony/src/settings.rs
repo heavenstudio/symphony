@@ -1175,6 +1175,13 @@ fn releases(file: &FileRead) -> SettingsEntry {
             ),
             file.setting(
                 &["releases"],
+                "rulesets",
+                "The command a run runs as its rulesets check",
+                SettingKind::List,
+                "none",
+            ),
+            file.setting(
+                &["releases"],
                 "candidate_reruns",
                 "Red reruns a release candidate takes",
                 number,
