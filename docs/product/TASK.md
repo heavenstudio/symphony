@@ -182,8 +182,9 @@ that no longer applies.
 One column, in the same order. A gate takes three lines instead of one row. The timeline is a
 list instead of lanes: a row per stage with when it started, how long it lasted and a bar as
 long, and under it the builds, tests and gate changes that began in it. It is kept short, showing
-the latest steps; **Show all**, with the number of steps, on its first line lets it grow, and **Show the latest**
-folds it again. Text fields are large enough that the phone does not zoom into them.
+the latest steps; **Show all**, with the number of steps, on its first line lets it grow, and
+**Show the latest** folds it again. Text fields are large enough that the phone does not zoom
+into them.
 
 ## Edges
 

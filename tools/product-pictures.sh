@@ -22,6 +22,7 @@ NOW=1772443800
 export TZ=UTC
 server=""
 reader=""
+board=""
 
 finish() {
     if [ -n "$server" ]; then
@@ -32,6 +33,17 @@ finish() {
     if [ -n "$reader" ]; then
         kill "$reader" 2>/dev/null || true
         wait "$reader" 2>/dev/null || true
+    fi
+    # The copy's board server, which the Symphony's started, ends once its starter has: it is no
+    # child of this script's to wait for, so it is ended by the pid it recorded and looked at until
+    # it is gone (ten seconds at most), as it writes in the folder removed next.
+    board="$(jq -r '.pid // empty' "$work/project/.git/symphony/tasks/server.json" 2>/dev/null || true)"
+    if [ -n "$board" ]; then
+        kill "$board" 2>/dev/null || true
+        for _ in $(seq 100); do
+            kill -0 "$board" 2>/dev/null || break
+            sleep 0.1
+        done
     fi
     rm -rf "$work"
 }
