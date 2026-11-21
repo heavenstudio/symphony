@@ -4044,11 +4044,19 @@ its unit, so no number in it reads as a commit. A copy of the board carries the 
 The pages draw the same figures, each with the day its prices were read and as an estimate, never
 money spent ([What the tokens cost](#what-the-tokens-cost)):
 
-- **A task's page** has *Tokens and estimated cost* last, under its thread, closed until opened, which
-  reads `/api/task-tokens?slug=SLUG` (`show --json`'s `tokens` without its `rows`) and draws the
-  total with its kinds, a table by role and one by review round, and the models no price was found
-  for; a task with none says *No tokens recorded for this task.* and draws no table.
-- **A board card** shows its task's cost all told, its subtasks' with it, beside its slug (`$1.23`,
+- **A task's page** says the cost after the time, on its timeline, from
+  `/api/task-tokens?slug=SLUG` (`show --json`'s `tokens`, its `rows` among them): the total after
+  the task's time (`1 d 3 h in all $80.02 · 6 review rounds`), whose words, pointed at or focused,
+  say that it is an estimate and of what day's prices, its split by role and by kind, the tokens
+  and the calls; and each stage stretch's after its own (`3 h 14 m $30.75`). Each row is on
+  exactly one stretch, never a share by time, so the stretches add up to the total: an
+  in-progress stretch carries the executor's rows of its round and what was spent while the task
+  was reserved (the last of two in one round carries both), a review the reviewer's rows of the
+  round it opens, and the executor's where no in-progress stretch follows; a row this places
+  nowhere (a subtask's, round 0, another role) goes to the stretch its first call fell in. A
+  stretch's words say whose calls it carries, when they ran and how many. A task with none draws
+  no cost.
+- **A board card** shows its task's cost all told, its subtasks' with it, before its time (`$1.23 · 1 h`;
   `$1.23+` where some tokens had no price, `unpriced` where none had, its title saying the rest),
   read apart from the board's
   listings, which carry none of it: the cards drawn in one turn are asked for together
