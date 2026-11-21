@@ -21,7 +21,7 @@ include = ["src/**", "!src/bin/fake-hc.rs", "build.rs", "README.md", "LICENSE"]
 # crate's own tree, and the rest of it (tokio, the WebSocket stack) is ~260 CPU-s of build this does
 # without (docs/engineering/analysis/review-app-rust-port.md, "Clean release build").
 [dependencies]
-process-cwd = { path = "../process-cwd", version = "1.0.0" }
+process-cwd = { path = "../process-cwd", version = "1.0.1" }
 # Its variables, each by its one SYMPHONY_ name.
 symphony-env = { path = "../symphony-env", version = "1.0.0" }
 # The command a mistyped word was nearest to, shared with the `symphony` command line.

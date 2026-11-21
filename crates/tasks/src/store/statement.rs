@@ -58,6 +58,19 @@ impl From<String> for Statement<'_> {
 }
 
 impl<'a> Statement<'a> {
+    /// The text of its PostgreSQL twin, each part as it is sent, none where it has no twin: what a
+    /// write's guard reads the tables it names in, beside its SurrealQL ([`crate::schema::needs`]).
+    /// A read of lists is never guarded, and gives none.
+    pub fn postgres_text(&self) -> Vec<&str> {
+        match &self.postgres {
+            Some(Pg::Read(text) | Pg::Simple(text) | Pg::Within(_, text)) => vec![text.as_ref()],
+            Some(Pg::Script(block, answer)) => std::iter::once(block.as_ref())
+                .chain(answer.as_deref())
+                .collect(),
+            Some(Pg::Listed(_) | Pg::Nothing) | None => Vec::new(),
+        }
+    }
+
     /// Its PostgreSQL twin, or the refusal of a statement that has none yet, sent from `at`.
     pub fn postgres_at(&self, at: &Location<'_>) -> Result<&Pg<'a>, Error> {
         self.postgres.as_ref().ok_or_else(|| {
@@ -74,6 +87,42 @@ impl<'a> Statement<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_statements_postgresql_text_is_each_part_it_sends_and_a_read_of_lists_has_none() {
+        let texts = |postgres: Option<Pg<'static>>| -> Vec<String> {
+            let statement = Statement {
+                surreal: "RETURN NONE;".into(),
+                postgres,
+            };
+            statement
+                .postgres_text()
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
+        };
+        assert_eq!(texts(Some(Pg::read("v->'slug'"))), ["v->'slug'"]);
+        assert_eq!(texts(Some(Pg::Simple("SELECT 1;".into()))), ["SELECT 1;"]);
+        assert_eq!(
+            texts(Some(Pg::Within(5, "BEGIN NULL; END".into()))),
+            ["BEGIN NULL; END"]
+        );
+        assert_eq!(
+            texts(Some(Pg::script("BEGIN NULL; END"))),
+            ["BEGIN NULL; END"]
+        );
+        assert_eq!(
+            texts(Some(Pg::script_then("BEGIN NULL; END", "v->'slug'"))),
+            ["BEGIN NULL; END", "v->'slug'"]
+        );
+        let none: [&str; 0] = [];
+        assert_eq!(texts(Some(Pg::Nothing)), none);
+        assert_eq!(
+            texts(Some(super::super::postgres::listed("t", "task", "slug"))),
+            none
+        );
+        assert_eq!(texts(None), none);
+    }
 
     #[test]
     fn an_unpaired_statement_is_refused_at_the_call_site_before_it_can_be_sent() {

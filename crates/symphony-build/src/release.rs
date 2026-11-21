@@ -21,6 +21,11 @@
 //! `--status` reads; `--schedule` prints the entry that runs it each day ([`schedule`]), which the
 //! owner installs.
 //!
+//! The project's settings decide what a run verifies, releases and refreshes, so they are read as
+//! the settings check reads them ([`Project::load`]): a project file that does not load stops a
+//! run before it fetches or checks anything, as the run's own red naming the file and what is
+//! wrong ([`unread`]), never a run of the plain project with its checks unsaid.
+//!
 //! It never tags a commit that is not on the remote's main, that is behind the newest release or
 //! that a check found red, never moves or deletes a tag, and pushes nothing but its new tag. After
 //! each check it looks at its checkout, and before it tags at what git names there once more:
@@ -66,6 +71,7 @@ mod updates;
 #[cfg(test)]
 mod waits;
 
+use std::ffi::OsStr;
 use std::fs::{self, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -241,7 +247,13 @@ struct Repo {
     common: PathBuf,
     /// Its main checkout.
     main: PathBuf,
+    /// Its project as a page reads it ([`Project::of`]): what a command needs to say where it
+    /// stands (the default branch, the run's checkout) even while the file does not load.
     project: Arc<Project>,
+    /// Why its project file does not load, when it does not ([`unread`]): a table, a key or a
+    /// value the Symphony does not know among them, which the forgiving read leaves out. No
+    /// command decides what is verified, released or refreshed from a project read that way.
+    unread: Option<String>,
 }
 
 /// Now, by the tests' clock when [`CLOCK`] is set, else this machine's.
@@ -367,7 +379,19 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
         .value("--branch")
         .map_or_else(|| repo.project.default_branch.clone(), str::to_string);
     if parsed.flag("--status") {
+        // It runs nothing, so it says where things stand all the same, and why no run will go.
+        if let Some(unread) = &repo.unread {
+            let _ = writeln!(out, "project file: {unread}");
+        }
         return status(&repo, &remote, &branch, now, out, err);
+    }
+    if let Some(unread) = &repo.unread
+        && ["--schedule", "--drop", "--github"]
+            .into_iter()
+            .any(|mode| parsed.flag(mode))
+    {
+        let _ = writeln!(err, "symphony-build release: {unread}");
+        return 1;
     }
     if parsed.flag("--schedule") {
         let at = parsed.value("--at").unwrap_or("03:00");
@@ -405,7 +429,16 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
     }
     let mut cause = None;
     let mut hosted_only = false;
-    if parsed.flag("--due") {
+    // A project file that does not load says no cadence: the count is not made as if it said the
+    // default. A count runs on the build the main checkout links, which may be older than the
+    // file a landing just changed, so it is a build of the tip that says whether the file loads
+    // ([`hand_off`]); the run below stops red only where that build is this one, or none is made.
+    // None is made for a file no build reads ([`written`]), which stops this count red at once.
+    let unread_count = parsed.flag("--due") && repo.unread.is_some() && written(&repo.main);
+    if parsed.flag("--due") && repo.unread.is_none() {
+        if stale() {
+            renew(&repo, out);
+        }
         if let [slug, landed] = &parsed.positionals[..] {
             let _ = writeln!(out, "release: {slug} landed ({})", short(landed));
         }
@@ -474,7 +507,14 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
             ),
         );
     }
-    if options.cause.is_some()
+    if unread_count && !driven() {
+        let _ = writeln!(
+            out,
+            "release: this build cannot load the project file, which a landing may have written \
+             for a newer one: a build of the tip reads it"
+        );
+    }
+    if (options.cause.is_some() || unread_count)
         && let Some(code) = hand_off(&repo, &options, args, out)
     {
         return code;
@@ -484,6 +524,10 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
 
 /// What a run a due count handed its run to is told ([`hand_off`]): the build it is.
 const DRIVER: &str = "SYMPHONY_RELEASE_DRIVER";
+/// What that run is told as well when the count's own build could not load the project file: the
+/// build the main checkout links is older than the file, which a build that loads it renews
+/// ([`renew`]).
+const STALE: &str = "SYMPHONY_RELEASE_STALE";
 /// The time the checkout and the build a due count's run starts from have.
 const DRIVER_BUILD: Duration = Duration::from_secs(3600);
 
@@ -518,6 +562,83 @@ fn driven() -> bool {
     std::env::var_os(DRIVER).is_some()
 }
 
+/// Whether this process is the build a count handed over to because its own, the one the main
+/// checkout links, could not load the project file ([`STALE`]).
+fn stale() -> bool {
+    driven() && std::env::var_os(STALE).is_some()
+}
+
+/// Whether the project file of the main checkout `main` is written as one at all: a file that is
+/// not TOML, or cannot be read, is read by no build, an older one's or a newer one's, so a count
+/// over it builds none.
+fn written(main: &Path) -> bool {
+    fs::read_to_string(main.join(symphony::project::FILE))
+        .is_ok_and(|text| toml::from_str::<toml::Table>(&text).is_ok())
+}
+
+/// `tools/rs-bin.sh MODE symphony-build` run at `launcher` in the checkout `tree`, within `until`,
+/// what the build said going to `out`: what it printed, or why it made no build.
+fn launch(
+    launcher: &Path,
+    mode: &str,
+    tree: &Path,
+    until: Bound<'_>,
+    out: &mut dyn Write,
+) -> Result<Vec<u8>, String> {
+    let mut build = symphony::children::command(launcher);
+    build
+        .args([mode, "symphony-build"])
+        .current_dir(tree)
+        .env_remove("CARGO_TARGET_DIR")
+        .env_remove(DRIVER)
+        .env_remove(STALE);
+    let tree = tree.display();
+    let done = group::output_until(&mut build, until).map_err(|failed| match failed {
+        group::Failed::Io(e) => format!("{} could not run: {e}", launcher.display()),
+        group::Failed::Late(took) | group::Failed::Interrupted(took) => format!(
+            "the build of its tip in {tree} was stopped after {} s",
+            took.as_secs()
+        ),
+    })?;
+    let _ = out.write_all(&done.stderr);
+    if !done.status.success() {
+        return Err(format!(
+            "the build of its tip in {tree} failed ({})",
+            done.status
+        ));
+    }
+    Ok(done.stdout)
+}
+
+/// The main checkout's link to `symphony-build` renewed, by the build of the tip a count handed
+/// over to because the linked one could not load the project file this one loads: the linked build
+/// is older than the file, and stays so at every land, each count building the tip, until
+/// `tools/rs-bin.sh --link symphony-build` builds it in the main checkout, which this runs once.
+/// It is one build in the main checkout's own build folder, of what the next board command there
+/// builds as well. A main checkout without the launcher, or whose build fails, is left as it was,
+/// the second said: the count goes on either way.
+fn renew(repo: &Repo, out: &mut dyn Write) {
+    let launcher = repo.main.join("tools/rs-bin.sh");
+    if !launcher.is_file() {
+        return;
+    }
+    let until = Bound::until(Instant::now() + DRIVER_BUILD);
+    let link = repo.main.join(".target/bin/symphony-build");
+    let said = match launch(&launcher, "--link", &repo.main, until, out) {
+        Ok(_) => format!(
+            "the build {} links was older than the project file: renewed, so the next count \
+             builds nothing",
+            link.display()
+        ),
+        Err(why) => format!(
+            "the build {} links is older than the project file and was not renewed ({why}): each \
+             count builds the tip until `just release --status` there renews it",
+            link.display()
+        ),
+    };
+    note(out, &[said]);
+}
+
 /// Say each line of `noted` on `out`, as a run says what it did on the way.
 fn note(out: &mut dyn Write, noted: &[String]) {
     for line in noted {
@@ -532,9 +653,11 @@ fn note(out: &mut dyn Write, noted: &[String]) {
 /// wait on its lock), and this process becomes that build, with `args` as given. None when the run
 /// goes on here: this is that build already, the tip holds no `tools/rs-bin.sh`, or the checkout or
 /// the build failed, which is said and which the run then meets as it would. An exit code when a
-/// run holds the lock: the count waits for it and nothing more runs.
+/// run holds the lock: the count waits for it and nothing more runs. A count over a project file
+/// its build cannot load is handed over the same way, undone: the tip's build counts if it loads
+/// the file and renews the link the count's build came by ([`renew`]), and stops red if it cannot
+/// either.
 fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write) -> Option<i32> {
-    use std::os::unix::process::CommandExt as _;
     if driven() {
         return None;
     }
@@ -579,11 +702,15 @@ fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write
         driver.display()
     );
     let _ = out.flush();
-    let error = std::process::Command::new(&driver)
-        .arg("release")
-        .args(args)
-        .env(DRIVER, &driver)
-        .exec();
+    let words: Vec<String> = std::iter::once("release".to_string())
+        .chain(args.iter().cloned())
+        .collect();
+    // A start that fails leaves this process as it was, which the run then goes on in.
+    let mut named = vec![(DRIVER, driver.as_os_str())];
+    if repo.unread.is_some() {
+        named.push((STALE, OsStr::new("1")));
+    }
+    let error = crate::replace::replace(driver.as_os_str(), &words, &named);
     let _ = writeln!(
         out,
         "release: {} cannot run ({error}): the run goes on from this build",
@@ -606,27 +733,8 @@ fn driver(repo: &Repo, options: &Options, out: &mut dyn Write) -> Result<Option<
         return Ok(None);
     }
     let tree = place.checkout.display();
-    let mut build = symphony::children::command(&launcher);
-    build
-        .args(["--build", "symphony-build"])
-        .current_dir(&place.checkout)
-        .env_remove("CARGO_TARGET_DIR")
-        .env_remove(DRIVER);
-    let done = group::output_until(&mut build, until).map_err(|failed| match failed {
-        group::Failed::Io(e) => format!("{} could not run: {e}", launcher.display()),
-        group::Failed::Late(took) | group::Failed::Interrupted(took) => format!(
-            "the build of its tip in {tree} was stopped after {} s",
-            took.as_secs()
-        ),
-    })?;
-    let _ = out.write_all(&done.stderr);
-    if !done.status.success() {
-        return Err(format!(
-            "the build of its tip in {tree} failed ({})",
-            done.status
-        ));
-    }
-    let printed = String::from_utf8_lossy(&done.stdout);
+    let printed = launch(&launcher, "--build", &place.checkout, until, out)?;
+    let printed = String::from_utf8_lossy(&printed);
     let path = PathBuf::from(printed.lines().last().unwrap_or_default().trim());
     if !path.is_file() {
         return Err(format!(
@@ -710,12 +818,31 @@ fn repo(at: &Path) -> Result<Repo, String> {
         Some(main) if common.file_name().is_some_and(|name| name == ".git") => main.to_path_buf(),
         _ => root.clone(),
     };
+    // The strict read decides: the forgiving one leaves out what it does not know, and reads the
+    // plain project for a file that does not load, which would run with every `[releases]` key
+    // unsaid, its checks dropped among them.
+    let (project, unread) = match Project::load(&main) {
+        Ok(project) => (Arc::new(project), None),
+        Err(problem) => (Project::of(&main), Some(unread(&main, &problem))),
+    };
     Ok(Repo {
-        project: Project::of(&main),
+        project,
+        unread,
         root,
         common,
         main,
     })
+}
+
+/// What a command says of the project file of the main checkout `main` that does not load for
+/// `problem`: the file, the error, and that nothing was decided from it.
+fn unread(main: &Path, problem: &str) -> String {
+    format!(
+        "the project file {} does not load, so nothing says what a run verifies, releases or \
+         refreshes, and none is run as if its settings were unset: {problem}. The settings check \
+         reads it the same way (docs/PROJECT_FILE.md, \"The settings check\")",
+        main.join(symphony::project::FILE).display()
+    )
 }
 
 /// The run's own checkout: `release` in the project's agent worktrees folder, else in a folder
@@ -1166,7 +1293,11 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
     // The release candidate, when this run is one of main's line: none or ended runs main's tip, an
     // open one is rerun once every red of it is answered, and before that nothing runs.
     let mut held: Option<candidate::Candidate> = None;
-    let turn = if options.refresh || options.out_of_cycle.is_some() {
+    let turn = if let Some(unread) = &repo.unread {
+        // Before anything is fetched, placed or checked: the run's own red, which the next run
+        // that gets through closes.
+        Err(Stop::Error(unread.clone()))
+    } else if options.refresh || options.out_of_cycle.is_some() {
         Ok(Turn::Main)
     } else {
         turn(repo, options, &folder, &mut held, within.bound, out)
@@ -1966,6 +2097,7 @@ fn tell(
         candidate: holding,
         rerun: record.rerun.is_some(),
         slept: record.slept,
+        rulesets: !repo.project.releases.rulesets.is_empty(),
     };
     let board = symphony::taskcli::CliBoard::new(&repo.main);
     let mut steps = record.checks.clone();
@@ -2974,6 +3106,7 @@ mod tests {
             common: main.join(".git"),
             main: main.to_path_buf(),
             project: Project::of(main),
+            unread: None,
         };
         tree.write("plain/README.md", "no project file\n");
         assert_eq!(

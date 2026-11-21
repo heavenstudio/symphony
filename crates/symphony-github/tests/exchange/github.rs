@@ -22,6 +22,9 @@ pub(crate) enum Fault {
     LoseAnswer,
     /// It is not carried out: this status and these headers are the answer.
     Status(u16, Vec<(&'static str, String)>),
+    /// It is carried out and answered: it holds a place, so the fault planted after it meets
+    /// the request after.
+    Pass,
 }
 
 struct Inner {
@@ -49,6 +52,12 @@ struct Inner {
     /// The checks written and not listed yet, by number: the listings of their head they are
     /// still left out of, and the check listed in their place meanwhile, none for a new one.
     unlisted: BTreeMap<i64, (usize, Option<Value>)>,
+    /// The reads of an open pull request that still answer the head it was at before a push to
+    /// its branch, and the head it moves to in place of the one pushed ([`Fake::move_late`]).
+    lag: (usize, Option<String>),
+    /// The pull requests whose head has not moved yet, by number: the reads still answered the
+    /// old head, and the head they move to.
+    moving: BTreeMap<i64, (usize, String)>,
     /// The GitHub App the request being answered is made as; 0 is a person's token.
     acting: i64,
     /// The number the next pull request or check is given.
@@ -134,6 +143,8 @@ impl Fake {
             pulls: Vec::new(),
             checks: Vec::new(),
             late: 0,
+            lag: (0, None),
+            moving: BTreeMap::new(),
             unlisted: BTreeMap::new(),
             acting: 0,
             asked_as: Vec::new(),
@@ -311,15 +322,33 @@ impl Fake {
             .count()
     }
 
-    /// A branch pushed there, as `git push` leaves it: its pull request follows it.
+    /// A branch pushed there, as `git push` leaves it: its pull request follows it, at once or
+    /// after the reads [`Fake::move_late`] names. A head the branch is at already moves nothing.
     pub(crate) fn push(&self, branch: &str, head: &str) {
         let mut inner = self.inner();
-        inner.branches.insert(branch.into(), head.into());
-        for pull in &mut inner.pulls {
+        if inner.branches.insert(branch.into(), head.into()).as_deref() == Some(head) {
+            return;
+        }
+        let (reads, to) = inner.lag.clone();
+        let to = to.unwrap_or_else(|| head.to_string());
+        let Inner { pulls, moving, .. } = &mut *inner;
+        for pull in pulls {
             if pull["head"]["ref"] == json!(branch) && pull["state"] == json!("open") {
-                pull["head"]["sha"] = json!(head);
+                if reads == 0 {
+                    pull["head"]["sha"] = json!(to);
+                } else {
+                    let number = pull["number"].as_i64().unwrap_or_default();
+                    moving.insert(number, (reads, to.clone()));
+                }
             }
         }
+    }
+
+    /// From now on an open pull request answers its next `reads` reads after a push to its
+    /// branch at the head it was at before, as GitHub moves its head a little after the push;
+    /// then it is at the head pushed, or at `to`, as when someone else pushed after.
+    pub(crate) fn move_late(&self, reads: usize, to: Option<&str>) {
+        self.inner().lag = (reads, to.map(str::to_string));
     }
 
     pub(crate) fn pulls(&self) -> Vec<Value> {
@@ -517,7 +546,10 @@ impl Fake {
                 false,
             );
         }
-        (inner.answer(method, path, body), fault.is_some())
+        (
+            inner.answer(method, path, body),
+            matches!(fault, Some(Fault::LoseAnswer)),
+        )
     }
 }
 
@@ -698,12 +730,16 @@ impl Inner {
             if pull["mergeable_state"] == json!("clean") && self.broken(&head).is_none() {
                 return error("Pull request is in clean status");
             }
-            self.pulls[at]["auto_merge"] = json!({
-                "enabled_by": {"login": format!("app-{acting}[bot]")},
-                "merge_method": variables["method"].as_str().unwrap_or_default().to_lowercase(),
-                "commit_title": variables["headline"], "commit_message": variables["body"],
-            });
-            self.pulls[at]["armed_by"] = json!(acting);
+            // On already, GitHub answers with no error and keeps the method and text it has.
+            if !self.pulls[at]["auto_merge"].is_object() {
+                self.pulls[at]["auto_merge"] = json!({
+                    "enabled_by": {"login": format!("app-{acting}[bot]")},
+                    "merge_method":
+                        variables["method"].as_str().unwrap_or_default().to_lowercase(),
+                    "commit_title": variables["headline"], "commit_message": variables["body"],
+                });
+                self.pulls[at]["armed_by"] = json!(acting);
+            }
             return answer(
                 200,
                 &json!({"data": {"enablePullRequestAutoMerge":
@@ -815,6 +851,7 @@ impl Inner {
                 answer(201, self.pulls.last().unwrap())
             }
             ("GET", ["pulls", number]) => {
+                self.settle(number.parse().unwrap_or_default());
                 match self
                     .pulls
                     .iter()
@@ -864,6 +901,23 @@ impl Inner {
             }
             ("GET", _) => self.protection(parts, query),
             _ => answer(404, &json!({"message": "Not Found"})),
+        }
+    }
+
+    /// One read of pull request `number`: its head moved to the one pushed once the reads
+    /// [`Fake::move_late`] kept it back for are spent.
+    fn settle(&mut self, number: i64) {
+        match self.moving.get_mut(&number) {
+            Some((left, _)) if *left > 0 => *left -= 1,
+            Some(_) => {
+                let (_, head) = self.moving.remove(&number).expect("found above");
+                for pull in &mut self.pulls {
+                    if pull["number"] == json!(number) {
+                        pull["head"]["sha"] = json!(head);
+                    }
+                }
+            }
+            None => {}
         }
     }
 

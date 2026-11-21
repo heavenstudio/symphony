@@ -34,7 +34,7 @@
 //! the board sets on what it starts: a move is not a land, but what it starts publishes and arms
 //! only what the land would.
 
-use super::delivery::{self, Journal, Stage, Transport};
+use super::delivery::{self, Binding, Journal, Stage, Transport};
 use super::{FOLDER, GIT_VARS, Landing, RECIPE, Refusal, Stop, short};
 use crate::cli::Env;
 use crate::sweep::git::rev;
@@ -101,6 +101,17 @@ fn delivering(cwd: &Path) -> Option<PathBuf> {
     let main = trigger::main_checkout(&common)?.to_path_buf();
     let command = delivery::command(&main).ok()?;
     (!command.is_empty()).then_some(main)
+}
+
+/// Where the project `cwd` is in delivers by pull request ([`delivering`]): the pull request
+/// `slug` is bound to, as its journal names it, none before a dispatch bound one. None where the
+/// land merges here.
+pub fn bound(cwd: &Path, slug: &str) -> Option<Option<Binding>> {
+    let main = delivering(cwd)?;
+    let journal = lands(&main)
+        .ok()
+        .and_then(|folder| Journal::read(&folder, slug));
+    Some(journal.and_then(|journal| journal.binding))
 }
 
 /// The `tasks` a detached child of `env` runs: a test's `TASKS_BIN`, else this one, else the main
@@ -224,7 +235,8 @@ pub(super) fn unmark(folder: &Path, slug: &str) {
 
 /// Whether `said`, a refusal and the head it was made at, is new for `slug`: not the last one said
 /// on its thread, which it is from now on. Kept in the lands' `folder` beside its journal and
-/// beyond it, as `SLUG.said`, so what holds a journal in hand writes nothing over it.
+/// beyond it, as `SLUG.said`, so what holds a journal in hand writes nothing over it. Asked only by
+/// a land delivered by a pull request, whose end forgets it ([`unsaid`]).
 pub(super) fn said(folder: &Path, slug: &str, said: &str) -> bool {
     let path = folder.join(format!("{}{SAID}", super::file_stem(slug)));
     if fs::read_to_string(&path).is_ok_and(|last| last == said) {
@@ -241,6 +253,30 @@ pub(super) fn unsaid(folder: &Path, slug: &str) {
 
 /// The ending of the file a task's last refusal said is kept in ([`said`]).
 const SAID: &str = ".said";
+
+/// When a round of the watcher first could not finish `slug`'s land, in whole seconds since 1970:
+/// `clock` where none is kept yet, which it is from now on. Kept in the lands' `folder` beside its
+/// journal, as `SLUG.stopped`, so a run that writes the journal whole writes nothing over it.
+pub(super) fn stopped(folder: &Path, slug: &str, clock: i64) -> i64 {
+    let path = folder.join(format!("{}{STOPPED}", super::file_stem(slug)));
+    let kept = fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| text.trim().parse().ok());
+    kept.unwrap_or_else(|| {
+        let _ = fs::write(&path, clock.to_string());
+        clock
+    })
+}
+
+/// When `slug`'s land first could not be finished forgotten ([`stopped`]): it ended, or it is a
+/// round's to finish no more.
+pub(super) fn unstopped(folder: &Path, slug: &str) {
+    let _ = fs::remove_file(folder.join(format!("{}{STOPPED}", super::file_stem(slug))));
+}
+
+/// The ending of the file that keeps when a task's land first could not be finished
+/// ([`stopped`]).
+const STOPPED: &str = ".stopped";
 
 /// The watcher started detached from the main checkout `main` where none runs and `env` starts one
 /// ([`enabled`]): the line saying it started, or none where one runs already or none starts.
@@ -299,8 +335,8 @@ fn taken(file: std::fs::File) -> Option<sys::FileLock> {
     Some(held)
 }
 
-/// Each task the lands' folder `folder` holds a journal of armed at the host, by slug: those the
-/// watcher reads ([`Journal::watched`]).
+/// Each task the lands' folder `folder` holds a journal of that the watcher reads
+/// ([`Journal::watched`]), by slug: armed at the host, or merged there with its land not ended.
 pub fn armed(folder: &Path) -> Vec<Journal> {
     let Ok(entries) = fs::read_dir(folder) else {
         return Vec::new();
@@ -323,6 +359,35 @@ fn acting(task: Option<&Task>, journal: &Journal) -> String {
         .map_or_else(|| journal.by.clone(), str::to_string)
 }
 
+/// What the watcher's last round said of each armed task: a round that comes to the same says
+/// nothing, so a task that waits days for its approve costs the log one line and not one a round,
+/// and what the log gains follows what changed, never how long the watcher ran.
+#[derive(Default)]
+pub(super) struct Told(std::collections::BTreeMap<String, Vec<u8>>);
+
+impl Told {
+    /// Only the tasks in `armed` kept: one armed no more is forgotten, so armed again it is said
+    /// again, and what is kept is no more than what is armed.
+    pub(super) fn keep(&mut self, armed: &[&str]) {
+        self.0.retain(|slug, _| armed.contains(&slug.as_str()));
+    }
+
+    /// Whether `said`, all a round wrote of `slug`, differs from its round before: kept as its
+    /// last from now on.
+    pub(super) fn news(&mut self, slug: &str, said: Vec<u8>) -> bool {
+        if self.0.get(slug) == Some(&said) {
+            return false;
+        }
+        self.0.insert(slug.to_string(), said);
+        true
+    }
+
+    /// What the last round that said anything of `slug` said.
+    pub(super) fn last(&self, slug: &str) -> &[u8] {
+        self.0.get(slug).map_or(&[], Vec::as_slice)
+    }
+}
+
 /// How a watcher runs: its clock, its rest and, for a test, how many rounds it makes at most.
 pub struct Watching<'a> {
     /// What answers the delivery's verbs in place of the command `[land] delivery` names: a test's.
@@ -336,9 +401,12 @@ pub struct Watching<'a> {
     pub rounds: Option<u32>,
 }
 
-/// `tasks land --watch`: while any task is armed at the host, a round of each ([`Landing::watched`])
-/// every `[land] watch_seconds`, ended once none is; the line it ends with. One runs per project:
-/// a watcher that finds another running ends at once.
+/// `tasks land --watch`: while any task is armed at the host, or merged there with its land not
+/// ended, a round of each ([`Landing::watched`]) every `[land] watch_seconds`, ended once none is;
+/// the line it ends with. One runs per project:
+/// a watcher that finds another running ends at once. A round writes to `out` what it came to for
+/// a task only where that differs from its round before ([`Told`]): `out` is the watcher's log,
+/// which is set aside past its limit only when a watcher starts.
 ///
 /// # Errors
 ///
@@ -368,6 +436,7 @@ pub fn watch(
         return Ok(format!("{running} runs already: nothing started"));
     };
     let mut round = 0;
+    let mut told = Told::default();
     loop {
         let mut journals = armed(&folder);
         if journals.is_empty() {
@@ -385,12 +454,22 @@ pub fn watch(
             }
         }
         if watching.rounds.is_some_and(|rounds| round >= rounds) {
-            return Ok(format!(
-                "{} armed at the host after {round} round(s)",
-                journals.len()
-            ));
+            let unfinished = journals.iter().filter(|j| j.settling()).count();
+            let armed = journals.len() - unfinished;
+            return Ok(match unfinished {
+                0 => format!("{armed} armed at the host after {round} round(s)"),
+                _ => format!(
+                    "{armed} armed at the host and {unfinished} merged with its land not ended \
+                     after {round} round(s)"
+                ),
+            });
         }
         round += 1;
+        let slugs: Vec<&str> = journals
+            .iter()
+            .map(|journal| journal.slug.as_str())
+            .collect();
+        told.keep(&slugs);
         for journal in journals {
             let task = store.get(&journal.slug).ok();
             let actor = acting(task.as_ref(), &journal);
@@ -404,14 +483,17 @@ pub fn watch(
                 watching.transport,
                 (watching.clock)(),
             );
-            let _ = out.write_all(&said);
             let line = match ended {
                 Ok(line) => line,
                 Err(Stop::Refused(line)) => line,
                 Err(Stop::Board(error)) => format!("{}: the board failed: {error}", journal.slug),
             };
-            let _ = writeln!(out, "{line}");
-            let _ = out.flush();
+            said.extend_from_slice(line.as_bytes());
+            said.push(b'\n');
+            if told.news(&journal.slug, said) {
+                let _ = out.write_all(told.last(&journal.slug));
+                let _ = out.flush();
+            }
         }
         let settings = super::Settings::of(&main).unwrap_or_default();
         (watching.rest)(settings.watch);
@@ -584,6 +666,9 @@ impl Landing<'_> {
         let Some(journal) = Journal::read(&self.folder, slug).filter(Journal::watched) else {
             return Ok(format!("{slug} is not armed at the host"));
         };
+        if journal.settling() {
+            return self.finished(clock);
+        }
         let task = self.store.get(slug)?;
         if task.status == "cancelled" {
             return self.cancelled(Some(journal));
@@ -692,6 +777,57 @@ impl Landing<'_> {
             stood / 60,
             binding.name
         ))
+    }
+
+    /// A round for this task, its land past the merge asked and not ended ([`Journal::settling`]):
+    /// the land's tail gone on with from where its journal stands, as a land run again goes on
+    /// ([`Landing::resumed`]): the pull request read, the commit proved, the checkout
+    /// fast-forwarded, the task closed once and what follows a land started once. A round that
+    /// cannot finish it says why and leaves it for the next; one a person now holds, or whose pull
+    /// request is open after all, is this round's no more. A stop that lasts past
+    /// `[land] merge_within_minutes` of the first round it stopped is said once on the thread.
+    fn finished(&mut self, clock: i64) -> Result<String, Stop> {
+        let slug = self.slug;
+        let stop = match self.resumed() {
+            Some(Ok(line)) => return Ok(line),
+            Some(Err(stop)) => stop,
+            None => return Ok(format!("{slug} is not armed at the host")),
+        };
+        let Some(left) = Journal::read(&self.folder, slug).filter(Journal::settling) else {
+            unstopped(&self.folder, slug);
+            return Err(stop);
+        };
+        let why = match stop {
+            Stop::Refused(line) => line,
+            Stop::Board(error) => format!("the board failed: {error}"),
+        };
+        let within = self.settings.merge_within.as_secs();
+        let since = stopped(&self.folder, slug, clock);
+        if u64::try_from(clock.saturating_sub(since)).unwrap_or(0) > within {
+            let said = format!(
+                "land {slug}: the land of {} has not ended",
+                short(&left.head)
+            );
+            // Said once, however many rounds stop: a thread that does not read says nothing.
+            let told = (self.store.thread(slug))
+                .map(|thread| thread.iter().any(|post| post.text.starts_with(&said)));
+            if told.is_ok_and(|told| !told) {
+                self.post(
+                    &format!(
+                        "{said} ({}) within {} min of the watcher's first round that could not \
+                         finish it (`[land] merge_within_minutes`): {why}. The watcher tries again \
+                         every round; put right what it names, or run `just land {slug}`, which \
+                         goes on from it",
+                        left.said(),
+                        within / 60
+                    ),
+                    Some("@orchestrator"),
+                );
+            }
+        }
+        Err(Stop::Refused(format!(
+            "{slug}: its land did not end ({why}): the next round tries again"
+        )))
     }
 
     /// The merge armed for `journal` that did not come, for `failure`: disarmed first (one the

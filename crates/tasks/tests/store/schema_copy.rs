@@ -86,7 +86,12 @@ fn guarded_staging_preserves_nested_nulls_in_copied_plugin_fields() {
 fn stale_remove_staging_preserves_newer_tables_even_when_migration_follows_the_table_list() {
     let f = Fixture::new(Seed::default().task("old/one", "ready"));
     let before = f.store.dump().unwrap();
+    // What a copy killed while it staged leaves, and a table of a build ahead: each defined, as
+    // the board is STRICT.
     for table in ["copy_abandoned", "unrelated"] {
+        (f.store.client())
+            .query(&format!("DEFINE TABLE {table} SCHEMALESS;"), json!({}))
+            .unwrap();
         (f.store.raw().row(table, "one"))
             .create(json!({"kept": true}))
             .unwrap();

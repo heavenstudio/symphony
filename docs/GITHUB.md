@@ -337,14 +337,23 @@ evidence, and it reads no board for it.
   answered. GitHub lists a check a few seconds after it takes it, so one not listed yet is read
   again after rests of 1, 2, 4 and 8 s, well inside the time the land gives the program, and
   nothing is written again; one still not listed then is answered `unavailable`, and the next run
-  finds what was written.
+  finds what was written. GitHub also moves a pull request that is open already to a head pushed
+  a few seconds after the push, so one still at the head it was read at before the push is read
+  again after the same rests, once the checks stand, and `published` names the head pushed; one
+  that has not moved then is answered `unavailable`, and the next run reads it first. A head
+  that is neither, as someone else pushed, is answered as it is, and the land refuses it.
 - **`arm`** reads the protection again, refusing as `publish` does, then turns on GitHub's
   auto-merge of the bound pull request at the head it is given (`expectedHeadOid`), by the method
   and commit text `merge` would ask for. GitHub then merges it itself once every check the branch
   requires passes, `symphony/eligible` among them. A pull request that is a draft is marked ready
   first. It answers:
   - `{"state": "armed", "pull": N, "head": SHA}`, also when auto-merge was on already by that
-    method, which it turns on no second time;
+    method and that text (GitHub's `auto_merge.commit_title` and `commit_message`), which it
+    turns on no second time. GitHub merges by the text it was armed with, so one on by another
+    text, armed at an earlier head or before the task's curated text was written, is turned off
+    and on again at this head with this text. One turned off whose arming GitHub then refuses,
+    or whose answer is lost, is answered so and left as GitHub has it: the next run reads it
+    first and arms it;
   - `{"state": "mergeable", "pull": N, "head": SHA}` where GitHub can merge it already (it takes
     no auto-merge of a pull request in `clean` or `unstable` status): the land asks `merge`;
   - `{"state": "merged", "sha": SHA}` and `{"state": "closed"}` where it is so already;

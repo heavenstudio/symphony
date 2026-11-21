@@ -34,6 +34,7 @@ mod renamed;
 mod rulesets;
 mod steps;
 mod stops;
+mod unread;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -251,6 +252,7 @@ impl Fixture {
             .env_remove("TASKS_RECORDER")
             .env_remove("TASKS_WORK")
             .env_remove("SYMPHONY_RELEASE_DRIVER")
+            .env_remove("SYMPHONY_RELEASE_STALE")
             .env_remove("SYMPHONY_RELEASE_RELOAD_SECONDS")
             .env_remove("SYMPHONY_RELEASE_REGENERATOR_SECONDS")
             .env_remove("SYMPHONY_RELEASE_SLEPT")

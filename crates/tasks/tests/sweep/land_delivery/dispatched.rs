@@ -624,6 +624,219 @@ fn a_merge_at_a_head_the_branch_moved_past_is_held_for_a_person() {
     assert!(landings(&r, SLUG).is_empty());
 }
 
+/// The line a watcher ends with once nothing is left for it.
+const ENDS: &str = "nothing is armed at the host: the watcher ends";
+
+#[test]
+fn a_land_cut_short_after_the_merge_is_finished_by_the_watchers_next_round() {
+    for stage in [
+        Stage::MergeRequested,
+        Stage::RemoteMerged,
+        Stage::Reconciled,
+        Stage::Closed,
+        Stage::Dispatching,
+    ] {
+        let (r, bare) = delivering();
+        project_file(
+            &r,
+            &format!(
+                "{DELIVERS}\n[board]\non_land = [\"sh\", \"-c\", \"echo $1 $2 >> '{}'\", \
+                 \"hook\"]\n",
+                r.dir.join("landings").display()
+            ),
+        );
+        git(&r.root, &["push", "-q", "origin", "main"]);
+        let (people, _, tip) = ready(&r, SLUG);
+        // The journal as it stood when the host was told it landed, closed and nothing started
+        // yet, kept aside: what a run cut short there leaves.
+        let (kept, aside) = (Journal::path(&lands(&r), SLUG), r.dir.join("cut.delivery"));
+        let host = Host::new(&r, &bare)
+            .arming(Arms::Always)
+            .before("landed", move || {
+                fs::copy(&kept, &aside).unwrap();
+            });
+        dispatched(&r, SLUG, &people.orch, &host).1.unwrap();
+        host.merge_on_green();
+        let squash = head(&bare, "main");
+        let (_, line, _) = watched(&r, &host, dispatch::seconds(), 3, &[]);
+        assert_eq!(line, ENDS, "{stage:?}");
+        assert_eq!(landings(&r, SLUG).len(), 1, "{stage:?}");
+        let text = fs::read_to_string(r.dir.join("cut.delivery")).unwrap();
+        let mut cut: Journal = serde_json::from_str(&text).unwrap();
+        assert_eq!(cut.stage, Stage::Closed);
+        cut.stage = stage;
+        cut.write(&lands(&r)).unwrap();
+        assert_eq!(dispatch::armed(&lands(&r)).len(), 1, "{stage:?}");
+        // The watcher stays for it, finishes it in one round and ends.
+        let asked = host.verbs().len();
+        let vars = [("TASKS_ON_LAND", "on"), ("TASKS_ON_LAND_SAYS", "60")];
+        let (said, line, rested) = watched(&r, &host, dispatch::seconds(), 3, &vars);
+        assert_eq!(line, ENDS, "{stage:?}: {said}");
+        assert_eq!(rested, 1, "{stage:?}");
+        assert!(
+            said.contains(&format!("landed {SLUG} on main at {}", &squash[..12])),
+            "{stage:?}: {said}"
+        );
+        assert_eq!(landings(&r, SLUG).len(), 1, "{stage:?}: closed once");
+        assert_eq!(status(&r, SLUG), "done", "{stage:?}");
+        assert_eq!(head(&r.root, "main"), squash, "{stage:?}");
+        assert_eq!(Receipt::read(&lands(&r), SLUG).unwrap().head, tip);
+        assert!(!Journal::path(&lands(&r), SLUG).exists(), "{stage:?}");
+        assert!(dispatch::armed(&lands(&r)).is_empty(), "{stage:?}");
+        let verbs = host.verbs()[asked..].to_vec();
+        if stage == Stage::MergeRequested {
+            assert_eq!(verbs, ["result", "landed"], "the pull request read first");
+        } else {
+            assert_eq!(verbs, ["landed"], "{stage:?}");
+        }
+        // What follows a land is started once: by this round, but for a run that named it started.
+        let counted = fs::read_to_string(r.dir.join("landings")).unwrap_or_default();
+        if stage == Stage::Dispatching {
+            assert_eq!(counted, "", "started by the run before, not twice");
+            assert!(said.contains("is not started twice"), "{said}");
+        } else {
+            assert_eq!(counted, format!("{SLUG} {squash}\n"), "{stage:?}");
+        }
+    }
+}
+
+#[test]
+fn a_merge_whose_land_stopped_before_its_close_is_closed_by_the_watcher_and_a_held_one_is_not() {
+    for held in [false, true] {
+        let (r, bare) = delivering();
+        let (people, _, tip) = ready(&r, SLUG);
+        let (host, green) = armed_green(&r, &bare, &people);
+        host.merge_on_green();
+        let squash = head(&bare, "main");
+        // A run that found the merge and stopped there (the board lost): nothing proved or closed.
+        let mut cut = journal(&r, SLUG);
+        cut.stage = Stage::MergeRequested;
+        cut.held = held.then(|| "a person reads it".to_string());
+        cut.write(&lands(&r)).unwrap();
+        let asked = host.verbs().len();
+        let (said, line, rested) = watched(&r, &host, green, 3, &[]);
+        assert_eq!(line, ENDS, "{held}: {said}");
+        if held {
+            assert_eq!(
+                (said.as_str(), rested),
+                ("", 0),
+                "no round reads a held one"
+            );
+            assert_eq!(host.verbs().len(), asked);
+            assert!(landings(&r, SLUG).is_empty());
+            assert_eq!(journal(&r, SLUG), cut, "held as it was");
+            assert_ne!(head(&r.root, "main"), squash);
+            continue;
+        }
+        assert_eq!(rested, 1);
+        assert!(
+            said.contains("a delivery is under way (merge requested at"),
+            "{said}"
+        );
+        assert_eq!(landings(&r, SLUG).len(), 1);
+        assert_eq!(head(&r.root, "main"), squash, "the checkout follows");
+        assert_eq!(Receipt::read(&lands(&r), SLUG).unwrap().head, tip);
+        assert!(!Journal::path(&lands(&r), SLUG).exists());
+        assert_eq!(host.verbs()[asked..], ["result", "landed"]);
+    }
+}
+
+#[test]
+fn a_merge_asked_for_that_the_host_never_made_goes_back_to_the_armed_and_is_no_stop() {
+    let (r, bare) = delivering();
+    let (people, _, _) = ready(&r, SLUG);
+    let (host, green) = armed_green(&r, &bare, &people);
+    let base = head(&bare, "main");
+    // A run that asked for the merge and stopped; the host holds the pull request open, a check
+    // of another's its rules require still pending.
+    host.waits();
+    let mut cut = journal(&r, SLUG);
+    cut.stage = Stage::MergeRequested;
+    cut.write(&lands(&r)).unwrap();
+    let (said, line, _) = watched(&r, &host, green, 1, &[]);
+    assert_eq!(line, "1 armed at the host after 1 round(s)", "{said}");
+    assert!(
+        said.contains(&format!("of {SLUG} is still open: nothing merged")),
+        "{said}"
+    );
+    assert_eq!(posts(&r, SLUG, "is still open: nothing merged"), 1);
+    let kept = journal(&r, SLUG);
+    assert_eq!((kept.stage, kept.armed), (Stage::Eligible, true));
+    assert!(
+        !(lands(&r).join(format!("{}.stopped", file_stem(SLUG)))).exists(),
+        "not a land a round could not finish"
+    );
+    assert_eq!(head(&bare, "main"), base);
+    assert!(landings(&r, SLUG).is_empty());
+}
+
+#[test]
+fn a_round_that_cannot_finish_a_land_tries_again_and_says_so_once_past_the_bound() {
+    let (r, bare) = delivering();
+    let (people, _, _) = ready(&r, SLUG);
+    let (host, green) = armed_green(&r, &bare, &people);
+    host.merge_on_green();
+    let squash = head(&bare, "main");
+    // The main checkout is not clean: the merge is proved and nothing here follows it.
+    let project = fs::read_to_string(r.root.join("symphony.toml")).unwrap();
+    write(&r.root, "symphony.toml", &format!("{project}# an edit\n"));
+    let (said, line, rested) = watched(&r, &host, green, 2, &[]);
+    assert_eq!(
+        line,
+        "0 armed at the host and 1 merged with its land not ended after 2 round(s)"
+    );
+    assert_eq!(rested, 2);
+    assert_eq!(journal(&r, SLUG).stage, Stage::RemoteMerged);
+    assert!(
+        said.contains(&format!(
+            "{SLUG}: its land did not end ({SLUG} landed remotely as {}",
+            &squash[..7]
+        )) && said.contains("): the next round tries again"),
+        "{said}"
+    );
+    assert_eq!(posts(&r, SLUG, "reconciliation pending"), 1, "said once");
+    assert_eq!(posts(&r, SLUG, "has not ended"), 0, "within its bound");
+    // Both rounds stopped at the same; the watcher's log says it once.
+    assert_eq!(said.matches("its land did not end").count(), 1, "{said}");
+    assert!(landings(&r, SLUG).is_empty());
+    let stopped = lands(&r).join(format!("{}.stopped", file_stem(SLUG)));
+    assert_eq!(fs::read_to_string(&stopped).unwrap(), green.to_string());
+    // Past `[land] merge_within_minutes` of the first round that stopped: told once, however many
+    // rounds stop after.
+    let late = green + 31 * 60;
+    for _ in 0..2 {
+        let (_, line, _) = watched(&r, &host, late, 2, &[]);
+        assert!(
+            line.starts_with("0 armed at the host and 1 merged"),
+            "{line}"
+        );
+    }
+    assert_eq!(posts(&r, SLUG, "has not ended"), 1);
+    let (text, to) = last_post(&r, SLUG);
+    assert!(
+        text.starts_with(&format!(
+            "land {SLUG}: the land of {} has not ended (merged remotely at",
+            &journal(&r, SLUG).head[..7]
+        )),
+        "{text}"
+    );
+    assert!(
+        text.contains("within 30 min of the watcher's first round that could not finish it")
+            && text.contains("reconciliation pending")
+            && text.ends_with(&format!("or run `just land {SLUG}`, which goes on from it")),
+        "{text}"
+    );
+    assert_eq!(to.as_deref(), Some("@orchestrator"));
+    assert!(landings(&r, SLUG).is_empty());
+    // Put right, the next round finishes it and the watcher ends.
+    git(&r.root, &["checkout", "--", "symphony.toml"]);
+    let (said, line, _) = watched(&r, &host, late, 3, &[]);
+    assert_eq!(line, ENDS, "{said}");
+    assert_eq!(landings(&r, SLUG).len(), 1);
+    assert_eq!(head(&r.root, "main"), squash);
+    assert!(!stopped.exists() && !Journal::path(&lands(&r), SLUG).exists());
+}
+
 #[test]
 fn two_tasks_armed_are_watched_by_one_watcher_until_neither_is() {
     const OTHER: &str = "sim/run";
@@ -1076,10 +1289,14 @@ fn a_refusal_a_watcher_round_stops_at_is_said_once_at_a_head_however_many_rounds
     assert_eq!(rested, 3);
     assert_eq!(
         said.matches(refused).count(),
-        3,
-        "each round reads it: {said}"
+        1,
+        "each round reads it, and the log says it once: {said}"
     );
     assert_eq!(posts(&r, SLUG, refused), 1, "said once on the thread");
+    // Kept at its head where a round reads it, a land delivered by a pull request.
+    let kept = fs::read_to_string(lands(&r).join(format!("{}.said", file_stem(SLUG)))).unwrap();
+    assert!(kept.starts_with(&head(&wt, "HEAD")), "{kept}");
+    assert!(kept.contains(refused), "{kept}");
     assert_eq!(
         host.verbs()[..2],
         ["publish", "arm"],
@@ -1103,7 +1320,11 @@ fn a_refusal_a_watcher_round_stops_at_is_said_once_at_a_head_however_many_rounds
     let refused = "refused to arm pull request #3 of";
     let (said, line, _) = watched(&r, &host, dispatch::seconds(), 3, &[]);
     assert_eq!(line, "1 armed at the host after 3 round(s)", "{said}");
-    assert_eq!(said.matches(refused).count(), 3, "{said}");
+    assert_eq!(
+        said.matches(refused).count(),
+        2,
+        "its evidence changed, then its publication did not end, said once each: {said}"
+    );
     assert_eq!(posts(&r, SLUG, refused), 1, "said once on the thread");
     let arms = host.verbs().iter().filter(|verb| *verb == "arm").count();
     assert_eq!(arms, 4, "the dispatch's, then one a round");
@@ -1380,6 +1601,56 @@ fn an_arming_starts_the_watcher_where_none_runs_and_none_while_one_does() {
 }
 
 #[test]
+fn a_round_that_comes_to_the_same_writes_nothing_to_the_watchers_log() {
+    // A task waiting for its approve: read every round, said once, however long it waits.
+    let (r, bare) = delivering();
+    let (people, _, tip) = pending(&r, SLUG, "sim/jump.gd");
+    let host = Host::new(&r, &bare);
+    dispatched(&r, SLUG, &people.exe, &host).1.unwrap();
+    let waiting = format!(
+        "{SLUG}: armed at {}, its evidence not standing yet\n",
+        &tip[..7]
+    );
+    let (said, line, rested) = watched(&r, &host, dispatch::seconds(), 40, &[]);
+    assert_eq!(line, "1 armed at the host after 40 round(s)");
+    assert_eq!(rested, 40);
+    assert_eq!(said, waiting, "one line, not one a round");
+    // Another watcher knows nothing of what the one before said: once again.
+    let (said, ..) = watched(&r, &host, dispatch::seconds(), 2, &[]);
+    assert_eq!(said, waiting);
+
+    // What a round comes to changed (the minutes its evidence stood): said again, once each.
+    let (r, bare) = delivering();
+    let (people, ..) = ready(&r, SLUG);
+    let (host, green) = armed_green(&r, &bare, &people);
+    host.waits();
+    let round = std::cell::Cell::new(0);
+    let clock = || {
+        round.set(round.get() + 1);
+        green + (round.get() - 1) * 30
+    };
+    let watching = Watching {
+        transport: Some(&host),
+        clock: &clock,
+        rest: &|_| {},
+        rounds: Some(4),
+    };
+    let mut out = Vec::new();
+    dispatch::watch(&r.board.store, &landing(&r, &[]), &mut out, &watching).unwrap();
+    let said = String::from_utf8(out).unwrap();
+    let stood: Vec<&str> = said.lines().collect();
+    assert_eq!(stood.len(), 2, "four rounds, two states: {said}");
+    assert!(
+        stood[0].contains("its evidence standing for 0 min"),
+        "{said}"
+    );
+    assert!(
+        stood[1].contains("its evidence standing for 1 min"),
+        "{said}"
+    );
+}
+
+#[test]
 fn the_land_command_takes_a_slug_or_watch_alone() {
     let (r, _) = delivering();
     let land = [("SYMPHONY_LAND", "1")];
@@ -1401,5 +1672,61 @@ fn the_land_command_takes_a_slug_or_watch_alone() {
         (code, out.as_str()),
         (0, "nothing is armed at the host: the watcher ends\n"),
         "{err}"
+    );
+}
+
+/// `slug`, filed here where it is not yet, claimed and in review with no branch, then
+/// approved by a fresh reviewer through the command line: what the approve printed.
+fn approved_line(r: &Repo, slug: &str) -> String {
+    let (exe, reviewer) = (r.board.session("worker"), r.board.session("reviewer"));
+    let store = &r.board.store;
+    if store.get(slug).is_err() {
+        r.task(slug);
+        store.claim(slug, &exe).unwrap();
+        store.move_to(slug, "review", &exe).unwrap();
+    }
+    store.take_role(slug, &reviewer, "reviewer").unwrap();
+    let off = [("TASKS_DISPATCH", "off")];
+    let (code, out, err) = tasks(r, &reviewer, &["verdict", slug, "approve", "fine"], &off);
+    assert_eq!(code, 0, "{out}{err}");
+    out
+}
+
+#[test]
+fn an_approve_says_the_host_merges_it_naming_its_pull_request_once_bound() {
+    let (r, bare) = delivering();
+    // Bound by its dispatch at review: the pull request its journal names.
+    let (people, ..) = pending(&r, SLUG, "sim/jump.gd");
+    let host = Host::new(&r, &bare).arming(Arms::Always);
+    dispatched(&r, SLUG, &people.orch, &host).1.unwrap();
+    assert_eq!(
+        approved_line(&r, SLUG),
+        format!(
+            "{SLUG} is approved: done on the board, not on main until the host merges it; the \
+             host merges pull request #3 of owner/name (https://example.test/owner/name/pull/3) \
+             once its checks pass, and the board closes the task; `just land {SLUG} --as HANDLE` \
+             only settles it by hand\n"
+        )
+    );
+    // Not bound yet (its dispatch has not published it): no pull request to name.
+    assert_eq!(
+        approved_line(&r, "sim/walk"),
+        "sim/walk is approved: done on the board, not on main until the host merges it; the \
+         host merges its pull request, bound by its dispatch, once its checks pass, and the \
+         board closes the task; `just land sim/walk --as HANDLE` only settles it by hand\n"
+    );
+    // A journal that does not read as its own binds nothing.
+    fs::write(Journal::path(&lands(&r), "sim/run"), "{").unwrap();
+    assert!(approved_line(&r, "sim/run").contains("its pull request, bound by its dispatch,"));
+    // A project whose `land` is a recipe of its own keeps its line: `just land` runs that recipe
+    // in the Symphony's place.
+    write(&r.root, "justfile", "land *ARGS:\n    @echo its own\n");
+    assert_eq!(
+        approved_line(&r, "sim/fall"),
+        format!(
+            "sim/fall is approved: done on the board, not on main until it lands; the `land` \
+             recipe of the project's own lands it ({}): `just land sim/fall`\n",
+            r.root.join("justfile").display()
+        )
     );
 }
