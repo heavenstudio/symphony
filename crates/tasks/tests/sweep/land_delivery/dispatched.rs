@@ -700,6 +700,237 @@ fn a_cancelled_tasks_pull_request_is_closed_unmerged_its_branch_left() {
     }
 }
 
+// -- what the host does not do ---------------------------------------------------------------------
+
+/// A host on which a red check is run again green and the pull request merged by itself just
+/// before the disarm a failure or a move asks reaches it.
+struct MergesAtDisarm<'a, 'r>(&'a Host<'r>);
+
+impl Transport for MergesAtDisarm<'_, '_> {
+    fn ask(&self, verb: &str, request: &Value) -> Result<Value, String> {
+        if verb == "disarm" {
+            self.0.foreign.borrow_mut().clear();
+            *self.0.waiting.borrow_mut() = false;
+            self.0.merge_on_green();
+        }
+        self.0.ask(verb, request)
+    }
+}
+
+#[test]
+fn a_result_the_host_does_not_give_is_read_again_at_the_next_round_nothing_changed() {
+    for case in ["lost", "unavailable"] {
+        let (r, bare) = delivering();
+        let (people, ..) = ready(&r, SLUG);
+        let (host, green) = armed_green(&r, &bare, &people);
+        host.waits();
+        // Red, were it read.
+        host.red_check("ci/build");
+        let why = match case {
+            "lost" => {
+                host.lost.borrow_mut().push("result");
+                "result: no answer"
+            }
+            _ => {
+                let away = json!({"state": "unavailable", "why": "the host is away"});
+                host.says.borrow_mut().push(("result", away));
+                "the host is away"
+            }
+        };
+        let (said, ..) = watched(&r, &host, green, 1, &[]);
+        assert!(
+            said.contains(&format!(
+                "{SLUG}: pull request #3 was not read ({why}): the next round reads it"
+            )),
+            "{case}: {said}"
+        );
+        assert_eq!(host.verbs()[2..], ["result"], "{case}: nothing disarmed");
+        assert!(host.is_armed(), "{case}");
+        assert_eq!(status(&r, SLUG), "done", "{case}");
+        let kept = journal(&r, SLUG);
+        assert_eq!(
+            (kept.stage, kept.green),
+            (Stage::Armed, Some(green)),
+            "{case}"
+        );
+    }
+}
+
+#[test]
+fn a_disarm_the_host_does_not_answer_leaves_it_armed_and_the_next_round_tries_again() {
+    let (r, bare) = delivering();
+    let before = head(&bare, "main");
+    let (people, ..) = ready(&r, SLUG);
+    let (host, green) = armed_green(&r, &bare, &people);
+    host.waits();
+    host.red_check("ci/build");
+    host.lost.borrow_mut().push("disarm");
+    let (said, ..) = watched(&r, &host, green, 1, &[]);
+    assert!(
+        said.contains(&format!(
+            "{SLUG}: pull request #3 was not disarmed (disarm: no answer): the next round tries \
+             again"
+        )),
+        "{said}"
+    );
+    assert_eq!(
+        status(&r, SLUG),
+        "done",
+        "nothing moved before the merge is off"
+    );
+    let kept = journal(&r, SLUG);
+    assert_eq!((kept.stage, kept.green), (Stage::Armed, Some(green)));
+    // The next round turns it off, and then the task goes back.
+    let (said, ..) = watched(&r, &host, green, 1, &[]);
+    assert!(
+        said.contains(&format!("land {SLUG}: not merged: a check")),
+        "{said}"
+    );
+    assert_eq!(host.verbs()[2..], ["result", "disarm", "result", "disarm"]);
+    assert_eq!(status(&r, SLUG), "in_progress");
+    assert_nothing_landed(&r, &bare, &before);
+}
+
+#[test]
+fn an_armed_task_moved_back_by_a_write_no_dispatch_saw_is_disarmed_by_the_watcher() {
+    let (r, bare) = delivering();
+    let (people, _, tip) = pending(&r, SLUG, "sim/jump.gd");
+    let host = Host::new(&r, &bare);
+    dispatched(&r, SLUG, &people.exe, &host).1.unwrap();
+    assert!(host.is_armed());
+    // Moved by the board itself, which starts no dispatch; the host's first answer is lost.
+    (r.board.store)
+        .move_to(SLUG, "in_progress", &people.exe)
+        .unwrap();
+    host.lost.borrow_mut().push("disarm");
+    let (said, ..) = watched(&r, &host, dispatch::seconds(), 1, &[]);
+    assert!(
+        said.contains("was not disarmed (disarm: no answer): the next round tries again"),
+        "{said}"
+    );
+    assert_eq!(journal(&r, SLUG).stage, Stage::Armed, "still watched");
+    let (said, ..) = watched(&r, &host, dispatch::seconds(), 1, &[]);
+    let line = format!(
+        "land {SLUG}: its auto-merge is off while {SLUG} is in_progress, its checks as its \
+         evidence says at {}; it is armed again once it moves to review",
+        &tip[..7]
+    );
+    assert!(said.contains(&line), "{said}");
+    assert_eq!(
+        host.verbs()[2..],
+        ["disarm", "disarm"],
+        "its evidence not standing, the host is not read"
+    );
+    assert!(!host.is_armed());
+    let kept = journal(&r, SLUG);
+    assert_eq!((kept.stage, kept.green), (Stage::Eligible, None));
+    assert_eq!(last_post(&r, SLUG), (line, None));
+    let (_, line, _) = watched(&r, &host, dispatch::seconds(), 1, &[]);
+    assert_eq!(line, "nothing is armed at the host: the watcher ends");
+}
+
+#[test]
+fn a_merge_the_host_made_as_its_disarm_was_asked_is_settled_as_its_land() {
+    for case in ["red", "moved back"] {
+        let (r, bare) = delivering();
+        let (people, _, tip) = ready(&r, SLUG);
+        let (host, green) = armed_green(&r, &bare, &people);
+        host.waits();
+        match case {
+            "red" => host.red_check("ci/build"),
+            _ => {
+                let store = &r.board.store;
+                store.move_to(SLUG, "review", &people.orch).unwrap();
+                store.move_to(SLUG, "in_progress", &people.orch).unwrap();
+            }
+        }
+        let (said, ..) = watched(&r, &MergesAtDisarm(&host), green, 1, &[]);
+        let squash = head(&bare, "main");
+        assert!(
+            said.contains(&format!("landed {SLUG} on main at {}", &squash[..12])),
+            "{case}: {said}"
+        );
+        assert!(!said.contains("not merged"), "{case}: {said}");
+        assert_eq!(head(&r.root, "main"), squash, "{case}");
+        assert_eq!(landings(&r, SLUG).len(), 1, "{case}");
+        assert_eq!(Receipt::read(&lands(&r), SLUG).unwrap().head, tip, "{case}");
+        assert_eq!(
+            status(&r, SLUG),
+            "done",
+            "{case}: closed from where it stood"
+        );
+    }
+}
+
+#[test]
+fn a_close_the_host_does_not_make_is_asked_again_while_armed_and_said_where_nothing_reads_it() {
+    // Armed: the watcher's next round asks again.
+    let (r, bare) = delivering();
+    let (people, ..) = pending(&r, SLUG, "sim/jump.gd");
+    let host = Host::new(&r, &bare);
+    dispatched(&r, SLUG, &people.exe, &host).1.unwrap();
+    host.lost.borrow_mut().push("close");
+    (r.board.store)
+        .move_to(SLUG, "cancelled", &people.orch)
+        .unwrap();
+    let (said, ..) = watched(&r, &host, dispatch::seconds(), 1, &[]);
+    assert!(
+        said.contains(&format!(
+            "{SLUG} is cancelled and pull request #3 was not closed (close: no answer): the next \
+             round tries again"
+        )),
+        "{said}"
+    );
+    assert!(Journal::path(&lands(&r), SLUG).exists());
+    let (said, ..) = watched(&r, &host, dispatch::seconds(), 1, &[]);
+    assert!(said.contains("closed without a merge, as"), "{said}");
+    assert!(!Journal::path(&lands(&r), SLUG).exists());
+
+    // Not armed: no round reads it, so the orchestrator is told how to close it, the host's
+    // refusal said as it gave it.
+    let (r, bare) = delivering();
+    let (people, ..) = pending(&r, SLUG, "sim/jump.gd");
+    let host = Host::new(&r, &bare).saying("close", json!({"state": "refused"}));
+    dispatched(&r, SLUG, &people.exe, &host).1.unwrap();
+    let store = &r.board.store;
+    store.move_to(SLUG, "in_progress", &people.exe).unwrap();
+    dispatched(&r, SLUG, &people.exe, &host).1.unwrap();
+    assert_eq!(journal(&r, SLUG).stage, Stage::Eligible);
+    store.move_to(SLUG, "cancelled", &people.orch).unwrap();
+    let line = dispatched(&r, SLUG, &people.orch, &host).1.unwrap();
+    let said = format!(
+        "land {SLUG}: {SLUG} is cancelled and pull request #3 was not closed (it gave no reason); \
+         it is not armed, so nothing merges it, and `just land {SLUG} --dispatch` closes it"
+    );
+    assert_eq!(line, said);
+    assert_eq!(last_post(&r, SLUG), (said, Some("@orchestrator".into())));
+
+    // Merged by hand meanwhile: held for a person, as nothing closes a cancelled task.
+    let (r, bare) = delivering();
+    let (people, ..) = pending(&r, SLUG, "sim/jump.gd");
+    let host = Host::new(&r, &bare).arming(Arms::Always);
+    dispatched(&r, SLUG, &people.exe, &host).1.unwrap();
+    *host.eligible.borrow_mut() = true;
+    host.merge_on_green();
+    (r.board.store)
+        .move_to(SLUG, "cancelled", &people.orch)
+        .unwrap();
+    let (said, ..) = watched(&r, &host, dispatch::seconds(), 1, &[]);
+    assert!(
+        said.contains(&format!(
+            "pull request #3 was merged while {SLUG} was cancelled"
+        )),
+        "{said}"
+    );
+    assert!(
+        said.contains(&format!(
+            "the delivery of {SLUG} is held for reconciliation"
+        )),
+        "{said}"
+    );
+    assert!(landings(&r, SLUG).is_empty());
+}
+
 // -- what a dispatch leaves alone ------------------------------------------------------------------
 
 #[test]

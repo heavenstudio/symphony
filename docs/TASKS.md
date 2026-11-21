@@ -2716,8 +2716,10 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
 | Any of these where the task cannot go back (cancelled or closed, a document save, which stays pending and shown, or what the regenerator made, which it cancels and makes again) | `tools/delivery-failed-SLUG` filed to `@orchestrator`, naming the pull request and why; a second failure is a line on the one open |
 
 A task cancelled while its pull request is open has it closed unmerged, its merge off and its
-branch left. One the host merged at a head its branch has moved past is held for reconciliation,
-by name, as any merge of another head.
+branch left. A close the host does not make is asked again by the watcher's next round while its
+merge is armed; one no longer armed, which nothing merges, is said to `@orchestrator` with the
+`just land SLUG --dispatch` that closes it. One the host merged at a head its branch has moved
+past is held for reconciliation, by name, as any merge of another head.
 
 #### A slug is delivered once
 

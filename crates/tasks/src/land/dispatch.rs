@@ -854,18 +854,30 @@ impl Landing<'_> {
                     binding.pull
                 ),
             )),
-            Ok(answer) => Ok(format!(
-                "{slug} is cancelled and pull request #{} was not closed ({}): the next round \
-                 tries again",
-                binding.pull,
-                delivery::state(&answer).1
-            )),
-            Err(why) => Ok(format!(
-                "{slug} is cancelled and pull request #{} was not closed ({why}): the next round \
-                 tries again",
-                binding.pull
-            )),
+            Ok(answer) => Ok(self.not_closed(&journal, delivery::state(&answer).1)),
+            Err(why) => Ok(self.not_closed(&journal, &why)),
         }
+    }
+
+    /// The pull request of a cancelled task the host did not close, for `why`: armed, the
+    /// watcher's next round asks again, a watcher started where none runs; not armed, nothing
+    /// merges it and no round reads it, so the orchestrator is told how to close it.
+    fn not_closed(&mut self, journal: &Journal, why: &str) -> String {
+        let slug = self.slug;
+        let pull = journal.binding.as_ref().map_or(0, |binding| binding.pull);
+        let line = format!("{slug} is cancelled and pull request #{pull} was not closed ({why})");
+        if journal.stage == Stage::Armed {
+            if let Some(said) = watch_start(self.env, &self.main) {
+                self.say(&format!("land {slug}: {said}"));
+            }
+            return format!("{line}: the next round tries again");
+        }
+        let line = format!(
+            "land {slug}: {line}; it is not armed, so nothing merges it, and `just land {slug} \
+             --dispatch` closes it"
+        );
+        self.post(&line, Some("@orchestrator"));
+        line
     }
 }
 
