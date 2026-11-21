@@ -32,10 +32,12 @@ Read this page with the orchestrator skill, as the [root guide](../../../AGENTS.
   current task-authorized prompt through the active approval flow; a redirected prompt alone
   is no reason to restart or repeat a recorded check.
 - A task that moves the board's schema (it raises `VERSION` in `crates/tasks/src/schema.rs`):
-  before its land, read `just release --status` and hold it while a run is in progress or a
-  release candidate is open, and for nothing else (not for `current` to serve the last schema);
-  after its land, run `just release` at once, without asking, unless the land's own `--due`
-  started a run ([the cadence](../../../docs/RELEASES.md#the-cadence)).
+  before its last stamp, read `just release --status` and hold it while a run is in progress or
+  a release candidate is open, and for nothing else (not for `current` to serve the last schema):
+  its reviewer is started only once neither holds, as here a pull request delivers it and GitHub
+  merges it within seconds of its approve; once the board's landed line is on its thread, run
+  `just release` at once, without asking, unless the land's own `--due` started a run
+  ([the cadence](../../../docs/RELEASES.md#the-cadence)).
 - Bending a rule is an orchestrator's decision, given by the owner on 2026-11-19: where a rule
   here would hold development back or slow it for no gain the task needs (a size or first-visit
   budget at its line once the cut was made first, a wait the work does not need), decide it
