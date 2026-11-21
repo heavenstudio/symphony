@@ -1613,14 +1613,20 @@ releases/release-2026-11-20/
   bin/tasks
   bin/agent-send
   bin/symphony
+  bin/tasks-move       the move of a board's store, which no recipe runs
   client/HASH/         the client, named by the hash of its files
 current -> releases/release-2026-11-20
 ```
 
 - **The build.** In the run's own checkout, at the release's commit and in its build folder, the
-  run builds the release profile of the four binaries (`tools/cargo.sh build --release --locked`,
+  run builds the release profile of the five binaries (`tools/cargo.sh build --release --locked`,
   each named with `--bin`, of the packages `symphony-server`, `symphony-board` and
-  `symphony-app`). The server
+  `symphony-app`): the four a project's recipes run, and `tasks-move`, by which a project on
+  the release moves its board's store to PostgreSQL
+  ([one board's move](analysis/board-pg-cutover.md#one-boards-move)). No recipe and no refresh
+  runs that one: the project's orchestrator or owner runs it by its path under `current`, and
+  `symphony init` links and names no build of it, so it has no size line
+  ([size budgets](CHECKS.md#size-budgets)). The server
   is built with no client compiled in (`SYMPHONY_CLIENT_BESIDE=1`, which its build script reads):
   run from a release's folder it serves `client/HASH/` from beside it. The client is the
   distribution the commit holds (`apps/symphony-server/client/public/`), which the release's own
