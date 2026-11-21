@@ -2101,8 +2101,9 @@ reason with no words is refused. A move to blocked names what it waits on as wel
 task's branch, named as its slug, on the default branch. `just tasks claim` says so of a top-level
 task (a slice works on its parent's branch, and an instruction subtask's slug is none), an approve
 of one says that the task is done on the board but not on the default branch until it lands, and
-the line that lands it (or the project's own `land`), an approve of a subtask that its work lands
-with the task it is under, and a land
+the line that lands it (or the project's own `land`), or, where the project
+[delivers by pull request](#a-land-delivered-by-a-pull-request), that the host merges it, an
+approve of a subtask that its work lands with the task it is under, and a land
 with no branch so named names the branch whose tip is the commit the approve names, and the rename
 (`git branch -m BRANCH SLUG`). It is the convention a project gets without configuring anything, and a lower level
 replaces a higher one: a project's own `land` recipe replaces it, everywhere. It runs only as `just land`, whose recipe sets `SYMPHONY_LAND`: `tasks
@@ -2591,6 +2592,13 @@ project's upstream is the one exception, merged there by a merge commit
 ([below](#an-import-delivered-by-a-pull-request)). With no such key the land is the one above, and
 nothing here is reached. This repository sets none.
 
+Nobody lands a task there, so an approve of one names no landing to run: it says that the task is
+done on the board and not on the default branch until the host merges it, that the host merges
+its pull request once its checks pass (named by its number, repository and address once a
+dispatch bound one, from its journal) and the board closes the task, and names `just land SLUG
+--as HANDLE` only as what settles it by hand. A project whose `land` is a recipe of its own keeps
+the line of [the default landing](#the-default-landing).
+
 The board names no host. The command is the project's own program, run in the main checkout as
 `COMMAND VERB --request FILE`, FILE one JSON object and its standard output another whose `state`
 says what it came to; [`symphony-github deliver`](GITHUB.md#delivering-a-land) is one. Its verbs
@@ -2709,7 +2717,8 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
   said, and is published and armed again. A refusal a round stops at (a head refused at the head,
   an arming refused) holds until what it names changes, so it is said on the thread once at the
   branch's head, however many rounds read it again (`SLUG.said` in the lands' folder keeps the
-  last one said, by a land, a dispatch or a round). A task whose evidence does not
+  last one said, by a land, a dispatch or a round, until the delivery ends, landed or cancelled;
+  a land that merges here keeps none). A task whose evidence does not
   stand yet costs it no read of the host, which merges nothing while eligible is pending; it reads
   its evidence again, so a write no command dispatches for (the owner's through the Symphony, a run
   recorded at the head) is published at its next round. One whose evidence stands has its pull

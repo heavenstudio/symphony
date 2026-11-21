@@ -164,9 +164,11 @@ fn the_token_is_in_no_argument_and_no_environment_variable() {
         !outside.contains(TOKEN),
         "neither argv nor the environment holds the token"
     );
-    assert!(!outside.contains("api.github.com"), "nor the URL");
+    // The request's own path: a GitHub runner's environment names the API's host itself.
+    assert!(!outside.contains("/repos/o/n"), "nor the URL");
     let stdin = fs::read_to_string(format!("{}.stdin", seen.display())).unwrap();
     assert!(stdin.contains(&format!("Authorization: Bearer {TOKEN}")));
+    assert!(stdin.contains("api.github.com/repos/o/n"), "{stdin}");
     let _ = fs::remove_file(&seen);
     let _ = fs::remove_file(format!("{}.stdin", seen.display()));
 }

@@ -780,8 +780,9 @@ const PHONE_PAGE_FIRST_LIMIT: f64 = 0.14;
 const PHONE_GATES_FIRST_LIMIT: f64 = 0.064;
 /// [`PHONE_PAGE_FIRST_LIMIT`]'s visit on the light theme: it scores 0.1556. The same elements move
 /// the same 32 px; the box a shift moves holds the card's shadow, and the light one
-/// (`--shadow-1`, `0 4px 16px` there, `0 1px 2px` dark) reaches 18 px above the slot, 24 px below
-/// and to the screen's edges: `div.task-gates-slot [0,378,390,466]→[0,346,390,285]`,
+/// (`--shadow-1`, `0 4px 16px` there, `0 1px 2px` dark) reaches 20 px above the card, 28 px below
+/// and 24 px at its sides, past the screen's edges, where the dark one reaches 2, 4 and 3:
+/// `div.task-gates-slot [0,378,390,466]→[0,346,390,285]`,
 /// `section#timeline [0,0,0,0]→[0,638,390,206]`. The difference from dark is that shadow's area
 /// alone. It only goes down.
 const PHONE_PAGE_FIRST_LIGHT_LIMIT: f64 = 0.156;

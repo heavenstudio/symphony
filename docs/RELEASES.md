@@ -233,7 +233,9 @@ on the three kit packages and five helpers, with all features and each manifest'
 It compares each with the latest eligible published version from crates.io, including the current
 version when already published. Removals, added constructor arguments and other detected breaks
 require a major; additive changes require the tool's minor where applicable. There is no
-`--release-type` override. A missing baseline, failed download or failed rustdoc build is red.
+`--release-type` override. A missing baseline, failed download or failed rustdoc build is red;
+a check that ended because crates.io's index did not answer it (a connection reset or timed out)
+is run again, three runs at most, and red if the third ends so.
 The product's five packages, below 1.0, keep their consumer guards instead.
 
 `tools/semver.sh` fetches the checksum-pinned upstream executable for Intel or ARM macOS or glibc
@@ -246,8 +248,8 @@ rustdoc JSON are cached by the tool in that build folder's `semver-checks/`.
 Release verification already needs crates.io for the source comparison and does not run wholly
 offline. The semver step likewise retrieves its baseline from crates.io on a cold cache: HTTPS
 access and the dependencies of both versions are required. The caches avoid repeated builds;
-offline release verification is not supported. A registry lookup or baseline build that fails is
-red. No vendored rustdoc snapshot needs updating at each publication. The checker does not
+offline release verification is not supported. A baseline build that fails is red, and so is a
+registry lookup that fails in each of the launcher's three runs. No vendored rustdoc snapshot needs updating at each publication. The checker does not
 compare arbitrary argument, return or field types, serialization behaviour or the two-release
 consumer migration rule. It also permits a new non-exhaustive enum variant in a patch; this
 project requires a minor for a vocabulary addition. The typed guards and review still hold these
@@ -339,7 +341,9 @@ it, and the run has no such check; this repository's `symphony.toml` names none
   policy does not hold, the rulesets were not read whole (gh not signed in as someone who
   administers the repository, or GitHub not answering), the command could not be run or was
   still running at the run's time. A red is filed as any red is (`tests/release-red-rulesets`,
-  its text the adapter's lines, each thing missing among them), and nothing is tagged, pushed or
+  its text the adapter's lines, each thing missing among them, and that whoever administers the
+  repository puts it right on GitHub, in place of how a fix in code starts, lands and closes it),
+  and nothing is tagged, pushed or
   refreshed: the commit is held as the release candidate ([step 5](#the-release-run)). Its fix is
   an administrator's on GitHub, never a commit, so its task is answered by being cancelled, saying
   where; the candidate's rerun runs the check again, as a red always reruns, and the run that
@@ -364,7 +368,20 @@ Neither reaches GitHub.
 releases, and is the one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)).
 It is a command of `symphony-build`, this repository's own binary in a package of its own, which no
 project is given and neither the library nor the shipped `symphony` compiles
-([CHECKS](CHECKS.md#size-budgets)):
+([CHECKS](CHECKS.md#size-budgets)).
+
+What it verifies, releases and refreshes is the project's `[releases]` table, so it reads the main
+checkout's `symphony.toml` as [the settings check](PROJECT_FILE.md#the-settings-check) does: a file
+that does not parse, or names a table, a key or a value the Symphony does not know, is not the
+plain project to it, as it is to a page that must still draw. A run over such a file stops before
+it fetches or checks anything ([stopped short](#the-release-run), step 6), saying the file and
+what is wrong with it, so a mistyped key never leaves a run going with its check or its cadence
+unsaid. A land's count (`--due`) does not count over such a file, and does not judge it either:
+it runs on the build the main checkout links, which a landing that adds a key may be newer than,
+so it hands over to a build of the tip as a due count does ([the count](#the-count)), which
+counts if it loads the file and stops red if it cannot; the count stops red in its own build only
+where no such build is made (the tip holds no `tools/rs-bin.sh`, or it does not build). `--status` says it
+first and prints the rest; `--schedule`, `--drop` and `--github` refuse, naming it.
 
 1. **The candidate.** It fetches `origin/main` (`--remote` and `--branch` name another remote and
    main line), the commit a project can fetch, and takes its tip; while a release candidate is
@@ -657,7 +674,8 @@ project is given and neither the library nor the shipped `symphony` compiles
    holds that commit as the release candidate ([below](#the-release-candidate)), and its reds'
    tasks say how a fix of one starts, merges and lands; their fixes' lands, not main's tip, are
    what the next run checks.
-6. **Stopped short:** a run that ends without deciding (a fetch that fails or does not answer, a
+6. **Stopped short:** a run that ends without deciding (a project file that does not load, a
+   fetch that fails or does not answer, a
    checkout it cannot take, a git lock held, a process in the run's checkout, a checkout changed
    under a check, a main behind the newest release, a push that fails, a run told to
    stop, a lock or a check that outlives its run, below) is red too, as the task
