@@ -6,9 +6,10 @@
 //!
 //! A row of an open table ([`crate::schema::OPEN`]) is read past a field its struct does not know:
 //! an additive step's, which a build without the step reads around and whose writes keep it. Each
-//! row refuses one read alone, as a dump reads it, since a copy, an export or a move to another
-//! engine made of it would drop it; the store's reader hands the row only the fields it names
-//! ([`open_row`], [`crate::objects`]), as a task's record does ([`crate::store`]'s `Beside`).
+//! row refuses one read exactly, as a dump is read ([`crate::objects::read_exact`]), since a copy,
+//! an export or a move to another engine made of it would drop it; every other read hands the row
+//! only the fields it names ([`open_row`], [`crate::objects::read`]), as a task's record does
+//! ([`crate::store`]'s `Beside`).
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -84,20 +85,22 @@ impl Dump {
 }
 
 /// `name`'s rows, taken out of `tables`: none when the dump has no such table (a board from before it).
+/// Read exactly ([`crate::objects::read_exact`]): a row with a field the copy does not know is
+/// refused, as the copy would drop it.
 fn table<T: DeserializeOwned>(
     tables: &mut Map<String, Value>,
     name: &str,
 ) -> Result<Vec<T>, String> {
     tables.remove(name).map_or(Ok(Vec::new()), |rows| {
-        crate::objects::read(&rows)
+        crate::objects::read_exact(&rows)
             .map_err(|e| format!("the dump's {name} are not rows the copy knows: {e}"))
     })
 }
 
 /// Whether `name` is a struct of an open table's rows ([`crate::schema::OPEN`]), by the name its
-/// `Deserialize` gives: what the store's reader hands only the fields the struct names
-/// ([`crate::objects`]). A match, so each struct's reader, whose name is its own constant, decides
-/// it as it is compiled, and only an open table's row names its fields.
+/// `Deserialize` gives: what the store's reader hands only the fields the struct names, but where
+/// it reads exactly ([`crate::objects`]). A match, so each struct's reader, whose name is its own
+/// constant, decides it as it is compiled, and only an open table's row names its fields.
 #[inline(always)]
 pub(crate) fn open_row(name: &str) -> bool {
     matches!(

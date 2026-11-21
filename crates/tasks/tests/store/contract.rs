@@ -143,6 +143,34 @@ fn worked(store: &Store, holder: Option<&str>, priority: i64, made: &str) {
 }
 
 on_both! {
+    fn a_whole_board_read_refuses_a_field_its_rows_do_not_name_which_every_other_read_passes(
+        backend: Backend
+    ) {
+        let db = backend.database();
+        // A build whose own step defines a field its row structs do not name.
+        let store = open(&db, &Opening::write().at(one_on()));
+        store.copy(&everything()).unwrap();
+        assert_eq!(additions(&db), Some(1));
+        let clean = store.dump().unwrap();
+        let raw = Raw::of(&db);
+        raw.row("task", "sim/jump").set(json!({"fixture_note": "kept"})).unwrap();
+        let rows = open_rows(&db);
+        // Its steps are the board's, so only the exact read stands between the field and a copy,
+        // an export or a move to another engine that would drop it.
+        let why = refused(store.dump());
+        assert!(
+            why.starts_with("the board's rows are not the dump's: unknown field `fixture_note`"),
+            "{why}"
+        );
+        assert_eq!(open_rows(&db), rows, "a refused dump writes nothing");
+        // Every other read and write passes it, and keeps it.
+        let jump = clean.tasks.iter().find(|task| task.slug == "sim/jump").unwrap();
+        assert_eq!(store.get("sim/jump").unwrap().title, jump.title);
+        store.set_priority("sim/jump", 4, "owner").unwrap();
+        assert_eq!(raw.row("task", "sim/jump").field("fixture_note").unwrap(), "kept");
+        assert_eq!(store.get("sim/jump").unwrap().priority, 4);
+    }
+
     fn a_build_steps_behind_reads_and_writes_a_board_ahead_and_keeps_what_it_does_not_know(
         backend: Backend
     ) {

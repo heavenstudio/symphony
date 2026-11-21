@@ -256,8 +256,8 @@ and a change keeps what it reads:
   named fields, never replaced whole (`store/surreal/fence_tests.rs`), so a field of an additive
   step survives every build of the contract. Each row struct refuses a field it does not know
   (`deny_unknown_fields`), and the store's reader hands an open table's row only the fields it
-  names (`rows::open_row`, `objects.rs`), so the whole-board dump alone, read by serde, refuses
-  one by name, as a copy would drop it. A new table, or a new field on one, is a step's;
+  names (`rows::open_row`, `objects::read`), so the whole-board dump alone, read exactly
+  (`objects::read_exact`), refuses one by name, as a copy would drop it. A new table, or a new field on one, is a step's;
   a closed table changes only by a breaking step;
 - before contract 28 nothing new went on `session`, as builds before it refused an optional field
   once a row carried it: callback addresses, chat ownership, delivery state and bindings live in
