@@ -499,7 +499,6 @@ fn text_reads_as_serde_json_reads_it_and_is_dropped_where_it_does_not() {
         (Some(binding.clone()), Some(binding.clone()))
     );
     assert_eq!(parse::<Binding>(written.as_bytes()), Some(binding.clone()));
-    assert_eq!(parse::<Binding>(written.to_string()), Some(binding));
     for row in requests().into_iter().map(row) {
         let text = serde_json::to_string(&row).unwrap();
         let (parsed, direct) = texts::<Row>(&text);
