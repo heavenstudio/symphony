@@ -686,3 +686,148 @@ fn the_clocks_give_settles_a_held_tasks_lost_holder_once_under_its_retry() {
     assert!(!hub.give(&fixture.store, &fixture.store.clock_board().unwrap()));
     assert_eq!(at(), "build/available@3");
 }
+
+/// The hold's file of the board of the repository at `root`, where a reach reads it.
+fn hold_file(root: &std::path::Path) -> PathBuf {
+    let folder = root.join(".git").join(symphony_board::server::FOLDER);
+    std::fs::create_dir_all(&folder).unwrap();
+    folder.join("hold")
+}
+
+/// Hold the board of the repository at `root` as a move does, starting and stopping nothing: what
+/// a reach of it is refused with until [`release`].
+fn hold(root: &std::path::Path) -> String {
+    let hold = symphony_board::server::Hold {
+        by: "silver-crane-104".into(),
+        why: "its move to PostgreSQL".into(),
+        at: 0,
+        pid: 1,
+    };
+    std::fs::write(hold_file(root), serde_json::to_string(&hold).unwrap()).unwrap();
+    symphony_board::server::ServerError::Held(hold).to_string()
+}
+
+fn release(root: &std::path::Path) {
+    std::fs::remove_file(hold_file(root)).unwrap();
+}
+
+#[test]
+fn a_held_boards_page_reader_opens_at_the_first_request_after_its_release() {
+    let tree = Tree::new();
+    let (mut hub, clock) = clocked(&tree);
+    let root = hub.root.clone();
+    let fixture = Fixture::empty();
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let refusal = Arc::new(Mutex::new(Some(hold(&root))));
+    let (count, refused) = (attempts.clone(), refusal.clone());
+    hub.connect_reader = Box::new(move |_| {
+        count.fetch_add(1, SeqCst);
+        match refused.lock().unwrap().clone() {
+            Some(refusal) => Err(refusal),
+            None => reader(&fixture, Schema::this_build()),
+        }
+    });
+    // Held for over a minute: an attempt at 0, 1, 3, 7, 15, 31 and 63 s, the next due at 123 s.
+    for second in 0..=64 {
+        let said = hub.reader().err().unwrap();
+        assert!(said.contains("held by silver-crane-104"), "{said}");
+        if second < 64 {
+            pass(&clock, 1);
+        }
+    }
+    assert_eq!(attempts.load(SeqCst), 7);
+    // Released at 64 s, with 59 s of its deadline left: the next request opens it.
+    release(&root);
+    *refusal.lock().unwrap() = None;
+    let store = hub.reader().unwrap();
+    assert_eq!(attempts.load(SeqCst), 8);
+    // A board that is down afterwards, and not held, keeps its deadlines however it is repaired.
+    hub.reader_failed(&store);
+    *refusal.lock().unwrap() = Some("the board's server did not come up".into());
+    assert!(hub.reader().is_err());
+    *refusal.lock().unwrap() = None;
+    for _ in 0..1000 {
+        assert!(hub.reader().is_err(), "down, repaired before its deadline");
+    }
+    assert_eq!(attempts.load(SeqCst), 9);
+    pass(&clock, 1);
+    assert!(hub.reader().is_ok());
+}
+
+#[test]
+fn a_released_board_that_is_not_up_yet_waits_one_second_not_the_holds_minute() {
+    let tree = Tree::new();
+    let (mut hub, clock) = clocked(&tree);
+    let root = hub.root.clone();
+    let fixture = Fixture::empty();
+    let refusal = Arc::new(Mutex::new(Some(hold(&root))));
+    let refused = refusal.clone();
+    hub.connect_reader = Box::new(move |_| match refused.lock().unwrap().clone() {
+        Some(refusal) => Err(refusal),
+        None => reader(&fixture, Schema::this_build()),
+    });
+    for _ in 0..=64 {
+        assert!(hub.reader().is_err());
+        pass(&clock, 1);
+    }
+    release(&root);
+    *refusal.lock().unwrap() = Some("the board's server did not come up".into());
+    assert_eq!(
+        hub.reader().err().as_deref(),
+        Some("the board's server did not come up"),
+        "the release made an attempt due"
+    );
+    *refusal.lock().unwrap() = None;
+    assert!(hub.reader().is_err(), "down now, and so on its own deadline");
+    pass(&clock, 1);
+    assert!(hub.reader().is_ok());
+}
+
+#[test]
+fn a_held_boards_worker_opens_at_the_first_tick_after_its_release() {
+    let tree = Tree::new();
+    let (hub, clock) = clocked(&tree);
+    let fixture = Fixture::new(Seed::default().task("tools/pending", "ready"));
+    let refusal = hold(&hub.root);
+    let released = AtomicBool::new(false);
+    let attempts = AtomicUsize::new(0);
+    let mut connect = |_: &std::path::Path| {
+        attempts.fetch_add(1, SeqCst);
+        if released.load(SeqCst) {
+            reader(&fixture, Schema::this_build())
+        } else {
+            Err(refusal.clone())
+        }
+    };
+    let mut board = None;
+    let start = *clock.lock().unwrap();
+    // A tick each tenth of a second for 100 s of hold.
+    for tick in 0..1_000 {
+        *clock.lock().unwrap() = start + Duration::from_millis(tick * 100);
+        hub.board_tick(&mut board, &mut connect);
+    }
+    assert_eq!(attempts.load(SeqCst), 7, "at 0, 1, 3, 7, 15, 31 and 63 s");
+    let said = hub.task_snapshot().err().unwrap();
+    assert!(said.contains("held by silver-crane-104"), "{said}");
+    // Released at 100 s, 23 s before its deadline: the next tick opens and reads it.
+    release(&hub.root);
+    released.store(true, SeqCst);
+    hub.board_tick(&mut board, &mut connect);
+    assert_eq!(attempts.load(SeqCst), 8);
+    assert!(board.is_some());
+    assert_eq!(hub.task_snapshot().unwrap().tasks.len(), 1);
+}
+
+#[test]
+fn a_hold_that_does_not_read_still_holds_and_a_folder_no_repository_holds_is_never_held() {
+    let tree = Tree::new();
+    let (hub, _clock) = clocked(&tree);
+    assert!(!hub.board_held());
+    std::fs::write(hold_file(&hub.root), "not a hold").unwrap();
+    assert!(hub.board_held());
+    release(&hub.root);
+    assert!(!hub.board_held());
+    let plain = tree.path("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    assert!(!Hub::new(&plain, &plain.join("build/client")).board_held());
+}
