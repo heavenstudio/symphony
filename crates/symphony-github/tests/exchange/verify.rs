@@ -160,7 +160,7 @@ fn a_verification_turned_off_names_its_own_setting_and_unread_settings_say_why()
         why.starts_with("turned off: its settings do not read: ") && why.contains("sometimes"),
         "{answer}"
     );
-    assert!(rig.github.asked().is_empty());
+    assert_eq!(rig.github.asked().len(), 0, "{:?}", rig.github.asked());
 }
 
 #[test]
