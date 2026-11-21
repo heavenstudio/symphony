@@ -75,9 +75,15 @@ fn the_line_names_the_folder_once_and_stays_short_at_any_depth() {
         "/Users/someone/Documents/a long project name/with'\\''s a quote/.git/symphony/surreal/\
          {SURREAL_VERSION}"
     );
-    assert!(line.starts_with(&format!("d='{folder}' && mkdir -p \"$d\" && ")), "{line}");
+    assert!(
+        line.starts_with(&format!("d='{folder}' && mkdir -p \"$d\" && ")),
+        "{line}"
+    );
     assert_eq!(line.matches("someone").count(), 1, "{line}");
-    assert!(line.contains(" && mv -f \"$d/.unpack/surreal\" \"$d/surreal\"; s=$?; "), "{line}");
+    assert!(
+        line.contains(" && mv -f \"$d/.unpack/surreal\" \"$d/surreal\"; s=$?; "),
+        "{line}"
+    );
     assert!(line.ends_with("; [ $s -eq 0 ]"), "{line}");
     // What the line adds to the folder's own length is fixed, whatever the path's depth.
     let own = line.len() - folder.len();
@@ -85,7 +91,10 @@ fn the_line_names_the_folder_once_and_stays_short_at_any_depth() {
     assert!(!line.contains('\n'));
     // A binary's name the shell would read inside the line's double quotes gets no line.
     for name in ["sur$real", "sur real", "sur\"real", "sur`real"] {
-        assert_eq!(fetch_line(Path::new("/r").join(name).as_path(), "b", "0", "linux"), None);
+        assert_eq!(
+            fetch_line(Path::new("/r").join(name).as_path(), "b", "0", "linux"),
+            None
+        );
     }
     assert_eq!(fetch_line(Path::new("/"), "b", "0", "linux"), None);
 }
