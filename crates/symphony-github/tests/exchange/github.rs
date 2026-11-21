@@ -22,6 +22,9 @@ pub(crate) enum Fault {
     LoseAnswer,
     /// It is not carried out: this status and these headers are the answer.
     Status(u16, Vec<(&'static str, String)>),
+    /// It is carried out and answered: it holds a place, so the fault planted after it meets
+    /// the request after.
+    Pass,
 }
 
 struct Inner {
@@ -517,7 +520,10 @@ impl Fake {
                 false,
             );
         }
-        (inner.answer(method, path, body), fault.is_some())
+        (
+            inner.answer(method, path, body),
+            matches!(fault, Some(Fault::LoseAnswer)),
+        )
     }
 }
 
