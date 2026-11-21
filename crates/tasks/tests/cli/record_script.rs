@@ -700,7 +700,9 @@ const CLIENT_BUILD: &str = "#!/bin/sh\nif [ \"$1\" = build/verified-client ] && 
 /// made the file that names; `metadata` saying no target, so the tests' lanes are the libraries'
 /// and binaries' own tests and the doc tests; `test` (the tests' build and each lane) saying the
 /// client it was handed and the steps folder it sees, red under `FAIL_TESTS`; but the hosted
-/// board's tests, which name its feature, say nothing and are red under `FAIL_HOSTED` alone.
+/// board's tests, which name its feature, say nothing and are red under `FAIL_HOSTED` alone, and
+/// the board's raw-statement fence, a test target `lint-rs` runs as one of its checks, says nothing
+/// and is green.
 const RECIPES_CARGO: &str = r#"#!/bin/sh
 if [ "$1" = metadata ]; then exit 0; fi
 if [ "$1" = nextest ] && [ "$2" = list ]; then
@@ -713,6 +715,7 @@ case " $* " in *' --features hosted-postgresql '*)
     if [ -n "${FAIL_HOSTED:-}" ]; then echo 'hosted stand-in: no PostgreSQL 16'; exit 4; fi
     exit 0 ;;
 esac
+case " $* " in *' --test raw_fence '*) exit 0 ;; esac
 if [ "$1" = test ] || [ "$1" = nextest ]; then
     echo "client=${SYMPHONY_UI_DIST-unset}"
     echo "steps=${SYMPHONY_CHECK_STEPS-unset}"
