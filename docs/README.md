@@ -86,7 +86,7 @@ still await implementation; its approval alone does not make it current app beha
 - [A project's task workflow](analysis/project-workflow.md) — the proposed project-defined
   steps, the existing gate boundary, and migration that preserves the default flow.
 - [The board's cutover to PostgreSQL](analysis/board-pg-cutover.md) — the order for moving
-  live boards, one board's move, the way back, what is not built yet and what the move waits for.
+  live boards, one board's move, the way back, and this repository's board's move on 2026-11-21.
 - [Managed PostgreSQL](analysis/hosted-postgresql.md) — the proposed hosted connection,
   connection budget, database boundary and PostgreSQL 16/18 validation contract.
 - [Configurable delivery workflows](analysis/configurable-delivery-workflow.md) — the proposed
