@@ -584,6 +584,11 @@ impl Reading {
     }
 }
 
+/// The root's `overflow-anchor`: `none` while the page's landing holds what the address names
+/// (`land`, shell/shell.ts), so no adjustment of the browser's own scroll anchoring reads to it as
+/// a scroll away; `auto` once the landing has ended.
+const ANCHORING: &str = "getComputedStyle(document.documentElement).overflowAnchor";
+
 /// Runs the deadline of the page's ghost ([`reader`] holds it) where it still waits, and says how
 /// many timers of its length the page held: its one.
 const SETTLE_DEADLINE: &str =
@@ -726,6 +731,11 @@ fn read_while_drawn(
         "{id} {reading:?}: the page's ghost lifts with it at the scroll padding: {}",
         page.eval(&format!("{element}?.getBoundingClientRect().top ?? null"))
     );
+    assert_eq!(
+        page.eval(ANCHORING),
+        json!("none"),
+        "{id} {reading:?}: the browser's own scroll anchoring is off while the landing holds"
+    );
     page.eval(TWO_FRAMES);
     page.eval(&format!("window.reading = {element}; true"));
     let landed = page.eval(READ);
@@ -795,6 +805,11 @@ fn read_while_drawn(
         page.wait_for(&held(false), SHOWN),
         "{id} {reading:?}: what the reader reads holds still while the reads are held: {}",
         page.eval(READ)
+    );
+    assert_eq!(
+        page.eval(ANCHORING),
+        json!("auto"),
+        "{id} {reading:?}: the reader's act ended the landing, and the browser's own scroll anchoring is back to hold their place"
     );
     let before = page.eval(READ);
     page.eval(COUNT_SCROLLS);
