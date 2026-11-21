@@ -1757,6 +1757,8 @@ fn browser_waits_keep_events_and_bound_idle_polls_without_charging_observer_dela
                     json!(false)
                 }
                 "after-timeout" => json!("usable"),
+                // Asked of a condition that threw: this page's document has its element.
+                "document.documentElement === null" => json!(false),
                 other => panic!("unexpected evaluation {other}"),
             };
             peer.reply(&command, json!({"result": {"value": value}}));
@@ -4886,4 +4888,62 @@ fn a_page_prefers_no_reduced_motion_until_a_caller_emulates_it() {
         )
         .unwrap();
     assert_eq!(chrome.eval(reduced).unwrap(), json!(true));
+}
+
+#[test]
+fn a_condition_that_throws_on_a_document_with_no_element_yet_is_asked_again() {
+    const ROOT: &str = "document.documentElement === null";
+    let thrown = || json!({"exceptionDetails": {"text": "Uncaught", "exception": {"className": "TypeError"}}});
+    // The stand-in page: `window.root` throws twice on a document with no element, the second
+    // time as the page goes on, then is met; `window.broken` throws on a document that has one.
+    let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, move |peer| {
+        let mut asked: Vec<String> = Vec::new();
+        while let Some(command) = peer.next() {
+            if marker(&command) {
+                peer.reply(&command, json!({"result": {"value": null}}));
+                continue;
+            }
+            if probe(&command) {
+                peer.reply(&command, json!({"result": {"value": 0}}));
+                continue;
+            }
+            let expression = command["params"]["expression"].as_str().unwrap().to_owned();
+            asked.push(expression.clone());
+            let count = asked.iter().filter(|asked| **asked == expression).count();
+            let roots = asked.iter().filter(|asked| *asked == ROOT).count();
+            match (expression.as_str(), count) {
+                ("window.root", 1 | 2) | ("window.broken", _) => peer.reply(&command, thrown()),
+                ("window.root", _) => peer.reply(&command, json!({"result": {"value": true}})),
+                (ROOT, _) if roots == 1 => peer.reply(&command, json!({"result": {"value": true}})),
+                (ROOT, _) if roots == 2 => {
+                    refuse(peer, &command, "Execution context was destroyed.");
+                }
+                (ROOT, _) => peer.reply(&command, json!({"result": {"value": false}})),
+                (other, count) => panic!("evaluation {count} of {other}"),
+            }
+        }
+        asked
+    });
+    assert!(chrome.wait_for("window.root", PROTOCOL_CPU).unwrap());
+    let broken = chrome
+        .wait_for("window.broken", PROTOCOL_CPU)
+        .unwrap_err()
+        .to_string();
+    assert!(broken.starts_with("window.broken threw: "), "{broken}");
+    // An evaluation on its own is asked once, and its throw is its answer wherever it is.
+    assert!(chrome.eval("window.broken").is_err());
+    drop(chrome);
+    assert_eq!(
+        peer.join().unwrap(),
+        [
+            "window.root",
+            ROOT,
+            "window.root",
+            ROOT,
+            "window.root",
+            "window.broken",
+            ROOT,
+            "window.broken"
+        ]
+    );
 }

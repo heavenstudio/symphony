@@ -101,6 +101,8 @@ pub struct Error {
     stalled: bool,
     /// An evaluation's reply was one of [`LOST_TO_NAVIGATION`]'s.
     navigated: bool,
+    /// An evaluation's expression threw.
+    threw: bool,
 }
 
 impl Error {
@@ -110,6 +112,7 @@ impl Error {
             past_deadline: false,
             stalled: false,
             navigated: false,
+            threw: false,
         }
     }
 
@@ -119,6 +122,7 @@ impl Error {
             past_deadline: true,
             stalled: false,
             navigated: false,
+            threw: false,
         }
     }
 
@@ -128,6 +132,7 @@ impl Error {
             past_deadline: false,
             stalled: true,
             navigated: false,
+            threw: false,
         }
     }
 
@@ -1564,7 +1569,10 @@ impl Chrome {
             }
             let result = &value["result"];
             if let Some(exception) = result.get("exceptionDetails") {
-                return Err(Error::new(format!("{expression} threw: {exception}")));
+                return Err(Error {
+                    threw: true,
+                    ..Error::new(format!("{expression} threw: {exception}"))
+                });
             }
             Ok(Some(result["result"]["value"].clone()))
         })
@@ -1575,7 +1583,8 @@ impl Chrome {
     /// renderer stalls until the wall-clock backstop is an error naming the stall, not a false
     /// condition: it never had the turns to make the condition true. An evaluation the page's
     /// navigation took from it ([`LOST_TO_NAVIGATION`]) is a turn whose condition is not met yet,
-    /// and the document the page went to is asked again; any other error reply ends the wait. A
+    /// and the document the page went to is asked again, and so is a condition that threw on a
+    /// document with no element yet ([`Chrome::rootless`]); any other error reply ends the wait. A
     /// page that closed, or whose renderer crashed, before the wait or under it, ends it at once
     /// with an error saying which ([`Gone`]): Chrome answers none of its evaluations then.
     pub fn wait_for(&mut self, expression: &str, cpu: Duration) -> Result<bool> {
@@ -1594,6 +1603,9 @@ impl Chrome {
                 ),
                 Ok(None) => break "evaluation still pending",
                 Err(error) if error.navigated => (false, "evaluation lost to a navigation"),
+                Err(error) if error.threw && self.rootless(&mut budget)? => {
+                    (false, "the document has no element yet")
+                }
                 Err(error) => return Err(error),
             };
             if met {
@@ -1611,6 +1623,18 @@ impl Chrome {
         }
         eprintln!("Chrome {state} after {}: {expression}", budget.spent());
         Ok(false)
+    }
+
+    /// Whether the page's document has no root element yet, or the page went on while it was
+    /// asked: a document the page has just gone to and not begun to read, which a busy machine
+    /// leaves so for a while. A condition that reads the root (`document.documentElement.dataset`)
+    /// throws there, and says nothing of the page it waits for.
+    fn rootless(&mut self, budget: &mut WaitBudget) -> Result<bool> {
+        match self.evaluate("document.documentElement === null", budget, true) {
+            Ok(rootless) => Ok(rootless != Some(json!(false))),
+            Err(error) if error.navigated => Ok(true),
+            Err(error) => Err(error),
+        }
     }
 
     /// Observe protocol events while the real browser is paused at a fixture boundary: those of
