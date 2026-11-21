@@ -17,8 +17,8 @@ use tungstenite::{Message, WebSocket};
 use crate::profiles::{self, next_profile};
 use crate::{
     BACKSTOP_FLOOR, BrowserGroup, CLEANUP_CPU, Chrome, End, LAUNCH_BACKSTOP, Leash, Owner, POLL,
-    PROTOCOL_CPU, WaitBudget, chrome_args, cleanup_profile, devtools_endpoint, find, load_said,
-    process, signal_group,
+    PROTOCOL_CPU, WaitBudget, chrome_args, cleanup_profile, devtools_endpoint, find, listed,
+    load_said, process, signal_group,
 };
 
 /// This test binary as the leash: it runs [`browser_leash`] alone.
@@ -4854,4 +4854,14 @@ fn a_context_left_for_a_fresh_one_leaves_no_target_and_the_page_runs_on_in_the_n
         assert_eq!(chrome.eval("1 + 1").unwrap(), json!(2));
         before = pages;
     }
+}
+
+#[test]
+fn a_target_is_listed_only_by_its_own_id_among_the_answers_targets() {
+    let targets = json!({"targetInfos": [{"targetId": "A1", "type": "page"}, {"targetId": "B2"}]});
+    assert!(listed(&targets, "A1"));
+    assert!(listed(&targets, "B2"));
+    assert!(!listed(&targets, "A"), "a part of an id is not it");
+    assert!(!listed(&json!({"targetInfos": []}), "A1"));
+    assert!(!listed(&json!({}), "A1"), "an answer with no list");
 }

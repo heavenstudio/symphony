@@ -384,6 +384,13 @@ impl WaitBudget {
     }
 }
 
+/// Whether `targets`, a `Target.getTargets` answer, lists the target `id`.
+fn listed(targets: &Value, id: &str) -> bool {
+    targets["targetInfos"]
+        .as_array()
+        .is_some_and(|infos| infos.iter().any(|info| info["targetId"] == id))
+}
+
 const CHROMES: [&str; 4] = [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "google-chrome",
@@ -1311,11 +1318,32 @@ impl Chrome {
             }
             (None, Some(page)) => {
                 self.browser_call("Target.closeTarget", json!({"targetId": page}))?;
+                self.wait_closed(&page)?;
             }
             (None, None) => {}
         }
         self.forget_events();
         Ok(())
+    }
+
+    /// Wait until the browser lists no target `page`: `Target.closeTarget` answers once the close
+    /// is asked for, and the page goes after it, later the busier the machine. A context's
+    /// disposal answers only once its pages are gone.
+    fn wait_closed(&mut self, page: &str) -> Result<()> {
+        let mut budget = self.budget(PROTOCOL_CPU)?;
+        loop {
+            let targets = self.browser_call("Target.getTargets", json!({}))?;
+            if !listed(&targets, page) {
+                return Ok(());
+            }
+            if budget.poll(&self.owner.members()?) {
+                let what = format!("the closed page {page}");
+                return Err(budget.ended(
+                    &what,
+                    format!("{what}: still a target after {}", budget.spent()),
+                ));
+            }
+        }
     }
 
     /// From now on, every call and wait here ends by `deadline` at the latest, whatever its own
