@@ -626,7 +626,7 @@ impl OutputJob {
     ///
     /// The journal could not be written.
     pub(super) fn deliver(&mut self, root: &Path) -> Result<bool, String> {
-        let edit = self.job.1.clone();
+        let edit = self.job.edit.clone();
         let sequence = sequence_of(&self.path)
             .ok_or_else(|| format!("{}: not a journal entry's name", self.path.display()))?;
         let _commits = shared_lock(root, "verdict-commits.lock")?;
