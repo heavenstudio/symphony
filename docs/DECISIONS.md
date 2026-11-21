@@ -5,6 +5,27 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
+## Needs your decision
+
+### Project workflows: the guard panel's links
+
+- [ ] **workflow-guard-panel-links** — The guard panel you found okay, redrawn so each row leads somewhere, as you asked. Every row opens the board's own record of it in place. A reason or a fact the ledger gives becomes a link to what it names (a task, a decision card, a document, a GitHub run). The ledger's name links to its own page for this approval, and "Let in by…" links to that move in the task's timeline. Where the fix is a command, the row shows it to copy. Nothing on it approves, as before. Approve this look, or comment. [[analysis/workflow-guard-panel#What a row links to]]
+  [2026-11-21 10:23] agent — For `app/workflow-guard-panel`; replaces **workflow-guard-panel**, which you rejected: "a lot of gates should probably link to something. An action, a log, a task, a decision card, a github run etc."
+
+    **Proposed, drawn into the real page with invented names, times, numbers and links.** Your Accept was refused: the ledger's two reasons link to the open task and the failed run, and the row's record is open under it. Above, "design signoff" links to the decision it rested on: ![Proposed, wide](analysis/workflow-guard-panel/links-wide.webp) ![Proposed, on a phone](analysis/workflow-guard-panel/links-phone.webp)
+
+    Every state a row can show, each with what it links to, one record open: ![Every state, wide](analysis/workflow-guard-panel/links-states-wide.webp) ![Every state, on a phone](analysis/workflow-guard-panel/links-states-phone.webp)
+
+    **Where each link comes from.**
+
+    - **The record** is what the board already keeps, or read from your try: who, when, the ledger's answer, what it rests on.
+    - **Reasons and facts** are the ledger's own words, which it already sends. A task, card, document or web address in them becomes a link; plain words stay quoted. A link that leaves the app is marked and names its site.
+    - **The ledger's page** needs one new, optional line in the project's settings saying where its ledger shows an approval. Without it the name is plain text.
+
+    **What still links to nothing.** A row whose attestation failed its signature shows nothing it says. Expired, missing and conflict rows have their record and the ledger's page, and no more: the board keeps no log of the ledger's reports, and no refusal beyond this page.
+
+    **Earlier verdicts checked.** **workflow-guard-panel**, rejected, asks for these links and calls the rest of the look okay, so the rows, words and colours are kept and only the links and the record are new. **revision-bound-project-guards** (B) keeps approvals in the project's ledger, which this keeps. **reports-task-page-pictures** (A) chose the gates' rows, whose way of linking this reuses. None decides how a guard's row links. The same task builds it after your answer.
+
 ## Auto-approved: spot-check
 
 ### Releases
@@ -25,7 +46,7 @@ their dated history work is in [REVIEW](REVIEW.md).
     **Earlier verdicts checked.** **consumer-contract-versioning** (B) lets a project link only the kit and the helpers, so neither tool keeps the library, and it leaves open how they get what they use. No other card speaks of either tool. Symphony's side is filed after your answer.
   [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
 
-## Waiting on an agent
+## Rejected and replaced
 
 ### Project workflows
 
@@ -40,8 +61,7 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **Earlier verdicts checked.** **revision-bound-project-guards** (B) puts approvals in the project's ledger, which this keeps; it says nothing of how a page shows them. **reports-task-page-pictures** (A) chose the gates' rows (met, missing or waived, with who, when and why), whose shape these rows reuse; it decides the gates, not guards. **project-workflow-shape** (C) lets a project add states and edges, not how they look. None decides this look. The same task builds it after your answer.
   [2026-11-20 06:30] owner · rejected — The design looks okay, but a lot of gates should probably link to something. An action, a log, a task, a decision card, a github run etc. In general, there should be a way for the user to click something that leads them to be able to see why something failed or not and get more info and context.
-
-## Rejected and replaced
+  [2026-11-21 10:22] agent — Redrawn with links, as you asked, and posted as a new card: **workflow-guard-panel-links**. Every row now opens the board's record of it, the ledger's reasons and facts link to the task, card, document or run they name, the ledger's name links to its own page, and "Let in by" links to the timeline. The rest of the look is kept. Nothing is built until you answer that card.
 
 ### Releases
 
@@ -297,7 +317,7 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### GitHub delivery
 
-- [x] **github-delivery-policy-reader-standing** — The trial you approved was run and settled it: with Administration (write) the third App is shown both lists, and they are what they should be, nobody let past the evidence rule and the landing App alone let past the update rule. The App is back to Administration (read). GitHub shows those lists only to a reader with write access to the rule set ([its documentation](https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset)), and of the App permissions tried, the one that showed them, Administration (write), can also change or remove the rules. Should such an identity stand on the real repository, `heavenstudio/symphony`, so every land can read them? A: yes, the third App is installed on `heavenstudio/symphony` with Administration (write) and used at each land for that reading alone. B: no; a person confirms the two lists by hand when delivery is turned on and whenever the rules are changed, and every land checks everything else. C: neither, and pull-request landing stays off. Recommended: B, because the key that A keeps on the landing machine could remove the protection outright, which is more than the change it would be there to notice. B is not the same protection: a person's look takes the place of a reading at every land. Approve and say A, B or C in the note, or comment. [[analysis/github-pr-landing#Permissions and protection]]
+- [r] **github-delivery-policy-reader-standing** — The trial you approved was run and settled it: with Administration (write) the third App is shown both lists, and they are what they should be, nobody let past the evidence rule and the landing App alone let past the update rule. The App is back to Administration (read). GitHub shows those lists only to a reader with write access to the rule set ([its documentation](https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset)), and of the App permissions tried, the one that showed them, Administration (write), can also change or remove the rules. Should such an identity stand on the real repository, `heavenstudio/symphony`, so every land can read them? A: yes, the third App is installed on `heavenstudio/symphony` with Administration (write) and used at each land for that reading alone. B: no; a person confirms the two lists by hand when delivery is turned on and whenever the rules are changed, and every land checks everything else. C: neither, and pull-request landing stays off. Recommended: B, because the key that A keeps on the landing machine could remove the protection outright, which is more than the change it would be there to notice. B is not the same protection: a person's look takes the place of a reading at every land. Approve and say A, B or C in the note, or comment. [[analysis/github-pr-landing#Permissions and protection]]
   [2026-11-19 08:15] agent — Posted for the board task `tools/github-pr-verified-activation`, as **github-delivery-policy-write-trial** said it would be if write showed the lists.
 
     **What the trial showed.** One reading of each rule set on the throwaway repository, with a token limited to it: both answered with their list present, the evidence rule's empty and the update rule's naming the landing App alone. The token was revoked, the App was put back to Administration (read) and that was confirmed on its installation page. No rule was edited and the two other Apps were not touched.
@@ -312,6 +332,7 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-19 08:22] agent — Corrected before this card reached main, for the board task `docs/github-delivery-policy-reader-standing`: it names the real repository, `heavenstudio/symphony`; it says that no narrower grant showed the lists among the GitHub App permissions tried, not among every identity; it no longer says only an administrator can add someone to a list, since write access to a rule set is enough; and it says that B puts a person's look in place of a reading at every land, which is not the same check. That a rule set's list of who is let past is shown only to a reader with write access to it is [GitHub's documentation of reading a rule set](https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset).
   [2026-11-19 10:35] owner · approved — A
   [2026-11-19 11:05] agent — Taken as A for `heavenstudio/symphony` alone: a third App with Administration (write), used by Symphony for the two readings at each land and nothing else. It is built and proved in the board task `tools/github-pr-verified-activation`, by its executor, in commits of its own, not in a separate task as the card said: the proof of the delivery cannot be made without it. Installing that App on the repository is yours to do on GitHub when the executor asks; delivery stays off until the proof is posted and reviewed.
+  [2026-11-21 10:22] agent · resolved
 - [r] **github-delivery-policy-write-trial** — The read-only App you approved was made and tried, and GitHub does not show it the lists either: reading a repository's administration is not enough. The one level left to try is writing it, and an identity that can write a repository's administration can also change or remove the rules it is there to read. May that be tried, on the throwaway repository only? A: yes, the third App is given Administration (write) there, for one reading, to learn whether GitHub then shows the lists, and is put back to Administration (read) right after it. B: no; a person confirms the lists by hand when delivery is turned on, and lands check everything else. C: neither, and pull-request landing stays off. Recommended: A, because it risks only the throwaway repository and settles what GitHub does; it decides nothing for the real one. Approve and say A, B or C in the note, or comment. [[analysis/github-pr-landing#Permissions and protection]]
   [2026-11-19 02:45] agent — Posted for the board task `tools/github-pr-verified-activation`, as **github-delivery-policy-reader** said it would be if reading was not enough.
 
