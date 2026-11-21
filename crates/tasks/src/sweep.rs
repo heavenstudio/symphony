@@ -1411,7 +1411,7 @@ fn recorded_lands(root: &Path) -> BTreeSet<String> {
         .flatten()
         .filter_map(|entry| {
             let text = std::fs::read_to_string(entry.path()).ok()?;
-            let record: crate::land::Record = serde_json::from_str(&text).ok()?;
+            let record: crate::land::Record = crate::objects::parse(&text)?;
             let at = entry.path();
             (at == crate::land::Record::path(&folder, &record.slug)
                 || at == crate::land::Record::dashed(&folder, &record.slug))

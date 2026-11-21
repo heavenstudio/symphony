@@ -1,16 +1,27 @@
-//! How the board reads its types from the JSON it holds as a [`Value`] ([`read`]): every answer
-//! of the store (`Store::read`, `Store::transact` and their kin decode through it), and an
-//! attempt's row and its artifacts. The board and its database write each struct of them as an
-//! object, so a struct is read from an object alone.
+//! How the board reads its types from the JSON it holds: as a [`Value`] ([`read`]), every answer
+//! of the store (`Store::read`, `Store::transact` and their kin decode through it), an attempt's
+//! row, facts and artifacts, the fields the board keeps on a task, the dump's tables and the
+//! project file's workflow tables; and as text it drops when it does not read ([`parse`]), the
+//! files and lines the board keeps beside its database. The board and its database write each
+//! struct of them as an object, so a struct is read from an object alone.
 //!
-//! `serde_json::from_value` reads a struct from an object or from an array of its fields in
-//! order, so each derived `Deserialize` it reads links two readers of the struct's fields, the
-//! map's and the sequence's, and the board reads many structs: through it the sequence readers
-//! would weigh about 165 KB of `tasks`, most of it in the store's answers, and about 50 KB of the
-//! server, which reads rows for a task's history and its cancel and stop. Read through [`Objects`], a struct links its map reader alone, as a struct
-//! variant does in both, and an array where a struct belongs is refused as the wrong type, as any
-//! other value there is. Everything else reads, and is refused, as `serde_json` reads and refuses
-//! it from a value.
+//! `serde_json` reads a struct from an object or from an array of its fields in order, from a
+//! value and from text alike, so each derived `Deserialize` it reads links two readers of the
+//! struct's fields, the map's and the sequence's, and from text a third and fourth of each, as a
+//! reader is compiled for each source it reads. Read through [`Objects`], a struct links its map
+//! reader alone, once, as a struct variant does in both. A read whose refusal a caller is shown
+//! (`tasks api`'s arguments, an assessment's submission, a file whose line and column are said)
+//! is `serde_json`'s own, and keeps its words.
+//!
+//! What reads differently here, each as no writer of the board writes it:
+//!
+//! - an array where a struct belongs is refused as the wrong type, as any other value there is;
+//! - a map's key is read as the string it is, where `serde_json` parses one for a key that is a
+//!   number, a boolean or a derived newtype: such a map is refused, and the board reads none;
+//! - text read by [`parse`] is a value first, so an object that says a field twice reads with
+//!   the later one, where `serde_json` refuses a struct's duplicate field from text.
+//!
+//! Everything else reads, and is refused, as `serde_json` reads and refuses it from a value.
 
 use serde::de::{
     self, DeserializeOwned, DeserializeSeed, Deserializer, EnumAccess, IntoDeserializer, MapAccess,
@@ -21,6 +32,17 @@ use serde_json::{Error, Map, Value};
 /// `value` read as `T`, each struct of it from an object.
 pub(crate) fn read<T: DeserializeOwned>(value: &Value) -> Result<T, Error> {
     T::deserialize(Objects(value))
+}
+
+/// `text` read as `T`, each struct of it from an object, or none where it is not JSON or not a
+/// `T`: for what the board drops when it cannot read it, as it says nothing of why.
+pub(crate) fn parse<T: DeserializeOwned>(text: impl AsRef<[u8]>) -> Option<T> {
+    read(&value(text.as_ref())?).ok()
+}
+
+/// `text` as the JSON value it is.
+fn value(text: &[u8]) -> Option<Value> {
+    serde_json::from_slice(text).ok()
 }
 
 /// A JSON value read with each struct from an object alone.

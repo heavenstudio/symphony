@@ -421,7 +421,7 @@ impl Needs {
     /// What a task's `fields` record of its needs, when they record any.
     pub fn of(fields: &BTreeMap<String, BTreeMap<String, Value>>) -> Option<Needs> {
         let value = fields.get(crate::red::FIELDS)?.get(NEEDS)?;
-        serde_json::from_value(value.clone()).ok()
+        crate::objects::read(value).ok()
     }
 
     /// Where the assessment stands: `at 1a2b3c4`, or `from the brief` when it read no tip; with
