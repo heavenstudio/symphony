@@ -6,7 +6,9 @@
 //! project names one, by a check of who bypasses its default branch's rules ([`rulesets`]). Every
 //! red check, and a run that stopped short of deciding, is a task on the board ([`board`]); when
 //! every check is green it tags the commit as the next release (`release-YYYY-MM-DD`, [`tags`])
-//! with what it holds ([`notes`]) and pushes that one tag, asks for its GitHub Release where the
+//! with what it holds ([`notes`]) and pushes that one tag (where the project names a command that
+//! verifies on GitHub's machines, the full verification is asked of it in place of the checkout,
+//! and run there when it gives no result: [`hosted`]), asks for its GitHub Release where the
 //! project names a command for one ([`github`]), then installs it on the machine ([`install`]),
 //! moves each registered project's board to its schema under the writer rule and points `current`
 //! at it ([`refresh`]), writing no project's checkout. `--commit COMMIT` does the same out of
@@ -45,6 +47,7 @@ mod git;
 mod github;
 mod gone;
 mod group;
+mod hosted;
 mod inputs;
 mod install;
 mod nextest;
@@ -107,7 +110,8 @@ the last week is a release's own or at that schema, and then current pointed at 
 machine's server follows; no project's checkout, branch or pin is written. \
 A run red in a check holds its commit as the release candidate, the local branch \
 release-candidate, until its reds' own lands answer them; then it is rerun, and main's tip is run \
-only once none is held (docs/RELEASES.md).
+only once none is held. Where [releases] hosted names a command, the full verification is asked \
+of GitHub's runners through it and run here only when they give no result (docs/RELEASES.md).
 
 options:
   -h, --help            show this help message and exit
@@ -1067,6 +1071,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         slept: 0.0,
         inputs: None,
         environment: None,
+        hosted: Vec::new(),
     };
     // HUP, INT and TERM stop the run, its check's group and its git, and let it say so and release
     // the lock; a signal this process was started ignoring stays ignored.
@@ -2149,6 +2154,18 @@ fn night(
         }
     }
     let mut carried: Vec<record::Carried> = Vec::new();
+    // The command that verifies on GitHub's machines, where the project names one.
+    let (id, main_tip) = (record.id.clone(), record.tip.clone());
+    let hosting = (!repo.project.releases.hosted.is_empty()).then(|| hosted::Hosting {
+        root: &repo.root,
+        main: &repo.main,
+        command: &repo.project.releases.hosted,
+        commit: &candidate,
+        tip: &main_tip,
+        remote,
+        branch: &options.branch,
+        by: &id,
+    });
     for step in &options.checks {
         told_to_stop(until, &format!("before `{}` started", step.name))?;
         let (planned, kept) = match held {
@@ -2192,8 +2209,33 @@ fn night(
             }
         };
         // What the run's time leaves out is red, never passed over: a release is checked whole.
+        let whole = matches!(planned, candidate::Planned::Whole);
+        let mut there = false;
         let ran = if Instant::now() >= until.until {
             Ran::never(step, &log(step), NOT_STARTED.into())
+        } else if let Some(hosting) = hosting.as_ref().filter(|_| whole && hosted::serves(step)) {
+            let _ = writeln!(
+                out,
+                "release: `{}` is asked of GitHub's runners for {}",
+                step.name,
+                short(&candidate)
+            );
+            match hosting.verify(step, &logs, &log(step), within) {
+                hosted::Judged::There(ran, judged) => {
+                    let _ = writeln!(out, "release: {}", judged.said());
+                    // Its greens stand on that run's runners, which no rerun here runs on.
+                    record.environment = Some(hosted::environment(&judged));
+                    record.hosted.push(judged);
+                    there = true;
+                    *ran
+                }
+                hosted::Judged::Here(why) => {
+                    let judged = hosted::Hosted::here(&step.name, &why);
+                    let _ = writeln!(out, "release: {}", judged.said());
+                    record.hosted.push(judged);
+                    steps::run(step, &place.checkout, &logs, &log(step), within, out)
+                }
+            }
         } else {
             steps::run(step, &place.checkout, &logs, &log(step), within, out)
         };
@@ -2203,7 +2245,8 @@ fn night(
         // Its tests' failures, each rerun alone in the checkout the look found as it was, which
         // is looked at again once they ended ([`alone`]).
         let mut ran = ran;
-        if looked.is_ok() && alone::rerun(&mut ran, &place.checkout, &logs, within, out) {
+        // Never those of a check GitHub judged: a rerun here is this machine's own build of them.
+        if looked.is_ok() && !there && alone::rerun(&mut ran, &place.checkout, &logs, within, out) {
             let mut reruns = (ran.steps.iter())
                 .filter_map(|step| step.alone.as_ref())
                 .flat_map(|alone| &alone.reruns);
@@ -3074,6 +3117,7 @@ mod tests {
             slept: 0.0,
             inputs: None,
             environment: None,
+            hosted: Vec::new(),
         }
     }
 

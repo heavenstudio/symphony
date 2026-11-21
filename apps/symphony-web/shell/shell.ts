@@ -621,15 +621,19 @@ function onScrollInput(stop: () => void): () => void {
 // view again once something drawn moved it, or the page's length changed (one at the page's end
 // may go higher now). The browser's own scroll anchoring holds none of this while the page is
 // under its ghost (`.settle`, hidden), and the sections that draw above a card once the landing
-// brings them near grow it by their pictures. The landing ends when it goes quiet: four frames
-// with nothing moved, no reserved box waiting within its sentinel's reach (`pendingNear`) and no
-// region busy within that reach (`aria-busy`: a ghost not lifted, a read not in), or 1800 at most,
-// a backstop as `reviewHoldPlace`'s. It ends too at the reader's input that scrolls
-// (`onScrollInput`), and at any scroll that moved the page and the element alike (find in the
-// page, a focus brought into view, a script: not a draw, the browser's own pull back at the page's
-// end aside). Only the next navigation lands again: a later call (a section's read in, the page's
-// last, an outline read again) opens what holds the element while the hold runs, and does nothing
-// once it has ended, leaving the page where the reader, or what they did, put it.
+// brings them near grow it by their pictures. It is off while the hold runs (`overflow-anchor:
+// none` on the root, back once the landing ends): its adjustment for a box that moves what it
+// anchors on and not the element (the ghost lifting before the sections near it come, on a loaded
+// machine) scrolls the page and the element alike, which the hold would take for a scroll away,
+// leaving the element to those sections as they draw above it. The landing ends when it goes
+// quiet: four frames with nothing moved, no reserved box waiting within its sentinel's reach
+// (`pendingNear`) and no region busy within that reach (`aria-busy`: a ghost not lifted, a read
+// not in), or 1800 at most, a backstop as `reviewHoldPlace`'s. It ends too at the reader's input
+// that scrolls (`onScrollInput`), and at any scroll that moved the page and the element alike
+// (find in the page, a focus brought into view, a script: not a draw, the browser's own pull back
+// at the page's end aside). Only the next navigation lands again: a later call (a section's read
+// in, the page's last, an outline read again) opens what holds the element while the hold runs,
+// and does nothing once it has ended, leaving the page where the reader, or what they did, put it.
 /** Where an element and the page are (`placeOf`). */
 type Place = [top: number, y: number, inner: number, length: number];
 interface Landing {
@@ -661,6 +665,7 @@ function scrolledAway([top, y, inner]: Place, [now, nowY, nowInner, nowLength]: 
 function endLanding() {
   landing.ended = true;
   landing.listening();
+  document.documentElement.style.removeProperty("overflow-anchor");
 }
 
 // Land on `target`, the element the address names, once for each navigation: open every `details`
@@ -681,6 +686,7 @@ function land(target: Element) {
     listening: () => {},
   };
   landing = current;
+  document.documentElement.style.overflowAnchor = "none";
   target.scrollIntoView();
   current.place = placeOf(target);
   current.listening = onScrollInput(endLanding);

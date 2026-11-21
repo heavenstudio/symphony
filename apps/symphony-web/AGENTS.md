@@ -1002,8 +1002,10 @@ What holds on every page, and each page's contract where its section above names
   after the new page mounts instead of applying its late top reset. A scroll to the
   element the address names, its own or a web kind's (`route.ts`), is held there while
   the page draws around it (`land`): the sections a landing brings near draw after
-  it, often taller than their ghosts, and the browser's own scroll anchoring holds nothing
-  under a page's ghost (`.settle`). A landing is one hold for each navigation. It ends
+  it, often taller than their ghosts, and the browser's own scroll anchoring, which holds
+  nothing under a page's ghost (`.settle`), is off while it holds (`overflow-anchor` on the
+  root), as an adjustment of its own would scroll the page and the element alike, a scroll away
+  to the hold. A landing is one hold for each navigation. It ends
   when it goes quiet (nothing moved and nothing waiting or busy within reach for four
   frames, or 1800 at most), at the reader's input that scrolls (a wheel, a touch that
   moves, a press on the page's scrollbar, a scroll key; not a click, a tap, a selection

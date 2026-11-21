@@ -1,5 +1,6 @@
 # `symphony-github`: the optional exchange of selected tasks with GitHub issues, with a land's
-# delivery by pull request and a release's GitHub Release (docs/GITHUB.md),
+# delivery by pull request, a release's GitHub Release and its verification on GitHub's runners
+# (docs/GITHUB.md),
 # a program of its own that reaches the board through `tasks api` alone and GitHub through `curl`.
 # Never published and never shipped: no project is given it, and neither the library every project
 # links, the board nor the server compiles any of it, so a project that never writes
