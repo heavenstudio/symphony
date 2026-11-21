@@ -90,6 +90,19 @@ pub struct Limits {
     pub alarm: Thresholds,
 }
 
+impl Limits {
+    /// The limit `key` names set to `most`: one of the four whole numbers, any other key the
+    /// machine's agents, as the settings that hold only these four name them.
+    fn set(&mut self, key: &str, most: usize) {
+        match key {
+            SLOTS => self.orchestrator_slots = Some(most),
+            TASKS => self.orchestrator_tasks = most,
+            LOW => self.low_volume = most,
+            _ => self.machine_agents = Some(most),
+        }
+    }
+}
+
 impl Default for Limits {
     fn default() -> Limits {
         Limits {
@@ -174,12 +187,7 @@ pub fn over(mut read: Read, local: Result<Option<crate::local::Local>, Vec<Strin
         }
     };
     for (key, most) in &local.limits {
-        match *key {
-            SLOTS => read.limits.orchestrator_slots = Some(*most),
-            TASKS => read.limits.orchestrator_tasks = *most,
-            LOW => read.limits.low_volume = *most,
-            _ => read.limits.machine_agents = Some(*most),
-        }
+        read.limits.set(key, *most);
         let at = local.written(&format!("[{TABLE}] {key}"), &[TABLE], key);
         read.written.insert(key, at);
     }
@@ -266,48 +274,28 @@ pub fn parse(path: &str, text: &str) -> Read {
         Some(Err(problem)) => read.problems.push(problem),
         None => {}
     }
-    if let Some(value) = limits.get(TASKS) {
-        let at = setting(TABLE, TASKS);
-        let (least, below) = least(TASKS);
+    // The three limits that are one whole number each, and what a value that is none leaves.
+    let whole_limits = [
+        (TASKS, format!("it takes its default, {ORCHESTRATOR_TASKS}")),
+        (LOW, format!("it takes its default, {LOW_VOLUME}")),
+        (
+            MACHINE_AGENTS,
+            "no limit on the agents this machine runs applies".to_string(),
+        ),
+    ];
+    for (key, left) in whole_limits {
+        let Some(value) = limits.get(key) else {
+            continue;
+        };
+        let at = setting(TABLE, key);
+        let (least, below) = least(key);
         match whole(value, least) {
             Ok(most) => {
-                read.limits.orchestrator_tasks = most;
-                read.written.insert(TASKS, at);
+                read.limits.set(key, most);
+                read.written.insert(key, at);
             }
             Err(why) => read.problems.push(format!(
-                "{path}: {} is {}; {}; it takes its default, {ORCHESTRATOR_TASKS}",
-                at.named(),
-                shown(value),
-                why.unwrap_or(below)
-            )),
-        }
-    }
-    if let Some(value) = limits.get(LOW) {
-        let at = setting(TABLE, LOW);
-        let (least, below) = least(LOW);
-        match whole(value, least) {
-            Ok(low) => {
-                read.limits.low_volume = low;
-                read.written.insert(LOW, at);
-            }
-            Err(why) => read.problems.push(format!(
-                "{path}: {} is {}; {}; it takes its default, {LOW_VOLUME}",
-                at.named(),
-                shown(value),
-                why.unwrap_or(below)
-            )),
-        }
-    }
-    if let Some(value) = limits.get(MACHINE_AGENTS) {
-        let at = setting(TABLE, MACHINE_AGENTS);
-        let (least, below) = least(MACHINE_AGENTS);
-        match whole(value, least) {
-            Ok(most) => {
-                read.limits.machine_agents = Some(most);
-                read.written.insert(MACHINE_AGENTS, at);
-            }
-            Err(why) => read.problems.push(format!(
-                "{path}: {} is {}; {}; no limit on the agents this machine runs applies",
+                "{path}: {} is {}; {}; {left}",
                 at.named(),
                 shown(value),
                 why.unwrap_or(below)

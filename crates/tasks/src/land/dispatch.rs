@@ -81,11 +81,7 @@ pub fn seconds() -> i64 {
 /// Whether a write in `env` may start a dispatch or the watcher: `TASKS_DISPATCH=on` or `off` says;
 /// else only on the repository's own board, which no `TASKS_SERVER` names, as for `on_review`.
 pub fn enabled(env: &Env) -> bool {
-    match env.var("TASKS_DISPATCH") {
-        Some("off") => false,
-        Some("on") => true,
-        _ => env.var("TASKS_SERVER").is_none(),
-    }
+    env.switch("TASKS_DISPATCH")
 }
 
 /// The lands' folder of the repository `main` is the main checkout of.
