@@ -875,8 +875,8 @@ fn of_an_admission_and_a_return_at_once_one_wins_and_the_board_is_whole() {
                 assert_eq!(events(&f), 15);
             }
             Err(Error::Refused(why)) => {
-                // By how far the return had got when the claim read: the workflow it was read
-                // under replaced or its task let go, or, the return whole, none active at all.
+                // Refused by whichever read met the return: the claim's first, which found no
+                // workflow active, or a later one, fenced on the workflow it had read.
                 assert!(
                     why.starts_with("stale_")
                         || why.starts_with("unknown_id")

@@ -268,7 +268,7 @@ impl Journal {
 
     pub fn read(folder: &Path, slug: &str) -> Option<Journal> {
         let text = fs::read_to_string(Journal::path(folder, slug)).ok()?;
-        (serde_json::from_str::<Journal>(&text).ok()).filter(|journal| journal.slug == slug)
+        crate::objects::parse::<Journal>(&text).filter(|journal| journal.slug == slug)
     }
 
     /// Kept in `folder`, whole or not at all, and on the disk before this returns.
@@ -323,7 +323,7 @@ impl Receipt {
 
     pub fn read(folder: &Path, slug: &str) -> Option<Receipt> {
         let text = fs::read_to_string(Receipt::path(folder, slug)).ok()?;
-        (serde_json::from_str::<Receipt>(&text).ok()).filter(|receipt| receipt.slug == slug)
+        crate::objects::parse::<Receipt>(&text).filter(|receipt| receipt.slug == slug)
     }
 
     /// The receipt kept for `slug` in `folder`, none where no file is kept for it: what a land
