@@ -471,9 +471,10 @@ fn a_phones_wait_strip_is_one_row_that_keeps_the_pressed_filter_in_view() {
             json!({"rows":true,"card":true,"fits":true}),
             "{what}"
         );
-        // The strip stays where it is as a chip is pressed and released: the row of work under
-        // way over it keeps its room under a filter.
-        const STRIP_TOP: &str = "Math.round(document.querySelector('.wait-strip').getBoundingClientRect().top + scrollY)";
+        // The strip stays as far under the banner as a chip is pressed and released: the row of
+        // work under way between them keeps its room under a filter. Measured from the banner's
+        // end, since the banner's own sentence is shorter under a filter and wraps anew at 320 px.
+        const STRIP_TOP: &str = "(row => Math.round(document.querySelector('.wait-strip').getBoundingClientRect().top - row.previousElementSibling.getBoundingClientRect().bottom))(document.querySelector('.under-way'))";
         let strip_top = page.eval(STRIP_TOP);
         assert_eq!(
             page.eval("document.querySelector('.under-way [data-stage=in_progress]') !== null"),
@@ -495,7 +496,7 @@ fn a_phones_wait_strip_is_one_row_that_keeps_the_pressed_filter_in_view() {
         assert_eq!(
             page.eval(STRIP_TOP),
             strip_top,
-            "{what}: pressing a chip moved the strip"
+            "{what}: pressing a chip moved the strip under the banner"
         );
         shot(&mut page, &format!("{width}-{scheme}-parked"));
         // Back to every open task: the stages return with the stage chosen before.
@@ -517,7 +518,7 @@ fn a_phones_wait_strip_is_one_row_that_keeps_the_pressed_filter_in_view() {
         assert_eq!(
             page.eval(STRIP_TOP),
             strip_top,
-            "{what}: releasing the chip moved the strip"
+            "{what}: releasing the chip moved the strip under the banner"
         );
     }
 }
