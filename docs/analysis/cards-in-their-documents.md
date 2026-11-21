@@ -7,7 +7,7 @@ far would move. [Its card](#the-card), at the end of this page, asks the one
 choice. The card is itself written the way this page proposes: in the analysis that argues it,
 inside a register region. Nothing in the product changes with this proposal, and no card moves.
 
-Every figure is of main at `497797177`, read on 2026-11-20 and 2026-11-21.
+Every figure is of main at `a72687e93`, read on 2026-11-21.
 
 ## Today
 
