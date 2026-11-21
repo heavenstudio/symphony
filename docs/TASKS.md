@@ -2727,7 +2727,12 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
   there until it does. A check belongs to its commit, so a green eligible on one head merges
   nothing at another; a new commit is pushed to the same pull request at the next dispatch, the
   merge armed across it and pending until the approve names the new head. One whose head and
-  evidence are as last published asks the host nothing more. Armed only while the task is in
+  evidence are as last published asks the host nothing more. Neither does one that runs once the
+  task landed at that head (a write's dispatch that waited for the land of its merge): its log
+  says it landed already, and the thread nothing. One whose publication the host refuses because
+  it merged that head meanwhile says so in its log alone as well, as the watcher's next round
+  closes the task; a pull request merged at another head is the refusal it was. Armed only while
+  the task is in
   review, blocked or done: a task moved back to work (a changes verdict) has its merge turned off
   first and its checks said again after, so no check published meanwhile lets the host merge it,
   and stays so until it moves to review.
