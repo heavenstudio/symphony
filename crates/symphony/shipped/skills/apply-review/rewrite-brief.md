@@ -1,27 +1,45 @@
 # Brief: rewrite design documents to match the owner's verdicts
 
-Work in the assigned project checkout. Read its AGENTS.md, local rules and review conventions first.
+Work in the assigned project checkout, under its AGENTS.md, local rules and review conventions.
 
-The owner reviews the design direction as one-line decision cards in `docs/DECISIONS.md`: `[x]` approved, `[-]` rejected, `[?]` question, `[r]` resolved (approved, nothing left to answer), `[ ]` not yet answered. Under each card is its dated history: `[date] owner · <verdict> — <comment>` lines are the owner's words; `[date] agent — …` lines are agent replies. Cards marked `[ ]` are proposals, often written by an agent from the owner's comments; they are not approved.
+The owner reviews the design direction as one-line decision cards in `docs/DECISIONS.md`: `[x]`
+approved, `[-]` rejected, `[?]` question, `[r]` resolved (approved, nothing left to answer),
+`[ ]` not yet answered. Under each card is its dated history: `owner` lines are the owner's
+words, `agent` lines are agent replies. A `[ ]` card is a proposal, never approved.
 
-The owner's standing instruction: **documents the owner disagreed with must be REWRITTEN, not pointed at the register.** Your job is to rewrite the files assigned to you so they agree with the verdicts, and read as current direction to someone who never saw the old version.
+Documents the owner disagreed with are rewritten, not pointed at the register: rewrite the files
+assigned to you so they agree with the verdicts and read as current direction to someone who
+never saw the old version.
 
 How to treat each verdict:
-- **Approved** (`[x]`): binding direction. Keep it, stated plainly. If the owner left a note on an approved card, the note refines it and the document must say the refined version.
-- **Rejected** with an owner note: the owner's note IS the new direction; write the document to it in the owner's sense. Where the owner only said what is wrong, remove or reframe the rejected content.
-- **Rejected with no note**: remove the rejected content; say in one line it is undecided.
-- **Question** (`[?]`) and the agent reply under it: rewrite the passage so it answers the confusion in plain words; where it remains undecided, say so in one line.
-- **Pending `[ ]` cards**: proposals awaiting the owner. Where your document needs something to replace rejected content and the owner's note did not supply it, state the pending card's proposal as **"Proposed, awaiting owner decision (`slug`)"** in one short line. Never present it as decided. Do not invent further proposals beyond the pending cards.
-- **Content the register never covered**: keep it only if it does not contradict any verdict.
+
+- **Approved**: binding direction, stated plainly. A note on an approved card refines it, and
+  the document says the refined version.
+- **Rejected with a note**: the note is the new direction; write the document to it in the
+  owner's sense. Where the owner only said what is wrong, remove or reframe the rejected content.
+- **Rejected with no note**: remove the rejected content, and say in one line it is undecided.
+- **Question** and the agent reply under it: rewrite the passage so it answers the confusion in
+  plain words; where it remains undecided, say so in one line.
+- **Pending `[ ]` cards**: where your document needs something to replace rejected content and
+  the owner's note did not supply it, state the pending card's proposal in one short line as
+  **"Proposed, awaiting owner decision (`slug`)"**, never as decided, and invent no proposal
+  beyond the pending cards.
+- **Content the register never covered**: keep it only if it contradicts no verdict.
 
 Writing rules:
-- **Remove repetition and keep the length appropriate to the project's audience.** Keep direction and the reasons that matter; cut hedging, repeated caveats ("this is not approved…"), meta-commentary about review process, and process history. Follow the project's policy for current guidance and historical evidence; keep process history out of current instructions.
-- Plain words. Avoid jargon such as "grammar", "departure", "cell", "lineage allocation" unless defined in one line.
-- Follow the project's document metadata conventions. Only the owner approves a card.
-- Keep headings that `docs/DECISIONS.md` links to via `[[FILE#Heading]]` if the section still exists; if you rename or remove a linked heading, list it in your report so the links can be fixed. Do NOT edit `docs/DECISIONS.md` yourself.
-- Keep valid relative links to images when the images still illustrate current direction; drop links to superseded studies unless labelled as such in one line. A picture a document shows is a file committed beside it under `docs/`, so a clone shows it: one linked from the ignored `artifacts/` folder is copied there and committed, never linked in place. `just symphony-cli docs-audit --check` refuses a picture your lines show that git does not track.
-- Do not touch files outside your assignment. Other agents are rewriting other docs in parallel.
-- Run only the checks assigned by the task and destination project. Preserve other sessions' active commands and follow local shared-service rules. Do not invent a verifier or landing command. Owner callouts remain the owner's; replies follow the project's conventions.
-- Commit, delegate or land only within the assignment's authorization and project workflow.
 
-Report back: for each file, old and new word count (`wc -w`), the verdicts you applied (by slug), any heading linked from DECISIONS.md that you renamed/removed, anything you deliberately left out, and any contradiction between verdicts you found (state it; don't resolve it by choosing).
+- Keep direction and the reasons that matter; cut repetition, hedging, repeated caveats,
+  commentary about the review process and process history.
+- Plain words: no jargon unless defined in one line.
+- Keep a heading `docs/DECISIONS.md` links to through `[[FILE#Heading]]` while its section
+  exists; list any you rename or remove in your report. Do not edit `docs/DECISIONS.md`.
+- Keep a relative link to a picture that still illustrates current direction. A picture a
+  document shows is a file committed beside it under `docs/`, never linked from the ignored
+  `artifacts/` folder (`just symphony-cli docs-audit --check` refuses one git does not track).
+- Touch no file outside your assignment, and run only the checks the task and the project
+  assign. Commit, delegate or land only within the assignment's authorization.
+
+Report back: for each file, its old and new word count (`wc -w`), the verdicts you applied by
+slug, any heading linked from the register that you renamed or removed, anything you
+deliberately left out, and any contradiction between verdicts (state it; do not resolve it by
+choosing).
