@@ -66,6 +66,30 @@ fn each_pinned_machine_gets_its_own_tarball_and_checker_and_any_other_none() {
     assert_eq!(surreal_fetch(surreal, "linux", "riscv64"), None);
 }
 
+#[test]
+fn the_line_names_the_folder_once_and_stays_short_at_any_depth() {
+    let deep = "/Users/someone/Documents/a long project name/with's a quote/.git/symphony/surreal";
+    let surreal = Path::new(deep).join(SURREAL_VERSION).join("surreal");
+    let line = surreal_fetch(&surreal, "macos", "aarch64").unwrap();
+    let folder = format!(
+        "/Users/someone/Documents/a long project name/with'\\''s a quote/.git/symphony/surreal/\
+         {SURREAL_VERSION}"
+    );
+    assert!(line.starts_with(&format!("d='{folder}' && mkdir -p \"$d\" && ")), "{line}");
+    assert_eq!(line.matches("someone").count(), 1, "{line}");
+    assert!(line.contains(" && mv -f \"$d/.unpack/surreal\" \"$d/surreal\"; s=$?; "), "{line}");
+    assert!(line.ends_with("; [ $s -eq 0 ]"), "{line}");
+    // What the line adds to the folder's own length is fixed, whatever the path's depth.
+    let own = line.len() - folder.len();
+    assert!(own < 520, "{own}: {line}");
+    assert!(!line.contains('\n'));
+    // A binary's name the shell would read inside the line's double quotes gets no line.
+    for name in ["sur$real", "sur real", "sur\"real", "sur`real"] {
+        assert_eq!(fetch_line(Path::new("/r").join(name).as_path(), "b", "0", "linux"), None);
+    }
+    assert_eq!(fetch_line(Path::new("/"), "b", "0", "linux"), None);
+}
+
 /// The fetch run with `sha` as the pinned tarball's: a stand-in `curl` hands it `tarball`.
 fn fetched(dir: &Path, surreal: &Path, tarball: &Path, sha: &str) -> std::process::Output {
     let os = if cfg!(target_os = "macos") {
