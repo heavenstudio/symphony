@@ -11,6 +11,9 @@ How several agent sessions share work, and how they, and the owner, talk
 about it. Sessions may run in any worktree of this repository; the board is the
 same for all of them.
 
+What the owner sees of it in the app is told in two product specs:
+[the task board](product/BOARD.md) and [a task's page](product/TASK.md).
+
 
 Commands shown use the consuming project's recipes and board connection.
 

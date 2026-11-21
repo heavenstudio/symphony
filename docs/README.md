@@ -8,7 +8,8 @@ the evidence behind decisions are under [Design and history](#design-and-history
 - [Product specs](product/README.md) — what each page of the app is for and how it behaves, with
   pictures; the form of a spec and how its pictures are taken.
 - [Concept review](REVIEW.md) — review cards, comments, questions and the owner queue.
-- [Task board](TASKS.md) — the board, sessions, roles and agent communication.
+- [Task board](TASKS.md) — the board, sessions, roles and agent communication; the pages are
+  [the task board](product/BOARD.md) and [a task's page](product/TASK.md).
 - [The Mac app](../apps/symphony-desktop/AGENTS.md) — the desktop app's guide: the servers it
   follows and how it finds them, what it counts and notifies, where a server's window may go, and
   what is not in it yet.
