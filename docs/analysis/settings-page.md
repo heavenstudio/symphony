@@ -2,14 +2,14 @@
 
 A concept, not a design to build from: what a Settings page that turns a project's integrations
 and tools on and off would be, questioned against the settings the Symphony has now. Nothing in
-the product changes with it. Its choices go to the owner as cards a few at a time. Three are
-answered: [the page shows everything in force and writes the preferences
+the product changes with it. Its choices went to the owner as cards over two rounds, and all five
+are answered: [the page shows everything in force and writes the preferences
 alone](../DECISIONS.md#settings-page-shape), [a project-wide change is committed straight to the
-default branch](../DECISIONS.md#settings-page-project-save), and [each thing on the page
-describes itself](../DECISIONS.md#settings-page-entries). Two are open: [which preferences the
-board keeps](../DECISIONS.md#settings-board-store) and [what turning an agent off
-means](../DECISIONS.md#settings-agent-off). [What is built, and when](#what-is-built-and-when)
-names the tasks.
+default branch](../DECISIONS.md#settings-page-project-save), [each thing on the page describes
+itself](../DECISIONS.md#settings-page-entries), [every preference the page changes is kept in
+the board first](../DECISIONS.md#settings-board-store), and [an agent that is off is refused at
+launch and not offered](../DECISIONS.md#settings-agent-off). Nothing is left to choose.
+[What is built, and when](#what-is-built-and-when) names the tasks.
 
 It is one of three concepts filed together, with blueprints (the board task `app/blueprints`) and
 users and identity (`app/users-and-identity`); [how they meet](#how-it-meets-the-other-two-concepts)
@@ -103,7 +103,9 @@ repository's values. It has four parts.
   switch. A setup has a button that opens its guide, and a reviewed one a button that files a
   task.
 - **Models and limits.** The values `just tasks limits` prints, each with its source and its
-  scope, and a control that asks which scope a change is for: the project or this machine.
+  scope. The drawing asks which scope a change is for, the project or this machine; by [the
+  store's card](#what-the-board-keeps) a change is kept in the board first, with a control
+  beside it that makes it the project's.
 - **Shown, changed by a reviewed task.** The landing, the board's commands, the stamps, the
   plugins, the workflow: what they are now, in a sentence, with the file and the line.
 - **This device.** What the browser keeps, the appearance first.
@@ -121,18 +123,19 @@ form over every key (C).
 
 ## What a save writes
 
-By scope:
+By the answered cards, the page has two writers and three places a value can end up.
 
 - **This device**: the browser, as now.
-- **This machine**: `symphony.local.toml` beside the main checkout's project file, by the same
-  edit the model command makes with `--local`, which keeps comments and order and never leaves
-  the file as its readers would refuse it. Nothing lands. The file takes the launch agent, the
-  models and the limits and nothing else, so the page offers this scope for those alone.
-  Whether the page writes that file or [the board's store](#what-the-board-keeps) in its place
-  is that section's open choice.
-- **The project**: the committed file, which is the open choice.
+- **The board**: [its store](#what-the-board-keeps), where every switch and value the page
+  changes goes first. It holds at once and nothing lands.
+- **The project**: the committed file, by the control beside a stored value that makes it the
+  project's.
 
-A change of the committed file can reach the default branch three ways.
+The page does not write `symphony.local.toml`. That file stays what it is, one machine's override
+by hand or by the model command with `--local`, read last, and the page shows a value that comes
+from it with its line.
+
+A change of the committed file could reach the default branch three ways.
 
 1. **As the owner's document saves do.** An answer on a card is committed straight to the default
    branch over a private index, never staging the checkout's other work
@@ -223,7 +226,7 @@ landing passes over it.
   comes from, and a stored value has a control that commits it for the project.
 - One more place for the one reader of the settings to read.
 
-**The open choice** is which preferences go there.
+**Which preferences go there** had three answers.
 
 1. **Only those with no key in a file.** A model, a limit or the panes setting is committed, as
    the save's card chose; the store holds what a plugin's entry adds and, later, a person's own.
@@ -237,7 +240,24 @@ landing passes over it.
 
 The second is the one that behaves the same on a local board, under delivery by pull request and
 on a hosted board, and it keeps the commit for the moment a person means the whole project.
-[Its card](../DECISIONS.md#settings-board-store) asks which.
+[Its card](../DECISIONS.md#settings-board-store) chose it. What follows from the choice:
+
+- **What is stored** is every preference the page has a control for: the launch agent, its model
+  and effort, the role models, the limits, the panes setting and [an agent
+  off](#turning-an-agent-off). The panes setting has no place in the local file today and needs
+  none: the store is where it differs from the committed value.
+- **A stored value has two controls beside it.** One makes it the project's: the value is
+  committed by the route the save's card chose, and the entry is removed once the commit stands,
+  or once its delivery is proved where the project lands by pull request. The other removes the
+  entry, and the value in force is the file's again.
+- **A stored value stands over a later commit of the same key**, since it is read after the file.
+  The page says so on that row, with the committed value it stands over, as `just tasks limits`
+  says what a local value is over.
+- **One reader.** The board's reader of the settings (`crates/tasks/src/local.rs` and the limits
+  beside it) is the one place the store is read, so `just tasks limits`, a launch and the page
+  agree, and each names the store as a source.
+- **A hosted board's page writes nothing yet.** Its visitors are not the owner, and who may write
+  there is the identity concept's to say. The store is built so that it can.
 
 ## Turning an agent off
 
@@ -255,8 +275,23 @@ default` picks which a launch starts when its caller names none, a caller may na
 Under any of them the launch default cannot be turned off: the switch says to pick another
 default first. Whether the program is on this machine is shown beside the switch whatever it
 says, and a launch of an agent the machine lacks is refused with that reason. Off is a
-preference, so it can hold for the project or for one machine. [Its
-card](../DECISIONS.md#settings-agent-off) asks which meaning.
+preference, so it can hold for the project or for one machine.
+
+[Its card](../DECISIONS.md#settings-agent-off) chose the first. What follows from it and from
+the store:
+
+- **The setting** is one more key of `[agents.launch]`, the agents that are off, none written
+  being none off. It is a preference by the two lists, so the local file may hold it, the board's
+  store may hold it, and a commit of it lands on the settings check alone.
+- **The switch** is stored first like every other, so off holds on this board at once, and the
+  control beside it makes it the project's.
+- **A file that names the launch default as off does not load**, with a line that says to pick
+  another default first, and the store refuses the same write. Where a default committed later
+  meets an older stored off, the default wins and the page says the entry no longer holds.
+- **What is refused** is a start: `just tasks launch`, the staffing pass and a restore of a
+  closed pane. An agent already running is not stopped, and the page says how many are.
+- **Not offered** means the agents page and the board's launch controls leave it out, and the
+  Settings page is the one place that still names it, with its switch.
 
 ## Who may change what
 
@@ -277,8 +312,8 @@ attaches, with no new sorting:
 ## How it meets the other two concepts
 
 **Blueprints.** A blueprint is a set of the same settings given a name. The page meets it in the
-source of a value: today a value comes from the default, the project file or the local file, and
-a blueprint is one more layer between the default and the project file. The page's source line
+source of a value: a value comes from the default, the project file, the board's store or the
+local file, and a blueprint is one more layer between the default and the project file. The page's source line
 is then where a person sees which values are the blueprint's and which the project wrote over
 it, and where "back to the blueprint's" is offered. Two things this concept asks of that one: a
 blueprint's settings sort into preferences and reviewed by the same line, so taking a blueprint
@@ -294,7 +329,8 @@ of the local server alone, which is one reason for [the board's store](#what-the
 
 ## Settled by the answered cards
 
-These follow from the three answers and are not asked.
+These follow from the five answers and are not asked. What follows from the store and from an
+agent off is in their own sections above.
 
 - **GitHub's row.** Its settings decide what lands and what is written to an outside service, so
   both on and off are reviewed: the row says the state and why, opens the setup guide, and files
@@ -305,7 +341,12 @@ These follow from the three answers and are not asked.
   landing that adds it says so to consuming projects. What is the machine's (the registry, the
   installed release) stays on the machine's own page, and the Settings page links there.
 - **The record of a change.** A committed one is its commit, whose message names the key, the
-  old value and the new. A stored one is the store's own record.
+  old value and the new. A stored one is the store's own record, which keeps each change and not
+  only the last, and the page shows a row's changes.
+- **The description's shape** for programs and plugins is the one the reading page's own entries
+  take, kept stable under the kit's version rules as a block is
+  ([its card](../DECISIONS.md#kit-new-block-version)). A stored switch for an entry a plugin
+  describes comes with that task.
 - **Who may change the project's preferences** once there are several people is the identity
   concept's to say, at the four places [above](#who-may-change-what).
 
@@ -314,9 +355,10 @@ These follow from the three answers and are not asked.
 | Task | What it builds | Waits on |
 | --- | --- | --- |
 | `app/settings-page-reads` | The page, reading: every entry of the Symphony's own in the description's shape, each value with its source, and the reviewed settings shown with their file and line. It writes nothing. | nothing |
-| The page's writes | Switches and values for the preferences, to the place the board-store card chooses. | that card |
-| An agent off | The setting, the launch's refusal and the page's switch. | its card |
-| Descriptions from programs and plugins | The kit's seam and a program's command, with the GitHub exchange's first. | the reading page having held its own entries in that shape |
+| `app/settings-store` | The board's store of preferences: its table, the order a value is read in, a value judged when written, the record of each change, and the store named as a source by `just tasks limits`. No page. | nothing |
+| `app/settings-page-writes` | Switches and values for the preferences, written to the store; beside a stored value, the control that commits it for the project and the one that removes it. | the reading page and the store |
+| `app/agent-off` | The setting, the launch's refusal, the pages no longer offering the agent, and its switch. | the page's writes |
+| `app/settings-descriptions` | Descriptions from programs and plugins: the kit's seam and a program's command, with the GitHub exchange's first. Parked. | the reading page having held its own entries in that shape |
 
 ## Not proposed
 

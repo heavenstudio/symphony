@@ -40,6 +40,7 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **Earlier verdicts checked.** **settings-page-shape** (B) gives the agents a switch and does not say what off does. None decides this.
   [2026-11-21 17:34] owner · approved — A
+  [2026-11-21 17:40] agent — Recorded: A. An agent that is off is refused at launch, with where it was turned off, and no page offers it; its files stay installed. Settled by it and **settings-board-store** without a card: off is a preference like the others, so the switch is kept in the board first and holds at once, and "make it the project's" commits it. Filed as `app/agent-off`. [[analysis/settings-page#Turning an agent off]]
 - [x] **settings-board-store** — Your note on **settings-page-project-save** adds a place for settings: the board's database, read first, with the settings file used where it has no entry. Which preferences should the Settings page keep there? A: only those with no key in a file (whether a plugin's entry is on, a person's own choices later); a model, a limit or Herdr on or off is committed, as you approved. B: every preference the page changes is kept in the board first and holds at once; beside it a "make it the project's" control commits it, as you approved, and clears the board's entry. C: none. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/settings-page#What the board keeps]]
   [2026-11-21 10:20] agent — Posted for the board task `app/settings-page`, round two. Base: today the board's database holds no setting; a value comes from the default, `symphony.toml` or `symphony.local.toml`.
 
@@ -53,6 +54,7 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **Earlier verdicts checked.** **settings-page-project-save** (A, with your note) decides the commit's route and that the database is a place; it does not say which preferences go there. **schema-landing-then-release** and **live-board-schema-moves** decide how a layout move lands, which B follows. None decides this.
   [2026-11-21 17:33] owner · approved — B
+  [2026-11-21 17:40] agent — Recorded: B. Every preference the page changes is kept in the board first and holds at once, with a control beside it that commits it for the project and clears the board's entry, and one that removes the entry and goes back to the file's value. The page does not write `symphony.local.toml`. Filed in two tasks: `app/settings-store` (the table and the order a value is read in) and `app/settings-page-writes` (the switches, the values and the commit). Nothing of this concept is left to choose. [[analysis/settings-page#What the board keeps]]
 
 ### Task timeline
 
