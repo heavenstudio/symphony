@@ -9,7 +9,10 @@
 //! - the stamps catalogue, by the commit the main checkout's head is at: `Catalogue::of` asks two
 //!   `git` processes, once a commit;
 //! - whether a tip holds work of its own ([`super::own_commits`]), by that tip and the default
-//!   branch's.
+//!   branch's;
+//! - what the cards a task's branch posted say of its `owner` stamp at a tip
+//!   (`symphony_board::stamps::posted::read`), by that tip and the default branch's: a few `git`
+//!   processes, read only where the owner's approve on the thread does not name the tip.
 //!
 //! The refs themselves (the branch's tip, the default branch's, the main checkout's head) are
 //! resolved on every read, as nothing cheaper says a ref has not moved.
@@ -26,6 +29,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use symphony_board::cli::machine_work::recorded::{self, Record};
 use symphony_board::stamps::Catalogue;
+use symphony_board::stamps::posted::{self, Posted};
 use symphony_board::{Error, Message, Store, Task, TaskStamp};
 
 use super::lock;
@@ -44,6 +48,8 @@ pub struct Reads {
     pub catalogues: usize,
     /// Whether a tip holds work of its own, a merge base.
     pub merge_bases: usize,
+    /// What the cards a branch posted say of its `owner` stamp at a tip.
+    pub posted: usize,
 }
 
 /// A task as the board held it at one stamp: what its gates read of the board.
@@ -80,6 +86,15 @@ struct Own {
     holds: bool,
 }
 
+/// What the cards a task's branch posted say of its `owner` stamp, as one read found it.
+struct Cards {
+    /// The task's tip.
+    tip: String,
+    /// The default branch's.
+    default_tip: Option<String>,
+    posted: Posted,
+}
+
 /// What tasks' gates are read from, kept between reads (the module's doc).
 #[derive(Default)]
 pub struct Inputs {
@@ -91,9 +106,12 @@ pub struct Inputs {
     catalogues: Mutex<HashMap<PathBuf, (String, Catalogue)>>,
     /// By checkout and slug.
     own: Mutex<HashMap<(PathBuf, String), Own>>,
+    /// By checkout and slug.
+    cards: Mutex<HashMap<(PathBuf, String), Cards>>,
     read_tasks: AtomicUsize,
     read_catalogues: AtomicUsize,
     read_merge_bases: AtomicUsize,
+    read_posted: AtomicUsize,
 }
 
 impl Inputs {
@@ -111,6 +129,7 @@ impl Inputs {
             records,
             catalogues: self.read_catalogues.load(Ordering::SeqCst),
             merge_bases: self.read_merge_bases.load(Ordering::SeqCst),
+            posted: self.read_posted.load(Ordering::SeqCst),
         }
     }
 
@@ -215,10 +234,33 @@ impl Inputs {
         holds
     }
 
+    /// What the cards the branch of the task `slug` posted say of its `owner` stamp at `tip`, in
+    /// the main checkout `root` (`posted::read`), the default branch's tip `default_tip`: as kept
+    /// while both tips are the ones it was read at.
+    pub fn posted(&self, root: &Path, slug: &str, tip: &str, default_tip: Option<&str>) -> Posted {
+        let key = (root.to_path_buf(), slug.to_string());
+        if let Some(kept) = lock(&self.cards).get(&key)
+            && kept.tip == tip
+            && kept.default_tip.as_deref() == default_tip
+        {
+            return kept.posted.clone();
+        }
+        self.read_posted.fetch_add(1, Ordering::SeqCst);
+        let read = posted::read(root, tip);
+        let kept = Cards {
+            tip: tip.to_string(),
+            default_tip: default_tip.map(str::to_string),
+            posted: read.clone(),
+        };
+        lock(&self.cards).insert(key, kept);
+        read
+    }
+
     /// Forget what is kept of every task `open` does not name, in every checkout.
     pub fn keep_open(&self, open: impl Fn(&str) -> bool) {
         lock(&self.tasks).retain(|(_, slug), _| open(slug));
         lock(&self.own).retain(|(_, slug), _| open(slug));
+        lock(&self.cards).retain(|(_, slug), _| open(slug));
     }
 }
 

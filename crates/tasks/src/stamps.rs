@@ -27,6 +27,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+pub mod posted;
 pub mod read;
 
 /// The stamps the Symphony has a reader for, by name, in the order the catalogue is listed.
