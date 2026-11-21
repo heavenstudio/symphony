@@ -14,6 +14,9 @@ of its own (its verification, certificates and stamps, as the `land-approve`,
 `land` recipe, which replaces the default everywhere for it; Symphony bundles
 no such policy.
 
+What the owner sees of it in the app is told in two product specs:
+[the task board](product/BOARD.md) and [a task's page](product/TASK.md).
+
 ## Where it lives
 
 A SurrealDB database (namespace `sf`, database `tasks`) whose server keeps its

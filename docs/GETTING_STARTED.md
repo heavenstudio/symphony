@@ -205,9 +205,9 @@ only in a folder you trust) and type a skill's name, with `/` in Claude Code and
 
 One orchestrator session is the usual start: tell it what you want built, and it files the tasks
 and staffs them with subagents of its own, each in a worktree of its task's branch. You follow
-along in the app: **Board** shows who
-holds what and what is stuck on whom, **Agents** who is alive, and a task's page its thread,
-where a message you write reaches the agent holding it.
+along in the app: [**Board**](product/BOARD.md) shows who
+holds what and what is stuck on whom, **Agents** who is alive, and [a task's page](product/TASK.md)
+its thread, where a message you write reaches the agent holding it.
 
 An agent in a terminal of its own, which `just tasks launch SLUG` starts in a worktree under
 `<project>-wt/` beside the main checkout and the pages can link to, needs the Herdr terminal app
