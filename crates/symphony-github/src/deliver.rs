@@ -314,6 +314,19 @@ struct Assessed {
 }
 
 /// What a request says it delivers: an import of `commit` from the repository at `url`, or none.
+/// The method a merge of `request`'s `head` is asked by, which the request names itself: a task's
+/// squashed, an import's (`imported`) by a merge commit. A head that is no whole commit, or
+/// another method, is refused.
+fn merge_method(request: &Value, head: &str, imported: bool) -> Result<&'static str, Stopped> {
+    let method = if imported { "merge" } else { "squash" };
+    if !commit(head) || request["method"] != json!(method) {
+        return Err(refused(
+            "a merge is of one whole commit: a task's squashed, an import's by a merge commit",
+        ));
+    }
+    Ok(method)
+}
+
 fn import(request: &Value) -> Option<(String, String)> {
     (request["operation"] == json!("import")).then(|| {
         (
@@ -1086,19 +1099,37 @@ impl Run<'_> {
         }
     }
 
+    /// What a merge and an arming both read again before GitHub is asked to merge the pull
+    /// request `pull` of `request`, as GitHub shows it `now`: the base branch it names, still
+    /// protected for this delivery; an import's upstream, still the one pinned; and a draft marked
+    /// ready, the one write here.
+    fn mergeable_at(
+        &self,
+        host: &Host<'_>,
+        request: &Value,
+        pull: &Pull,
+        now: &Value,
+    ) -> Result<(), Stopped> {
+        let slug = text(request, "slug");
+        let id = request["repository"].as_i64().unwrap_or_default();
+        let base = now["base"]["ref"].as_str().unwrap_or_default().to_string();
+        if !plain(&base, "-._/") {
+            return Err(refused("the pull request names no base branch"));
+        }
+        self.protected(host, id, &base, &slug)?;
+        if import(request).is_some() {
+            self.upstream(host, request, id)?;
+        }
+        if now["draft"] == json!(true) {
+            self.ready(host, &slug, pull, now)?;
+        }
+        Ok(())
+    }
+
     fn merge(&mut self, request: &Value) -> Result<Value, Stopped> {
         let (slug, head) = (text(request, "slug"), text(request, "head"));
         let imported = import(request);
-        let method = if imported.is_some() {
-            "merge"
-        } else {
-            "squash"
-        };
-        if !commit(&head) || request["method"] != json!(method) {
-            return Err(refused(
-                "a merge is of one whole commit: a task's squashed, an import's by a merge commit",
-            ));
-        }
+        let method = merge_method(request, &head, imported.is_some())?;
         let transport = self.connect()?;
         let host = Host {
             transport: transport.as_ref(),
@@ -1127,18 +1158,7 @@ impl Run<'_> {
         }
         // Read again here: the policy that stood when the head was published may be gone, and
         // from this step on the pull request is ready and its merge asked for.
-        let id = request["repository"].as_i64().unwrap_or_default();
-        let base = now["base"]["ref"].as_str().unwrap_or_default().to_string();
-        if !plain(&base, "-._/") {
-            return Err(refused("the pull request names no base branch"));
-        }
-        self.protected(&host, id, &base, &slug)?;
-        if imported.is_some() {
-            self.upstream(&host, request, id)?;
-        }
-        if now["draft"] == json!(true) {
-            self.ready(&host, &slug, &pull, &now)?;
-        }
+        self.mergeable_at(&host, request, &pull, &now)?;
         let (title, message) = self.commit_text(&slug, &head, &pull, imported.as_ref());
         let sent = json!({
             "sha": head, "merge_method": method, "commit_title": title, "commit_message": message,
@@ -1302,16 +1322,7 @@ impl Run<'_> {
     fn arm(&mut self, request: &Value) -> Result<Value, Stopped> {
         let (slug, head) = (text(request, "slug"), text(request, "head"));
         let imported = import(request);
-        let method = if imported.is_some() {
-            "merge"
-        } else {
-            "squash"
-        };
-        if !commit(&head) || request["method"] != json!(method) {
-            return Err(refused(
-                "a merge is of one whole commit: a task's squashed, an import's by a merge commit",
-            ));
-        }
+        let method = merge_method(request, &head, imported.is_some())?;
         let transport = self.connect()?;
         let host = Host {
             transport: transport.as_ref(),
@@ -1336,18 +1347,7 @@ impl Run<'_> {
             ));
         }
         // Read as a merge reads it: from here GitHub merges by itself once the checks pass.
-        let id = request["repository"].as_i64().unwrap_or_default();
-        let base = now["base"]["ref"].as_str().unwrap_or_default().to_string();
-        if !plain(&base, "-._/") {
-            return Err(refused("the pull request names no base branch"));
-        }
-        self.protected(&host, id, &base, &slug)?;
-        if imported.is_some() {
-            self.upstream(&host, request, id)?;
-        }
-        if now["draft"] == json!(true) {
-            self.ready(&host, &slug, &pull, &now)?;
-        }
+        self.mergeable_at(&host, request, &pull, &now)?;
         let armed = json!({"state": "armed", "pull": pull.number, "head": head});
         let (title, message) = self.commit_text(&slug, &head, &pull, imported.as_ref());
         let on = &now["auto_merge"];
