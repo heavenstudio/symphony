@@ -456,7 +456,7 @@ describe("the part drawn", () => {
     const refused = { edge: "pass", revision: 7, tried: { refusal: REFUSAL, said: "", at: 0 } };
 
     it("draws the guards that let it in over the actions, and an action's under it", () => {
-      const drawn = markup({ slug: "w/b", read });
+      const drawn = markup({ read });
       expect(drawn.indexOf('data-guards="entry"')).toBeLessThan(drawn.indexOf("flow-actions"));
       expect(drawn).toContain('Let in by <a href="#timeline">Submit · revision 7 · ');
       expect(drawn).toContain('aria-label="Pass review needs"');
@@ -469,15 +469,14 @@ describe("the part drawn", () => {
       expect(drawn).toContain("nothing on this page approves");
     });
 
-    it("holds an action whose authority this app cannot ask, with the command to copy", () => {
+    it("holds an action whose authority this app cannot ask, and gives no command", () => {
       const authorities = GUARDS.authorities.map((one) => ({ ...one, asked_here: false }));
       const apart: Read = { ...read, guards: { ...GUARDS, authorities } };
       expect(elementOf(view({ read: apart }), button("Pass review"))?.props.disabled).toBe(true);
-      const drawn = markup({ slug: "w/b", read: apart });
+      const drawn = markup({ read: apart });
       expect(drawn).toContain('data-state="not from here"');
-      expect(drawn).toContain(
-        "<code>just tasks workflow apply w/b pass --revision 7 --attestation FILE</code>",
-      );
+      expect(drawn).toContain("no plugin of this project answers for its adapter, release");
+      expect(drawn).not.toContain("<code>");
       // Something else holds it too: its line says that, the guard's row the guard.
       const both = { ...HELD, unavailable: ["guard_unavailable", "unauthorized"] };
       const held = markup({ read: { ...read, offer: { ...GUARDED, actions: [both] } } });

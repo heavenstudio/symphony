@@ -42,13 +42,14 @@ where the authority or the board's record points, never to a way of approving on
 The action's button follows what the host can do. The owner's take asks the project's authority
 for its attestation when a plugin of the project answers for that authority's adapter, and the
 button is enabled when that holds for every guard of the edge and nothing else holds it; where
-the host cannot ask one, the button stays disabled and the row says `not from here`, with the
-command that takes the edge with the authority's attestation file.
+the host cannot ask one, the button stays disabled and the row says `not from here`, and what
+would let it go from this app. It gives no command: the command line takes an edge as an agent's
+session, never as the owner, so none it could print would take the owner's edge.
 
 ![Wide: Pass review needs release signoff, which the owner's take asks the ledger for; design signoff, which let the task in, decided again since](workflow-guard-panel/built-wide.webp)
 ![Wide, after the take was refused: the ledger's two reasons as links, the record open under the row](workflow-guard-panel/built-refused-wide.webp)
 ![On a phone, after the take was refused](workflow-guard-panel/built-refused-phone.webp)
-![Wide, an authority this host cannot ask: the action waits, the row gives the command](workflow-guard-panel/built-not-from-here-wide.webp)
+![Wide, an authority this host cannot ask: the action waits, the row says what would let it go from here](workflow-guard-panel/built-not-from-here-wide.webp)
 
 ## What a row links to
 
@@ -73,7 +74,7 @@ Every row opens, and most lead somewhere:
   web address with `{task}` and `{guard}` filled in. It is the one link a row has before anything
   was tried: where to go to have it decided. A project that commits none shows the name as text.
 - **The board's own places.** *Let in by EDGE · revision N · time* links to the task's timeline,
-  which draws that transition. Where the fix is a command (`not from here`, `unreported`), the row
+  which draws that transition. Where the fix is a command (`unreported`), the row
   shows the command itself, to copy.
 
 What is not linked, because nothing is kept to link to: the authority's accepted state has no
@@ -90,7 +91,7 @@ newer server's) is said as `refused`, in the refusal's own words, or as `not sta
 | Word | Tone | From | Says | Its words link to |
 | --- | --- | --- | --- | --- |
 | no word yet | quiet | the board's records | Taking the action asks the authority. Nothing tried on this page. | nothing more |
-| not from here | quiet | the board's records | This host cannot ask that authority: the command line takes the edge. | the command, to copy |
+| not from here | quiet | the board's records | This host cannot ask that authority: no plugin of the project answers for its adapter. The action waits until one does. | nothing more |
 | unreported | amber | the board's records | The authority has reported no state, so nothing it attests is admitted. | the command that reports, to copy |
 | conflict | red | the board's records | It reported two decisions at one generation: nothing it attests is admitted until it reports the state after them. | nothing more |
 | uncommitted | red | the board's records | The active workflow commits no authority for the guard, so nothing meets it. | nothing more |
@@ -100,7 +101,7 @@ newer server's) is said as `refused`, in the refusal's own words, or as `not sta
 | refused | red | your last try | The authority attested `refuse`, its reasons quoted as it gave them. | each reason's reference |
 | unknown | quiet | your last try | The authority attested `unknown`, its reasons quoted. | each reason's reference |
 | expired | amber | your last try | The attestation's time ran out on this machine's clock (one issued ahead of the clock says `early`, one held too long `held too long`). | nothing more: the action again asks for a fresh one |
-| stale | amber | your last try | It covers another revision, pair, workflow or activation of the task, or other input revisions. | nothing more |
+| stale | amber | your last try | It covers another operation: another revision, pair, workflow or activation of the task, or other input revisions. The row names the revision it was given for and the one taken. | nothing more |
 | decided again | amber | your last try | It was decided at an older generation than the board accepts now. | nothing more |
 | not reported | amber | your last try | It was decided at a generation the authority has not reported yet. | nothing more |
 | not yours | red | your last try | It covers another principal than the one taking the edge. | nothing more |

@@ -660,7 +660,8 @@ fn the_task_page_names_each_guard_its_authority_and_the_last_refusal_and_approve
         "the page sends no attestation: the host asks the authority"
     );
 
-    // An authority this host cannot ask: the action waits, and its row gives the command.
+    // An authority this host cannot ask: the action waits, and its row says what would let it go
+    // from here, with no command, as the command line takes no edge as the owner.
     let mut apart = samples["taskGuards"].clone();
     apart["authorities"][1]["asked_here"] = json!(false);
     site.set_json(WORKFLOW_GUARDS_PATH, &apart);
@@ -681,8 +682,14 @@ fn the_task_page_names_each_guard_its_authority_and_the_last_refusal_and_approve
         json!(true)
     );
     assert_eq!(
-        texts(&mut page, "[data-guards=pass] .guard-why code"),
-        json!(["just tasks workflow apply w/b pass --revision 7 --attestation FILE"])
+        texts(&mut page, "[data-guards=pass] .guard-why"),
+        json!([
+            "This app cannot ask ledger: no plugin of this project answers for its adapter, release. Pass review goes from here once one does."
+        ])
+    );
+    assert_eq!(
+        page.eval("document.querySelector('[data-guards=pass] code')"),
+        json!(null)
     );
     shot(&mut page, "guards-not-from-here-1280");
 }

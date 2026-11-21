@@ -303,7 +303,6 @@ export interface Tried {
 
 /** An action a guard holds, as its rows are drawn from it. */
 export interface Guarded {
-  slug: string;
   edge: string;
   label: string;
   /** The task's workflow revision the action was offered at. */
@@ -387,7 +386,7 @@ function triedWords(
         state: "stale",
         tone: "amber",
         why: [
-          `The attestation ${issuer} gave covers another operation (task revision ${record?.task_revision ?? "?"}); the task is at revision ${action.revision}.`,
+          `The attestation ${issuer} gave covers another operation than this take: it was given for task revision ${record?.task_revision ?? "?"}, and this take is of revision ${action.revision}, its inputs as they are now.`,
         ],
       };
     case "decided_again":
@@ -457,11 +456,10 @@ function untriedWords(
     return {
       state: "not from here",
       tone: "quiet",
+      // No command is given: the command line takes an edge as an agent's session, never as the
+      // owner, so none it could print would take the owner's edge.
       why: [
-        `This app cannot ask ${issuer}. With ${issuer}'s attestation file, from the command line: `,
-        {
-          code: `just tasks workflow apply ${action.slug} ${action.edge} --revision ${action.revision} --attestation FILE`,
-        },
+        `This app cannot ask ${issuer}: no plugin of this project answers for its adapter, ${authority.adapter}. ${action.label} goes from here once one does.`,
       ],
     };
   }

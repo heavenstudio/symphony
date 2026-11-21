@@ -30,7 +30,7 @@ import type {
 const GUARDS = readGuards(CASES.samples.taskGuards) as WorkflowTaskGuards;
 const REFUSAL = readRefusal(CASES.samples.guardRefusal) as WorkflowGuardRefusal;
 const RECORD = REFUSAL.record as WorkflowGuardRecord;
-const PASS: Guarded = { slug: "w/b", edge: "pass", label: "Pass review", revision: 7 };
+const PASS: Guarded = { edge: "pass", label: "Pass review", revision: 7 };
 const NAMES = {
   place: ({ phase, state }: { phase: string; state: string }) => `${phase}/${state}`,
 };
@@ -208,15 +208,16 @@ describe("a guard an action needs, before any take", () => {
     ]);
   });
 
-  it("gives the command to copy where this app cannot ask its authority", () => {
+  it("says what would let it go from here where this app cannot ask its authority, and no command", () => {
     const row = need(withAuthority({ asked_here: false, admitted: 1 }));
     expect(row.state).toBe("not from here");
     expect(text(row.why)).toBe(
-      "This app cannot ask ledger. With ledger's attestation file, from the command line: " +
-        "`just tasks workflow apply w/b pass --revision 7 --attestation FILE`",
+      "This app cannot ask ledger: no plugin of this project answers for its adapter, release. " +
+        "Pass review goes from here once one does.",
     );
     expect(text(row.record.lines[1]?.parts ?? [])).toBe("1 operation");
     expect(text(row.record.lines[2]?.parts ?? [])).toBe("no: this app cannot ask it");
+    expect(row.why.every((part) => typeof part === "string")).toBe(true);
   });
 
   it("says an authority that reported no state, one in conflict and one not committed", () => {
@@ -275,7 +276,7 @@ describe("a guard the owner's take was refused by", () => {
       ["expired", "expired", "amber", `expired at ${clock(RECORD.expires_at)}. Pass review again`],
       ["early", "early", "amber", `issued at ${clock(RECORD.issued_at)}, ahead of this machine`],
       ["overlong", "held too long", "amber", "holds for longer than an attestation may."],
-      ["stale", "stale", "amber", "(task revision 7); the task is at revision 7."],
+      ["stale", "stale", "amber", "given for task revision 7, and this take is of revision 7, its"],
       ["decided_again", "decided again", "amber", "at generation 41 and has decided again since"],
       ["not_reported", "not reported", "amber", "which it has not reported to the board yet."],
     ];
@@ -294,7 +295,7 @@ describe("a guard the owner's take was refused by", () => {
 
   it("says a refusal with no attestation to show in what it has, never a blank", () => {
     expect(text(tried("expired", null).why)).toContain("expired at an unknown time.");
-    expect(text(tried("stale", null).why)).toContain("(task revision ?)");
+    expect(text(tried("stale", null).why)).toContain("given for task revision ?,");
     expect(text(tried("not_yours", null).why)).toContain("covers another principal, not you.");
     expect(text(tried("refused", null).why)).toBe(
       "Your Pass review at 13:40:07 UTC was refused. ledger says: ",
@@ -470,7 +471,7 @@ describe("the rows drawn", () => {
   });
 
   it("draw a command as code, a web page of the authority's in its own tab, and no box of none", () => {
-    const apart = need(withAuthority({ asked_here: false }));
+    const apart = need(withAuthority({ generation: null, epoch: null }));
     const out = { ...apart, authority: { ...apart.authority, page: "https://ledger.example/w" } };
     const bare = {
       ...apart,
@@ -479,7 +480,7 @@ describe("the rows drawn", () => {
     const drawn = renderToStaticMarkup(
       <GuardRows of="pass" label="needs" heading="needs" rows={[out]} />,
     );
-    expect(drawn).toContain("<code>just tasks workflow apply w/b pass --revision 7");
+    expect(drawn).toContain("<code>just tasks workflow observe FILE</code>");
     expect(drawn).toContain(
       '<a class="guard-out" href="https://ledger.example/w" target="_blank" rel="noreferrer">ledger</a>',
     );

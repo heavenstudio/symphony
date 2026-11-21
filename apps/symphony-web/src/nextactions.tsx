@@ -464,7 +464,6 @@ export function NextActions({ scope, slug, place, updated }: NextActionsProps) {
   };
   return (
     <NextActionsView
-      slug={slug}
       place={place}
       read={read}
       values={values}
@@ -483,8 +482,6 @@ export function NextActions({ scope, slug, place, updated }: NextActionsProps) {
 }
 
 export interface NextActionsViewProps {
-  /** The task, as the command a guard's row gives to copy names it. */
-  slug?: string;
   place: WorkflowPlace;
   /** What the page read; none before its first read answers. */
   read: Read | null;
@@ -513,7 +510,6 @@ export interface NextActionsViewProps {
  * task's place, whose read is on its way.
  */
 export function NextActionsView({
-  slug = "",
   place,
   read,
   values,
@@ -567,7 +563,6 @@ export function NextActionsView({
             const rows = guards
               ? needRows(
                   {
-                    slug,
                     edge: action.edge,
                     label: action.label,
                     revision: offer.snapshot.task_revision,

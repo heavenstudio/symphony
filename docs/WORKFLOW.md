@@ -685,8 +685,9 @@ it. Under each action a guard holds, *ACTION needs* heads a row for each guard i
 A row is the guard's name, its state in a word, a line saying why, and its authority (the issuer
 it signs as, and its adapter) with what the board accepted from it: its generation and epoch,
 `none yet`, or `in conflict`. Before any take the row is the board's records: `no word yet`
-where taking the action asks the authority, `not from here` where this host cannot ask it, with
-the command that takes the edge with an attestation file, `unreported` with the command that
+where taking the action asks the authority, `not from here` where this host cannot ask it, saying
+what would (a plugin of the project answering for the guard's adapter) and no command, as the
+command line takes an edge as an agent's session and never as the owner, `unreported` with the command that
 reports the authority's state, `conflict`, or `uncommitted`. After the owner's take is refused,
 the row of the guard the refusal names says it by its word: `missing`, `unanswered`, `refused`
 and `unknown` with the authority's reasons, `expired`, `early`, `held too long`, `stale`,
