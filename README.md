@@ -31,8 +31,8 @@ at once.
   show how work flows: tasks done, lead time, where the hours go
   ([runs](docs/RUNS.md), [machine work](docs/MACHINE_WORK.md)).
 - **Plugins and themes.** A project adds its own card kinds, pages and actions as a plugin, and
-  its own look as a theme ([the project file](docs/PROJECT_FILE.md),
-  [the plugin protocol](docs/PLUGIN_PROTOCOL.md)).
+  its own look as a theme ([writing a plugin and a theme](docs/PLUGIN_WRITING.md),
+  [the project file](docs/PROJECT_FILE.md), [the plugin protocol](docs/PLUGIN_PROTOCOL.md)).
 - **One server, many projects.** Each registered project is served under its own address with its
   own documents, board and theme; the front page lists them with what waits on you in each.
 
@@ -105,7 +105,8 @@ A project with plugins of its own takes Symphony's versioned libraries from crat
 this repository by Git at a release tag with the selected revision in its Cargo lockfile. Take
 the related packages from one source together; its host supplies its plugins and its own
 verification, approval and landing policy
-([the plugin protocol](docs/PLUGIN_PROTOCOL.md), [releases](docs/RELEASES.md)).
+([writing a plugin](docs/PLUGIN_WRITING.md), [the plugin protocol](docs/PLUGIN_PROTOCOL.md),
+[releases](docs/RELEASES.md)).
 
 ## Working on Symphony
 
