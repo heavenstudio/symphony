@@ -516,6 +516,7 @@ mod tests {
             slept: 0.0,
             inputs: None,
             environment: None,
+            hosted: Vec::new(),
         }
     }
 

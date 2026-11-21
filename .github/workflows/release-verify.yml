@@ -1,8 +1,11 @@
 # The release's verification of one commit on GitHub's macOS runners: that commit's own
 # `just verify`, a job for each step its tools/verify.sh names (docs/RELEASES.md, "On GitHub's
-# runners"). Started by hand alone, for a full commit. It is given no secret and its token reads
-# the repository and nothing more, so it tags, pushes and publishes nothing; `just release` does
-# not start it. crates/symphony-build/tests/hosted_workflow.rs holds it to those bounds.
+# runners"). Started by a dispatch alone, for a full commit: a person's, or `just release`'s where
+# the project turns that on. It is given no secret and its token reads the repository and nothing
+# more, so it tags, pushes and publishes nothing; what reads its result tags and publishes on the
+# machine that asked. crates/symphony-build/tests/hosted_workflow.rs holds it to those bounds, and
+# the release run reads its plan job's name, its jobs' names and its artifacts' names and folder
+# (crates/symphony-build/src/release/hosted.rs).
 name: Release verification
 run-name: Release verification of ${{ inputs.commit }}
 
@@ -66,11 +69,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       # just, fnm for the Node tools/node.sh runs, and PostgreSQL 18 for the board's tests and 16
-      # for the hosted check, as docs/PROJECT_FILE.md and docs/POSTGRESQL.md install them.
+      # for the hosted check, as docs/PROJECT_FILE.md and docs/POSTGRESQL.md install them, and
+      # OpenSSL 3 first on PATH for that check's certificates: the image's own `openssl` is 1.1.1,
+      # whose authority's certificate repeats an extension and is read by no client.
       - name: The tools no pin of the tree holds
         run: |
-          brew install just fnm postgresql@18 postgresql@16
+          brew install just fnm postgresql@18 postgresql@16 openssl@3
           printf '%s/bin\n' "$(brew --prefix postgresql@18)" >>"$GITHUB_PATH"
+          printf '%s/bin\n' "$(brew --prefix openssl@3)" >>"$GITHUB_PATH"
       - name: The toolchain and Node the tree pins
         run: |
           cargo --version
@@ -82,6 +88,8 @@ jobs:
           "$SYMPHONY_CHROME" --version
           postgres --version
           "$(brew --prefix postgresql@16)/bin/postgres" --version
+          command -v openssl
+          openssl version
           just --version
           df -h .
       - name: just verify

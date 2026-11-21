@@ -242,6 +242,20 @@ fn the_apps_keys_that_do_not_hold_together_are_refused_by_name() {
 }
 
 #[test]
+fn verification_is_off_unless_the_settings_say_hosted_and_any_other_word_is_refused() {
+    assert_eq!(parse(ON).unwrap().verification, Verification::Off);
+    assert_eq!(Verification::Off.word(), "off");
+    let on = parse(&format!("{ON}verification = \"hosted\"\n")).unwrap();
+    assert_eq!(on.verification, Verification::Hosted);
+    assert_eq!(on.verification.word(), "hosted");
+    // It turns on nothing else.
+    assert_eq!(on.releases, Releases::Off);
+    assert_eq!(on.pull_requests, PullRequests::Off);
+    assert!(parse(&format!("{ON}verification = \"github\"\n")).is_err());
+    assert!(parse(&format!("{ON}verification = true\n")).is_err());
+}
+
+#[test]
 fn releases_are_off_unless_the_settings_say_publish_and_any_other_word_is_refused() {
     assert_eq!(parse(ON).unwrap().releases, Releases::Off);
     assert_eq!(Releases::Off.word(), "off");

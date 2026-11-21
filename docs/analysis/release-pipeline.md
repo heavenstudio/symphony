@@ -353,8 +353,10 @@ and each test now has a time and a timeout of its own under one scheduler
 
 Once the GitHub plugin is in, a release's checks run on GitHub's CI, and a project without the
 plugin keeps the local run exactly as it is. The design, approved on
-[its card](../DECISIONS.md#release-run-on-github). Its workflow is in the tree, started by hand
-alone ([RELEASES](../RELEASES.md#on-githubs-runners)); `just release` does not start it yet:
+[its card](../DECISIONS.md#release-run-on-github). Its workflow is in the tree, and `just
+release` starts it where a project turns it on, which this repository has not
+([RELEASES](../RELEASES.md#on-githubs-runners), which says what was built and what was left for
+later: a rerun of named steps and the rerun of a failure alone stay on this machine):
 
 **Optional by the plugin.** The release run verifies locally unless the project's GitHub
 integration is installed, its repository identity verified and hosted verification turned on,

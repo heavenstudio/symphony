@@ -438,6 +438,12 @@ project is given and neither the library nor the shipped `symphony` compiles
    Where the project names `[releases] rulesets`, the check `rulesets` runs after the others, its
    command in the main checkout ([who bypasses the rules](#who-bypasses-the-rules-again)).
 
+   **On GitHub's machines.** Where the project names `[releases] hosted`, the full verification is
+   asked of GitHub's runners in place of this checkout, and its jobs are the steps below; what
+   GitHub does not answer is verified here, the record saying which judged
+   ([on GitHub's runners](#on-githubs-runners)). The checkout is made all the same: the looks
+   below, a rerun here and the refresh's install are of it.
+
    **The runner's setup belongs to the release run.** Before `tests`, verification runs the
    explicit `nextest-setup` step (`just nextest-setup`), on a full run and a tests-only rerun.
    `tools/nextest.sh` verifies this target's cached cargo-nextest first, then the main checkout's
@@ -741,16 +747,25 @@ the candidate does not descend from drops the candidate ([below](#its-bounds)).
 
 ## On GitHub's runners
 
-`.github/workflows/release-verify.yml` runs one commit's own `just verify` on GitHub's macOS
-runners, a job for each step that commit's `tools/verify.sh` names, the tests one job with their
-`nextest-setup`. It is the first part of the design [its card](DECISIONS.md#release-run-on-github)
-approved, whose [analysis](analysis/release-pipeline.md#the-hosted-run-on-github) says the rest.
-`just release` does not start it: the release run verifies on this machine, as above.
+A project that says so has its release run verify the candidate on GitHub's macOS runners in
+place of this machine, so a busy or sleeping machine no longer decides a release
+([its card](DECISIONS.md#release-run-on-github), whose
+[analysis](analysis/release-pipeline.md#the-hosted-run-on-github) says why). It is the project's
+word, which is two settings, as [a GitHub Release](#a-github-release) has two: `[releases] hosted`
+in `symphony.toml`, the command the run asks, and `verification = "hosted"` in the GitHub
+adapter's own settings, without which that command answers `refused` and asks GitHub nothing
+([GITHUB](GITHUB.md#verifying-a-release)). This repository's `symphony.toml` names no command.
+While none is named the run starts no program for it and is the run above, to the byte: its
+checks, its output and its record (`crates/symphony-build/src/release/hosted.rs`).
 
-- **Started by hand alone**, for a full commit: `gh workflow run release-verify.yml -f
-  commit=COMMIT`. Its first job refuses an input that is not the full commit it checked out (a
-  branch, a tag or a short commit), and lists the steps; no other job runs before it. It starts on
-  no push, pull request or clock.
+**The workflow.** `.github/workflows/release-verify.yml` runs one commit's own `just verify`, a
+job for each step that commit's `tools/verify.sh` names, the tests one job with their
+`nextest-setup`.
+
+- **Started for a full commit alone**, by a `workflow_dispatch`: the release run's, or a person's
+  `gh workflow run release-verify.yml -f commit=COMMIT`. Its first job refuses an input that is
+  not the full commit it checked out (a branch, a tag or a short commit), and lists the steps; no
+  other job runs before it. It starts on no push, pull request or clock.
 - **It writes nothing.** It is given no secret, its token reads the repository's contents alone and
   is left in no checkout, and each action it takes is pinned by a commit, so it tags, pushes and
   publishes nothing.
@@ -765,6 +780,64 @@ approved, whose [analysis](analysis/release-pipeline.md#the-hosted-run-on-github
 
 `crates/symphony-build/tests/hosted_workflow.rs` holds the file to those bounds, each refusal on a
 variant of it, and runs its two scripts as GitHub runs them.
+
+**What the run asks.** `hosted = ["symphony-github", "verify"]` names the GitHub adapter, which
+no package here builds with: the run starts it as a program in the main checkout, `COMMAND…
+--request FILE`, and reads one line of JSON. Any program that answers the same way serves, as
+the tests' stand-in does. The run is still the command and still holds its lock: it picks the
+candidate, makes its checkout and asks what the tree says of its checks' inputs as above, and
+only then, in place of running `just verify` there, asks the command to verify that commit and
+waits for its answer within the run's time.
+
+- **Only the full verification, whole.** The check `verify` by its own command, `just verify`,
+  with every step to run: a first run of a tip, an out-of-cycle commit, and a rerun of the
+  release candidate that carries nothing. A check named by hand (`--check`) runs here, and so
+  does a rerun of named steps or lanes ([the rerun](#the-release-candidate)), since the workflow
+  runs every step of one commit.
+- **Believed only as that commit's run of main's workflow.** The adapter answers `ended` only for
+  a run GitHub says is of the repository its state is bound to by its number, of this workflow
+  file, started by a dispatch on the default branch, titled for exactly the commit asked, and
+  completed ([GITHUB](GITHUB.md#verifying-a-release)). The run then reads the workflow file with
+  its own git at the commit that run names and at main's tip as fetched: the two must be one
+  file, a commit not held here being fetched for once. A candidate is on `origin/main` by its
+  commit, so the branch `release-candidate` is still never pushed.
+- **Each job is a step.** Each job's artifact is its step's `build/verify` folder, so the run lays
+  them out in the check's own folder of steps (`logs/ID/verify.steps/`) as `just verify` lists
+  them here: `steps.tsv`, each step's log and the tests' lanes' logs, each log named by its place
+  in the folder and copied only when it is a plain file there. What records the steps, files a
+  red and reads its log is unchanged. A job GitHub ended cancelled, timed out, skipped or in any
+  way but passed or failed is a step that did not run to its end: red, never green, whatever its
+  artifact lists; so is a job that passed and listed no step. A job that failed before it listed
+  one is red with the job's own log. The check is green only when the workflow run concluded
+  `success`.
+- **What is kept.** `logs/ID/verify.hosted/` holds the request, each job's log as GitHub served it
+  (`job-N.log`), each artifact's archive and what it opened to; `verify.log` holds what the
+  command answered. The run's record (`runs/ID.json`) names what judged in `hosted`: the check,
+  `GitHub` with the workflow run's page, its attempt and the commit whose workflow file it ran,
+  or `here` with why. `--status` says the same on the run's line.
+- **Its greens stand on that run's runners.** The record's environment is the workflow run, so no
+  rerun here carries a green GitHub found ([what a run ran on](#what-a-run-ran-on)): a candidate
+  whose greens are GitHub's is rerun whole, there.
+- **A red test is not rerun alone.** The rerun of each failure alone (step 5) is this machine's
+  own build of the tests, so a check GitHub judged files its red tests as they failed there.
+- **When GitHub does not answer.** A command that cannot be run or fails, an answer `refused`
+  (turned off, another repository at the name, a token that may not start the workflow) or
+  `unavailable` (the commit is not there, the dispatch or a read went unanswered, no run showed),
+  a run that is not believed, an artifact that does not open, and a run that ended `success` and
+  listed no step are no red of the commit. The run says so (`verify verified here, not on
+  GitHub: WHY`), verifies here as a project without the command does, and its record says which
+  judged and why.
+- **The run's time.** The command is told the time the run has left. When that ends while GitHub
+  is waited for, whether the run stops the command or the command answers `late` first, the check
+  is red as any check stopped at the run's time is, nothing is verified here, and the workflow
+  run is left to end: it writes nothing. The run says `verify asked of GitHub: WHY`.
+
+**What stays here:** the lock, the candidate and its record, the reds, the tag and its push, the
+publication on crates.io, the GitHub Release, the install, the boards, `current` and the wait for
+the server ([the refresh](#the-refresh)). The run on GitHub verifies and does nothing else.
+
+Its tests ask a stand-in for the adapter (`crates/symphony-build/tests/release/hosted.rs`); the
+adapter's own ask a GitHub repository held in memory. Neither reaches GitHub.
 
 ## The release candidate
 
@@ -1522,6 +1595,9 @@ upload's cause is put right is an orchestrator's act as well. Naming a command i
 github`, and which repository the adapter's settings name, are the owner's word; once one is
 named, `just release --refresh` and `just release --github` for a release left pending are an
 orchestrator's acts, and `just release --github` for the releases tagged before is the owner's.
+Naming a command in `[releases] hosted` and saying `verification = "hosted"` in the adapter's
+settings, which together move a release's verification to GitHub's machines, are the owner's
+word; once they are said, each run asks there without asking anyone.
 Naming a command in `[releases] rulesets` is the owner's word as well, as every run then reads the
 repository's rulesets with the gh of whoever runs it.
 Running `--due` by hand starts a release, and stays the owner's call. The release candidate's two

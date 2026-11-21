@@ -290,6 +290,10 @@ pub struct Releases {
     /// `COMMAND… --request FILE` (the GitHub adapter's `symphony-github release`); none, and no
     /// program is run and nothing is published there.
     pub github: Vec<String>,
+    /// The command a release run asks to verify its commit on GitHub's machines in place of
+    /// verifying it here, run as `COMMAND… --request FILE` (the GitHub adapter's
+    /// `symphony-github verify`); none, and no program is run and every run verifies here.
+    pub hosted: Vec<String>,
     /// The command each release run runs as a check of its own, `rulesets`, after the checks
     /// (the GitHub adapter's `symphony-github rulesets --verify`, where its settings publish pull
     /// requests): red unless it exits 0; none, and the run has no such check.
@@ -323,6 +327,7 @@ impl Default for Releases {
             refresh: true,
             publish: false,
             github: Vec::new(),
+            hosted: Vec::new(),
             rulesets: Vec::new(),
             candidate_reruns: Releases::CANDIDATE_RERUNS,
             candidate_hours: Releases::CANDIDATE_HOURS,
@@ -775,6 +780,11 @@ impl Project {
                     .into(),
             );
         }
+        if (file.releases.hosted.first()).is_some_and(|program| program.trim().is_empty()) {
+            return Err(
+                "[releases] hosted names no command: leave it out to verify a release here".into(),
+            );
+        }
         if (file.releases.rulesets.first()).is_some_and(|program| program.trim().is_empty()) {
             return Err(
                 "[releases] rulesets names no command: leave it out to verify no rulesets".into(),
@@ -830,6 +840,7 @@ impl Project {
                 refresh: file.releases.refresh,
                 publish: file.releases.publish,
                 github: file.releases.github,
+                hosted: file.releases.hosted,
                 rulesets: file.releases.rulesets,
                 candidate_reruns: file.releases.candidate_reruns,
                 candidate_hours: file.releases.candidate_hours,

@@ -37,6 +37,7 @@ refusal as turned off.
 | `issues` | `"off"` | `"import"`, `"export"` or `"exchange"` (both) |
 | `pull_requests` | `"off"` | `"publish"` answers [a land's delivery](#delivering-a-land); `"track"` is read and held to its word, and this build tracks none and says so |
 | `releases` | `"off"` | `"publish"` answers [a release run](#publishing-a-release) with a GitHub Release for a tag it pushed |
+| `verification` | `"off"` | `"hosted"` answers [a release run](#verifying-a-release) with its commit's verification on GitHub's runners |
 | `token_file` | none | the absolute path of a file holding the token |
 | `import_labels` | `[]` | the labels that select an open issue for import |
 | `import_comments` | `false` | whether the comments of a mapped issue become notes on its task |
@@ -75,7 +76,8 @@ holds the token. A machine without `curl` on `PATH` is told so, and nothing is s
 
 A fine-grained token scoped to the one repository is enough: issues read for `import`, issues
 read and write for `export` and `exchange`, and contents read and write for `releases =
-"publish"`, which GitHub takes a release's creation as. A token that GitHub refuses (401) pauses
+"publish"`, which GitHub takes a release's creation as, and actions read and write for
+`verification = "hosted"`, which starts the workflow and reads its runs. A token that GitHub refuses (401) pauses
 the exchange with everything kept; the next preview that succeeds lifts the pause.
 
 A delivery uses the same one token: an installation token of the GitHub App `app_id` names, with
@@ -94,6 +96,7 @@ makes](#tokens-it-makes) is asked for exactly these:
 | the repository and its merge settings, the pull requests, their merge (`/pulls`, `/pulls/N/merge`) and marking one ready (GraphQL) | pull requests write and contents write, under `pull_requests = "publish"` |
 | a head's checks, read and written (`/commits/SHA/check-runs`, `/check-runs`) | checks write, under `pull_requests = "publish"` |
 | a release by its tag, the tag and the release's creation (`/releases/tags/TAG`, `/git/ref/tags/TAG`, `POST /releases`) | contents write, under `releases = "publish"` |
+| the workflow's runs, its start for one commit, one run, its jobs, their logs and its artifacts (`/actions/workflows/release-verify.yml/runs` and `/dispatches`, `/actions/runs/N`, `/actions/jobs/N/logs`, `/actions/artifacts/N/zip`) and the commit (`/commits/SHA`) | actions write, under `verification = "hosted"` |
 | the rules in effect for the branch (`/rules/branches/BRANCH`), each ruleset they come from (`/rulesets/ID`, never shown its bypass list) and a public upstream's repository | metadata, which every token has; a private upstream is read only by a token its installation reaches |
 
 Where the settings name no installation and key, whoever installs the App keeps a current token
@@ -185,6 +188,9 @@ otherwise the `tasks` beside `symphony-github` or the one on `PATH`.
 - **`release --request FILE`** answers a release run with
   [a GitHub Release](#publishing-a-release) for the tag FILE names. A release run runs it; an
   operator asks through that run's own `--github`.
+- **`verify --request FILE`** answers a release run with
+  [its commit's verification](#verifying-a-release) on GitHub's runners. A release run runs it;
+  an operator has no reason to.
 - **`tokens`** says whether the token is current and when it expires, never the token
   ([tokens it makes](#tokens-it-makes)).
 
@@ -452,6 +458,58 @@ a run after one killed between the request and its answer make no second release
 GitHub refuses as there already, made by another run since the look, is found and kept. This
 command sends one kind of write, a release's creation: it edits and deletes no release and
 makes, moves and deletes no tag.
+
+## Verifying a release
+
+A project whose `symphony.toml` commits `[releases] hosted = ["symphony-github", "verify"]` has
+its release run verify its commit on GitHub's runners
+([RELEASES](RELEASES.md#on-githubs-runners)): the run starts `symphony-github verify --request
+FILE` in the main checkout and reads one line of JSON. The adapter answers only `enabled`
+settings whose `verification` is `"hosted"`; under any other it answers `refused` and asks GitHub
+nothing, keeping nothing. The request names the `commit`, its 40 hexadecimal digits, the
+`folder` the run's logs are downloaded into, which must be there, and the `seconds` the run may
+be waited for (six hours with none).
+
+In order, with `token_file`'s token (`crates/symphony-github/src/verify.rs`):
+
+1. **The repository** is read and held to the one the state is bound to by its number, as a
+   delivery holds it; with none bound yet, it is bound. Another repository at the name is
+   refused: nothing is started in it.
+2. **The commit must be there** (`GET …/commits/SHA`): one GitHub does not hold is `unavailable`,
+   and nothing is started.
+3. **The workflow is started** on the default branch for that commit (`POST
+   …/actions/workflows/release-verify.yml/dispatches`, its one input the commit), the one write
+   this command sends, journaled before it is made. The state's lock is held until GitHub
+   answers it and never while the run is waited for, so a land's delivery is not kept waiting.
+4. **Its run is found**: the newest dispatched run of the workflow titled for the commit that
+   was not listed before the dispatch, looked for over two minutes, as GitHub lists a run a
+   little after it takes the dispatch. A dispatch whose answer was lost is looked for the same
+   way; none showing is `unavailable`.
+5. **The run is waited for**, read every 30 seconds until it has ended. Twenty reads in a row
+   left unanswered give the wait up as `unavailable`; the time given ending first is `late`, the
+   run left to end.
+6. **It is believed** only if GitHub says it is of the bound repository, of
+   `.github/workflows/release-verify.yml`, started by a `workflow_dispatch` on the default
+   branch, titled for exactly the commit, and completed with a conclusion; anything else is
+   `refused` and nothing is downloaded. Whether the workflow file it ran is the one the default
+   branch commits is the release run's to check with its own git, by the commit the answer
+   names.
+7. **Its logs are downloaded** into the folder: each job's log (`job-N.log`) and each artifact's
+   archive (`artifact-N.zip`). GitHub answers each with a redirect to another host, which a
+   second `curl` fetches with no token, its URL read from standard input and said nowhere, as it
+   carries the download's own signature. A job with no log and an artifact that cannot be
+   fetched are said in the answer (`no_log`, `missing`) and stop nothing.
+
+The answer's `state` is `ended` (with `run`, its page, attempt, conclusion and the commit whose
+workflow file it ran; `jobs`, each with its conclusion as GitHub gave it, its seconds and its
+log; and `artifacts`), `late`, `refused` (asking again as things are changes nothing: the
+settings, the repository, the workflow file, a token that may not start it, a run not believed)
+or `unavailable` (GitHub gave no answer to go on by). A red run is `ended` like a green one: what
+its jobs concluded is the release run's to judge.
+
+It is safe to run twice: each request starts a run of its own and reads that one, and the
+workflow is given no secret and writes nothing, so a run started and never read costs runner
+minutes and nothing else. The command cancels no run.
 
 ## The protection a delivery needs
 

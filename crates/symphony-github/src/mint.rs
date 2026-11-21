@@ -18,7 +18,7 @@
 //! ones. A failure writes nothing, leaves the file as it was, and names what to put right
 //! without a key, a JWT or a token.
 
-use crate::config::{App, Config, PullRequests, Releases};
+use crate::config::{App, Config, PullRequests, Releases, Verification};
 use crate::credential::{self, Secret};
 use crate::reconcile::Context;
 use crate::transport::{Failure, Request};
@@ -247,7 +247,7 @@ pub const TOKEN_FILE: &str = "token_file";
 
 /// The permissions the token is asked for, each the least the calls it is sent with need
 /// (docs/GITHUB.md, "The token"): a delivery's pushes, pull requests and checks, a release's
-/// contents, and the issues the exchange reads or writes.
+/// contents, a hosted verification's workflow run, and the issues the exchange reads or writes.
 #[must_use]
 pub fn permissions(config: &Config) -> BTreeMap<&'static str, &'static str> {
     let mut asked = BTreeMap::new();
@@ -258,6 +258,9 @@ pub fn permissions(config: &Config) -> BTreeMap<&'static str, &'static str> {
     }
     if config.releases == Releases::Publish {
         asked.insert("contents", "write");
+    }
+    if config.verification == Verification::Hosted {
+        asked.insert("actions", "write");
     }
     if config.issues.exports() || config.close_issues {
         asked.insert("issues", "write");

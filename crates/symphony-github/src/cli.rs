@@ -8,9 +8,10 @@
 //! `reconcile` makes the folder. `reconcile` is the one command that writes either, and only the
 //! preview it is handed. `deliver` is the land's, not an operator's: it answers one verb of a
 //! delivery by pull request ([`crate::deliver`]). `release` is the release run's: a GitHub
-//! Release for a tag it pushed ([`crate::release`]).
+//! Release for a tag it pushed ([`crate::release`]), and `verify` its commit's verification on
+//! GitHub's machines ([`crate::verify`]).
 
-use crate::config::{PullRequests, Releases};
+use crate::config::{PullRequests, Releases, Verification};
 use crate::github::{clean_body, clean_title};
 use crate::mint::{self, Held};
 use crate::plan;
@@ -45,6 +46,9 @@ project's default branch commits symphony-github.toml with enabled = true.
                                       (`[land] delivery`): publish, merge, result or landed
   release --request FILE              answer the release run with a GitHub Release for a tag it
                                       pushed (`[releases] github`); edits and deletes none
+  verify --request FILE               answer the release run with its commit's verification on
+                                      GitHub's machines (`[releases] hosted`): starts the
+                                      workflow, waits for it and downloads its logs
   preflight [--branch BASE]           read the protection of BASE (the default branch) as a
                                       delivery does before it writes, and say what is missing;
                                       writes nothing anywhere but a token it makes
@@ -145,6 +149,12 @@ fn status(ctx: &Context<'_>, out: &mut dyn Write) -> Outcome {
                     Releases::Publish => " (a release run's GitHub Release: `release`)",
                 }
             );
+            if config.verification == Verification::Hosted {
+                let _ = writeln!(
+                    out,
+                    "verification: hosted (a release run's checks on GitHub's machines: `verify`)"
+                );
+            }
             if let Some(file) = &config.token_file {
                 let _ = writeln!(out, "token file: {}", file.display());
             }
@@ -525,6 +535,11 @@ fn command(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
             let file = need(&mut rest, "--request")?;
             none_left(&rest)?;
             crate::release::run(ctx, std::path::Path::new(&file), out)
+        }
+        "verify" => {
+            let file = need(&mut rest, "--request")?;
+            none_left(&rest)?;
+            crate::verify::run(ctx, std::path::Path::new(&file), out)
         }
         "preflight" => {
             let named = option(&mut rest, "--branch")?;
