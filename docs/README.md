@@ -33,6 +33,9 @@ are under [Design and history](#design-and-history).
 
 ## Extending it
 
+- [Writing a plugin and a theme](PLUGIN_WRITING.md) — a first plugin from nothing: its crate, its
+  code and test, its settings, its component in a document and how to see it drawn; a theme's
+  tokens by name, in the project file alone and from a plugin.
 - [The board's JSON APIs](BOARD_API.md) — `tasks api`, the board's methods as a versioned JSON
   contract for a program, and the agents API with what a callback and the PULL digest push.
 - [Plugin protocol](PLUGIN_PROTOCOL.md) — a plugin answering from a process of its own: the

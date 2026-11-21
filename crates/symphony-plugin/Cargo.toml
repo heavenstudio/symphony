@@ -18,6 +18,12 @@ categories = ["development-tools"]
 # What crates.io gets: the sources, the readme and the licence; never tests/ or fixtures.
 include = ["src/**", "README.md", "LICENSE"]
 
+# A first plugin, whole, which docs/PLUGIN_WRITING.md walks through: built and tested with the
+# workspace so the page's code cannot go stale, and outside `include`, so not in the package.
+[[example]]
+name = "hello"
+test = true
+
 [dependencies]
 # The block vocabulary a plugin renders to and the data its seams return (`vocabulary`).
 symphony-blocks = { path = "../symphony-blocks", version = "1.1.0" }
