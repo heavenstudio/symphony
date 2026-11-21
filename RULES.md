@@ -192,7 +192,7 @@ a later release, with concrete read-only evidence that consumers have migrated, 
 consumer-API compile guards with it. Review checks a removal or signature change against those
 guards; kit and helper major-version requirements still apply. The procedure and evidence are in
 [CHECKS](docs/CHECKS.md#consumer-api-changes), from
-[its card](docs/DECISIONS.md#consumer-api-break-release), alongside the current
+[its card](docs/analysis/release-candidate.md#consumer-api-break-release), alongside the current
 [release contract](docs/RELEASES.md#the-release-run).
 
 ### `code/no-timed-waits`
@@ -469,7 +469,7 @@ scratch repository and a scratch board, never the real worktrees or the live boa
 A consuming project's checkout on this machine is read-only to an agent working here: it is read,
 and nothing in it is changed but what a release's refresh moves there, which is the release run's,
 and an act there the owner's word names, which is that word's, such as a pin's commit made once
-by hand ([its card](docs/DECISIONS.md#consumer-manifest-line)).
+by hand ([its card](docs/RELEASES.md#consumer-manifest-line)).
 
 ### `commits/only-the-land-pushes`
 
