@@ -424,7 +424,8 @@ projects this machine serves, whose own gates meet a change when they take a rel
 Where the project names `[releases] hosted`, the same `just verify` of the same commit runs on
 GitHub's runners instead, a job for each step, and the run reads its result, files its reds and
 tags here; what GitHub does not answer is verified here
-([RELEASES](RELEASES.md#on-githubs-runners)). It is off unless the project says, and never a
+([RELEASES](RELEASES.md#on-githubs-runners)), but in a run started by
+[the hosted clock](RELEASES.md#the-hosted-clock), which verifies nothing here. It is off unless the project says, and never a
 task's gate: no push or pull request starts it. A
 green run tags a release; a red one files each red check as a task in the
 `tests/release-red-*` series at p0 ([TASKS](TASKS.md#slots)), staffed first and filed as a fast

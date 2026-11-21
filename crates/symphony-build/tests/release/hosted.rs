@@ -14,20 +14,20 @@ use symphony_board::sys::{Command, output};
 
 use super::{Fixture, NOW};
 
-const URL: &str = "https://github.com/o/n/actions/runs/9000";
-const WORKFLOW: &str = ".github/workflows/release-verify.yml";
+pub(super) const URL: &str = "https://github.com/o/n/actions/runs/9000";
+pub(super) const WORKFLOW: &str = ".github/workflows/release-verify.yml";
 
 /// A stand-in for `symphony-github verify` in a folder of the fixture's own, run as `stand-in
 /// verify --request FILE`: it keeps each request (`asked.jsonl`) with the folder it was run in
 /// (`cwd.log`), copies its `downloads` into the folder the request names, and prints its
 /// `answer`, `COMMIT` in it the request's commit; while the file `fails` is beside it, it fails.
-struct Stand {
-    folder: PathBuf,
+pub(super) struct Stand {
+    pub(super) folder: PathBuf,
     program: PathBuf,
 }
 
 impl Stand {
-    fn new(fixture: &Fixture) -> Stand {
+    pub(super) fn new(fixture: &Fixture) -> Stand {
         let folder = fixture.root.join("hosted-stand-in");
         fs::create_dir_all(folder.join("downloads")).unwrap();
         let program = folder.join("stand-in");
@@ -54,15 +54,15 @@ sed "s/COMMIT/$commit/g" "$here/answer"
     }
 
     /// The project file's `[releases]` line that names the stand-in.
-    fn setting(&self) -> String {
+    pub(super) fn setting(&self) -> String {
         format!("hosted = [\"{}\", \"verify\"]\n", self.program.display())
     }
 
-    fn answer(&self, answer: &Value) {
+    pub(super) fn answer(&self, answer: &Value) {
         fs::write(self.folder.join("answer"), format!("{answer}\n")).unwrap();
     }
 
-    fn asked(&self) -> Vec<Value> {
+    pub(super) fn asked(&self) -> Vec<Value> {
         fs::read_to_string(self.folder.join("asked.jsonl"))
             .unwrap_or_default()
             .lines()
@@ -71,13 +71,13 @@ sed "s/COMMIT/$commit/g" "$here/answer"
     }
 
     /// A job's log among its downloads.
-    fn log(&self, name: &str, text: &str) {
+    pub(super) fn log(&self, name: &str, text: &str) {
         fs::write(self.folder.join("downloads").join(name), text).unwrap();
     }
 
     /// An artifact among its downloads, as the workflow uploads a step's `build/verify`: `list`
     /// its `steps.tsv`, and each of `files` a file in it.
-    fn artifact(&self, name: &str, list: &str, files: &[(&str, &str)]) {
+    pub(super) fn artifact(&self, name: &str, list: &str, files: &[(&str, &str)]) {
         let made = self.folder.join("made").join(name);
         fs::create_dir_all(&made).unwrap();
         fs::write(made.join("steps.tsv"), list).unwrap();
@@ -101,7 +101,7 @@ sed "s/COMMIT/$commit/g" "$here/answer"
 }
 
 /// A line of a runner's `steps.tsv`, its log where the runner's checkout holds it.
-fn line(step: &str, exit: &str, log: &str) -> String {
+pub(super) fn line(step: &str, exit: &str, log: &str) -> String {
     format!(
         "{step}\t{exit}\t12\t/Users/runner/work/n/n/build/verify/{log}\tjust {step}\t1.50 1.20 1.00 3\n"
     )
@@ -109,7 +109,7 @@ fn line(step: &str, exit: &str, log: &str) -> String {
 
 /// The fixture with a project file naming `stand`, the workflow file and a `just verify` of its
 /// own that leaves `ran-here` beside the fixture and is red while the candidate holds `red`.
-fn fixture() -> (Fixture, Stand) {
+pub(super) fn fixture() -> (Fixture, Stand) {
     let fixture = Fixture::new();
     let stand = Stand::new(&fixture);
     fixture.write("symphony.toml", &Fixture::project_file(&stand.setting()));
@@ -126,13 +126,18 @@ fn fixture() -> (Fixture, Stand) {
     (fixture, stand)
 }
 
-fn ran_here(fixture: &Fixture) -> bool {
+pub(super) fn ran_here(fixture: &Fixture) -> bool {
     fs::remove_file(fixture.root.join("ran-here")).is_ok()
 }
 
 /// What the adapter answers of a run that ended `conclusion` with `jobs` and `artifacts`, its
 /// workflow file the one of `workflow_commit`.
-fn ended(workflow_commit: &str, conclusion: &str, jobs: &Value, artifacts: &Value) -> Value {
+pub(super) fn ended(
+    workflow_commit: &str,
+    conclusion: &str,
+    jobs: &Value,
+    artifacts: &Value,
+) -> Value {
     json!({
         "state": "ended", "commit": "COMMIT",
         "run": {"id": 9000, "url": URL, "attempt": 1, "conclusion": conclusion,
@@ -142,7 +147,7 @@ fn ended(workflow_commit: &str, conclusion: &str, jobs: &Value, artifacts: &Valu
     })
 }
 
-fn job(id: u64, name: &str, conclusion: &str, log: Option<&str>) -> Value {
+pub(super) fn job(id: u64, name: &str, conclusion: &str, log: Option<&str>) -> Value {
     json!({
         "id": id, "name": name, "conclusion": conclusion, "seconds": 90,
         "url": format!("https://github.com/o/n/actions/job/{id}"), "log": log,
@@ -150,7 +155,7 @@ fn job(id: u64, name: &str, conclusion: &str, log: Option<&str>) -> Value {
     })
 }
 
-fn tip(fixture: &Fixture) -> String {
+pub(super) fn tip(fixture: &Fixture) -> String {
     super::git(&fixture.main, &["rev-parse", "origin/main"])
 }
 

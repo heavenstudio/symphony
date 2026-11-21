@@ -206,6 +206,34 @@ fn each_key_left_out_takes_its_default_beside_those_given() {
         "{unnamed}"
     );
     assert!(refused("[releases]\nhosted = true\n").contains("hosted"));
+    // Its clock: 30 minutes unless said, and none while no command is named or the minutes are 0.
+    let named = "[releases]\nhosted = [\"symphony-github\", \"verify\"]\n";
+    let releases = parsed("").unwrap().releases;
+    assert_eq!(releases.hosted_every_minutes, 30);
+    assert_eq!(releases.hosted_clock(), None, "no command, no clock");
+    assert_eq!(parsed(named).unwrap().releases.hosted_clock(), Some(30));
+    let set = |minutes: &str| {
+        parsed(&format!("{named}hosted_every_minutes = {minutes}\n"))
+            .unwrap()
+            .releases
+            .hosted_clock()
+    };
+    assert_eq!(set("25"), Some(25));
+    assert_eq!(set("0"), None, "0 starts none by the clock");
+    assert_eq!(
+        parsed("[releases]\nhosted_every_minutes = 25\n")
+            .unwrap()
+            .releases
+            .hosted_clock(),
+        None
+    );
+    for wrong in ["-1", "\"often\"", "2.5"] {
+        let refusal = refused(&format!("[releases]\nhosted_every_minutes = {wrong}\n"));
+        assert!(
+            refusal.contains("hosted_every_minutes"),
+            "{wrong}: {refusal}"
+        );
+    }
     // Who bypasses the rules is verified again by the command the project names, and by none
     // unsaid.
     assert!(parsed("").unwrap().releases.rulesets.is_empty());
