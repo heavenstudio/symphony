@@ -9,7 +9,7 @@
 
 use symphony::plugins::measure::READ_AS_ANOTHER;
 
-// Whether a Mach-O binary exports a symbol, read from its export trie.
+// The symbols a Mach-O binary exports, read from its export trie.
 #[cfg(target_os = "macos")]
 #[path = "../../../tools/test-support/macho_exports.rs"]
 mod macho_exports;
@@ -46,12 +46,14 @@ fn the_binary_links_no_plugin_loopback() {
 fn the_binary_exports_no_symbols() {
     let this = std::fs::read(std::env::current_exe().unwrap()).unwrap();
     assert!(
-        macho_exports::exports_any(&this),
+        !macho_exports::exports(&this).is_empty(),
         "this test's executable exports nothing: the reading no longer finds an export trie"
     );
+    let exports = macho_exports::exports(&server());
     assert!(
-        !macho_exports::exports_any(&server()),
+        exports.is_empty(),
         "the symphony-server binary exports symbols: its link lost `-Wl,-no_exported_symbols` \
-         (apps/symphony-server/build.rs)"
+         (apps/symphony-server/build.rs): {}",
+        macho_exports::said(&exports)
     );
 }
