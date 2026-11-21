@@ -534,7 +534,6 @@ fn note(out: &mut dyn Write, noted: &[String]) {
 /// the build failed, which is said and which the run then meets as it would. An exit code when a
 /// run holds the lock: the count waits for it and nothing more runs.
 fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write) -> Option<i32> {
-    use std::os::unix::process::CommandExt as _;
     if driven() {
         return None;
     }
@@ -579,11 +578,12 @@ fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write
         driver.display()
     );
     let _ = out.flush();
-    let error = std::process::Command::new(&driver)
-        .arg("release")
-        .args(args)
-        .env(DRIVER, &driver)
-        .exec();
+    let words: Vec<String> = std::iter::once("release".to_string())
+        .chain(args.iter().cloned())
+        .collect();
+    // A start that fails leaves this process as it was, which the run then goes on in.
+    let named = [(DRIVER, driver.as_os_str())];
+    let error = crate::replace::replace(driver.as_os_str(), &words, &named);
     let _ = writeln!(
         out,
         "release: {} cannot run ({error}): the run goes on from this build",
