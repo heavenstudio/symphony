@@ -982,8 +982,8 @@ What holds on every page, and each page's contract where its section above names
   on) stays under 0.05 in both. A task of another shape (two gates, one unsigned) stays under
   0.05 on a return and on a wide first visit, and on a phone's first visit moves what is under
   its gates once: it is held under 0.14 with the page's answer first (it scores 0.1399) and
-  under 0.064 with the gates' first (0.0636). Those two limits only go down; the board task
-  `app/task-first-visit-holds-still` brings them to 0.05. For every other ghost:
+  under 0.064 with the gates' first (0.0636). Those two limits only go down; no task
+  brings them to 0.05 (`app/task-first-visit-holds-still` was cancelled on the owner's verdict). For every other ghost:
   `apps/symphony-web-tests/tests/browser/landmarks.rs` compares each region's place on the ghost and on the page,
   on a first visit and the next, on a board, a queue and tasks shaped as the live ones (a
   later card, a later queue group, the board's lower row, a task opened first and after
