@@ -3327,8 +3327,8 @@ landing](#the-default-landing)).
   cards' part `crates/tasks/src/stamps/posted.rs`): the owner's `approve SHA` naming T on the
   task's thread, or the owner's approve of the cards the task posted for the owner's look, read
   from git in the main checkout, never from a worktree's files. The cards' approve stands when
-  the branch posted a card (one of a register in a project document at T that the merge base of
-  T with the default branch holds no copy of, the owner's lines and its mark aside, as the pages
+  the branch posted a card (one in a project document at T, inline where it decides or in a
+  register, that the merge base of T with the default branch holds no copy of in any document, the owner's lines and its mark aside, as the pages
   read a branch's posted cards), each card it posted has `approved` as its newest owner verdict
   at T, committed (a reject, a question, pending, dismissed or none, on any of them, and it does
   not), and nothing came after the newest of those approves but the owner's lines: every commit

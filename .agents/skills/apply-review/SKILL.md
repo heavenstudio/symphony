@@ -2,7 +2,7 @@
 name: apply-review
 description: Apply the owner's review verdicts to the design docs. Use after the owner has reviewed in the Symphony (`just symphony`) — answers every open note on a card, turns rejections into new proposal cards, and rewrites documents that disagree with a verdict under the project's workflow. Trigger on "apply my review", "I made decisions", "I left comments", or /apply-review.
 ---
-<!-- symphony-stamp: 987e3de8a8b51477 files=SKILL.md,rewrite-brief.md -->
+<!-- symphony-stamp: 9ffc8ceaac59fc42 files=SKILL.md,rewrite-brief.md -->
 
 # Apply the owner's review
 
@@ -112,11 +112,11 @@ do not treat it as approval, and change documents only when it asks for that.
    content rules, together with the destination project's instructions. If the
    project permits delegation, assign disjoint file groups with their relevant
    verdicts and linked headings. Follow its launch, model and concurrency policy.
-   Keep register updates with the integrating session so replies remain ordered.
+   Keep card updates with the integrating session so replies remain ordered.
    Give each assignment an explicit scope, validation and commit boundary.
 
-7. **Integrate.** From the reports: fix any `[[FILE#Heading]]` link in
-   `DECISIONS.md` whose heading was renamed; check `just symphony-status --open`
+7. **Integrate.** From the reports: fix any `[[FILE#Heading]]` link on a
+   card, in whichever document holds it, whose heading was renamed; check `just symphony-status --open`
    shows nothing but what is waiting on the owner; check word counts went down;
    skim each rewritten file for anything presented as decided that is only a
    pending proposal. Run `just symphony-status --tidy` so the register ends

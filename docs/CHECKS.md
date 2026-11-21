@@ -312,7 +312,7 @@ says.
   run the recorder keeps with its commit
   ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), so its reviewer reads it as
   recorded, like any test. A guide, or a document under
-  `docs/` but the register and `docs/history/`, also runs the check for the owner's words in the
+  `docs/` but `docs/history/`, a card's own lines and a register region aside, also runs the check for the owner's words in the
   shapes the guides gave them, dated or straight-quoted (`just test-rs -p symphony-app --test hooks
   owner_words`, RULES.md `docs/no-ledger-in-documents`), and its reviewer reads for any other
   shape. For a shipped skill,

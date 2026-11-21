@@ -5,10 +5,12 @@
 //!
 //! It stands at the tip T when all of these hold:
 //!
-//! 1. **Posted.** The branch posted a card: one of a register in a project document at T whose
-//!    copy, the owner's lines and its mark aside, the merge base of T with the default branch
-//!    holds in none of its registers ([`Written`]), as the docs pages read a branch's posted
-//!    cards. A card the base holds that only the owner answered since is none the branch posted.
+//! 1. **Posted.** The branch posted a card: one in a project document at T, inline where the
+//!    thing it decides is said or in a register region, whose copy, the owner's lines and its
+//!    mark aside, the merge base of T with the default branch holds in none of its documents
+//!    ([`Written`]), as the docs pages read a branch's posted cards. A card the base holds that
+//!    only the owner answered since, or that only moved to another document, is none the branch
+//!    posted.
 //! 2. **Approved.** Each card it posted has `approved` as its newest owner verdict at T
 //!    ([`newest`]): a reject, a question, pending, dismissed or none, on any of them, and it does
 //!    not stand.
@@ -78,13 +80,12 @@ fn approval(main: &Path, tip: &str) -> Option<Posted> {
     args.extend(&specs);
     let changed = names(main, &args)?;
     let at_tip: Vec<Card> = (texts(main, tip, &changed)?.into_iter().flatten())
-        .filter(|text| text.contains(REGION_START))
         .flat_map(|text| cards(&lines(&text)))
         .collect();
     if at_tip.is_empty() {
         return Some(Posted::Nothing);
     }
-    let held = registers(main, &base, &specs)?;
+    let held = carded(main, &base, &specs)?;
     let mut forked: BTreeMap<String, Vec<Written>> = BTreeMap::new();
     for text in texts(main, &base, &held)?.into_iter().flatten() {
         for card in cards(&lines(&text)) {
@@ -121,7 +122,7 @@ fn approval(main: &Path, tip: &str) -> Option<Posted> {
     let Some(before) = first_other(main, tip, &base, &default_tip, &named, &folders)? else {
         return Some(Posted::Nothing);
     };
-    let carried = (registers(main, &before, &specs).and_then(|held| texts(main, &before, &held)))?
+    let carried = (carded(main, &before, &specs).and_then(|held| texts(main, &before, &held)))?
         .into_iter()
         .flatten()
         .any(|text| {
@@ -417,10 +418,26 @@ fn names(main: &Path, args: &[&str]) -> Option<Vec<String>> {
     )
 }
 
-/// The documents of `rev` under the pathspecs `specs` that hold a register; none where git could
-/// not say.
-fn registers(main: &Path, rev: &str, specs: &[&str]) -> Option<Vec<String>> {
-    let mut args = vec!["grep", "-l", "-z", "-F", "-e", REGION_START, rev, "--"];
+/// A card's first line as git's extended pattern: the shape [`cards`] reads, a list item at the
+/// left margin with a mark and a name in bold. It finds the documents worth reading and decides
+/// nothing: [`cards`] reads each one found.
+const CARD_LINE: &str = r"^-[[:space:]]+\[[ xX?r~a-]\][[:space:]]+\*\*";
+
+/// The documents of `rev` under the pathspecs `specs` that may hold a card, a register's marker
+/// or a card's line anywhere in them; none where git could not say.
+fn carded(main: &Path, rev: &str, specs: &[&str]) -> Option<Vec<String>> {
+    let mut args = vec![
+        "grep",
+        "-l",
+        "-z",
+        "-E",
+        "-e",
+        REGION_START,
+        "-e",
+        CARD_LINE,
+        rev,
+        "--",
+    ];
     args.extend(specs);
     let done = git(main, &args)?;
     // 1 is a grep that found none.

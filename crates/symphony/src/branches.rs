@@ -49,12 +49,13 @@ impl Tree {
     }
 }
 
-/// A register card a branch's worktree holds that the owner is to read.
+/// A card a branch's worktree holds, inline in a document or in a register, that the owner is to
+/// read.
 #[derive(Clone, Debug)]
 pub struct BranchCard {
     pub tree: Tree,
-    /// The page's document name, `docs/DECISIONS.md`, whatever the project's documents folder is
-    /// called: [`Project::file`] is the file under the worktree.
+    /// The page's document name, as `docs/RELEASES.md`, whatever the project's documents folder
+    /// is called: [`Project::file`] is the file under the worktree.
     pub doc: String,
     /// On a live branch, the card as the branch's HEAD commit holds it, with the owner's lines its
     /// worktree holds uncommitted laid on top. A card the owner spoke on that only a draft or a
