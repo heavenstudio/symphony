@@ -5,7 +5,8 @@
 //! server (`http.rs`). `deliver.rs` asks it the four verbs of a land delivered by a pull request,
 //! `protection.rs` what those verbs refuse of a repository not protected for one, and
 //! `rulesets.rs` the rulesets a person verifies for them. `release.rs` asks it for a GitHub
-//! Release of a tag, as the release run does.
+//! Release of a tag, as the release run does, and `verify.rs` for its commit's verification on
+//! GitHub's machines.
 
 #![expect(
     clippy::unwrap_used,
@@ -24,6 +25,7 @@ mod recovery;
 mod release;
 mod rulesets;
 mod scratch;
+mod verify;
 
 use github::Fake;
 use memory::MemBoard;
@@ -144,6 +146,10 @@ pub(crate) struct Shared(pub(crate) Arc<Fake>);
 impl Transport for Shared {
     fn send(&self, request: &Request) -> Result<Response, Failure> {
         self.0.send(request)
+    }
+
+    fn fetch(&self, url: &str, to: &Path) -> Result<u16, Failure> {
+        self.0.fetch(url, to)
     }
 }
 

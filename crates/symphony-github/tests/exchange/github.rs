@@ -68,7 +68,36 @@ struct Inner {
     /// The tags GitHub made itself, for a release whose tag it did not hold.
     tags_made: Vec<String>,
     releases: Vec<Value>,
+    actions: Actions,
 }
+
+/// The release verification's workflow as the repository holds it: the runs a dispatch made, and
+/// what a test says the next one is and ends as.
+pub(crate) struct Actions {
+    /// Whether the default branch holds the workflow file.
+    pub(crate) workflow: bool,
+    /// The commits the repository holds.
+    pub(crate) commits: Vec<String>,
+    /// The runs, oldest first, as a read of each answers it once it has ended.
+    pub(crate) runs: Vec<Value>,
+    /// Whether a run is listed among the workflow's.
+    pub(crate) listed: bool,
+    /// The reads of a run that still answer it in progress.
+    pub(crate) pending: usize,
+    /// How the next run ends.
+    pub(crate) conclusion: &'static str,
+    /// Fields laid over the run a dispatch makes: what a test has GitHub say of it.
+    pub(crate) over: Value,
+    /// Its jobs, each `(name, conclusion, log)`; a log of none has no download.
+    pub(crate) jobs: Vec<(&'static str, &'static str, Option<&'static str>)>,
+    /// Its artifacts, each `(name, bytes)`.
+    pub(crate) artifacts: Vec<(&'static str, &'static str)>,
+    /// What each download's URL serves.
+    downloads: BTreeMap<String, String>,
+}
+
+/// What signs a download's URL: nothing a test reads back may contain it.
+pub(crate) const SIGNATURE: &str = "sig=DOWNLOADsignature0123";
 
 pub(crate) struct Fake(Mutex<Inner>);
 
@@ -106,6 +135,18 @@ impl Fake {
             tags: BTreeMap::new(),
             tags_made: Vec::new(),
             releases: Vec::new(),
+            actions: Actions {
+                workflow: true,
+                commits: Vec::new(),
+                runs: Vec::new(),
+                listed: true,
+                pending: 0,
+                conclusion: "success",
+                over: json!({}),
+                jobs: Vec::new(),
+                artifacts: Vec::new(),
+                downloads: BTreeMap::new(),
+            },
             made: 100,
             about: json!({
                 "default_branch": "main", "archived": false, "allow_squash_merge": true,
@@ -220,6 +261,11 @@ impl Fake {
     /// The lightweight tag `name` pushed, naming `commit`.
     pub(crate) fn tag_light(&self, name: &str, commit: &str) {
         (self.inner().tags).insert(name.into(), (commit.into(), None));
+    }
+
+    /// The workflow's state, for a test to set and read.
+    pub(crate) fn actions<T>(&self, with: impl FnOnce(&mut Actions) -> T) -> T {
+        with(&mut self.inner().actions)
     }
 
     /// The releases, in the order they were made.
@@ -600,6 +646,9 @@ impl Inner {
         if let Some(response) = self.released(method, parts, sent) {
             return response;
         }
+        if let Some(response) = self.verified(method, parts, sent) {
+            return response;
+        }
         match (method, parts) {
             ("GET", ["pulls"]) => {
                 let value = |name: &str| {
@@ -748,6 +797,118 @@ impl Inner {
                         200,
                         &json!({"sha": sha, "object": {"type": "commit", "sha": commit}}),
                     ),
+                    None => missing(),
+                }
+            }
+            _ => return None,
+        })
+    }
+
+    /// A hosted verification's calls: a commit, the workflow's runs and its dispatch, one run,
+    /// its jobs and artifacts, and the redirect each download is answered with.
+    fn verified(&mut self, method: &str, parts: &[&str], sent: &Value) -> Option<Response> {
+        let missing = || answer(404, &json!({"message": "Not Found"}));
+        let redirect = |url: String| Response {
+            status: 302,
+            headers: BTreeMap::from([("location".to_string(), url)]),
+            body: String::new(),
+        };
+        let number = |text: &str| text.parse::<i64>().unwrap_or_default();
+        let (id, clock) = (self.id, self.clock);
+        let actions = &mut self.actions;
+        Some(match (method, parts) {
+            ("GET", ["commits", sha]) => {
+                if actions.commits.iter().any(|held| held == sha) {
+                    answer(200, &json!({"sha": sha}))
+                } else {
+                    answer(422, &json!({"message": "No commit found for SHA"}))
+                }
+            }
+            (_, ["actions", "workflows", _, ..]) if !actions.workflow => missing(),
+            ("GET", ["actions", "workflows", "release-verify.yml", "runs"]) => {
+                let mut runs = if actions.listed {
+                    actions.runs.clone()
+                } else {
+                    Vec::new()
+                };
+                runs.reverse();
+                answer(
+                    200,
+                    &json!({"total_count": runs.len(), "workflow_runs": runs}),
+                )
+            }
+            ("POST", ["actions", "workflows", "release-verify.yml", "dispatches"]) => {
+                let run = 9000 + i64::try_from(actions.runs.len()).unwrap();
+                let commit = sent["inputs"]["commit"].as_str().unwrap_or_default();
+                let mut made = json!({
+                    "id": run, "run_attempt": 1, "status": "completed",
+                    "conclusion": actions.conclusion, "event": "workflow_dispatch",
+                    "path": ".github/workflows/release-verify.yml",
+                    "head_branch": sent["ref"], "head_sha": "f".repeat(40),
+                    "display_title": format!("Release verification of {commit}"),
+                    "repository": {"id": id},
+                    "html_url": format!("https://github.com/o/n/actions/runs/{run}"),
+                    "run_started_at": stamp(clock), "updated_at": stamp(clock + 2940),
+                });
+                for (field, value) in actions.over.as_object().into_iter().flatten() {
+                    made[field] = value.clone();
+                }
+                actions.runs.push(made);
+                answer(204, &Value::Null)
+            }
+            ("GET", ["actions", "runs", run]) => {
+                let Some(found) = (actions.runs.iter()).find(|held| held["id"] == number(run))
+                else {
+                    return Some(missing());
+                };
+                let mut found = found.clone();
+                if actions.pending > 0 {
+                    actions.pending -= 1;
+                    found["status"] = json!("in_progress");
+                    found["conclusion"] = Value::Null;
+                }
+                answer(200, &found)
+            }
+            ("GET", ["actions", "runs", _, "jobs"]) => {
+                let jobs: Vec<Value> = (actions.jobs.iter().enumerate())
+                    .map(|(at, (name, conclusion, _))| {
+                        json!({
+                            "id": 500 + at, "name": name, "conclusion": conclusion,
+                            "started_at": stamp(clock), "completed_at": stamp(clock + 90),
+                            "html_url": format!("https://github.com/o/n/actions/job/{}", 500 + at),
+                        })
+                    })
+                    .collect();
+                answer(200, &json!({"total_count": jobs.len(), "jobs": jobs}))
+            }
+            ("GET", ["actions", "jobs", job, "logs"]) => {
+                let at = usize::try_from(number(job) - 500).unwrap_or(usize::MAX);
+                match actions.jobs.get(at).and_then(|(.., log)| *log) {
+                    Some(log) => {
+                        let url = format!("https://logs.example/job/{job}?{SIGNATURE}");
+                        actions.downloads.insert(url.clone(), log.into());
+                        redirect(url)
+                    }
+                    None => missing(),
+                }
+            }
+            ("GET", ["actions", "runs", _, "artifacts"]) => {
+                let artifacts: Vec<Value> = (actions.artifacts.iter().enumerate())
+                    .map(|(at, (name, _))| json!({"id": 700 + at, "name": name}))
+                    .collect();
+                answer(
+                    200,
+                    &json!({"total_count": artifacts.len(), "artifacts": artifacts}),
+                )
+            }
+            ("GET", ["actions", "artifacts", artifact, "zip"]) => {
+                let at = usize::try_from(number(artifact) - 700).unwrap_or(usize::MAX);
+                match actions.artifacts.get(at) {
+                    Some((_, bytes)) => {
+                        let url = format!("https://logs.example/artifact/{artifact}?{SIGNATURE}");
+                        actions.downloads.insert(url.clone(), (*bytes).into());
+                        redirect(url)
+                    }
                     None => missing(),
                 }
             }
@@ -964,6 +1125,16 @@ impl Transport for Fake {
             ))
         } else {
             Ok(response)
+        }
+    }
+
+    fn fetch(&self, url: &str, to: &std::path::Path) -> Result<u16, Failure> {
+        match self.inner().actions.downloads.get(url) {
+            Some(text) => {
+                std::fs::write(to, text).unwrap();
+                Ok(200)
+            }
+            None => Ok(404),
         }
     }
 }
