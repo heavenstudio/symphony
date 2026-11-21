@@ -224,7 +224,8 @@ pub(super) fn unmark(folder: &Path, slug: &str) {
 
 /// Whether `said`, a refusal and the head it was made at, is new for `slug`: not the last one said
 /// on its thread, which it is from now on. Kept in the lands' `folder` beside its journal and
-/// beyond it, as `SLUG.said`, so what holds a journal in hand writes nothing over it.
+/// beyond it, as `SLUG.said`, so what holds a journal in hand writes nothing over it. Asked only by
+/// a land delivered by a pull request, whose end forgets it ([`unsaid`]).
 pub(super) fn said(folder: &Path, slug: &str, said: &str) -> bool {
     let path = folder.join(format!("{}{SAID}", super::file_stem(slug)));
     if fs::read_to_string(&path).is_ok_and(|last| last == said) {

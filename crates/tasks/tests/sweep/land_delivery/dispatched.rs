@@ -1080,6 +1080,10 @@ fn a_refusal_a_watcher_round_stops_at_is_said_once_at_a_head_however_many_rounds
         "each round reads it: {said}"
     );
     assert_eq!(posts(&r, SLUG, refused), 1, "said once on the thread");
+    // Kept at its head where a round reads it, a land delivered by a pull request.
+    let kept = fs::read_to_string(lands(&r).join(format!("{}.said", file_stem(SLUG)))).unwrap();
+    assert!(kept.starts_with(&head(&wt, "HEAD")), "{kept}");
+    assert!(kept.contains(refused), "{kept}");
     assert_eq!(
         host.verbs()[..2],
         ["publish", "arm"],
