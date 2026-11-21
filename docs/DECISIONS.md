@@ -36,7 +36,32 @@ their dated history work is in [REVIEW](REVIEW.md).
     - **people-kept-where** (B) lets a board say what a named person may do. It says nothing of a person no board names.
 
     None decides this.
-- [ ] **public-name-where-declared** — You said a person needs an id outside the database, to sign their comments and decisions. That is a short public name (`ana`), written on lines that are files in git. Something must say that `ana` is a name and whose. A: a committed file of the project lists the names and nothing else; each board keeps privately which sign-in a name belongs to. B: each board keeps its own names and nothing is committed. C: the name is taken from the sign-in itself, such as the part of an email before the @. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Where public names are declared]]
+
+## Auto-approved: spot-check
+
+### Releases
+
+- [a] **contract-tool-route** — Under B a consuming project links nothing of Symphony but the plugin kit and the small helpers. Two of its tools use more of Symphony's library today, so each needs another way to get what it uses. Its art tool, which checks its art cards, sorts the register's cards with the project's plugin inside the library, runs Symphony's status and triage, and draws a card as a page draws it. Its landing tool uses the checks a landing makes (whether generated files must be made again, what counts as a document, whether your open lines are left) and the reader of the project's settings. A: Symphony's commands: both tools run the machine's own commands, which start the project's plugin as the machine does; Symphony adds the commands it lacks (one that draws a single card, one that answers the landing's checks for a branch) and keeps those commands' output stable. B: the project's own copies: it copies what the two tools use into its own code, and Symphony builds nothing. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/consumer-contract#Open choices]]
+  [2026-11-13 20:27] agent — Posted for the board task `design/contract-b-breakdown`: the one choice B leaves open, a card of its own as your note on **consumer-contract-versioning** asks.
+
+    **What they use:** the art tool, in 9 files; the landing tool, in three files and a test. Both also read the register and use small text helpers, which are copied under either option.
+
+    **The lock.** The landing tool also takes the lock the machine's server takes while it writes the main checkout. Under either option the lock's place and rule are written down as part of what Symphony promises, and the landing takes it itself, so it does not decide this card.
+
+    **A** costs Symphony two new commands, and keeping their output and status's and triage's stable for the project to read. **B** costs Symphony nothing. The project keeps copies of how a card is sorted and drawn and of the landing's checks. They keep passing while the machine does otherwise, until someone copies again.
+
+    **Why A.** Both tools exist to check what the machine does: the card you will see, and whether the machine would hold a land. Only the machine's own commands answer that.
+
+    **When.** No Symphony task waits on this. It is needed when the project moves these two tools off the library, after its plugin.
+
+    **Earlier verdicts checked.** **consumer-contract-versioning** (B) lets a project link only the kit and the helpers, so neither tool keeps the library, and it leaves open how they get what they use. No other card speaks of either tool. Symphony's side is filed after your answer.
+  [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
+
+## Waiting on an agent
+
+### People and sign-in
+
+- [-] **public-name-where-declared** — You said a person needs an id outside the database, to sign their comments and decisions. That is a short public name (`ana`), written on lines that are files in git. Something must say that `ana` is a name and whose. A: a committed file of the project lists the names and nothing else; each board keeps privately which sign-in a name belongs to. B: each board keeps its own names and nothing is committed. C: the name is taken from the sign-in itself, such as the part of an email before the @. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Where public names are declared]]
   [2026-11-21 17:32] agent — Posted for the board task `app/users-and-identity`, from your note on **people-kept-where**: "There should however be some 'non db id' in use to identify people in their comments and interactions (who decided things for example). So there will be some information that isn't the the DB only." A concept: nothing is built by this card.
 
     ![Where a person's public name is declared](analysis/users-and-identity/public-name.svg)
@@ -67,28 +92,7 @@ their dated history work is in [REVIEW](REVIEW.md).
     - **sign-in-service-shipped** (B) says how a person signs in, not what they are called in the record.
 
     Neither decides this.
-
-## Auto-approved: spot-check
-
-### Releases
-
-- [a] **contract-tool-route** — Under B a consuming project links nothing of Symphony but the plugin kit and the small helpers. Two of its tools use more of Symphony's library today, so each needs another way to get what it uses. Its art tool, which checks its art cards, sorts the register's cards with the project's plugin inside the library, runs Symphony's status and triage, and draws a card as a page draws it. Its landing tool uses the checks a landing makes (whether generated files must be made again, what counts as a document, whether your open lines are left) and the reader of the project's settings. A: Symphony's commands: both tools run the machine's own commands, which start the project's plugin as the machine does; Symphony adds the commands it lacks (one that draws a single card, one that answers the landing's checks for a branch) and keeps those commands' output stable. B: the project's own copies: it copies what the two tools use into its own code, and Symphony builds nothing. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/consumer-contract#Open choices]]
-  [2026-11-13 20:27] agent — Posted for the board task `design/contract-b-breakdown`: the one choice B leaves open, a card of its own as your note on **consumer-contract-versioning** asks.
-
-    **What they use:** the art tool, in 9 files; the landing tool, in three files and a test. Both also read the register and use small text helpers, which are copied under either option.
-
-    **The lock.** The landing tool also takes the lock the machine's server takes while it writes the main checkout. Under either option the lock's place and rule are written down as part of what Symphony promises, and the landing takes it itself, so it does not decide this card.
-
-    **A** costs Symphony two new commands, and keeping their output and status's and triage's stable for the project to read. **B** costs Symphony nothing. The project keeps copies of how a card is sorted and drawn and of the landing's checks. They keep passing while the machine does otherwise, until someone copies again.
-
-    **Why A.** Both tools exist to check what the machine does: the card you will see, and whether the machine would hold a land. Only the machine's own commands answer that.
-
-    **When.** No Symphony task waits on this. It is needed when the project moves these two tools off the library, after its plugin.
-
-    **Earlier verdicts checked.** **consumer-contract-versioning** (B) lets a project link only the kit and the helpers, so neither tool keeps the library, and it leaves open how they get what they use. No other card speaks of either tool. Symphony's side is filed after your answer.
-  [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
-
-## Waiting on an agent
+  [2026-11-21 17:37] owner · rejected — We will probably have a mapping of names / emails / git handles / communication usernames and preferences (for example slack user). So this may be become more complex then proposed
 
 ### Task timeline
 
