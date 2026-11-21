@@ -85,7 +85,7 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     Neither decides this.
   [2026-11-21 17:22] owner · approved — A
-- [x] **group-card-who-decides** — Replaces: owner-with-several-people. Your comment is the base now: a card or a task is owned by a group (engineering, design) or by one person, and its members are told. What is left to choose is whose answer settles a card its group owns. A: any one member; the first answer decides and a later one from any member overrides it. B: the one member it is assigned to; the others comment. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Who in a group decides]]
+- [-] **group-card-who-decides** — Replaces: owner-with-several-people. Your comment is the base now: a card or a task is owned by a group (engineering, design) or by one person, and its members are told. What is left to choose is whose answer settles a card its group owns. A: any one member; the first answer decides and a later one from any member overrides it. B: the one member it is assigned to; the others comment. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Who in a group decides]]
   [2026-11-21 10:22] agent — Posted for the board task `app/users-and-identity`, from your comment on the analysis: "C, but it could be 'group owned'. […] there can be an engineering group -> people there would get 'notified' and assigned to resolve." A concept: nothing is built by this card.
 
     ![Speaking, deciding and directing agents are three separate things](analysis/users-and-identity/people-and-agents.svg)
@@ -115,6 +115,7 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     Neither decides this.
   [2026-11-21 17:22] owner · approved — A
+  [2026-11-21 17:25] owner · rejected — Feels this is mixing authentication with authorization. Something should authenticate it, and give symphony the user’s auth data. This could probably leverage OAuth 2 here. And this should be some plugin that happens outside of the core of symphony’s symphony just relies on that service to get info on who the person is. Which could be signed header data.
 
 ### Task timeline
 
