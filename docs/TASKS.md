@@ -2709,7 +2709,8 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
   said, and is published and armed again. A refusal a round stops at (a head refused at the head,
   an arming refused) holds until what it names changes, so it is said on the thread once at the
   branch's head, however many rounds read it again (`SLUG.said` in the lands' folder keeps the
-  last one said, by a land, a dispatch or a round). A task whose evidence does not
+  last one said, by a land, a dispatch or a round, until the delivery ends, landed or cancelled;
+  a land that merges here keeps none). A task whose evidence does not
   stand yet costs it no read of the host, which merges nothing while eligible is pending; it reads
   its evidence again, so a write no command dispatches for (the owner's through the Symphony, a run
   recorded at the head) is published at its next round. One whose evidence stands has its pull

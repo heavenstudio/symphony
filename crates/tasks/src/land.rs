@@ -2006,10 +2006,14 @@ impl Landing<'_> {
         }
         // A watcher round stops where the last one did until what stopped it changes: what it
         // refuses is said once at the branch's head, whoever said it first (a land, a dispatch).
-        let tip = rev(&self.main, &format!("refs/heads/{}", self.slug)).unwrap_or_default();
-        let new = dispatch::said(&self.folder, self.slug, &format!("{tip} {}", refusal.line));
-        if !new && matches!(self.mode, Mode::Watch(_)) {
-            return Stop::Refused(refusal.line);
+        // Kept only where a round can read it, a land delivered by a pull request, whose end
+        // forgets it: a land that merges here keeps none, as nothing there would remove it.
+        if self.delivers() {
+            let tip = rev(&self.main, &format!("refs/heads/{}", self.slug)).unwrap_or_default();
+            let new = dispatch::said(&self.folder, self.slug, &format!("{tip} {}", refusal.line));
+            if !new && matches!(self.mode, Mode::Watch(_)) {
+                return Stop::Refused(refusal.line);
+            }
         }
         let slug = self.slug;
         let mut said = format!("land refused: {}", refusal.line);
