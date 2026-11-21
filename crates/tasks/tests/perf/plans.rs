@@ -63,6 +63,9 @@ pub fn bound(name: &str) -> Option<Value> {
         // The workflow position a task's write puts it at, which the schema's `workflow_position`
         // event reads its transitions by.
         "w" => json!({"phase": "build", "state": "working", "revision": 1}),
+        // The transition a return recorded for a task whose position goes, which the same event
+        // reads its activation by.
+        "r" => json!({"status": "ready", "activation": 1}),
         _ => return None,
     })
 }

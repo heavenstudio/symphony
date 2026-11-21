@@ -87,10 +87,12 @@
 //! (`['authority', ADAPTER]`) and each guarded edge's admission (`['admission', SLUG, REVISION]`).
 //! A task the workflow holds keeps its position in `fields._board.workflow`. Two events are the
 //! fence every writer meets, whatever it is: a task's position, or the status of a task that has
-//! one, changes only beside the transition recorded for it (`workflow_position`), and a recorded
-//! definition, activation, transition, receipt or admission is never changed, nor an authority's
-//! accepted generation lowered within its epoch (`workflow_history`). A board with no custom
-//! workflow holds no such record and meets neither.
+//! one, changes only beside the transition recorded for it (`workflow_position`), and from schema
+//! 27 a position goes only beside the transition made by an activation recorded as a return to the
+//! board's writers; and a recorded definition, activation, transition, receipt or admission is
+//! never changed, nor an authority's accepted generation lowered within its epoch
+//! (`workflow_history`). No event reads a record's deletion: the whole-board copy replaces the
+//! table. A board with no custom workflow holds no such record and meets neither.
 //!
 //! `writer:[host, path]` is a program that opens the board to write, the schema it was built at and
 //! when it was last seen (`store/writers.rs`), from schema 18: schemaless and with no event, as
@@ -775,6 +777,7 @@ DEFINE FIELD OVERWRITE kind ON workflow TYPE string
     ASSERT $value IN ['active', 'definition', 'activation', 'event', 'receipt', 'intent', 'authority', 'admission'];
 DEFINE FIELD IF NOT EXISTS body ON workflow TYPE object FLEXIBLE;
 DEFINE FIELD IF NOT EXISTS at ON workflow TYPE float;
+-- Schema 27: a position goes beside a return's transition (`Store::return_to_default`).
 DEFINE EVENT OVERWRITE workflow_position ON task
     WHEN $event != 'DELETE' AND (($before.fields._board.workflow ?? NONE) != ($after.fields._board.workflow ?? NONE)
         OR (($before.fields._board.workflow ?? NONE) != NONE AND $before.status != $after.status)
@@ -791,18 +794,25 @@ DEFINE EVENT OVERWRITE workflow_position ON task
         IF $was != NONE AND $w = $was {
             THROW string::concat('refused: explicit_action_required: the status of ', $after.slug, ' follows its workflow position, which only its workflow edges move (just tasks workflow actions ', $after.slug, ')');
         };
-        IF $w = NONE { THROW string::concat('refused: workflow: ', $after.slug, ' keeps its workflow position: only an activation returns a task to the board writers'); };
-        IF $was != NONE AND $w.revision != $was.revision + 1 {
-            THROW string::concat('refused: workflow: ', $after.slug, ' moves from workflow revision ', <string>$was.revision, ' only to the next');
-        };
-        IF $was = NONE AND (SELECT VALUE kind FROM ONLY type::record('workflow', ['event', $after.slug, $w.revision + 1])) != NONE {
-            THROW string::concat('refused: workflow: ', $after.slug, ' moved on from workflow revision ', <string>$w.revision, '; it never returns to a position it left');
-        };
-        LET $e =(SELECT VALUE body FROM ONLY type::record('workflow', ['event', $after.slug, $w.revision]));
-        IF $e = NONE OR $e.slug != $after.slug OR $e.revision != $w.revision
-            OR $e.to != { phase: $w.phase, state: $w.state } OR ($e.resume ?? NONE) != ($w.resume ?? NONE)
-            OR $e.generation != $w.generation OR $e.digest != $w.digest OR $e.status != $after.status {
-            THROW string::concat('refused: workflow: ', $after.slug, ' is at a workflow position only beside the transition recorded for it');
+        IF $w = NONE {
+            LET $r = (SELECT VALUE body FROM ONLY type::record('workflow', ['event', $after.slug, $was.revision + 1]));
+            IF $r = NONE OR $r.status != $after.status OR ($r.activation ?? NONE) = NONE
+                OR (SELECT VALUE body.returned FROM ONLY type::record('workflow', ['activation', $r.activation])) != true {
+                THROW string::concat('refused: workflow: ', $after.slug, ' keeps its workflow position: only an activation that returns the board to its own writers retires it, beside the transition recorded for it');
+            };
+        } ELSE {
+            IF $was != NONE AND $w.revision != $was.revision + 1 {
+                THROW string::concat('refused: workflow: ', $after.slug, ' moves from workflow revision ', <string>$was.revision, ' only to the next');
+            };
+            IF $was = NONE AND (SELECT VALUE kind FROM ONLY type::record('workflow', ['event', $after.slug, $w.revision + 1])) != NONE {
+                THROW string::concat('refused: workflow: ', $after.slug, ' moved on from workflow revision ', <string>$w.revision, '; it never returns to a position it left');
+            };
+            LET $e =(SELECT VALUE body FROM ONLY type::record('workflow', ['event', $after.slug, $w.revision]));
+            IF $e = NONE OR $e.slug != $after.slug OR $e.revision != $w.revision
+                OR $e.to != { phase: $w.phase, state: $w.state } OR ($e.resume ?? NONE) != ($w.resume ?? NONE)
+                OR $e.generation != $w.generation OR $e.digest != $w.digest OR $e.status != $after.status {
+                THROW string::concat('refused: workflow: ', $after.slug, ' is at a workflow position only beside the transition recorded for it');
+            };
         };
     };
 };

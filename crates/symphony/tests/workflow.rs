@@ -1196,10 +1196,22 @@ fn authority_insert_all_matches_the_standard_set_length_and_reports_cost() {
 #[test]
 fn workflow_mappings_are_a_known_key_checked_against_the_workflow() {
     let mapped = "[[workflow_mappings]]\nfrom = { phase = \"ready\", state = \"available\" }\nto = { phase = \"build\", state = \"available\" }\n";
+    // With no [workflow] the mappings map onto built-in v1, the board's own writers: a pair it
+    // declares is never remapped, and one it does not maps to one it does.
     assert!(
         Project::parse(Path::new("/tmp/demo"), mapped)
             .unwrap_err()
-            .contains("workflow_mappings: no [workflow] to map onto")
+            .contains("workflow_mappings: ready/available is still declared")
+    );
+    let back = "[[workflow_mappings]]\nfrom = { phase = \"build\", state = \"available\" }\nto = { phase = \"ready\", state = \"available\" }\n";
+    assert!(Project::parse(Path::new("/tmp/demo"), back).is_ok());
+    assert!(
+        Project::parse(
+            Path::new("/tmp/demo"),
+            &back.replace("\"ready\"", "\"deploy\"")
+        )
+        .unwrap_err()
+        .contains("names a destination the workflow does not declare")
     );
     assert!(
         Project::parse(Path::new("/tmp/demo"), &format!("{CUSTOM}{mapped}"))
@@ -1218,7 +1230,10 @@ fn workflow_mappings_are_a_known_key_checked_against_the_workflow() {
     tree.write("symphony.toml", mapped);
     Project::of(&tree.root);
     let problem = Project::problem(&tree.root).unwrap();
-    assert!(problem.contains("no [workflow] to map onto"), "{problem}");
+    assert!(
+        problem.contains("ready/available is still declared"),
+        "{problem}"
+    );
     assert!(!problem.contains("unknown"), "{problem}");
 }
 

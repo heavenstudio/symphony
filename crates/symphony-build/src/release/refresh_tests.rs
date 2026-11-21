@@ -1,31 +1,11 @@
-//! The refresh's parts that need no board or server: what holds the release, the SurrealDB a
-//! release pins, how a command it runs fails and what the server's reload said. The writer rule,
-//! the snapshots kept and the SurrealDB a move never replaces are the library's
+//! The refresh's parts that need no board or server: the SurrealDB a release pins, how a command
+//! it runs fails and what the server's reload said. The writer rule, the snapshots kept and the
+//! SurrealDB a move never replaces are the library's
 //! (`symphony::machine::writers`, `symphony::machine::moving`). The whole refresh, on scratch
 //! boards and a stand-in server, is `tests/release/refresh.rs`.
 
 use super::*;
 use crate::test_tree::Tree;
-
-#[test]
-fn what_holds_the_release_is_a_lagging_writer_or_the_refreshs_own_red_and_never_an_old_board() {
-    let theirs = |holds| Verdict::Theirs {
-        why: String::new(),
-        holds,
-    };
-    assert!(theirs(true).holds());
-    assert!(!theirs(false).holds(), "a board below the writer record");
-    assert!(Verdict::Red(String::new()).holds());
-    assert!(!Verdict::Done(String::new()).holds());
-    assert!(
-        !Verdict::Move {
-            live: 18,
-            leave: true,
-            gone: String::new(),
-        }
-        .holds()
-    );
-}
 
 #[test]
 fn a_release_at_currents_schema_or_behind_it_says_which_and_moves_only_a_board_left_behind() {
@@ -241,7 +221,7 @@ fn a_board_on_postgresql_is_judged_by_its_writers_alone_and_snapshotted_with_pg_
     );
     // This test's own line among the writers is behind the next schema, and holds the move.
     let held = judge(&entry, &common, schema + 1, &against);
-    assert!(matches!(&held.verdict, Verdict::Theirs { holds: true, .. }));
+    assert!(matches!(&held.verdict, Verdict::Theirs(_)));
     store.raw().table("writer").delete().unwrap();
     let mut moving = judge(&entry, &common, schema + 1, &against);
     assert!(
