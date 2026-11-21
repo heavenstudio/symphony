@@ -569,11 +569,7 @@ fn section_with(
     let (_, text, _) = source(render, rel, scope)?;
     let part = crate::edit::section_text(&text, anchor)
         .ok_or_else(|| format!("no such heading in {rel}"))?;
-    let mut fragment: Fragment = wire(if typed {
-        render.typed_reply(&part, rel)
-    } else {
-        render.reply(&part, rel)
-    });
+    let mut fragment: Fragment = wire(render.excerpt(&part, rel, typed));
     prepare_fragment(
         &mut fragment.html,
         &mut fragment.media,

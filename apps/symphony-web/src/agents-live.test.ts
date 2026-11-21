@@ -4,6 +4,7 @@ import {
   type AgentPageRead,
   type AgentsHost,
   agentLine,
+  agentSpent,
   agentsPageTakes,
   connectedAgents,
   connection,
@@ -66,9 +67,21 @@ describe("the agents page's reads", () => {
 
   it("read what a server leaves out as serde's defaults", () => {
     const bare = SAMPLES.bareAgent as Record<string, unknown>;
-    const { following, callback, chat, slots, session_url, in_process, go, parent, ...older } =
-      bare;
+    const {
+      following,
+      callback,
+      chat,
+      slots,
+      session_url,
+      in_process,
+      go,
+      parent,
+      tokens,
+      cost,
+      ...older
+    } = bare;
     expect(readAgent(older)).toEqual(readAgent(bare));
+    expect(readAgent(older)).toMatchObject({ tokens: null, cost: null });
     expect(readAgent(bare)).toMatchObject({ handle: "birch", chat: false, go: null, parent: null });
     const { machine_work, ...view } = field(SAMPLES.emptyAgentPage, "view") as Record<
       string,
@@ -106,6 +119,13 @@ describe("the agents page's reads", () => {
       ["slots", { open: 3, cap: 8.5 }],
       ["go", { url: "https://example.com" }],
       ["go", { handle: "birch", pane: 2 }],
+      ["tokens", { input: 1 }],
+      ["tokens", { ...(whole.tokens as object), calls: -1 }],
+      ["tokens", { ...(whole.tokens as object), output: 1.5 }],
+      ["cost", { ...(whole.cost as object), dollars: "1" }],
+      ["cost", { ...(whole.cost as object), prices: 1 }],
+      ["cost", { ...(whole.cost as object), unpriced: [{ model: "x", speed: "standard" }] }],
+      ["cost", { ...(whole.cost as object), unpriced: {} }],
     ] as [string, unknown][]) {
       expect([key, wrong, readAgent({ ...whole, [key]: wrong })]).toEqual([key, wrong, null]);
     }
@@ -120,6 +140,27 @@ describe("the agents page's reads", () => {
     // The counts' edges serde takes.
     const edges = { following: 0, slots: { open: 0, cap: Number.MAX_SAFE_INTEGER } };
     expect(readAgent({ ...whole, ...edges })).toMatchObject(edges);
+  });
+
+  it("say an agent's tokens with their estimated cost and the prices' day, and none it took none", () => {
+    const whole = readAgent(field(SAMPLES.agentChange, "value")) as Agent;
+    expect(agentSpent(whole)).toBe(
+      "Tokens: 84k in 7 calls · $0.06 + unpriced, estimated at API list prices read " +
+        "2026-11-16, not money spent; no price for gpt-x 6 tokens",
+    );
+    const priced = { ...whole, cost: { ...(whole.cost as Agent["cost"] & object), unpriced: [] } };
+    expect(agentSpent(priced)).toBe(
+      "Tokens: 84k in 7 calls · $0.06, estimated at API list prices read 2026-11-16, not money spent",
+    );
+    // A board that keeps no price table names the tokens alone.
+    expect(agentSpent({ ...whole, cost: null })).toBe("Tokens: 84k in 7 calls");
+    const none = { input: 0, cache_write_5m: 0, cache_write_1h: 0, cache_read: 0, output: 0 };
+    expect(agentSpent({ ...whole, tokens: null, cost: null })).toBeNull();
+    expect(agentSpent({ ...whole, tokens: { ...none, calls: 0 } })).toBeNull();
+    // A call that read nothing is still a call.
+    expect(agentSpent({ ...whole, tokens: { ...none, calls: 1 }, cost: null })).toBe(
+      "Tokens: 0 in 1 call",
+    );
   });
 
   it("refuse a page or a view without what the page draws", () => {

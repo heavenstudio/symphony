@@ -3,14 +3,16 @@
 //! (a remote's transport, a test's server) runs on. A group is told from a later one given the same
 //! id by its leader's start ([`Stamp`], [`lives`]).
 
-use std::io;
+use std::io::{self, Write as _};
 use std::path::Path;
 use std::process::Output;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use symphony_board::sys::{Boottime, Command, Start, process_starts, spawn_output, wait_output};
+use symphony_board::sys::{
+    Boottime, Command, Start, process_starts, spawn_output, spawn_piped, wait_output,
+};
 
 /// How long a stopped group has to end on SIGTERM before SIGKILL.
 pub(crate) const GRACE: Duration = Duration::from_secs(10);
@@ -482,9 +484,38 @@ fn stat_member(pid: u32, stat: &str, group: u32) -> io::Result<Option<Member>> {
 /// `command` run in a process group of its own, stdin null and its output read, within `bound`: a
 /// command still running when it ends has its whole group killed.
 pub(crate) fn output_until(command: &mut Command, bound: Bound<'_>) -> Result<Output, Failed> {
+    output_fed_until(command, None, bound)
+}
+
+/// [`output_until`], `input` written to the command's stdin, then closed, by a thread of its own,
+/// so a command that answers as it reads (`git cat-file --batch-check`) is read meanwhile and
+/// neither waits on the other. A command that ends before reading it all is answered by its own
+/// status, and the writer then ends at the broken pipe.
+pub(crate) fn fed_until(
+    command: &mut Command,
+    input: Vec<u8>,
+    bound: Bound<'_>,
+) -> Result<Output, Failed> {
+    output_fed_until(command, Some(input), bound)
+}
+
+fn output_fed_until(
+    command: &mut Command,
+    input: Option<Vec<u8>>,
+    bound: Bound<'_>,
+) -> Result<Output, Failed> {
     let started = Instant::now();
     command.process_group(0);
-    let child = spawn_output(command).map_err(Failed::Io)?;
+    let mut child = match input {
+        None => spawn_output(command),
+        Some(_) => spawn_piped(command),
+    }
+    .map_err(Failed::Io)?;
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(&input);
+        });
+    }
     let pid = child.id();
     let (tell, heard) = mpsc::channel();
     std::thread::spawn(move || {
@@ -1478,6 +1509,26 @@ mod tests {
         assert_eq!(done.stdout, b"out\n");
         assert_eq!(done.stderr, b"err\n");
         let missing = output_until(&mut command("/no/such/program"), far());
+        assert!(matches!(missing, Err(Failed::Io(_))), "{missing:?}");
+    }
+
+    /// More than a pipe holds either way: what it is fed is read while what it prints is, and one
+    /// that ends without reading what it is fed is answered by its own status.
+    #[test]
+    fn a_fed_command_reads_its_input_while_it_answers_and_may_end_without_it() {
+        let input: Vec<u8> = (0..200_000).map(|at| b'a' + (at % 26) as u8).collect();
+        let done = fed_until(&mut command("cat"), input.clone(), far()).unwrap();
+        assert!(done.status.success());
+        assert_eq!(done.stdout, input);
+        let done = fed_until(
+            command("sh").args(["-c", "echo early; exit 4"]),
+            input,
+            far(),
+        )
+        .unwrap();
+        assert_eq!(done.status.code(), Some(4));
+        assert_eq!(done.stdout, b"early\n");
+        let missing = fed_until(&mut command("/no/such/program"), Vec::new(), far());
         assert!(matches!(missing, Err(Failed::Io(_))), "{missing:?}");
     }
 

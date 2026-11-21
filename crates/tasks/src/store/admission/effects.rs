@@ -10,8 +10,8 @@
 
 use super::{
     Decided, Error, Failure, Host, OperationRequest, Receipt, Refusal, RefusalCode, Store, admit,
-    applied, context, joins_said, pg, receipt_id, refusal, request_digest, sender, sql, sql_cap,
-    surreal,
+    applied, context, guarding, joins_said, pg, receipt_id, refusal, request_digest, sender, sql,
+    sql_cap, surreal,
 };
 use crate::store::statement::both;
 use crate::workflow::effect::{self, Adapter, Bindings, Intent, Stage};
@@ -67,7 +67,7 @@ impl Store {
         if body.is_null() {
             return Ok(None);
         }
-        serde_json::from_value(body)
+        crate::objects::read(&body)
             .map(Some)
             .map_err(|e| Error::Db(format!("a workflow intent not in the board's shape: {e}")))
     }
@@ -87,7 +87,7 @@ impl Store {
         if body.is_null() {
             return Ok(None);
         }
-        serde_json::from_value(body).map(Some).map_err(|e| {
+        crate::objects::read(&body).map(Some).map_err(|e| {
             Error::Db(format!(
                 "a workflow transition not in the board's shape: {e}"
             ))
@@ -170,12 +170,15 @@ impl Store {
                     .map_err(Failure::Stop);
             }
             let at = self.now();
+            // The adapter takes the edge, and no attestation comes with it: a guarded prepare
+            // edge is refused, as activation refuses one (`activate::supported_with`).
             let admitted = admit::admit(
                 context(&decided),
                 &decided.facts,
                 principal,
                 host,
                 request,
+                &guarding(&decided, &[]),
                 at,
             )
             .map_err(refusal)?;
@@ -258,7 +261,9 @@ impl Store {
 
     /// The intent of `slug` at `revision` moved on to dispatched, once `adapter` has read its
     /// bindings again and they are the ones bound, the workflow is the one that admitted its
-    /// prepare and the task has not moved since: the adapter may then send its request. A
+    /// prepare, the task has not moved since, and each guard that brought it into the pair it was
+    /// prepared from stands at the authority's state it was met at (`guard::unstanding`): the
+    /// adapter may then send its request. A
     /// reservation stale or cancelled by then is withdrawn and refused, and nothing is sent under
     /// it. One dispatched before is read again the same way, so a run again sends nothing for
     /// bindings that moved; refused where its effect happened already, which is finalized instead.
@@ -291,6 +296,9 @@ impl Store {
             Stage::Withdrawn => return Err(withdrawn(&intent)),
         }
         let now = adapter.current(&intent).map_err(unread)?;
+        // The guards that brought the task into the pair it was prepared from, met again now:
+        // a decision revoked since withdraws the intent, and nothing is sent under it.
+        let unguarded = self.prepared_from_unguarded(slug, revision)?;
         let moved = self.retrying(|| {
             let standing = self.standing(slug, revision)?;
             let held = standing.intent.ok_or(Failure::Again)?;
@@ -307,7 +315,8 @@ impl Store {
                 }
             }
             let position = standing.task.as_ref().and_then(|t| t.position.as_ref());
-            let stale = effect::stale(&held, standing.active.as_ref(), position, Some(&now));
+            let stale = effect::stale(&held, standing.active.as_ref(), position, Some(&now))
+                .or_else(|| unguarded.clone());
             let next = Intent {
                 stage: if stale.is_some() {
                     Stage::Withdrawn
@@ -529,6 +538,7 @@ impl Store {
             principal,
             host,
             &request,
+            &guarding(decided, &[]),
             self.now(),
         )
         .map_err(refusal)?;

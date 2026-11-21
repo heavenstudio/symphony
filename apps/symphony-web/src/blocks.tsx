@@ -198,9 +198,10 @@ function BlockView({ block }: { block: Block }) {
       // A comment draws nothing, as in Markdown; its source stays in the data.
       return null;
     case "unknown":
+      // An element is named alone, what it holds drawn after it: no empty paragraph for it.
       return (
         <Unknown description={block.tag} attributes={[]}>
-          <p>{block.text}</p>
+          {block.text !== "" && <p>{block.text}</p>}
         </Unknown>
       );
     default:

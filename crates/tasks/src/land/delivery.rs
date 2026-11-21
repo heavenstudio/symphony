@@ -49,7 +49,9 @@
 //!    project file must be the one committed here; a head that changes a generator's outputs and
 //!    is not what the regenerator made ([`Landing::generated`]), or merges a commit the remote
 //!    default does not hold and is not an import of the upstream (another history, which a
-//!    squash would flatten), is refused.
+//!    squash would flatten), is refused. A release candidate's fix ([`CANDIDATE`]) is told to
+//!    keep its outputs and deliver a merge of the default branch that keeps the default branch's
+//!    ([`Landing::outputs`]).
 //! 2. **Eligible**: published, and the snapshot read again: one of another revision is published
 //!    again, never merged.
 //! 3. **Merge requested**: written before the request. From here no run merges locally, whatever
@@ -105,6 +107,19 @@ pub const GENERATED: &str = "generated";
 pub const IMPORT: &str = "import";
 /// Where the upstream's default branch is fetched to in the main checkout, read for an import.
 pub const UPSTREAM: &str = "refs/symphony/upstream";
+/// The local branch that names the release candidate's tip while the release run holds one
+/// (RELEASES, the release candidate), where a fix of one of its reds starts.
+pub const CANDIDATE: &str = "release-candidate";
+
+/// Where a head stands to the release candidate ([`Landing::candidate`]).
+enum Candidate {
+    /// A fix of it: the head holds its tip, at this commit, and beyond it only its own commits.
+    Fix(String),
+    /// One is held, at this commit, and the head does not hold it.
+    Behind(String),
+    /// None is held, or the head holds what the remote default branch holds beyond it.
+    None,
+}
 
 /// `[land] delivery` as the main checkout `main` has it committed at its head: the command, or
 /// nothing where the land merges here. Its shape is [`super::Settings::parse`]'s to refuse.
@@ -158,6 +173,9 @@ pub trait Transport {
 pub enum Stage {
     Prepared,
     Eligible,
+    /// Published, and the host's own merge of that head armed: it merges once every check it
+    /// requires passes, and the watcher closes the task once it has ([`super::dispatch`]).
+    Armed,
     MergeRequested,
     RemoteMerged,
     Reconciled,
@@ -203,6 +221,18 @@ pub struct Journal {
     /// What an import imports; none for any other operation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub import: Option<Import>,
+    /// When its evidence was first published eligible at the head armed, in whole seconds since
+    /// 1970 ([`super::dispatch::seconds`]): what `[land] merge_within_minutes` counts from. None
+    /// while it is not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub green: Option<i64>,
+    /// Whether the host's own merge of its pull request is armed, as far as the board knows: set
+    /// once the host answers an arming, cleared only once it answers a disarm. A publication
+    /// between keeps it, as the host keeps the merge armed across a push: what the watcher reads
+    /// ([`Journal::watched`]), so a publication that stops before the host answers an arming
+    /// again leaves a merge the host may still make in sight.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub armed: bool,
 }
 
 /// What an import delivers, as the land read it before it published, and what it proved after:
@@ -238,7 +268,7 @@ impl Journal {
 
     pub fn read(folder: &Path, slug: &str) -> Option<Journal> {
         let text = fs::read_to_string(Journal::path(folder, slug)).ok()?;
-        (serde_json::from_str::<Journal>(&text).ok()).filter(|journal| journal.slug == slug)
+        crate::objects::parse::<Journal>(&text).filter(|journal| journal.slug == slug)
     }
 
     /// Kept in `folder`, whole or not at all, and on the disk before this returns.
@@ -248,6 +278,26 @@ impl Journal {
 
     pub fn drop_in(folder: &Path, slug: &str) {
         let _ = fs::remove_file(Journal::path(folder, slug));
+    }
+
+    /// Whether the watcher reads it: its merge armed at the host and nothing here settling it
+    /// yet, the stage short of a merge asked and no person holding it; or its land past the merge
+    /// asked and not ended ([`Journal::settling`]). One whose last publication stopped before the
+    /// host answered its arming again ([`Stage::Prepared`] or [`Stage::Eligible`]) is among the
+    /// armed: the host may merge it all the same.
+    pub fn watched(&self) -> bool {
+        self.settling()
+            || ((self.armed || self.stage == Stage::Armed)
+                && self.held.is_none()
+                && self.stage < Stage::MergeRequested)
+    }
+
+    /// Whether its land went past the merge asked and did not end, no person holding it: a run
+    /// cut short between the host's merge and the journal dropped (the board lost, a crash, a
+    /// reboot), which only the land's tail gone on with finishes ([`Landing::resumed`]). The
+    /// watcher runs it each round until it does ([`super::dispatch`]).
+    pub fn settling(&self) -> bool {
+        self.held.is_none() && self.stage >= Stage::MergeRequested
     }
 }
 
@@ -283,7 +333,7 @@ impl Receipt {
 
     pub fn read(folder: &Path, slug: &str) -> Option<Receipt> {
         let text = fs::read_to_string(Receipt::path(folder, slug)).ok()?;
-        (serde_json::from_str::<Receipt>(&text).ok()).filter(|receipt| receipt.slug == slug)
+        crate::objects::parse::<Receipt>(&text).filter(|receipt| receipt.slug == slug)
     }
 
     /// The receipt kept for `slug` in `folder`, none where no file is kept for it: what a land
@@ -363,7 +413,7 @@ impl Journal {
     }
 
     /// Where it stands, in a few words.
-    fn said(&self) -> String {
+    pub(super) fn said(&self) -> String {
         let pull = (self.binding.as_ref()).map_or_else(String::new, |b| {
             format!(", pull request #{} of {}", b.pull, b.name)
         });
@@ -373,6 +423,7 @@ impl Journal {
             match self.stage {
                 Stage::Prepared => "prepared",
                 Stage::Eligible => "eligible",
+                Stage::Armed => "armed",
                 Stage::MergeRequested => "merge requested",
                 Stage::RemoteMerged => "merged remotely",
                 Stage::Reconciled => "reconciled",
@@ -492,7 +543,7 @@ fn pinned(answer: &Value, import: &Import) -> Result<i64, String> {
 }
 
 /// The `state` of an answer, and its `why`.
-fn state(answer: &Value) -> (&str, &str) {
+pub(super) fn state(answer: &Value) -> (&str, &str) {
     (
         answer["state"].as_str().unwrap_or_default(),
         answer["why"].as_str().unwrap_or("it gave no reason"),
@@ -505,7 +556,7 @@ impl Landing<'_> {
         self.task && !self.delivery.is_empty()
     }
 
-    fn ask(&self, verb: &str, request: &Value) -> Result<Value, String> {
+    pub(super) fn ask(&self, verb: &str, request: &Value) -> Result<Value, String> {
         match self.transport {
             Some(transport) => transport.ask(verb, request),
             None => self.program(verb, request),
@@ -776,13 +827,36 @@ impl Landing<'_> {
         self.withdraw(slug, &journal, &binding, tip, &snapshot)
     }
 
-    /// Deliver the task's `tip`, found ready as `judged`, by its pull request.
+    /// Deliver the task's `tip`, found ready as `judged`, by its pull request: published, then the
+    /// host's own merge of it armed ([`Landing::arm`]).
     pub(super) fn deliver(
         &mut self,
         task: &Task,
         tip: &str,
         judged: &Judged,
     ) -> Result<String, Stop> {
+        let (closes, stood): (&[&str], String) = match judged {
+            Judged::Approved(_) => (&["done"], String::new()),
+            Judged::Stamped(stood) => (&["review", "blocked", "done"], stood.clone()),
+        };
+        let (journal, eligible) = self.publish_head(task, tip, closes, stood, true)?;
+        self.arm(journal, eligible)
+    }
+
+    /// Publish the task's `tip` and its evidence by its pull request, refused first where the
+    /// head is not one a squash delivers: the journal it leaves at [`Stage::Eligible`], bound to
+    /// that pull request, and whether its evidence stood there. A land publishes only evidence
+    /// that is `eligible_only`; a dispatch publishes it whatever it says, so the check the host
+    /// requires holds the merge until it stands ([`super::dispatch`]). The task, once landed,
+    /// closes from one of `closes`, its landed line adding `stood`.
+    pub(super) fn publish_head(
+        &mut self,
+        task: &Task,
+        tip: &str,
+        closes: &[&str],
+        stood: String,
+        eligible_only: bool,
+    ) -> Result<(Journal, bool), Stop> {
         let slug = self.slug;
         let default = self.settings.default_branch.clone();
         let base = (self.fetched()).map_err(|line| self.refuse(Refusal::here(line)))?;
@@ -801,7 +875,7 @@ impl Landing<'_> {
             .map_err(|refusal| self.refuse(refusal))?;
         self.owner_lines(&base, tip)
             .map_err(|refusal| self.refuse(refusal))?;
-        let mut snapshot = self.eligible(task, tip)?;
+        let mut snapshot = self.read_evidence(task, tip, eligible_only)?;
         let changed = || {
             Stop::Refused(format!(
                 "the assessment of {slug} changed what it says {} imports while it was \
@@ -809,11 +883,14 @@ impl Landing<'_> {
                 short(tip)
             ))
         };
-        let (closes, stood): (&[&str], String) = match judged {
-            Judged::Approved(_) => (&["done"], String::new()),
-            Judged::Stamped(stood) => (&["review", "blocked", "done"], stood.clone()),
-        };
-        let earlier = Journal::read(&self.folder, slug).filter(|journal| journal.head == tip);
+        // One task is delivered by one pull request, whatever head it was published at before;
+        // the time its evidence first stood is the head's.
+        let earlier = Journal::read(&self.folder, slug);
+        let green = (earlier.as_ref())
+            .filter(|journal| journal.head == tip)
+            .and_then(|journal| journal.green);
+        // A merge armed before stays armed at the host through this publication.
+        let armed = (earlier.as_ref()).is_some_and(|journal| journal.armed);
         let (title, body) = match &import {
             Some(import) => (
                 format!("Merge branch '{slug}'"),
@@ -847,6 +924,8 @@ impl Landing<'_> {
             squash: None,
             held: None,
             import,
+            green,
+            armed,
         };
         let here = |line: String| Stop::Refused(line);
         if !agrees(&snapshot, &journal) {
@@ -880,7 +959,9 @@ impl Landing<'_> {
             journal.revision = snapshot.revision.clone();
             journal.stage = Stage::Eligible;
             journal.write(&self.folder).map_err(here)?;
-            let again = self.eligible(task, tip)?;
+            // Bound: a later write dispatches it by its binding, no longer by its mark.
+            super::dispatch::unmark(&self.folder, slug);
+            let again = self.read_evidence(task, tip, eligible_only)?;
             if !agrees(&again, &journal) {
                 return Err(changed());
             }
@@ -896,17 +977,13 @@ impl Landing<'_> {
         if !published {
             return Err(self.refuse(Refusal::here(format!(
                 "{slug}'s evidence changed {} times while it was published; nothing merged: run \
-                 the land again",
+                 the land again, or a dispatch publishes it once it settles",
                 super::TRIES
             ))));
         }
         self.go_on(None).map_err(Stop::Refused)?;
         self.owner_lines(&base, tip)
             .map_err(|refusal| self.refuse(refusal))?;
-        let binding = journal
-            .binding
-            .clone()
-            .ok_or_else(|| here("unbound".into()))?;
         // What the regenerator made is judged again on the remote default branch as it is now:
         // the last reading before the request, which nothing here recalls. A record that no
         // longer names the task (a round cancelled it as stale meanwhile) asks for no merge.
@@ -921,28 +998,163 @@ impl Landing<'_> {
             });
             again.map_err(|refusal| self.refuse(refusal))?;
         }
-        // Before the request: from here the pull request decides, never a merge made here.
-        journal.stage = Stage::MergeRequested;
-        journal.write(&self.folder).map_err(here)?;
-        self.post(
-            &format!(
-                "land {slug}: asking {} to {} {tip} by pull request #{} ({}), its evidence at \
-                 revision {}",
-                binding.name,
-                journal.method(),
-                binding.pull,
-                binding.url,
-                short(&journal.revision)
-            ),
-            None,
-        );
+        Ok((journal, snapshot.eligible))
+    }
+
+    /// Arm the host's own merge of the head `journal` published, whose evidence was `eligible`
+    /// there or not: the host squashes it once every check it requires passes, a land here
+    /// waiting for none of it, and the watcher closes the task once it has
+    /// ([`super::dispatch`]). A pull request the host would merge now (its evidence standing, no
+    /// other check to wait on) is asked to merge by one request instead, as the host arms nothing
+    /// that waits on nothing; one merged or closed already is settled.
+    pub(super) fn arm(&mut self, mut journal: Journal, eligible: bool) -> Result<String, Stop> {
+        let slug = self.slug;
+        let here = |line: String| Stop::Refused(line);
+        let binding = journal
+            .binding
+            .clone()
+            .ok_or_else(|| here("unbound".into()))?;
         let request = json!({
-            "verb": "merge", "slug": slug, "by": self.actor, "head": tip,
+            "verb": "arm", "slug": slug, "by": self.actor, "head": journal.head,
             "repository": binding.repository, "pull": binding.pull, "method": journal.method(),
             "title": journal.title, "body": journal.body,
         });
-        let asked = self.ask("merge", &delivering(request, &journal));
-        self.settle(journal, Some(asked))
+        // Armed before, the host may merge the head published all the same: the watcher reads
+        // it every round and arms it again ([`Journal::watched`]).
+        let (before, at) = (journal.armed, short(&journal.head).to_string());
+        let not_armed = |why: &str| {
+            if before {
+                format!(
+                    "pull request #{} of {slug} was not armed again at {at} ({why}): its merge \
+                     armed before stands, which the watcher reads every round and arms again",
+                    binding.pull
+                )
+            } else {
+                format!(
+                    "pull request #{} of {slug} was not armed ({why}): nothing merged, and the \
+                     next dispatch asks again",
+                    binding.pull
+                )
+            }
+        };
+        let answer = match self.ask("arm", &delivering(request, &journal)) {
+            Ok(answer) => answer,
+            Err(why) => {
+                if before && let Some(said) = super::dispatch::watch_start(self.env, &self.main) {
+                    self.say(&format!("land {slug}: {said}"));
+                }
+                return Err(self.refuse(Refusal::here(not_armed(&why))));
+            }
+        };
+        let (said, why) = state(&answer);
+        match said {
+            "armed" => {
+                // Said once an arming: not again at each publication its merge stays armed through.
+                let first = !journal.armed;
+                journal.stage = Stage::Armed;
+                journal.armed = true;
+                journal.green = if eligible {
+                    journal.green.or_else(|| Some(super::dispatch::seconds()))
+                } else {
+                    None
+                };
+                journal.write(&self.folder).map_err(here)?;
+                let line = format!(
+                    "land {slug}: dispatched {} as pull request #{} of {} ({}), which merges it \
+                     itself once symphony/eligible is green{}",
+                    short(&journal.head),
+                    binding.pull,
+                    binding.name,
+                    binding.url,
+                    if eligible {
+                        ", as it is now"
+                    } else {
+                        ": its evidence says so once it stands"
+                    }
+                );
+                if first {
+                    self.post(&line, None);
+                }
+                if let Some(said) = super::dispatch::watch_start(self.env, &self.main) {
+                    self.say(&format!("land {slug}: {said}"));
+                }
+                Ok(line)
+            }
+            "mergeable" if eligible => {
+                // Before the request: from here the pull request decides, never a merge here.
+                journal.stage = Stage::MergeRequested;
+                journal.write(&self.folder).map_err(here)?;
+                self.post(
+                    &format!(
+                        "land {slug}: asking {} to {} {} by pull request #{} ({}), its evidence at \
+                         revision {}",
+                        binding.name,
+                        journal.method(),
+                        journal.head,
+                        binding.pull,
+                        binding.url,
+                        short(&journal.revision)
+                    ),
+                    None,
+                );
+                let request = json!({
+                    "verb": "merge", "slug": slug, "by": self.actor, "head": journal.head,
+                    "repository": binding.repository, "pull": binding.pull,
+                    "method": journal.method(), "title": journal.title, "body": journal.body,
+                });
+                let asked = self.ask("merge", &delivering(request, &journal));
+                self.settle(journal, Some(asked))
+            }
+            "mergeable" => Err(self.refuse(Refusal::to(
+                format!(
+                    "{} would merge pull request #{} of {slug} now, while its evidence does not \
+                     stand at {}: nothing was armed or merged, as the default branch's rules hold \
+                     nothing to its evidence",
+                    binding.name,
+                    binding.pull,
+                    short(&journal.head)
+                ),
+                "@orchestrator",
+                "`symphony-github preflight` says what the rules lack: put it right, then \
+                 dispatch again"
+                    .into(),
+            ))),
+            "merged" | "closed" => {
+                journal.stage = Stage::MergeRequested;
+                journal.write(&self.folder).map_err(here)?;
+                self.settle(journal, None)
+            }
+            "refused" => {
+                let line = format!(
+                    "{} refused to arm pull request #{} of {slug} at {}: {why}",
+                    binding.name,
+                    binding.pull,
+                    short(&journal.head)
+                );
+                Err(self.refuse(match answer["kind"].as_str().unwrap_or_default() {
+                    "conflict" | "head" => Refusal::to(
+                        line,
+                        "@executor",
+                        "Settle it on the branch; a new head is assessed and stamped again"
+                            .into(),
+                    ),
+                    _ => Refusal::to(
+                        line,
+                        "@orchestrator",
+                        "Nothing merged, here or there: put right what it names, then dispatch \
+                         again"
+                            .into(),
+                    ),
+                }))
+            }
+            other => {
+                let line = not_armed(if why.is_empty() { other } else { why });
+                if before && let Some(said) = super::dispatch::watch_start(self.env, &self.main) {
+                    self.say(&format!("land {slug}: {said}"));
+                }
+                Err(self.refuse(Refusal::here(line)))
+            }
+        }
     }
 
     /// Refuse while the project file here is not the one the remote default branch commits at
@@ -1024,7 +1236,11 @@ impl Landing<'_> {
         Ok(())
     }
 
-    /// Refuse a head that changes a generator's outputs, which no hosted merge puts back.
+    /// Refuse a head that changes a generator's outputs, which no hosted merge puts back. What the
+    /// refusal asks for is told by where the head stands to the release candidate
+    /// ([`Landing::candidate`]): a fix of it keeps the outputs its own sources make, which the
+    /// candidate takes, and delivers a merge of the default branch that keeps the default
+    /// branch's instead (RELEASES, a red's fix); any other head puts them back.
     fn outputs(&self, base: &str, tip: &str) -> Result<(), Refusal> {
         let (slug, default) = (self.slug, &self.settings.default_branch);
         let range = format!("{base}...{tip}");
@@ -1033,34 +1249,85 @@ impl Landing<'_> {
             .filter(|file| (self.settings.generators.iter()).any(|g| owns(&g.outputs, file)))
             .map(String::as_str)
             .collect();
-        if !generated.is_empty() {
-            return Err(Refusal::to(
-                format!(
-                    "{slug} changes {} generated {} ({}), which a pull request would deliver as \
-                     the branch built {}",
-                    generated.len(),
-                    if generated.len() == 1 {
-                        "path"
-                    } else {
-                        "paths"
-                    },
-                    generated
-                        .iter()
-                        .take(super::NAMED_PATHS)
-                        .copied()
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    if generated.len() == 1 { "it" } else { "them" },
-                ),
-                "@executor",
-                format!(
-                    "Put them back as {default} has them on the branch (`git checkout \
-                     {REMOTE}/{default} -- PATH`, committed), then have the new head assessed and \
-                     stamped"
-                ),
-            ));
+        if generated.is_empty() {
+            return Ok(());
         }
-        Ok(())
+        let line = format!(
+            "{slug} changes {} generated {} ({}), which a pull request would deliver as the \
+             branch built {}",
+            generated.len(),
+            if generated.len() == 1 {
+                "path"
+            } else {
+                "paths"
+            },
+            generated
+                .iter()
+                .take(super::NAMED_PATHS)
+                .copied()
+                .collect::<Vec<_>>()
+                .join(", "),
+            if generated.len() == 1 { "it" } else { "them" },
+        );
+        let back = format!(
+            "Put them back as {default} has them on the branch (`git checkout \
+             {REMOTE}/{default} -- PATH`, committed), then have the new head assessed and stamped"
+        );
+        let next = match self.candidate(base, tip)? {
+            Candidate::Fix(at) => {
+                let outputs: Vec<&str> = (self.settings.generators.iter())
+                    .map(|g| g.outputs.as_str())
+                    .filter(|output| generated.iter().any(|file| owns(output, file)))
+                    .collect();
+                format!(
+                    "{slug} starts at {CANDIDATE} ({}), a fix of the release candidate, which \
+                     takes the outputs its own sources make: keep {} as it is, approved by a \
+                     fresh reviewer naming it whatever its assessment needs, as the candidate \
+                     takes only a commit an approve names and a land with none drops it. Then \
+                     merge {REMOTE}/{default} into the branch once, keeping {default}'s side of \
+                     every generated path (`git restore --source={REMOTE}/{default} --staged \
+                     --worktree -- {}` before the merge's commit), and have that head assessed, \
+                     tested and approved: it is delivered, and the candidate advances to the \
+                     commit approved before the merge",
+                    short(&at),
+                    short(tip),
+                    outputs.join(" ")
+                )
+            }
+            Candidate::Behind(at) => format!(
+                "{back}. A fix of the release candidate starts at {CANDIDATE}, now at {}, which \
+                 this head does not hold: rebased there while nothing approved it, its land says \
+                 how its outputs are delivered; approved already, it lands as any task and its \
+                 land drops the candidate",
+                short(&at)
+            ),
+            Candidate::None => back,
+        };
+        Err(Refusal::to(line, "@executor", next))
+    }
+
+    /// Where `tip` stands to the release candidate, as the branch [`CANDIDATE`] names its tip in
+    /// the main checkout while the release run holds one: a fix of it holds that tip and, beyond
+    /// it, only commits of its own, none the remote default branch holds at `base`.
+    fn candidate(&self, base: &str, tip: &str) -> Result<Candidate, Refusal> {
+        let Some(at) = rev(&self.main, &format!("refs/heads/{CANDIDATE}")) else {
+            return Ok(Candidate::None);
+        };
+        if !ancestor(&self.main, &at, tip) {
+            return Ok(Candidate::Behind(at));
+        }
+        let beyond = |not: &[&str]| -> Result<String, Refusal> {
+            let not_at = format!("^{at}");
+            let args = [&["rev-list", "--count", tip, &not_at][..], not].concat();
+            Ok(run_git(&self.main, &args)?)
+        };
+        let own = beyond(&[])?;
+        let fix = own != "0" && own == beyond(&[&format!("^{base}")])?;
+        Ok(if fix {
+            Candidate::Fix(at)
+        } else {
+            Candidate::None
+        })
     }
 
     /// The upstream's branch fetched now from `upstream`'s address to [`UPSTREAM`]: its tip. A head
@@ -1214,6 +1481,26 @@ impl Landing<'_> {
         })
     }
 
+    /// The task's evidence at `tip`, read now: refused unless it is eligible where `eligible_only`.
+    pub(super) fn read_evidence(
+        &self,
+        task: &Task,
+        tip: &str,
+        eligible_only: bool,
+    ) -> Result<Snapshot, Stop> {
+        if eligible_only {
+            return self.eligible(task, tip);
+        }
+        let slug = self.slug;
+        let (task, thread): (Task, Vec<Message>) =
+            match (self.store.get(slug), self.store.thread(slug)) {
+                (Ok(task), Ok(thread)) => (task, thread),
+                _ => (task.clone(), Vec::new()),
+            };
+        evidence::snapshot(self.store, self.env, &self.main, &task, &thread, tip)
+            .map_err(|line| self.refuse(Refusal::here(line)))
+    }
+
     /// The task's evidence at `tip`, read now, refused unless it is eligible.
     fn eligible(&self, task: &Task, tip: &str) -> Result<Snapshot, Stop> {
         let slug = self.slug;
@@ -1290,7 +1577,7 @@ impl Landing<'_> {
     /// Go on from a delivery whose merge was asked for: read the bound pull request, whatever
     /// `asked` (the request's own answer, when this run made it) said, and act on what the host
     /// holds. A command's word alone proves nothing.
-    fn settle(
+    pub(super) fn settle(
         &mut self,
         mut journal: Journal,
         asked: Option<Result<Value, String>>,
@@ -1417,7 +1704,7 @@ impl Landing<'_> {
     }
 
     /// Hold the delivery for a person: said on the thread to the orchestrator, nothing closed.
-    fn hold(&self, mut journal: Journal, what: String) -> Stop {
+    pub(super) fn hold(&self, mut journal: Journal, what: String) -> Stop {
         let known = journal.held.as_deref() == Some(what.as_str());
         journal.held = Some(what.clone());
         let _ = journal.write(&self.folder);
@@ -1739,6 +2026,9 @@ impl Landing<'_> {
             }
         }
         Journal::drop_in(&self.folder, slug);
+        super::dispatch::unmark(&self.folder, slug);
+        super::dispatch::unsaid(&self.folder, slug);
+        super::dispatch::unstopped(&self.folder, slug);
         Ok(line)
     }
 }

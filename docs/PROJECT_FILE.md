@@ -100,8 +100,9 @@ not there; nothing is landed for it.
 This table is a project's custom delivery workflow, strict, read by
 `symphony::project::workflow::candidate`. Project loading accepts one the local host supports and
 refuses any other with `unsupported_activation`, naming what it needs: a capability no grant of
-the host names, a guard, an adapter, or what durable attempts, landing adapters or accepted
-outputs bring. The board activates the workflow the project's default branch commits, with its
+the host names, a guard no committed approval authority attests
+([below](#workflow_authorities)) or a route around one, an adapter, or what durable attempts,
+landing adapters or accepted outputs bring. The board activates the workflow the project's default branch commits, with its
 `[[workflow_mappings]]`, and moves its tasks by its edges alone (`just tasks workflow`).
 Omission retains the current board behavior and selects built-in definition v1 in the candidate
 reader. Candidate parsing never changes a board. The [workflow reference](WORKFLOW.md) documents
@@ -121,21 +122,58 @@ where validation allows it. Unknown fields and variants refuse the candidate.
 | `edges` | required | typed routes, authority requirements, inputs, guards and effects |
 | `capabilities` | required | declared host capability IDs; declarations grant no authority |
 | `adapters` | required | declared host adapter IDs; declarations supply no adapter |
-| `guards` | required | opaque policy requirements by stable ID and adapter |
+| `guards` | required | policy requirements by stable ID and the adapter whose approval authority attests them |
 
 ## `[[workflow_mappings]]`
 
 Where a task goes when a newly committed `[workflow]` no longer declares the pair it stands at
 (or the pair it resumes to when blocked). Each entry names a removed pair and a pair the workflow
 declares, and no pair is mapped twice; a pair the workflow still declares is never remapped, as an
-ID keeps its meaning (rename it instead). Mappings with no `[workflow]` are refused. A task the
-board's existing writers kept starts from built-in v1's pair of its status
-([WORKFLOW](WORKFLOW.md#activation-and-mappings)).
+ID keeps its meaning (rename it instead). A task the board's existing writers kept starts from
+built-in v1's pair of its status ([WORKFLOW](WORKFLOW.md#activation-and-mappings)).
+
+Mappings in a file with no `[workflow]` map onto built-in v1, the board's own writers: each
+names a pair v1 does not declare and one it does. They say where each task goes when a project
+that ran a custom workflow drops it ([WORKFLOW](WORKFLOW.md#returning-to-the-boards-own-writers)),
+and a board with no workflow active reads them and does nothing.
 
 | Key | Default | What it sets |
 | --- | --- | --- |
 | `from` | required | the removed `{ phase, state }` pair |
 | `to` | required | the declared `{ phase, state }` pair a task there goes to |
+
+## `[[workflow_authorities]]`
+
+The approval authorities whose signed word meets the workflow's guards, one for each adapter its
+guards name ([WORKFLOW](WORKFLOW.md#guards)). A guard is a decision the project keeps in its own
+approval ledger; the board never holds that ledger and never decides a guard. What it asks of a
+project, in plain words:
+
+- **It holds a signing key.** The project runs an authority over its ledger that holds an
+  Ed25519 signing key and signs, with it, each observation of the ledger's state and each
+  attestation that a guard holds for one operation. The secret half stays with that authority:
+  never in the repository, the board or a request.
+- **It commits the public half here**, as `ed25519:` and the key's 32 bytes in lowercase hex,
+  with the adapter it answers for and the issuer it signs as. The board verifies every
+  observation and attestation by the key the default branch commits, and by nothing else.
+- **A changed key is a new generation.** Changing a key, an issuer or an authority is a commit of
+  this file, which activates a new generation of the workflow: every attestation made for the
+  previous one stops at once, and the new key goes on from the ledger state the board last
+  accepted.
+- **It names itself by `[project] id`.** An attestation names the project it is for by the id this
+  file commits, which a project with an authority must write: an id taken from a folder's name or
+  a machine's registry could differ between machines, and could match another project's.
+
+An authority with no `[workflow]`, for an adapter the workflow does not declare, named twice,
+with no issuer or a key that does not read is refused by name, and a guard with no authority
+committed for its adapter leaves the workflow unsupported.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `adapter` | required | the adapter of the workflow's `adapters` this authority answers for |
+| `issuer` | required | the name the authority signs as, which its observations and attestations repeat |
+| `contract` | required | the attestation contract it speaks, `1` in this release |
+| `key` | required | the public half of its signing key, `ed25519:` and 64 lowercase hex digits |
 
 ## `[project]`
 
@@ -280,6 +318,8 @@ What the default landing, `just land SLUG`, does besides its merge ([TASKS](TASK
 | `keys` | none | a generator's name, then the command printing its key: a tip whose key passed before runs nothing |
 | `check_paths` | the list in [TASKS](TASKS.md#the-default-landing) | what holds the project's tests and checks, which a red's fix its orchestrator approves may not change |
 | `delivery` | none: the land merges and pushes here | the command that delivers a task by a hosted pull request in place of that merge and push, a list of words run as `COMMAND VERB --request FILE` ([TASKS](TASKS.md#a-land-delivered-by-a-pull-request)); it decides what lands, so a change of it is reviewed |
+| `watch_seconds` | `30` | how long the delivery watcher rests between two rounds of reading what the host made of each armed pull request ([TASKS](TASKS.md#a-land-dispatched-at-review)); `0` is refused |
+| `merge_within_minutes` | `30` | how long an armed pull request whose evidence stands may stay neither merged nor red before the watcher turns its merge off and says so; `0` is refused |
 | `upstream` | none: no import is delivered | `[land.upstream]`, the repository this one imports from, as below |
 
 ## `[land.upstream]`
@@ -321,6 +361,7 @@ A generator, in `[land] generators` or `[verdicts] generators`, usually written 
 | `review_alarm_hours` | `4` | the hours review must stay over the ratio to raise it |
 | `review_alarm_clear_hours` | `1` | the hours review must stay at or under it to clear it |
 | `swept_cap_gb` | `5` | the gigabytes the evidence kept of removed worktrees may hold before the sweep asks for a check by hand |
+| `stale_writer_hours` | `24` | the hours a build that wrote the board, on this machine, may go without running before it holds no move of the board to a release, unless it is a build the project runs now: one a link in its main checkout's `.target/bin` names ([RELEASES](RELEASES.md#the-refresh)); a whole number over 0 |
 | `postgresql` | discover `postgres` on `PATH` | an explicit absolute folder of the machine's PostgreSQL programs takes precedence over discovery; the server of a board whose home names PostgreSQL starts it ([DECISIONS](DECISIONS.md#postgresql-binary-source)) |
 | `external_postgresql` | none: the board is the machine's own | `[board.external_postgresql]`, where a hosted board's PostgreSQL is and the budget of its connections, as below |
 | `machine_wip` | none | `[board.machine_wip.MACHINE]`, advice per machine, as below |
@@ -458,5 +499,8 @@ other project runs.
 | `refresh` | `true` | whether a green release refreshes the machine |
 | `publish` | `false` | whether a green release, once pushed, publishes on crates.io each package whose version it lacks ([RELEASES](RELEASES.md#packages-on-cratesio)) |
 | `github` | none | the command a green release, once pushed, asks for its GitHub Release, run as `COMMAND… --request FILE`: `["symphony-github", "release"]` names the GitHub adapter's; with none, no program is run ([RELEASES](RELEASES.md#a-github-release)) |
+| `hosted` | none | the command a release run asks to verify its commit on GitHub's machines in place of this one, run as `COMMAND… --request FILE`: `["symphony-github", "verify"]` names the GitHub adapter's; with none, no program is run and every run verifies here ([RELEASES](RELEASES.md#on-githubs-runners)) |
+| `hosted_every_minutes` | `30` | while `hosted` names a command, a run of main's tip also starts at a landing once this many minutes passed since the last run started, unless that tip is judged already: the least time between two starts, since one run at a time holds the release's lock, so a value below a whole run's length makes the runs back to back. Such a run verifies nothing on this machine, and still builds at its tip and, when green, installs and refreshes here. `0` starts none by the clock, and without `hosted` it is not read ([RELEASES](RELEASES.md#the-hosted-clock)) |
+| `rulesets` | none | the command each run runs after its checks as the check `rulesets`, in the main checkout, red unless it exits 0: `["symphony-github", "rulesets", "--verify"]` verifies again who bypasses the default branch's rules, where the adapter's settings publish pull requests; with none, the run has no such check ([RELEASES](RELEASES.md#who-bypasses-the-rules-again)) |
 | `candidate_reruns` | `3` | the red reruns a release candidate takes before it is dropped |
 | `candidate_hours` | `24` | the hours a release candidate is held before it is dropped |

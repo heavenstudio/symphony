@@ -378,6 +378,12 @@ impl Hub {
             true => read()?,
             false => snapshot,
         };
+        // The blocks the owner's word ended, from the same read, as the dispatch ends a `task:`
+        // block; the next tick's dispatch delivers each move's STATUS line.
+        let snapshot = match judging && self.keep_decided(store, &snapshot) {
+            true => read()?,
+            false => snapshot,
+        };
         // The board's health counts the open tasks nobody orchestrates from this snapshot too.
         self.health.unowned(&snapshot);
         // The one server's agents' day files, from this snapshot: no board read or write of its own.

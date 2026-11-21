@@ -4,7 +4,7 @@
 //! panel pushes the header and the page aside;
 //! the chat sheet is one surface from the top of the window, beside the header's controls.
 use super::components::{open_panel, site};
-use super::{SHOWN, chrome, chrome::Chrome, wait_for_board};
+use super::{SHOWN, at_page_width, chrome, chrome::Chrome, wait_for_board};
 use serde_json::{Value, json};
 
 /// Three cards waiting on the owner, so the pending bar shows on every page.
@@ -28,12 +28,14 @@ fn settle(page: &mut Chrome) {
 }
 
 /// The dock and the controls it holds: whether it spans the window's foot, which fixed controls
-/// stick out of it, which a click at their middle would miss, and which overlap each other.
-const DOCK: &str = r#"(() => {
+/// stick out of it, which a click at their middle would miss, and which overlap each other. A
+/// page function of the window's `width`, the width it leaves the page beside its scrollbar
+/// ([`at_page_width`]).
+const DOCK: &str = r#"width => {
     const name = control => control.id || control.className;
     const dock = document.querySelector('.frame-dock')?.getBoundingClientRect();
     if (!dock) return 'no dock';
-    const width = document.documentElement.clientWidth, height = document.documentElement.clientHeight;
+    const height = document.documentElement.clientHeight;
     const controls = [...document.querySelectorAll('.frame-pending, #quick-open, .doc-toc')]
         .filter(control => getComputedStyle(control).position === 'fixed' && control.getBoundingClientRect().width > 0);
     const boxes = controls.map(control => [control, control.getBoundingClientRect()]);
@@ -44,7 +46,7 @@ const DOCK: &str = r#"(() => {
         missed: boxes.filter(([c, b]) => !c.contains(document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2))).map(([c]) => name(c)),
         overlapping: boxes.flatMap(([c, b], i) => boxes.slice(i + 1).filter(([, o]) => b.left < o.right && o.left < b.right && b.top < o.bottom && o.top < b.bottom).map(([o]) => name(c) + ' / ' + name(o))),
     };
-})()"#;
+}"#;
 
 /// Whether `selector`'s element is clear of every fixed control and of the dock, and a click at
 /// its middle reaches it.
@@ -88,17 +90,18 @@ const UNDER_DOCK: &str = "(() => {const box=document.querySelector('a.go').getBo
 
 /// What the window's foot draws with nothing but the chat button to hold: whether the dock's bar
 /// draws, whether a pending bar is there, and whether the "+" sits alone in the window's corner,
-/// at the dock's lift.
-const BARE: &str = r#"(() => {
+/// at the dock's lift. A page function of the window's `width`, the width it leaves the page
+/// beside its scrollbar ([`at_page_width`]).
+const BARE: &str = r#"width => {
     const dock = document.querySelector('.frame-dock')?.getBoundingClientRect();
     const open = document.querySelector('#quick-open').getBoundingClientRect();
-    const width = document.documentElement.clientWidth, height = document.documentElement.clientHeight;
+    const height = document.documentElement.clientHeight;
     return {
         bar: !!dock && dock.width > 0 && dock.height > 0,
         pending: document.querySelector('.frame-pending') !== null,
         corner: Math.abs(height - 8 - open.bottom) < 1 && Math.abs(width - 16 - open.right) < 1,
     };
-})()"#;
+}"#;
 
 /// Whether the home's primary button is wholly in the window, and whether its foot is above the
 /// chat button's top.
@@ -122,7 +125,7 @@ fn with_nothing_pending_no_dock_draws_and_the_chat_button_sits_alone_in_the_corn
         ));
         settle(&mut page);
         assert_eq!(
-            page.eval(BARE),
+            page.eval(&at_page_width(BARE)),
             json!({"bar":false,"pending":false,"corner":true}),
             "at {width}px the tasks page draws no dock, and the \"+\" sits alone in the corner"
         );
@@ -131,7 +134,7 @@ fn with_nothing_pending_no_dock_draws_and_the_chat_button_sits_alone_in_the_corn
         assert!(page.wait_for(ready, SHOWN));
         settle(&mut page);
         assert_eq!(
-            page.eval(BARE),
+            page.eval(&at_page_width(BARE)),
             json!({"bar":false,"pending":false,"corner":true}),
             "at {width}px the board draws no dock, and the \"+\" sits alone in the corner"
         );
@@ -159,7 +162,7 @@ fn with_nothing_pending_no_dock_draws_and_the_chat_button_sits_alone_in_the_corn
     assert!(page.wait_for("document.querySelector('.doc-toc details').open", SHOWN));
     settle(&mut page);
     assert_eq!(
-        page.eval(BARE),
+        page.eval(&at_page_width(BARE)),
         json!({"bar":false,"pending":false,"corner":true}),
         "a wide document with its contents open draws no dock"
     );
@@ -167,7 +170,7 @@ fn with_nothing_pending_no_dock_draws_and_the_chat_button_sits_alone_in_the_corn
     assert!(page.wait_for("!document.querySelector('.doc-toc details').open", SHOWN));
     settle(&mut page);
     assert_eq!(
-        page.eval(DOCK),
+        page.eval(&at_page_width(DOCK)),
         json!({"spans":true,"controls":["doc-toc","quick-open"],"outside":[],"missed":[],"overlapping":[]}),
         "folded, the contents pill brings the dock back, beside the \"+\""
     );
@@ -176,7 +179,7 @@ fn with_nothing_pending_no_dock_draws_and_the_chat_button_sits_alone_in_the_corn
     assert!(page.wait_for(toc, SHOWN));
     settle(&mut page);
     assert_eq!(
-        page.eval(BARE),
+        page.eval(&at_page_width(BARE)),
         json!({"bar":false,"pending":false,"corner":true}),
         "on a phone the folded contents sit in the page, and no dock draws"
     );
@@ -201,7 +204,7 @@ fn the_dock_holds_the_floating_controls_and_a_focused_or_last_control_sits_above
         settle(&mut page);
         let height = foot_at_window_foot(&mut page, width);
         assert_eq!(
-            page.eval(DOCK),
+            page.eval(&at_page_width(DOCK)),
             json!({"spans":true,"controls":["pending-nav frame-pending","quick-open"],"outside":[],"missed":[],"overlapping":[]}),
             "at {width}px, the pending bar and the chat button sit in the dock, apart"
         );
@@ -291,7 +294,7 @@ fn a_documents_contents_pill_sits_in_the_dock_and_in_the_page_on_a_phone() {
     assert!(page.wait_for("!document.querySelector('.doc-toc details').open", SHOWN));
     settle(&mut page);
     assert_eq!(
-        page.eval(DOCK),
+        page.eval(&at_page_width(DOCK)),
         json!({"spans":true,"controls":["doc-toc","pending-nav frame-pending","quick-open"],"outside":[],"missed":[],"overlapping":[]}),
         "a folded contents pill sits in the dock, apart from the pending bar and the chat button"
     );
@@ -317,7 +320,7 @@ fn a_documents_contents_pill_sits_in_the_dock_and_in_the_page_on_a_phone() {
         "on a phone the folded contents are in the page, between its title and its body"
     );
     assert_eq!(
-        page.eval(DOCK)["controls"],
+        page.eval(&at_page_width(DOCK))["controls"],
         json!(["pending-nav frame-pending", "quick-open"]),
         "and not in the dock"
     );
@@ -389,11 +392,12 @@ fn the_open_activity_panel_pushes_the_header_and_the_page_aside() {
     page.eval("document.querySelector('#activity-panel [aria-label=\"Close activity\"]').click()");
     assert!(page.wait_for("document.getElementById('activity-panel') === null", SHOWN));
     settle(&mut page);
-    assert_eq!(
-        page.eval("Math.round(document.querySelector('.frame-page').getBoundingClientRect().right) === document.documentElement.clientWidth"),
-        json!(true),
-        "closing it gives the page its width back"
-    );
+    // The page's right edge, and the width the window leaves the page beside its scrollbar.
+    let [right, window]: [u64; 2] = serde_json::from_value(page.eval(&at_page_width(
+        "width => [Math.round(document.querySelector('.frame-page').getBoundingClientRect().right), width]",
+    )))
+    .unwrap();
+    assert_eq!(right, window, "closing it gives the page its width back");
 }
 
 #[test]

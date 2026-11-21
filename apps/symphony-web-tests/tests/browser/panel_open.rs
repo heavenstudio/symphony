@@ -500,7 +500,7 @@ fn the_warm_up_waits_for_the_page_s_own_data() {
     );
 }
 
-/// Holds the page's lookups in the device's cache (shell/cache.js, `read`) until the test calls
+/// Holds the page's lookups in the device's cache (shell/cache.ts, `read`) until the test calls
 /// `window.__answer()`, as a store slow to open and answer is on a loaded machine: set before the
 /// shell takes the store's `read` as one of the page's reads. `window.__lookups` counts them.
 const SLOW_STORE: &str = r"

@@ -170,7 +170,8 @@ fn the_write_refusal_is_split_around_the_version_the_guard_reads() {
 fn the_guard_takes_a_writes_own_variables_and_adds_its_own() {
     let refusal = Refusal::of(Some("alpha"), 11, &program());
     let mut vars = json!({"slug": "a/b"});
-    guard_vars(&mut vars, 11, false, &refusal, "refused: ");
+    let steps = Steps::naming("fixture_new", 2, "the alpha board", 11);
+    guard_vars(&mut vars, 11, false, &refusal, &steps, "refused: ");
     assert_eq!(
         vars,
         json!({
@@ -179,16 +180,63 @@ fn the_guard_takes_a_writes_own_variables_and_adds_its_own() {
             "board_schema_ahead": false,
             "board_schema_before": "refused: the alpha board is at schema ",
             "board_schema_after": refusal.after,
+            "board_additions_least": 2,
+            "board_additions_most": i64::MAX,
+            "board_additions_before": "refused: the alpha board has ",
+            "board_additions_after": steps.after,
         })
+    );
+    assert!(
+        steps
+            .after
+            .contains("names `fixture_new`, which step 2 defines")
     );
     // A write with no variables of its own is given an object for the guard's.
     let mut none = serde_json::Value::Null;
-    guard_vars(&mut none, 11, true, &refusal, "refused: ");
+    guard_vars(&mut none, 11, true, &refusal, &Steps::any(), "refused: ");
     assert_eq!(none["board_schema"], 11);
     assert_eq!(none["board_schema_ahead"], true);
+    assert_eq!(none["board_additions_least"], 0);
     assert!(GUARD.contains("$board_schema_found != $board_schema"));
     assert!(GUARD.contains("$board_schema_ahead = true"));
     assert!(GUARD.contains("type::is_int($board_schema_from)"));
+    // The steps are judged on a board of the store's own contract alone.
+    assert!(GUARD.contains("IF $board_schema_found = $board_schema AND ($board_additions_found"));
+    // A copy's: exactly its own.
+    let exactly = Steps::exactly(3, "this board", 11);
+    assert_eq!((exactly.least, exactly.most), (3, 3));
+}
+
+/// A statement needs the highest step whose table it names as a whole word, however it is quoted
+/// or nested; a word that only contains a table's name, or none of them, needs nothing.
+#[test]
+fn a_statement_needs_the_highest_step_whose_table_it_names_in_any_quoting() {
+    let added = vec![
+        ("note".to_string(), 1),
+        ("note_tag".to_string(), 2),
+        ("other".to_string(), 3),
+    ];
+    let needs = |sql: &str| super::needs(sql, &added);
+    assert_eq!(needs("CREATE note:1 SET a = 1;"), Some(("note", 1)));
+    assert_eq!(
+        needs("UPSERT type::record('note_tag', [$a]) SET b = 2;"),
+        Some(("note_tag", 2))
+    );
+    assert_eq!(needs("CREATE `note` SET a = 1;"), Some(("note", 1)));
+    assert_eq!(needs("CREATE ⟨note⟩:x SET a = 1;"), Some(("note", 1)));
+    assert_eq!(
+        needs("CREATE NOTE:1;"),
+        Some(("note", 1)),
+        "case is not looked at"
+    );
+    // Nested, in a subquery or a block: the highest step named anywhere.
+    assert_eq!(
+        needs("LET $x = (SELECT * FROM note); IF true { FOR $o IN [1] { CREATE other:1; }; };"),
+        Some(("other", 3))
+    );
+    assert_eq!(needs("UPDATE task SET notes = 1, note_tags = 2;"), None);
+    assert_eq!(needs("UPDATE task SET title = 'a';"), None);
+    assert_eq!(super::needs("CREATE note:1;", &[]), None);
 }
 
 /// The guard's rule, as a reader asks it before it writes: its own schema always, one ahead only

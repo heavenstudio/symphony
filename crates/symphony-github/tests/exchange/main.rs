@@ -2,15 +2,19 @@
 //! repository held in memory (`github.rs`). `flows.rs` and `recovery.rs` run it on a board held
 //! in memory (`memory.rs`), where each failure is planted exactly; `scratch.rs` runs it on a
 //! real scratch board through `tasks api`, its requests made by a real `curl` to a loopback
-//! server (`http.rs`). `deliver.rs` asks it the four verbs of a land delivered by a pull request, and
-//! `protection.rs` what those verbs refuse of a repository not protected for one. `release.rs` asks
-//! it for a GitHub Release of a tag, as the release run does.
+//! server (`http.rs`). `deliver.rs` asks it the verbs of a land delivered by a pull request,
+//! `armed.rs` those of one GitHub merges by its auto-merge, `protection.rs` what those verbs
+//! refuse of a repository not protected for one, and
+//! `rulesets.rs` the rulesets a person verifies for them. `release.rs` asks it for a GitHub
+//! Release of a tag, as the release run does, and `verify.rs` for its commit's verification on
+//! GitHub's machines.
 
 #![expect(
     clippy::unwrap_used,
     reason = "the fixtures beside the tests assert as they do: an unwrap is the failure"
 )]
 
+mod armed;
 mod deliver;
 mod flows;
 mod github;
@@ -21,7 +25,9 @@ mod minting;
 mod protection;
 mod recovery;
 mod release;
+mod rulesets;
 mod scratch;
+mod verify;
 
 use github::Fake;
 use memory::MemBoard;
@@ -143,6 +149,10 @@ impl Transport for Shared {
     fn send(&self, request: &Request) -> Result<Response, Failure> {
         self.0.send(request)
     }
+
+    fn fetch(&self, url: &str, to: &Path) -> Result<u16, Failure> {
+        self.0.fetch(url, to)
+    }
 }
 
 /// What one command said.
@@ -176,6 +186,19 @@ pub(crate) fn run(
     now: i64,
     repository: Vec<PathBuf>,
 ) -> Ran {
+    run_gh(args, board, source, connect, now, repository, "gh")
+}
+
+/// The same, with `gh` the gh CLI it runs.
+pub(crate) fn run_gh(
+    args: &[&str],
+    board: &dyn Board,
+    source: &dyn Source,
+    connect: &dyn Fn(Secret) -> Result<Box<dyn Transport>, String>,
+    now: i64,
+    repository: Vec<PathBuf>,
+    gh: &str,
+) -> Ran {
     let args: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
     let ctx = Context {
         source,
@@ -184,6 +207,8 @@ pub(crate) fn run(
         now,
         repository,
         openssl: "openssl",
+        gh,
+        rest: &|_| {},
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = symphony_github::cli::run(&args, &ctx, &mut out, &mut err);

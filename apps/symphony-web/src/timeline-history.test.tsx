@@ -2,7 +2,7 @@ import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import FIXTURE from "../../../crates/symphony-api/fixtures/task-timeline.json";
-import { stopsOf, TimelineDrawn } from "./timeline";
+import { arrowPlace, stopsOf, TimelineDrawn } from "./timeline";
 import {
   address,
   endpointLane,
@@ -194,6 +194,31 @@ describe("recorded timeline history", () => {
         sources: [{ ...(history().sources[0] as HistorySource), state: "unavailable" }],
       }),
     ).toContain("task: unavailable");
+  });
+});
+
+describe("a selected message's arrow", () => {
+  // A layer starting at the name column, as `.tl-address-track` does, and tracks that start past
+  // it: the arrow is placed by what is drawn, never by the layer's own percent.
+  const layer = { left: 144, top: 300, width: 1048, height: 240 };
+  const mark = { left: 268.25, top: 344, width: 24, height: 24 };
+  const track = (top: number) => ({ left: 152, top, width: 1040, height: 36 });
+  it("runs down through its mark's middle to the middle of its recipient's track", () => {
+    expect(arrowPlace(layer, mark, track(386))).toEqual({ left: 136.25, from: 56, to: 104 });
+  });
+  it("runs up to a recipient above its sender, and stays on one lane's middle for its own", () => {
+    expect(arrowPlace(layer, mark, track(302))).toEqual({ left: 136.25, from: 56, to: 20 });
+    expect(arrowPlace(layer, mark, track(338))).toEqual({ left: 136.25, from: 56, to: 56 });
+  });
+  it("follows a mark shrunk about its middle by a press", () => {
+    const held = { left: 268.61, top: 344.36, width: 23.28, height: 23.28 };
+    const place = arrowPlace(layer, held, track(386));
+    expect(place?.left).toBeCloseTo(136.25, 10);
+    expect(place?.from).toBeCloseTo(56, 10);
+  });
+  it("is none while its mark or its recipient's track is not drawn", () => {
+    expect(arrowPlace(layer, undefined, track(386))).toBeNull();
+    expect(arrowPlace(layer, mark, undefined)).toBeNull();
   });
 });
 

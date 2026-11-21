@@ -21,7 +21,7 @@ include = ["src/**", "!src/bin/fake-hc.rs", "build.rs", "README.md", "LICENSE"]
 # crate's own tree, and the rest of it (tokio, the WebSocket stack) is ~260 CPU-s of build this does
 # without (docs/engineering/analysis/review-app-rust-port.md, "Clean release build").
 [dependencies]
-process-cwd = { path = "../process-cwd", version = "1.0.0" }
+process-cwd = { path = "../process-cwd", version = "1.0.1" }
 # Its variables, each by its one SYMPHONY_ name.
 symphony-env = { path = "../symphony-env", version = "1.0.0" }
 # The command a mistyped word was nearest to, shared with the `symphony` command line.
@@ -30,11 +30,11 @@ symphony-args = { path = "../symphony-args", version = "1.0.0" }
 symphony-api = { path = "../symphony-api", version = "=0.2.0" }
 # A card and the owner's lines under it, read as the Symphony reads them: the owner's answers a
 # worktree holds that no commit has, which the sweep keeps and a land refuses (src/sweep/git/owner.rs).
-symphony-docs = { path = "../symphony-docs", version = "1.0.1" }
+symphony-docs = { path = "../symphony-docs", version = "1.1.0" }
 # The execution adapter contract (`symphony_plugin::execution`) whose attempts the board keeps
 # (src/execution.rs): the kit's types and its bounded `invoke`, never a provider's client; and the
 # trusted principal a workflow operation is admitted for (`Principal`, src/workflow.rs).
-symphony-plugin = { path = "../symphony-plugin", version = "1.0.1" }
+symphony-plugin = { path = "../symphony-plugin", version = "1.1.0" }
 serde = { version = "1", features = ["derive"] }
 # float_roundtrip: a time in a dump reads as exactly the float Python wrote, not one ulp off. The other
 # three are the features the server's build unifies on serde_json (crates/symphony and
@@ -47,6 +47,11 @@ serde_json = { version = "1", features = ["arbitrary_precision", "float_roundtri
 # moving to review starts (src/on_review.rs).
 toml.workspace = true
 sha2.workspace = true
+# The check of a workflow guard's attestation and an approval authority's observation: an Ed25519
+# signature by the key the project commits in `[[workflow_authorities]]` (src/workflow/guard.rs).
+# No default features: verification alone, no key generation, no random source, no serde of keys;
+# `verify_strict` refuses weak keys and malleable signatures. It shares sha2 0.11 with this package.
+ed25519-dalek = { version = "3", default-features = false }
 # `tasks run` becomes the command it records and watches it from a process of its own, where it
 # cannot, runs it as a child (src/cli/recorder.rs); the machine id is read without following a link;
 # the free disk the board warns of is read by `statvfs` (src/board_health/disk.rs).

@@ -1,5 +1,6 @@
 //! Delivery-workflow definitions as the board runs them (docs/WORKFLOW.md): the strict reader of
-//! a project file's `[workflow]` and `[[workflow_mappings]]`, normalization, revision identity,
+//! a project file's `[workflow]`, `[[workflow_mappings]]` and `[[workflow_authorities]]`,
+//! normalization, revision identity,
 //! the host's prerequisites and capability grants, built-in definition v1, and the reader of the
 //! project file the default branch commits, which is the only file a board activates from.
 //!
@@ -16,15 +17,19 @@ pub mod activate;
 pub mod admit;
 mod builtin;
 pub mod effect;
+pub mod guard;
 pub mod operate;
 pub mod recover;
 mod validate;
+pub use crate::store::admission::Admission;
 pub use crate::store::admission::{Finalized, Receipt, Reviewed, Settled};
+pub use crate::store::guard::{Authorities, Observing};
 pub use crate::store::workflow::{
     Active, Followed, Moved, Recorded, Recovered, TaskPosition, Transition, Trigger,
 };
 pub use activate::Host;
-pub use builtin::{builtin, legacy_pair};
+pub use builtin::{DEFAULT, builtin, legacy_pair};
+pub use guard::Attester;
 pub use operate::Operating;
 
 /// A project's file, at the top of the tree a commit holds.
@@ -129,7 +134,9 @@ pub fn candidate(text: &str) -> Result<Validated, String> {
 }
 
 /// The file's `[workflow]`, validated, or none when it has none; and its `[[workflow_mappings]]`,
-/// checked against that workflow. Mappings without a workflow are refused: they map onto nothing.
+/// checked against that workflow. Mappings without a workflow map onto built-in v1, the board's
+/// own writers: where each task goes when a board that activated a workflow returns to them
+/// ([`crate::Store::return_to_default`]).
 pub fn written(text: &str) -> Result<(Option<Validated>, Vec<Mapping>), String> {
     let mut file = table(text)?;
     written_from(file.remove("workflow"), file.remove("workflow_mappings"))
@@ -145,9 +152,9 @@ pub fn written_from(
     let mappings: Vec<Mapping> = taken(mappings, "workflow_mappings")?.unwrap_or_default();
     let Some(definition) = definition else {
         if !mappings.is_empty() {
-            return Err("workflow_mappings: no [workflow] to map onto".into());
+            Validated::new(builtin())?.check_mappings(&mappings)?;
         }
-        return Ok((None, Vec::new()));
+        return Ok((None, mappings));
     };
     let validated = Validated::new(definition)?;
     validated.check_mappings(&mappings)?;
@@ -184,16 +191,74 @@ fn taken<T: serde::de::DeserializeOwned>(
         }
     }
     value
-        .map(|value| serde_json::from_value(json(value)).map_err(|e| format!("{key}: {e}")))
+        .map(|value| crate::objects::read(&json(value)).map_err(|e| format!("{key}: {e}")))
         .transpose()
 }
 
-/// The workflow a commit's project file sets: a custom definition with its revision and
-/// mappings, or none for a file with no `[workflow]` (the board's existing writers).
+/// The file's `[[workflow_authorities]]`, sorted by adapter and checked against `definition`
+/// ([`guard::check_attesters`]); refused where there is no `[workflow]` to guard, or no
+/// `[project] id` to bind an attestation to ([`attested_project`]).
+pub fn authorities(text: &str, definition: Option<&Validated>) -> Result<Vec<Attester>, String> {
+    let mut file = table(text)?;
+    let project = project_id(&file);
+    authorities_from(
+        file.remove("workflow_authorities"),
+        project.as_deref(),
+        definition,
+    )
+}
+
+/// [`authorities`] of a file already read as TOML: the value of its `workflow_authorities` and its
+/// `[project] id`, none where it has none, so a reader of the whole file reads it once, as
+/// [`written_from`] does. A blank id is none.
+pub fn authorities_from(
+    value: Option<toml::Value>,
+    project: Option<&str>,
+    definition: Option<&Validated>,
+) -> Result<Vec<Attester>, String> {
+    let mut attesters: Vec<Attester> = taken(value, "workflow_authorities")?.unwrap_or_default();
+    let Some(definition) = definition else {
+        if !attesters.is_empty() {
+            return Err("workflow_authorities: no [workflow] to guard".into());
+        }
+        return Ok(attesters);
+    };
+    if !attesters.is_empty() && project.is_none_or(|id| id.trim().is_empty()) {
+        return Err(
+            "workflow_authorities: an attestation names the project it is for, and [project] \
+             id names none"
+                .into(),
+        );
+    }
+    guard::check_attesters(definition, &attesters)?;
+    // Each adapter is named once (`check_attesters`), so its name orders them.
+    ordered(&mut attesters, |attester| attester.adapter.clone());
+    Ok(attesters)
+}
+
+/// The `[project] id` the file commits, which every attestation names as the project it is for:
+/// the committed id alone, never one a machine's registry or folder gives, so a project's
+/// attestation reads the same on every board of it and on no other project's.
+pub fn attested_project(text: &str) -> Option<String> {
+    project_id(&table(text).ok()?)
+}
+
+/// `file`'s `[project] id`, where it is text that is not blank.
+fn project_id(file: &toml::Table) -> Option<String> {
+    let id = file.get("project")?.get("id")?.as_str()?;
+    (!id.trim().is_empty()).then(|| id.to_string())
+}
+
+/// The workflow a commit's project file sets: a custom definition with its revision, mappings
+/// and authorities, or none for a file with no `[workflow]` (the board's existing writers), and
+/// then the mappings onto built-in v1 the file keeps for a return to them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Committed {
     pub commit: String,
     pub custom: Option<Custom>,
+    /// The file's mappings where it has no `[workflow]`; empty beside a custom definition, whose
+    /// own they are.
+    pub returning: Vec<Mapping>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -201,6 +266,12 @@ pub struct Custom {
     pub definition: Validated,
     pub revision: Revision,
     pub mappings: Vec<Mapping>,
+    /// The approval authorities its guards are verified by, sorted by adapter: the public keys
+    /// the default branch commits ([`guard::Attester`]).
+    pub authorities: Vec<Attester>,
+    /// The project an attestation is for ([`attested_project`]): none where no authority is
+    /// committed.
+    pub project: Option<String>,
 }
 
 /// The project file the tip of `branch` commits in the repository whose main checkout is `main`,
@@ -234,6 +305,7 @@ fn committed_at(main: &Path, branch: &str, commit: String) -> Result<Committed, 
         return Ok(Committed {
             commit,
             custom: None,
+            returning: Vec::new(),
         });
     };
     if !matches!(mode.as_str(), "100644" | "100755") {
@@ -250,24 +322,42 @@ fn committed_at(main: &Path, branch: &str, commit: String) -> Result<Committed, 
         .filter(|file| file.id == blob)
         .ok_or_else(|| refuse(format!("{FILE} is not readable at {commit}")))?;
     let text = String::from_utf8(file.bytes).map_err(|_| refuse("the file is not UTF-8".into()))?;
-    let (definition, mappings) = written(&text).map_err(refuse)?;
-    let custom = match definition {
-        None => None,
-        Some(definition) => {
-            let revision = definition
-                .revision(Source {
-                    commit: commit.clone(),
-                    project_blob: blob.to_string(),
-                })
-                .map_err(refuse)?;
-            Some(Custom {
-                definition,
-                revision,
-                mappings,
-            })
-        }
+    // One reading of the file, as the Symphony's own.
+    let mut file = table(&text).map_err(refuse)?;
+    let project = project_id(&file);
+    let (definition, mappings) =
+        written_from(file.remove("workflow"), file.remove("workflow_mappings")).map_err(refuse)?;
+    let authorities = authorities_from(
+        file.remove("workflow_authorities"),
+        project.as_deref(),
+        definition.as_ref(),
+    )
+    .map_err(refuse)?;
+    let project = project.filter(|_| !authorities.is_empty());
+    let Some(definition) = definition else {
+        return Ok(Committed {
+            commit,
+            custom: None,
+            returning: mappings,
+        });
     };
-    Ok(Committed { commit, custom })
+    let revision = definition
+        .revision(Source {
+            commit: commit.clone(),
+            project_blob: blob.to_string(),
+        })
+        .map_err(refuse)?;
+    Ok(Committed {
+        commit,
+        custom: Some(Custom {
+            definition,
+            revision,
+            mappings,
+            authorities,
+            project,
+        }),
+        returning: Vec::new(),
+    })
 }
 
 /// The workflow the project's default branch commits, followed on its board (automatic

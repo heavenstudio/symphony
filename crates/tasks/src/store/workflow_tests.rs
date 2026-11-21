@@ -427,6 +427,126 @@ fn the_database_never_changes_a_recorded_transition_or_moves_the_active_generati
 }
 
 #[test]
+fn the_database_retires_a_position_only_beside_a_returns_transition() {
+    for backend in BACKENDS {
+        let f = Fixture::on(backend, Seed::default());
+        managed(&f, "sim/jump");
+        managed(&f, "sim/two");
+        // The next transition of each, as an activation's: 7 an ordinary one, 8 a return.
+        by_hand(
+            &f,
+            "CREATE workflow:['activation', 7] CONTENT { kind: 'activation', body: { generation: 7, digest: 'd7' }, at: 1.0 } RETURN NONE;
+             CREATE workflow:['activation', 8] CONTENT { kind: 'activation', body: { generation: 8, digest: 'builtin-v1', returned: true }, at: 1.0 } RETURN NONE;
+             CREATE workflow:['event', 'sim/jump', 2] CONTENT { kind: 'event', body: { slug: 'sim/jump', revision: 2, status: 'ready', activation: 7 }, at: 1.0 } RETURN NONE;
+             CREATE workflow:['event', 'sim/two', 2] CONTENT { kind: 'event', body: { slug: 'sim/two', revision: 2, status: 'ready', activation: 8 }, at: 1.0 } RETURN NONE;
+             RETURN NONE;",
+            "INSERT INTO workflow (id, kind, body, at) VALUES \
+             ('[\"activation\", 7]', 'activation', '{\"generation\": 7, \"digest\": \"d7\"}', 1.0), \
+             ('[\"activation\", 8]', 'activation', '{\"generation\": 8, \"digest\": \"builtin-v1\", \"returned\": true}', 1.0), \
+             ('[\"event\", \"sim/jump\", 2]', 'event', '{\"slug\": \"sim/jump\", \"revision\": 2, \"status\": \"ready\", \"activation\": 7}', 1.0), \
+             ('[\"event\", \"sim/two\", 2]', 'event', '{\"slug\": \"sim/two\", \"revision\": 2, \"status\": \"ready\", \"activation\": 8}', 1.0);",
+        )
+        .unwrap();
+        let retire = |slug: &str, status: &str| {
+            f.store.raw().row("task", slug).set(json!({
+                "status": status,
+                "fields._board.workflow": null,
+            }))
+        };
+        let keeps = "keeps its workflow position: only an activation that returns the board to \
+                     its own writers retires it";
+        // Beside an activation that is no return.
+        let ordinary = refused(retire("sim/jump", "ready"));
+        assert!(ordinary.contains(keeps), "{backend:?}: {ordinary}");
+        // Beside a return's transition, at another status than it recorded.
+        let elsewhere = refused(retire("sim/two", "done"));
+        assert!(elsewhere.contains(keeps), "{backend:?}: {elsewhere}");
+        assert!(f.store.workflow_position("sim/two").unwrap().is_some());
+        // Beside it, at its status: the position goes, and the task is the board's writers'.
+        retire("sim/two", "ready").unwrap();
+        assert_eq!(f.store.workflow_position("sim/two").unwrap(), None);
+        assert_eq!(
+            f.store.get("sim/two").unwrap().status,
+            "ready",
+            "{backend:?}"
+        );
+        f.store
+            .raw()
+            .row("task", "sim/two")
+            .set(json!({"status": "review"}))
+            .unwrap();
+        // It never returns to the position its return left.
+        let first = moved("sim/two", 1, pair("build", "working"), "in_progress");
+        let back = refused(f.store.raw().row("task", "sim/two").set(json!({
+            "status": "in_progress",
+            "fields._board.workflow": first.position(),
+        })));
+        assert!(
+            back.contains("sim/two moved on from workflow revision 1"),
+            "{backend:?}: {back}"
+        );
+    }
+}
+
+#[test]
+fn the_database_never_changes_an_admission_or_lowers_an_authority_within_its_epoch() {
+    for backend in BACKENDS {
+        let f = Fixture::on(backend, Seed::default());
+        by_hand(
+            &f,
+            "CREATE workflow:['admission', 'sim/a', 4] CONTENT { kind: 'admission', body: { edge: 'accept' }, at: 1.0 } RETURN NONE;
+             CREATE workflow:['authority', 'approvals'] CONTENT { kind: 'authority', body: { epoch: 'e1', generation: 3, state: 's3' }, at: 1.0 } RETURN NONE;
+             RETURN NONE;",
+            "INSERT INTO workflow (id, kind, body, at) VALUES \
+             ('[\"admission\", \"sim/a\", 4]', 'admission', '{\"edge\": \"accept\"}', 1.0), \
+             ('[\"authority\", \"approvals\"]', 'authority', \
+              '{\"epoch\": \"e1\", \"generation\": 3, \"state\": \"s3\"}', 1.0);",
+        )
+        .unwrap();
+        let admission = refused(by_hand(
+            &f,
+            "UPDATE workflow:['admission', 'sim/a', 4] SET body.edge = 'other' RETURN NONE; RETURN NONE;",
+            "UPDATE workflow SET body = body || '{\"edge\": \"other\"}' \
+             WHERE id = '[\"admission\", \"sim/a\", 4]';",
+        ));
+        assert_eq!(
+            admission, "workflow: a recorded admission is never changed",
+            "{backend:?}"
+        );
+        let lowered = refused(by_hand(
+            &f,
+            "UPDATE workflow:['authority', 'approvals'] SET body.generation = 2 RETURN NONE; RETURN NONE;",
+            "UPDATE workflow SET body = body || '{\"generation\": 2}' \
+             WHERE id = '[\"authority\", \"approvals\"]';",
+        ));
+        assert_eq!(
+            lowered,
+            "workflow: the generation the board accepted from an approval authority is never \
+             lowered within its epoch",
+            "{backend:?}"
+        );
+        // Forward within its epoch, a mark of conflict, or a new epoch at any generation is a move.
+        by_hand(
+            &f,
+            "UPDATE workflow:['authority', 'approvals'] SET body.generation = 4, body.conflicted = true RETURN NONE;
+             UPDATE workflow:['authority', 'approvals'] SET body.epoch = 'e2', body.generation = 1 RETURN NONE;
+             RETURN NONE;",
+            "UPDATE workflow SET body = body || '{\"generation\": 4, \"conflicted\": true}' \
+             WHERE id = '[\"authority\", \"approvals\"]'; \
+             UPDATE workflow SET body = body || '{\"epoch\": \"e2\", \"generation\": 1}' \
+             WHERE id = '[\"authority\", \"approvals\"]';",
+        )
+        .unwrap();
+        let retyped = refused(by_hand(
+            &f,
+            "UPDATE workflow:['authority', 'approvals'] SET kind = 'intent' RETURN NONE; RETURN NONE;",
+            "UPDATE workflow SET kind = 'intent' WHERE id = '[\"authority\", \"approvals\"]';",
+        ));
+        assert_eq!(retyped, "workflow: a recorded authority is never changed");
+    }
+}
+
+#[test]
 fn a_copy_carries_the_workflow_and_refuses_positions_without_their_records() {
     for backend in BACKENDS {
         let f = Fixture::on(backend, Seed::default());
@@ -534,7 +654,7 @@ fn record_keys_order_as_surrealdb_orders_compound_ids() {
 }
 
 #[test]
-fn schema_24_keeps_every_row_fences_the_writer_before_it_and_its_readers_read_a_managed_task() {
+fn a_schema_step_keeps_every_row_fences_the_writer_before_it_and_its_readers_read_a_managed_task() {
     use crate::store_fixture::{HOST, NOW};
     use crate::{NewTask, Opening, Schema};
     for backend in BACKENDS {
@@ -597,8 +717,7 @@ fn schema_24_keeps_every_row_fences_the_writer_before_it_and_its_readers_read_a_
 }
 
 #[test]
-fn a_board_made_at_22_or_23_migrates_to_this_builds_schema_with_its_rows_and_opens_there_as_it_is()
-{
+fn a_board_made_at_an_older_schema_migrates_to_this_one_with_its_rows_and_then_opens_as_it_is() {
     use crate::store_fixture::{HOST, NOW};
     use crate::{NewTask, Opening, Schema};
     // What an older build's board lacks of this build's definitions: schema 24's workflow
@@ -636,6 +755,10 @@ fn a_board_made_at_22_or_23_migrates_to_this_builds_schema_with_its_rows_and_ope
         for (older, lacks) in [
             (22, &[NO_WORKFLOW, NO_EXECUTION][..]),
             (23, &[NO_WORKFLOW][..]),
+            // 24 to 26 have every table: what they lack is the fence that lets a position go.
+            (24, &[][..]),
+            (25, &[][..]),
+            (26, &[][..]),
         ] {
             let database = backend.database();
             let open = |how| {
@@ -663,10 +786,14 @@ fn a_board_made_at_22_or_23_migrates_to_this_builds_schema_with_its_rows_and_ope
                 .unwrap();
             }
             assert_eq!(version(&old), Some(older));
-            assert!(!defines(&old, "workflow"), "{backend:?} at {older}");
+            assert_eq!(
+                defines(&old, "workflow"),
+                older >= 24,
+                "{backend:?} at {older}"
+            );
             assert_eq!(
                 defines(&old, "execution_attempt"),
-                older == 23,
+                older >= 23,
                 "{backend:?}"
             );
 
@@ -693,7 +820,7 @@ fn a_board_made_at_22_or_23_migrates_to_this_builds_schema_with_its_rows_and_ope
                 );
                 assert_eq!(current.raw().table(table).count().unwrap(), 0, "{table}");
             }
-            // Schema 24's fence is on the board again: a held task's status follows its position.
+            // The workflow's fence is on the board again: a held task's status follows its position.
             let first = moved("sim/jump", 1, pair("build", "working"), "in_progress");
             current.record_transition(&first, 0).unwrap();
             let follows = refused(

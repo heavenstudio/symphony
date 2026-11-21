@@ -29,7 +29,7 @@ IF $assignee != NONE {
 };
 FOR $link IN $links {
     UPSERT type::record('link', [$slug, $link.kind, $link.target])
-        CONTENT { slug: $slug, kind: $link.kind, target: $link.target } RETURN NONE;
+        SET slug = $slug, kind = $link.kind, target = $link.target RETURN NONE;
 };";
 
 /// Every task's slug and parent: the tree, read whole.
@@ -182,7 +182,7 @@ FOR $c IN $counters {{
 FOR $g IN $gives {{
     FOR $h IN $g.drop {{ DELETE type::record('role', [$g.slug, $h, 'orchestrator']) RETURN NONE; }};
     UPSERT type::record('role', [$g.slug, $g.to, 'orchestrator'])
-        CONTENT {{ slug: $g.slug, handle: $g.to, role: 'orchestrator', since: $now }} RETURN NONE;
+        SET slug = $g.slug, handle = $g.to, role = 'orchestrator', since = $now, expires = NONE RETURN NONE;
     UPDATE type::record('task', $g.slug) SET version += 1 RETURN NONE;
     UPSERT type::record('counter', ['slots', $g.to]) SET last += 1 RETURN NONE;
     {}
@@ -236,7 +236,7 @@ LET $task = (SELECT title FROM ONLY type::record('task', $slug));
 IF $task = NONE {{ THROW $missing }};
 FOR $link IN $links {{
     UPSERT type::record('link', [$slug, 'doc', $link])
-        CONTENT {{ slug: $slug, kind: 'doc', target: $link }} RETURN NONE;
+        SET slug = $slug, kind = 'doc', target = $link RETURN NONE;
 }};
 UPDATE type::record('task', $slug) SET title = $title, version += 1 RETURN NONE;
 IF $task.title != $title {{

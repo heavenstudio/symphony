@@ -203,6 +203,9 @@ pub struct Snapshot {
     /// its branch's page. An owner's ask on a card no page holds is not answered
     /// ([`crate::owner_asks`]).
     pub held: std::sync::Arc<Held>,
+    /// The owner's dated lines under each of those cards, by slug, on every copy: what ends a
+    /// task's block on one ([`crate::decided`]).
+    pub said: std::sync::Arc<crate::decided::Said>,
 }
 
 /// Cards by page path and slug, each with when the owner last wrote under that page's copy, in
@@ -228,6 +231,19 @@ fn held(docs: &[Doc], pages: &Pages) -> Held {
         held.insert(key, at);
     }
     held
+}
+
+/// The owner's lines under every card `docs` and `pages` hold ([`crate::decided::said`]).
+fn said(docs: &[Doc], pages: &Pages) -> crate::decided::Said {
+    crate::decided::said(
+        docs.iter()
+            .flat_map(|doc| doc.decisions.iter().map(|card| (doc.path.as_str(), card)))
+            .chain(
+                pages
+                    .iter()
+                    .flat_map(|(path, cards)| cards.iter().map(|card| (path.as_str(), card))),
+            ),
+    )
 }
 
 /// When the owner last wrote under `card`, by its dated lines.
@@ -359,6 +375,7 @@ pub fn snapshot(
     // One read of the registers: a plugin's process is asked every card at once.
     let plugins = plugins.reading(root, &docs);
     let held = held(&docs, &pages);
+    let said = said(&docs, &pages);
     let task_names = if proposals.is_empty() {
         BTreeMap::new()
     } else {
@@ -602,6 +619,7 @@ pub fn snapshot(
         order: queue_order,
         pages: std::sync::Arc::new(pages),
         held: std::sync::Arc::new(held),
+        said: std::sync::Arc::new(said),
     })
 }
 

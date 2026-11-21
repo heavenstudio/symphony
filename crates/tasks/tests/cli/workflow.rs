@@ -77,6 +77,8 @@ fn custom(text: &str) -> Custom {
         definition,
         revision,
         mappings: Vec::new(),
+        authorities: Vec::new(),
+        project: None,
     }
 }
 
@@ -564,6 +566,8 @@ fn a_session_reads_the_accepted_output_a_claim_takes_and_names_it_to_take_the_ed
         definition,
         revision,
         mappings: Vec::new(),
+        authorities: Vec::new(),
+        project: None,
     };
     c.store()
         .activate_workflow(&custom, &Host::local())
@@ -658,4 +662,373 @@ fn a_session_reads_the_accepted_output_a_claim_takes_and_names_it_to_take_the_ed
         "{}",
         other.err
     );
+}
+
+/// FLOW with its submit edge guarded by `approved`, which the `approvals` authority attests
+/// with the key of seed 7, in the project `sim`.
+mod guarded {
+    use super::super::{Case, scratch};
+    use super::{FLOW, flow};
+    use ed25519_dalek::{Signer, SigningKey};
+    use std::collections::BTreeMap;
+    use symphony_api::workflow::{
+        ATTESTATION_CONTRACT, Attestation, Attested, Observation, Pair, Signed,
+    };
+    use symphony_board::workflow::guard::{MAX_VALIDITY, attestee, signed_message};
+    use symphony_board::workflow::{Attester, Custom, Host, agent_session, written};
+
+    const NOW: f64 = 1_800_000_000.0;
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    fn signing(seed: u8) -> SigningKey {
+        SigningKey::from_bytes(&[seed; 32])
+    }
+
+    fn signed(seed: u8, observation: bool, payload: String) -> Signed {
+        let signature = signing(seed).sign(&signed_message(observation, &payload));
+        Signed {
+            payload,
+            signature: hex(&signature.to_bytes()),
+        }
+    }
+
+    fn guarded_flow() -> Custom {
+        let text = FLOW
+            .replacen("adapters = []", "adapters = [\"approvals\"]", 1)
+            .replacen(
+                "guards = []",
+                "guards = [{ id = \"approved\", adapter = \"approvals\" }]",
+                1,
+            )
+            .replacen(
+                "operation = \"request_review\", authority = [{ kind = \"task_role\", role = \"executor\" }], inputs = [], dependencies = \"none\", guards = []",
+                "operation = \"request_review\", authority = [{ kind = \"task_role\", role = \"executor\" }], inputs = [], dependencies = \"none\", guards = [\"approved\"]",
+                1,
+            );
+        let definition = written(&text).unwrap().0.unwrap();
+        Custom {
+            definition,
+            authorities: vec![Attester {
+                adapter: "approvals".into(),
+                issuer: "ledger".into(),
+                contract: ATTESTATION_CONTRACT,
+                key: format!("ed25519:{}", hex(signing(7).verifying_key().as_bytes())),
+            }],
+            project: Some("sim".into()),
+            ..flow()
+        }
+    }
+
+    fn observation(seed: u8, generation: u64) -> Signed {
+        observation_of(seed, generation, &format!("s{generation}"))
+    }
+
+    /// The first observation of `approvals` at `generation` in epoch e1, in `state`.
+    fn observation_of(seed: u8, generation: u64, state: &str) -> Signed {
+        let observed = Observation {
+            contract: ATTESTATION_CONTRACT,
+            adapter: "approvals".into(),
+            issuer: "ledger".into(),
+            epoch: "e1".into(),
+            generation,
+            state: state.into(),
+            previous: None,
+            at: NOW,
+        };
+        signed(seed, true, serde_json::to_string(&observed).unwrap())
+    }
+
+    /// This machine's time, which the board holds an attestation to whatever `TASKS_NOW` pins.
+    fn machine_now() -> f64 {
+        (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH))
+            .unwrap()
+            .as_secs_f64()
+    }
+
+    /// amber's submit of sim/jump from its workflow revision 2, passed at generation 3, on the
+    /// input revision design=r7, issued a second ago by this machine's clock for as long as the
+    /// board takes one ([`MAX_VALIDITY`]).
+    fn submit_attestation(custom: &Custom, amber: &str) -> Signed {
+        submit_attested_at(custom, amber, machine_now() - 1.0)
+    }
+
+    /// [`submit_attestation`], issued at `issued`.
+    fn submit_attested_at(custom: &Custom, amber: &str, issued: f64) -> Signed {
+        let attestation = Attestation {
+            contract: ATTESTATION_CONTRACT,
+            adapter: "approvals".into(),
+            issuer: "ledger".into(),
+            epoch: "e1".into(),
+            generation: 3,
+            project: "sim".into(),
+            task: "sim/jump".into(),
+            guard: "approved".into(),
+            edge: "submit".into(),
+            workflow: custom.revision.digest.clone(),
+            activation_generation: 1,
+            task_revision: 2,
+            at: Pair {
+                phase: "build".into(),
+                state: "working".into(),
+            },
+            input_revisions: BTreeMap::from([("design".to_string(), "r7".to_string())]),
+            principal: attestee(&agent_session(amber)),
+            result: Attested::Pass,
+            facts: vec!["ledger:decision/41".into()],
+            reasons: Vec::new(),
+            issued_at: issued,
+            expires_at: issued + MAX_VALIDITY,
+        };
+        signed(7, false, serde_json::to_string(&attestation).unwrap())
+    }
+
+    /// A board with `guarded_flow` active and sim/jump claimed by a new worker session.
+    fn claimed() -> (Case, String, Custom) {
+        let c = Case::new();
+        let amber = c.register("worker");
+        let custom = guarded_flow();
+        c.store()
+            .activate_workflow(&custom, &Host::local())
+            .unwrap();
+        c.ok(&amber, &["create", "sim/jump", "Jump departure"]);
+        c.ok(
+            &amber,
+            &["workflow", "apply", "sim/jump", "claim", "--revision", "1"],
+        );
+        (c, amber, custom)
+    }
+
+    #[test]
+    fn a_session_takes_a_guarded_edge_with_the_authoritys_signed_word_and_no_other() {
+        let (mut c, amber, custom) = claimed();
+        let dir = scratch("workflow-guarded-cli");
+        let file = |name: &str, signed: &Signed| {
+            let path = dir.join(name);
+            std::fs::write(&path, serde_json::to_string(signed).unwrap()).unwrap();
+            path.to_string_lossy().into_owned()
+        };
+        assert!(c.ok(&amber, &["workflow", "actions", "sim/jump"]).contains(
+            "submit → verify/awaiting  Submit, by its executor  (not now: guard_unavailable)"
+        ));
+        let submit = ["workflow", "apply", "sim/jump", "submit", "--revision", "2"];
+        let unobserved = c.run_as(&amber, &submit, "");
+        assert!(
+            unobserved.err.starts_with(
+                "✖ guard_unavailable: edge submit is guarded by approved, and the board has \
+                 accepted no observation from approvals"
+            ),
+            "{}",
+            unobserved.err
+        );
+        let observed = file("observed.json", &observation(7, 3));
+        assert_eq!(
+            c.ok(&amber, &["workflow", "observe", &observed]),
+            "approvals: accepted generation 3 of e1 (s3)\n"
+        );
+        assert_eq!(
+            c.ok(&amber, &["workflow", "observe", &observed]),
+            "approvals: already at generation 3 of e1 (s3)\n"
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(&c.ok(&amber, &["workflow", "observe", &observed, "--json"]))
+                .unwrap();
+        assert_eq!(json["observed"], "unchanged");
+        assert_eq!(json["authority"]["generation"], 3);
+        assert_eq!(json["authority"]["state"], "s3");
+        let forged = file("forged.json", &observation(8, 4));
+        let refused = c.run_as(&amber, &["workflow", "observe", &forged], "");
+        assert!(refused.err.contains("committed key"), "{}", refused.err);
+
+        let attested = file("attested.json", &submit_attestation(&custom, &amber));
+        let mut with = submit.to_vec();
+        with.extend(["--attestation", &attested]);
+        let drifted = c.run_as(&amber, &with, "");
+        assert!(drifted.err.starts_with("✖ stale_input:"), "{}", drifted.err);
+        let missing = c.run_as(
+            &amber,
+            &[
+                &submit[..],
+                &["--attestation", "/nonexistent/attested.json"],
+            ]
+            .concat(),
+            "",
+        );
+        assert!(
+            missing
+                .err
+                .contains("--attestation /nonexistent/attested.json"),
+            "{}",
+            missing.err
+        );
+        std::fs::write(dir.join("garbage.json"), "{}").unwrap();
+        let garbage = dir.join("garbage.json").to_string_lossy().into_owned();
+        let unread = c.run_as(
+            &amber,
+            &[&submit[..], &["--attestation", &garbage]].concat(),
+            "",
+        );
+        assert!(
+            unread.err.contains("not a signed statement"),
+            "{}",
+            unread.err
+        );
+        let bad_revision = c.run_as(
+            &amber,
+            &[&with[..], &["--input-revision", "design"]].concat(),
+            "",
+        );
+        assert!(
+            bad_revision
+                .err
+                .contains("--input-revision is NAME=REVISION"),
+            "{}",
+            bad_revision.err
+        );
+        let twice = c.run_as(
+            &amber,
+            &[
+                &with[..],
+                &["--accept", "design=r1", "--input-revision", "design=r7"],
+            ]
+            .concat(),
+            "",
+        );
+        assert!(twice.err.contains("design is given twice"), "{}", twice.err);
+        with.extend(["--input-revision", "design=r7"]);
+        // An attestation expired by this machine's clock is refused, though TASKS_NOW pins the
+        // command's clock inside its time: the caller sets that clock, never the guard's.
+        let issued = machine_now() - MAX_VALIDITY - 100.0;
+        let expired = file("expired.json", &submit_attested_at(&custom, &amber, issued));
+        let pinned = c.env.vars["TASKS_NOW"].clone();
+        c.env
+            .vars
+            .insert("TASKS_NOW".into(), (issued + 1.0).to_string());
+        let late = c.run_as(
+            &amber,
+            &[
+                &submit[..],
+                &["--attestation", &expired, "--input-revision", "design=r7"],
+            ]
+            .concat(),
+            "",
+        );
+        c.env.vars.insert("TASKS_NOW".into(), pinned);
+        assert!(
+            late.err.starts_with("✖ guard_unavailable:") && late.err.contains("expired"),
+            "{}",
+            late.err
+        );
+        assert_eq!(
+            c.ok(&amber, &with),
+            "took submit (sim/jump@3)\nsim/jump at verify/awaiting, workflow revision 3 (generation 1)\n  accept → verify/accepted  Accept, by owner  (not now: human_wait, unauthorized)\n"
+        );
+        // The same command again answers the first result.
+        assert!(c.ok(&amber, &with).starts_with("took submit (sim/jump@3)"));
+        let admission = c
+            .store()
+            .workflow_admission("sim/jump", 3)
+            .unwrap()
+            .unwrap();
+        assert_eq!(admission.guards[0].guard, "approved");
+        // Another decision at the generation accepted leaves the authority unknown: the state
+        // accepted stays, marked in conflict.
+        let other = file("other.json", &observation_of(7, 3, "x3"));
+        assert_eq!(
+            c.ok(&amber, &["workflow", "observe", &other]),
+            "approvals: in conflict at generation 3 of e1 (s3); nothing it attests is admitted \
+             until it reports a state following this one\n"
+        );
+        let third = file("third.json", &observation_of(7, 3, "y3"));
+        let json: serde_json::Value =
+            serde_json::from_str(&c.ok(&amber, &["workflow", "observe", &third, "--json"]))
+                .unwrap();
+        assert_eq!(json["observed"], "conflicted");
+        assert_eq!(json["authority"]["conflicted"], true);
+        assert_eq!(json["authority"]["state"], "s3");
+    }
+
+    #[test]
+    fn an_agent_takes_a_guarded_edge_through_the_api_with_the_attestation_it_carries() {
+        let (c, amber, custom) = claimed();
+        let call = |call: serde_json::Value| {
+            let ran = super::super::run(&c.env, &["api"], &call.to_string());
+            serde_json::from_str::<serde_json::Value>(&ran.out).unwrap()
+        };
+        let observed = call(serde_json::json!({"method": "workflow_observe",
+            "args": {"signed": observation(7, 3)}}));
+        assert_eq!(observed["ok"]["observed"], "accepted", "{observed}");
+        assert_eq!(observed["ok"]["authority"]["generation"], 3);
+        let next = call(serde_json::json!({"method": "workflow_actions",
+            "args": {"slug": "sim/jump", "handle": amber}}));
+        let request = serde_json::json!({
+            "project": c.store().database().database(), "task": "sim/jump", "edge": "submit",
+            "expected": next["ok"]["snapshot"], "input_revisions": {"design": "r7"},
+            "idempotency_key": "api-submit", "inputs": {},
+        });
+        let bare = call(serde_json::json!({"method": "workflow_apply",
+            "args": {"handle": amber, "request": request}}));
+        assert!(
+            bare["refused"]
+                .as_str()
+                .unwrap()
+                .starts_with("guard_unavailable:"),
+            "{bare}"
+        );
+        let applied = call(serde_json::json!({"method": "workflow_apply",
+            "args": {"handle": amber, "request": request,
+                "attestations": [submit_attestation(&custom, &amber)]}}));
+        assert_eq!(applied["ok"]["transition"], "sim/jump@3", "{applied}");
+        let forged = call(serde_json::json!({"method": "workflow_observe",
+            "args": {"signed": observation(8, 4)}}));
+        assert!(
+            forged["refused"]
+                .as_str()
+                .unwrap()
+                .contains("committed key"),
+            "{forged}"
+        );
+    }
+}
+
+#[test]
+fn after_a_return_the_boards_own_commands_move_the_task_again() {
+    let c = Case::new();
+    let amber = c.register("worker");
+    c.store()
+        .activate_workflow(&flow(), &Host::local())
+        .unwrap();
+    c.ok(&amber, &["create", "sim/jump", "Jump departure"]);
+    c.ok(
+        &amber,
+        &["workflow", "apply", "sim/jump", "claim", "--revision", "1"],
+    );
+    // The default branch commits a file with no [workflow], its mappings onto the board's pairs.
+    let back = "[[workflow_mappings]]\nfrom = { phase = \"build\", state = \"working\" }\nto = { phase = \"in_progress\", state = \"working\" }\n";
+    let committed = symphony_board::workflow::Committed {
+        commit: "3".repeat(40),
+        custom: None,
+        returning: written(back).unwrap().1,
+    };
+    assert_eq!(
+        c.store().follow_committed(&committed, &Host::local()),
+        Ok(symphony_board::workflow::Followed::Returned { generation: 2 })
+    );
+    assert_eq!(
+        c.ok(&amber, &["workflow", "show"]),
+        "no custom workflow is active: the board's own writers keep its tasks\n"
+    );
+    let shown = c.ok(&amber, &["show", "sim/jump"]);
+    assert!(shown.contains("[in_progress"), "{shown}");
+    // Its executor came back with it, and sends it to review by the board's own move.
+    c.ok(&amber, &["move", "sim/jump", "review"]);
+    let edge = c.run_as(
+        &amber,
+        &["workflow", "apply", "sim/jump", "submit", "--revision", "3"],
+        "",
+    );
+    assert_eq!(edge.code, 1, "{}", edge.out);
+    assert!(!edge.err.is_empty());
 }

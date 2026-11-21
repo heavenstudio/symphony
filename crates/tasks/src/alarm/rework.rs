@@ -37,7 +37,7 @@ impl Assessed {
     /// The one beside the record on `task`, if one is.
     pub fn of(task: &crate::Task) -> Option<Assessed> {
         let board = task.fields.get(crate::red::FIELDS)?;
-        let assessed: Self = serde_json::from_value(board.get(ASSESSED)?.clone()).ok()?;
+        let assessed: Self = crate::objects::read(board.get(ASSESSED)?).ok()?;
         (assessed.at.is_finite()
             && !assessed.id.trim().is_empty()
             && assessed.sid.is_none_or(|sid| sid > 0))
@@ -167,7 +167,7 @@ pub fn kept_fix(task: &crate::Task, record: Written<'_>) -> Option<Tip> {
         .get(FIXED)?
         .get(record.tip)?
         .get(record.key())?;
-    let tip: Tip = serde_json::from_value(kept.clone()).ok()?;
+    let tip: Tip = crate::objects::read(kept).ok()?;
     (tip.at.is_finite() && !tip.commit.trim().is_empty()).then_some(tip)
 }
 

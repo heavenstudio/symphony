@@ -527,7 +527,7 @@ impl Home {
     /// [`Home::ensure`] when the server does not answer.
     pub fn recorded(&self) -> Option<Running> {
         let text = fs::read_to_string(self.dir.join(ADDRESS)).ok()?;
-        serde_json::from_str(&text).ok()
+        crate::objects::parse(&text)
     }
 
     /// The board's server, answering: the recorded one, else one started now. The recorded one counts only

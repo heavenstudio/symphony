@@ -189,6 +189,75 @@ fn each_key_left_out_takes_its_default_beside_those_given() {
     );
     assert!(refused("[releases]\ngithub = [\" \", \"release\"]\n").contains("names no command"));
     assert!(refused("[releases]\ngithub = \"symphony-github\"\n").contains("github"));
+    // The command that verifies a release's commit on GitHub's machines, none unless said.
+    assert!(parsed("").unwrap().releases.hosted.is_empty());
+    assert!((parsed("[releases]\nhosted = []\n").unwrap().releases.hosted).is_empty());
+    assert_eq!(
+        parsed("[releases]\nhosted = [\"symphony-github\", \"verify\"]\n")
+            .unwrap()
+            .releases
+            .hosted,
+        ["symphony-github", "verify"]
+    );
+    let unnamed = refused("[releases]\nhosted = [\"\", \"verify\"]\n");
+    assert!(
+        unnamed
+            .contains("[releases] hosted names no command: leave it out to verify a release here"),
+        "{unnamed}"
+    );
+    assert!(refused("[releases]\nhosted = true\n").contains("hosted"));
+    // Its clock: 30 minutes unless said, and none while no command is named or the minutes are 0.
+    let named = "[releases]\nhosted = [\"symphony-github\", \"verify\"]\n";
+    let releases = parsed("").unwrap().releases;
+    assert_eq!(releases.hosted_every_minutes, 30);
+    assert_eq!(releases.hosted_clock(), None, "no command, no clock");
+    assert_eq!(parsed(named).unwrap().releases.hosted_clock(), Some(30));
+    let set = |minutes: &str| {
+        parsed(&format!("{named}hosted_every_minutes = {minutes}\n"))
+            .unwrap()
+            .releases
+            .hosted_clock()
+    };
+    assert_eq!(set("25"), Some(25));
+    assert_eq!(set("0"), None, "0 starts none by the clock");
+    assert_eq!(
+        parsed("[releases]\nhosted_every_minutes = 25\n")
+            .unwrap()
+            .releases
+            .hosted_clock(),
+        None
+    );
+    for wrong in ["-1", "\"often\"", "2.5"] {
+        let refusal = refused(&format!("[releases]\nhosted_every_minutes = {wrong}\n"));
+        assert!(
+            refusal.contains("hosted_every_minutes"),
+            "{wrong}: {refusal}"
+        );
+    }
+    // Who bypasses the rules is verified again by the command the project names, and by none
+    // unsaid.
+    assert!(parsed("").unwrap().releases.rulesets.is_empty());
+    assert!(
+        (parsed("[releases]\nrulesets = []\n")
+            .unwrap()
+            .releases
+            .rulesets)
+            .is_empty(),
+        "an empty command is none"
+    );
+    assert_eq!(
+        parsed("[releases]\nrulesets = [\"symphony-github\", \"rulesets\", \"--verify\"]\n")
+            .unwrap()
+            .releases
+            .rulesets,
+        ["symphony-github", "rulesets", "--verify"]
+    );
+    let blank = refused("[releases]\nrulesets = [\"\", \"rulesets\"]\n");
+    assert!(
+        blank.contains("[releases] rulesets names no command"),
+        "{blank}"
+    );
+    assert!(refused("[releases]\nrulesets = \"symphony-github\"\n").contains("rulesets"));
 }
 
 #[test]
@@ -476,6 +545,18 @@ fn the_land_table_names_what_the_regenerator_makes_and_whether_a_land_pushes_and
             .contains("[land] timeout_seconds is 0, which no generator or check runs in")
     );
     assert!(refused("[land]\ntimeout_seconds = \"1h\"\n").contains("timeout_seconds"));
+    // How often the delivery watcher reads the host, and how long a host is given to merge: keys
+    // the project file knows, which the board reads (`symphony_board::land::Settings`), neither 0.
+    assert!(parsed("[land]\nwatch_seconds = 10\nmerge_within_minutes = 45\n").is_ok());
+    assert!(
+        refused("[land]\nwatch_seconds = 0\n")
+            .contains("[land] watch_seconds is 0: the watcher rests between its rounds")
+    );
+    assert!(
+        refused("[land]\nmerge_within_minutes = 0\n")
+            .contains("[land] merge_within_minutes is 0: a host is given time to merge")
+    );
+    assert!(refused("[land]\nwatch_seconds = \"30s\"\n").contains("watch_seconds"));
     // Whether a land runs `[verdicts] check`: on unless the project turns it off.
     assert!(plain.land.check);
     assert!(!parsed("[land]\ncheck = false\n").unwrap().land.check);

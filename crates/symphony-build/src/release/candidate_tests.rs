@@ -72,6 +72,7 @@ fn run(id: &str, commit: &str, checks: Vec<Ran>) -> Run {
         slept: 0.0,
         inputs: None,
         environment: None,
+        hosted: Vec::new(),
     }
 }
 
@@ -1952,6 +1953,78 @@ fn a_delivered_head_that_merged_main_never_brings_main_into_the_candidate() {
              land",
             short(&receipt.squash),
             short(&tip)
+        )]
+    );
+}
+
+#[test]
+fn a_delivered_merge_keeping_mains_outputs_leaves_the_candidate_the_fixs_own_outputs() {
+    // A red's fix that changes what the client is built from, under delivery (RELEASES, a red's
+    // fix): its head commits the outputs its own sources make, main makes its own meanwhile, and
+    // the head delivered merges main keeping main's side of them. The land tells such a fix by
+    // the branch this run keeps.
+    assert_eq!(BRANCH, symphony_board::land::delivery::CANDIDATE);
+    let tree = Tree::new();
+    let scratch = Scratch::new(&tree);
+    let tip = scratch.commit("dist.txt", "built of the candidate\n", "the candidate");
+    scratch.checkout(&["-b", SLUG]);
+    let fix = scratch.commit("dist.txt", "built of the fix\n", "the fix, and its build");
+    scratch.checkout(&["main"]);
+    scratch.commit("dist.txt", "built of main\n", "main's build");
+    scratch.checkout(&[SLUG]);
+    let named = ["-c", "user.name=t", "-c", "user.email=t@example.com"];
+    let merge = git(
+        &scratch.root,
+        &[&named[..], &["merge", "-q", "--no-ff", "main"]].concat(),
+    );
+    assert!(merge.is_err(), "dist.txt conflicts");
+    scratch.git(&["checkout", "main", "--", "dist.txt"]);
+    scratch.git(&["commit", "-q", "--no-edit"]);
+    let caught_up = scratch.head();
+    let receipt = delivered(&scratch, &caught_up);
+    let main = scratch.head();
+    let show = |at: &str| scratch.git(&["show", &format!("{at}:dist.txt")]);
+    assert_eq!(show(&receipt.squash), "built of main", "main keeps its own");
+    let board = Fake {
+        approves: vec![(
+            SLUG.into(),
+            vec![
+                format!("approve: {fix}: the fix and its build"),
+                format!("approve: {caught_up}: main merged, its outputs kept"),
+            ],
+        )],
+        ..Fake::default()
+    };
+    let settled = |at: &str| {
+        let mut candidate = candidate_at(at);
+        let said = settle(
+            &mut candidate,
+            &line(&scratch, &main, Some(&main)),
+            &board,
+            NOW + 60.0,
+            BOUNDS,
+        );
+        (candidate, said)
+    };
+    let (candidate, said) = settled(&tip);
+    assert_eq!(candidate.commit, fix, "{said:?}");
+    assert_eq!(show(&candidate.commit), "built of the fix");
+    assert!(candidate.open(), "{said:?}");
+    // A candidate that moved on since the fix started (another red's fix advanced it) takes
+    // neither: the fix does not hold its tip, and it is dropped, said.
+    scratch.checkout(&["-b", "tools/another-red", &tip]);
+    let moved = scratch.commit("other.txt", "another red's fix\n", "another red's fix");
+    let (candidate, said) = settled(&moved);
+    assert_eq!(candidate.state, State::Dropped, "{said:?}");
+    assert_eq!(candidate.commit, moved);
+    assert_eq!(
+        said,
+        vec![format!(
+            "dropped the release candidate: {SLUG} landed ({}) with no approved commit that \
+             descends from the candidate ({}) and holds beyond it nothing main held before the \
+             land",
+            short(&receipt.squash),
+            short(&moved)
         )]
     );
 }

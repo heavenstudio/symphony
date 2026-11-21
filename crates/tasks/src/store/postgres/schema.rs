@@ -147,6 +147,8 @@ pub(in crate::store) const TABLES: [Table; 30] = [
                     "event",
                     "receipt",
                     "intent",
+                    "authority",
+                    "admission",
                 ],
             ),
             req("body", Object),
@@ -516,8 +518,18 @@ BEGIN
             || 'workflow actions ' || NEW.slug || ')';
     END IF;
     IF w IS NULL THEN
-        RAISE EXCEPTION '%', 'refused: workflow: ' || NEW.slug
-            || ' keeps its workflow position: only an activation returns a task to the board writers';
+        SELECT body INTO e FROM workflow
+            WHERE id = jsonb_build_array('event', NEW.slug, (was ->> 'revision')::bigint + 1);
+        IF e IS NULL OR e -> 'status' IS DISTINCT FROM to_jsonb(NEW.status)
+            OR e ->> 'activation' IS NULL
+            OR (SELECT body -> 'returned' FROM workflow
+                WHERE id = jsonb_build_array('activation', e -> 'activation'))
+                IS DISTINCT FROM 'true'::jsonb THEN
+            RAISE EXCEPTION '%', 'refused: workflow: ' || NEW.slug
+                || ' keeps its workflow position: only an activation that returns the board to its'
+                || ' own writers retires it, beside the transition recorded for it';
+        END IF;
+        RETURN NEW;
     END IF;
     IF was IS NOT NULL AND (w -> 'revision') IS DISTINCT FROM to_jsonb((was ->> 'revision')::bigint + 1) THEN
         RAISE EXCEPTION '%', 'refused: workflow: ' || NEW.slug || ' moves from workflow revision '
@@ -543,15 +555,21 @@ BEGIN
 END
 $f$;
 
--- A recorded definition, activation, transition or receipt is never changed, and the active
+-- A recorded definition, activation, transition, receipt or admission is never changed, a
+-- generation accepted from an approval authority is never lowered within its epoch, and the active
 -- generation moves forward only to an activation recorded for it: SurrealDB's
 -- `workflow_history` and `workflow_active` events.
 CREATE OR REPLACE FUNCTION board_workflow_history() RETURNS trigger LANGUAGE plpgsql AS $f$
 DECLARE
     activation jsonb;
 BEGIN
-    IF OLD.kind IN ('definition', 'activation', 'event', 'receipt') OR OLD.kind <> NEW.kind THEN
+    IF OLD.kind IN ('definition', 'activation', 'event', 'receipt', 'admission') OR OLD.kind <> NEW.kind THEN
         RAISE EXCEPTION '%', 'refused: workflow: a recorded ' || OLD.kind || ' is never changed';
+    END IF;
+    IF OLD.kind = 'authority' AND OLD.body ->> 'epoch' = NEW.body ->> 'epoch'
+        AND (NEW.body ->> 'generation')::bigint < (OLD.body ->> 'generation')::bigint THEN
+        RAISE EXCEPTION '%',
+            'refused: workflow: the generation the board accepted from an approval authority is never lowered within its epoch';
     END IF;
     IF NEW.kind = 'active' THEN
         SELECT body INTO activation FROM workflow
@@ -877,8 +895,12 @@ fn create(table: &Table) -> String {
             sql.push_str(" NOT NULL");
         }
         if !column.one_of.is_empty() {
-            let values: Vec<String> = column.one_of.iter().map(|v| format!("'{v}'")).collect();
-            let _ = write!(sql, " CHECK ({} IN ({}))", column.name, values.join(", "));
+            let _ = write!(
+                sql,
+                " CHECK ({} IN ({}))",
+                column.name,
+                quoted(column.one_of)
+            );
         }
         if let Some(json) = column.kind.json() {
             let _ = write!(sql, " CHECK (jsonb_typeof({}) = '{json}')", column.name);
@@ -886,6 +908,37 @@ fn create(table: &Table) -> String {
     }
     sql.push_str("\n);\n");
     sql
+}
+
+/// `values` as SQL text literals, separated by commas.
+fn quoted(values: &[&str]) -> String {
+    format!("'{}'", values.join("', '"))
+}
+
+/// `table`'s `kind` check made again from its definition, for a board whose table an older schema
+/// made with fewer kinds: `CREATE TABLE IF NOT EXISTS` leaves an existing table's check as it was.
+/// Only a check that lacks one of them is altered: `ALTER TABLE` takes the table's exclusive lock
+/// even when it changes nothing, and a migration would wait behind every open reader of it.
+fn kinds(table: &str) -> String {
+    let column = (self::table(table)
+        .expect("a table of the board")
+        .columns
+        .iter())
+    .find(|c| c.name == "kind")
+    .expect("a table with a kind column");
+    let values = quoted(column.one_of);
+    format!(
+        "DO $kinds$ BEGIN
+    IF EXISTS (SELECT 1 FROM unnest(ARRAY[{values}]) AS k WHERE NOT EXISTS (
+            SELECT 1 FROM pg_constraint c
+            WHERE c.conrelid = '{table}'::regclass AND c.conname = '{table}_kind_check'
+            AND strpos(pg_get_constraintdef(c.oid), '''' || k || '''') > 0)) THEN
+        ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {table}_kind_check,
+            ADD CONSTRAINT {table}_kind_check CHECK (kind IN ({values}));
+    END IF;
+END $kinds$;
+"
+    )
 }
 
 /// The columns a table gained after it was first made, which `CREATE TABLE IF NOT EXISTS` would
@@ -951,6 +1004,7 @@ fn defined(analyzed: &str) -> String {
         sql.push_str(&create(table));
     }
     sql.push_str(ADDED);
+    sql.push_str(&kinds("workflow"));
     sql.push_str(UNIQUES);
     sql.push_str(RECOVERY);
     sql.push_str(INDEXES);
