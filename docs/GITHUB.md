@@ -344,7 +344,12 @@ evidence, and it reads no board for it.
   requires passes, `symphony/eligible` among them. A pull request that is a draft is marked ready
   first. It answers:
   - `{"state": "armed", "pull": N, "head": SHA}`, also when auto-merge was on already by that
-    method, which it turns on no second time;
+    method and that text (GitHub's `auto_merge.commit_title` and `commit_message`), which it
+    turns on no second time. GitHub merges by the text it was armed with, so one on by another
+    text, armed at an earlier head or before the task's curated text was written, is turned off
+    and on again at this head with this text. One turned off whose arming GitHub then refuses,
+    or whose answer is lost, is answered so and left as GitHub has it: the next run reads it
+    first and arms it;
   - `{"state": "mergeable", "pull": N, "head": SHA}` where GitHub can merge it already (it takes
     no auto-merge of a pull request in `clean` or `unstable` status): the land asks `merge`;
   - `{"state": "merged", "sha": SHA}` and `{"state": "closed"}` where it is so already;

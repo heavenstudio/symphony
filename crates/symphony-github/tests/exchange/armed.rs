@@ -378,3 +378,214 @@ fn result_says_each_check_at_the_head_that_is_not_the_apps_and_did_not_pass() {
     assert_eq!(d.result(100)["foreign"], json!([]));
     assert_eq!(d.rig.github.listings(HEAD), reads);
 }
+
+/// The auto-merge of the one pull request as the fake holds it: its title and message.
+fn armed_text(d: &Delivery) -> (Value, Value) {
+    let on = d.rig.github.pulls().remove(0)["auto_merge"].clone();
+    (on["commit_title"].clone(), on["commit_message"].clone())
+}
+
+/// A curated text written for [`SLUG`], titled `title`.
+fn curate(d: &Delivery, title: &str) {
+    let body = d.rig.dir.0.join("body.md");
+    std::fs::write(&body, "What it does, for the public.\n").unwrap();
+    d.rig
+        .run(&[
+            "publish",
+            SLUG,
+            "--title",
+            title,
+            "--body-file",
+            body.to_str().unwrap(),
+        ])
+        .ok();
+}
+
+#[test]
+fn armed_at_an_earlier_head_it_is_armed_again_and_the_squash_names_the_new_head() {
+    let d = published("armed-new-head");
+    d.arm(100, HEAD);
+    // A new commit published: GitHub keeps the auto-merge on, with the text of the first head.
+    let next = "b".repeat(40);
+    assert_eq!(
+        d.publish(&snapshot(&next, "missing", "r2"))["state"],
+        "published"
+    );
+    assert_eq!(
+        armed_text(&d).1,
+        json!(format!("Squashed from {HEAD} by pull request #100."))
+    );
+    assert_eq!(
+        d.arm(100, &next),
+        json!({"state": "armed", "pull": 100, "head": next})
+    );
+    // Turned off, then on at the new head with its text.
+    let sent = mutations(&d);
+    assert_eq!(sent.len(), 3, "{sent:?}");
+    assert!(
+        sent[1]["query"]
+            .as_str()
+            .unwrap()
+            .contains("disablePullRequestAutoMerge(input:")
+    );
+    assert_eq!(
+        sent[2]["variables"],
+        json!({
+            "id": "PR_node100", "method": "SQUASH", "head": next, "headline": SLUG,
+            "body": format!("Squashed from {next} by pull request #100."),
+        })
+    );
+    // The same head and text again: nothing sent.
+    assert_eq!(d.arm(100, &next)["state"], "armed");
+    assert_eq!(mutations(&d).len(), 3);
+    // On by this text and another method: armed again as well.
+    let mut on = d.rig.github.pulls().remove(0)["auto_merge"].clone();
+    on["merge_method"] = json!("merge");
+    d.rig.github.set_pull(100, &json!({"auto_merge": on}));
+    assert_eq!(d.arm(100, &next)["state"], "armed");
+    assert_eq!(mutations(&d).len(), 5);
+    assert_eq!(
+        d.rig.github.pulls()[0]["auto_merge"]["merge_method"],
+        "squash"
+    );
+    d.publish(&snapshot(&next, "met", "r3"));
+    let merged = d.rig.github.pulls().remove(0)["merged_as"].clone();
+    assert_eq!(
+        merged,
+        json!({
+            "sha": next, "merge_method": "squash", "commit_title": SLUG,
+            "commit_message": format!("Squashed from {next} by pull request #100."),
+        })
+    );
+    d.assert_no_token();
+}
+
+#[test]
+fn a_curated_text_written_after_the_arm_reaches_the_squash() {
+    let d = published("armed-curated-later");
+    d.arm(100, HEAD);
+    assert_eq!(armed_text(&d).0, json!(SLUG));
+    d.rig
+        .board
+        .file(SLUG, "the private title", "the private brief");
+    curate(&d, "Jump higher");
+    assert_eq!(d.arm(100, HEAD)["state"], "armed");
+    assert_eq!(mutations(&d).len(), 3, "off, then on by the curated title");
+    // Curated again, the title as it was: the text is the same, and nothing is sent.
+    curate(&d, "Jump higher");
+    assert_eq!(d.arm(100, HEAD)["state"], "armed");
+    assert_eq!(mutations(&d).len(), 3);
+    d.publish(&snapshot(HEAD, "met", "r2"));
+    let merged = d.rig.github.pulls().remove(0)["merged_as"].clone();
+    assert_eq!(
+        (&merged["commit_title"], &merged["commit_message"]),
+        (
+            &json!("sim/jump: Jump higher"),
+            &json!(format!("Squashed from {HEAD} by pull request #100."))
+        )
+    );
+}
+
+#[test]
+fn a_disarm_made_and_an_arming_lost_or_refused_leaves_it_off_for_the_next_run_to_arm() {
+    let next = "b".repeat(40);
+    let rearmed = |name: &str| {
+        let d = published(name);
+        d.arm(100, HEAD);
+        d.publish(&snapshot(&next, "missing", "r2"));
+        d
+    };
+    // The arming refused after the disarm: said by kind, auto-merge off.
+    let d = rearmed("armed-again-refused");
+    d.rig.github.fault("POST", "/graphql", Fault::Pass);
+    d.rig
+        .github
+        .fault("POST", "/graphql", Fault::Status(403, Vec::new()));
+    let answer = d.arm(100, &next);
+    assert_eq!(
+        (&answer["state"], &answer["kind"]),
+        (&json!("refused"), &json!("permission")),
+        "{answer}"
+    );
+    assert_eq!(d.rig.github.pulls()[0]["auto_merge"], Value::Null);
+    let journal: Vec<String> = (d.rig.journal().iter())
+        .map(|entry| format!("{} {:?}", entry.kind, entry.event))
+        .collect();
+    assert_eq!(
+        journal[journal.len() - 4..],
+        ["disarm Intent", "disarm Ack", "arm Intent", "arm Failed"],
+        "{journal:?}"
+    );
+    // Off, the next run arms it with one mutation, at the new head.
+    assert_eq!(d.arm(100, &next)["state"], "armed");
+    assert_eq!(mutations(&d).len(), 4);
+    assert_eq!(
+        armed_text(&d).1,
+        json!(format!("Squashed from {next} by pull request #100."))
+    );
+    // The arming never reaching GitHub is the same to this run as its answer lost: unavailable.
+    // Here it was carried out, and the next run reads this head's text and sends nothing.
+    let d = rearmed("armed-again-lost");
+    d.rig.github.fault("POST", "/graphql", Fault::Pass);
+    d.rig.github.fault("POST", "/graphql", Fault::LoseAnswer);
+    let answer = d.arm(100, &next);
+    assert_eq!(answer["state"], "unavailable", "{answer}");
+    let journal = d.rig.journal();
+    let last = journal.last().unwrap();
+    assert_eq!(format!("{} {:?}", last.kind, last.event), "arm Unknown");
+    assert_eq!(d.arm(100, &next)["state"], "armed");
+    assert_eq!(mutations(&d).len(), 3);
+    // The arming never carried out, its answer GitHub's own failure: not known, auto-merge off.
+    let d = rearmed("armed-again-unanswered");
+    d.rig.github.fault("POST", "/graphql", Fault::Pass);
+    d.rig
+        .github
+        .fault("POST", "/graphql", Fault::Status(502, Vec::new()));
+    let answer = d.arm(100, &next);
+    assert_eq!(answer["state"], "unavailable", "{answer}");
+    assert_eq!(d.rig.github.pulls()[0]["auto_merge"], Value::Null);
+    let journal: Vec<String> = (d.rig.journal().iter())
+        .map(|entry| format!("{} {:?}", entry.kind, entry.event))
+        .collect();
+    assert_eq!(
+        journal[journal.len() - 4..],
+        ["disarm Intent", "disarm Ack", "arm Intent", "arm Unknown"],
+        "{journal:?}"
+    );
+    // The next run arms it: one enable, at the new head with its text.
+    assert_eq!(d.arm(100, &next)["state"], "armed");
+    let sent = mutations(&d);
+    assert_eq!(sent.len(), 4, "{sent:?}");
+    assert!(
+        sent[3]["query"]
+            .as_str()
+            .unwrap()
+            .contains("enablePullRequestAutoMerge(input:")
+    );
+    assert_eq!(sent[3]["variables"]["head"], json!(next));
+    assert_eq!(
+        armed_text(&d).1,
+        json!(format!("Squashed from {next} by pull request #100."))
+    );
+    // The disarm itself refused: the first arming stands, said as a disarm says it.
+    let d = rearmed("armed-again-held");
+    d.rig
+        .github
+        .fault("POST", "/graphql", Fault::Status(403, Vec::new()));
+    let answer = d.arm(100, &next);
+    assert_eq!(
+        answer["why"],
+        "GitHub left auto-merge on for pull request #100 (403): planted"
+    );
+    assert_eq!(
+        armed_text(&d).1,
+        json!(format!("Squashed from {HEAD} by pull request #100."))
+    );
+    // Its answer lost: not known, and nothing armed after it.
+    d.rig.github.fault("POST", "/graphql", Fault::LoseAnswer);
+    let answer = d.arm(100, &next);
+    assert_eq!(answer["state"], "unavailable", "{answer}");
+    assert_eq!(d.rig.github.pulls()[0]["auto_merge"], Value::Null);
+    assert_eq!(d.arm(100, &next)["state"], "armed");
+    d.assert_no_token();
+}
