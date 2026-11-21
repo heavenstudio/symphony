@@ -299,6 +299,12 @@ fn the_board_draws_the_workflows_phases_as_columns_and_tabs_and_filters_by_a_sta
         json!(true),
         "no sideways scroll on a phone"
     );
+    // A workflow's lanes are phases: its board draws no row of work under way.
+    assert_eq!(
+        page.eval("document.querySelector('.under-way')"),
+        Value::Null,
+        "a custom workflow's board draws no row of work under way"
+    );
     shot(&mut page, "board-phone");
 }
 

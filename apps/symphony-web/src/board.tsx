@@ -824,13 +824,20 @@ export function TaskBoard({
           wait === "" && search === "" ? (meta("ready")?.ordinary ?? count("ready")) : undefined
         }
       />
-      {phone && wait === "" && tabs.includes("in_progress") && (
-        <UnderWay
-          working={meta("in_progress")?.ordinary ?? count("in_progress")}
-          machines={machine ? [count("build"), count("test")] : null}
-          onStage={show}
-        />
-      )}
+      {/* Under a wait filter, whose counts are the filter's, the row keeps its room, so the strip
+          under it stays where the chip was pressed. A custom workflow's lanes are phases: its
+          board draws none, from the listing that names it, before its lanes are read. */}
+      {phone &&
+        !generation &&
+        (wait === "" ? (
+          <UnderWay
+            working={meta("in_progress")?.ordinary ?? count("in_progress")}
+            machines={machine ? [count("build"), count("test")] : null}
+            onStage={show}
+          />
+        ) : (
+          <div className="under-way" />
+        ))}
       <nav
         ref={waits}
         className="wait-strip scroll-row"

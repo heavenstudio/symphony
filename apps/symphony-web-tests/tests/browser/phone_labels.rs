@@ -471,7 +471,15 @@ fn a_phones_wait_strip_is_one_row_that_keeps_the_pressed_filter_in_view() {
             json!({"rows":true,"card":true,"fits":true}),
             "{what}"
         );
-        // The last filter, with nothing waiting on it, pressed: it lists across the stages.
+        // The strip stays where it is as a chip is pressed and released: the row of work under
+        // way over it keeps its room under a filter.
+        const STRIP_TOP: &str = "Math.round(document.querySelector('.wait-strip').getBoundingClientRect().top + scrollY)";
+        let strip_top = page.eval(STRIP_TOP);
+        assert_eq!(
+            page.eval("document.querySelector('.under-way [data-stage=in_progress]') !== null"),
+            json!(true),
+            "{what}: the row of work under way is over the strip"
+        );
         page.eval("(chip => { chip.focus(); chip.click(); })(document.querySelector('.wait-chip.k-parked'))");
         assert!(
             page.wait_for(
@@ -484,6 +492,11 @@ fn a_phones_wait_strip_is_one_row_that_keeps_the_pressed_filter_in_view() {
         chosen(&row, "Parked 0", &what);
         ringed(&row, "Parked 0", &what);
         cued(&row, "start", &format!("{what}, Parked pressed"));
+        assert_eq!(
+            page.eval(STRIP_TOP),
+            strip_top,
+            "{what}: pressing a chip moved the strip"
+        );
         shot(&mut page, &format!("{width}-{scheme}-parked"));
         // Back to every open task: the stages return with the stage chosen before.
         page.eval(
@@ -501,5 +514,10 @@ fn a_phones_wait_strip_is_one_row_that_keeps_the_pressed_filter_in_view() {
         let row = rests(&mut page, ".wait-strip", &format!("{what}, every task"));
         chosen(&row, "73 open", &what);
         cued(&row, "end", &format!("{what}, every task"));
+        assert_eq!(
+            page.eval(STRIP_TOP),
+            strip_top,
+            "{what}: releasing the chip moved the strip"
+        );
     }
 }

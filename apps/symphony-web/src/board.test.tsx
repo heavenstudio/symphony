@@ -235,6 +235,13 @@ describe("the approved B board", () => {
     vi.stubGlobal("innerWidth", 390);
     expect(render(<GhostBoard shape={[]} />)).toContain('<div class="under-way"></div>');
   });
+  it("draws no row of work under way on a board whose listing names a custom workflow", () => {
+    vi.stubGlobal("innerWidth", 390);
+    const waiting = { kinds: [], columns: [], workflow: 3 };
+    const held = board({ counts: [["in_progress", 5]], waiting });
+    expect(held).not.toContain("under-way");
+    expect(held).toContain("wait-strip");
+  });
   it("gives each count of the work under way its lane", () => {
     const shown: string[] = [];
     const row = UnderWay({ working: 1, machines: [2, 3], onStage: (stage) => shown.push(stage) });

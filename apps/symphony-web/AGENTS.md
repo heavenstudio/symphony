@@ -847,10 +847,12 @@ What holds on every page, and each page's contract where its section above names
   the tasks in progress, blocked ones left out, with those a machine builds or tests among them
   and named as such (working, building, testing, the last two once a machine reports), each
   count a button to its lane, since the Build and Test tabs are past the tab row's edge and In
-  progress alone read 0 while every task was in a build or a test; a custom workflow's board,
-  whose lanes are phases, draws none (`apps/symphony-web-tests/tests/browser/phone_board.rs`).
-  There the header's pages, the wait strip and the stage tabs are each one row that scrolls across what
-  does not fit it (`src/scrollrow.ts`, `.scroll-row` in `src/styles/frame.css`): the chosen one,
+  progress alone read 0 while every task was in a build or a test
+  (`apps/symphony-web-tests/tests/browser/phone_board.rs`). Under a wait filter it keeps its
+  room empty, so the strip stays where its chip was pressed (`phone_labels.rs`), and a board
+  whose listing names a custom workflow, its lanes being phases, draws none
+  (`workflow_board.rs`). There the header's pages, the wait strip and the stage tabs are each
+  one row that scrolls across what does not fit it (`src/scrollrow.ts`, `.scroll-row` in `src/styles/frame.css`): the chosen one,
   and one that takes the focus, is brought whole into view; an edge fades only while the row
   continues past it, the row itself and no colour over it; and a choice not whole in the row's
   window is drawn as its empty shape, so no label is read in part
