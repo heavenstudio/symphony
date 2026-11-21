@@ -692,12 +692,14 @@ fn a_task_holds_still_while_its_thread_loads() {
 }
 
 /// A phone's first visit to a task of another shape, the page's answer drawn before the gates':
-/// it scores 0.1399. The board task `app/task-first-visit-holds-still` brings it down to
-/// `CLS_LIMIT`; until then it only goes down.
-const PHONE_PAGE_FIRST_LIMIT: f64 = 0.14;
-/// The same visit with the gates' answer drawn before the page's: it scores 0.0636. The board
-/// task `app/task-first-visit-holds-still` brings it down to `CLS_LIMIT`.
-const PHONE_GATES_FIRST_LIMIT: f64 = 0.064;
+/// it scores 0.1556 in Chrome 158, which reports the boxes that moved at the page's whole width
+/// (0.1399 in Chrome 157, at their own inside the page's padding). The board task
+/// `app/task-first-visit-holds-still` brings it down to `CLS_LIMIT`; until then it only goes down.
+const PHONE_PAGE_FIRST_LIMIT: f64 = 0.156;
+/// The same visit with the gates' answer drawn before the page's: it scores 0.0689 in Chrome 158
+/// (0.0636 in 157). The board task `app/task-first-visit-holds-still` brings it down to
+/// `CLS_LIMIT`.
+const PHONE_GATES_FIRST_LIMIT: f64 = 0.069;
 
 /// What a first visit to a task of another shape than the outline's guess scores less than: on a
 /// phone what its order measures, wide the limit of every page (0.0309 and 0.0284 there).
