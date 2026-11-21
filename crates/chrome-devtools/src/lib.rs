@@ -690,6 +690,11 @@ fn chrome_args(profile: &Path) -> Vec<String> {
         // left page Chrome keeps for Back still gets a new frame. Chrome takes only the last
         // --disable-features given, so every feature turned off is in this one.
         "--disable-features=Translate,OptimizationHints,MediaRouter,RenderDocument",
+        // Motion as a page asks for it, whatever the machine's own setting: Chrome otherwise
+        // reads the system's "reduce motion" (on, on a hosted macOS runner) into
+        // `prefers-reduced-motion`, and a page is drawn and measured one way here and another
+        // there. A caller that wants the reduced page emulates it (`Emulation.setEmulatedMedia`).
+        "--force-prefers-no-reduced-motion",
         "--remote-debugging-port=0",
     ]
     .into_iter()

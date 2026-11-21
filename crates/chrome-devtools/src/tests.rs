@@ -270,6 +270,8 @@ fn browser_leash() {
         assert!(args.contains(&"--disable-backgrounding-occluded-windows".into()));
         // No updater, whose wake leaves the browser's group and outlives the leash.
         assert!(args.contains(&"--disable-updater-scheduler".into()));
+        // Motion as the page asks, not as the machine's settings reduce it.
+        assert!(args.contains(&"--force-prefers-no-reduced-motion".into()));
         // A same-site visit keeps its frame, in the one list of features turned off Chrome reads.
         let disabled: Vec<_> = args
             .iter()
@@ -4864,4 +4866,24 @@ fn a_target_is_listed_only_by_its_own_id_among_the_answers_targets() {
     assert!(!listed(&targets, "A"), "a part of an id is not it");
     assert!(!listed(&json!({"targetInfos": []}), "A1"));
     assert!(!listed(&json!({}), "A1"), "an answer with no list");
+}
+
+#[test]
+fn a_page_prefers_no_reduced_motion_until_a_caller_emulates_it() {
+    let Some(binary) = find() else {
+        eprintln!("no Chrome: real browser capability unavailable");
+        return;
+    };
+    let (base, _asked) = caching_server();
+    let mut chrome = Chrome::launch(&binary, &leash()).unwrap();
+    chrome.open(&base).unwrap();
+    let reduced = "matchMedia('(prefers-reduced-motion: reduce)').matches";
+    assert_eq!(chrome.eval(reduced).unwrap(), json!(false));
+    chrome
+        .call(
+            "Emulation.setEmulatedMedia",
+            json!({"features": [{"name": "prefers-reduced-motion", "value": "reduce"}]}),
+        )
+        .unwrap();
+    assert_eq!(chrome.eval(reduced).unwrap(), json!(true));
 }
