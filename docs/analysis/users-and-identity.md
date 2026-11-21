@@ -310,6 +310,30 @@ What follows for the rules that say "the owner":
 
 A group of one is a single owner, so a machine with one person sees none of this.
 
+### Which group a thing belongs to
+
+The place it is in, unless a name is written on it
+([its card](../DECISIONS.md#owning-group-how-named), C).
+
+![Which group owns a card or a task](users-and-identity/owning-group.svg)
+
+- **The board keeps a map of places to groups**: a folder of documents, a task's area. A card or
+  a task with nothing written on it belongs to the group its place maps to.
+- **A name written on it overrides the map**: a group's, or one person's. The card shows which
+  of the two gave its group.
+- **A place the map does not name** goes to the board's default group, which on a board with
+  nobody named is the person at the machine.
+- **Any member can hand a thing to another group**, and the board records who did.
+
+What follows:
+
+- **The map is the board's own**, as its groups are, so two boards of one project can send the
+  same folder to different groups.
+- **A name written on a card is in the file**, so a group's name is public as a person's is. A
+  board with no group of that name treats the card as unnamed and falls back to the map.
+- **An agent posting a card writes nothing** in the usual case, and names a group only when the
+  question is not its document's.
+
 ### Words without agent reach
 
 Nothing reaches an agent until someone passes it on
@@ -344,36 +368,9 @@ What follows:
 
 ## This round
 
-Two choices, each a card. Both follow
-from what is settled: a group owns a thing, so something must say which group; and a person's
-name is on every line they write, so something must say whose name is whose.
-
-### Which group a thing belongs to
-
-**Base.** A card belongs to nobody but the owner. It has a document, whose first folder under
-`docs/` is its category in the queue (design, engineering), and a topic heading in its register.
-A task has an orchestrator and a name whose first part is its area (`app/`, `tools/`). Neither
-names who decides it.
-
-![Which group owns a card or a task](users-and-identity/owning-group.svg)
-
-- **A, written on it.** Whoever posts a card or files a task names its group, or its one person.
-  One with none goes to the board's default group.
-- **B, read from where it is.** The board maps places to groups: a folder of documents, a task's
-  area. Nothing is written on a card, and changing the map moves everything there at once.
-- **C, the place, unless named.** The map gives the group. A name written on the card or the
-  task overrides it, and the card shows which of the two gave its group.
-
-Under every option any member can hand a thing to another group, and the board records who did.
-The map of places to groups is the board's own, as its groups are. A group's name written on a
-card is in the file, so it is public as a person's name is, and a board with no group of that
-name treats the card as unnamed. With one group on a board the three are the same.
-
-**Recommended: C.** Agents post most cards. Under A each must choose a group every time, and one
-that chooses wrong or leaves it out sends the card to people who cannot answer it. Under B a
-design question raised in an engineering document goes to engineering with no way to say
-otherwise. C needs nothing written in the usual case and has a way out for the other. Its cost
-is two rules where A and B have one.
+Two choices, each a card. A person's name is on every line they write, so something must say
+whose name is whose. And on a machine Tailscale is the sign-in service, so something must say
+what a machine under another person's login may do before a board names them.
 
 ### Where public names are declared
 
@@ -410,6 +407,34 @@ person cannot write on a board until a landing has added their name. An admin ad
 from the People page would file that landing, and the person reads meanwhile. A group's name,
 where one is written on a card ([above](#which-group-a-thing-belongs-to)), is declared the same
 way.
+
+### A tailnet machine under another login
+
+**Base.** Any machine the tailnet answers for reaches the server and writes as the owner: the
+owner's phone, and equally a colleague's laptop or a machine shared into the tailnet. Whose
+machine it is, is in Tailscale's answer and is not read
+([the picture](#what-the-symphony-has-today)).
+
+Once the login is read, a machine under the Mac's own login is its person, as today. The choice
+is what a machine under another login may do before a board has named that person.
+
+![A tailnet machine under someone else's login](users-and-identity/tailnet-peer.svg)
+
+- **A, as today.** It keeps writing as the owner until a board names its first person. Nothing
+  changes for anyone until then, and what is open today stays open.
+- **B, nothing until named.** It is refused, with a page saying whose machine the server is and
+  that a board must name them. A board that names that login's person lets them in, to that
+  board.
+- **C, reads until named.** It reads every board the server holds and writes nothing.
+
+A machine with no login (a tagged node) is treated as the other login's machine is. With nobody
+else in the tailnet the three are the same.
+
+**Recommended: B.** A leaves a colleague's laptop deciding the owner's cards for as long as
+nobody is named, which on a one-person machine is always. C shows every project on the machine
+to the whole tailnet, which a board's own list was meant to decide. B changes nothing for one
+person and their own machines, and it is the only one of the three under which being in a
+tailnet gives nothing by itself.
 
 ## Sessions
 
@@ -455,11 +480,12 @@ Each step can ship alone, and a machine with one person sees none of them.
 1. **The actor seam.** Every write takes an actor. The local host supplies the local owner, and
    every line reads as it does today.
 2. **Tailscale's login read.** The gate keeps who a peer is. A peer under the machine's own
-   login is its person. Whether a peer under another login keeps today's reach until a board
-   names somebody is a later card.
+   login is its person. What a peer under another login may do before a board names them is
+   [asked](#a-tailnet-machine-under-another-login).
 3. **People, groups and powers on a board.** The rows, the People page, names on lines.
-4. **Ownership.** A card and a task have their group, queues and notices follow it, and any
-   member's answer settles what the group owns.
+4. **Ownership.** A card and a task have their group, from the board's map of places or a name
+   written on them; queues and notices follow it, and any member's answer settles what the
+   group owns.
 5. **Speaking apart from directing agents.** A person's words reach people always. The board
    holds the words of someone who may not direct agents, and passing them on makes them an ask.
 6. **The signed word verified.** The core's check of a sign-in service's signed data, and hosted
@@ -493,7 +519,6 @@ Not carded yet.
   like their other words.
 - How a person's line reads in a document and on a thread, and who authors the commit of a
   person's save.
-- A tailnet peer under another login, before a board names anybody: today's reach, or none.
 - Queues and notices per person and per group.
 - Shared agents: whose machine and credits host them, what a host may limit, and how an agent on
   another machine proves its handle to a board.

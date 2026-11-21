@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="470" viewBox="0 0 760 470" role="img" aria-labelledby="title desc">
+<title id="title">A tailnet machine under someone else&#x27;s login</title>
+<desc id="desc">What a machine of the tailnet may do when it is signed in to Tailscale under a login other than this Mac&#x27;s, before a board has named that person. Today it writes as the owner, like any machine the tailnet answers for. Under A that stays so until a board names its first person. Under B it reaches nothing until a board names that login&#x27;s person. Under C it reads and writes nothing until named. In all three a machine under this Mac&#x27;s own login, such as the owner&#x27;s phone, is the owner as today. Recommended: B.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--question:#946a00;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--question:#e0b84c;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.inner{fill:var(--muted);stroke:var(--border)}
+.hot{fill:none;stroke:var(--dislike);stroke-width:1.5}
+.new{fill:none;stroke:var(--primary);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.b{font-weight:600}
+.h{font-size:15px;font-weight:600}
+.t{font-size:17px;font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+.red{fill:var(--dislike)}
+.blue{fill:var(--primary)}
+.arrow{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip)}
+.both{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip);marker-start:url(#tail)}
+.no{stroke:var(--dislike);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+.tipfill{fill:var(--muted-foreground)}
+</style>
+<defs><marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M0,0 L10,5 L0,10 z"/></marker><marker id="tail" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M10,0 L0,5 L10,10 z"/></marker></defs>
+<rect class="page" width="760" height="470"/>
+<text class="t" x="24" y="34">A tailnet machine under someone else&#x27;s login</text>
+<rect class="card" x="24" y="60" width="232" height="294" rx="8"/>
+<text class="h" x="38" y="86">A: as today</text>
+<text class="m" x="38" y="106">until a board names someone</text>
+<rect class="inner" x="38" y="122" width="204" height="50" rx="5"/>
+<text class="m" x="48" y="142">your phone, your login</text>
+<text x="48" y="161">is you</text>
+<rect class="hot" x="38" y="182" width="204" height="50" rx="5"/>
+<text class="m" x="48" y="202">a colleague&#x27;s laptop</text>
+<text x="48" y="221">writes as you</text>
+<text class="red" x="48" y="262">Anyone in the tailnet</text>
+<text class="red" x="48" y="281">decides your cards.</text>
+<rect class="card" x="264" y="60" width="232" height="294" rx="8"/>
+<text class="h" x="278" y="86">B: nothing until named</text>
+<text class="m" x="278" y="106">recommended</text>
+<rect class="inner" x="278" y="122" width="204" height="50" rx="5"/>
+<text class="m" x="288" y="142">your phone, your login</text>
+<text x="288" y="161">is you</text>
+<rect class="new" x="278" y="182" width="204" height="69" rx="5"/>
+<text class="m" x="288" y="202">a colleague&#x27;s laptop</text>
+<text x="288" y="221">refused, with a page</text>
+<text x="288" y="240">saying who to ask</text>
+<text class="m" x="288" y="281">A board that names them</text>
+<text class="m" x="288" y="300">lets them in.</text>
+<rect class="card" x="504" y="60" width="232" height="294" rx="8"/>
+<text class="h" x="518" y="86">C: reads until named</text>
+<text class="m" x="518" y="106">writes nothing</text>
+<rect class="inner" x="518" y="122" width="204" height="50" rx="5"/>
+<text class="m" x="528" y="142">your phone, your login</text>
+<text x="528" y="161">is you</text>
+<rect class="new" x="518" y="182" width="204" height="69" rx="5"/>
+<text class="m" x="528" y="202">a colleague&#x27;s laptop</text>
+<text x="528" y="221">reads every board,</text>
+<text x="528" y="240">writes nothing</text>
+<text class="red" x="528" y="281">Every project on the</text>
+<text class="red" x="528" y="300">machine is readable</text>
+<text class="red" x="528" y="319">to the whole tailnet.</text>
+<rect class="card" x="24" y="376" width="712" height="70" rx="8"/>
+<text x="40" y="402">A machine with no login at all (a tagged node, a server) is treated as the colleague&#x27;s</text>
+<text x="40" y="424">laptop is. With nobody else in your tailnet, the three are the same.</text>
+</svg>

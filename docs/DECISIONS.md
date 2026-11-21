@@ -9,6 +9,33 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### People and sign-in
 
+- [ ] **tailnet-peer-before-named** — Today any machine in your tailnet writes as you, a colleague's laptop as much as your phone. Once the server reads whose machine it is, your own machines stay you. What is left to choose is what a machine under someone else's Tailscale login may do before a board has named that person. A: as today, it writes as the owner until a board names its first person. B: nothing; it is refused until a board names them. C: it reads every board and writes nothing. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#A tailnet machine under another login]]
+  [2026-11-21 17:37] agent — Posted for the board task `app/users-and-identity`. On a machine Tailscale is the sign-in service (**sign-in-service-shipped**, B), so this is what its word is used for. A concept: nothing is built by this card.
+
+    ![A tailnet machine under someone else's login](analysis/users-and-identity/tailnet-peer.svg)
+
+    **Base (today).** The server asks Tailscale only whether an address is a machine of the tailnet. Any such machine reaches every project and writes as `owner`. Tailscale's answer also says whose machine it is, and that part is not read.
+
+    **A, as today.**
+    - A machine under another login keeps writing as the owner until a board names its first person.
+    - Nothing changes for anyone until then. What is open today stays open.
+
+    **B, nothing until named.**
+    - It is refused, with a page saying whose server this is and that a board must name them.
+    - A board that names that login's person lets them in, to that board.
+
+    **C, reads until named.**
+    - It reads every board the server holds and writes nothing.
+
+    **Under every option** a machine under this Mac's own login, your phone among them, is you with nothing set up. A machine with no login (a tagged node) is treated as someone else's is. If nobody else is in your tailnet, the three are the same.
+
+    **Why B.** A leaves a colleague's laptop able to decide your cards for as long as nobody is named, which on a one-person machine is always. C shows every project on this Mac to the whole tailnet. B changes nothing for you and your own machines, and under it being in a tailnet gives nothing by itself.
+
+    **Earlier verdicts checked.**
+    - **sign-in-service-shipped** (B) and **identity-provider-how-added** (B) say how a person is known. They do not say what a known person nobody has named may do.
+    - **people-kept-where** (B) lets a board say what a named person may do. It says nothing of a person no board names.
+
+    None decides this.
 - [ ] **public-name-where-declared** — You said a person needs an id outside the database, to sign their comments and decisions. That is a short public name (`ana`), written on lines that are files in git. Something must say that `ana` is a name and whose. A: a committed file of the project lists the names and nothing else; each board keeps privately which sign-in a name belongs to. B: each board keeps its own names and nothing is committed. C: the name is taken from the sign-in itself, such as the part of an email before the @. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Where public names are declared]]
   [2026-11-21 17:32] agent — Posted for the board task `app/users-and-identity`, from your note on **people-kept-where**: "There should however be some 'non db id' in use to identify people in their comments and interactions (who decided things for example). So there will be some information that isn't the the DB only." A concept: nothing is built by this card.
 
@@ -62,38 +89,6 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
 
 ## Waiting on an agent
-
-### People and sign-in
-
-- [x] **owning-group-how-named** — A card or a task is owned by a group, as you said. Something must say which group. A: whoever posts it writes the group on it. B: the board reads it from where the thing is (a card's document folder, a task's area), and nothing is written. C: the place gives the group, and a name written on the card overrides it. Recommended: C. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Which group a thing belongs to]]
-  [2026-11-21 17:32] agent — Posted for the board task `app/users-and-identity`, from your comment on the analysis: "there can be an engineering group -> people there would get 'notified' and assigned to resolve." A concept: nothing is built by this card.
-
-    ![Which group owns a card or a task](analysis/users-and-identity/owning-group.svg)
-
-    **Base (today).** A card belongs to nobody but you. It has a document, whose first folder under `docs/` already sorts your queue (design, engineering). A task has a name whose first part is its area (`app/`, `tools/`). Neither says who decides it.
-
-    **A, written on it.**
-    - Whoever posts a card or files a task names its group, or its one person.
-    - One with none goes to the board's default group.
-
-    **B, read from where it is.**
-    - The board keeps a map of places to groups: a folder of documents, a task's area.
-    - Nothing is written on a card. Changing the map moves everything there at once.
-
-    **C, the place, unless named.**
-    - The map gives the group.
-    - A name written on the card or the task overrides it, and the card shows which of the two gave its group.
-
-    **Under every option** any member can hand a thing to another group, and the board records who did. With one group on a board the three are the same.
-
-    **Why C.** Agents post most cards. Under A each must choose a group every time, and one that chooses wrong sends the card to people who cannot answer it. Under B a design question raised in an engineering document goes to engineering with no way to say otherwise. C needs nothing written in the usual case and has a way out for the other. Its cost is two rules where A and B have one.
-
-    **Earlier verdicts checked.**
-    - **people-kept-where** (B) keeps a board's groups with the board. It does not say which group a card belongs to.
-    - **group-card-who-decides** was rejected; **group-answer-settles** asks who in a group decides, not which group.
-
-    Neither decides this.
-  [2026-11-21 17:36] owner · approved — C
 
 ### Task timeline
 
@@ -466,6 +461,37 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### People and sign-in
 
+- [r] **owning-group-how-named** — A card or a task is owned by a group, as you said. Something must say which group. A: whoever posts it writes the group on it. B: the board reads it from where the thing is (a card's document folder, a task's area), and nothing is written. C: the place gives the group, and a name written on the card overrides it. Recommended: C. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Which group a thing belongs to]]
+  [2026-11-21 17:32] agent — Posted for the board task `app/users-and-identity`, from your comment on the analysis: "there can be an engineering group -> people there would get 'notified' and assigned to resolve." A concept: nothing is built by this card.
+
+    ![Which group owns a card or a task](analysis/users-and-identity/owning-group.svg)
+
+    **Base (today).** A card belongs to nobody but you. It has a document, whose first folder under `docs/` already sorts your queue (design, engineering). A task has a name whose first part is its area (`app/`, `tools/`). Neither says who decides it.
+
+    **A, written on it.**
+    - Whoever posts a card or files a task names its group, or its one person.
+    - One with none goes to the board's default group.
+
+    **B, read from where it is.**
+    - The board keeps a map of places to groups: a folder of documents, a task's area.
+    - Nothing is written on a card. Changing the map moves everything there at once.
+
+    **C, the place, unless named.**
+    - The map gives the group.
+    - A name written on the card or the task overrides it, and the card shows which of the two gave its group.
+
+    **Under every option** any member can hand a thing to another group, and the board records who did. With one group on a board the three are the same.
+
+    **Why C.** Agents post most cards. Under A each must choose a group every time, and one that chooses wrong sends the card to people who cannot answer it. Under B a design question raised in an engineering document goes to engineering with no way to say otherwise. C needs nothing written in the usual case and has a way out for the other. Its cost is two rules where A and B have one.
+
+    **Earlier verdicts checked.**
+    - **people-kept-where** (B) keeps a board's groups with the board. It does not say which group a card belongs to.
+    - **group-card-who-decides** was rejected; **group-answer-settles** asks who in a group decides, not which group.
+
+    Neither decides this.
+  [2026-11-21 17:36] owner · approved — C
+  [2026-11-21 17:37] agent — Recorded, C: the board's map of places gives a card or a task its group, and a name written on it overrides the map. What follows is in [[analysis/users-and-identity#Which group a thing belongs to]]. One consequence the card did not state: a place the map does not name goes to the board's default group.
+  [2026-11-21 17:37] agent · resolved
 - [r] **group-answer-settles** — Replaces: group-card-who-decides. The same choice, as authorization alone: it is about people the board already knows, however they signed in, and no sign-in service has a part in it. A card or a task is owned by a group (engineering, design) or by one person, and its members are told. What is left to choose is whose answer settles a card its group owns. A: any one member; the first answer decides and a later one from any member overrides it. B: the one member it is assigned to; the others comment. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Who in a group decides]]
   [2026-11-21 17:29] agent — Posted for the board task `app/users-and-identity`. You approved A on **group-card-who-decides** at 17:22 and rejected the card at 17:25 for mixing authentication with authorization. Your note says where signing in belongs and nothing about whose answer settles a card, so A is not carried and the choice is asked again. A concept: nothing is built by this card.
 
