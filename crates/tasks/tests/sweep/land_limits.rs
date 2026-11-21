@@ -22,7 +22,7 @@ fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
 }
 
 /// A whole pid line, once the shell has written it (creating the file comes first).
-fn written_pid(path: &Path) -> Option<u32> {
+pub(super) fn written_pid(path: &Path) -> Option<u32> {
     fs::read_to_string(path)
         .ok()
         .filter(|text| text.ends_with('\n'))?
@@ -32,10 +32,10 @@ fn written_pid(path: &Path) -> Option<u32> {
 }
 
 /// End only this test's check group if an assertion fails or its land stalls.
-struct CheckGroup(PathBuf);
+pub(super) struct CheckGroup(pub(super) PathBuf);
 
 impl CheckGroup {
-    fn end(&self) {
+    pub(super) fn end(&self) {
         if let Some(group) = written_pid(&self.0).filter(|&group| sys::group_alive(group)) {
             // SAFETY: this group belongs to the check this test started, recorded by its shell.
             unsafe { libc::kill(-i32::try_from(group).unwrap(), libc::SIGKILL) };
