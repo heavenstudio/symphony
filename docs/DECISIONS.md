@@ -9,63 +9,6 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### People and sign-in
 
-- [ ] **group-card-who-decides** — Replaces: owner-with-several-people. Your comment is the base now: a card or a task is owned by a group (engineering, design) or by one person, and its members are told. What is left to choose is whose answer settles a card its group owns. A: any one member; the first answer decides and a later one from any member overrides it. B: the one member it is assigned to; the others comment. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Who in a group decides]]
-  [2026-11-21 10:22] agent — Posted for the board task `app/users-and-identity`, from your comment on the analysis: "C, but it could be 'group owned'. […] there can be an engineering group -> people there would get 'notified' and assigned to resolve." A concept: nothing is built by this card.
-
-    ![Speaking, deciding and directing agents are three separate things](analysis/users-and-identity/people-and-agents.svg)
-
-    **Base (today).** One owner. Whatever you answer decides, and a later word of yours overrides an earlier one.
-
-    **A, any one member.**
-    - Every member is told and has the card in their queue.
-    - The first answer decides, under that member's name, and the card leaves the others' queues.
-    - A later word from any member overrides it, as your own later word does today. Both stay in the card's history.
-    - A member can take a card. That shows the others who is on it, and locks nothing.
-
-    **B, the one member it is assigned to.**
-    - The card goes to one member: whoever takes it first, or the next in turn.
-    - Only that member's answer decides. The others comment.
-    - If that member is away, the card waits until someone hands it to another.
-
-    A group of one is the same under both, so this machine sees neither.
-
-    **Why A.** Nothing waits on a person who is away, and no rule is needed for handing a card on. B puts one accountable name on a decision before it is made; under A the name is there once it is made.
-
-    **I read "notified and assigned to resolve" two ways**, which is why this is asked: the group is assigned and anyone in it resolves (A), or one member is (B).
-
-    **Earlier verdicts checked.**
-    - **people-kept-where** (B) says where people are kept, per board. It does not say who in a group decides.
-    - **revision-bound-project-guards** (B) covers an approval that must be several people's. This card is about one answer being enough, and whose.
-
-    Neither decides this.
-- [ ] **words-without-agent-reach** — You said speaking and directing agents are different settings: someone may comment anywhere without starting an agent. What is left to choose is whether an agent ever sees the words of such a person. A: no, until someone who may direct agents passes them on; until then people see them and no agent does. B: yes; they start no agent, but an agent that works there later reads them with everything else. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Words without agent reach]]
-  [2026-11-21 10:22] agent — Posted for the board task `app/users-and-identity`, from your comment on the analysis: "there could be a role that allows people to comment in any place they want, including the board tasks, but that doesn't automatically trigger an execution from an agent." A concept: nothing is built by this card.
-
-    **Base (today).** Everything you write that waits on an answer is handed to an agent at once: a comment in a document, a note on a card, a message on a task. A comment is also written into the document's file, where any agent working there reads it.
-
-    **A, nothing until someone passes them on.**
-    - Their words show on the page to everyone, and the people concerned are told.
-    - The board keeps them. They are not written into the document's file, and no agent is handed them.
-    - Someone who may direct agents passes a comment on with one press. From then it is treated as yours are today, under both names.
-
-    **B, everything, but it wakes nobody.**
-    - Their words are saved as yours are today, with their name.
-    - No agent is started for them.
-    - An agent working there later, for someone else, reads them. Its instructions tell it to act only on the words of people who may direct agents.
-
-    **What each costs.**
-    - **A:** comments live in a second place until they are passed on, so a clone shows them only afterwards.
-    - **B:** someone without the setting can still steer an agent, by writing an instruction where one will read it. The setting then decides when an agent starts, not whose words it follows.
-
-    **Why A.** On a board with guests, B leaves it to each agent to ignore what it has read. A makes it the board's rule.
-
-    **A's limit.** On this machine an agent can open the board's database by itself, as it can open anything of yours. A promises only that the Symphony hands such words to no agent.
-
-    **Earlier verdicts checked.**
-    - **owner-asks-place** (A) says where your open asks are shown. It was decided for one owner and says nothing of a person whose words are not an ask.
-    - **hosted-ingress-boundary** (B) passes a visitor's permissions to the server's handlers. It names no such permission.
-
-    Neither decides this.
 - [ ] **identity-provider-how-added** — Replaces: identity-provider-plug. The same choice, with pictures. An identity provider does one thing: it tells the server who is asking. What that person may do is the board's to say. You expected the provider to be a plugin; the choice is how one is added. A: providers are part of the server, and the Symphony ships two. B: a provider is a separate program the server asks, which anyone writes; it is the server's plugin, never a project's. C: the Symphony signs people in itself, with Google or GitHub. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#How a provider plugs in]]
   [2026-11-21 10:22] agent — Base: today, the server asks only whether a browser's address is this machine or a machine of the tailnet. Whose machine it is, is not read. ![Today: everyone the gate lets in writes as the one owner](analysis/users-and-identity/today.svg)
 
@@ -113,6 +56,107 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### People and sign-in
 
+- [x] **words-without-agent-reach** — You said speaking and directing agents are different settings: someone may comment anywhere without starting an agent. What is left to choose is whether an agent ever sees the words of such a person. A: no, until someone who may direct agents passes them on; until then people see them and no agent does. B: yes; they start no agent, but an agent that works there later reads them with everything else. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Words without agent reach]]
+  [2026-11-21 10:22] agent — Posted for the board task `app/users-and-identity`, from your comment on the analysis: "there could be a role that allows people to comment in any place they want, including the board tasks, but that doesn't automatically trigger an execution from an agent." A concept: nothing is built by this card.
+
+    **Base (today).** Everything you write that waits on an answer is handed to an agent at once: a comment in a document, a note on a card, a message on a task. A comment is also written into the document's file, where any agent working there reads it.
+
+    **A, nothing until someone passes them on.**
+    - Their words show on the page to everyone, and the people concerned are told.
+    - The board keeps them. They are not written into the document's file, and no agent is handed them.
+    - Someone who may direct agents passes a comment on with one press. From then it is treated as yours are today, under both names.
+
+    **B, everything, but it wakes nobody.**
+    - Their words are saved as yours are today, with their name.
+    - No agent is started for them.
+    - An agent working there later, for someone else, reads them. Its instructions tell it to act only on the words of people who may direct agents.
+
+    **What each costs.**
+    - **A:** comments live in a second place until they are passed on, so a clone shows them only afterwards.
+    - **B:** someone without the setting can still steer an agent, by writing an instruction where one will read it. The setting then decides when an agent starts, not whose words it follows.
+
+    **Why A.** On a board with guests, B leaves it to each agent to ignore what it has read. A makes it the board's rule.
+
+    **A's limit.** On this machine an agent can open the board's database by itself, as it can open anything of yours. A promises only that the Symphony hands such words to no agent.
+
+    **Earlier verdicts checked.**
+    - **owner-asks-place** (A) says where your open asks are shown. It was decided for one owner and says nothing of a person whose words are not an ask.
+    - **hosted-ingress-boundary** (B) passes a visitor's permissions to the server's handlers. It names no such permission.
+
+    Neither decides this.
+  [2026-11-21 17:22] owner · approved — A
+- [x] **group-card-who-decides** — Replaces: owner-with-several-people. Your comment is the base now: a card or a task is owned by a group (engineering, design) or by one person, and its members are told. What is left to choose is whose answer settles a card its group owns. A: any one member; the first answer decides and a later one from any member overrides it. B: the one member it is assigned to; the others comment. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Who in a group decides]]
+  [2026-11-21 10:22] agent — Posted for the board task `app/users-and-identity`, from your comment on the analysis: "C, but it could be 'group owned'. […] there can be an engineering group -> people there would get 'notified' and assigned to resolve." A concept: nothing is built by this card.
+
+    ![Speaking, deciding and directing agents are three separate things](analysis/users-and-identity/people-and-agents.svg)
+
+    **Base (today).** One owner. Whatever you answer decides, and a later word of yours overrides an earlier one.
+
+    **A, any one member.**
+    - Every member is told and has the card in their queue.
+    - The first answer decides, under that member's name, and the card leaves the others' queues.
+    - A later word from any member overrides it, as your own later word does today. Both stay in the card's history.
+    - A member can take a card. That shows the others who is on it, and locks nothing.
+
+    **B, the one member it is assigned to.**
+    - The card goes to one member: whoever takes it first, or the next in turn.
+    - Only that member's answer decides. The others comment.
+    - If that member is away, the card waits until someone hands it to another.
+
+    A group of one is the same under both, so this machine sees neither.
+
+    **Why A.** Nothing waits on a person who is away, and no rule is needed for handing a card on. B puts one accountable name on a decision before it is made; under A the name is there once it is made.
+
+    **I read "notified and assigned to resolve" two ways**, which is why this is asked: the group is assigned and anyone in it resolves (A), or one member is (B).
+
+    **Earlier verdicts checked.**
+    - **people-kept-where** (B) says where people are kept, per board. It does not say who in a group decides.
+    - **revision-bound-project-guards** (B) covers an approval that must be several people's. This card is about one answer being enough, and whose.
+
+    Neither decides this.
+  [2026-11-21 17:22] owner · approved — A
+
+### Task timeline
+
+- [x] **timeline-navigation** — A task's wide timeline would still open on the whole task, and gain zoom and sideways movement. Builds and tests would sit on one or two rows at their recorded times, not in a pile, and messages would be small ticks under the bars, not rings on them. One choice is open: what to do with a long stretch in which the task's records hold nothing. The 10 h 54 m after `tools/workflow-revision-guards` closed takes 40% of its width today. A: always the true clock, with zoom alone to get past such a stretch. B: such stretches skipped by default, each a narrow band that says its length, a click or a switch showing true time. C: as B, but off until switched on. Time the records do not cover is never skipped. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/timeline-navigation#The choice]]
+  [2026-11-20 04:56] agent — Base: today, `tools/workflow-revision-guards` at 1440 wide on the shared server. Its builds and tests take 26 rows, its messages are rings on the bars, and the 10 h 54 m after it closed is the empty 40% in the middle. ![Today, the whole task](analysis/timeline-navigation/before-wide.webp)
+
+    A message selected, then the same mark held down, before the repair below: ![A message selected, then held down, before the repair](analysis/timeline-navigation/before-selected-held.webp)
+
+    **The arrow was a defect, not part of this choice, and is repaired.** Its overlay was on a scale 8 px off the marks', it stopped 6 px above them, and a held mark jumped 12 px to the right. The board task `app/timeline-message-alignment` repaired all three and landed after these pictures; its source is this proposal's baseline. The hour lines share the 8 px offset, and a phone's message words sit 16 px below their diamond. The repair left both to this proposal, under every option.
+  [2026-11-20 04:56] agent — Posted for the board task `inbox/timeline-ui-needs-improvement`. The whole task under each option, from a mockup that draws this task's recorded timeline; nothing is built: ![The whole task under A](analysis/timeline-navigation/proposed-fit-clock.webp) ![The whole task under B](analysis/timeline-navigation/proposed-fit.webp) ![The whole task under C](analysis/timeline-navigation/proposed-fit-true.webp)
+
+    **A** keeps every width to scale. The empty 40% stays, and zoom gets past it. **B** gives the work 1.6 times the width. A band's 10 h 54 m is 36 px, and its label, the hours line and the range readout all say so. **C** draws A until its switch is on.
+
+    **What counts as quiet.** At least an hour with no build or test, no executor or reviewer role held, and no message or change of stage, role, round or gate, and only where those records are kept. Here the 10 h 54 m after the close is quiet. The 6 h 33 m of ready time is not: no runs are kept before 11:09, so that time is unknown and stays on the true clock. A session's heartbeat is not used: keen-swift-85 kept beating through the closed stretch.
+
+    **What each costs.** No option needs a server or schema change. B and C need the same client work: one slice more than A, the band and its switch.
+
+    **Why B.** Your request: “Could also have a "skipped range" for when no work was done”, with the whole task kept as the default: “having the default be "100% view of the timeline does make sense tho”. B narrows only measured emptiness and labels each band with its length. C leaves the empty hours in the first view.
+
+    **Earlier verdicts checked.**
+    - **reports-task-page-pictures** (A): lanes wide and a list on a phone, kept.
+    - **task-page-timeline-place** (C): the phone's 240 px box, kept.
+    - Your note on `inbox/timeline-should-not-be-collapsed-by-defa`, “Desktop collapse save almost no space and hides really good information from view.”: the whole task stays the default and nothing is collapsed. By its rule, a band holds no record.
+    - Your rejection of **timeline-burst-drawing**, “yes. rework the proposal to be more horizontal based.”: runs keep their own bars at their recorded times, on one row unless they overlap, with no folding. At the whole-task scale, runs seconds apart share pixels, and zoom parts them.
+    - **timeline-orchestrator-messages** (approved): one arrow for the selected message, and the message list and its keys, kept. The mark becomes a tick under the bars, a change of drawing only.
+
+    None of them decides whether quiet time is skipped.
+  [2026-11-20 04:56] agent — Under every option:
+    - The whole task shows first. Whole task, − and +, ⌘/Ctrl + scroll and a drag across the hours zoom, Shift + scroll moves, and an overview strip shows where the view is while zoomed.
+    - A run takes another row only when it overlaps one, so the lanes are 353 px tall against 818.
+    - Where runs are not kept, the Builds and Tests lanes are hatched, in place of the sentence above them.
+    - A selected message's arrow joins its two marks. A message whose two ends share a lane, such as an outside post to everyone, draws no arrow: its tick is ringed, and the hours line names both ends. Today it draws a 12 px stub.
+
+    Zoomed to 73 minutes, a verdict selected: ![Proposed, zoomed, a verdict selected](analysis/timeline-navigation/proposed-zoom.webp) [Open the mockup](analysis/timeline-navigation/mockup.html).
+
+    **On a phone** the list and its 240 px box stay under every option. The box shows four steps where it shows one today: the "not kept" sentence becomes a row at its time, and a message takes one line. A quiet stretch is a row of its own: ![Today on a phone](analysis/timeline-navigation/before-phone.webp) ![Proposed on a phone](analysis/timeline-navigation/proposed-phone.webp) ![Proposed on a phone, Show all, at the closed stretch](analysis/timeline-navigation/proposed-phone-all.webp)
+  [2026-11-20 05:04] owner · approved — B
+
+## Rejected and replaced
+
+### People and sign-in
+
 - [-] **owner-with-several-people** — Once several people can be on a board, the rules that say "the owner" need to say who that is: whose approve is the owner stamp, and who decides a card. A: one owner for a project, as now; other people join as members who read, comment, ask and file tasks, and never decide. B: owner is a role a few named people hold; any one of them decides, and their line says who. C: owners by area; each card or task names who decides it. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#What the owner becomes]]
   [2026-11-20 06:40] agent — Posted for the board task `app/users-and-identity`, from your ask: "an admin/user system so that multiple users could be on the board by leveraging some IdP (which itself would likely be a plugin too)". A concept: nothing is built by this card.
 
@@ -156,61 +200,6 @@ their dated history work is in [REVIEW](REVIEW.md).
     **Earlier verdicts checked.** **hosted-ingress-boundary** (B) put the hosted checks in an adapter inside the server, against a separate gateway. It does not say whether the Symphony ships providers, opens the adapter to other programs or signs people in itself. **desktop-client** (A) left a hosted server's login to a later card, which is this one. **consumer-contract-versioning** (B) keeps a project's code outside the library; under A and B a host's own provider stays the host's. None decides this.
   [2026-11-21 09:49] owner · rejected — this needs some diagrams to be understood
   [2026-11-21 10:22] agent — Replaced by **identity-provider-how-added**: the same three options, each with a picture, after one of today and one of where a provider sits in a request. The pictures are in the analysis too.
-- [x] **people-kept-where** — With several people, the Symphony must keep a list of who they are and what each may do, and someone must be able to change it. Where it is kept decides who that someone is. A: in the project's `symphony.toml`, committed; a change is a landing. B: with the server and in no repository (the machine folder here, a hosted board's protected store); an admin changes it from a People page. C: in the identity provider; its groups are read as roles. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Where people are kept]]
-  [2026-11-20 06:40] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
-
-    **Base (today).** No person is recorded anywhere. The nearest things are the server's list of projects, in the machine folder, and a workflow authority's public key, in the project file.
-
-    **A.** The list is reviewed, in git's history, and the same on every machine. But each person's sign-in name (an email) is committed, in a repository that may be public. Whoever can land a change to the file can make themselves an owner. Adding a person is a landing.
-
-    **B.** A clone holds nobody's sign-in: a document carries only the short name chosen for a person (`ana`). Each change is kept in a log of its own, since git no longer keeps it. Each server has its own list. With no list, the person at the machine is its admin and the owner of every project, as today.
-
-    **C.** The Symphony keeps no list. But which group means which role must still be written down under A or B, each provider says groups its own way, and Tailscale, the first provider proposed, gives a login and no group.
-
-    **Why B.** Who may enter is asked before any project is opened, so it is the server's to keep, and one server serves many projects. C can come later as one more way to fill B's list.
-
-    **Earlier verdicts checked.** **hosted-ingress-boundary** (B) has the hosted adapter pass permissions to the handlers, and its analysis says trust settings never come from a document a visitor can edit. That is the reasoning behind B here, and it was said of a hosted board alone: it does not decide where a machine's server, or the product, keeps people. **revision-bound-project-guards** (B) commits a project's authority key in its file. That is a key that checks a signature, not a list of people. Neither decides this.
-  [2026-11-21 09:48] owner · approved — B. This is a board specific setting. There could even be multiple boards for the same project where people have different permissions. There should however be some "non db id" in use to identify people in their comments and interactions (who decided things for example). So there will be some information that isn't the the DB only.
-  [2026-11-21 10:22] agent — Recorded, B as you narrowed it: "This is a board specific setting. There could even be multiple boards for the same project where people have different permissions." The list is each board's own (its people, their groups and what each may do, kept with that board's tasks), not one list for the server, so two boards can differ. "There should however be some 'non db id' in use to identify people": that is the short public name (ana), written on a card's line, in a comment and on a thread, so it is in git and outlives the board's row. It follows that one name means one person across a project's boards and is never given to another. Where a project declares its names is a later card. The analysis says all this under Where people are kept.
-
-### Task timeline
-
-- [x] **timeline-navigation** — A task's wide timeline would still open on the whole task, and gain zoom and sideways movement. Builds and tests would sit on one or two rows at their recorded times, not in a pile, and messages would be small ticks under the bars, not rings on them. One choice is open: what to do with a long stretch in which the task's records hold nothing. The 10 h 54 m after `tools/workflow-revision-guards` closed takes 40% of its width today. A: always the true clock, with zoom alone to get past such a stretch. B: such stretches skipped by default, each a narrow band that says its length, a click or a switch showing true time. C: as B, but off until switched on. Time the records do not cover is never skipped. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/timeline-navigation#The choice]]
-  [2026-11-20 04:56] agent — Base: today, `tools/workflow-revision-guards` at 1440 wide on the shared server. Its builds and tests take 26 rows, its messages are rings on the bars, and the 10 h 54 m after it closed is the empty 40% in the middle. ![Today, the whole task](analysis/timeline-navigation/before-wide.webp)
-
-    A message selected, then the same mark held down, before the repair below: ![A message selected, then held down, before the repair](analysis/timeline-navigation/before-selected-held.webp)
-
-    **The arrow was a defect, not part of this choice, and is repaired.** Its overlay was on a scale 8 px off the marks', it stopped 6 px above them, and a held mark jumped 12 px to the right. The board task `app/timeline-message-alignment` repaired all three and landed after these pictures; its source is this proposal's baseline. The hour lines share the 8 px offset, and a phone's message words sit 16 px below their diamond. The repair left both to this proposal, under every option.
-  [2026-11-20 04:56] agent — Posted for the board task `inbox/timeline-ui-needs-improvement`. The whole task under each option, from a mockup that draws this task's recorded timeline; nothing is built: ![The whole task under A](analysis/timeline-navigation/proposed-fit-clock.webp) ![The whole task under B](analysis/timeline-navigation/proposed-fit.webp) ![The whole task under C](analysis/timeline-navigation/proposed-fit-true.webp)
-
-    **A** keeps every width to scale. The empty 40% stays, and zoom gets past it. **B** gives the work 1.6 times the width. A band's 10 h 54 m is 36 px, and its label, the hours line and the range readout all say so. **C** draws A until its switch is on.
-
-    **What counts as quiet.** At least an hour with no build or test, no executor or reviewer role held, and no message or change of stage, role, round or gate, and only where those records are kept. Here the 10 h 54 m after the close is quiet. The 6 h 33 m of ready time is not: no runs are kept before 11:09, so that time is unknown and stays on the true clock. A session's heartbeat is not used: keen-swift-85 kept beating through the closed stretch.
-
-    **What each costs.** No option needs a server or schema change. B and C need the same client work: one slice more than A, the band and its switch.
-
-    **Why B.** Your request: “Could also have a "skipped range" for when no work was done”, with the whole task kept as the default: “having the default be "100% view of the timeline does make sense tho”. B narrows only measured emptiness and labels each band with its length. C leaves the empty hours in the first view.
-
-    **Earlier verdicts checked.**
-    - **reports-task-page-pictures** (A): lanes wide and a list on a phone, kept.
-    - **task-page-timeline-place** (C): the phone's 240 px box, kept.
-    - Your note on `inbox/timeline-should-not-be-collapsed-by-defa`, “Desktop collapse save almost no space and hides really good information from view.”: the whole task stays the default and nothing is collapsed. By its rule, a band holds no record.
-    - Your rejection of **timeline-burst-drawing**, “yes. rework the proposal to be more horizontal based.”: runs keep their own bars at their recorded times, on one row unless they overlap, with no folding. At the whole-task scale, runs seconds apart share pixels, and zoom parts them.
-    - **timeline-orchestrator-messages** (approved): one arrow for the selected message, and the message list and its keys, kept. The mark becomes a tick under the bars, a change of drawing only.
-
-    None of them decides whether quiet time is skipped.
-  [2026-11-20 04:56] agent — Under every option:
-    - The whole task shows first. Whole task, − and +, ⌘/Ctrl + scroll and a drag across the hours zoom, Shift + scroll moves, and an overview strip shows where the view is while zoomed.
-    - A run takes another row only when it overlaps one, so the lanes are 353 px tall against 818.
-    - Where runs are not kept, the Builds and Tests lanes are hatched, in place of the sentence above them.
-    - A selected message's arrow joins its two marks. A message whose two ends share a lane, such as an outside post to everyone, draws no arrow: its tick is ringed, and the hours line names both ends. Today it draws a 12 px stub.
-
-    Zoomed to 73 minutes, a verdict selected: ![Proposed, zoomed, a verdict selected](analysis/timeline-navigation/proposed-zoom.webp) [Open the mockup](analysis/timeline-navigation/mockup.html).
-
-    **On a phone** the list and its 240 px box stay under every option. The box shows four steps where it shows one today: the "not kept" sentence becomes a row at its time, and a message takes one line. A quiet stretch is a row of its own: ![Today on a phone](analysis/timeline-navigation/before-phone.webp) ![Proposed on a phone](analysis/timeline-navigation/proposed-phone.webp) ![Proposed on a phone, Show all, at the closed stretch](analysis/timeline-navigation/proposed-phone-all.webp)
-  [2026-11-20 05:04] owner · approved — B
-
-## Rejected and replaced
 
 ### Releases
 
@@ -463,6 +452,25 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-11 19:13] agent — Done on `tools/orphan-processes`: the Symphony no longer looks for copies of itself or for test databases. The census, the notice at the top of every page, the `symphony-server orphans` command and the starter's line about leftovers are gone, with their tests and docs; no notice moved to the live feed. The repairs at the source stay: the database of a board in the temporary folder or under `artifacts/` ends when the process that started it ends, even when that process is killed, and the two test fixtures that start a database themselves end it the same way. The server's status still sends `orphans`, always 0, so a starter built before this can still read it.
 
 ## Resolved
+
+### People and sign-in
+
+- [x] **people-kept-where** — With several people, the Symphony must keep a list of who they are and what each may do, and someone must be able to change it. Where it is kept decides who that someone is. A: in the project's `symphony.toml`, committed; a change is a landing. B: with the server and in no repository (the machine folder here, a hosted board's protected store); an admin changes it from a People page. C: in the identity provider; its groups are read as roles. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Where people are kept]]
+  [2026-11-20 06:40] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
+
+    **Base (today).** No person is recorded anywhere. The nearest things are the server's list of projects, in the machine folder, and a workflow authority's public key, in the project file.
+
+    **A.** The list is reviewed, in git's history, and the same on every machine. But each person's sign-in name (an email) is committed, in a repository that may be public. Whoever can land a change to the file can make themselves an owner. Adding a person is a landing.
+
+    **B.** A clone holds nobody's sign-in: a document carries only the short name chosen for a person (`ana`). Each change is kept in a log of its own, since git no longer keeps it. Each server has its own list. With no list, the person at the machine is its admin and the owner of every project, as today.
+
+    **C.** The Symphony keeps no list. But which group means which role must still be written down under A or B, each provider says groups its own way, and Tailscale, the first provider proposed, gives a login and no group.
+
+    **Why B.** Who may enter is asked before any project is opened, so it is the server's to keep, and one server serves many projects. C can come later as one more way to fill B's list.
+
+    **Earlier verdicts checked.** **hosted-ingress-boundary** (B) has the hosted adapter pass permissions to the handlers, and its analysis says trust settings never come from a document a visitor can edit. That is the reasoning behind B here, and it was said of a hosted board alone: it does not decide where a machine's server, or the product, keeps people. **revision-bound-project-guards** (B) commits a project's authority key in its file. That is a key that checks a signature, not a list of people. Neither decides this.
+  [2026-11-21 09:48] owner · approved — B. This is a board specific setting. There could even be multiple boards for the same project where people have different permissions. There should however be some "non db id" in use to identify people in their comments and interactions (who decided things for example). So there will be some information that isn't the the DB only.
+  [2026-11-21 10:22] agent — Recorded, B as you narrowed it: "This is a board specific setting. There could even be multiple boards for the same project where people have different permissions." The list is each board's own (its people, their groups and what each may do, kept with that board's tasks), not one list for the server, so two boards can differ. "There should however be some 'non db id' in use to identify people": that is the short public name (ana), written on a card's line, in a comment and on a thread, so it is in git and outlives the board's row. It follows that one name means one person across a project's boards and is never given to another. Where a project declares its names is a later card. The analysis says all this under Where people are kept.
 
 ### GitHub delivery
 
