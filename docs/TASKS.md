@@ -2381,8 +2381,11 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   ([RELEASES](RELEASES.md#the-cadence)).
 
 The merge of the task's tip is one step of the land, the one a hosted pull request's
-merge would take the place of: the approval before it and the record, the move, the
-push and the close after it stay as they are.
+merge takes the place of under `[land] delivery`: the approval before it and the record, the move,
+the push and the close after it stay as they are. There no land needs running at all: the task's
+move to review dispatches it, the host merges once its last stamp stands, and the watcher closes
+the task ([a land dispatched at review](#a-land-dispatched-at-review)); `just land SLUG` arms one
+that reached done without a dispatch and settles a merge no watcher saw.
 
 **Bounded.** The merge's commit, with its hooks, and the check each run in a process group
 of its own, which the land ends whole past `[land] timeout_seconds` (an hour unless the project says;
@@ -2590,9 +2593,10 @@ nothing here is reached. This repository sets none.
 
 The board names no host. The command is the project's own program, run in the main checkout as
 `COMMAND VERB --request FILE`, FILE one JSON object and its standard output another whose `state`
-says what it came to; [`symphony-github deliver`](GITHUB.md#delivering-a-land) is one. Its four
-verbs are `publish`, `merge`, `result` and `landed` (`crates/tasks/src/land/delivery.rs`), and it
-decides nothing: what a task needs and whether it stands is
+says what it came to; [`symphony-github deliver`](GITHUB.md#delivering-a-land) is one. Its verbs
+are `publish`, `arm`, `merge`, `disarm`, `close`, `result` and `landed`
+(`crates/tasks/src/land/delivery.rs`, `crates/tasks/src/land/dispatch.rs`), and it decides
+nothing: what a task needs and whether it stands is
 [the evidence](#the-evidence-of-a-task-at-its-head) the land reads and hands it.
 
 It delivers nothing past a check the project asks for. The default land runs `[verdicts] check`
@@ -2619,9 +2623,14 @@ A land keeps a journal of the delivery in the lands' folder, written before each
 2. **Eligible.** `publish` makes the head and its evidence public and answers the pull request,
    which the task is bound to from then on. The evidence is read again: of another revision, it is
    published again or refused, never merged as it was.
-3. **Merge requested.** One `merge`, a squash of that pull request at that head, or a merge
+3. **Armed.** `arm` turns on the host's own merge of that head, by the squash and the text a
+   merge asks: the host merges it once every check it requires passes, `symphony/eligible` among
+   them, and the watcher closes the task ([below](#a-land-dispatched-at-review)). A pull request
+   the host would merge now (its evidence standing, no other check to wait on) takes no such
+   arming, answered `mergeable`, and the land asks the merge itself.
+4. **Merge requested.** One `merge`, a squash of that pull request at that head, or a merge
    commit for an import.
-4. **Merged remotely.** The commit the host made is proved by git alone: on the fetched default
+5. **Merged remotely.** The commit the host made is proved by git alone: on the fetched default
    branch, of one parent, its tree the merge of that parent and the head (an import's proof is
    [its own](#an-import-delivered-by-a-pull-request)). A receipt of the head and the commit is kept
    for good (`receipts/` in the lands' folder), and the head stays reachable under
@@ -2629,11 +2638,11 @@ A land keeps a journal of the delivery in the lands' folder, written before each
    does not go back to review. A slug is delivered once: the release run counts, holds a release
    and reads its notes by that receipt and that head, so neither is ever replaced
    ([below](#a-slug-is-delivered-once)).
-5. **Reconciled.** A clean main checkout whose default branch the remote's descends from is
+6. **Reconciled.** A clean main checkout whose default branch the remote's descends from is
    fast-forwarded. A dirty or diverged one is left as it is, the land answering "landed remotely,
    reconciliation pending" once on the thread, and a land run again closes the task once the
    checkout can follow. Nothing here is reset, merged or pushed for it.
-6. **Closed**, then what follows a land: the landed line names the commit, the head and the pull
+7. **Closed**, then what follows a land: the landed line names the commit, the head and the pull
    request, once; `[board] on_land` runs with the commit, once; and `landed` tells the program on
    every run that reaches here, as the verb is safe to ask twice and a run cut short before it
    told nobody.
@@ -2658,6 +2667,72 @@ run, by `result`:
 
 One limit holds by design: evidence withdrawn after the last reading and before the host acts on
 a request already made does not recall it. The receipt names the revision that was read.
+
+#### A land dispatched at review
+
+Nobody runs a land of a task the host delivers: a write to the board that can change its evidence
+starts its dispatch, the host merges it once its last stamp stands, within seconds, and the
+watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
+
+- **What dispatches.** A top-level task's move to review, and after it each later move,
+  assessment (`tasks needs`), verdict and gate decision, starts `tasks land SLUG --dispatch`
+  detached from the main checkout, as the one who wrote, with the land's mark; the write returns
+  at once and its lines go to `dispatch.log` in the lands' folder. The move to review leaves
+  `SLUG.dispatching` there, naming who moved it, until a dispatch binds the task's pull request,
+  and from then on its binding is what a later write dispatches it by: so a first dispatch that
+  stopped before it published is made again by the next write, and a task never moved to review,
+  or delivered and closed, starts none. A dispatch that stops says why on the task's thread, to
+  `@orchestrator`, with the `just land SLUG --dispatch` that dispatches it again: nobody reads its
+  log. A board that `TASKS_SERVER` names (a test's) starts one only under `TASKS_DISPATCH=on`;
+  `TASKS_DISPATCH=off` starts none anywhere. One dispatch runs at a time under the land's lock,
+  and one asked while another runs runs after it.
+- **What a dispatch does.** What a land does up to the publication, the refusals at the head
+  above among it (each goes to the thread, to whom it names, and nothing is pushed); then the head
+  pushed, never forced, its pull request opened ready and the checks written from the evidence at
+  that head, whatever it says, and the host's merge armed. `symphony/eligible` is pending while a
+  stamp is not given yet (an assessment, a review, the owner's approve), fails where one is red at
+  the head or evidence that stood there was withdrawn, and passes once every stamp stands: so a
+  reviewer's approve, or the owner's, is what lets the host merge, and a task in review stays
+  there until it does. A check belongs to its commit, so a green eligible on one head merges
+  nothing at another; a new commit is pushed to the same pull request at the next dispatch, the
+  merge armed across it and pending until the approve names the new head. One whose head and
+  evidence are as last published asks the host nothing more. Armed only while the task is in
+  review, blocked or done: a task moved back to work (a changes verdict) has its merge turned off
+  first and its checks said again after, so no check published meanwhile lets the host merge it,
+  and stays so until it moves to review.
+- **Who watches.** One watcher per project, `tasks land --watch` (`watch.lock` in the lands'
+  folder, `watch.log` its lines), started by each arming where none runs, which reads each armed
+  task every `[land] watch_seconds` (30) and ends once none is left. Armed means the host answered
+  an arming and has not answered a disarm since: a publication between keeps it so, as the host
+  keeps its merge armed across a push, and one that stopped before the host answered its arming
+  again (an answer lost, a host away) has its pull request read every round, whatever its checks
+  said, and is published and armed again. A refusal a round stops at (a head refused at the head,
+  an arming refused) holds until what it names changes, so it is said on the thread once at the
+  branch's head, however many rounds read it again (`SLUG.said` in the lands' folder keeps the
+  last one said, by a land, a dispatch or a round). A task whose evidence does not
+  stand yet costs it no read of the host, which merges nothing while eligible is pending; it reads
+  its evidence again, so a write no command dispatches for (the owner's through the Symphony, a run
+  recorded at the head) is published at its next round. One whose evidence stands has its pull
+  request read: merged, the commit is proved and the task closed from review or done alike, the
+  checkout fast-forwarded and `[board] on_land` and the regenerator started, as a land closes one
+  ([above](#a-land-delivered-by-a-pull-request)). A merge no watcher saw (a reboot) is settled by
+  the next dispatch or `just land SLUG`.
+- **A merge that does not come**, once the evidence stood (before, the task is in review and its
+  evidence says what is missing). The host's merge is turned off first, so a check that passes
+  later merges nothing behind the board, and one line says why, to `@orchestrator`:
+
+| What the watcher reads | What follows |
+| --- | --- |
+| A check that is not the Symphony's red at the head (a CI the repository adds), or the host reporting the pull request in conflict with the default branch | the task back to in progress (from done by review): its executor merges the default branch once, or puts the check right, and moves it to review, which dispatches it again |
+| The pull request closed unmerged, by someone | back to in progress, naming it; the next dispatch opens another |
+| Neither merged nor red once `[land] merge_within_minutes` (30) passed since its evidence stood (review time counts for nothing) | the task stays where it is, the work not at fault: `just land SLUG` arms it again |
+| Any of these where the task cannot go back (cancelled or closed, a document save, which stays pending and shown, or what the regenerator made, which it cancels and makes again) | `tools/delivery-failed-SLUG` filed to `@orchestrator`, naming the pull request and why; a second failure is a line on the one open |
+
+A task cancelled while its pull request is open has it closed unmerged, its merge off and its
+branch left. A close the host does not make is asked again by the watcher's next round while its
+merge is armed; one no longer armed, which nothing merges, is said to `@orchestrator` with the
+`just land SLUG --dispatch` that closes it. One the host merged at a head its branch has moved
+past is held for reconciliation, by name, as any merge of another head.
 
 #### A slug is delivered once
 

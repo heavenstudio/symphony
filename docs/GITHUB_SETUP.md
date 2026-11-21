@@ -134,7 +134,7 @@ nothing, until steps 7 and 8 are done.
    | --- | --- |
    | Checks: Read and write | the evidence, written as checks |
    | Contents: Read and write | the pull request's merge, and a release where `releases = "publish"` |
-   | Pull requests: Read and write | the pull request, opened, marked ready and merged |
+   | Pull requests: Read and write | the pull request, opened, marked ready, armed for auto-merge, merged and closed |
    | Issues: Read and write | only where `close_issues` is set or the issue exchange is on |
    | Actions: Read and write | only where `verification = "hosted"`: the workflow's start and the reads of its run |
 
@@ -157,7 +157,8 @@ nothing, until steps 7 and 8 are done.
    calls need, written to its token file, and made again before it expires. The token file need
    not be there yet. With the issue exchange on as well, the same token serves both.
 5. **The repository's merge settings** (Settings, General, Pull Requests): squash merging
-   allowed, merge commits and rebase merging not.
+   allowed, merge commits and rebase merging not, and "Allow auto-merge" ticked, which `arm`
+   turns on for a pull request.
 6. **The settings, landed while the default branch still takes a push.** `symphony-github.toml`,
    at the root:
 
@@ -318,7 +319,7 @@ holds: a delivery would go on (policy 0123abc)
 ```
 
 It exits 0 on `holds` alone, and has made the token it needed. The next
-`just land SLUG --as HANDLE` then publishes the task as a draft pull request with its checks, and
+`just land SLUG --as HANDLE` then publishes the task as a pull request with its checks, and
 has it squashed.
 
 **The token.** `symphony-github tokens` says whether it is current, reading nothing remote and

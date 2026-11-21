@@ -625,10 +625,12 @@ function onScrollInput(stop: () => void): () => void {
 // none` on the root, back once the landing ends): its adjustment for a box that moves what it
 // anchors on and not the element (the ghost lifting before the sections near it come, on a loaded
 // machine) scrolls the page and the element alike, which the hold would take for a scroll away,
-// leaving the element to those sections as they draw above it. The landing ends when it goes
+// leaving the element to those sections as they draw above it. A value the root's own style had
+// as the landing began is the one put back. The landing ends when it goes
 // quiet: four frames with nothing moved, no reserved box waiting within its sentinel's reach
 // (`pendingNear`) and no region busy within that reach (`aria-busy`: a ghost not lifted, a read
-// not in), or 1800 at most, a backstop as `reviewHoldPlace`'s. It ends too at the reader's input
+// not in), or 1800 at most, a backstop as `reviewHoldPlace`'s. It ends too once no element has
+// its id (one drawn again in its place within the frame is held in turn), at the reader's input
 // that scrolls (`onScrollInput`), and at any scroll that moved the page and the element alike
 // (find in the page, a focus brought into view, a script: not a draw, the browser's own pull back
 // at the page's end aside). Only the next navigation lands again: a later call (a section's read
@@ -640,9 +642,17 @@ interface Landing {
   generation: number;
   ended: boolean;
   place: Place | null;
+  /** The root's own inline `overflow-anchor` as the landing began. */
+  anchoring: string;
   listening: () => void;
 }
-let landing: Landing = { generation: 0, ended: true, place: null, listening: () => {} };
+let landing: Landing = {
+  generation: 0,
+  ended: true,
+  place: null,
+  anchoring: "",
+  listening: () => {},
+};
 
 // Where `target` and the page are: its top, the page's scroll and its scroller's, the page's length.
 function placeOf(target: Element): Place {
@@ -662,10 +672,12 @@ function scrolledAway([top, y, inner]: Place, [now, nowY, nowInner, nowLength]: 
   return Math.abs(scrolled) >= 0.5 && !pulledBack && Math.abs(now - top + scrolled) < 1;
 }
 
+// End the landing that holds, if one does: the root's own `overflow-anchor` is back.
 function endLanding() {
+  if (landing.ended) return;
   landing.ended = true;
   landing.listening();
-  document.documentElement.style.removeProperty("overflow-anchor");
+  document.documentElement.style.overflowAnchor = landing.anchoring;
 }
 
 // Land on `target`, the element the address names, once for each navigation: open every `details`
@@ -683,6 +695,7 @@ function land(target: Element) {
     generation: requested,
     ended: false,
     place: null,
+    anchoring: document.documentElement.style.overflowAnchor,
     listening: () => {},
   };
   landing = current;
@@ -697,19 +710,18 @@ function land(target: Element) {
   const hold = () => {
     if (current.ended || landing !== current) return;
     if (location.href !== href) return endLanding();
-    // An element drawn again in its place is held in turn; none at all is nothing quiet.
+    // An element drawn again in its place is held in turn; none at all is nothing left to hold.
     const now = document.getElementById(id);
-    if (now) {
-      // Set as the landing began, before its first frame.
-      const before = current.place as Place,
-        there = placeOf(now);
-      if (scrolledAway(before, there)) return endLanding();
-      if (Math.abs(there[0] - before[0]) >= 0.5 || there[3] !== before[3]) now.scrollIntoView();
-      current.place = placeOf(now);
-      const moved =
-        Math.abs(there[0] - before[0]) >= 0.5 || Math.abs(current.place[0] - before[0]) >= 0.5;
-      quiet = moved || pendingNear() || near("[aria-busy=true]") ? 0 : quiet + 1;
-    } else quiet = 0;
+    if (!now) return endLanding();
+    // Set as the landing began, before its first frame.
+    const before = current.place as Place,
+      there = placeOf(now);
+    if (scrolledAway(before, there)) return endLanding();
+    if (Math.abs(there[0] - before[0]) >= 0.5 || there[3] !== before[3]) now.scrollIntoView();
+    current.place = placeOf(now);
+    const moved =
+      Math.abs(there[0] - before[0]) >= 0.5 || Math.abs(current.place[0] - before[0]) >= 0.5;
+    quiet = moved || pendingNear() || near("[aria-busy=true]") ? 0 : quiet + 1;
     if (quiet < 4 && ++frame < 1800) requestAnimationFrame(hold);
     else endLanding();
   };
