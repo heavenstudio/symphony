@@ -18,18 +18,26 @@ is and how it works: read the one you change, and the ones it names.
 A page kind is an entry under `kinds/` that exports `run` and `stop`, named in `KINDS`
 (`vite.config.ts`):
 
-| Kind | Route | Drawn by | Its document |
-|---|---|---|---|
-| `review` | `/` | `home.tsx`, `home-board.ts` | [REVIEW](../../docs/REVIEW.md#the-web-app) |
-| `queue` | `/queue` | `queue.tsx`, `postpone.tsx` | [REVIEW](../../docs/REVIEW.md#queue-categories) |
-| `docs` | `/docs/`, every page an entrypoint serves | `document-page.tsx`, `document-live.ts`, `document.ts`, `editor.tsx`, `asks.tsx` | [REVIEW](../../docs/REVIEW.md#commenting-in-place) |
-| `board` | `/tasks` | `board.tsx`, `boardlive.tsx`, `boardwait.tsx`, `flow.tsx` | [the board's design](../../docs/analysis/board-design.md) |
-| `task` | `/task/SLUG` | `task-page.tsx`, `task-live.ts`, `parts.ts`, `gates.tsx`, `timeline.tsx`, `task-diff.tsx`, `attempts.tsx`, `task-tokens.tsx` | [TASKS](../../docs/TASKS.md#gates), [the timeline](../../docs/TASKS.md#the-timeline) |
-| `agents` | `/agents` | `agents.tsx`, `agents-live.ts`, `session.tsx` | [TASKS](../../docs/TASKS.md#the-agents-api) |
-| `reports` | `/reports` | `reports.tsx`, `chart.tsx` | its module's comment |
-| `runs` | `/runs` | `runs.tsx` | [RUNS](../../docs/RUNS.md#the-runs-page) |
-| `panel` (persistent) | the chat, add task, activity, toasts, the pending bar, Appearance | `panel.tsx`, `quick.tsx`, `panel-model.ts`, `panel-focus.ts`, `appearance.tsx` | [REVIEW](../../docs/REVIEW.md#chat) |
-| `overlay` (persistent) | a select's popup and the picture viewer | `overlay.tsx`, `select-popup.tsx`, `picture-viewer.tsx` | its module's comment |
+- `review`, `/`: `home.tsx`, `home-board.ts`
+  ([REVIEW](../../docs/REVIEW.md#the-web-app)).
+- `queue`, `/queue`: `queue.tsx`, `postpone.tsx`
+  ([REVIEW](../../docs/REVIEW.md#queue-categories)).
+- `docs`, `/docs/` and every page an entrypoint serves: `document-page.tsx`, `document-live.ts`,
+  `document.ts`, `editor.tsx`, `asks.tsx` ([REVIEW](../../docs/REVIEW.md#commenting-in-place)).
+- `board`, `/tasks`: `board.tsx`, `boardlive.tsx`, `boardwait.tsx`, `flow.tsx`
+  ([the board's design](../../docs/analysis/board-design.md)).
+- `task`, `/task/SLUG`: `task-page.tsx`, `task-live.ts`, `parts.ts`, `gates.tsx`, `timeline.tsx`,
+  `task-diff.tsx`, `attempts.tsx`, `task-tokens.tsx` ([TASKS](../../docs/TASKS.md#gates),
+  [the timeline](../../docs/TASKS.md#the-timeline)).
+- `agents`, `/agents`: `agents.tsx`, `agents-live.ts`, `session.tsx`
+  ([TASKS](../../docs/TASKS.md#the-agents-api)).
+- `reports`, `/reports`: `reports.tsx`, `chart.tsx`.
+- `runs`, `/runs`: `runs.tsx` ([RUNS](../../docs/RUNS.md#the-runs-page)).
+- `panel`, persistent (the chat, add task, activity, toasts, the pending bar, Appearance):
+  `panel.tsx`, `quick.tsx`, `panel-model.ts`, `panel-focus.ts`, `appearance.tsx`
+  ([REVIEW](../../docs/REVIEW.md#chat)).
+- `overlay`, persistent (a select's popup and the picture viewer): `overlay.tsx`,
+  `select-popup.tsx`, `picture-viewer.tsx`.
 
 What the kinds share:
 
