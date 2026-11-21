@@ -21,6 +21,11 @@
 //! `--status` reads; `--schedule` prints the entry that runs it each day ([`schedule`]), which the
 //! owner installs.
 //!
+//! The project's settings decide what a run verifies, releases and refreshes, so they are read as
+//! the settings check reads them ([`Project::load`]): a project file that does not load stops a
+//! run before it fetches or checks anything, as the run's own red naming the file and what is
+//! wrong ([`unread`]), never a run of the plain project with its checks unsaid.
+//!
 //! It never tags a commit that is not on the remote's main, that is behind the newest release or
 //! that a check found red, never moves or deletes a tag, and pushes nothing but its new tag. After
 //! each check it looks at its checkout, and before it tags at what git names there once more:
@@ -241,7 +246,13 @@ struct Repo {
     common: PathBuf,
     /// Its main checkout.
     main: PathBuf,
+    /// Its project as a page reads it ([`Project::of`]): what a command needs to say where it
+    /// stands (the default branch, the run's checkout) even while the file does not load.
     project: Arc<Project>,
+    /// Why its project file does not load, when it does not ([`unread`]): a table, a key or a
+    /// value the Symphony does not know among them, which the forgiving read leaves out. No
+    /// command decides what is verified, released or refreshed from a project read that way.
+    unread: Option<String>,
 }
 
 /// Now, by the tests' clock when [`CLOCK`] is set, else this machine's.
@@ -367,7 +378,19 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
         .value("--branch")
         .map_or_else(|| repo.project.default_branch.clone(), str::to_string);
     if parsed.flag("--status") {
+        // It runs nothing, so it says where things stand all the same, and why no run will go.
+        if let Some(unread) = &repo.unread {
+            let _ = writeln!(out, "project file: {unread}");
+        }
         return status(&repo, &remote, &branch, now, out, err);
+    }
+    if let Some(unread) = &repo.unread
+        && ["--schedule", "--drop", "--github"]
+            .into_iter()
+            .any(|mode| parsed.flag(mode))
+    {
+        let _ = writeln!(err, "symphony-build release: {unread}");
+        return 1;
     }
     if parsed.flag("--schedule") {
         let at = parsed.value("--at").unwrap_or("03:00");
@@ -405,7 +428,12 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
     }
     let mut cause = None;
     let mut hosted_only = false;
-    if parsed.flag("--due") {
+    // A project file that does not load says no cadence: the count is not made as if it said the
+    // default. A count runs on the build the main checkout links, which may be older than the
+    // file a landing just changed, so it is a build of the tip that says whether the file loads
+    // ([`hand_off`]); the run below stops red only where that build is this one, or none is made.
+    let unread_count = parsed.flag("--due") && repo.unread.is_some();
+    if parsed.flag("--due") && repo.unread.is_none() {
         if let [slug, landed] = &parsed.positionals[..] {
             let _ = writeln!(out, "release: {slug} landed ({})", short(landed));
         }
@@ -474,7 +502,14 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
             ),
         );
     }
-    if options.cause.is_some()
+    if unread_count && !driven() {
+        let _ = writeln!(
+            out,
+            "release: this build cannot load the project file, which a landing may have written \
+             for a newer one: a build of the tip reads it"
+        );
+    }
+    if (options.cause.is_some() || unread_count)
         && let Some(code) = hand_off(&repo, &options, args, out)
     {
         return code;
@@ -532,7 +567,9 @@ fn note(out: &mut dyn Write, noted: &[String]) {
 /// wait on its lock), and this process becomes that build, with `args` as given. None when the run
 /// goes on here: this is that build already, the tip holds no `tools/rs-bin.sh`, or the checkout or
 /// the build failed, which is said and which the run then meets as it would. An exit code when a
-/// run holds the lock: the count waits for it and nothing more runs.
+/// run holds the lock: the count waits for it and nothing more runs. A count over a project file
+/// its build cannot load is handed over the same way, undone: the tip's build counts if it loads
+/// the file, and stops red if it cannot either.
 fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write) -> Option<i32> {
     if driven() {
         return None;
@@ -710,12 +747,31 @@ fn repo(at: &Path) -> Result<Repo, String> {
         Some(main) if common.file_name().is_some_and(|name| name == ".git") => main.to_path_buf(),
         _ => root.clone(),
     };
+    // The strict read decides: the forgiving one leaves out what it does not know, and reads the
+    // plain project for a file that does not load, which would run with every `[releases]` key
+    // unsaid, its checks dropped among them.
+    let (project, unread) = match Project::load(&main) {
+        Ok(project) => (Arc::new(project), None),
+        Err(problem) => (Project::of(&main), Some(unread(&main, &problem))),
+    };
     Ok(Repo {
-        project: Project::of(&main),
+        project,
+        unread,
         root,
         common,
         main,
     })
+}
+
+/// What a command says of the project file of the main checkout `main` that does not load for
+/// `problem`: the file, the error, and that nothing was decided from it.
+fn unread(main: &Path, problem: &str) -> String {
+    format!(
+        "the project file {} does not load, so nothing says what a run verifies, releases or \
+         refreshes, and none is run as if its settings were unset: {problem}. The settings check \
+         reads it the same way (docs/PROJECT_FILE.md, \"The settings check\")",
+        main.join(symphony::project::FILE).display()
+    )
 }
 
 /// The run's own checkout: `release` in the project's agent worktrees folder, else in a folder
@@ -1166,7 +1222,11 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
     // The release candidate, when this run is one of main's line: none or ended runs main's tip, an
     // open one is rerun once every red of it is answered, and before that nothing runs.
     let mut held: Option<candidate::Candidate> = None;
-    let turn = if options.refresh || options.out_of_cycle.is_some() {
+    let turn = if let Some(unread) = &repo.unread {
+        // Before anything is fetched, placed or checked: the run's own red, which the next run
+        // that gets through closes.
+        Err(Stop::Error(unread.clone()))
+    } else if options.refresh || options.out_of_cycle.is_some() {
         Ok(Turn::Main)
     } else {
         turn(repo, options, &folder, &mut held, within.bound, out)
@@ -1966,6 +2026,7 @@ fn tell(
         candidate: holding,
         rerun: record.rerun.is_some(),
         slept: record.slept,
+        rulesets: !repo.project.releases.rulesets.is_empty(),
     };
     let board = symphony::taskcli::CliBoard::new(&repo.main);
     let mut steps = record.checks.clone();
@@ -2974,6 +3035,7 @@ mod tests {
             common: main.join(".git"),
             main: main.to_path_buf(),
             project: Project::of(main),
+            unread: None,
         };
         tree.write("plain/README.md", "no project file\n");
         assert_eq!(
