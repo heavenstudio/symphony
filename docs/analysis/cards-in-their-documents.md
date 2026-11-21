@@ -234,11 +234,11 @@ landings, for a list the app can draw from the cards themselves.
 ## The card
 
 <!-- register:start -->
-## Needs your decision
+## Waiting on an agent
 
 ### Decision cards
 
-- [ ] **cards-in-their-documents** — Each decision card would be written at the end of the analysis that argues it, instead of in `docs/DECISIONS.md`, which today holds all 88 cards in 378 KB. You would still answer every card from the queue as today; opening one shows its analysis above it. What should `DECISIONS.md` become, and do the cards written so far move? A: only new cards go in their analyses; `DECISIONS.md` keeps all its cards and lists no new one. B: every card moves once to its analysis; `DECISIONS.md` keeps the 17 cards that have none, and its page lists every other card live, one line each, linking it. C: as B, but `DECISIONS.md` holds a committed one-line copy of every card, rewritten on each post and answer. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/cards-in-their-documents#The choice]]
+- [-] **cards-in-their-documents** — Each decision card would be written at the end of the analysis that argues it, instead of in `docs/DECISIONS.md`, which today holds all 88 cards in 378 KB. You would still answer every card from the queue as today; opening one shows its analysis above it. What should `DECISIONS.md` become, and do the cards written so far move? A: only new cards go in their analyses; `DECISIONS.md` keeps all its cards and lists no new one. B: every card moves once to its analysis; `DECISIONS.md` keeps the 17 cards that have none, and its page lists every other card live, one line each, linking it. C: as B, but `DECISIONS.md` holds a committed one-line copy of every card, rewritten on each post and answer. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/cards-in-their-documents#The choice]]
   [2026-11-21 13:20] agent — Posted for the board task `docs/decisions-live-with-their-documents`, on your ask of 2026-11-20: "we should not be hoarding all decisions in this file. The ideal scenario is that decisions are hopefully added or connected to the particular files that they belong at. [...] Decisions.md could be a sort of catch all that just has a copy of a decision made in another place?". This card is written the proposed way, at the end of its analysis, and reaches your queue as any card does.
 
     **Base, today.** Every card is in `DECISIONS.md`: 88 cards, 378 KB, about 95,000 tokens to read whole, 85% of it settled cards. It more than doubled in six days (173 KB on 11-13) and took 228 commits in ten; 10 of the 41 unmerged branches change it now. 71 cards link an analysis, 43 analyses in all; 17 link none.
@@ -260,4 +260,5 @@ landings, for a list the app can draw from the cards themselves.
     - **contract-tool-route** (auto-approved A): a project's tools draw a card by its document and name, which works wherever the card is.
 
     None of them decides where a card is written.
+  [2026-11-21 09:39] owner · rejected — This isn't just about analysis docs. The idea is that decisions are made in any place, And this should be the default behavior. If you look at the star-foundry project, you can see how in there decisions are a lot more spread, docs have better structure between engineering, product, design etc. There's probably some skill or instructions in star foundry that better dictates this that is missing on this project.
 <!-- register:end -->
