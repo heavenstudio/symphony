@@ -1085,12 +1085,15 @@ Once a release's tag is pushed, the run does this, in order:
     longer ago than the project's bound, `[board] stale_writer_hours` in its `symphony.toml`, a day
     when it names none ([PROJECT_FILE](PROJECT_FILE.md#board)). The builds a project runs now are
     the files the links in its main checkout's `.target/bin` lead to, the ones its recipes run
-    (`crates/symphony/src/builds.rs`), so a build its link names holds the board however long ago
-    it last wrote, and a build its links moved past (a superseded build named by its hash, still
-    in the project's cache) holds it only within the bound. The step says each
+    first (`crates/symphony/src/builds.rs`), so a build its link names holds the board however
+    long ago it last wrote, and a build its links moved past (a superseded build named by its
+    hash, still in the project's cache) holds it only within the bound. A recipe with no link runs
+    the release `current` names, else a build on `PATH`: one on `PATH` behind is not counted past
+    the bound either. The step says each
     (`not counted, as its project runs another build now and it has not run here for over N h`),
     and the move runs with `--leave-behind`. Run again after the move, such a build is refused the
-    board before any write, as a build gone from its path would be. A writer on another host is
+    board before any write, as a build gone from its path would be: a refused write, never a
+    corrupt one. A writer on another host is
     always counted, its links not being this machine's to read. Where the build a project's link
     names is what holds its board, the step says the two ways it takes the release: its pin moved
     to the release and the build made again, or, where its board binaries are the board's own

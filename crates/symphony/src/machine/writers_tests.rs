@@ -285,6 +285,54 @@ fn a_judgement_read_later_says_the_same_steadily_while_the_same_writers_hold() {
 }
 
 #[test]
+fn a_held_board_names_its_writers_what_its_project_does_and_what_moves_it_then() {
+    let now = 1_000_000.0;
+    let gate = writer("gate", Path::new("/w/gate"), "h", 18, now, 60.0);
+    let tasks = writer("tasks", Path::new("/w/tasks"), "h", 17, now, 7200.0);
+    let one = holding(18, std::slice::from_ref(&gate), "release-1", 19, "", now);
+    assert_eq!(
+        steady(&one),
+        "its board stays at schema 18: a writer seen there in the last week is behind \
+         release-1's schema 19: gate at schema 18 (/w/gate on h); rebuild each at schema 19 and \
+         run it once, which records it, then the Symphony moves it"
+    );
+    // Two writers, and one not counted: its words come after what moves the board.
+    let gone = [(
+        writer("old", Path::new("/w/old"), "h", 17, now, 60.0),
+        Gone::Missing,
+    )];
+    let two = holding(
+        18,
+        &[gate, tasks],
+        "release-1",
+        19,
+        &not_counted(&gone, now),
+        now,
+    );
+    assert!(
+        steady(&two).starts_with(
+            "its board stays at schema 18: 2 writers seen there in the last week are behind \
+             release-1's schema 19: gate at schema 18 (/w/gate on h); tasks at schema 17 \
+             (/w/tasks on h); rebuild each"
+        ),
+        "{two}"
+    );
+    assert!(
+        two.ends_with(&format!("moves it{}", not_counted(&gone, now))),
+        "{two}"
+    );
+    // A project reads it on its own board: it names none of the Symphony's own commands, and
+    // promises no server's round, as which of a refresh and the machine's server moves the board
+    // is theirs to say.
+    for said in [&one, &two] {
+        assert!(
+            !said.contains("just ") && !said.contains("server"),
+            "{said}"
+        );
+    }
+}
+
+#[test]
 fn a_board_from_before_the_writer_record_is_its_projects_own_migrates_to_bring_up() {
     let said = before_the_record(17, Path::new("/work/alpha"));
     assert_eq!(

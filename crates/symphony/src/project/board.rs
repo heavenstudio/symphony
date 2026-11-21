@@ -93,6 +93,13 @@ impl Board {
         // keeps of removed worktrees: the board reads it itself (`symphony_board::sweep::kept`),
         // 5 when unwritten; checked here so a project's lint refuses a value the sweep would not
         // take.
+        if let Some(gb) = file.swept_cap_gb
+            && !(gb > 0.0 && gb.is_finite())
+        {
+            return Err(format!(
+                "[board] swept_cap_gb is {gb}; it is a number of gigabytes over 0"
+            ));
+        }
         // The hours a build the project no longer runs holds its board's move to a release, which
         // the writer rule reads itself (`crate::machine::writers::Runs`), a day when unwritten;
         // checked here so a project's lint refuses a value the rule would not take.
@@ -100,13 +107,6 @@ impl Board {
             return Err(format!(
                 "[board] {} is 0; it is a whole number of hours over 0",
                 crate::machine::writers::UNUSED_KEY
-            ));
-        }
-        if let Some(gb) = file.swept_cap_gb
-            && !(gb > 0.0 && gb.is_finite())
-        {
-            return Err(format!(
-                "[board] swept_cap_gb is {gb}; it is a number of gigabytes over 0"
             ));
         }
         // The folder of the machine's PostgreSQL programs, which the board reads itself

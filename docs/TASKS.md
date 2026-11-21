@@ -1868,9 +1868,30 @@ The task returns to its recorded stage; work from `in_progress` without an execu
 `ready`. A block without a recorded stage returns to `ready`, or `in_progress` with an executor.
 Resuming work respects the slot cap and retries on dispatch when a slot frees. The move is
 recorded once on the thread and reaches the current orchestrator through native STATUS/PULL
-delivery. Dispatch also reconciles a completion whose writer stopped before delivery. Decision,
-check, parked and unknown blocks stay blocked; cancelled or missing prerequisites never satisfy
-a task block.
+delivery. Dispatch also reconciles a completion whose writer stopped before delivery. Cancelled or
+missing prerequisites never satisfy a task block.
+
+The owner's word ends the two blocks that wait on the owner, the same way: back to the recorded
+stage, under the slot cap, the move recorded once and told as STATUS. A `decision:NAME` block ends
+once card NAME carries the owner's verdict that decides it, approved, rejected or dismissed, in an
+owner's line dated in or after the minute the block was recorded, on any page's copy of the card:
+main's documents or a branch's, so whichever checkout the owner's save wrote, main's or the
+worktree of the task that posted it, committed or not. The owner's newest verdict there is the
+card's: a question, or the card set back to pending, ends nothing. Its line names the card and the
+verdict, `unblocked: the owner decided NAME (reject); back to in_progress`, so the executor acts on
+what the card says a reject does. An owner's line since the block that decides nothing (a
+message, a question) leaves it blocked and is posted once on the task's thread to
+`@orchestrator`, with its card, stamp and words. A `check:owner` hold, the default landing's, ends
+once an owner's approve on the task's thread names the tip of its branch (`refs/heads/SLUG`), as
+the land's `owner` stamp reads it: `unblocked: the owner approved 1a2b3c4; back to review`; an
+approve of another commit ends nothing. The machine's one server judges both on its board clock,
+from the cards its pages hold and the board it read that tick (`crates/symphony/src/decided.rs`):
+a save needs no hook, as the page that reads the saved document again brings the line to the next
+tick, and a verdict written while no server ran, or saved by another build, is read at the first
+tick that reads the documents. The move is fenced on the block the server read
+(`Store::resume_judged`): a move or a block anew in between, the owner's or a session's, wins. A
+private server, and a board no server reaches, leave them blocked until the one server runs.
+Other check, parked and unknown blocks stay blocked.
 
 **The line.** Each open task waits on one thing, said as `KIND · WHO · WHY` since the time it took
 its status (`crates/tasks/src/waits_on.rs`), KIND one of:
@@ -2122,7 +2143,7 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   `@orchestrator`, holds the task blocked from review (`Store::hold_blocked_on`, keeping its
   slot, on `check:owner`, the owner's approve of the tip, which reads as his decision: [what a
   task waits on](#what-a-task-waits-on)), or leaves it done by its approve, until the owner approves the tip
-  on the task's page. A stamp a [gate decision](#gate-decisions) waived for the tip is not
+  on the task's page, which returns a held task to review by itself, told as its STATUS. A stamp a [gate decision](#gate-decisions) waived for the tip is not
   needed there; a raise one gave must be carried in its file at the tip. A land of a task that needed no review says on its landing line the stamps and the
   whole tip they stood on (`landed SLUG on main at MERGE; its needs (tests) stood at SHA`),
   the commit it vouched for, as an approve names one.

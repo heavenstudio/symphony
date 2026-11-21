@@ -117,8 +117,8 @@ fn the_board_table_takes_the_hours_a_build_no_longer_run_holds_a_move_as_the_wri
  {
     // The writer rule reads the bound itself; the project takes what it takes and refuses what it
     // refuses, the rule reading anything it refuses as its default.
-    let root = std::env::temp_dir().join(format!("symphony-stale-writers-{}", std::process::id()));
-    std::fs::create_dir_all(&root).unwrap();
+    let tree = super::Tree::new();
+    let root = tree.root.clone();
     for (text, hours) in [
         ("", symphony::machine::writers::UNUSED_HOURS),
         ("[board]\nstale_writer_hours = 48\n", 48),
@@ -132,7 +132,6 @@ fn the_board_table_takes_the_hours_a_build_no_longer_run_holds_a_move_as_the_wri
             "{text}"
         );
     }
-    std::fs::remove_dir_all(&root).unwrap();
     for value in ["0", "-1", "1.5", "\"24\""] {
         let text = format!("[board]\nstale_writer_hours = {value}\n");
         assert!(refused(&text).contains("stale_writer_hours"), "{text}");
