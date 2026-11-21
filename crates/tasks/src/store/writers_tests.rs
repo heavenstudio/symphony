@@ -21,33 +21,43 @@ fn line(program: &str, host: &str, schema: i64, seen: f64) -> Writer {
 fn the_opening_read_says_the_version_and_whether_the_table_and_the_line_are_there() {
     let kept = json!({"schema": 18, "seen": NOW});
     assert_eq!(
-        opened(&[Value::Null, json!([18, kept])]),
+        opened(&[Value::Null, json!([18, kept, 0])]),
         (
             Some(18),
             Line::Held(Some(Kept {
                 schema: 18,
                 seen: NOW
-            }))
+            })),
+            0
         )
     );
     assert_eq!(
-        opened(&[Value::Null, json!([18, null])]),
-        (Some(18), Line::Held(None))
+        opened(&[Value::Null, json!([18, null, 2])]),
+        (Some(18), Line::Held(None), 2)
     );
     assert_eq!(
-        opened(&[Value::Null, json!([17, false])]),
-        (Some(17), Line::NoTable)
+        opened(&[Value::Null, json!([17, false, 0])]),
+        (Some(17), Line::NoTable, 0)
     );
     assert_eq!(
-        opened(&[Value::Null, json!([null, false])]),
-        (None, Line::NoTable)
+        opened(&[Value::Null, json!([null, false, 0])]),
+        (None, Line::NoTable, 0)
     );
     // A line that does not read as one is written again, never taken for a fresh one.
     assert_eq!(
-        opened(&[Value::Null, json!([18, {"seen": "yesterday"}])]),
-        (Some(18), Line::Held(None))
+        opened(&[Value::Null, json!([18, {"seen": "yesterday"}, 0])]),
+        (Some(18), Line::Held(None), 0)
     );
-    assert_eq!(opened(&[]), (None, Line::NoTable));
+    // A board's count of additive steps that is missing or not a number is none.
+    assert_eq!(
+        opened(&[json!([18, null])]),
+        (Some(18), Line::Held(None), 0)
+    );
+    assert_eq!(
+        opened(&[json!([18, null, "2"])]),
+        (Some(18), Line::Held(None), 0)
+    );
+    assert_eq!(opened(&[]), (None, Line::NoTable, 0));
 }
 
 #[test]

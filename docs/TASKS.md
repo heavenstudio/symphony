@@ -37,10 +37,19 @@ common dir, under the same namespace and database. The Symphony serves each
 registered project's board, and reconnects to one whose server restarted. A
 project's heartbeat keys, sweep state and staffing lock stay in its common dir.
 
-Each build of the board writes one schema version, which the board records. A
-build opens a board at its own version with one read and no write. A newer
-build migrates an older board forward once, its additive steps and the new
-version in one transaction before any other write. An older build is refused
+Each build of the board writes one contract, its schema version, which the board records with the
+additive steps on it the board has ([CHECKS](CHECKS.md#the-board-is-a-contract)). The version
+counts breaking steps alone: a step that only adds (a table of its own, an index that is not
+unique, an optional field on a table every build reads and writes past what it does not know)
+leaves it as it is. A build opens a board of its own contract with one read and no write, whatever
+additive steps either has. One with fewer steps than the board reads and writes it, keeping on each
+row the fields it does not know. One with more adds them where it may move the board (below), in
+one transaction, as any move, holding no writer; where it may not, it uses the board as it is: a
+write naming a table of a step the board lacks is refused before anything is written, and the
+board refuses a field or a table it does not define. A whole-board copy, export or move to another
+engine runs only on a board with the build's own steps. A newer contract migrates an older board
+forward once, its steps and the new version in one transaction before any other write. An older
+build is refused
 before it writes, naming the project, the program to rebuild (its file name and
 where it is) and `just symphony`. A Symphony one version
 behind still reads the board, and every write it would send is refused the same
@@ -68,7 +77,8 @@ once a schema lands, and only such a build makes the board when it is not made
 yet. A PostgreSQL board also checks `crates/tasks/src/store/postgres/schema.rs` from the same
 default-branch commit. Where it commits none (a consuming project, which pins a build), it is only
 `just tasks migrate` run in the main checkout, which says whether it made the
-board, moved it from one version to the next, or found nothing to move; there
+board, moved it from one version to the next, added the additive steps it lacked, or found
+nothing to move; there
 any writer makes a board not made yet. A repository with no main checkout (a
 bare repository's worktrees, a submodule's working tree) moves its board, where
 its default branch commits no source, only by `just tasks migrate`, run in any
@@ -159,7 +169,9 @@ once, which records it, then migrate again; `just tasks migrate --leave-behind` 
 all the same, and each writer left behind is refused, naming itself as the program to rebuild,
 until it is. A writer not seen for a week is not counted. Only the migrate asks: where a project's
 default branch commits the board's source, as this repository's does, main's build moves the board
-at its first command once a schema lands, and names no writer.
+at its first command once a schema lands, and names no writer. A move of additive steps alone, to
+a board of the build's contract, names none either: every build of the contract writes the board
+after it ([CHECKS](CHECKS.md#the-board-is-a-contract)).
 
 The shared server is not counted. The Symphony opens a board to read
 (`crates/symphony/src/taskview/connect.rs`), though it writes through that store (the owner's

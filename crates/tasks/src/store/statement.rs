@@ -58,6 +58,19 @@ impl From<String> for Statement<'_> {
 }
 
 impl<'a> Statement<'a> {
+    /// The text of its PostgreSQL twin, each part as it is sent, none where it has no twin: what a
+    /// write's guard reads the tables it names in, beside its SurrealQL ([`crate::schema::needs`]).
+    /// A read of lists is never guarded, and gives none.
+    pub fn postgres_text(&self) -> Vec<&str> {
+        match &self.postgres {
+            Some(Pg::Read(text) | Pg::Simple(text) | Pg::Within(_, text)) => vec![text.as_ref()],
+            Some(Pg::Script(block, answer)) => std::iter::once(block.as_ref())
+                .chain(answer.as_deref())
+                .collect(),
+            Some(Pg::Listed(_) | Pg::Nothing) | None => Vec::new(),
+        }
+    }
+
     /// Its PostgreSQL twin, or the refusal of a statement that has none yet, sent from `at`.
     pub fn postgres_at(&self, at: &Location<'_>) -> Result<&Pg<'a>, Error> {
         self.postgres.as_ref().ok_or_else(|| {

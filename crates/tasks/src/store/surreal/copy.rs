@@ -72,9 +72,11 @@ pub(in crate::store) fn staged(staging: &str, tables: &[&str]) -> Vec<String> {
 /// `$last_ts` (messages), `$last_task` and `$last_ask`, and the board's recovery generation
 /// replaced ([`super::recovery::REBIND`]), which is its answer: the numbers and versions the copy
 /// gives name other tasks than the ones a token was read on, in the same transaction or not at
-/// all.
-pub(in crate::store) fn swap(staging: &str, tables: &[&str]) -> String {
-    let mut swap = String::new();
+/// all. The database `database` is made STRICT again in it, as a board put back by other means
+/// than a move may have lost that ([`super::opening::strict`]).
+pub(in crate::store) fn swap(staging: &str, tables: &[&str], database: &str) -> String {
+    let mut swap = super::opening::strict(database);
+    swap.push('\n');
     // Each sender's last word goes with the messages, before them, so their deletion
     // finds no word to look past; the copied messages' events name them again.
     swap.push_str("LET $there = object::keys((INFO FOR DB).tables);\n");

@@ -44,12 +44,17 @@ pub struct Version {
     pub minor: u32,
 }
 
-/// What a release's own binaries say they serve: the board schema they write, the plugin protocol
-/// its server speaks, the `tasks api` its board answers and the Symphony pin its server is at
-/// ([`super::PIN`]), which the host rule reads before a start runs the release's server.
+/// What a release's own binaries say they serve: the board schema they write, its additive steps
+/// on that contract, the plugin protocol its server speaks, the `tasks api` its board answers and
+/// the Symphony pin its server is at ([`super::PIN`]), which the host rule reads before a start
+/// runs the release's server.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Serves {
     pub schema: i64,
+    /// Its additive steps on `schema` (`symphony_board::schema::ADDITIONS`): 0 from a release whose
+    /// server did not say, as every release before the contract had none.
+    #[serde(default)]
+    pub additions: i64,
     pub protocol: Version,
     pub tasks_api: Version,
     /// 0 from a release whose server did not say: older than every project's pin, so no start

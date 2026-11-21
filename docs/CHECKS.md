@@ -114,11 +114,65 @@ schema move, a call a consumer-API guard stopped holding, or a key the settings 
 no more, each without its entry, and for a trailer that reads as no entry; a reviewer reads the
 rest, and that an entry says what a project does, not what the change was.
 
+## The board is a contract
+
+The board's schema version (`schema::VERSION`, `crates/tasks/src/schema.rs`) is a contract between
+the builds that read and write a board, and it counts breaking steps alone. A step that only adds
+is an additive step on the contract (`schema::ADDED`): the version stays, the step's definitions
+run after the contract's, and the board counts the steps it has (`meta:additions`). Builds on
+either side of an additive step read and write the board. Only a breaking step moves boards under
+their writers, and only it is held by the writers it would leave behind
+([TASKS](TASKS.md#who-writes-a-board)).
+
+An additive step may define:
+
+- tables of its own, with any definitions of theirs;
+- definitions of the database's own (an analyzer, a function), none changed;
+- an index that is not unique, on any table;
+- on an open table (`schema::OPEN`: `task`, `link`, `session`, `role`, `message`, `delivery`,
+  `delivery_key`, `barred_key`, `task_session`, `ask`, `usage`), a field at the top of its rows
+  that may be none (on PostgreSQL a nullable column), with no default, assertion, value or other
+  rule of its own.
+
+Anything else is breaking: a field on any other table, a field a row must have, a field retyped or
+removed, an assertion changed, a unique index, an event or a trigger on a table there before, a
+database-wide definition changed, a step that writes rows. The catalogue test holds it (below):
+each step has its own files (`ENGINE-VERSION.STEPS.txt`), each the one before with only what the
+list allows; the tables a step declares (`Addition::tables`) are the ones its definitions add; and
+a board with rows in it, moved by the step, keeps every row as it was. What no catalogue shows is
+the reviewer's, as for a declared step below: a rule held in code that a build without the step
+skips, a meaning changed, a table such a build must write. The step's `why` says how a build
+without it reads and writes around it.
+
+What each side does, on both engines:
+
+- A build behind the board's steps reads and writes it as it is. Every read of an open table's row
+  passes a field it does not know, and every write of one sets named fields, so the field stays:
+  no statement replaces such a row whole (`store/surreal/fence_tests.rs`). The code of a step asks
+  `Store::additions` before it reads or writes what the step defines.
+- A build ahead adds its steps where it may move the board ([TASKS](TASKS.md#where-it-lives)),
+  holding no writer, and uses the board as it is where it may not. The guard refuses, in the
+  write's own transaction, a write naming a table of a step the board lacks, whatever its quoting
+  or nesting, in the statement as it is sent on either engine; and the database refuses a field or
+  a table it does not define, a SurrealDB board being STRICT. Nothing of a refused write is
+  written.
+- A whole-board copy, its staging, a recovery's rebind, and the dump that a copy, an export or a
+  move to another engine reads, are held to the build's own steps exactly; the dump also refuses a
+  field it does not know, naming it.
+
+A breaking step raises the version and empties `schema::ADDED`, its steps' definitions going into
+the contract's own. Contract 28 is the first: builds before it read rows as no field more than
+they knew and replaced some rows whole, so its move refuses every build before it. A breaking step
+owes the `board` consumer note (above) and starts a release run at once
+([RELEASES](RELEASES.md#the-cadence)); an additive step owes neither, as a project's builds of the
+contract keep reading and writing its board.
+
 ## A schema step that keeps the Symphony writing
 
-A schema step that only adds tables of its own, with their fields, indexes and events, and
-definitions of the database's own changes nothing the Symphony one schema behind writes. Such a
-step may be declared to keep that Symphony writing: its version is listed in `schema::COMPATIBLE`
+This is the rule from before the contract (above), kept for a breaking step whose change the
+Symphony one schema behind never meets; nothing is declared under it. A schema step that only adds
+tables of its own, with their fields, indexes and events, and definitions of the database's own
+changes nothing the Symphony one schema behind writes. Such a step may be declared to keep that Symphony writing: its version is listed in `schema::COMPATIBLE`
 (`crates/tasks/src/schema.rs`) with one line saying why, and nothing is listed by default. Its
 migration then writes, beside the version and in the same transaction on both engines, the oldest
 schema whose Symphony may write the board (`meta:schema`'s `writable_from`): the version before

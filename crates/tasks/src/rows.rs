@@ -2,7 +2,12 @@
 //! table's columns, as `tasks-copy --board --out` writes them. The copy reads them ([`crate::Store::copy`]) and the tests seed
 //! the board with them. A column added to a board after it was first written (`instruction`, the
 //! liveness columns) may be missing from an old dump, and reads as its default; a table or a column
-//! the copy does not know is refused by name ([`Dump::from_json`]), never dropped.
+//! the copy does not know is refused by name ([`Dump::from_json`], [`strictly`]), never dropped.
+//!
+//! A row of an open table ([`crate::schema::OPEN`]) is read past a field its struct does not know:
+//! an additive step's, which a build without the step reads around and whose writes keep it. Only
+//! the dump, which a copy, an export and a move to another engine are made of, refuses one, as it
+//! would drop it.
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -83,13 +88,23 @@ fn table<T: DeserializeOwned>(
     name: &str,
 ) -> Result<Vec<T>, String> {
     tables.remove(name).map_or(Ok(Vec::new()), |rows| {
-        serde_json::from_value(rows)
-            .map_err(|e| format!("the dump's {name} are not rows the copy knows: {e}"))
+        strictly(rows).map_err(|e| format!("the dump's {name} are not rows the copy knows: {e}"))
     })
 }
 
+/// `value` as a `T`, refused, naming each, where it has a field `T` does not know, at any depth: what
+/// a row's struct reads past on an ordinary read ([`crate::schema::OPEN`]) a dump would drop.
+pub fn strictly<T: DeserializeOwned>(value: Value) -> Result<T, String> {
+    let mut unknown = Vec::new();
+    let read: T = serde_ignored::deserialize(value, |path| unknown.push(path.to_string()))
+        .map_err(|e| e.to_string())?;
+    match unknown.is_empty() {
+        true => Ok(read),
+        false => Err(format!("a field it does not know: {}", unknown.join(", "))),
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct TaskRow {
     /// SQLite's row id: the order tasks were created in (`sid` in SurrealDB, whose `id` is the record's).
     #[serde(alias = "sid")]
@@ -116,7 +131,6 @@ pub struct TaskRow {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct LinkRow {
     pub slug: String,
     /// `doc` or `dep`.
@@ -125,7 +139,6 @@ pub struct LinkRow {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct SessionRow {
     pub handle: String,
     pub kind: String,
@@ -158,7 +171,6 @@ pub struct SessionRow {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct RoleRow {
     pub slug: String,
     pub handle: String,
@@ -170,7 +182,6 @@ pub struct RoleRow {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct MessageRow {
     #[serde(alias = "sid")]
     pub id: i64,
@@ -185,7 +196,6 @@ pub struct MessageRow {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct DeliveryRow {
     pub message: i64,
     pub handle: String,
@@ -193,7 +203,6 @@ pub struct DeliveryRow {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct BarredKeyRow {
     pub key: String,
 }
@@ -201,7 +210,6 @@ pub struct BarredKeyRow {
 /// A post made once per key on a thread (`Store::say_keyed`): the message it made, and when. Never a
 /// SQLite table; a dump from before it has none.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct DeliveryKeyRow {
     pub slug: String,
     pub key: String,
@@ -213,7 +221,6 @@ pub struct DeliveryKeyRow {
 /// owner waits on, open until it is answered, never a task. Never a SQLite table; a dump from before
 /// it has none.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct AskRow {
     /// The order asks were opened in: `ask N` (`sid` in SurrealDB, whose `id` is the record's).
     #[serde(alias = "sid")]
@@ -288,7 +295,6 @@ pub struct HeldRow {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct TaskSessionRow {
     pub slug: String,
     pub handle: String,
@@ -313,7 +319,6 @@ pub struct TaskSessionRow {
 /// The tokens one session spent on one task, in one role, on one model at one speed, in one round
 /// (`crate::usage`): what its beats added up. Never a SQLite table.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct UsageRow {
     pub handle: String,
     /// The task, "" for calls made while the session worked none.
