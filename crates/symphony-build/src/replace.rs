@@ -3,7 +3,7 @@
 
 use std::ffi::{CString, OsStr, OsString};
 use std::io;
-use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
+use std::os::unix::ffi::OsStrExt as _;
 
 /// Replaces this process with the program at the path `program`, run with `rest` and with this
 /// process's environment, each variable of `add` set over it, and returns only where that start
@@ -61,7 +61,6 @@ fn environment(
             add.iter()
                 .map(|(name, value)| pair(OsStr::new(name), value)),
         )
-        .map(|one| OsString::from_vec(one).into_vec())
         .collect()
 }
 
