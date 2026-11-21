@@ -509,7 +509,10 @@ impl Store {
                 let Some(codex) = codex else {
                     continue;
                 };
-                let thread = callback.address.strip_prefix("codex:").unwrap_or_default();
+                let thread = callback
+                    .address
+                    .strip_prefix(crate::launch::CODEX)
+                    .unwrap_or_default();
                 if codex.threads.contains(thread) {
                     true
                 } else if let Some(terminal) = &callback.terminal {
@@ -1651,7 +1654,7 @@ fn validate(address: &str) -> Result<(), String> {
         if PathBuf::from(path).is_absolute() && !path.contains('\n') {
             return Ok(());
         }
-    } else if let Some(id) = address.strip_prefix("codex:")
+    } else if let Some(id) = address.strip_prefix(crate::launch::CODEX)
         && !id.is_empty()
         && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
     {
@@ -1739,7 +1742,7 @@ fn deliver(callback: &Callback, text: &str) -> Result<(), DeliveryError> {
         }
         return result;
     }
-    let thread = address.strip_prefix("codex:").unwrap_or("");
+    let thread = address.strip_prefix(crate::launch::CODEX).unwrap_or("");
     if codex::steer(thread, text)? {
         return Ok(());
     }

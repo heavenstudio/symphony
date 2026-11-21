@@ -621,7 +621,7 @@ pub fn conversation(argv: &[String]) -> Option<String> {
     };
     match base? {
         "claude" => after("--session-id").or_else(|| after("--resume")).cloned(),
-        "codex" => after("resume").map(|id| format!("codex:{id}")),
+        "codex" => after("resume").map(|id| format!("{}{id}", crate::launch::CODEX)),
         _ => None,
     }
 }

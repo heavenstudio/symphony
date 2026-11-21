@@ -197,7 +197,11 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                             .var("CLAUDE_CODE_MESSAGING_SOCKET")
                             .map(|path| format!("uds:{path}"))
                     })
-                    .or_else(|| c.env.var("CODEX_THREAD_ID").map(|id| format!("codex:{id}")))
+                    .or_else(|| {
+                        c.env
+                            .var("CODEX_THREAD_ID")
+                            .map(|id| format!("{}{id}", crate::launch::CODEX))
+                    })
             };
             if !p.flag("off") && address.is_none() {
                 if web.is_some() {

@@ -668,7 +668,11 @@ fn reuse(
         pane: pane.into(),
         claude_session: format!(
             "{}{}",
-            if kind == "codex" { "codex:" } else { "" },
+            if kind == "codex" {
+                crate::launch::CODEX
+            } else {
+                ""
+            },
             agent.session_id.as_deref().unwrap_or_default()
         ),
         worktree: agent.worktree.clone(),
