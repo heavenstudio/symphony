@@ -1,6 +1,7 @@
 //! The guides and the documents state their rules in plain words, never as the owner's words, dated
 //! or quoted (RULES.md `docs/no-ledger-in-documents`): the words are kept in
-//! `docs/history/owner-words.md` and the decision register, the records this check passes over. The
+//! `docs/history/owner-words.md` and on the cards, the records this check passes over: the history
+//! by its folder, a card by its own lines wherever it sits in a document, a register region whole. The
 //! pattern is the one the published packages are read against (`tests/common/owner_words.rs`),
 //! read across a line's break, as prose wraps an attribution onto the next line. It finds the
 //! shapes that pattern names; any other is a reviewer's to read for.
@@ -14,8 +15,9 @@ use std::process::Command;
 /// What a guide is called, at the root or in a package.
 const GUIDES: [&str; 3] = ["AGENTS.md", "README.md", "RULES.md"];
 
-/// The records under `docs/` that keep the owner's words: the decision register and the history.
-const RECORDS: [&str; 2] = ["docs/DECISIONS.md", "docs/history/"];
+/// The records under `docs/` that keep the owner's words whole: the history. A card's lines are a
+/// record too, read by line ([`records`]).
+const RECORDS: [&str; 1] = ["docs/history/"];
 
 fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -54,13 +56,32 @@ fn texts(root: &Path) -> Vec<String> {
         .collect()
 }
 
+/// For each line of `lines`, whether it is a record: a card's own line, wherever the card sits
+/// ([`symphony::register::carded`]), or a line of a register region, its markers among them.
+fn records(lines: &[&str]) -> Vec<bool> {
+    use symphony::register::{REGION_END, REGION_START, carded};
+    let mut records = carded(lines);
+    let mut region = false;
+    for (line, record) in lines.iter().zip(&mut records) {
+        region |= line.trim() == REGION_START;
+        *record |= region;
+        region &= line.trim() != REGION_END;
+    }
+    records
+}
+
 /// Each line of `text` the owner's words start on, by its number from 1, with the words: a line is
-/// read with the next one joined by a space, and a match is told at the line it starts on.
+/// read with the next one joined by a space, and a match is told at the line it starts on. A
+/// record's lines ([`records`]) are passed over.
 fn found(text: &str) -> Vec<(usize, String)> {
     let pattern = words::pattern();
     let lines: Vec<&str> = text.lines().collect();
+    let records = records(&lines);
     let mut found = Vec::new();
     for (at, line) in lines.iter().enumerate() {
+        if records[at] {
+            continue;
+        }
         let here = line.trim_end();
         let next = lines.get(at + 1).map_or("", |next| next.trim_start());
         let read = format!("{here} {next}");
@@ -110,12 +131,12 @@ fn the_guides_and_the_documents_are_held_and_the_records_are_not() {
         "crates/symphony-api/README.md",
         "docs/README.md",
         "docs/TASKS.md",
+        "docs/DECISIONS.md",
         "docs/analysis/desktop-client.md",
     ] {
         assert!(held(path), "{path}");
     }
     for path in [
-        "docs/DECISIONS.md",
         "docs/history/owner-words.md",
         "docs/history/README.md",
         "docs/analysis/owner-asks-board-asks.png",
@@ -161,4 +182,34 @@ fn a_rule_in_plain_words_or_a_dated_measurement_is_not_the_owners_words() {
     ] {
         assert_eq!(found(text), Vec::<(usize, String)>::new(), "{text:?}");
     }
+}
+
+#[test]
+fn a_cards_lines_and_a_register_region_are_records_and_the_prose_around_them_is_held() {
+    let said = "The owner, 2026-11-11: \"do it\".";
+    // Inline: the card's line and the lines under it pass, the paragraphs around it do not.
+    let inline = format!(
+        "{said}\n\n- [x] **lamp** — {said}\n  [2026-11-11 10:00] agent — {said}\n\n    {said}\n\n{said}\n"
+    );
+    assert_eq!(
+        found(&inline)
+            .into_iter()
+            .map(|(line, _)| line)
+            .collect::<Vec<_>>(),
+        [1, 8]
+    );
+    // A region: everything between its markers passes, a heading or a stray line too.
+    let region = format!(
+        "{said}\n<!-- register:start -->\n## Resolved\n{said}\n- [r] **lamp** — {said}\n<!-- register:end -->\n{said}\n"
+    );
+    assert_eq!(
+        found(&region)
+            .into_iter()
+            .map(|(line, _)| line)
+            .collect::<Vec<_>>(),
+        [1, 7]
+    );
+    // A card in a code block is an example, and its words are the document's.
+    let fenced = format!("```\n- [x] **lamp** — {said}\n```\n");
+    assert_eq!(found(&fenced).len(), 1);
 }

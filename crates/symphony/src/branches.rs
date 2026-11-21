@@ -241,11 +241,25 @@ fn merged(root: &Path, main: &str) -> HashSet<String> {
     .collect()
 }
 
-/// The document pages of the project's entrypoints at `rev` that hold a register (cards): where a
-/// branch's cards can be. None when git could not say.
+/// A card's line as `git grep -E` finds it, the one [`crate::register::card_line`] reads: `- [m]
+/// **`, the mark one of the seven.
+const CARD_LINE: &str = r"^-[[:space:]]+\[[ xX?r~a-]\][[:space:]]+\*\*";
+
+/// The document pages of the project's entrypoints at `rev` that hold cards, in a register region
+/// or inline at the place they decide: where a branch's cards can be. None when git could not say.
 fn registers(at: &Path, rev: &str, project: &Project) -> Option<Vec<String>> {
     let folders = project.pathspecs();
-    let mut args = vec!["grep", "-l", "-e", REGION_START, rev, "--"];
+    let mut args = vec![
+        "grep",
+        "-l",
+        "-E",
+        "-e",
+        REGION_START,
+        "-e",
+        CARD_LINE,
+        rev,
+        "--",
+    ];
     args.extend(folders.iter().map(String::as_str));
     Some(
         git_grep(at, &args)?
