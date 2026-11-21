@@ -842,8 +842,14 @@ What holds on every page, and each page's contract where its section above names
   Search and filters, collapsed initially at every width.
   A focused card that moves keeps its title focused, opening its destination where needed;
   unrelated moves keep the chosen stage. At 760 px and below one stage is mounted, Review
-  first, with the chosen tab saved per project (`board-waiting-stage`, `src/storage.ts`). There
-  the header's pages, the wait strip and the stage tabs are each one row that scrolls across what
+  first, with the chosen tab saved per project (`board-waiting-stage`, `src/storage.ts`). Over
+  the wait strip there, one fixed row says how much is under way (`UnderWay`, `src/board.tsx`):
+  the tasks in progress, blocked ones left out, with those a machine builds or tests among them
+  and named as such (working, building, testing, the last two once a machine reports), each
+  count a button to its lane, since the Build and Test tabs are past the tab row's edge and In
+  progress alone read 0 while every task was in a build or a test; a custom workflow's board,
+  whose lanes are phases, draws none (`apps/symphony-web-tests/tests/browser/phone_board.rs`).
+  There the header's pages, the wait strip and the stage tabs are each one row that scrolls across what
   does not fit it (`src/scrollrow.ts`, `.scroll-row` in `src/styles/frame.css`): the chosen one,
   and one that takes the focus, is brought whole into view; an edge fades only while the row
   continues past it, the row itself and no colour over it; and a choice not whole in the row's
