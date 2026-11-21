@@ -21,6 +21,8 @@ export const RUN_LOG_MOST = 1048576;
 export const RUNS_DAYS = 14;
 export const SCHEMA_UPDATES_PATH = "/api/schema-updates";
 export const VERSION_HEADER = "symphony-version";
+export const GETTING_STARTED =
+  "https://github.com/heavenstudio/symphony/blob/main/docs/GETTING_STARTED.md";
 export const VERDICT_TASKS = "verdicts/";
 export const UPLOAD_PATH = "/api/upload";
 export const UPLOAD_MAX_BYTES = 10485760;
