@@ -324,6 +324,37 @@ fn met(
     guard::check(context.definition, edge, &binding, guarding)
 }
 
+/// Why a guard of `request`'s edge refuses it for `principal` with `guarding`'s attestations, as a
+/// page shows it ([`guard::Explained`]): none where the edge is not one leaving the task's pair,
+/// its guards are met, or what refuses names no single guard. It decides nothing: admission's own
+/// refusal ([`admit`]) is the answer, and this says which guard it was.
+pub fn guard_refusal(
+    context: Context,
+    facts: &Facts,
+    principal: &Principal,
+    request: &OperationRequest,
+    guarding: &Guarding<'_>,
+) -> Option<symphony_api::workflow::GuardRefusal> {
+    let position = held(facts).ok()?;
+    let from = position.at();
+    let edge =
+        (context.definition.edges.iter()).find(|e| e.id == request.edge && e.from == from)?;
+    let binding = Binding {
+        project: guarding.project,
+        task: &facts.slug,
+        edge: &edge.id,
+        workflow: &context.revision.digest,
+        activation_generation: context.generation,
+        task_revision: position.revision,
+        at: &from,
+        input_revisions: &request.input_revisions,
+        principal,
+    };
+    guard::explained(context.definition, edge, &binding, guarding)
+        .err()?
+        .guard
+}
+
 /// The edges leaving the task's pair, each with what stops `principal` taking it now: a preview,
 /// never a permit, which shows an action the principal cannot take with the reason, and names the
 /// authority it needs without saying who holds it. An edge that prepares or finalizes an external

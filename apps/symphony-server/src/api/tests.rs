@@ -96,8 +96,8 @@ async fn a_listing_status_no_listing_selects_is_refused_before_the_board_is_read
     );
 }
 
-/// The local owner's next actions are on one task: a read that names none is refused before the
-/// board is read, so no hub starts for it.
+/// The local owner's next actions, and a task's guards, are on one task: a read that names none is
+/// refused before the board is read, so no hub starts for it.
 #[tokio::test]
 async fn next_actions_that_name_no_task_are_refused_before_the_board_is_read() {
     let tree = crate::testing::Tree::new();
@@ -109,7 +109,12 @@ async fn next_actions_that_name_no_task_are_refused_before_the_board_is_read() {
         None,
         crate::gate::Gate::new(Arc::new(|_| Ok(None)), Arc::new(std::time::Instant::now)),
     );
-    for uri in ["/api/workflow-actions", "/api/workflow-actions?slug="] {
+    for uri in [
+        "/api/workflow-actions",
+        "/api/workflow-actions?slug=",
+        "/api/workflow-guards",
+        "/api/workflow-guards?slug=",
+    ] {
         let request = Request::builder()
             .uri(uri)
             .header("Host", "localhost:1234")

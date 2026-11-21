@@ -73,6 +73,7 @@ pub(crate) const READS: &[&str] = &[
     symphony_api::SCHEMA_UPDATES_PATH,
     symphony_api::workflow::WORKFLOW_PATH,
     symphony_api::workflow::WORKFLOW_ACTIONS_PATH,
+    symphony_api::workflow::WORKFLOW_GUARDS_PATH,
     symphony_api::TASK_ATTEMPTS_PATH,
 ];
 
@@ -222,6 +223,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             | symphony_api::TASK_DIFF_PATH
             | symphony_api::TASK_DIFF_FILE_PATH
             | symphony_api::workflow::WORKFLOW_ACTIONS_PATH
+            | symphony_api::workflow::WORKFLOW_GUARDS_PATH
             | symphony_api::TASK_ATTEMPTS_PATH
     ) && let Err(why) = argument(&request, "slug")
     {
@@ -233,6 +235,13 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         return Some(error(
             StatusCode::FORBIDDEN,
             "Forbidden: next actions are the local owner's, never a hosted visitor's",
+        ));
+    }
+    // A task's guards are read with its actions, and are the local owner's as they are.
+    if hosted && path == symphony_api::workflow::WORKFLOW_GUARDS_PATH {
+        return Some(error(
+            StatusCode::FORBIDDEN,
+            "Forbidden: a task's guards are the local owner's, never a hosted visitor's",
         ));
     }
     if path == symphony_api::AGENT_SCREEN_PATH
@@ -554,6 +563,30 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             );
             match crate::spawn::blocking(move || crate::attempts::read(&hub, &slug, &asker)).await {
                 Ok(Ok(attempts)) => no_store(Json(attempts)),
+                Ok(Err((code, e))) => error(code, e),
+                Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+            }
+        }
+        // The guards of one task a custom workflow holds, as the board's records have them, with
+        // each authority's page and whether this host asks it (`symphony::guards`): the same for
+        // every branch, the project file's pages the main checkout's.
+        symphony_api::workflow::WORKFLOW_GUARDS_PATH => {
+            let slug = query(&request, "slug").unwrap_or_default();
+            match crate::spawn::blocking(move || {
+                let store = hub.reader().map_err(|e| unavailable(&e, ""))?;
+                let read = symphony::guards::of(&hub.root, &store, &slug)
+                    .map(|guards| no_store(Json(guards)))
+                    .map_err(task_failure);
+                if read.as_ref().is_err_and(|(status, _)| {
+                    [StatusCode::SERVICE_UNAVAILABLE, StatusCode::GATEWAY_TIMEOUT].contains(status)
+                }) {
+                    hub.reader_failed(&store);
+                }
+                read
+            })
+            .await
+            {
+                Ok(Ok(response)) => response,
                 Ok(Err((code, e))) => error(code, e),
                 Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
             }

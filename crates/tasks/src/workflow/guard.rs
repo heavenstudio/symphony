@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use symphony_api::workflow::{
     ATTESTATION_CONTRACT, Attestation, Attested, Attestee, AuthorityState, Definition, Edge,
-    Effect, Observation, Pair, RefusalCode, Signed,
+    Effect, GuardRefusal, GuardStanding, GuardWhy, Observation, Pair, RefusalCode, Signed,
 };
 use symphony_plugin::execution::{Principal, PrincipalKind};
 
@@ -374,6 +374,35 @@ pub fn check(
     binding: &Binding<'_>,
     guarding: &Guarding<'_>,
 ) -> Result<Vec<Checked>, Refusal> {
+    explained(definition, edge, binding, guarding).map_err(|refused| refused.refusal)
+}
+
+/// A guard's refusal with what a page shows of it: the refusal as [`check`] gives it, and, where
+/// one guard of the edge refused, which, by whose authority, a word for why, and what the
+/// attestation given says once it verified. A refusal of what was given as a whole (an
+/// attestation for no guard of the edge, two for one) names no guard.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Explained {
+    pub refusal: Refusal,
+    pub guard: Option<GuardRefusal>,
+}
+
+impl From<Refusal> for Explained {
+    fn from(refusal: Refusal) -> Self {
+        Self {
+            refusal,
+            guard: None,
+        }
+    }
+}
+
+/// [`check`], a refusal explained ([`Explained`]): the same decision, read by the same steps.
+pub fn explained(
+    definition: &Definition,
+    edge: &Edge,
+    binding: &Binding<'_>,
+    guarding: &Guarding<'_>,
+) -> Result<Vec<Checked>, Explained> {
     let unavailable = |why: String| Refusal::new(RefusalCode::GuardUnavailable, why);
     let id = &edge.id;
     // Every attestation given is read first: one for a guard the edge does not carry, or a second
@@ -387,7 +416,8 @@ pub fn check(
             return Err(unavailable(format!(
                 "an attestation given for {id} names {adapter}, which no authority the active \
                  workflow commits is"
-            )));
+            ))
+            .into());
         };
         match verified_attestation(attester, signed) {
             Ok(attestation) => {
@@ -399,13 +429,15 @@ pub fn check(
                              carry",
                             attestation.guard
                         ),
-                    ));
+                    )
+                    .into());
                 }
                 if by_guard.iter().any(|(a, _)| a.guard == attestation.guard) {
                     return Err(unavailable(format!(
                         "two attestations were given for guard {} of {id}; give one",
                         attestation.guard
-                    )));
+                    ))
+                    .into());
                 }
                 by_guard.push((attestation, signed));
             }
@@ -419,112 +451,173 @@ pub fn check(
         let Some(guard) = definition.guards.iter().find(|g| &g.id == guard_id) else {
             return Err(unavailable(format!(
                 "edge {id} is guarded by {guard_id}, which the active workflow does not declare"
-            )));
+            ))
+            .into());
         };
         let adapter = &guard.adapter;
+        // This guard's refusal, with the word a page reads and nothing an attestation says.
+        let told = |why: GuardWhy, refusal: Refusal| Explained {
+            refusal,
+            guard: Some(GuardRefusal {
+                guard: guard_id.clone(),
+                adapter: adapter.clone(),
+                why,
+                record: None,
+            }),
+        };
         if !guarding.attesters.iter().any(|a| &a.adapter == adapter) {
-            return Err(unavailable(format!(
-                "edge {id} is guarded by {guard_id}, and the active workflow commits no \
-                 authority for {adapter}"
-            )));
+            return Err(told(
+                GuardWhy::Uncommitted,
+                unavailable(format!(
+                    "edge {id} is guarded by {guard_id}, and the active workflow commits no \
+                     authority for {adapter}"
+                )),
+            ));
         }
         let Some(accepted) = guarding.accepted.iter().find(|a| &a.adapter == adapter) else {
-            return Err(unavailable(format!(
-                "edge {id} is guarded by {guard_id}, and the board has accepted no observation \
-                 from {adapter}: its authority publishes one first"
-            )));
+            return Err(told(
+                GuardWhy::Unreported,
+                unavailable(format!(
+                    "edge {id} is guarded by {guard_id}, and the board has accepted no \
+                     observation from {adapter}: its authority publishes one first"
+                )),
+            ));
         };
         if accepted.conflicted {
-            return Err(unavailable(format!(
-                "{adapter} reported two different decisions at generation {} of {}: its \
-                 authority is unknown until it reports a state that follows them",
-                accepted.generation, accepted.epoch
-            )));
+            return Err(told(
+                GuardWhy::Conflict,
+                unavailable(format!(
+                    "{adapter} reported two different decisions at generation {} of {}: its \
+                     authority is unknown until it reports a state that follows them",
+                    accepted.generation, accepted.epoch
+                )),
+            ));
         }
         let taken = by_guard.iter().position(|(a, _)| &a.guard == guard_id);
         let Some((attestation, signed)) = taken.map(|at| by_guard.swap_remove(at)) else {
-            return Err(unavailable(match unverified.get(adapter) {
-                Some(why) => format!(
-                    "edge {id} is guarded by {guard_id}, and the attestation given from \
-                     {adapter} does not verify: {why}"
+            return Err(match unverified.get(adapter) {
+                Some(why) => told(
+                    GuardWhy::Unverified,
+                    unavailable(format!(
+                        "edge {id} is guarded by {guard_id}, and the attestation given from \
+                         {adapter} does not verify: {why}"
+                    )),
                 ),
-                None => format!(
-                    "edge {id} is guarded by {guard_id}: it is taken with an attestation from \
-                     {adapter}"
+                None => told(
+                    GuardWhy::Missing,
+                    unavailable(format!(
+                        "edge {id} is guarded by {guard_id}: it is taken with an attestation \
+                         from {adapter}"
+                    )),
                 ),
-            }));
+            });
         };
         // A guard is decided on the word of its own adapter's authority alone: the key that
         // verified the attestation and the state it is held to below are that authority's.
         if attestation.adapter != *adapter {
-            return Err(unavailable(format!(
-                "the attestation given for {guard_id} of {id} is from {}, and only {adapter} \
-                 attests {guard_id}",
-                attestation.adapter
-            )));
+            return Err(told(
+                GuardWhy::Unverified,
+                unavailable(format!(
+                    "the attestation given for {guard_id} of {id} is from {}, and only \
+                     {adapter} attests {guard_id}",
+                    attestation.adapter
+                )),
+            ));
         }
-        bound(&attestation, guard_id, binding)?;
+        // From here the attestation is this guard's authority's own, verified: what it says is
+        // shown with the refusal.
+        let said = |why: GuardWhy, refusal: Refusal| {
+            let mut explained = told(why, refusal);
+            if let Some(guard) = &mut explained.guard {
+                guard.record = Some(attestation.record());
+            }
+            explained
+        };
+        bound(&attestation, guard_id, binding).map_err(|refusal| said(GuardWhy::Stale, refusal))?;
         if attestation.principal != attestee(binding.principal) {
-            return Err(Refusal::new(
-                RefusalCode::Unauthorized,
-                format!(
-                    "the attestation of {guard_id} covers {}/{} ({}), not the principal taking \
-                     {id}",
-                    attestation.principal.issuer,
-                    attestation.principal.subject,
-                    attestation.principal.kind
+            return Err(said(
+                GuardWhy::NotYours,
+                Refusal::new(
+                    RefusalCode::Unauthorized,
+                    format!(
+                        "the attestation of {guard_id} covers {}/{} ({}), not the principal \
+                         taking {id}",
+                        attestation.principal.issuer,
+                        attestation.principal.subject,
+                        attestation.principal.kind
+                    ),
                 ),
             ));
         }
         if attestation.input_revisions != *binding.input_revisions {
-            return Err(Refusal::new(
-                RefusalCode::StaleInput,
-                format!(
-                    "the attestation of {guard_id} binds the input revisions {:?}, and {id} is \
-                     taken on {:?}",
-                    attestation.input_revisions, binding.input_revisions
+            return Err(said(
+                GuardWhy::Stale,
+                Refusal::new(
+                    RefusalCode::StaleInput,
+                    format!(
+                        "the attestation of {guard_id} binds the input revisions {:?}, and {id} \
+                         is taken on {:?}",
+                        attestation.input_revisions, binding.input_revisions
+                    ),
                 ),
             ));
         }
         match attestation.result {
             Attested::Pass if attestation.facts.is_empty() => {
-                return Err(unavailable(format!(
-                    "the attestation of {guard_id} passes on no decision of {adapter}'s"
-                )));
+                return Err(said(
+                    GuardWhy::Unfounded,
+                    unavailable(format!(
+                        "the attestation of {guard_id} passes on no decision of {adapter}'s"
+                    )),
+                ));
             }
             Attested::Pass => {}
             Attested::Refuse => {
-                return Err(unavailable(format!(
-                    "{adapter} refuses {guard_id} for {}: {}",
-                    binding.task,
-                    attestation.reasons.join("; ")
-                )));
+                return Err(said(
+                    GuardWhy::Refused,
+                    unavailable(format!(
+                        "{adapter} refuses {guard_id} for {}: {}",
+                        binding.task,
+                        attestation.reasons.join("; ")
+                    )),
+                ));
             }
             Attested::Unknown => {
-                return Err(unavailable(format!(
-                    "{adapter} cannot say whether {guard_id} holds for {}: {}",
-                    binding.task,
-                    attestation.reasons.join("; ")
-                )));
+                return Err(said(
+                    GuardWhy::Unknown,
+                    unavailable(format!(
+                        "{adapter} cannot say whether {guard_id} holds for {}: {}",
+                        binding.task,
+                        attestation.reasons.join("; ")
+                    )),
+                ));
             }
         }
-        timely(&attestation, guard_id, guarding.now)?;
+        timely(&attestation, guard_id, guarding.now)
+            .map_err(|(why, refusal)| said(why, refusal))?;
         if attestation.epoch != accepted.epoch || attestation.generation != accepted.generation {
-            return Err(unavailable(format!(
-                "the attestation of {guard_id} is at generation {} of {}, and the board accepted \
-                 generation {} of {} from {adapter}: {}",
-                attestation.generation,
-                attestation.epoch,
-                accepted.generation,
-                accepted.epoch,
-                if attestation.epoch == accepted.epoch
-                    && attestation.generation > accepted.generation
-                {
-                    "its authority publishes that observation first"
+            let ahead =
+                attestation.epoch == accepted.epoch && attestation.generation > accepted.generation;
+            return Err(said(
+                if ahead {
+                    GuardWhy::NotReported
                 } else {
-                    "a later decision stands, so it attests again"
-                }
-            )));
+                    GuardWhy::DecidedAgain
+                },
+                unavailable(format!(
+                    "the attestation of {guard_id} is at generation {} of {}, and the board \
+                     accepted generation {} of {} from {adapter}: {}",
+                    attestation.generation,
+                    attestation.epoch,
+                    accepted.generation,
+                    accepted.epoch,
+                    if ahead {
+                        "its authority publishes that observation first"
+                    } else {
+                        "a later decision stands, so it attests again"
+                    }
+                )),
+            ));
         }
         checked.push(Checked {
             guard: guard_id.clone(),
@@ -590,43 +683,67 @@ pub fn unstanding(
     attesters: &[Attester],
     accepted: &[Accepted],
 ) -> Option<String> {
-    met.iter().find_map(|checked| {
-        let (guard, adapter) = (&checked.guard, &checked.adapter);
-        let Some(attester) = (attesters.iter()).find(|a| a.adapter == *adapter) else {
-            return Some(format!(
+    (met.iter()).find_map(|checked| standing(checked, attesters, accepted).1)
+}
+
+/// Whether one guard an admission met still stands, as a word a page says it by, with the reason
+/// [`unstanding`] gives while it does not.
+pub fn standing(
+    checked: &Checked,
+    attesters: &[Attester],
+    accepted: &[Accepted],
+) -> (GuardStanding, Option<String>) {
+    let (guard, adapter) = (&checked.guard, &checked.adapter);
+    let Some(attester) = (attesters.iter()).find(|a| a.adapter == *adapter) else {
+        return (
+            GuardStanding::Uncommitted,
+            Some(format!(
                 "{guard} was met by {adapter}, which the active workflow no longer commits"
-            ));
-        };
-        if let Err(why) = verified_attestation(attester, &checked.signed) {
-            return Some(format!(
+            )),
+        );
+    };
+    if let Err(why) = verified_attestation(attester, &checked.signed) {
+        return (
+            GuardStanding::Unverified,
+            Some(format!(
                 "the attestation that met {guard} no longer verifies by the key committed for \
                  {adapter}: {why}"
-            ));
-        }
-        let met_at = format!("generation {} of {}", checked.generation, checked.epoch);
-        let Some(now) = accepted.iter().find(|a| a.adapter == *adapter) else {
-            return Some(format!(
+            )),
+        );
+    }
+    let met_at = format!("generation {} of {}", checked.generation, checked.epoch);
+    let Some(now) = accepted.iter().find(|a| a.adapter == *adapter) else {
+        return (
+            GuardStanding::Unreported,
+            Some(format!(
                 "{guard} was met at {met_at} of {adapter}, and the board accepts no state from it now"
-            ));
-        };
-        if now.conflicted {
-            return Some(format!(
+            )),
+        );
+    };
+    if now.conflicted {
+        return (
+            GuardStanding::Conflict,
+            Some(format!(
                 "{adapter} is in conflict at generation {} of {}: nothing it attested is \
                  dispatched until it reports a state following that one",
                 now.generation, now.epoch
-            ));
-        }
-        let same = now.epoch == checked.epoch
-            && now.generation == checked.generation
-            && now.state == checked.state;
-        (!same).then(|| {
-            format!(
-                "{adapter} decided again since {guard} was met at {met_at}: a later decision \
-                 stands (generation {} of {} now)",
-                now.generation, now.epoch
-            )
-        })
-    })
+            )),
+        );
+    }
+    let same = now.epoch == checked.epoch
+        && now.generation == checked.generation
+        && now.state == checked.state;
+    if same {
+        return (GuardStanding::Met, None);
+    }
+    (
+        GuardStanding::DecidedAgain,
+        Some(format!(
+            "{adapter} decided again since {guard} was met at {met_at}: a later decision \
+             stands (generation {} of {} now)",
+            now.generation, now.epoch
+        )),
+    )
 }
 
 /// Refused unless `attestation` covers exactly the operation `binding` names.
@@ -680,31 +797,46 @@ fn bound(attestation: &Attestation, guard: &str, binding: &Binding<'_>) -> Resul
 
 /// Refused unless `now` is within `attestation`'s time: issued no later than [`SKEW`] ahead of
 /// the machine's clock, not yet expired, and held for no longer than [`MAX_VALIDITY`].
-fn timely(attestation: &Attestation, guard: &str, now: f64) -> Result<(), Refusal> {
-    let refuse = |why: String| Err(Refusal::new(RefusalCode::GuardUnavailable, why));
+/// Each refusal comes with the word a page says it by ([`GuardWhy`]).
+fn timely(attestation: &Attestation, guard: &str, now: f64) -> Result<(), (GuardWhy, Refusal)> {
+    let refuse =
+        |word: GuardWhy, why: String| Err((word, Refusal::new(RefusalCode::GuardUnavailable, why)));
     let (issued, expires) = (attestation.issued_at, attestation.expires_at);
     if !(issued.is_finite() && expires.is_finite()) || expires <= issued {
-        return refuse(format!(
-            "the attestation of {guard} expires ({expires}) no later than it was issued ({issued})"
-        ));
+        return refuse(
+            GuardWhy::Expired,
+            format!(
+                "the attestation of {guard} expires ({expires}) no later than it was issued \
+                 ({issued})"
+            ),
+        );
     }
     if expires - issued > MAX_VALIDITY {
-        return refuse(format!(
-            "the attestation of {guard} holds for {} s, longer than the {MAX_VALIDITY} s an \
-             attestation may",
-            expires - issued
-        ));
+        return refuse(
+            GuardWhy::Overlong,
+            format!(
+                "the attestation of {guard} holds for {} s, longer than the {MAX_VALIDITY} s an \
+                 attestation may",
+                expires - issued
+            ),
+        );
     }
     if issued > now + SKEW {
-        return refuse(format!(
-            "the attestation of {guard} says it was issued at {issued}, ahead of this machine's \
-             clock ({now})"
-        ));
+        return refuse(
+            GuardWhy::Early,
+            format!(
+                "the attestation of {guard} says it was issued at {issued}, ahead of this \
+                 machine's clock ({now})"
+            ),
+        );
     }
     if now >= expires {
-        return refuse(format!(
-            "the attestation of {guard} expired at {expires}; this machine's clock is {now}"
-        ));
+        return refuse(
+            GuardWhy::Expired,
+            format!(
+                "the attestation of {guard} expired at {expires}; this machine's clock is {now}"
+            ),
+        );
     }
     Ok(())
 }
