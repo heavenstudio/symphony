@@ -277,6 +277,11 @@ pub(super) struct FileLand {
     /// The repository this one imports from (`symphony_board::land::Upstream`), strict as a
     /// generator is: a misspelt key would change what a delivery merges.
     pub(super) upstream: Option<symphony_board::land::Upstream>,
+    /// How long the delivery watcher rests between two rounds (`symphony_board::land::dispatch`).
+    pub(super) watch_seconds: u64,
+    /// How long an armed pull request whose evidence stands may stay unmerged before the watcher
+    /// disarms it.
+    pub(super) merge_within_minutes: u64,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }
@@ -292,6 +297,8 @@ impl Default for FileLand {
             check_paths: None,
             delivery: Vec::new(),
             upstream: None,
+            watch_seconds: symphony_board::land::WATCH.as_secs(),
+            merge_within_minutes: symphony_board::land::MERGE_WITHIN.as_secs() / 60,
             unknown: Unknown::new(),
         }
     }

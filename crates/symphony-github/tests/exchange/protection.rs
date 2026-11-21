@@ -631,16 +631,9 @@ fn a_policy_that_changed_since_the_publication_stops_the_merge() {
     let writes = d.writes();
     let answer = d.merge(100);
     assert_eq!(missing(&answer).len(), 1, "{answer}");
-    assert_eq!(
-        d.writes(),
-        writes,
-        "neither marked ready nor asked to merge"
-    );
+    assert_eq!(d.writes(), writes, "not asked to merge");
     let pull = d.rig.github.pulls().remove(0);
-    assert_eq!(
-        (&pull["draft"], &pull["merged"]),
-        (&json!(true), &json!(false))
-    );
+    assert_eq!(pull["merged"], false);
     assert_eq!(d.result(100)["state"], "open");
     // Taken away again, the merge goes on, under the policy first read.
     d.rig.github.ruleset(2, &Value::Null, &Value::Null);

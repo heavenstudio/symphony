@@ -614,6 +614,7 @@ pub fn run_by(
             named: false,
             transport,
             delivery,
+            mode: super::Mode::Land,
             out: &mut *out,
         };
         let mut regenerator = Regenerator {
