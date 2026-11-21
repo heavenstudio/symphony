@@ -3,7 +3,8 @@
 // (timeline.tsx, a chunk of its own) is drawn once it has come. The box imports the chunk once it
 // nears the screen and its part of the page has something to draw, behind no other read and no
 // set wait, so the page's first draw carries none of the timeline's code or style, and nothing
-// outside the box moves when the timeline arrives as tall as it was drawn last. On a phone the box keeps that height when a read adds a step to it; wide it grows to
+// outside the box moves when the timeline arrives as tall as it was drawn last. The task's tokens
+// are asked beside it and handed to the timeline as they came, which says their cost. On a phone the box keeps that height when a read adds a step to it; wide it grows to
 // hold the whole timeline. Its style is timeline-slot.css, which the task page's kind imports.
 
 import {
@@ -19,7 +20,7 @@ import { trimmed } from "./gates-model";
 import { PartsContext, usePart } from "./parts";
 import { snapshot } from "./shared";
 import { load, save } from "./storage";
-import { timelinePart } from "./task-live";
+import { timelinePart, tokensPart } from "./task-live";
 import type { HostProps } from "./timeline";
 import type { ThreadAccess } from "./timeline-messages";
 import { useVisibility } from "./viewport";
@@ -207,6 +208,9 @@ function SlotBox({ slug, scope, thread }: SlotProps) {
   const part = timelinePart(scope, slug);
   const parts = useContext(PartsContext);
   const answer = usePart(part);
+  // The task's tokens, whose cost the timeline says after each time: asked beside the timeline,
+  // drawn without until they come and where their read fails (the store tries it again).
+  const tokens = usePart(tokensPart(scope, slug));
   const { key } = part;
   // biome-ignore lint/correctness/useExhaustiveDependencies: a part is its key
   const read = useCallback(() => parts?.read(part) ?? Promise.resolve(), [parts, key]);
@@ -248,6 +252,7 @@ function SlotBox({ slug, scope, thread }: SlotProps) {
               thread={thread}
               details={details}
               part={answer}
+              tokens={tokens.value}
               read={read}
               onDrawn={(wideDraw, natural) => keep(slug, wideDraw, natural)}
             />

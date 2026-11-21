@@ -13,6 +13,9 @@
 // A run's words for a pointer resting on it and for its focus (`runTitle`) name its command, its
 // wait to start and its run time, each apart.
 //
+// Where the task's tokens are read, each stage stretch's estimated cost follows its time, in its
+// label, its words and its row (`Costs`, what timeline-cost.ts puts on each stage).
+//
 // What crates/symphony-api's `timeline` answers (a time's offset, how often to read again, where
 // the timeline ends, a run's wait and run time, the words of a verdict, a result and a gate's
 // state) is carried here in TypeScript; the rest is the layout the Dioxus client drew (its
@@ -20,6 +23,7 @@
 // it by the browser tests.
 
 import { field } from "./shared";
+import { type Carried, carriedFigure, carriedWords } from "./timeline-cost";
 import { address, endpointLane, readHistory } from "./timeline-history";
 import type {
   Claim,
@@ -347,15 +351,23 @@ export function shortCommit(commit: string): string {
   return commit;
 }
 
-/** The heading's totals: how long the task has taken, its rounds and bounces; then, once a run is
- * kept for it, the machine's time on its runs and their wait to start. */
-export function totals(timeline: TaskTimeline): [string, string | null] {
+/** The first of the heading's totals in its two parts, between which the task's estimated cost
+ * goes: how long the task has taken, then its rounds and bounces. */
+export function totalParts(timeline: TaskTimeline): [string, string] {
   const length = took(timelineEnd(timeline) - timeline.created);
   const so = timeline.closed === undefined || timeline.closed === null ? "so far" : "in all";
   const rounds = timeline.rounds.length;
-  const first =
-    `${length} ${so} · ${rounds} ${plural(rounds, "review round")} · ` +
-    `${timeline.bounces} ${plural(timeline.bounces, "bounce")}`;
+  return [
+    `${length} ${so}`,
+    ` · ${rounds} ${plural(rounds, "review round")} · ` +
+      `${timeline.bounces} ${plural(timeline.bounces, "bounce")}`,
+  ];
+}
+
+/** The heading's totals: how long the task has taken, its rounds and bounces; then, once a run is
+ * kept for it, the machine's time on its runs and their wait to start. */
+export function totals(timeline: TaskTimeline): [string, string | null] {
+  const first = totalParts(timeline).join("");
   const machine =
     timeline.runs.length === 0
       ? null
@@ -400,6 +412,8 @@ export interface Row {
   label: string;
   /** How long it took; none for an instant. */
   took: string | null;
+  /** A stage's estimated cost, said after its time; left out where it carries none. */
+  cost?: string;
   /** Its bar; none for an instant. */
   bar: Bar | null;
   /** The word after the bar (a verdict, a run's result, "now") and its tone. */
@@ -427,13 +441,43 @@ interface Worked {
 
 type Share = (seconds: number) => number;
 
+/** What the task's tokens put on each stage (`carried`, timeline-cost.ts), one for each of the
+ * timeline's stages in their order, and the day their prices were read. */
+export interface Costs {
+  stages: Carried[];
+  prices: string;
+}
+
+/** What the stage at `index` says of its cost: its figure after its time, or none, and what its
+ * words add after its hours. */
+function stageCost(timeline: TaskTimeline, costs: Costs | undefined, index: number) {
+  const held = costs?.stages[index];
+  const start = timeline.stages[index]?.from ?? timeline.created;
+  // A call made another day than its stretch began says its day too.
+  const when = (at: number) =>
+    dateOf(timeline, at) === dateOf(timeline, start)
+      ? clockOf(timeline, at)
+      : `${dateOf(timeline, at)} ${clockOf(timeline, at)}`;
+  const from = (other: number) => when(timeline.stages[other]?.from ?? start);
+  return {
+    figure: carriedFigure(held),
+    words: carriedWords(held, timeline.slug, costs?.prices ?? "", when, from),
+  };
+}
+
 /** `x` held between `least` and `most`, as Rust's `f64::clamp` (which panics where `least` is
  * over `most`: here `most` wins). */
 function clamp(x: number, least: number, most: number): number {
   return Math.min(Math.max(x, least), most);
 }
 
-function stageRow(timeline: TaskTimeline, stage: Stage, worked: Worked, share: Share): Row {
+function stageRow(
+  timeline: TaskTimeline,
+  stage: Stage,
+  worked: Worked,
+  share: Share,
+  cost: { figure: string | null; words: string },
+): Row {
   const now = timeline.now;
   const end = stage.to ?? now;
   const ended = closed(stage);
@@ -496,9 +540,10 @@ function stageRow(timeline: TaskTimeline, stage: Stage, worked: Worked, share: S
     sub: false,
     event: false,
     tone,
-    title: `${label}: from ${clockOf(timeline, stage.from)}${until}${moved}`,
+    title: `${label}: from ${clockOf(timeline, stage.from)}${until}${moved}${cost.words}`,
     label,
     took: ended ? null : took(seconds),
+    ...(cost.figure === null ? {} : { cost: cost.figure }),
     bar,
     word,
   };
@@ -733,7 +778,7 @@ export function placeRow(stretch: PlaceStretch, timeline: TaskTimeline, share: S
  * it went on, by time. A stage left before a minute was out (one that would read "0 m") has no
  * row: what began in it goes under the stage before.
  */
-export function rows(timeline: TaskTimeline): Row[] {
+export function rows(timeline: TaskTimeline, costs?: Costs): Row[] {
   const now = timeline.now;
   const places = stretches(timeline, "place");
   const longest = [
@@ -751,8 +796,15 @@ export function rows(timeline: TaskTimeline): Row[] {
   const listed: Row[] = [];
   const worked: Worked = { before: false, by: null };
   timeline.stages.forEach((stage, index) => {
-    const row = stageRow(timeline, stage, worked, share);
-    const fleeting = !closed(stage) && (stage.to ?? null) !== null && stageSeconds(stage, now) < 30;
+    const cost = stageCost(timeline, costs, index);
+    const row = stageRow(timeline, stage, worked, share, cost);
+    // A stage left before a minute was out has no row, unless it carries a cost, which no other
+    // row would say.
+    const fleeting =
+      !closed(stage) &&
+      (stage.to ?? null) !== null &&
+      stageSeconds(stage, now) < 30 &&
+      cost.figure === null;
     if (!fleeting) listed.push(row);
     const following = timeline.stages[index + 1]?.from;
     while (next < under.length) {
@@ -863,19 +915,28 @@ export function label(text: string, room: Room): Fit | null {
   return from === undefined ? null : { text, from, to: null };
 }
 
+/** The first of `texts`, longest first, that fits in a segment `room` percent wide: each drawn
+ * only at the widths that hold it and no longer one. */
+export function fittedFirst(texts: readonly string[], room: number): Fit[] {
+  const fits: Fit[] = [];
+  // The width from which a longer one is drawn: none yet.
+  let to: number | null = null;
+  for (const text of texts) {
+    if (text === "" || fits.some((fit) => fit.text === text)) continue;
+    const from = widthFor(text, room, PAD_PX);
+    if (from === undefined) continue;
+    if (from !== null && to !== null && from >= to) continue;
+    fits.push({ text, from, to });
+    if (from === null) break;
+    to = from;
+  }
+  return fits;
+}
+
 /** `long` where it fits in a segment `room` percent wide, else `short` where that fits: each drawn
  * only at the widths that hold it. */
 export function fitted(long: string, short: string, room: number): Fit[] {
-  const fits: Fit[] = [];
-  const longFrom = widthFor(long, room, PAD_PX);
-  if (longFrom !== undefined) fits.push({ text: long, from: longFrom, to: null });
-  if (longFrom === null || short === "" || short === long) return fits;
-  const from = widthFor(short, room, PAD_PX);
-  if (from !== undefined) {
-    const to = longFrom ?? null;
-    if (from === null || to === null || from < to) fits.push({ text: short, from, to });
-  }
-  return fits;
+  return fittedFirst([long, short], room);
 }
 
 /** A segment of a lane, placed in percent of the hours drawn. */
@@ -1038,25 +1099,29 @@ export function short(run: Run): string {
 
 /** The stage lane: each stretch the task held a status, the wait to land drawn as waiting; a close
  * is an instant, not drawn. */
-function stageSegs(timeline: TaskTimeline, scale: Scale): Seg[] {
+function stageSegs(timeline: TaskTimeline, scale: Scale, costs?: Costs): Seg[] {
   const segs: Seg[] = [];
-  for (const stage of timeline.stages.filter((stage) => !closed(stage))) {
+  for (const [index, stage] of timeline.stages.entries()) {
+    if (closed(stage)) continue;
     const to = stage.to ?? scale.now;
     const width = scale.width(stage.from, to);
     if (!(width > 0)) continue;
     const approved = stage.approved === true;
     const word = approved ? "waiting to land" : stage.status.replaceAll("_", " ");
     const length = took(to - stage.from);
+    const cost = stageCost(timeline, costs, index);
+    const spent = cost.figure === null ? "" : ` ${cost.figure}`;
     segs.push({
       left: scale.at(stage.from),
       width,
       tone: statusTone(stage.status),
       look: approved ? "waiting" : "solid",
-      text: fitted(`${word} ${length}`, length, width),
+      // Its word, its time and its cost; else its time and its cost; else its time alone.
+      text: fittedFirst([`${word} ${length}${spent}`, `${length}${spent}`, length], width),
       after: null,
       under: null,
       row: 0,
-      title: `${word} ${length}, from ${scale.clock(stage.from)} to ${scale.clock(to)}`,
+      title: `${word} ${length}${spent}, from ${scale.clock(stage.from)} to ${scale.clock(to)}${cost.words}`,
       stop: true,
     });
   }
@@ -1273,7 +1338,7 @@ function gateRows(timeline: TaskTimeline, scale: Scale): GateRow[] {
 /** The wide view of `timeline`: the stage lane always, the executor's, the reviewer's, the builds'
  * and the tests' (every run not a build's) once there is something to draw in them, and a row per
  * gate. */
-export function lanes(timeline: TaskTimeline): Lanes {
+export function lanes(timeline: TaskTimeline, costs?: Costs): Lanes {
   const scale = new Scale(timeline);
   const open = timeline.closed === undefined || timeline.closed === null;
   const executors = eachOnce(timeline.claims.map((claim) => claim.by));
@@ -1290,7 +1355,7 @@ export function lanes(timeline: TaskTimeline): Lanes {
       who: "",
       rows: 1,
       dense: false,
-      segs: stageSegs(timeline, scale),
+      segs: stageSegs(timeline, scale, costs),
     },
   ];
   if ((timeline.places ?? []).length > 0) {

@@ -4,7 +4,7 @@
 //! anything local holds it.
 
 use crate::config::Repository;
-use crate::transport::{Failure, Request, Response, Transport};
+use crate::transport::{Failure, Request, Response, Transport, rate_limited};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -168,8 +168,9 @@ fn since_query(since: Option<&str>) -> String {
         .unwrap_or_default()
 }
 
-fn header_number(response: &Response, name: &str) -> Option<i64> {
-    response.headers.get(name)?.trim().parse().ok()
+/// The path of `rest` under `repository`'s own: `/repos/OWNER/NAME` and what follows it.
+pub(crate) fn path(repository: &Repository, rest: &str) -> String {
+    format!("/repos/{}/{}{rest}", repository.owner, repository.name)
 }
 
 /// The repository's calls.
@@ -191,10 +192,7 @@ impl<'a> Client<'a> {
     }
 
     fn path(&self, rest: &str) -> String {
-        format!(
-            "/repos/{}/{}{rest}",
-            self.repository.owner, self.repository.name
-        )
+        path(self.repository, rest)
     }
 
     /// The JSON of a 2xx answer to `request`.
@@ -208,15 +206,8 @@ impl<'a> Client<'a> {
                 Failure::Unknown(why) if write => ApiError::Unknown(why),
                 Failure::Unknown(why) => ApiError::Unexpected(why),
             })?;
-        let limited = response.status == 429
-            || (response.status == 403
-                && (response.headers.contains_key("retry-after")
-                    || header_number(&response, "x-ratelimit-remaining") == Some(0)));
-        if limited {
-            let until = header_number(&response, "retry-after")
-                .map(|seconds| self.now + seconds.max(0))
-                .or_else(|| header_number(&response, "x-ratelimit-reset"));
-            return Err(ApiError::RateLimited(until));
+        if let Some(wait) = rate_limited(&response) {
+            return Err(ApiError::RateLimited(wait.until(self.now)));
         }
         match response.status {
             200..=299 => serde_json::from_str(&response.body)
