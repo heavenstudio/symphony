@@ -842,6 +842,7 @@ impl Store {
             left: &task.status,
             status,
             roles: &roles,
+            retired: workflow::retired(&task.fields),
         };
         placing
             .reopened(&reopening, &principal, view.now)

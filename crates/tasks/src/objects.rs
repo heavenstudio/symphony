@@ -1,14 +1,16 @@
-//! How the board reads an attempt's row and its artifacts from their JSON ([`read`]): the board
-//! writes each struct of them as an object, so a struct is read from an object alone.
+//! How the board reads its types from the JSON it holds as a [`Value`] ([`read`]): every answer
+//! of the store (`Store::read`, `Store::transact` and their kin decode through it), and an
+//! attempt's row and its artifacts. The board and its database write each struct of them as an
+//! object, so a struct is read from an object alone.
 //!
 //! `serde_json::from_value` reads a struct from an object or from an array of its fields in
 //! order, so each derived `Deserialize` it reads links two readers of the struct's fields, the
-//! map's and the sequence's, and a row holds many structs: through it the sequence readers would
-//! weigh about 50 KB of the server, which reads rows for a task's history and its cancel and stop,
-//! and as much of `tasks`. Read through [`Objects`], a struct links its map reader alone, as a
-//! struct variant does in both, and an array where a struct belongs is refused as the wrong type,
-//! as any other value there is. Everything else reads, and is refused, as `serde_json` reads and
-//! refuses it from a value.
+//! map's and the sequence's, and the board reads many structs: through it the sequence readers
+//! would weigh about 165 KB of `tasks`, most of it in the store's answers, and about 50 KB of the
+//! server, which reads rows for a task's history and its cancel and stop. Read through [`Objects`], a struct links its map reader alone, as a struct
+//! variant does in both, and an array where a struct belongs is refused as the wrong type, as any
+//! other value there is. Everything else reads, and is refused, as `serde_json` reads and refuses
+//! it from a value.
 
 use serde::de::{
     self, DeserializeOwned, DeserializeSeed, Deserializer, EnumAccess, IntoDeserializer, MapAccess,
