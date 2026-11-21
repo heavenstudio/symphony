@@ -1116,6 +1116,8 @@ fn put_together(read: &Read<'_>, root: &Path, pending: &Pending, kept: &Kept) ->
                 vec![record.slug.clone()]
             };
             let folder = read::folder(&project.artifacts, &record.slug);
+            let by_cards =
+                |tip: &str| (kept.inputs).posted(root, &record.slug, tip, default_tip.as_deref());
             let evidence = stamps::Evidence {
                 thread,
                 runs,
@@ -1124,6 +1126,7 @@ fn put_together(read: &Read<'_>, root: &Path, pending: &Pending, kept: &Kept) ->
                 branch: &branch,
                 tip: at.as_deref(),
                 cards: &posted,
+                posted: &by_cards,
             };
             stamps::stamps(record, &catalogue, &evidence)
         }

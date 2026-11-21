@@ -1880,9 +1880,13 @@ verdict, `unblocked: the owner decided NAME (reject); back to in_progress`, so t
 what the card says a reject does. An owner's line since the block that decides nothing (a
 message, a question) leaves it blocked and is posted once on the task's thread to
 `@orchestrator`, with its card, stamp and words. A `check:owner` hold, the default landing's, ends
-once an owner's approve on the task's thread names the tip of its branch (`refs/heads/SLUG`), as
-the land's `owner` stamp reads it: `unblocked: the owner approved 1a2b3c4; back to review`; an
-approve of another commit ends nothing. The machine's one server judges both on its board clock,
+once the land's `owner` stamp stands on the tip of its branch (`refs/heads/SLUG`), read by its one
+reader ([Needed stamps](#needed-stamps)): an owner's approve on the task's thread naming the tip,
+`unblocked: the owner approved 1a2b3c4; back to review`, or the owner's approve of every card
+the branch posted, committed, with nothing after it but the owner's lines and merges of the
+default branch, `unblocked: the owner approved card NAME, at 1a2b3c4; back to review`; an approve
+of another commit, or an owner's line no commit carries, ends nothing. The machine's one server
+judges both on its board clock,
 from the cards its pages hold and the board it read that tick (`crates/symphony/src/decided.rs`):
 a save needs no hook, as the page that reads the saved document again brings the line to the next
 tick, and a verdict written while no server ran, or saved by another build, is read at the first
@@ -2135,13 +2139,14 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   closes it with no verdict) or done by an approve standing; in progress or ready it is
   refused to `@executor`, to move it to review. Each other stamp is read at the tip: `tests`
   the task's recorded runs there, by [what clears what](#what-clears-a-red-run), `pictures` a post naming the tip with a picture, `owner` the owner's approve of the
-  tip. A missing one refuses, naming each and who gives it: `tests` or `pictures` to
+  tip, or of every card the task's branch posted ([Needed stamps](#needed-stamps)). A missing one refuses, naming each and who gives it: `tests` or `pictures` to
   `@executor`, at that tip; `review`, or an assessment of another tip, to `@orchestrator`, to
   start an assessor or staff a fresh reviewer; one waiting on `owner` alone, to
   `@orchestrator`, holds the task blocked from review (`Store::hold_blocked_on`, keeping its
   slot, on `check:owner`, the owner's approve of the tip, which reads as his decision: [what a
   task waits on](#what-a-task-waits-on)), or leaves it done by its approve, until the owner approves the tip
-  on the task's page, which returns a held task to review by itself, told as its STATUS. A stamp a [gate decision](#gate-decisions) waived for the tip is not
+  on the task's page, or the cards its branch posted with their lines committed, which returns a
+  held task to review by itself, told as its STATUS. A stamp a [gate decision](#gate-decisions) waived for the tip is not
   needed there; a raise one gave must be carried in its file at the tip. A land of a task that needed no review says on its landing line the stamps and the
   whole tip they stood on (`landed SLUG on main at MERGE; its needs (tests) stood at SHA`),
   the commit it vouched for, as an approve names one.
@@ -3150,6 +3155,23 @@ landing](#the-default-landing)).
   `workflow/no-second-build-in-review`, [CHECKS](CHECKS.md#no-second-build-in-review)), and what
   an executor reads before it asks for review. It is refused for a task the board does not hold,
   outside a checkout of its repository, and with no tip to read.
+- **The `owner` stamp** stands on a tip T by one reader, which the land, the task page's gate
+  and its Approve offer, and the end of a `check:owner` hold all go by (`read::owner_at`, the
+  cards' part `crates/tasks/src/stamps/posted.rs`): the owner's `approve SHA` naming T on the
+  task's thread, or the owner's approve of the cards the task posted for the owner's look, read
+  from git in the main checkout, never from a worktree's files. The cards' approve stands when
+  the branch posted a card (one of a register in a project document at T that the merge base of
+  T with the default branch holds no copy of, the owner's lines and its mark aside, as the pages
+  read a branch's posted cards), each card it posted has `approved` as its newest owner verdict
+  at T, committed (a reject, a question, pending, dismissed or none, on any of them, and it does
+  not), and nothing came after the newest of those approves but the owner's lines: every commit
+  on T's first-parent line after the one the owner's page showed when the owner gave it (the
+  commit before the first that carries the approve) adds the owner's lines under those cards
+  and nothing else, or is a merge of the default branch that is git's own merge of its two
+  parents. Any other commit after it, code, a document or a card's text, keeps it from
+  standing, whoever reviewed it: the owner asked for a look of their own, and its reading names
+  that commit. Met by the cards, the reading names them, `Approved by the owner on card NAME, at
+  1a2b3c4`, which the task page shows and the land's line carries. It is never waived.
 - **The needs** are the board's own field `fields._board.needs`, out of `just tasks field`'s
   reach as the red mark is: the stamps, the tip the assessment read (none, from
   the brief), who made it and why. `just tasks needs SLUG STAMP… [--tip TIP] --why WHY --as

@@ -280,6 +280,49 @@ fn a_hold_on_the_owners_approve_ends_on_his_approve_of_the_tip_alone() {
     );
 }
 
+/// The owner's approve of the card the task's branch posted ends the hold too, once a commit
+/// carries it: the line saved in the worktree alone counts for nothing, as the land carries commits.
+#[test]
+fn a_hold_on_the_owners_approve_ends_on_his_approve_of_the_card_its_branch_posted_committed() {
+    let tree = Tree::new();
+    let root = project(&tree, "");
+    let worktree = branch_posting_the_card(&tree, &root);
+    let (f, orch) = board("review", true);
+    f.store
+        .hold_blocked_on(
+            SLUG,
+            &orch,
+            Some(On {
+                thing: "check:owner",
+                why: None,
+            }),
+        )
+        .unwrap();
+    // The owner approves the card on the branch's page: saved in its worktree, no commit yet.
+    decide(&root, SCOPE, "approved", "wider it is");
+    let saved = std::fs::read_to_string(worktree.join(DOC)).unwrap();
+    assert!(saved.contains("owner · approved — wider it is"), "{saved}");
+    assert!(
+        !look(&hub(&root, true), &f),
+        "an owner's line no commit carries"
+    );
+    assert_eq!(status(&f), "blocked");
+    git(
+        &worktree,
+        &["commit", "-qam", "The owner's approve of layout"],
+    );
+    let tip = symphony_board::sweep::git::rev(&root, SLUG).expect("the branch is there");
+    assert!(look(&hub(&root, true), &f));
+    assert_eq!(status(&f), "review");
+    assert_eq!(
+        lines(&f, "unblocked: "),
+        [format!(
+            "unblocked: the owner approved card layout, at {}; back to review",
+            &tip[..7]
+        )]
+    );
+}
+
 /// A hold whose task has no branch of its name (a landing of another branch's) names no tip: it
 /// stays, and the look says nothing went wrong.
 #[test]
