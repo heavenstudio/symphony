@@ -2530,7 +2530,8 @@ holds](#the-limit-on-the-tasks-an-orchestrator-holds)):
   or a lost holder's is given on by the rules above, it waits marked with none that stays, and any
   orchestrator takes the role on it or hands it over, though no other role is taken on a done
   task. It takes no place under the limit and no slot. Ten minutes after its approve, its
-  orchestrator's PULL lists it as `approved_unlanded` until it lands ([Sessions](#sessions)). A task done by a landing, by a close
+  orchestrator's PULL lists it as `approved_unlanded` until it lands ([Sessions](#sessions)). Its
+  assessor still writes what it needs ([Needed stamps](#needed-stamps)). A task done by a landing, by a close
   as covered by another's landing or by a subtask's `done` never carries the mark.
 
 A task's own story (`--for`, the filer's work, its parent session, the task above it, the one it
@@ -2724,7 +2725,20 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
   there until it does. A check belongs to its commit, so a green eligible on one head merges
   nothing at another; a new commit is pushed to the same pull request at the next dispatch, the
   merge armed across it and pending until the approve names the new head. One whose head and
-  evidence are as last published asks the host nothing more. Armed only while the task is in
+  evidence are as last published asks the host nothing more.
+- **A head moved under an approve.** A delivery takes an approve naming the head alone, so a
+  task approved and not landed whose branch is at a commit its approve does not name (a merge
+  of the default branch that settles a conflict, a fix, or an approve that named no commit)
+  waits on a fresh one, which only a task in review is given. The dispatch that finds it, a
+  write's or the watcher's round, moves it back to review itself, by the board's own move from
+  done ([Tasks and roles](#tasks-and-roles)), and says so once to `@orchestrator`, naming the
+  head and the commit the approve named: its orchestrator starts its assessor and resumes its reviewer as
+  at any move to review, and nobody moves it by hand. Then it is published as any head: the
+  pull request shows the new head with `symphony/eligible` pending, its merge armed across the
+  push, until an assessment and an approve name it. An approve that comes before the
+  assessment leaves the task done, and the assessment is written all the same ([Needed
+  stamps](#needed-stamps)). One that does not go back is refused, naming `just tasks move SLUG
+  review`. Armed only while the task is in
   review, blocked or done: a task moved back to work (a changes verdict) has its merge turned off
   first and its checks said again after, so no check published meanwhile lets the host merge it,
   and stays so until it moves to review.
@@ -3296,7 +3310,10 @@ landing](#the-default-landing)).
   HANDLE` writes them, `none` alone for a task that needs no stamp, run in a checkout of the
   task's repository: `--tip` is resolved there to its whole commit, refused when it names none.
   It refuses a stamp the catalogue lacks, `none` beside a stamp, an empty reason and a task
-  done or cancelled. Each write is a line on the thread, which keeps every assessment: `needs
+  cancelled or done, but one approved and not landed (the `unlanded` mark, [Tasks and
+  roles](#tasks-and-roles)): it reads done while its land is still to make, of a head its
+  assessor may not have read, so its assessment is written as open work's is and leaves it
+  done. Each write is a line on the thread, which keeps every assessment: `needs
   tests, review at 1a2b3c4 (was review): a store query and its test, no page or wire; by
   HANDLE`.
 - **The assessor** is a role in name, with no row on the task: `just tasks needs` is refused,
