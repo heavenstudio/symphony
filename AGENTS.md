@@ -227,7 +227,7 @@ orchestrator who landed it starts at once without asking
 ([the cadence](docs/RELEASES.md#the-cadence)).
 A schema move never waits for the owner: when this board is at a schema the release `current`
 names does not serve, the refresh of a green release serving it points `current` forward itself
-([the forward move](docs/RELEASES.md#the-refresh)). Where one did not, its failed update's task
+([the refresh](docs/RELEASES.md#the-refresh)). Where one did not, its failed update's task
 filed ([an update](docs/RELEASES.md#an-update)), an orchestrator points `current` forward at that
 release at once, without asking, and says so on that task's thread; another project's pages then
 save nothing until its board moves, which its own update's task tells. Restarting the shared

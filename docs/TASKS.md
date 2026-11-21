@@ -211,13 +211,15 @@ which the `current` the refresh then points takes on) or was built at the releas
 the only writers behind are a release's own, its migrate runs with `--leave-behind`, naming them.
 A line on this host whose program is gone from its path, nothing there or a file written since
 the line's last possible write, is not counted, and is left behind the same way
-([a writer gone from its path](RELEASES.md#the-refresh)).
-Any other writer behind holds the release: the refresh names each to rebuild, moves no board of
-any project and leaves `current` where it was, until each is rebuilt and run once and the
-refresh's retry moves them all. Every board is snapshotted before the first moves; a migrate that
-fails stops the rest, the boards moved before it staying at the release's schema until the retry
-finishes the others ([RELEASES](RELEASES.md#the-refresh)). A release that keeps the schema
-`current` names moves no board.
+([a writer gone from its path](RELEASES.md#the-refresh)); so is one whose program is no build the
+project runs now (none its main checkout's `.target/bin` links name) and that has not run for
+longer than the project's `[board] stale_writer_hours`, a day by default.
+Any other writer behind holds that board alone: the refresh names each to rebuild and leaves that
+board where it was, until each is rebuilt and run once and a later refresh, or the machine's
+server's next round, moves it. No board holds another or `current`: each board is snapshotted
+just before its own move, and a migrate that fails is that board's red alone
+([RELEASES](RELEASES.md#the-refresh)). A release that keeps the schema `current` names moves only
+a board left behind it.
 
 The store takes about what it holds. Every server the board starts keeps each
 value beside its key, where compaction drops the versions a rewrite leaves, and

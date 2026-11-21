@@ -739,6 +739,33 @@ red only when COMMIT holds the commit that red was found on, so an urgent fix fr
 leaves it open. It holds no release candidate and runs whatever one is held; a release of it that
 the candidate does not descend from drops the candidate ([below](#its-bounds)).
 
+## On GitHub's runners
+
+`.github/workflows/release-verify.yml` runs one commit's own `just verify` on GitHub's macOS
+runners, a job for each step that commit's `tools/verify.sh` names, the tests one job with their
+`nextest-setup`. It is the first part of the design [its card](DECISIONS.md#release-run-on-github)
+approved, whose [analysis](analysis/release-pipeline.md#the-hosted-run-on-github) says the rest.
+`just release` does not start it: the release run verifies on this machine, as above.
+
+- **Started by hand alone**, for a full commit: `gh workflow run release-verify.yml -f
+  commit=COMMIT`. Its first job refuses an input that is not the full commit it checked out (a
+  branch, a tag or a short commit), and lists the steps; no other job runs before it. It starts on
+  no push, pull request or clock.
+- **It writes nothing.** It is given no secret, its token reads the repository's contents alone and
+  is left in no checkout, and each action it takes is pinned by a commit, so it tags, pushes and
+  publishes nothing.
+- **Each job** checks the commit out with its history, installs by Homebrew what no pin of the tree
+  holds (just, fnm, and PostgreSQL 18 and 16 as [PROJECT_FILE](PROJECT_FILE.md#board) and
+  [POSTGRESQL](POSTGRESQL.md#a-hosted-board) install them), takes the toolchain and Node by the
+  tree's own pins, names the runner image's Chrome with `SYMPHONY_CHROME`, and says the machine and
+  the versions no pin holds. It runs `just verify STEP` with no recorder (`TASKS_RECORDER=off`),
+  says the swap used, the pages swapped out, the disk left and the build folder's size after it,
+  and uploads its `build/verify` folder, the step's log, its line of `steps.tsv` and the tests'
+  lanes' logs, however the step ended.
+
+`crates/symphony-build/tests/hosted_workflow.rs` holds the file to those bounds, each refusal on a
+variant of it, and runs its two scripts as GitHub runs them.
+
 ## The release candidate
 
 A release may never come if each run judges main's tip: a red's fix lands with everything else
@@ -1072,10 +1099,11 @@ branch is made in a project, no commit, no pin moved and no main fast-forwarded:
 the release's kit and helpers by its own landing, which moves its pin through its own gate.
 
 **What the run does with a consuming project.** It builds and tests nothing of a consuming
-project's, and reads the machine's registry (`projects.json`) only to refresh. A Symphony change
-that breaks that project's build or tests is found by its own gate when its own landing takes the
-release, not by the release. Of a project, the refresh moves its live board, under the writer rule
-below, and nothing else.
+project's, and reads the machine's registry (`projects.json`) only to refresh; of a project it
+reads only its board, its `symphony.toml`'s `[board] stale_writer_hours` and where the links in
+its main checkout's `.target/bin` lead. A Symphony change that breaks that project's build or
+tests is found by its own gate when its own landing takes the release, not by the release. Of a
+project, the refresh moves its live board, under the writer rule below, and nothing else.
 
 Once a release's tag is pushed, the run does this, in order:
 
@@ -1089,27 +1117,24 @@ Once a release's tag is pushed, the run does this, in order:
   own pin, and a board moved past it would leave that server only reading it.
 - **The boards.** A release that keeps the board schema of the release `current` names, or is
   behind it, moves no board back and judges only a board read behind its schema, one an earlier
-  forward move left behind (*The forward move*, below), saying nothing of the rest (`RELEASE
-  serves board schema N, as the release current names serves N: only a board left behind it
-  moves`; `RELEASE serves board schema N, behind the release current names, which serves M: none
-  moves back, and only a board left behind N moves`). Each such board is judged and moved on its
-  own, as in the forward move: snapshotted just before its own move, and holding neither another
-  board nor `current`, which is pointed at the release as it would be with no board left behind;
-  one still held stays, its update's failure ([an update](#an-update), below).
-  One that raises it, or the first, with no `current`, judges the live board of each project in the
-  registry, this repository's aside (its board moves with its own main), one step `refresh-ID` for
-  each. A project whose id is not a plain name, whose checkout is gone, or that is not a git
-  checkout is left out, and the refresh says so (`left out: ID: …`). Every board is judged before
-  any moves, each read through its running database:
+  refresh left behind, saying nothing of the rest (`RELEASE serves board schema N, as the release
+  current names serves N: only a board left behind it moves`; `RELEASE serves board schema N,
+  behind the release current names, which serves M: none moves back, and only a board left behind
+  N moves`). One that raises it, or the first, with no `current`, judges the live board of each
+  project in the registry, this repository's aside (its board moves with its own main), one step
+  `refresh-ID` for each. A project whose id is not a plain name, whose checkout is gone, or that is
+  not a git checkout is left out, and the refresh says so (`left out: ID: …`). Each board is
+  judged, then moved, on its own, read through its running database:
   - A project with no board folder, a board not made yet, and one at the release's schema or past
     it have nothing to move.
   - **The writer rule.** A board moves only when every writer seen there in the last week (its
-    writer record, [who writes a board](TASKS.md#who-writes-a-board)) is a release's own or was
-    built at the release's schema. A release's own is a binary of a release installed in this
-    machine folder (`releases/NAME/bin/`) on this host, which pointing `current` takes on. A board
-    with any other writer behind stays where it is, and the step names each writer to rebuild, at
-    its schema, by its path and host and when it was last seen: the project's to finish. The
-    machine's server is never counted, as it takes the new schema only by its reload.
+    writer record, [who writes a board](TASKS.md#who-writes-a-board)) is a release's own, was built
+    at the release's schema, or is not counted (below). A release's own is a binary of a release
+    installed in this machine folder (`releases/NAME/bin/`) on this host, which pointing `current`
+    takes on. A board with any other writer behind stays where it is, and the step names each
+    writer to rebuild, at its schema, by its path and host and when it was last seen: the
+    project's to finish. The machine's server is never counted, as it takes the new schema only by
+    its reload.
   - **A writer gone from its path.** A line keeps its program's path and no more, so for a line
     behind on this host the refresh looks at what is at that path now, and runs none of it: a
     recorded path is read from the board, which is no word on what to run. A line is not counted
@@ -1118,8 +1143,8 @@ Once a release's tag is pushed, the run does this, in order:
     since). A line is written again once it is an hour old, so every write through a path falls
     within the hour after its `seen`, and a file written later has never opened this board to
     write: the program that wrote is gone either way. The step says each line it did not count
-    and why (`not counted, as its program is gone: …`), on the board's line whether it moves,
-    waits or stays, and the move runs with `--leave-behind`, as the migrate reads the lines again.
+    and why (`not counted, as its program is gone: …`), on the board's line whether it moves or
+    stays, and the move runs with `--leave-behind`, as the migrate reads the lines again.
     A writer on another host is always counted, and so is one whose path cannot be read. What
     this cannot see: an old build put back at a path that was empty, the same old build touched,
     and a build put there since that is itself behind and has not run. Each that runs before the
@@ -1127,58 +1152,68 @@ Once a release's tag is pushed, the run does this, in order:
     naming itself as the program to rebuild, before any write
     ([who writes a board](TASKS.md#who-writes-a-board)): a refused write, never a corrupt one. A
     file restored with its old time still counts.
+  - **A build the project no longer runs.** A line behind on this host whose program is still at
+    its path is not counted either when it is no build the project runs now and was last seen
+    longer ago than the project's bound, `[board] stale_writer_hours` in its `symphony.toml`, a day
+    when it names none ([PROJECT_FILE](PROJECT_FILE.md#board)). The builds a project runs now are
+    the files the links in its main checkout's `.target/bin` lead to, the ones its recipes run
+    first (`crates/symphony/src/builds.rs`), so a build its link names holds the board however
+    long ago it last wrote, and a build its links moved past (a superseded build named by its
+    hash, still in the project's cache) holds it only within the bound. A recipe with no link runs
+    the release `current` names, else a build on `PATH`: one on `PATH` behind is not counted past
+    the bound either. The step says each
+    (`not counted, as its project runs another build now and it has not run here for over N h`),
+    and the move runs with `--leave-behind`. Run again after the move, such a build is refused the
+    board before any write, as a build gone from its path would be: a refused write, never a
+    corrupt one. A writer on another host is
+    always counted, its links not being this machine's to read. Where the build a project's link
+    names is what holds its board, the step says the two ways it takes the release: its pin moved
+    to the release and the build made again, or, where its board binaries are the board's own
+    (`symphony_board::cli`'s, as a project's thin `tasks` is), its links to them removed, so its
+    recipes run the release's (`current/bin` in the machine folder) and its board moves with each
+    release, as a project with no build of its own does.
   - A board whose database is not running is red: nothing here starts, signals or stops a
     database, and once it runs (any `just tasks` in its checkout starts it) the retry moves it. So
     is one running an older SurrealDB than the release pins, which the move would replace, and one
     whose versions cannot be read, the release's or the database's: the guard fails closed. So is
     a board whose schema or writers cannot be read.
   - A board below schema 18, from before the board recorded who writes it, has no record to judge
-    and is never moved here: its project's own `just tasks migrate`, in its main checkout, brings
-    it up. It is the project's to finish, and holds nothing, as it is behind every release.
+    and is never moved here: its project's own `just tasks migrate`, in its main checkout, brings it
+    up. It is the project's to finish.
 
-  **The forward move.** While this repository's board is at the release's schema and the release
-  `current` names serves an older one (or none is named), nothing holds the release: `this
-  repository's board is at schema N, which the release current names does not serve (it serves M): no
-  project's board holds current, each moving as its own writers allow`. Each board that can move
-  is snapshotted just before its own move and moved; one that lags, red or the project's to
-  finish, stays where it is, its update failed ([an update](#an-update), below), and `current` is
-  pointed at the release all the same. A board left behind is moved by a later refresh once its
-  writers allow, as the release `current` names then serves past it, and until then it holds no
-  later release at that schema either (*The boards*, above). Projects left behind never hold this
-  repository's board back: their pages save nothing until their boards move.
-
-  Otherwise a board that lags, red or the project's to finish, holds the release: no board moves and
-  `current` is not pointed, and each board that could move says it waits (`ID: its board can move
-  from schema N to M, and stays at N while X holds the release`). Otherwise every board is
-  snapshotted through its running database, all of them before the first move
+  **No board holds another.** A board that lags, red or its project's to finish, stays where it is,
+  its update failed ([an update](#an-update), below), and holds neither another project's board,
+  this repository's, nor `current`, which is pointed at the release all the same: one project
+  behind never keeps another, or the Symphony's own board, from a release that serves it. Its pages
+  save nothing until its board moves, which a later refresh does once its writers allow, as does
+  the machine's server at its next round ([a held update tried
+  again](#a-held-update-tried-again)), and until then it holds no later release either. Each board
+  that can move is snapshotted through its running database just before its own move
   (`symphony/tasks/snapshots/before-schema-N-RELEASE.surql` in the project's git common dir, the
   newest 5 kept; for a board on PostgreSQL `before-schema-N-RELEASE.sql`, `pg_dump`'s text of
-  the board's database, which `psql` restores): a snapshot that fails is red and no board moves.
-  A board on PostgreSQL is read on that engine, by the PostgreSQL programs its project names, and
-  waits on no SurrealDB version, as a release pins none of the machine's PostgreSQL. Then each board is moved in
-  turn by the release's own `tasks migrate` (`releases/RELEASE/bin/tasks`) run in the project's
-  main checkout, the one command that moves a project's board, and its schema is read again. Where
-  the only writers behind are a release's own, it runs with `--leave-behind`, which names them;
-  otherwise the migrate's own check of its writers is a second guard.
+  the board's database, which `psql` restores): a snapshot that fails is that board's red, and it
+  is not moved. A board on PostgreSQL is read on that engine, by the PostgreSQL programs its
+  project names, and waits on no SurrealDB version, as a release pins none of the machine's
+  PostgreSQL. Then it is moved by the release's own `tasks migrate`
+  (`releases/RELEASE/bin/tasks`) run in the project's main checkout, the one command that moves a
+  project's board, and its schema is read again. Where the only writers behind are a release's own
+  or not counted, it runs with `--leave-behind`, which names them; otherwise the migrate's own
+  check of its writers is a second guard.
 
-  **A move that fails partway.** The boards move one at a time, so a release can be left
-  half-moved: the first migrate that fails is red and stops the rest, and `current` is not
-  pointed, as it is not when it cannot be pointed after every board moved. The boards moved before
-  it stay at the release's schema, each line saying so; the one that failed keeps the schema it
-  had, its snapshot kept; each after it stays where it was (`ID: its board can move from schema N
-  to M, and stays at N while the move of ID's board failed`). Until the retry gets through, a
-  moved board is ahead of the release `current` names (none, before the first): one schema ahead,
-  that release's server reads it and writes nothing to it, saying so on its pages, unless the step
-  keeps it writing ([CHECKS](CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)), and two
-  ahead it refuses it ([the switch](#the-switch)); that release's `tasks` and `agent-send` refuse it
-  either way, naming themselves as the program to rebuild ([who writes a
-  board](TASKS.md#who-writes-a-board)). The retry, `just release --refresh` once the failure's
-  cause is fixed, judges every board again: one moved already is at the release's schema, with
-  nothing to move, and the rest are snapshotted and moved, then `current` is pointed. The way back
-  to the schema a board had is its snapshot, restored by hand ([the way back](#the-way-back)).
-- **`current`.** Once no board holds it, `current` is pointed at the release ([the
+  **A move that fails.** A migrate that fails is its board's red alone: that board keeps the
+  schema it had, its snapshot kept, and every other board is judged and moved as it would be. The
+  way back to the schema a board had is its snapshot, restored by hand ([the way
+  back](#the-way-back)). The retry, `just release --refresh` once the failure's cause is fixed,
+  judges every board again: one moved already is at the release's schema, with nothing to move.
+- **`current`.** `current` is pointed at the release whatever a board did ([the
   install](#the-install), below): every recipe of a project with no build of its own runs it from
-  then on. One that cannot be pointed is the install's red, `current` as it was.
+  then on. One that cannot be pointed is the install's red, `current` as it was; until a retry
+  points it, a board moved is ahead of the release `current` names (none, before the first): one
+  schema ahead, that release's server reads it and writes nothing to it, saying so on its pages,
+  unless the step keeps it writing ([CHECKS](CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)),
+  and two ahead it refuses it ([the switch](#the-switch)); that release's `tasks` and `agent-send`
+  refuse it either way, naming themselves as the program to rebuild ([who writes a
+  board](TASKS.md#who-writes-a-board)).
 - **The machine's server.** Last, the run says which server answered on the machine's record
   before `current` moved. Nothing here starts, stops, signals or restarts it. A release's server
   follows `current` by its own reload ([the install](#the-install)): the run waits, 5 minutes at
@@ -1196,8 +1231,9 @@ Once a release's tag is pushed, the run does this, in order:
 Each step ends in one of three:
 
 - **Moved**, or nothing to move. Green.
-- **The project's to finish**: a writer seen on its board in the last week is behind the release's
-  schema, each named with what to do (rebuild it at that schema and run it once, which records it,
+- **The project's to finish**: a writer seen on its board in the last week and counted is behind
+  the release's schema, each named with what to do (rebuild it at that schema and run it once,
+  which records it,
   then an orchestrator's `just release --refresh` moves the board, as the machine's server does
   by itself at its next round once nothing holds it, [a held update tried
   again](#a-held-update-tried-again)); or its board is below schema 18 (`cd ROOT && just tasks
@@ -1215,8 +1251,9 @@ Each step ends in one of three:
   was up or it was told to stop is red, as the run's own.
 
 A red step says what it found, the release stands (its tag is pushed), and the run exits 1.
-`current` stays where it was, but for the forward move, a migrate that fails leaves the snapshot
-taken before it, and the boards moved before it stay moved (*A move that fails partway*, above).
+A board's red leaves that board where it was, a migrate that failed leaving the snapshot taken
+before it, and moves or holds no other board and not `current` (*A move that fails*, above); the
+install's red and the registry's leave `current` where it was.
 A board's red is its update's failure, filed once on that update's task ([an update](#an-update),
 below) and never as a red of its step as well; the install's red and the registry's
 (`tests/release-red-refresh`) are filed as a check's red is, saying what was left as it was and who
@@ -1270,8 +1307,8 @@ updates up to it (`updates.json` in the machine folder,
 - **A failure** is a refresh that ends with the update not complete where the move of its board
   failed (a red), its project holds it (writers behind, a board from before the writer record), or
   a green release serving `N` was installed, a server answered and still does not write it. With no
-  release serving `N` yet, no server answering, or a board that waits on another's move, it waits,
-  and nothing is filed. An update complete the first time it is found files nothing.
+  release serving `N` yet or no server answering, it waits, and nothing is filed. An update
+  complete the first time it is found files nothing.
 - **Its task.** The first failure files one task, `tests/release-red-update-ID-N` at p0 and marked
   red (RULES.md `workflow/fast-bugfixes`), on the board that can act: the project's own, where its
   project holds the board and a release installed here writes that board's schema, run in its main
@@ -1319,15 +1356,16 @@ when nothing holds it, without a refresh (`crates/symphony/src/machine/held.rs`)
   that lock says in its `running.json` that it runs (a living process), nothing moves that round.
   Under the lock, `current` is read again: it still names this server's release, or nothing moves.
 - **The judgement** is the refresh's own, in its own words: a writer behind seen in the last week,
-  not a release's own and not gone from its path, holds the board; a board from before the writer
+  not a release's own, not gone from its path and not a build its project no longer runs unseen
+  past its bound, holds the board; a board from before the writer
   record is its project's own migrate's; a database down, writers or schema that cannot be read, or
   a SurrealDB older than the release pins is red. Nothing is ever moved past the schema the release
   serves, and no program is run from a path a board's record names.
 - **The move** is the refresh's: the store snapshotted first, to the same file a refresh writes
   (`snapshots/before-schema-N-RELEASE`, the newest five kept), then the release's own `tasks
   migrate` (`releases/RELEASE/bin/tasks` in the machine folder) in the project's main checkout,
-  `--leave-behind` where the only writers behind are a release's own or gone, and its schema read
-  again. The snapshot and the migrate each have the sweep's 240 s, and the server's stop ends
+  `--leave-behind` where the only writers behind are a release's own or not counted, and its schema
+  read again. The snapshot and the migrate each have the sweep's 240 s, and the server's stop ends
   either.
 - **The ledger** is the same update's, by its identity ([an update](#an-update), above). A round
   that does not move it records a failure (`the machine's server, RELEASE`) and posts it on the
@@ -1631,11 +1669,11 @@ removes there only what an install of that same release left unfinished. Its ref
 project's checkout nothing at all: no branch, no commit, no worktree, no pin and no move of its
 main. It writes to a project only the snapshot of its store, in its git common dir, and moves the
 project's board only by the release's own `tasks migrate` run in its main checkout, and only when
-every writer seen there in the last week, and still at its path, is a release's own or at the
-release's schema. It runs nothing because a board's record names it. It never
-moves a board below schema 18, never moves one board of a schema-raising release while another
-holds it, and never points `current` while a board holds the release, a project's linked plugin
-holds the switch or a move failed. It never starts, signals, stops or restarts a board's database
+every writer seen there in the last week and counted (still at its path, and a build its project
+runs now or one that ran within its bound) is a release's own or at the release's schema. It runs
+nothing because a board's record names it. It never moves a board below schema 18, never lets one
+project's board hold another's or `current`, and never points `current` while a project's linked
+plugin holds the switch. It never starts, signals, stops or restarts a board's database
 or a server, a release's server taking the `current` it points by its own reload; past its time it
 stops only the `surreal export` client it started. Its tests run on a repository of their own with a bare
 repository for its remote and a user git configuration that asks every push for more, a scratch
