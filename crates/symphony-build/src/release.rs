@@ -1199,27 +1199,12 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
             "release"
         }
         .into(),
-        commit: String::new(),
-        tip: String::new(),
         started_at: options.now,
         ended_at: options.now,
         result: "error".into(),
-        error: None,
-        previous: None,
-        checks: Vec::new(),
-        tag: None,
-        pushed: false,
-        board: record::Board::default(),
         remote: options.remote.clone(),
-        unpushed: None,
         cause: options.cause.clone(),
-        refreshed: None,
-        published: None,
-        rerun: None,
-        slept: 0.0,
-        inputs: None,
-        environment: None,
-        hosted: Vec::new(),
+        ..Run::default()
     };
     // HUP, INT and TERM stop the run, its check's group and its git, and let it say so and release
     // the lock; a signal this process was started ignoring stays ignored.
@@ -3293,25 +3278,9 @@ mod tests {
             kind: kind.into(),
             commit: commit.into(),
             tip: commit.into(),
-            started_at: 0.0,
-            ended_at: 0.0,
             result: "red".into(),
-            error: None,
-            previous: None,
-            checks: Vec::new(),
-            tag: None,
-            pushed: false,
-            board: record::Board::default(),
             remote: "origin".into(),
-            unpushed: None,
-            cause: None,
-            refreshed: None,
-            published: None,
-            rerun: None,
-            slept: 0.0,
-            inputs: None,
-            environment: None,
-            hosted: Vec::new(),
+            ..Run::default()
         }
     }
 

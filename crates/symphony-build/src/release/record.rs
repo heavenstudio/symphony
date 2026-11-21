@@ -49,8 +49,9 @@ const LEGACY: &str = "nightly";
 /// The lock one run at a time holds, in the folder.
 const LOCK: &str = "run.lock";
 
-/// A run's record.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// A run's record. A record written out names what its run knows and leaves the rest as a run
+/// that reached none of it has it ([`Default`]), so a new field is written where it is known.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Run {
     pub(crate) version: u32,
     pub(crate) id: String,
@@ -419,27 +420,8 @@ fn interrupted(folder: &Path, id: &str, holder: Option<&Running>, by: &str, now:
         kind: (holder.map(|h| h.kind.clone()))
             .filter(|kind| !kind.is_empty())
             .unwrap_or_else(|| "release".into()),
-        commit: String::new(),
-        tip: String::new(),
         started_at: holder.map_or_else(|| heard.map_or(now, |(first, _)| first), |h| h.started_at),
-        ended_at: 0.0,
-        result: String::new(),
-        error: None,
-        previous: None,
-        checks: Vec::new(),
-        tag: None,
-        pushed: false,
-        board: Board::default(),
-        remote: String::new(),
-        unpushed: None,
-        cause: None,
-        refreshed: None,
-        published: None,
-        rerun: None,
-        slept: 0.0,
-        inputs: None,
-        environment: None,
-        hosted: Vec::new(),
+        ..Run::default()
     });
     run.ended_at = heard.map_or(run.started_at, |(_, last)| last.max(run.started_at));
     let doing = match holder.and_then(|holder| holder.check.as_ref()) {
@@ -789,22 +771,8 @@ mod tests {
             started_at,
             ended_at: started_at + 60.0,
             result: result.into(),
-            error: None,
-            previous: None,
-            checks: Vec::new(),
-            tag: None,
-            pushed: false,
-            board: Board::default(),
             remote: "origin".into(),
-            unpushed: None,
-            cause: None,
-            refreshed: None,
-            published: None,
-            rerun: None,
-            slept: 0.0,
-            inputs: None,
-            environment: None,
-            hosted: Vec::new(),
+            ..Run::default()
         }
     }
 
