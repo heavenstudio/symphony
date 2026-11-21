@@ -30,6 +30,7 @@ import { folderPill, isSettled, partEdges, partForm } from "./document";
 import { api, DocumentLive, documentLive, FolderLive, followFolder, named } from "./document-live";
 import { readDiff, readFragment, readVersions } from "./document-read";
 import { Editor, PageContext } from "./editor";
+import { FirstSteps } from "./first";
 import { useFrame, useRefreshed } from "./frame";
 import { PageNotices } from "./live";
 import { useMount } from "./mount";
@@ -44,6 +45,7 @@ import type {
   Document,
   DocumentCard,
   DocumentDiff,
+  Folder,
   Fragment,
   LinkTarget,
   Section,
@@ -790,6 +792,17 @@ export function bothShown(
   return folder ?? intro;
 }
 
+/** What a folder with no document says in their place: what makes the first one, and a card. */
+export function FirstDocument({ folder }: { folder: Folder }) {
+  if (folder.intro !== null || folder.entries.length > 0) return null;
+  return (
+    <FirstSteps>
+      No document is here yet. A Markdown file in this folder is a page of its own, and a card in
+      its register waits for your verdict in the queue:
+    </FirstSteps>
+  );
+}
+
 /** A folder's page: its head, its intro (a document drawn in it) and its entries. */
 export function FolderPage({ path, scope }: { path: string; scope: string }) {
   // An entrypoint's own page, the main checkout's, is kept on this device, pinned, with its
@@ -840,6 +853,7 @@ export function FolderPage({ path, scope }: { path: string; scope: string }) {
         )}
         {/* The page counts its documents once, in the pill above: the entries' heading gives no
             second number to disagree with it. */}
+        <FirstDocument folder={folder} />
         {folder.entries.length > 0 && <h2 className="section-title">In this folder</h2>}
         <div className="folder-entries">
           {folder.entries.map((entry) => {

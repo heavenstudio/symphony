@@ -50,6 +50,35 @@ const board = (props: Partial<TaskBoardProps> = {}) =>
 const columns = (html: string) => [...html.matchAll(/data-status="([^"]*)"/g)].map((m) => m[1]);
 const rows = (html: string) => [...html.matchAll(/id="row-([^"]*)"/g)].map((m) => m[1]);
 
+describe("a board with no task", () => {
+  const empty: [string, number][] = [
+    ["ready", 0],
+    ["done", 0],
+  ];
+  it("says in one line how the first is filed, with the guide's link", () => {
+    const html = board({ counts: empty });
+    expect(html).toContain(
+      '<p class="first-steps">No task is open on this board, and none finished today. Add one with the + button, or have an agent file it with the create-task skill or <code>just tasks create</code>: <a href="',
+    );
+    expect(html).toContain('/docs/GETTING_STARTED.md" target="_blank"');
+    expect(html.match(/first-steps/g)).toHaveLength(1);
+  });
+  it("says it of a new board, which counts no stage at all", () => {
+    expect(board({ counts: [] }).match(/first-steps/g)).toHaveLength(1);
+  });
+  it("says nothing of it once a task is there, open or finished", () => {
+    for (const counts of [
+      [["ready", 1]],
+      [
+        ["ready", 0],
+        ["done", 2],
+      ],
+    ] as [string, number][][]) {
+      expect(board({ counts })).not.toContain("first-steps");
+    }
+  });
+});
+
 describe("the approved B board", () => {
   it("shows lifecycle and machine columns, with Backlog in the toolbar and no Blocked or signoff column", () => {
     const html = board({ signoff: ["a"], statuses: ["blocked", "ready"] });

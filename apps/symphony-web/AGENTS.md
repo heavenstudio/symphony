@@ -26,7 +26,7 @@ A page kind is an entry under `kinds/` that exports `run` and `stop`, named in `
 - `board`, `/tasks`: `board.tsx`, `boardlive.tsx`, `boardwait.tsx`, `flow.tsx`
   ([the board's design](../../docs/analysis/board-design.md)).
 - `task`, `/task/SLUG`: `task-page.tsx`, `task-live.ts`, `parts.ts`, `gates.tsx`, `timeline.tsx`,
-  `task-diff.tsx`, `attempts.tsx`, `task-tokens.tsx` ([TASKS](../../docs/TASKS.md#gates),
+  `timeline-cost.ts`, `task-diff.tsx`, `attempts.tsx` ([TASKS](../../docs/TASKS.md#gates),
   [the timeline](../../docs/TASKS.md#the-timeline)).
 - `agents`, `/agents`: `agents.tsx`, `agents-live.ts`, `session.tsx`
   ([TASKS](../../docs/TASKS.md#the-agents-api)).
@@ -109,11 +109,11 @@ Each is one a lint or a test does not hold by itself, or names the one that does
 - **New fields extend the shared controls.** Colours use the canonical shadcn token names
   (`styles/controls-theme.css` maps them); a hover that moves or raises a thing sits under
   `(hover: hover) and (pointer: fine)`.
-- **A chunk imported later imports nothing of its kind's own** (the timeline, a task's tokens and
-  attempts): one that did splits the kind's entry in two, a file more on every first visit. It
-  brings its own sheet as `?inline` and puts it in the page, as the build links no chunk's sheet
-  and a plain CSS import there builds and never loads; when its import fails it asks the shell's
-  `gone()` before offering Retry (`task-page.tsx`).
+- **A chunk imported later imports nothing of its kind's own** (the timeline, a task's attempts):
+  one that did splits the kind's entry in two, a file more on every first visit. It brings its
+  own sheet as `?inline` and puts it in the page, as the build links no chunk's sheet and a plain
+  CSS import there builds and never loads; when its import fails it asks the shell's `gone()`
+  before offering Retry (`task-page.tsx`).
 - **A change to `styles/board.css`'s tokens or `styles/frame.css` is copied to the server's
   copies** (`apps/symphony-server/src/`); `crates/symphony/tests/packages.rs` fails until it is.
 - **A dependency added is argued on its task's thread first.** The pins are the latest stable

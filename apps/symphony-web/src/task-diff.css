@@ -38,13 +38,3 @@
 .task-diff-patch pre {
   margin: 0;
 }
-
-/* The tokens' disclosure under the changes (`TokensPart`, task-page.tsx): its heading on the
-   marker's line while closed, before its chunk, which brings the body's own sheet. */
-.task-tokens > summary {
-  cursor: pointer;
-}
-.task-tokens > summary h2 {
-  display: inline;
-  margin: 0;
-}

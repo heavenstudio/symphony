@@ -11,7 +11,6 @@ import {
   type ComponentType,
   type CSSProperties,
   memo,
-  useContext,
   useEffect,
   useMemo,
   useReducer,
@@ -37,7 +36,7 @@ import { GoToSession } from "./session";
 import { field, STALE, snapshot, useStore } from "./shared";
 import { load, save } from "./storage";
 import { TaskDiffPanel } from "./task-diff";
-import { LiveTask, offerPart, type Thread, tokensPart } from "./task-live";
+import { LiveTask, offerPart, type Thread } from "./task-live";
 import { readBrief } from "./task-read";
 import { statusWords, WorkPhases } from "./taskcard";
 import { Textarea } from "./textarea";
@@ -658,88 +657,6 @@ export function Brief({ slug, revision, blocks, omitted, next }: BriefProps) {
   );
 }
 
-/** The body the tokens' chunk draws from their part's answer, which `retry` reads again. */
-type TokensPanel = ComponentType<{ answer: Shown<unknown>; retry: () => void }>;
-
-/**
- * A task's tokens and their estimated cost: a disclosure, closed until the reader opens it, whose
- * body is a chunk of its own (task-tokens.tsx, with its guard and its style) imported as it first
- * opens, so the page's first visit carries none of it; their part (task-live.ts's `tokensPart`)
- * is asked as it opens too, beside the chunk. Until both come the body says it reads; a chunk that
- * does not come is said with its retry, once the shell has said the page's build is not gone (the
- * page then loads again). One per task: another task's page gets it closed.
- */
-export function TokensPart({ scope, slug }: { scope: string; slug: string }) {
-  const [opened, setOpened] = useState(false);
-  const [part, setPart] = useState<TokensPanel | null>(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let on = opened && !failed;
-    if (on)
-      import("./task-tokens").then(
-        (chunk) => on && setPart(() => chunk.TaskTokensPanel),
-        async () => {
-          const shell = snapshot("reviewShell") as { gone(): Promise<boolean> } | undefined;
-          if (on && !(await shell?.gone())) setFailed(true);
-        },
-      );
-    return () => {
-      on = false;
-    };
-  }, [opened, failed]);
-  return (
-    <details
-      className="task-tokens card"
-      onToggle={(event) => {
-        if (event.currentTarget.open) setOpened(true);
-      }}
-    >
-      <summary>
-        <h2>Tokens and estimated cost</h2>
-      </summary>
-      {opened && (
-        <TokensBody
-          scope={scope}
-          slug={slug}
-          Panel={part}
-          failed={failed}
-          onRetry={() => setFailed(false)}
-        />
-      )}
-    </details>
-  );
-}
-
-/** The opened disclosure's body: its part, asked as it mounts, drawn by the chunk once it came. */
-export function TokensBody({
-  scope,
-  slug,
-  Panel,
-  failed,
-  onRetry,
-}: {
-  scope: string;
-  slug: string;
-  Panel: TokensPanel | null;
-  failed: boolean;
-  onRetry: () => void;
-}) {
-  const part = tokensPart(scope, slug);
-  const parts = useContext(PartsContext);
-  const answer = usePart(part);
-  if (Panel !== null) return <Panel answer={answer} retry={() => void parts?.read(part)} />;
-  return failed ? (
-    <p role="alert">
-      {"The tokens could not be loaded. "}
-      <Button onClick={onRetry}>Retry</Button>
-    </p>
-  ) : (
-    <p role="status" aria-busy="true">
-      Reading the tokens…
-    </p>
-  );
-}
-
 /**
  * A task a custom workflow holds: its place and the owner's next actions on it, a chunk of their
  * own (nextactions.tsx), imported for such a task alone. One that does not come is said with its
@@ -1056,9 +973,6 @@ export function TaskDetail({
           )}
         </NearViewport>
       </Settle>
-      {/* Last, under the composer: a line above the thread would push the thread's region, which
-          mounts as it comes into view, off the first screen of the pages it began on. */}
-      <TokensPart key={`tokens-${slug}`} scope={scope} slug={slug} />
     </article>
   );
 }

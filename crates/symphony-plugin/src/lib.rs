@@ -553,7 +553,8 @@ pub struct Theme {
     /// The name shown in the header and the tab.
     pub name: String,
     pub icon: Option<String>,
-    /// Token names (`accent`, `bg`, `fg`, `font`, …) and their CSS values.
+    /// Token names (`primary`, `background`, `foreground`, `font-sans`, …) and their CSS values
+    /// (docs/PLUGIN_WRITING.md lists them).
     pub tokens: BTreeMap<String, String>,
     /// Stylesheets appended after the tokens, project-relative.
     pub stylesheets: Vec<String>,
