@@ -440,6 +440,47 @@ fn a_due_tip_that_does_not_build_says_why_and_its_night_runs_from_the_linked_bui
     assert!(!fixture.records().join("running.json").exists());
 }
 
+/// The run goes on in the process whose hand-off failed, so that start must not have made it the
+/// program it did not become (`replace`, whose own test holds its signals and environment to that).
+#[test]
+fn a_due_tips_build_that_cannot_be_started_says_why_and_its_night_runs_from_the_linked_build() {
+    let fixture = counting(1);
+    let built = fixture.root.join("built");
+    fs::write(&built, "a file nobody may execute").unwrap();
+    fixture.write(
+        "tools/rs-bin.sh",
+        &format!("#!/bin/sh\necho '{}'\n", built.display()),
+    );
+    fs::set_permissions(
+        fixture.main.join("tools/rs-bin.sh"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    fixture.commit("a launcher whose build cannot start");
+    git(&fixture.main, &["push", "-q", "origin", "main"]);
+
+    let landed = landing(&fixture, "tools/one");
+    let args = ["--check", CHECK, "--due", "tools/one", &landed];
+    let (code, out, err) = fixture.release_at(NOW, &args);
+    assert_eq!(code, 0, "{out}{err}");
+    let handed = format!(
+        "release: the run goes on from {0}, built in its own checkout\nrelease: {0} cannot run \
+         (Permission denied (os error 13)): the run goes on from this build\n",
+        built.display()
+    );
+    assert!(out.contains(&handed), "{out}");
+    assert!(
+        out.contains("release: green; tagged release-2026-11-12"),
+        "{out}"
+    );
+    assert_eq!(
+        fixture.runs().len(),
+        1,
+        "one run, of the build that counted"
+    );
+    assert!(!fixture.records().join("running.json").exists());
+}
+
 #[test]
 fn a_cadence_of_none_starts_no_run_and_says_the_night_still_runs() {
     let fixture = counting(0);
