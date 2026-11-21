@@ -372,7 +372,12 @@ fn removed_scrollers_release_idle_holds_without_ending_connected_scrolling() {
         let result = page.eval(&format!(
             r#"(async () => {{
                 document.documentElement.style.overflowAnchor = 'none';
+                // The page's own scroll is over before the touch begins: its scrollend comes a
+                // frame or more later, and one landing between a release and the touch's first
+                // scroll event ends the touch as one that scrolled nothing.
+                const from = scrollY, rested = new Promise(resolve => addEventListener('scrollend', resolve, {{once:true}}));
                 scrollTo(0,600);
+                if (scrollY !== from) await rested;
                 await new Promise(requestAnimationFrame);
                 const board = document.querySelector('.waiting-columns');
                 const row = [...board.querySelectorAll('[data-slug]')].find(row => {{
