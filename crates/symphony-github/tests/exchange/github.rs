@@ -1,7 +1,9 @@
 //! A GitHub repository held in memory, answering the calls the exchange makes as GitHub does:
 //! the repository, its issues listed by update and paged, one issue, its creation and edit, and
-//! its comments, for a delivery its pull requests, their merge and a commit's checks (listed a
-//! little after they are written where a test says so), and for a
+//! its comments, for a delivery its pull requests, their merge, their auto-merge (which merges
+//! by itself once the rulesets let it, as GitHub's does, after each check written) and a
+//! commit's checks (listed as GitHub lists them, the newest run of each
+//! name by each App, and a little after they are written where a test says so), and for a
 //! release its tag and the release of that tag. A test
 //! may protect its default branch by rulesets, which it then answers the rules of and holds a
 //! merge to, as GitHub does. A test
@@ -359,15 +361,35 @@ impl Fake {
         }
     }
 
-    /// The checks on `head`: each one's name, conclusion and the App that wrote it.
+    /// The checks on `head` as GitHub goes by them, the newest run of each name by each App:
+    /// each one's name, its conclusion (`in_progress` while it has none) and the App that wrote it.
     pub(crate) fn checks(&self, head: &str) -> Vec<(String, String, i64)> {
+        (self.inner().latest(head).iter())
+            .map(|run| {
+                (
+                    run["name"].as_str().unwrap().to_string(),
+                    (run["conclusion"].as_str())
+                        .or(run["status"].as_str())
+                        .unwrap()
+                        .to_string(),
+                    run["app"]["id"].as_i64().unwrap(),
+                )
+            })
+            .collect()
+    }
+
+    /// Every run written on `head`, each one's name and conclusion (`in_progress` while it has
+    /// none), oldest first: what a check named again leaves beside it.
+    pub(crate) fn runs(&self, head: &str) -> Vec<(String, String)> {
         (self.inner().checks.iter())
             .filter(|run| run["head_sha"] == json!(head))
             .map(|run| {
                 (
                     run["name"].as_str().unwrap().to_string(),
-                    run["conclusion"].as_str().unwrap().to_string(),
-                    run["app"]["id"].as_i64().unwrap(),
+                    (run["conclusion"].as_str())
+                        .or(run["status"].as_str())
+                        .unwrap()
+                        .to_string(),
                 )
             })
             .collect()
@@ -394,12 +416,17 @@ impl Fake {
 
     /// A check another App wrote on `head`.
     pub(crate) fn foreign_check(&self, head: &str, name: &str, app: i64) {
+        self.foreign_check_as(head, name, app, "success");
+    }
+
+    /// A check another App wrote on `head`, concluded `conclusion`.
+    pub(crate) fn foreign_check_as(&self, head: &str, name: &str, app: i64, conclusion: &str) {
         let mut inner = self.inner();
         inner.made += 1;
         let id = 700 + inner.made;
         inner.checks.push(json!({
             "id": id, "name": name, "head_sha": head, "status": "completed",
-            "conclusion": "success", "external_id": "", "app": {"id": app},
+            "conclusion": conclusion, "external_id": "", "app": {"id": app},
         }));
     }
 
@@ -493,7 +520,7 @@ impl Inner {
 
     fn answer(&mut self, method: &str, path: &str, body: Option<&str>) -> Response {
         if (method, path) == ("POST", "/graphql") {
-            return self.ready(body);
+            return self.graphql(body);
         }
         let (path, query) = path.split_once('?').unwrap_or((path, ""));
         let root = format!("/repos/{}/{}", self.owner, self.name);
@@ -571,33 +598,131 @@ impl Inner {
         }
     }
 
-    /// The one mutation a delivery makes: a draft pull request marked ready, named by its node.
-    fn ready(&mut self, body: Option<&str>) -> Response {
+    /// The mutations a delivery makes, each naming its pull request by its node: a draft marked
+    /// ready, and auto-merge turned on or off.
+    fn graphql(&mut self, body: Option<&str>) -> Response {
         let sent: Value = serde_json::from_str(body.unwrap_or_default()).unwrap_or(Value::Null);
-        let marks = (sent["query"].as_str()).is_some_and(|query| {
-            query.contains("markPullRequestReadyForReview(input: {pullRequestId: $id})")
-        });
-        let found = (self.pulls.iter_mut())
-            .find(|pull| marks && pull["node_id"] == sent["variables"]["id"]);
-        match found {
-            Some(pull) => {
-                pull["draft"] = json!(false);
-                answer(
-                    200,
-                    &json!({"data": {"markPullRequestReadyForReview":
-                    {"pullRequest": {"isDraft": false}}}}),
-                )
-            }
-            None => answer(
+        let query = sent["query"].as_str().unwrap_or_default();
+        let variables = &sent["variables"];
+        let error = |message: &str| {
+            answer(
                 200,
-                &json!({"data": null, "errors": [{"message": "Could not resolve"}]}),
-            ),
+                &json!({"data": null, "errors": [{"message": message}]}),
+            )
+        };
+        let allowed = self.about["allow_auto_merge"] == json!(true);
+        let acting = self.acting;
+        let Some(at) = (self.pulls.iter()).position(|pull| pull["node_id"] == variables["id"])
+        else {
+            return error("Could not resolve to a node with the global id");
+        };
+        if query.contains("markPullRequestReadyForReview(input: {pullRequestId: $id})") {
+            self.pulls[at]["draft"] = json!(false);
+            return answer(
+                200,
+                &json!({"data": {"markPullRequestReadyForReview":
+                {"pullRequest": {"isDraft": false}}}}),
+            );
+        }
+        if query.contains("enablePullRequestAutoMerge(input:") {
+            let pull = &self.pulls[at];
+            let head = pull["head"]["sha"].clone();
+            if pull["state"] != json!("open") {
+                return error("Pull request is closed");
+            }
+            if pull["draft"] == json!(true) {
+                return error("Pull request is a draft");
+            }
+            if variables["head"] != head {
+                return error("Head sha didn't match expected head");
+            }
+            if !allowed {
+                return error("Auto merge is not allowed for this repository");
+            }
+            if pull["mergeable_state"] == json!("dirty") {
+                return error("Pull request has merge conflicts");
+            }
+            if pull["mergeable_state"] == json!("clean") && self.broken(&head).is_none() {
+                return error("Pull request is in clean status");
+            }
+            self.pulls[at]["auto_merge"] = json!({
+                "enabled_by": {"login": format!("app-{acting}[bot]")},
+                "merge_method": variables["method"].as_str().unwrap_or_default().to_lowercase(),
+                "commit_title": variables["headline"], "commit_message": variables["body"],
+            });
+            self.pulls[at]["armed_by"] = json!(acting);
+            return answer(
+                200,
+                &json!({"data": {"enablePullRequestAutoMerge":
+                {"pullRequest": {"autoMergeRequest": {"enabledAt": "now"}}}}}),
+            );
+        }
+        if query.contains("disablePullRequestAutoMerge(input: {pullRequestId: $id})") {
+            if self.pulls[at]["merged"] == json!(true) {
+                return error("Pull request is already merged");
+            }
+            self.pulls[at]["auto_merge"] = Value::Null;
+            return answer(
+                200,
+                &json!({"data": {"disablePullRequestAutoMerge":
+                {"pullRequest": {"autoMergeRequest": null}}}}),
+            );
+        }
+        error("Unknown mutation")
+    }
+
+    /// The newest run of each name by each App on `head`, as GitHub lists a commit's checks.
+    fn latest(&self, head: &str) -> Vec<Value> {
+        let mut newest: Vec<Value> = Vec::new();
+        for run in (self.checks.iter()).filter(|run| run["head_sha"] == json!(head)) {
+            let same = |other: &Value| other["name"] == run["name"] && other["app"] == run["app"];
+            match newest.iter_mut().find(|other| same(other)) {
+                Some(other) if other["id"].as_i64() < run["id"].as_i64() => *other = run.clone(),
+                Some(_) => {}
+                None => newest.push(run.clone()),
+            }
+        }
+        newest
+    }
+
+    /// Each open pull request whose auto-merge is on, merged as GitHub merges it: at its head,
+    /// once nothing the rulesets require of the App that armed it is missing there.
+    fn merge_armed(&mut self) {
+        let acting = self.acting;
+        for at in 0..self.pulls.len() {
+            let pull = &self.pulls[at];
+            if pull["state"] != json!("open") || !pull["auto_merge"].is_object() {
+                continue;
+            }
+            if pull["mergeable_state"] != json!("clean") || pull["draft"] == json!(true) {
+                continue;
+            }
+            let head = pull["head"]["sha"].clone();
+            self.acting = pull["armed_by"].as_i64().unwrap_or_default();
+            let held = self.broken(&head).is_some();
+            self.acting = acting;
+            if held {
+                continue;
+            }
+            let pull = &mut self.pulls[at];
+            pull["merged_as"] = json!({
+                "sha": head, "merge_method": pull["auto_merge"]["merge_method"],
+                "commit_title": pull["auto_merge"]["commit_title"],
+                "commit_message": pull["auto_merge"]["commit_message"],
+            });
+            pull["state"] = json!("closed");
+            pull["merged"] = json!(true);
+            pull["merge_commit_sha"] = json!("5".repeat(40));
+            pull["merged_by"] = json!({"login": pull["auto_merge"]["enabled_by"]["login"]});
         }
     }
 
     /// A delivery's calls: a branch's pull requests, their merge and a commit's checks.
     fn delivery(&mut self, method: &str, parts: &[&str], query: &str, sent: &Value) -> Response {
         if let Some(response) = self.released(method, parts, sent) {
+            return response;
+        }
+        if let Some(response) = self.closing(method, parts, sent) {
             return response;
         }
         match (method, parts) {
@@ -678,24 +803,52 @@ impl Inner {
                     &json!({"merged": true, "sha": squash, "message": "merged"}),
                 )
             }
-            ("GET", ["commits", head, "check-runs"]) => {
-                let mut runs = Vec::new();
-                for run in (self.checks.iter()).filter(|run| run["head_sha"] == json!(head)) {
-                    let id = run["id"].as_i64().unwrap_or_default();
-                    match self.unlisted.get_mut(&id) {
-                        Some((left, before)) if *left > 0 => {
-                            *left -= 1;
-                            runs.extend(before.clone());
-                        }
-                        _ => runs.push(run.clone()),
-                    }
-                }
-                answer(200, &json!({"total_count": runs.len(), "check_runs": runs}))
+            ("GET", ["commits", head, "check-runs"]) => self.listed(head),
+            ("POST", ["check-runs"]) | ("PATCH", ["check-runs", _]) => {
+                let written = self.written(parts, sent);
+                self.merge_armed();
+                written
             }
-            ("POST", ["check-runs"]) | ("PATCH", ["check-runs", _]) => self.written(parts, sent),
             ("GET", _) => self.protection(parts, query),
             _ => answer(404, &json!({"message": "Not Found"})),
         }
+    }
+
+    /// The checks on `head` as GitHub lists them, the newest of each name by each App, a run
+    /// planted as listed late in its place by what stood before it.
+    fn listed(&mut self, head: &str) -> Response {
+        let mut runs = Vec::new();
+        for run in &self.latest(head) {
+            let id = run["id"].as_i64().unwrap_or_default();
+            match self.unlisted.get_mut(&id) {
+                Some((left, before)) if *left > 0 => {
+                    *left -= 1;
+                    runs.extend(before.clone());
+                }
+                _ => runs.push(run.clone()),
+            }
+        }
+        answer(200, &json!({"total_count": runs.len(), "check_runs": runs}))
+    }
+
+    /// A pull request closed unmerged, as `close` asks.
+    fn closing(&mut self, method: &str, parts: &[&str], sent: &Value) -> Option<Response> {
+        let ("PATCH", ["pulls", number]) = (method, parts) else {
+            return None;
+        };
+        let Some(pull) =
+            (self.pulls.iter_mut()).find(|pull| number.parse().ok() == pull["number"].as_i64())
+        else {
+            return Some(answer(404, &json!({"message": "Not Found"})));
+        };
+        if pull["merged"] == json!(true) {
+            return Some(answer(422, &json!({"message": "Pull request is merged"})));
+        }
+        if sent["state"] == json!("closed") {
+            pull["state"] = json!("closed");
+            pull["auto_merge"] = Value::Null;
+        }
+        Some(answer(200, pull))
     }
 
     /// A release's calls: one by its tag, its creation, and a tag read as a reference and as its
@@ -851,9 +1004,9 @@ impl Inner {
                 }
                 let required = &rule["parameters"]["required_status_checks"];
                 for check in required.as_array().into_iter().flatten() {
-                    let passes = self.checks.iter().any(|run| {
-                        run["head_sha"] == *head
-                            && run["name"] == check["context"]
+                    let latest = self.latest(head.as_str().unwrap_or_default());
+                    let passes = latest.iter().any(|run| {
+                        run["name"] == check["context"]
                             && run["app"]["id"] == check["integration_id"]
                             && matches!(run["conclusion"].as_str(), Some("success" | "neutral"))
                     });

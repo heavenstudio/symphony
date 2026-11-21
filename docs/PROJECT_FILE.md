@@ -314,6 +314,8 @@ What the default landing, `just land SLUG`, does besides its merge ([TASKS](TASK
 | `keys` | none | a generator's name, then the command printing its key: a tip whose key passed before runs nothing |
 | `check_paths` | the list in [TASKS](TASKS.md#the-default-landing) | what holds the project's tests and checks, which a red's fix its orchestrator approves may not change |
 | `delivery` | none: the land merges and pushes here | the command that delivers a task by a hosted pull request in place of that merge and push, a list of words run as `COMMAND VERB --request FILE` ([TASKS](TASKS.md#a-land-delivered-by-a-pull-request)); it decides what lands, so a change of it is reviewed |
+| `watch_seconds` | `30` | how long the delivery watcher rests between two rounds of reading what the host made of each armed pull request ([TASKS](TASKS.md#a-land-dispatched-at-review)); `0` is refused |
+| `merge_within_minutes` | `30` | how long an armed pull request whose evidence stands may stay neither merged nor red before the watcher turns its merge off and says so; `0` is refused |
 | `upstream` | none: no import is delivered | `[land.upstream]`, the repository this one imports from, as below |
 
 ## `[land.upstream]`

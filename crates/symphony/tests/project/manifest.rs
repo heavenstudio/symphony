@@ -476,6 +476,18 @@ fn the_land_table_names_what_the_regenerator_makes_and_whether_a_land_pushes_and
             .contains("[land] timeout_seconds is 0, which no generator or check runs in")
     );
     assert!(refused("[land]\ntimeout_seconds = \"1h\"\n").contains("timeout_seconds"));
+    // How often the delivery watcher reads the host, and how long a host is given to merge: keys
+    // the project file knows, which the board reads (`symphony_board::land::Settings`), neither 0.
+    assert!(parsed("[land]\nwatch_seconds = 10\nmerge_within_minutes = 45\n").is_ok());
+    assert!(
+        refused("[land]\nwatch_seconds = 0\n")
+            .contains("[land] watch_seconds is 0: the watcher rests between its rounds")
+    );
+    assert!(
+        refused("[land]\nmerge_within_minutes = 0\n")
+            .contains("[land] merge_within_minutes is 0: a host is given time to merge")
+    );
+    assert!(refused("[land]\nwatch_seconds = \"30s\"\n").contains("watch_seconds"));
     // Whether a land runs `[verdicts] check`: on unless the project turns it off.
     assert!(plain.land.check);
     assert!(!parsed("[land]\ncheck = false\n").unwrap().land.check);

@@ -173,6 +173,9 @@ pub trait Transport {
 pub enum Stage {
     Prepared,
     Eligible,
+    /// Published, and the host's own merge of that head armed: it merges once every check it
+    /// requires passes, and the watcher closes the task once it has ([`super::dispatch`]).
+    Armed,
     MergeRequested,
     RemoteMerged,
     Reconciled,
@@ -218,6 +221,11 @@ pub struct Journal {
     /// What an import imports; none for any other operation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub import: Option<Import>,
+    /// When its evidence was first published eligible at the head armed, in whole seconds since
+    /// 1970 ([`super::dispatch::seconds`]): what `[land] merge_within_minutes` counts from. None
+    /// while it is not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub green: Option<i64>,
 }
 
 /// What an import delivers, as the land read it before it published, and what it proved after:
@@ -388,6 +396,7 @@ impl Journal {
             match self.stage {
                 Stage::Prepared => "prepared",
                 Stage::Eligible => "eligible",
+                Stage::Armed => "armed",
                 Stage::MergeRequested => "merge requested",
                 Stage::RemoteMerged => "merged remotely",
                 Stage::Reconciled => "reconciled",
@@ -507,7 +516,7 @@ fn pinned(answer: &Value, import: &Import) -> Result<i64, String> {
 }
 
 /// The `state` of an answer, and its `why`.
-fn state(answer: &Value) -> (&str, &str) {
+pub(super) fn state(answer: &Value) -> (&str, &str) {
     (
         answer["state"].as_str().unwrap_or_default(),
         answer["why"].as_str().unwrap_or("it gave no reason"),
@@ -520,7 +529,7 @@ impl Landing<'_> {
         self.task && !self.delivery.is_empty()
     }
 
-    fn ask(&self, verb: &str, request: &Value) -> Result<Value, String> {
+    pub(super) fn ask(&self, verb: &str, request: &Value) -> Result<Value, String> {
         match self.transport {
             Some(transport) => transport.ask(verb, request),
             None => self.program(verb, request),
@@ -791,13 +800,36 @@ impl Landing<'_> {
         self.withdraw(slug, &journal, &binding, tip, &snapshot)
     }
 
-    /// Deliver the task's `tip`, found ready as `judged`, by its pull request.
+    /// Deliver the task's `tip`, found ready as `judged`, by its pull request: published, then the
+    /// host's own merge of it armed ([`Landing::arm`]).
     pub(super) fn deliver(
         &mut self,
         task: &Task,
         tip: &str,
         judged: &Judged,
     ) -> Result<String, Stop> {
+        let (closes, stood): (&[&str], String) = match judged {
+            Judged::Approved(_) => (&["done"], String::new()),
+            Judged::Stamped(stood) => (&["review", "blocked", "done"], stood.clone()),
+        };
+        let (journal, eligible) = self.publish_head(task, tip, closes, stood, true)?;
+        self.arm(journal, eligible)
+    }
+
+    /// Publish the task's `tip` and its evidence by its pull request, refused first where the
+    /// head is not one a squash delivers: the journal it leaves at [`Stage::Eligible`], bound to
+    /// that pull request, and whether its evidence stood there. A land publishes only evidence
+    /// that is `eligible_only`; a dispatch publishes it whatever it says, so the check the host
+    /// requires holds the merge until it stands ([`super::dispatch`]). The task, once landed,
+    /// closes from one of `closes`, its landed line adding `stood`.
+    pub(super) fn publish_head(
+        &mut self,
+        task: &Task,
+        tip: &str,
+        closes: &[&str],
+        stood: String,
+        eligible_only: bool,
+    ) -> Result<(Journal, bool), Stop> {
         let slug = self.slug;
         let default = self.settings.default_branch.clone();
         let base = (self.fetched()).map_err(|line| self.refuse(Refusal::here(line)))?;
@@ -816,7 +848,7 @@ impl Landing<'_> {
             .map_err(|refusal| self.refuse(refusal))?;
         self.owner_lines(&base, tip)
             .map_err(|refusal| self.refuse(refusal))?;
-        let mut snapshot = self.eligible(task, tip)?;
+        let mut snapshot = self.read_evidence(task, tip, eligible_only)?;
         let changed = || {
             Stop::Refused(format!(
                 "the assessment of {slug} changed what it says {} imports while it was \
@@ -824,11 +856,12 @@ impl Landing<'_> {
                 short(tip)
             ))
         };
-        let (closes, stood): (&[&str], String) = match judged {
-            Judged::Approved(_) => (&["done"], String::new()),
-            Judged::Stamped(stood) => (&["review", "blocked", "done"], stood.clone()),
-        };
-        let earlier = Journal::read(&self.folder, slug).filter(|journal| journal.head == tip);
+        // One task is delivered by one pull request, whatever head it was published at before;
+        // the time its evidence first stood is the head's.
+        let earlier = Journal::read(&self.folder, slug);
+        let green = (earlier.as_ref())
+            .filter(|journal| journal.head == tip)
+            .and_then(|journal| journal.green);
         let (title, body) = match &import {
             Some(import) => (
                 format!("Merge branch '{slug}'"),
@@ -862,6 +895,7 @@ impl Landing<'_> {
             squash: None,
             held: None,
             import,
+            green,
         };
         let here = |line: String| Stop::Refused(line);
         if !agrees(&snapshot, &journal) {
@@ -895,7 +929,7 @@ impl Landing<'_> {
             journal.revision = snapshot.revision.clone();
             journal.stage = Stage::Eligible;
             journal.write(&self.folder).map_err(here)?;
-            let again = self.eligible(task, tip)?;
+            let again = self.read_evidence(task, tip, eligible_only)?;
             if !agrees(&again, &journal) {
                 return Err(changed());
             }
@@ -911,17 +945,13 @@ impl Landing<'_> {
         if !published {
             return Err(self.refuse(Refusal::here(format!(
                 "{slug}'s evidence changed {} times while it was published; nothing merged: run \
-                 the land again",
+                 the land again, or a dispatch publishes it once it settles",
                 super::TRIES
             ))));
         }
         self.go_on(None).map_err(Stop::Refused)?;
         self.owner_lines(&base, tip)
             .map_err(|refusal| self.refuse(refusal))?;
-        let binding = journal
-            .binding
-            .clone()
-            .ok_or_else(|| here("unbound".into()))?;
         // What the regenerator made is judged again on the remote default branch as it is now:
         // the last reading before the request, which nothing here recalls. A record that no
         // longer names the task (a round cancelled it as stale meanwhile) asks for no merge.
@@ -936,28 +966,141 @@ impl Landing<'_> {
             });
             again.map_err(|refusal| self.refuse(refusal))?;
         }
-        // Before the request: from here the pull request decides, never a merge made here.
-        journal.stage = Stage::MergeRequested;
-        journal.write(&self.folder).map_err(here)?;
-        self.post(
-            &format!(
-                "land {slug}: asking {} to {} {tip} by pull request #{} ({}), its evidence at \
-                 revision {}",
-                binding.name,
-                journal.method(),
-                binding.pull,
-                binding.url,
-                short(&journal.revision)
-            ),
-            None,
-        );
+        Ok((journal, snapshot.eligible))
+    }
+
+    /// Arm the host's own merge of the head `journal` published, whose evidence was `eligible`
+    /// there or not: the host squashes it once every check it requires passes, a land here
+    /// waiting for none of it, and the watcher closes the task once it has
+    /// ([`super::dispatch`]). A pull request the host would merge now (its evidence standing, no
+    /// other check to wait on) is asked to merge by one request instead, as the host arms nothing
+    /// that waits on nothing; one merged or closed already is settled.
+    pub(super) fn arm(&mut self, mut journal: Journal, eligible: bool) -> Result<String, Stop> {
+        let slug = self.slug;
+        let here = |line: String| Stop::Refused(line);
+        let binding = journal
+            .binding
+            .clone()
+            .ok_or_else(|| here("unbound".into()))?;
         let request = json!({
-            "verb": "merge", "slug": slug, "by": self.actor, "head": tip,
+            "verb": "arm", "slug": slug, "by": self.actor, "head": journal.head,
             "repository": binding.repository, "pull": binding.pull, "method": journal.method(),
             "title": journal.title, "body": journal.body,
         });
-        let asked = self.ask("merge", &delivering(request, &journal));
-        self.settle(journal, Some(asked))
+        let not_armed = |why: &str| {
+            format!(
+                "pull request #{} of {slug} was not armed ({why}): nothing merged, and the next \
+                 dispatch asks again",
+                binding.pull
+            )
+        };
+        let answer = (self.ask("arm", &delivering(request, &journal)))
+            .map_err(|why| self.refuse(Refusal::here(not_armed(&why))))?;
+        let (said, why) = state(&answer);
+        match said {
+            "armed" => {
+                let first = journal.stage != Stage::Armed;
+                journal.stage = Stage::Armed;
+                journal.green = if eligible {
+                    journal.green.or_else(|| Some(super::dispatch::seconds()))
+                } else {
+                    None
+                };
+                journal.write(&self.folder).map_err(here)?;
+                let line = format!(
+                    "land {slug}: dispatched {} as pull request #{} of {} ({}), which merges it \
+                     itself once symphony/eligible is green{}",
+                    short(&journal.head),
+                    binding.pull,
+                    binding.name,
+                    binding.url,
+                    if eligible {
+                        ", as it is now"
+                    } else {
+                        ": its evidence says so once it stands"
+                    }
+                );
+                if first {
+                    self.post(&line, None);
+                }
+                if let Some(said) = super::dispatch::watch_start(self.env, &self.main) {
+                    self.say(&format!("land {slug}: {said}"));
+                }
+                Ok(line)
+            }
+            "mergeable" if eligible => {
+                // Before the request: from here the pull request decides, never a merge here.
+                journal.stage = Stage::MergeRequested;
+                journal.write(&self.folder).map_err(here)?;
+                self.post(
+                    &format!(
+                        "land {slug}: asking {} to {} {} by pull request #{} ({}), its evidence at \
+                         revision {}",
+                        binding.name,
+                        journal.method(),
+                        journal.head,
+                        binding.pull,
+                        binding.url,
+                        short(&journal.revision)
+                    ),
+                    None,
+                );
+                let request = json!({
+                    "verb": "merge", "slug": slug, "by": self.actor, "head": journal.head,
+                    "repository": binding.repository, "pull": binding.pull,
+                    "method": journal.method(), "title": journal.title, "body": journal.body,
+                });
+                let asked = self.ask("merge", &delivering(request, &journal));
+                self.settle(journal, Some(asked))
+            }
+            "mergeable" => Err(self.refuse(Refusal::to(
+                format!(
+                    "{} would merge pull request #{} of {slug} now, while its evidence does not \
+                     stand at {}: nothing was armed or merged, as the default branch's rules hold \
+                     nothing to its evidence",
+                    binding.name,
+                    binding.pull,
+                    short(&journal.head)
+                ),
+                "@orchestrator",
+                "`symphony-github preflight` says what the rules lack: put it right, then \
+                 dispatch again"
+                    .into(),
+            ))),
+            "merged" | "closed" => {
+                journal.stage = Stage::MergeRequested;
+                journal.write(&self.folder).map_err(here)?;
+                self.settle(journal, None)
+            }
+            "refused" => {
+                let line = format!(
+                    "{} refused to arm pull request #{} of {slug} at {}: {why}",
+                    binding.name,
+                    binding.pull,
+                    short(&journal.head)
+                );
+                Err(self.refuse(match answer["kind"].as_str().unwrap_or_default() {
+                    "conflict" | "head" => Refusal::to(
+                        line,
+                        "@executor",
+                        "Settle it on the branch; a new head is assessed and stamped again"
+                            .into(),
+                    ),
+                    _ => Refusal::to(
+                        line,
+                        "@orchestrator",
+                        "Nothing merged, here or there: put right what it names, then dispatch \
+                         again"
+                            .into(),
+                    ),
+                }))
+            }
+            other => Err(self.refuse(Refusal::here(not_armed(if why.is_empty() {
+                other
+            } else {
+                why
+            })))),
+        }
     }
 
     /// Refuse while the project file here is not the one the remote default branch commits at
@@ -1284,6 +1427,26 @@ impl Landing<'_> {
         })
     }
 
+    /// The task's evidence at `tip`, read now: refused unless it is eligible where `eligible_only`.
+    pub(super) fn read_evidence(
+        &self,
+        task: &Task,
+        tip: &str,
+        eligible_only: bool,
+    ) -> Result<Snapshot, Stop> {
+        if eligible_only {
+            return self.eligible(task, tip);
+        }
+        let slug = self.slug;
+        let (task, thread): (Task, Vec<Message>) =
+            match (self.store.get(slug), self.store.thread(slug)) {
+                (Ok(task), Ok(thread)) => (task, thread),
+                _ => (task.clone(), Vec::new()),
+            };
+        evidence::snapshot(self.store, self.env, &self.main, &task, &thread, tip)
+            .map_err(|line| self.refuse(Refusal::here(line)))
+    }
+
     /// The task's evidence at `tip`, read now, refused unless it is eligible.
     fn eligible(&self, task: &Task, tip: &str) -> Result<Snapshot, Stop> {
         let slug = self.slug;
@@ -1360,7 +1523,7 @@ impl Landing<'_> {
     /// Go on from a delivery whose merge was asked for: read the bound pull request, whatever
     /// `asked` (the request's own answer, when this run made it) said, and act on what the host
     /// holds. A command's word alone proves nothing.
-    fn settle(
+    pub(super) fn settle(
         &mut self,
         mut journal: Journal,
         asked: Option<Result<Value, String>>,
@@ -1487,7 +1650,7 @@ impl Landing<'_> {
     }
 
     /// Hold the delivery for a person: said on the thread to the orchestrator, nothing closed.
-    fn hold(&self, mut journal: Journal, what: String) -> Stop {
+    pub(super) fn hold(&self, mut journal: Journal, what: String) -> Stop {
         let known = journal.held.as_deref() == Some(what.as_str());
         journal.held = Some(what.clone());
         let _ = journal.write(&self.folder);

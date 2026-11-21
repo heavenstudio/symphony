@@ -70,6 +70,11 @@ pub struct Stamp {
     pub detail: String,
     /// What it stands on: the recorded runs' ids, or the thread's line.
     pub evidence: Vec<String>,
+    /// Missing because what it reads is red at the head (a command's newest run there failed),
+    /// not because it is not given yet: what the check of it says fails, and no later write but
+    /// a new run or a new head turns it. Said only where it is.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub red: bool,
 }
 
 /// The assessment the task carries, whatever commit it read.
@@ -226,6 +231,7 @@ pub fn snapshot(
             standing,
             detail,
             evidence,
+            red: false,
         };
         let waiver = needed.waived.iter().find(|waiver| waiver.gate == name);
         stamps.push(if let Some(waiver) = waiver {
@@ -262,7 +268,12 @@ pub fn snapshot(
         } else {
             let detail = (missing.iter().find(|stamp| stamp.name == name))
                 .map_or_else(|| "No reader says it stands".into(), |m| m.detail.clone());
-            stamp(Standing::Missing, detail, Vec::new())
+            // Its reader's line says which command; the check of it fails rather than waits.
+            let red = name == TESTS && !read::reds(&evidence.runs, head, ours).is_empty();
+            Stamp {
+                red,
+                ..stamp(Standing::Missing, detail, Vec::new())
+            }
         });
     }
     for stamp in &stamps {
