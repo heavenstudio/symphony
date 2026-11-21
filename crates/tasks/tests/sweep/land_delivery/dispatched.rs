@@ -796,6 +796,8 @@ fn a_round_that_cannot_finish_a_land_tries_again_and_says_so_once_past_the_bound
     );
     assert_eq!(posts(&r, SLUG, "reconciliation pending"), 1, "said once");
     assert_eq!(posts(&r, SLUG, "has not ended"), 0, "within its bound");
+    // Both rounds stopped at the same; the watcher's log says it once.
+    assert_eq!(said.matches("its land did not end").count(), 1, "{said}");
     assert!(landings(&r, SLUG).is_empty());
     let stopped = lands(&r).join(format!("{}.stopped", file_stem(SLUG)));
     assert_eq!(fs::read_to_string(&stopped).unwrap(), green.to_string());
@@ -1287,8 +1289,8 @@ fn a_refusal_a_watcher_round_stops_at_is_said_once_at_a_head_however_many_rounds
     assert_eq!(rested, 3);
     assert_eq!(
         said.matches(refused).count(),
-        3,
-        "each round reads it: {said}"
+        1,
+        "each round reads it, and the log says it once: {said}"
     );
     assert_eq!(posts(&r, SLUG, refused), 1, "said once on the thread");
     // Kept at its head where a round reads it, a land delivered by a pull request.
@@ -1318,7 +1320,11 @@ fn a_refusal_a_watcher_round_stops_at_is_said_once_at_a_head_however_many_rounds
     let refused = "refused to arm pull request #3 of";
     let (said, line, _) = watched(&r, &host, dispatch::seconds(), 3, &[]);
     assert_eq!(line, "1 armed at the host after 3 round(s)", "{said}");
-    assert_eq!(said.matches(refused).count(), 3, "{said}");
+    assert_eq!(
+        said.matches(refused).count(),
+        2,
+        "its evidence changed, then its publication did not end, said once each: {said}"
+    );
     assert_eq!(posts(&r, SLUG, refused), 1, "said once on the thread");
     let arms = host.verbs().iter().filter(|verb| *verb == "arm").count();
     assert_eq!(arms, 4, "the dispatch's, then one a round");
@@ -1592,6 +1598,56 @@ fn an_arming_starts_the_watcher_where_none_runs_and_none_while_one_does() {
     assert!(!said.contains("the watcher"), "{said}");
     held.unlock().unwrap();
     assert_eq!(fs::read_to_string(&record).unwrap().lines().count(), 1);
+}
+
+#[test]
+fn a_round_that_comes_to_the_same_writes_nothing_to_the_watchers_log() {
+    // A task waiting for its approve: read every round, said once, however long it waits.
+    let (r, bare) = delivering();
+    let (people, _, tip) = pending(&r, SLUG, "sim/jump.gd");
+    let host = Host::new(&r, &bare);
+    dispatched(&r, SLUG, &people.exe, &host).1.unwrap();
+    let waiting = format!(
+        "{SLUG}: armed at {}, its evidence not standing yet\n",
+        &tip[..7]
+    );
+    let (said, line, rested) = watched(&r, &host, dispatch::seconds(), 40, &[]);
+    assert_eq!(line, "1 armed at the host after 40 round(s)");
+    assert_eq!(rested, 40);
+    assert_eq!(said, waiting, "one line, not one a round");
+    // Another watcher knows nothing of what the one before said: once again.
+    let (said, ..) = watched(&r, &host, dispatch::seconds(), 2, &[]);
+    assert_eq!(said, waiting);
+
+    // What a round comes to changed (the minutes its evidence stood): said again, once each.
+    let (r, bare) = delivering();
+    let (people, ..) = ready(&r, SLUG);
+    let (host, green) = armed_green(&r, &bare, &people);
+    host.waits();
+    let round = std::cell::Cell::new(0);
+    let clock = || {
+        round.set(round.get() + 1);
+        green + (round.get() - 1) * 30
+    };
+    let watching = Watching {
+        transport: Some(&host),
+        clock: &clock,
+        rest: &|_| {},
+        rounds: Some(4),
+    };
+    let mut out = Vec::new();
+    dispatch::watch(&r.board.store, &landing(&r, &[]), &mut out, &watching).unwrap();
+    let said = String::from_utf8(out).unwrap();
+    let stood: Vec<&str> = said.lines().collect();
+    assert_eq!(stood.len(), 2, "four rounds, two states: {said}");
+    assert!(
+        stood[0].contains("its evidence standing for 0 min"),
+        "{said}"
+    );
+    assert!(
+        stood[1].contains("its evidence standing for 1 min"),
+        "{said}"
+    );
 }
 
 #[test]

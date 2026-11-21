@@ -1167,6 +1167,26 @@ fn the_pairs_passed_keep_the_newest_first_once_each_and_no_more_than_kept() {
 }
 
 #[test]
+fn the_watcher_says_a_task_again_only_where_its_round_differs_or_it_was_armed_again() {
+    let mut told = dispatch::Told::default();
+    assert_eq!(told.last("tools/lamp"), b"", "nothing said of it yet");
+    assert!(told.news("tools/lamp", b"armed\n".to_vec()));
+    assert!(!told.news("tools/lamp", b"armed\n".to_vec()), "the same");
+    assert!(told.news("tools/desk", b"armed\n".to_vec()), "another's");
+    assert!(told.news("tools/lamp", b"standing\n".to_vec()));
+    assert_eq!(told.last("tools/lamp"), b"standing\n");
+    // Back to what it said two rounds ago: it differs from the last, so it is said.
+    assert!(told.news("tools/lamp", b"armed\n".to_vec()));
+    // Armed no more, a task is forgotten, and armed again it is said again; the other is kept.
+    told.keep(&["tools/desk"]);
+    assert_eq!(told.last("tools/lamp"), b"");
+    assert!(told.news("tools/lamp", b"armed\n".to_vec()));
+    assert!(!told.news("tools/desk", b"armed\n".to_vec()));
+    told.keep(&[]);
+    assert!(told.news("tools/desk", b"armed\n".to_vec()));
+}
+
+#[test]
 fn the_watcher_reads_a_journal_armed_or_past_its_merge_and_none_a_person_holds() {
     use delivery::{Journal, Stage};
     let journal = |stage: &str, armed: bool, held: Option<&str>| -> Journal {

@@ -2710,7 +2710,10 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
   and stays so until it moves to review.
 - **Who watches.** One watcher per project, `tasks land --watch` (`watch.lock` in the lands'
   folder, `watch.log` its lines), started by each arming where none runs, which reads each armed
-  task every `[land] watch_seconds` (30) and ends once none is left. Armed means the host answered
+  task every `[land] watch_seconds` (30) and ends once none is left. A round writes a task's line
+  to the log only where it differs from its round before, so a task that waits days for its
+  approve is one line there and the log grows by what changed, never by how long the watcher ran;
+  it is set aside past 1 MiB (`watch.log.1`) when a watcher starts. Armed means the host answered
   an arming and has not answered a disarm since: a publication between keeps it so, as the host
   keeps its merge armed across a push, and one that stopped before the host answered its arming
   again (an answer lost, a host away) has its pull request read every round, whatever its checks
@@ -2729,7 +2732,8 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
   watcher's as well, armed or not: each round goes on from where its journal stands, as a land run
   again does, the task closed once and what follows a land started once, and the watcher does not
   end while one is there. A round that cannot finish it (the board or the host away, the main
-  checkout dirty or diverged) says why in `watch.log` and the next tries again; one still not
+  checkout dirty or diverged) says why in `watch.log`, once while the reason is the same, and the
+  next tries again; one still not
   finished `[land] merge_within_minutes` after the first round that stopped is said once on the
   thread to `@orchestrator`, naming `just land SLUG`. One held for a person stays held, read by no
   round. A merge no watcher saw (a reboot, which ends the watcher) is settled by the next dispatch
