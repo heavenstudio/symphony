@@ -105,12 +105,12 @@ fn fetched_within(
                     failure: Refusal::new(RefusalCode::GuardUnavailable, said)
                         .to_string()
                         .into(),
-                    guard: Some(GuardRefusal {
+                    guard: Some(Box::new(GuardRefusal {
                         guard: guard.into(),
                         adapter: authority.adapter().into(),
                         why: GuardWhy::Unanswered,
                         record: None,
-                    }),
+                    })),
                 }
             })?;
             Ok(Signed {

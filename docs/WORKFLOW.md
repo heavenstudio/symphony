@@ -633,6 +633,19 @@ A task the board's own writers keep carries none, and its wire is the text it wa
 `GET /api/workflow-actions?slug=SLUG` (`WORKFLOW_ACTIONS_PATH`) answers that task's
 `NextActions` for the local owner, a preview and never a permit; a hosted visitor is refused it,
 as the apply route refuses one.
+`GET /api/workflow-guards?slug=SLUG` (`WORKFLOW_GUARDS_PATH`) answers that task's `TaskGuards`,
+the local owner's too: each authority the active activation commits, with the epoch and
+generation the board accepted from it, whether it is in conflict, the admissions counted on it
+and whether this host asks it (`asked_here`: a plugin of the project answers for its adapter);
+each guard the definition declares with its adapter and, where the project commits one, its
+authority's `page` filled in for this task; the edges leaving the task's pair that carry guards;
+and `entry`, the transition that brought the task into its pair by a guarded edge, with each
+guard its admission met, its standing as a word (`GuardStanding`) and what its attestation
+said (`GuardRecord`), shown only while it still verifies by the committed key. It reads the
+board's records and decides nothing; a board with no workflow answers none of each. A take of
+`/api/workflow-apply` that a guard refuses answers `guard` beside its `error`, a `GuardRefusal`:
+the guard, its adapter, why as a word (`GuardWhy`) and, from an attestation that verified, what
+it said. The error's text is what it was, and every other refusal answers as it did.
 
 **The board.** The [waiting listing](TASKS.md#what-a-task-waits-on) puts a task the workflow holds
 in its phase's column, keyed `phase:ID` so a phase never takes a status's key or an overlay's,
@@ -662,6 +675,37 @@ names). Taking one posts its edge, the snapshot the actions named and a fresh id
 `/api/workflow-apply`, the same key again only for the same request after an answer that never
 came. A refusal says its words; a `stale_*` one says the task moved since and offers to read its
 actions again, and they are read again whenever the task's revision moves.
+
+Where the definition declares a guard, the page reads the task's guards beside its actions and
+draws them (`apps/symphony-web/src/guards.tsx`). Over the actions, *Let in by EDGE · revision N ·
+time*, a link to the task's timeline, heads the guards that admission met: `met` while the board
+still accepts the state it was decided at, else why it no longer stands (`decided again`,
+`conflict`, `unreported`, `uncommitted`, `unverified`), which is why no effect is dispatched on
+it. Under each action a guard holds, *ACTION needs* heads a row for each guard its edge carries.
+A row is the guard's name, its state in a word, a line saying why, and its authority (the issuer
+it signs as, and its adapter) with what the board accepted from it: its generation and epoch,
+`none yet`, or `in conflict`. Before any take the row is the board's records: `no word yet`
+where taking the action asks the authority, `not from here` where this host cannot ask it, with
+the command that takes the edge with an attestation file, `unreported` with the command that
+reports the authority's state, `conflict`, or `uncommitted`. After the owner's take is refused,
+the row of the guard the refusal names says it by its word: `missing`, `unanswered`, `refused`
+and `unknown` with the authority's reasons, `expired`, `early`, `held too long`, `stale`,
+`decided again`, `not reported`, `not yours` or `unverified`. The page keeps that refusal beside
+the action only until the task's revision moves or the page loads again: the board records no
+refusal, so it shows on no other page, device or session.
+
+The guard's name is the row's link: it opens, under the row, what the board holds for it (the
+state it accepted and the admissions counted on it; for a refusal, what the attestation said, its
+time and what it covers; for an admission, the transition and who took it). What the authority
+itself points at, the facts a pass rests on and its reasons, is drawn as the gates draw a link: a
+path of the app in it is a link named for the task, decision, run or document it names, a web
+address at its end puts the link on the words before it, marked as leaving the app with its host
+beside it, and anything else is its text; nothing an unverified attestation says is shown. The
+authority's name links to its ledger's page for the guard where the project commits `page`
+([PROJECT_FILE](PROJECT_FILE.md#workflow_authorities)). An action its guards alone hold is the
+owner's to take when this host asks every one's authority, the take bringing its word; otherwise
+it waits. The panel shows and links: it has no approval, grant, paste or upload, and the
+authority decides in the project's own ledger.
 
 **The timeline and the Agents page.** A task's timeline (`/api/task-timeline`) carries `places`,
 one for each transition recorded for it (`Store::workflow_transitions`, a read of its own events'

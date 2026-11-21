@@ -12,7 +12,7 @@ pub struct Failure {
 /// failure's words as `guard`.
 pub struct Refused {
     pub failure: Failure,
-    pub guard: Option<symphony_api::workflow::GuardRefusal>,
+    pub guard: Option<Box<symphony_api::workflow::GuardRefusal>>,
 }
 
 impl From<Failure> for Refused {

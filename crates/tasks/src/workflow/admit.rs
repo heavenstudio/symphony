@@ -353,6 +353,7 @@ pub fn guard_refusal(
     guard::explained(context.definition, edge, &binding, guarding)
         .err()?
         .guard
+        .map(|guard| *guard)
 }
 
 /// The edges leaving the task's pair, each with what stops `principal` taking it now: a preview,

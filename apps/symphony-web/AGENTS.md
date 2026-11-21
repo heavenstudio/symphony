@@ -555,6 +555,17 @@ history it answers; a view opens a blank window within the click, cuts its opene
 address `/api/attempt-view` resolved, which the page keeps nowhere
 ([EXECUTION_ATTEMPTS](../../docs/EXECUTION_ATTEMPTS.md#on-a-tasks-page)).
 
+A task a custom workflow holds (`workflow` on its page) draws its place and the owner's next
+actions in its head (`src/nextactions.tsx`, a chunk the page imports for such a task alone, its
+style `src/flow.css` put in the page as it draws). Where the workflow declares a guard, the chunk
+reads the task's guards beside the actions (`/api/workflow-guards`) and draws them
+(`src/guards.tsx`): the guards that let the task in over the actions, and under each action a
+guard holds a row for each, a gate's row in shape, whose name opens the board's record of it in
+place. A refusal that names its guard (`guard` beside the refusal's `error`, which a `Failure`
+carries as its `answer`) is read by its word, never its text, and kept in the page's memory until
+the task's revision moves. Nothing in the rows posts: the only request is the action's own
+([WORKFLOW](../../docs/WORKFLOW.md#the-app)).
+
 Last, under the thread's composer, _Tokens and estimated cost_ (`TokensPart`, `src/task-page.tsx`)
 is a closed disclosure, last so it moves nothing that loads (above the thread it pushed the
 thread's region, which mounts as it comes into view, off the first screen it began on): its

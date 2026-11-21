@@ -26,7 +26,7 @@ fn taken(
     f: &Fixture,
     plugin: Option<&'static Approvals>,
     request: &OperationRequest,
-) -> Result<(), (String, Option<GuardRefusal>)> {
+) -> Result<(), (String, Option<Box<GuardRefusal>>)> {
     let owner = local_owner();
     let root = PathBuf::from("/project");
     let plugins = plugin.map_or_else(|| Plugins::new(Vec::new()), plugins);
@@ -40,7 +40,7 @@ fn pushed(
     f: &Fixture,
     request: &OperationRequest,
     given: &[Signed],
-) -> Result<(), (String, Option<GuardRefusal>)> {
+) -> Result<(), (String, Option<Box<GuardRefusal>>)> {
     let owner = local_owner();
     (f.store
         .apply_attested(&owner, &Host::local(), request, given))
@@ -49,7 +49,8 @@ fn pushed(
         let said = refused.to_string();
         let guard = guards(&said)
             .then(|| f.store.guard_refusal(&owner, request, given).unwrap())
-            .flatten();
+            .flatten()
+            .map(Box::new);
         (said, guard)
     })
 }

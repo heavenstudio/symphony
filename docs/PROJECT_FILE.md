@@ -174,6 +174,11 @@ committed for its adapter leaves the workflow unsupported.
 | `issuer` | required | the name the authority signs as, which its observations and attestations repeat |
 | `contract` | required | the attestation contract it speaks, `1` in this release |
 | `key` | required | the public half of its signing key, `ed25519:` and 64 lowercase hex digits |
+| `page` | none | where its ledger shows a guard of a task: a path of the app or a web address, `{task}` and `{guard}` filled in with the task's slug and the guard's ID, which [a task's page](WORKFLOW.md#the-app) puts on the authority's name |
+
+`page` is a link and nothing more: the board records none of it, it names no key or issuer, and
+it decides nothing the board admits. One that, filled in, is neither a path of the app nor a web
+address is refused by name.
 
 ## `[project]`
 

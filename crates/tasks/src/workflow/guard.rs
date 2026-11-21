@@ -384,7 +384,7 @@ pub fn check(
 #[derive(Clone, Debug, PartialEq)]
 pub struct Explained {
     pub refusal: Refusal,
-    pub guard: Option<GuardRefusal>,
+    pub guard: Option<Box<GuardRefusal>>,
 }
 
 impl From<Refusal> for Explained {
@@ -458,12 +458,12 @@ pub fn explained(
         // This guard's refusal, with the word a page reads and nothing an attestation says.
         let told = |why: GuardWhy, refusal: Refusal| Explained {
             refusal,
-            guard: Some(GuardRefusal {
+            guard: Some(Box::new(GuardRefusal {
                 guard: guard_id.clone(),
                 adapter: adapter.clone(),
                 why,
                 record: None,
-            }),
+            })),
         };
         if !guarding.attesters.iter().any(|a| &a.adapter == adapter) {
             return Err(told(

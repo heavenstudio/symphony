@@ -36,8 +36,8 @@ const TABLES: [(&str, &str, &str); 23] = [
         "[[workflow_mappings]]",
     ),
     (
-        "crates/tasks/src/workflow/guard.rs",
-        "Attester",
+        "crates/tasks/src/workflow.rs",
+        "WrittenAuthority",
         "[[workflow_authorities]]",
     ),
     (FILE, "FileProject", "[project]"),

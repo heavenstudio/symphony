@@ -315,7 +315,8 @@ impl Saves {
                 // or cannot be read again.
                 let guard = (attest::guards(&failure.error))
                     .then(|| store.guard_refusal(&owner, &request, &attestations))
-                    .and_then(|read| read.ok().flatten());
+                    .and_then(|read| read.ok().flatten())
+                    .map(Box::new);
                 Err(Refused { failure, guard })
             }
         }
