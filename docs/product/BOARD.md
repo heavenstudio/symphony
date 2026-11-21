@@ -12,11 +12,12 @@ board itself changes none.
 - **Sees what waits on them.** **Your decisions** counts the tasks that cannot go on without the
   owner; a press lists them.
 - **Finds what is stuck.** A blocked task stays at the top of the stage it stopped in, marked
-  **blocked**, with what it waits on and for how long.
+  **blocked**, with what it waits on and for how long. A parked task carries the mark too, at
+  the foot of its stage.
 - **Opens a task.** A press on a card's title opens [the task's page](TASK.md), where its brief,
   its gates and its thread are.
-- **Looks for one.** **Search and filters** opens a search over slugs, titles, briefs and
-  messages, and the window of finished tasks.
+- **Looks for one.** **Search and filters** opens a search over the tasks' slugs, titles, briefs
+  and messages, and the window of finished tasks.
 - **Checks that someone is running the work.** A banner says so when ready tasks wait and no
   orchestrator is live.
 
@@ -29,7 +30,7 @@ tasks wait on, a row naming every stage, and a column per stage.
 | --- | --- |
 | The strip | the number of open tasks, then a chip for each thing a task can wait on, with its count |
 | The stage row | a button per stage, which brings that column into view; **‹** or **›** marks a column the window cuts |
-| A column | its name and how many tasks it holds that are not blocked, then under it how many more are blocked there and the age of its oldest, then its cards |
+| A column | its name and how many tasks it holds that are not blocked, then under it how many more are blocked there, the parked among them, and the age of its oldest, then its cards |
 | A card | a task: its title, its slug, its priority, what it waits on, for how long and why |
 
 ### The stages
@@ -54,7 +55,7 @@ The columns, left to right, are the stages a task goes through: **concept**, **d
 
 | Part | What it says |
 | --- | --- |
-| Marks before the title | **blocked** on a blocked task; **1 review**, **2 reviews** once it has been to review that many times |
+| Marks before the title | **blocked** on a blocked task, a parked one among them; **1 review**, **2 reviews** once it has been to review that many times |
 | Title | the task's title, two lines at most; it opens the task's page |
 | Slug | the task's name on the board, which its branch carries too |
 | Cost | what the task and its subtasks spent in tokens, as an estimate in dollars: **$1.23**, **$1.23+** when some of it had no price, **unpriced** when none had; absent when nothing was spent |
@@ -62,8 +63,9 @@ The columns, left to right, are the stages a task goes through: **concept**, **d
 | **▾** | opens the card in place to the whole of its title, slug, wait and reason |
 | Wait line | what it waits on, for how long, and why |
 
-The age on the wait line counts from when the task came to wait on that: in hours up to two days,
-then in days. It turns red after a week, except on a task that is queued, parked or finished. A
+The age on the wait line counts from when the task came to the status it holds, not from when
+what it waits on last changed: a task in review for six hours says six hours, whenever its
+reviewer took it. It is in hours up to two days, then in days. It turns red after a week, except on a task that is queued, parked or finished. A
 finished card says **Done** or **Cancelled** and the time since.
 
 ## What a task waits on
@@ -79,7 +81,7 @@ is on its task's page.
 | **On checks** | wait on a check or a stamp someone has to give before they land | **On** and the check's name |
 | **On tasks** | wait on another task that is still open | **On** and that task's slug, *its dependency* |
 | **Working** | have an agent at work on them, or on a subtask of theirs | **Working**, the role and the agent's name; **(stale)** after an agent that has gone quiet |
-| **Queued** | lack nothing: waiting for an agent to take them (*waits to be staffed*), or reviewed and waiting to land | **Queued** |
+| **Queued** | lack nothing: waiting for an agent to take them (*waits to be staffed*), kept for a named agent (*reserved for* and its name), in the backlog with nothing else to wait on (*in the backlog*), or reviewed and waiting to land | **Queued** |
 | **Parked** | were put aside on purpose | **Parked** |
 
 A press on a chip shows its tasks alone, as one list across every stage, under the chip's name;
@@ -102,7 +104,7 @@ A column draws thirty cards; **Load more tasks** brings the next thirty.
 
 **Search and filters** is closed at first, at every width. **Search tasks and messages** takes a
 slug or words and keeps on the board only the tasks whose slug, title, brief or thread has them,
-subtasks among them, as it is typed. **Finished tasks** is **Last 24 hours** or **Last week**, and
+as it is typed. A subtask is not searched for: words found only in a subtask show nothing. **Finished tasks** is **Last 24 hours** or **Last week**, and
 decides which finished and cancelled tasks are shown and counted.
 
 ## No live orchestrator
@@ -110,8 +112,8 @@ decides which finished and cancelled tasks are shown and counted.
 An orchestrator is the agent that staffs the ready tasks and lands the approved ones. While at
 least one ready task waits to start and no orchestrator is live, a banner above the strip says
 **No live orchestrator.**, who holds the role and in what health, and how many of the ready tasks
-wait to start. It is amber while a holder has only gone quiet, red when none is there, and absent
-while one is live or nothing waits to start.
+wait to start. It is amber while a holder has only gone quiet, red otherwise (no holder, one
+gone, or one whose health is not known), and absent while one is live or nothing waits to start.
 
 ## States
 
@@ -120,9 +122,9 @@ while one is live or nothing waits to start.
 | Loading, first visit | the board's outline: the strip at zero and a column per stage with a card's shape in each |
 | Loading, a later visit | at once, the board this device last held, with *Shown from this device, saved 14:32. Checking for changes…* until the server has answered |
 | No task in a stage | the column with its count at 0 and no card |
-| No build or test going on | in **build** and **test**, *No tasks with fresh build activity.*, or *No build observations reported.* when no machine reports at all |
+| No build or test going on | each column in its own words: *No tasks with fresh build activity.* in **build** and *No tasks with fresh test activity.* in **test**, or *No build observations reported.* and *No test observations reported.* when no machine reports at all |
 | The first read fails | **The task board could not be read**, why, and **Retry**; the page tries again by itself |
-| The connection is lost | *Reconnecting: the board may be out of date*, the board as last drawn, and **build** and **test** saying *Disconnected · build activity unknown* |
+| The connection is lost | *Reconnecting: the board may be out of date*, the board as last drawn, and **build** and **test** saying *Disconnected · build activity unknown* and *Disconnected · test activity unknown* |
 | A link names a task the board no longer has | *The linked task is no longer on this board.* and **Retry** |
 | A task moves while the page is open | its card moves in place, with no reload; a card that holds the keyboard's focus keeps it |
 
@@ -132,8 +134,8 @@ while one is live or nothing waits to start.
 
 One stage at a time. A row of tabs under the strip names the stages, **Review** first, then
 **In progress**, **Ready**, **Done**, **Design**, **Concept** and **Backlog**, each with its count
-and, after a **+**, how many more are blocked there; **Build** and **Test** join the row while a
-machine reports work. The stage chosen is kept on this device, for this project. The strip and the
+and, after a **+**, how many more are blocked there; **Build** and **Test** join the row while any
+machine reports to the board, with work going on or none. The stage chosen is kept on this device, for this project. The strip and the
 tabs each scroll sideways, and a choice that does not fit whole is drawn as an empty shape rather
 than cut. There is no **Backlog** button and no **Back to stages**: the backlog is a tab, and the
 cancelled tasks open from **Done** as on a wide screen.

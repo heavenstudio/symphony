@@ -20,7 +20,9 @@ and, where their approval is needed, gives it.
 
 ## What it shows
 
-From the top, in this order. A part with nothing to show is left out.
+From the top, in this order. **Subtasks**, **Attempts** and the facts of the head are left out
+when there are none; the other parts say that they are empty (**Changes** says *No changed
+files.*).
 
 | Part | Holds |
 | --- | --- |
@@ -59,9 +61,11 @@ From the top, in this order. A part with nothing to show is left out.
 The section opens with what the task waits on now and how many gates are in each state, then a
 row for each gate: its name, its state, a line of detail, and who gave it and when.
 
-What it waits on follows its stage: before it starts, nothing; while it is worked on, its
-executor, said *lost* or *left* when that agent is gone; in review, the gates still missing or
-held; blocked, the tasks it depends on. A finished task waits on nothing.
+What it waits on follows its stage: in concept, design and progress, its executor, said *lost* or
+*left* when that agent is gone; in review, the gates still missing or held; blocked, the tasks it
+depends on; in the backlog or ready, nothing of its stage's. Outside review, each gate that is
+held is named after that (*executor* and its name *and owner*), so a task not started still waits
+on the owner while a card of its waits on them. A finished task waits on nothing.
 
 | Gate | It is met when |
 | --- | --- |
@@ -76,10 +80,10 @@ A project can add gates of its own, drawn the same way.
 | State | What it means to the reader |
 | --- | --- |
 | **met** | given, for the work as it stands now |
-| **missing** | not given yet, or given for an earlier commit: any new commit asks for it again |
+| **missing** | not given yet, or given for an earlier commit: any new commit asks for it again. The **owner** gate is never missing: unmet, it is held. |
 | **held** | waits on the owner |
 | **waived** | not needed for this task; the row says who decided that and why |
-| **unknown** | could not be read, or the task's branch is gone; the row says which |
+| **unknown** | could not be read, or the task finished and neither its branch nor the commit it landed as can be found; the row says which |
 
 Which gates a task needs is decided for each task by an agent that neither filed nor wrote it,
 from the kind of change it is. A task lands once every gate it needs is met.
@@ -105,10 +109,11 @@ On a wide screen it is lanes over the same hours, with a line at now:
 | **Stage** | each stage the task was in, as long as it lasted |
 | **Orchestrator**, **Executor**, **Reviewer** | when each agent held the role; a review's verdict after its bar |
 | Builds and tests | each recorded run, striped while it is going on; absent on a task with none |
-| **Other / task messages** | a mark for each message |
+| **Other / task messages** | a mark for each message from a sender that holds no one role; a role holder's message is marked on that role's lane |
 | **Gates** | a thin lane per gate, its pattern the state it was in: dotted missing, double held, solid met |
 
-The arrow keys, a click or a tap pick a part, and the line above the lanes says all of it: for a
+The arrow keys, a click or a tap pick a part, and the line under the lanes, where the legend
+was, says all of it: for a
 build or test its command, how long it waited and ran, how it ended, its commit, who ran it and
 where. A bar says when an agent held a role, not that it worked the whole time.
 
@@ -129,16 +134,19 @@ messages** brings the page before the ones shown.
 
 The box under it sends a message as the owner. **Send**, or ⌘/Ctrl+Enter, posts it.
 
+Whatever **to** says, the owner's message reaches every agent holding a role on the task and the
+task's orchestrator, and stays on the thread for everyone to read. A recipient adds, and never
+narrows:
+
 | Sent **to** | Who hears it |
 | --- | --- |
 | **everyone on it** | every agent holding a role on the task, and the task's orchestrator |
-| **@executor**, **@reviewer**, **@orchestrator** | whoever holds that role |
-| an agent's name | that agent |
+| **@executor**, **@reviewer**, **@orchestrator** | the same, the message addressed to whoever holds that role |
+| an agent's name | the same, and that agent where it holds no role on the task |
 
-Whoever it is sent to, the owner's message stays on the thread for everyone to read. When no live
-orchestrator holds the task, every orchestrator on the board hears it, so it is never lost.
-**Attach**, paste or drop adds files. The words typed and the recipient chosen are kept on this
-device, for this task, until the message is sent.
+When no live orchestrator holds the task, every orchestrator on the board hears it, so it is never
+lost. **Attach**, paste or drop adds files. The words typed are kept on this device, for this
+task, until the message is sent; the recipient chosen is kept after it too.
 
 ## Changes
 
@@ -156,19 +164,19 @@ dollar on it is an estimate. A task that recorded none says *No tokens recorded 
 ## A task in a workflow of the project's own
 
 Where the project runs its own workflow and that workflow holds the task, the head adds
-**Workflow**: the phase and state the task is in, then **Next actions**, a button for each step
-that leaves that state, with where it leads. A step the owner cannot take now is shown with why,
-and whose it is. A step that asks for something, a reason say, shows a field for it. When the task
-moved since the actions were read, the page says so and reads them again rather than take a step
-that no longer applies.
+**At** and the phase and state the task is in, then a button for each step that leaves that
+state, with where it leads. A step the owner cannot take now is shown with why, and whose it is. A
+step that asks for something, a reason say, shows a field for it. When the task moved since the
+actions were read, a press takes no step: the page says that the task moved and offers **Refresh
+actions**. *No action is open now* stands where no step leaves the state.
 
 ## States
 
 | State | What the page shows |
 | --- | --- |
 | Loading, first visit | *Loading task…* and the outline of each part: the head, the gates, the timeline's box, the brief, the thread |
-| Loading, a later visit | at once, the head, the brief and the thread this device last held, with *Shown from this device, saved 14:32. Checking for changes…*; **Send**, **Priority**, **Cancel task** and the approval say *Checking…* and wait until the server has answered |
-| One part fails | that part says so in its own place, with its retry, while the rest is drawn: **Retry** under the gates, **Retry loading the timeline**, **Load messages** |
+| Loading, a later visit | at once, the head, the brief and the thread this device last held, with *Shown from this device, saved 14:32. Checking for changes…*; **Send**, **Cancel task** and the approval say *Checking…* and wait until the server has answered, and **Priority** cannot be changed until then |
+| One part fails | that part says so in its own place, with its retry, while the rest is drawn: **Retry** under the gates, **Try again** in the timeline's box, **Load messages** |
 | The task cannot be read | **The task could not be loaded**, why, and **Retry** |
 | No such task | **No task** and the slug, with **All tasks** back to the board |
 | The connection is lost | *Reconnecting: the board may be out of date*, the page as last drawn |
@@ -182,19 +190,19 @@ that no longer applies.
 One column, in the same order. A gate takes three lines instead of one row. The timeline is a
 list instead of lanes: a row per stage with when it started, how long it lasted and a bar as
 long, and under it the builds, tests and gate changes that began in it. It is kept short, showing
-the latest steps; **Show all**, with the number of steps, on its first line lets it grow, and
+the latest steps; **Show all**, with the number of steps, at its foot lets it grow, and
 **Show the latest** folds it again. Text fields are large enough that the phone does not zoom
 into them.
 
 ## Edges
 
 - An approval, a review or a test run counts only for the commit it names. After a new commit the
-  gate reads **missing** and names the commit it stood on.
+  gate reads **missing**, the owner's **held**, and names the commit it stood on.
 - A subtask has no review gate of its own: it is reviewed with the task it is part of.
 - A task that landed and whose branch was since removed keeps its gates, read at the commit that
   landed.
-- Two tabs on one task each keep the same draft, as it is kept per device and task; the one that
-  sends clears it.
+- A draft is kept per device and task, and one tab does not follow another: two tabs open on one
+  task each show their own words, and the one typed in last is what the device keeps.
 - A message that fails to send keeps its words in the box and says why.
 - A task finished before gates were assessed keeps the gates it had then, and is not judged again.
 
