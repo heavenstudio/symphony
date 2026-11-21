@@ -87,7 +87,7 @@ shape are held by the contract tests.
 
 ## Exit codes
 
-The two new commands print help and exit 0 for `-h` or `--help`, exit 2 for invalid command-line
+`render-card` and `landing-checks` print help and exit 0 for `-h` or `--help`, exit 2 for invalid command-line
 arguments, and exit 1 for a read, configuration or rendering error. Diagnostics go to stderr;
 failures print no success object. Status exits 2 if its board cannot be read. Triage exits 1
 when its board or statistics cannot be read, and 2 for invalid arguments. Success exits 0.
