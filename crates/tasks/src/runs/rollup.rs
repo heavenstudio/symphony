@@ -50,7 +50,7 @@ fn read(runs: &Path, days: &[String]) -> Result<Vec<RunLine>, String> {
         lines.extend(
             bytes
                 .split(|byte| *byte == b'\n')
-                .filter_map(|line| serde_json::from_slice::<RunLine>(line).ok()),
+                .filter_map(crate::objects::parse::<RunLine>),
         );
     }
     Ok(fold(lines))
