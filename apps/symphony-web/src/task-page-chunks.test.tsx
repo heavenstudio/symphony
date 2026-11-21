@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AttemptsProps } from "./attempts";
 import type { NextActionsProps } from "./nextactions";
-import { AttemptsPart, TokensPart, WorkflowPart } from "./task-page";
+import { AttemptsPart, WorkflowPart } from "./task-page";
 import { fire, reading, turn, until } from "./testing";
 
 // React's state and effects stood in for, as no DOM runs here: a part's states are kept by the
@@ -31,7 +31,7 @@ vi.mock("react", async (original) => ({
   },
 }));
 
-// The page's three chunks stood in for: each comes as a part that says what it was given, or does
+// The page's two chunks stood in for: each comes as a part that says what it was given, or does
 // not come, as its test says; `asked` counts each import.
 const chunks = vi.hoisted(() => ({ come: true, asked: 0 }));
 
@@ -48,7 +48,6 @@ function chunksCome(come: boolean) {
   chunks.come = come;
   vi.doMock("./nextactions", () => chunk("NextActions"));
   vi.doMock("./attempts", () => chunk("Attempts"));
-  vi.doMock("./task-tokens", () => chunk("TaskTokensPanel"));
   vi.resetModules();
 }
 
@@ -187,58 +186,5 @@ describe("a part of a task's page that is a chunk of its own", () => {
       expect([come, draw(part).html]).toEqual([come, ""]);
     }
     expect(gone).not.toHaveBeenCalled();
-  });
-});
-
-describe("a task's tokens", () => {
-  const part = <TokensPart scope="" slug="w/a" />;
-  /** The disclosure opened, as the reader's click opens it. */
-  function open() {
-    react.at = 0;
-    const drawn = TokensPart({ scope: "", slug: "w/a" });
-    fire(drawn, (element) => element.type === "details", "onToggle", {
-      currentTarget: { open: true },
-    });
-  }
-
-  it("import nothing while their disclosure is closed", async () => {
-    aShell(false);
-    const closed = draw(part);
-    expect(closed.html).toBe(
-      '<details class="task-tokens card"><summary><h2>Tokens and estimated cost</h2></summary></details>',
-    );
-    closed.effect();
-    await turn();
-    expect(chunks.asked).toBe(0);
-  });
-
-  it("are read and their chunk imported as the disclosure first opens, then drawn by it", async () => {
-    aShell(false);
-    open();
-    const opened = draw(part);
-    expect(opened.html).toContain('<p role="status" aria-busy="true">Reading the tokens…</p>');
-    opened.effect();
-    await until(() => expect(draw(part).html).toContain('data-part="TaskTokensPanel"'));
-    expect(chunks.asked).toBe(1);
-  });
-
-  it("say a chunk that did not come, and import it again by its Retry", async () => {
-    chunksCome(false);
-    aShell(false);
-    open();
-    draw(part).effect();
-    const html = await until(() => {
-      const drawn = draw(part).html;
-      expect(drawn).toContain('role="alert"');
-      return drawn;
-    });
-    expect(html).toMatch(
-      /<p role="alert">The tokens could not be loaded\. <button[^>]*>Retry<\/button><\/p>/,
-    );
-    chunksCome(true);
-    // The retry is the body's, which the disclosure hands its own: said failed no more.
-    react.states[2] = false;
-    draw(part).effect();
-    await until(() => expect(draw(part).html).toContain('data-part="TaskTokensPanel"'));
   });
 });
