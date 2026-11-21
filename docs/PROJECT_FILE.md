@@ -493,5 +493,6 @@ other project runs.
 | `refresh` | `true` | whether a green release refreshes the machine |
 | `publish` | `false` | whether a green release, once pushed, publishes on crates.io each package whose version it lacks ([RELEASES](RELEASES.md#packages-on-cratesio)) |
 | `github` | none | the command a green release, once pushed, asks for its GitHub Release, run as `COMMAND… --request FILE`: `["symphony-github", "release"]` names the GitHub adapter's; with none, no program is run ([RELEASES](RELEASES.md#a-github-release)) |
+| `hosted` | none | the command a release run asks to verify its commit on GitHub's machines in place of this one, run as `COMMAND… --request FILE`: `["symphony-github", "verify"]` names the GitHub adapter's; with none, no program is run and every run verifies here ([RELEASES](RELEASES.md#on-githubs-runners)) |
 | `candidate_reruns` | `3` | the red reruns a release candidate takes before it is dropped |
 | `candidate_hours` | `24` | the hours a release candidate is held before it is dropped |

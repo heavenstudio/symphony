@@ -290,6 +290,10 @@ pub struct Releases {
     /// `COMMAND… --request FILE` (the GitHub adapter's `symphony-github release`); none, and no
     /// program is run and nothing is published there.
     pub github: Vec<String>,
+    /// The command a release run asks to verify its commit on GitHub's machines in place of
+    /// verifying it here, run as `COMMAND… --request FILE` (the GitHub adapter's
+    /// `symphony-github verify`); none, and no program is run and every run verifies here.
+    pub hosted: Vec<String>,
     /// How many reruns of a release candidate may come back red before it is dropped and main's
     /// tip is run again; 0 holds no candidate.
     pub candidate_reruns: u32,
@@ -319,6 +323,7 @@ impl Default for Releases {
             refresh: true,
             publish: false,
             github: Vec::new(),
+            hosted: Vec::new(),
             candidate_reruns: Releases::CANDIDATE_RERUNS,
             candidate_hours: Releases::CANDIDATE_HOURS,
         }
@@ -770,6 +775,11 @@ impl Project {
                     .into(),
             );
         }
+        if (file.releases.hosted.first()).is_some_and(|program| program.trim().is_empty()) {
+            return Err(
+                "[releases] hosted names no command: leave it out to verify a release here".into(),
+            );
+        }
         if let Some(upstream) = land.upstream.take() {
             upstream.judged()?;
         }
@@ -820,6 +830,7 @@ impl Project {
                 refresh: file.releases.refresh,
                 publish: file.releases.publish,
                 github: file.releases.github,
+                hosted: file.releases.hosted,
                 candidate_reruns: file.releases.candidate_reruns,
                 candidate_hours: file.releases.candidate_hours,
             },

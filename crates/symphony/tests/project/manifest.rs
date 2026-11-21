@@ -189,6 +189,23 @@ fn each_key_left_out_takes_its_default_beside_those_given() {
     );
     assert!(refused("[releases]\ngithub = [\" \", \"release\"]\n").contains("names no command"));
     assert!(refused("[releases]\ngithub = \"symphony-github\"\n").contains("github"));
+    // The command that verifies a release's commit on GitHub's machines, none unless said.
+    assert!(parsed("").unwrap().releases.hosted.is_empty());
+    assert!((parsed("[releases]\nhosted = []\n").unwrap().releases.hosted).is_empty());
+    assert_eq!(
+        parsed("[releases]\nhosted = [\"symphony-github\", \"verify\"]\n")
+            .unwrap()
+            .releases
+            .hosted,
+        ["symphony-github", "verify"]
+    );
+    let unnamed = refused("[releases]\nhosted = [\"\", \"verify\"]\n");
+    assert!(
+        unnamed
+            .contains("[releases] hosted names no command: leave it out to verify a release here"),
+        "{unnamed}"
+    );
+    assert!(refused("[releases]\nhosted = true\n").contains("hosted"));
 }
 
 #[test]

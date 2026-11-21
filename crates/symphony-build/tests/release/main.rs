@@ -20,6 +20,7 @@ mod consumers;
 mod delivered;
 mod github;
 mod held;
+mod hosted;
 mod install;
 mod places;
 mod publish;
