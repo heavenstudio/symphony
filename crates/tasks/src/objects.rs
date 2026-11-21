@@ -16,7 +16,7 @@ use serde::de::{
     self, DeserializeOwned, DeserializeSeed, Deserializer, EnumAccess, IntoDeserializer, MapAccess,
     SeqAccess, Unexpected, VariantAccess, Visitor,
 };
-use serde_json::{Error, Map, Value};
+use serde_json::{Error, Value};
 
 /// `value` read as `T`, each struct of it from an object.
 pub(crate) fn read<T: DeserializeOwned>(value: &Value) -> Result<T, Error> {
@@ -127,28 +127,21 @@ impl<'de> Deserializer<'de> for Objects<'de> {
     }
 
     fn deserialize_map<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
-        let Value::Object(map) = self.0 else {
-            return refused(self.0, &visitor);
-        };
-        let mut entries = Entries::of(map);
-        let read = visitor.visit_map(&mut entries)?;
-        match entries.entries.len() {
-            0 => Ok(read),
-            _ => Err(de::Error::invalid_length(
-                map.len(),
-                &"fewer elements in map",
-            )),
-        }
+        self.read_map(None, visitor)
     }
 
-    /// A struct from an object alone: never its fields in an array's order.
+    /// A struct from an object alone: never its fields in an array's order. A row of an open table
+    /// is handed only the fields its struct names ([`crate::rows::open_row`]), so it reads past
+    /// one an additive step added, which every build of the contract must
+    /// ([`crate::schema::OPEN`]); every other struct is handed all of them.
     fn deserialize_struct<V: Visitor<'de>>(
         self,
-        _: &'static str,
-        _: &'static [&'static str],
+        name: &'static str,
+        fields: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, Error> {
-        self.deserialize_map(visitor)
+        let named = crate::rows::open_row(name).then_some(fields);
+        self.read_map(named, visitor)
     }
 
     fn deserialize_enum<V: Visitor<'de>>(
@@ -201,19 +194,47 @@ impl<'de> SeqAccess<'de> for Items<'de> {
     }
 }
 
+impl<'a> Objects<'a> {
+    /// The object's entries read by `visitor`, only those `named` names where it names some.
+    fn read_map<V: Visitor<'a>>(
+        self,
+        named: Option<&'static [&'static str]>,
+        visitor: V,
+    ) -> Result<V::Value, Error> {
+        let Value::Object(map) = self.0 else {
+            return refused(self.0, &visitor);
+        };
+        let mut entries = Entries {
+            entries: map.iter(),
+            named,
+            value: None,
+        };
+        let read = visitor.visit_map(&mut entries)?;
+        match entries.entries.len() {
+            0 => Ok(read),
+            _ => Err(de::Error::invalid_length(
+                map.len(),
+                &"fewer elements in map",
+            )),
+        }
+    }
+}
+
 /// An object's entries, each value read through [`Objects`].
 struct Entries<'a> {
     entries: serde_json::map::Iter<'a>,
+    /// The fields of the struct reading them, where it is handed only those.
+    named: Option<&'static [&'static str]>,
     /// The value of the key read last.
     value: Option<&'a Value>,
 }
 
 impl<'a> Entries<'a> {
-    fn of(map: &'a Map<String, Value>) -> Entries<'a> {
-        Entries {
-            entries: map.iter(),
-            value: None,
-        }
+    /// The next entry, past each the struct reading them is not handed.
+    #[inline(never)]
+    fn next_entry(&mut self) -> Option<(&'a String, &'a Value)> {
+        let named = self.named;
+        (self.entries).find(|(key, _)| named.is_none_or(|named| named.contains(&key.as_str())))
     }
 }
 
@@ -224,13 +245,17 @@ impl<'de> MapAccess<'de> for Entries<'de> {
         &mut self,
         seed: K,
     ) -> Result<Option<K::Value>, Error> {
-        let Some((key, value)) = self.entries.next() else {
+        let Some((key, value)) = self.next_entry() else {
             return Ok(None);
         };
         self.value = Some(value);
         seed.deserialize(key.as_str().into_deserializer()).map(Some)
     }
 
+    /// Never inlined: a field's value is a type of its own, often a struct read in many places,
+    /// and inlined its whole reader went into the reader of each struct holding it, a copy each
+    /// (two pages of `tasks`, 32,848 bytes, where it was measured with the open rows' reader).
+    #[inline(never)]
     fn next_value_seed<V: DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value, Error> {
         match self.value.take() {
             Some(value) => seed.deserialize(Objects(value)),

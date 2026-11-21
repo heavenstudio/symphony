@@ -147,8 +147,10 @@ without it reads and writes around it.
 What each side does, on both engines:
 
 - A build behind the board's steps reads and writes it as it is. Every read of an open table's row
-  passes a field it does not know, and every write of one sets named fields, so the field stays:
-  no statement replaces such a row whole (`store/surreal/fence_tests.rs`). The code of a step asks
+  passes a field it does not know, as the store's reader hands the row only the fields its struct
+  names (`rows::open_row`), and every write of one sets named fields, so the field stays: no
+  statement replaces such a row whole (`store/surreal/fence_tests.rs`). The whole-board dump reads
+  each row as its struct alone does, which refuses the field by name, as a copy would drop it. The code of a step asks
   `Store::additions` before it reads or writes what the step defines.
 - A build ahead adds its steps where it may move the board ([TASKS](TASKS.md#where-it-lives)),
   holding no writer, and uses the board as it is where it may not. The guard refuses, in the

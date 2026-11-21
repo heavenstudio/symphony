@@ -400,9 +400,10 @@ impl Store {
 }
 
 /// `read`, the board's rows as the dump reads them, as a `T`, refused where a row holds a field the
-/// dump does not know, which a copy of it would drop ([`crate::rows::strictly`]).
+/// dump does not know, which a copy of it would drop: read by serde alone, each row refuses one,
+/// where the store's reader hands an open table's row only its own ([`crate::rows::open_row`]).
 fn read_strictly<T: serde::de::DeserializeOwned>(read: Value) -> Result<T, Error> {
-    crate::rows::strictly(read)
+    serde_json::from_value(read)
         .map_err(|why| Error::Refused(format!("the board's rows are not the dump's: {why}")))
 }
 

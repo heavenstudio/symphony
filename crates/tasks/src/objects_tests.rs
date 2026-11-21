@@ -442,3 +442,45 @@ fn the_shapes_no_row_holds_read_as_from_value_reads_them() {
         agree::<std::collections::HashMap<String, u8>>(value);
     }
 }
+
+#[test]
+fn an_open_tables_row_reads_past_a_field_it_does_not_know_and_reads_alone_refuses_it() {
+    use crate::rows::{Dump, RoleRow, TaskRow, WorkflowRow};
+    let role = json!({"slug": "a", "handle": "h", "role": "executor", "since": 1.0});
+    let mut ahead = role.clone();
+    ahead["fixture_note"] = json!({"kept": [1, null]});
+    // Through the store's reader, at the top, in a list and inside another struct, as it is read
+    // without the field.
+    let (objects, values) = both::<RoleRow>(ahead.clone());
+    assert_eq!(objects.unwrap(), read::<RoleRow>(&role).unwrap());
+    assert_eq!(
+        values.unwrap_err(),
+        "unknown field `fixture_note`, expected one of `slug`, `handle`, `role`, `since`, `expires`"
+    );
+    let rows: Vec<RoleRow> = read(&json!([role, ahead])).unwrap();
+    assert_eq!(rows[0], rows[1]);
+    let held: (Vec<RoleRow>, i64) = read(&json!([[ahead], 3])).unwrap();
+    assert_eq!(held.0[0], rows[0]);
+    // An alias the struct names is handed to it: SurrealDB's `sid` for a task's `id`.
+    let task = json!({"sid": 7, "slug": "sim/jump", "title": "Jump", "status": "ready",
+        "created_by": "owner", "created": 1.0, "updated": 2.0, "fixture_note": "x"});
+    let read_task: TaskRow = read(&task).unwrap();
+    assert_eq!((read_task.id, read_task.slug.as_str()), (7, "sim/jump"));
+    // The rest refuse it through either reader: a closed table's row and the dump itself.
+    let record = json!({"key": ["active"], "kind": "active", "body": {}, "at": 1.0, "extra": 1});
+    let (objects, values) = both::<WorkflowRow>(record);
+    assert!(objects.unwrap_err().starts_with("unknown field `extra`"));
+    assert!(values.unwrap_err().starts_with("unknown field `extra`"));
+    let dump = json!({"roles": [], "fixture_table": []});
+    let (objects, values) = both::<Dump>(dump);
+    assert!(
+        objects
+            .unwrap_err()
+            .starts_with("unknown field `fixture_table`")
+    );
+    assert!(
+        values
+            .unwrap_err()
+            .starts_with("unknown field `fixture_table`")
+    );
+}

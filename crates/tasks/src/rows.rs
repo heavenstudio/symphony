@@ -2,12 +2,13 @@
 //! table's columns, as `tasks-copy --board --out` writes them. The copy reads them ([`crate::Store::copy`]) and the tests seed
 //! the board with them. A column added to a board after it was first written (`instruction`, the
 //! liveness columns) may be missing from an old dump, and reads as its default; a table or a column
-//! the copy does not know is refused by name ([`Dump::from_json`], [`strictly`]), never dropped.
+//! the copy does not know is refused by name ([`Dump::from_json`]), never dropped.
 //!
 //! A row of an open table ([`crate::schema::OPEN`]) is read past a field its struct does not know:
-//! an additive step's, which a build without the step reads around and whose writes keep it. Only
-//! the dump, which a copy, an export and a move to another engine are made of, refuses one, as it
-//! would drop it.
+//! an additive step's, which a build without the step reads around and whose writes keep it. Each
+//! row refuses one read alone, as a dump reads it, since a copy, an export or a move to another
+//! engine made of it would drop it; the store's reader hands the row only the fields it names
+//! ([`open_row`], [`crate::objects`]), as a task's record does ([`crate::store`]'s `Beside`).
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -88,28 +89,35 @@ fn table<T: DeserializeOwned>(
     name: &str,
 ) -> Result<Vec<T>, String> {
     tables.remove(name).map_or(Ok(Vec::new()), |rows| {
-        strictly(rows).map_err(|e| format!("the dump's {name} are not rows the copy knows: {e}"))
+        serde_json::from_value(rows)
+            .map_err(|e| format!("the dump's {name} are not rows the copy knows: {e}"))
     })
 }
 
-/// `value` as a `T`, refused, naming each with where it is (`unknown field `estimate` at
-/// 1.estimate`), where it has a field `T` does not know, at any depth: what a row's struct reads
-/// past on an ordinary read ([`crate::schema::OPEN`]) a dump would drop.
-pub fn strictly<T: DeserializeOwned>(value: Value) -> Result<T, String> {
-    let mut unknown = Vec::new();
-    let read: T = serde_ignored::deserialize(value, |path| {
-        let path = path.to_string();
-        let name = path.rsplit('.').next().unwrap_or(&path);
-        unknown.push(format!("unknown field `{name}` at {path}"));
-    })
-    .map_err(|e| e.to_string())?;
-    match unknown.is_empty() {
-        true => Ok(read),
-        false => Err(unknown.join(", ")),
-    }
+/// Whether `name` is a struct of an open table's rows ([`crate::schema::OPEN`]), by the name its
+/// `Deserialize` gives: what the store's reader hands only the fields the struct names
+/// ([`crate::objects`]). A match, so each struct's reader, whose name is its own constant, decides
+/// it as it is compiled, and only an open table's row names its fields.
+#[inline(always)]
+pub(crate) fn open_row(name: &str) -> bool {
+    matches!(
+        name,
+        "TaskRow"
+            | "LinkRow"
+            | "SessionRow"
+            | "RoleRow"
+            | "MessageRow"
+            | "DeliveryRow"
+            | "DeliveryKeyRow"
+            | "BarredKeyRow"
+            | "TaskSessionRow"
+            | "AskRow"
+            | "UsageRow"
+    )
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TaskRow {
     /// SQLite's row id: the order tasks were created in (`sid` in SurrealDB, whose `id` is the record's).
     #[serde(alias = "sid")]
@@ -136,6 +144,7 @@ pub struct TaskRow {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LinkRow {
     pub slug: String,
     /// `doc` or `dep`.
@@ -144,6 +153,7 @@ pub struct LinkRow {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SessionRow {
     pub handle: String,
     pub kind: String,
@@ -176,6 +186,7 @@ pub struct SessionRow {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RoleRow {
     pub slug: String,
     pub handle: String,
@@ -187,6 +198,7 @@ pub struct RoleRow {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MessageRow {
     #[serde(alias = "sid")]
     pub id: i64,
@@ -201,6 +213,7 @@ pub struct MessageRow {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DeliveryRow {
     pub message: i64,
     pub handle: String,
@@ -208,6 +221,7 @@ pub struct DeliveryRow {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BarredKeyRow {
     pub key: String,
 }
@@ -215,6 +229,7 @@ pub struct BarredKeyRow {
 /// A post made once per key on a thread (`Store::say_keyed`): the message it made, and when. Never a
 /// SQLite table; a dump from before it has none.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DeliveryKeyRow {
     pub slug: String,
     pub key: String,
@@ -226,6 +241,7 @@ pub struct DeliveryKeyRow {
 /// owner waits on, open until it is answered, never a task. Never a SQLite table; a dump from before
 /// it has none.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AskRow {
     /// The order asks were opened in: `ask N` (`sid` in SurrealDB, whose `id` is the record's).
     #[serde(alias = "sid")]
@@ -300,6 +316,7 @@ pub struct HeldRow {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TaskSessionRow {
     pub slug: String,
     pub handle: String,
@@ -324,6 +341,7 @@ pub struct TaskSessionRow {
 /// The tokens one session spent on one task, in one role, on one model at one speed, in one round
 /// (`crate::usage`): what its beats added up. Never a SQLite table.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UsageRow {
     pub handle: String,
     /// The task, "" for calls made while the session worked none.
@@ -429,42 +447,41 @@ mod tests {
         );
     }
 
+    /// Each open table with the struct its rows are read as, in `schema::OPEN`'s order: a table
+    /// added there, or a struct renamed, without its line here fails.
     #[test]
-    fn a_row_of_an_open_table_reads_past_a_field_it_does_not_know_and_a_strict_read_names_it() {
-        let row = serde_json::json!({
-            "slug": "a", "handle": "h", "role": "executor", "since": 1.0, "fixture_note": "x"});
-        let role: RoleRow = serde_json::from_value(row.clone()).unwrap();
-        assert_eq!(role.handle, "h");
-        assert_eq!(
-            strictly::<RoleRow>(row).unwrap_err(),
-            "unknown field `fixture_note` at fixture_note"
-        );
-        // Each field it does not know, at any depth, in the order read; a list's place by its index.
-        let rows = serde_json::json!([
-            {"slug": "a", "handle": "h", "role": "executor", "since": 1.0},
-            {"slug": "b", "handle": "h", "role": "executor", "since": 1.0, "one": 1, "two": 2},
-        ]);
-        assert_eq!(
-            strictly::<Vec<RoleRow>>(rows).unwrap_err(),
-            "unknown field `one` at 1.one, unknown field `two` at 1.two"
-        );
-        // A struct that denies what it does not know refuses it itself, as serde says it.
-        let held = serde_json::json!({"tasks": [], "fixture_table": []});
-        assert!(
-            strictly::<Dump>(held)
-                .unwrap_err()
-                .starts_with("unknown field `fixture_table`, expected one of `tasks`"),
-        );
-        // What it knows it reads as the tolerant read does, and a type that is wrong is refused
-        // as serde says it.
-        let known =
-            serde_json::json!({"slug": "a", "handle": "h", "role": "executor", "since": 1.0});
-        assert_eq!(strictly::<RoleRow>(known).unwrap(), role);
-        let wrong = serde_json::json!({"slug": 1, "handle": "h", "role": "executor", "since": 1.0});
-        assert_eq!(
-            strictly::<RoleRow>(wrong).unwrap_err(),
-            "invalid type: number, expected a string"
-        );
+    fn the_open_rows_are_the_structs_of_the_open_tables() {
+        use std::any::type_name;
+        let read_as = [
+            ("task", type_name::<TaskRow>()),
+            ("link", type_name::<LinkRow>()),
+            ("session", type_name::<SessionRow>()),
+            ("role", type_name::<RoleRow>()),
+            ("message", type_name::<MessageRow>()),
+            ("delivery", type_name::<DeliveryRow>()),
+            ("delivery_key", type_name::<DeliveryKeyRow>()),
+            ("barred_key", type_name::<BarredKeyRow>()),
+            ("task_session", type_name::<TaskSessionRow>()),
+            ("ask", type_name::<AskRow>()),
+            ("usage", type_name::<UsageRow>()),
+        ];
+        assert_eq!(read_as.map(|(table, _)| table), crate::schema::OPEN);
+        for (table, path) in read_as {
+            assert!(
+                open_row(path.rsplit("::").next().unwrap()),
+                "{table}: {path}"
+            );
+        }
+        for closed in [
+            "HeldRow",
+            "WorkflowRow",
+            "Dump",
+            "Snapshot",
+            "taskrow",
+            "TaskRow ",
+        ] {
+            assert!(!open_row(closed), "{closed}");
+        }
     }
 
     #[test]
