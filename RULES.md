@@ -473,12 +473,14 @@ by hand ([its card](docs/DECISIONS.md#consumer-manifest-line)).
 
 ### `commits/only-the-land-pushes`
 
-Nothing is pushed but main, by the land, and a release's tag, by the release run
-([AGENTS.md](AGENTS.md#this-repository-as-its-own-project)): nothing else of a task, its branch
-included. A project that sets `[land] delivery` has its land's program push the task's branch
-for its pull request ([TASKS](docs/TASKS.md#a-land-delivered-by-a-pull-request)); this repository
-sets none. A consuming project's branch is pushed only on the owner's word naming that push; a
-release's refresh makes none and moves no pin ([the refresh](docs/RELEASES.md#the-refresh)).
+Nothing is pushed but a task's branch, by the dispatch of its land, for the pull request that
+delivers it, and a release's tag, by the release run
+([AGENTS.md](AGENTS.md#this-repository-as-its-own-project)): nothing else of a task. Main is
+pushed by nobody, the owner included, while this repository sets `[land] delivery`: it moves only
+by GitHub's squash of a task's pull request, and its ruleset refuses any other update
+([TASKS](docs/TASKS.md#a-land-delivered-by-a-pull-request)). A consuming project's branch is
+pushed only on the owner's word naming that push; a release's refresh makes none and moves no pin
+([the refresh](docs/RELEASES.md#the-refresh)).
 
 ### `delete-by-name`
 
