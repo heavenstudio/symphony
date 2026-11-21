@@ -778,7 +778,10 @@ fn a_released_board_that_is_not_up_yet_waits_one_second_not_the_holds_minute() {
         "the release made an attempt due"
     );
     *refusal.lock().unwrap() = None;
-    assert!(hub.reader().is_err(), "down now, and so on its own deadline");
+    assert!(
+        hub.reader().is_err(),
+        "down now, and so on its own deadline"
+    );
     pass(&clock, 1);
     assert!(hub.reader().is_ok());
 }

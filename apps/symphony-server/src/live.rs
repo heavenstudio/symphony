@@ -627,11 +627,11 @@ impl Hub {
         if !self.holds_its_project() {
             return Err(self.gone());
         }
-        match kept.retry.run_unless_released(
-            &self.retry_clock,
-            &|| self.board_held(),
-            || (self.connect_reader)(&self.root),
-        ) {
+        match kept
+            .retry
+            .run_unless_released(&self.retry_clock, &|| self.board_held(), || {
+                (self.connect_reader)(&self.root)
+            }) {
             Some(Ok(store)) => {
                 let store = Arc::new(store);
                 kept.store = Some(Arc::clone(&store));

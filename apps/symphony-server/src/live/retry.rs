@@ -119,7 +119,11 @@ mod tests {
         for seconds in [1, 2, 4, 8, 16, 32, 60, 60] {
             assert_eq!(fail(&mut retry, &now, &held), Some(Err(())));
             now.set(now.get() + Duration::from_secs(seconds) - Duration::from_nanos(1));
-            assert_eq!(fail(&mut retry, &now, &held), None, "held, before {seconds} s");
+            assert_eq!(
+                fail(&mut retry, &now, &held),
+                None,
+                "held, before {seconds} s"
+            );
             now.set(now.get() + Duration::from_nanos(1));
         }
         assert_eq!(fail(&mut retry, &now, &held), Some(Err(())));
@@ -146,7 +150,11 @@ mod tests {
         for seconds in [1, 2] {
             assert_eq!(fail(&mut retry, &now, &held), Some(Err(())));
             now.set(now.get() + Duration::from_secs(seconds) - Duration::from_nanos(1));
-            assert_eq!(fail(&mut retry, &now, &held), None, "down, before {seconds} s");
+            assert_eq!(
+                fail(&mut retry, &now, &held),
+                None,
+                "down, before {seconds} s"
+            );
             now.set(now.get() + Duration::from_nanos(1));
         }
     }
