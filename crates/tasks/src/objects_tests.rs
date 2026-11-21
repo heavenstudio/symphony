@@ -544,7 +544,7 @@ fn text_reads_differently_only_for_an_array_as_a_struct_and_a_field_said_twice()
         serde_json::from_str::<Binding>(twice)
             .unwrap_err()
             .to_string(),
-        "duplicate field `id` at line 1 column 44"
+        "duplicate field `id` at line 1 column 40"
     );
     assert_eq!(parse::<Binding>(twice).unwrap().id, "second");
 }
