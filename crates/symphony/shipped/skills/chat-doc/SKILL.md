@@ -5,10 +5,9 @@ description: Register as the Symphony chat recipient and answer each owner callb
 
 # Chat with the owner through the Symphony
 
-The owner reads and decides in the Symphony. Each save there queues an event and calls the
-registered session's native channel; this skill is how an agent hears them and answers in place,
-so the app works like a chat. Follow the project's permissions, shared-server rules and review
-conventions.
+The owner reads and decides in the Symphony, and each save there calls the registered session's
+native channel: this skill is how an agent hears those events and answers in place. Follow the
+project's permissions, shared-server rules and review conventions.
 
 ## Connect
 

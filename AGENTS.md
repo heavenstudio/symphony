@@ -141,9 +141,9 @@ consuming project's.
   move to review dispatches it: its branch pushed, its pull request opened, its evidence written
   there as checks. Once every stamp it needs stands on its head, GitHub squashes it within
   seconds and the board closes the task
-  ([a land dispatched at review](docs/TASKS.md#a-land-dispatched-at-review)). So an orchestrator
-  starts the assessor when it files a task and each time it moves to review, before any
-  reviewer: a task nobody assessed at its head waits in review, and nothing merges it. A
+  ([a land dispatched at review](docs/TASKS.md#a-land-dispatched-at-review)). A task nobody
+  assessed at its head waits in review and nothing merges it, so its assessor is started at
+  each move to review. A
   dispatch that stops, a red check, a conflict or a pull request closed unmerged is said on the
   thread to `@orchestrator`, naming what follows; `just land SLUG --as HANDLE` dispatches by
   hand a task whose merge did not come. What dispatches is the main checkout's

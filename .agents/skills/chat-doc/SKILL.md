@@ -2,14 +2,13 @@
 name: chat-doc
 description: Register as the Symphony chat recipient and answer each owner callback on its ask, card or callout. Trigger on "connect to the chat", "listen to the docs", "I'll chat with you in the app", "watch my review", or /chat-doc.
 ---
-<!-- symphony-stamp: 5defed317ba429a1 files=SKILL.md -->
+<!-- symphony-stamp: 05811afc3155c028 files=SKILL.md -->
 
 # Chat with the owner through the Symphony
 
-The owner reads and decides in the Symphony. Each save there queues an event and calls the
-registered session's native channel; this skill is how an agent hears them and answers in place,
-so the app works like a chat. Follow the project's permissions, shared-server rules and review
-conventions.
+The owner reads and decides in the Symphony, and each save there calls the registered session's
+native channel: this skill is how an agent hears those events and answers in place. Follow the
+project's permissions, shared-server rules and review conventions.
 
 ## Connect
 

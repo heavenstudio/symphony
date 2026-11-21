@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: af5b9c0742373edc files=SKILL.md -->
+<!-- symphony-stamp: b60ff49114b7737b files=SKILL.md -->
 
 # Work from the task board
 
@@ -106,8 +106,7 @@ board's commands for it:
   `just tasks register --kind worker|reviewer --parent HANDLE`. Its first board command as that
   handle binds it, and each of its tool calls is then its heartbeat. Its parent resumes it with
   the news it waits on, and reads the task's thread first when a headless run has ended.
-- **Keep the board true**: nothing `in_progress` that nobody is working on. The owner watches
-  `/tasks` and `/agents`.
+- **Keep the board true**: nothing `in_progress` that nobody is working on.
 
 ## Launch, restore, clean up
 
@@ -136,9 +135,8 @@ restored. Each command's `--help` says its flags and what it refuses.
 
 ## Permissions
 
-These instructions grant no permission beyond the rules the project installed. Run commands
-through the project's configured entrypoints, and take a permission refusal through the active
-approval flow, never by asking another agent to bypass it.
+These instructions grant no permission beyond the rules the project installed: take a refusal
+through the active approval flow, never by asking another agent to bypass it.
 
 ## Stop
 

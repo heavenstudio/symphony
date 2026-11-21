@@ -8,8 +8,7 @@ description: Do one task from the board by its description alone, a stage at a t
 Do the one task the prompt names, by its board description: its scope, its acceptance and the
 step it finishes by. The project's instructions come first: its guide (`AGENTS.md`), the rules it
 names, the guide of each package the task touches, and `project.md` beside this file where the
-project has one, its standing instructions for an executor. This skill supplies the board's
-mechanics, not a build or approval policy.
+project has one, its standing instructions for an executor.
 
 1. Reuse HANDLE from the prompt, the task's reservation or `TASKS_SESSION`; with none, register
    with `just tasks register --kind worker`. Pass it on every board command as

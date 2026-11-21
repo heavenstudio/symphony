@@ -18,7 +18,7 @@ certificate or landing system.
    hold it already, `just tasks role SLUG reviewer --as HANDLE`. Refused the role, stop and say
    why on the thread `--to @orchestrator`; never pass `--beside` yourself.
 3. Read `just tasks show SLUG --as HANDLE`, its thread with every earlier review on it, and the
-   whole diff of the tip it names against the default branch.
+   whole diff of its tip (the `TIP` line of step 4) against the default branch.
 4. Read its recorded builds and tests at that tip: `just tasks runs SLUG --as HANDLE` (`--tip
    SHA` for another commit). A run recorded green at the tip is run: never build or run it again,
    and never the full suite. Build or run only what the record does not cover and reading cannot

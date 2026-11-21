@@ -31,12 +31,12 @@ land by how an executor carries the work: [fast bug fixes](../work/start.md#fast
    discarded in its red's own fix, and no other work is held back to keep the load down for a
    run. Then staff ready work, restore orphaned work and arrange independent reviews. File a gap
    between approved documents and the implementation only with evidence, complete acceptance and
-   no existing task, by the create-task skill.
+   no existing task (`just tasks create`, by the create-task skill).
 4. Follow the project's integration and dependency policy before starting, and the stacking the
    task states. Coordinate file ownership, a separate checkout per executor, and record actual
    conflicts on the thread.
-5. Register a worker's handle (`just tasks register --kind worker --parent HANDLE`, a
-   reviewer's or an assessor's `--kind reviewer`) and give it only its prompt, on the task
+5. Register each agent a handle of its own, `just tasks register --kind worker --parent HANDLE`
+   (`--kind reviewer` for a reviewer or an assessor), and give it only its prompt, on the task
    itself, with no work or review subtask: `/work SLUG HANDLE`, `/review-task SLUG HANDLE` or
    `/assess-task SLUG HANDLE` (Codex: `$` in place of `/`). The skill, the slug and the handle
    are the whole prompt.
@@ -83,6 +83,5 @@ land by how an executor carries the work: [fast bug fixes](../work/start.md#fast
     shows what cleanup would close. Never remove another agent's checkout or close its terminal
     by hand.
 
-Owner approvals travel with the ask: quote the exact words and apply them within scope, and
-never ask again for an approved requirement. An unseen design or artifact still needs the
-project's review.
+Owner approvals travel with the ask: quote the exact words, apply them within scope and never
+ask again. An unseen design or artifact still needs the project's review.

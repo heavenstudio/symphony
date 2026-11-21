@@ -105,8 +105,7 @@ board's commands for it:
   `just tasks register --kind worker|reviewer --parent HANDLE`. Its first board command as that
   handle binds it, and each of its tool calls is then its heartbeat. Its parent resumes it with
   the news it waits on, and reads the task's thread first when a headless run has ended.
-- **Keep the board true**: nothing `in_progress` that nobody is working on. The owner watches
-  `/tasks` and `/agents`.
+- **Keep the board true**: nothing `in_progress` that nobody is working on.
 
 ## Launch, restore, clean up
 
@@ -135,9 +134,8 @@ restored. Each command's `--help` says its flags and what it refuses.
 
 ## Permissions
 
-These instructions grant no permission beyond the rules the project installed. Run commands
-through the project's configured entrypoints, and take a permission refusal through the active
-approval flow, never by asking another agent to bypass it.
+These instructions grant no permission beyond the rules the project installed: take a refusal
+through the active approval flow, never by asking another agent to bypass it.
 
 ## Stop
 
