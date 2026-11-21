@@ -875,8 +875,12 @@ fn of_an_admission_and_a_return_at_once_one_wins_and_the_board_is_whole() {
                 assert_eq!(events(&f), 15);
             }
             Err(Error::Refused(why)) => {
+                // Refused by whichever read met the return: the claim's first, which found no
+                // workflow active, or a later one, fenced on the workflow it had read.
                 assert!(
-                    why.starts_with("stale_") || why.starts_with("unknown_id"),
+                    why.starts_with("stale_")
+                        || why.starts_with("unknown_id")
+                        || why.starts_with("unsupported_activation: no custom workflow is active"),
                     "{backend:?}: {why}"
                 );
                 assert_eq!(

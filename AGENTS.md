@@ -213,7 +213,10 @@ not a question in chat.
 
 **Releases.** A land starts a release run (`just release`, below) once `[releases]
 every_landings` tasks (20) have landed since the last release or run ([the
-cadence](docs/RELEASES.md#the-cadence)), and a green release refreshes the machine: the release
+cadence](docs/RELEASES.md#the-cadence)), or, where `[releases] hosted` has the release verified
+on GitHub's runners, once `hosted_every_minutes` passed since the last run started, that run
+verifying nothing here ([the hosted clock](docs/RELEASES.md#the-hosted-clock)), and a green
+release refreshes the machine: the release
 installed in the machine folder ([the install](docs/RELEASES.md#the-install)), each registered
 project's board moved to its schema once every writer seen there in the last week is on the
 release, `current` pointed at it, and the machine's server following `current` by its own reload

@@ -51,6 +51,17 @@ impl Store {
     /// read before the copy is refused after it and one read before a copy that failed still
     /// holds; the new generation is then published to this store's authority, when it has one.
     pub fn copy(&self, dump: &Dump) -> Result<(), Error> {
+        self.copy_limited(dump, copy_limit)
+    }
+
+    /// [`Store::copy`], the server ending a PostgreSQL board's copy at `limit` of its client's
+    /// wait: [`copy_limit`] for every copy the board takes. A test gives a limit of its own, so a
+    /// copy it holds is ended soon while its client still waits on the server as any board's does.
+    fn copy_limited(
+        &self,
+        dump: &Dump,
+        limit: impl FnOnce(Duration) -> Duration,
+    ) -> Result<(), Error> {
         let keyed = |rows: Vec<Value>, key: &dyn Fn(&Value) -> Value| -> Vec<Value> {
             rows.into_iter()
                 .map(|mut row| {
@@ -178,7 +189,7 @@ impl Store {
         let last_ask = dump.asks.iter().map(|a| a.id).max().unwrap_or(0);
         let last_ts = dump.messages.iter().map(|m| m.ts).reduce(f64::max);
         if let Some(wait) = self.db.postgresql_wait() {
-            let limit = copy_limit(wait);
+            let limit = limit(wait);
             let generation =
                 self.copy_in_one(&tables, last, last_ts, last_task, last_ask, limit)?;
             return self.copied(&generation);

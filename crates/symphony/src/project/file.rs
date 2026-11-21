@@ -277,6 +277,11 @@ pub(super) struct FileLand {
     /// The repository this one imports from (`symphony_board::land::Upstream`), strict as a
     /// generator is: a misspelt key would change what a delivery merges.
     pub(super) upstream: Option<symphony_board::land::Upstream>,
+    /// How long the delivery watcher rests between two rounds (`symphony_board::land::dispatch`).
+    pub(super) watch_seconds: u64,
+    /// How long an armed pull request whose evidence stands may stay unmerged before the watcher
+    /// disarms it.
+    pub(super) merge_within_minutes: u64,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }
@@ -292,6 +297,8 @@ impl Default for FileLand {
             check_paths: None,
             delivery: Vec::new(),
             upstream: None,
+            watch_seconds: symphony_board::land::WATCH.as_secs(),
+            merge_within_minutes: symphony_board::land::MERGE_WITHIN.as_secs() / 60,
             unknown: Unknown::new(),
         }
     }
@@ -299,7 +306,9 @@ impl Default for FileLand {
 
 /// The `[releases]` table: how often the Symphony's own release run cuts a release besides each day's,
 /// whether a green release refreshes the machine and publishes on crates.io, the command that
-/// publishes its GitHub Release and the one that verifies who bypasses the default branch's rules
+/// publishes its GitHub Release, the one that verifies a commit on GitHub's machines, how often a
+/// run starts while that one is named, and the command that verifies who bypasses the default
+/// branch's rules
 /// (docs/RELEASES.md).
 #[derive(Deserialize)]
 #[serde(default)]
@@ -308,6 +317,8 @@ pub(super) struct FileReleases {
     pub(super) refresh: bool,
     pub(super) publish: bool,
     pub(super) github: Vec<String>,
+    pub(super) hosted: Vec<String>,
+    pub(super) hosted_every_minutes: u32,
     pub(super) rulesets: Vec<String>,
     pub(super) candidate_reruns: u32,
     pub(super) candidate_hours: u32,
@@ -322,6 +333,8 @@ impl Default for FileReleases {
             refresh: true,
             publish: false,
             github: Vec::new(),
+            hosted: Vec::new(),
+            hosted_every_minutes: super::Releases::HOSTED_EVERY_MINUTES,
             rulesets: Vec::new(),
             candidate_reruns: super::Releases::CANDIDATE_RERUNS,
             candidate_hours: super::Releases::CANDIDATE_HOURS,

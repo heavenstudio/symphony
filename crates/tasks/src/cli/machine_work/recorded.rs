@@ -475,8 +475,8 @@ fn record(path: &Path) -> Reading {
         return Reading::Failed;
     }
     let stem = path.file_stem().and_then(|stem| stem.to_str());
-    match (serde_json::from_slice::<Record>(&bytes), stem) {
-        (Ok(found), Some(stem)) if bytes.len() as u64 <= MAX_BYTES && found.valid(stem) => {
+    match (crate::objects::parse::<Record>(&bytes), stem) {
+        (Some(found), Some(stem)) if bytes.len() as u64 <= MAX_BYTES && found.valid(stem) => {
             Reading::Record(Box::new(found), bytes)
         }
         _ => Reading::NotOne,
@@ -658,7 +658,7 @@ pub fn history(folder: &Path) -> io::Result<Vec<Record>> {
             Err(error) => return Err(error),
         };
         for line in bytes.split(|byte| *byte == b'\n') {
-            if let Ok(record) = serde_json::from_slice::<Record>(line)
+            if let Some(record) = crate::objects::parse::<Record>(line)
                 && seen.insert(record.operation_id.clone())
             {
                 kept.push(record);

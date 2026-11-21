@@ -113,6 +113,10 @@ pub(crate) struct Run {
     /// that reached no check.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) environment: Option<super::inputs::Environment>,
+    /// What judged each check it asked of GitHub's runners ([`super::hosted`]): the workflow run,
+    /// or this machine and why; none for a run that asked nothing there.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) hosted: Vec<super::hosted::Hosted>,
 }
 
 /// A rerun of the release candidate: the commit first judged, the round it is (2 for the first
@@ -435,6 +439,7 @@ fn interrupted(folder: &Path, id: &str, holder: Option<&Running>, by: &str, now:
         slept: 0.0,
         inputs: None,
         environment: None,
+        hosted: Vec::new(),
     });
     run.ended_at = heard.map_or(run.started_at, |(_, last)| last.max(run.started_at));
     let doing = match holder.and_then(|holder| holder.check.as_ref()) {
@@ -578,6 +583,9 @@ fn line(run: &Run, now: f64) -> String {
     );
     if let Some(slept) = super::span::said(run.slept) {
         said.push_str(&format!("; the machine slept {slept} under it"));
+    }
+    for judged in &run.hosted {
+        said.push_str(&format!("; {}", judged.said()));
     }
     if let Some(rerun) = &run.rerun {
         said.push_str(&format!(
@@ -796,6 +804,7 @@ mod tests {
             slept: 0.0,
             inputs: None,
             environment: None,
+            hosted: Vec::new(),
         }
     }
 
