@@ -1288,7 +1288,10 @@ fn a_dispatch_after_the_land_of_its_merge_says_it_landed_and_stops_nothing() {
     assert_eq!(r.board.said(SLUG).len(), thread);
     assert_eq!(posts(&r, SLUG, "its dispatch stopped"), 0);
     assert_eq!(posts(&r, SLUG, "--dispatch"), 0);
-    assert!(!Journal::path(&lands(&r), SLUG).exists(), "none left behind");
+    assert!(
+        !Journal::path(&lands(&r), SLUG).exists(),
+        "none left behind"
+    );
     assert_eq!(landings(&r, SLUG).len(), 1);
     // Its branch at another head than the one merged is the refusal it was: a slug delivered once.
     write(&wt, "sim/jump.gd", "extends Node2D\n");
