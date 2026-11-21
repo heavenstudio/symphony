@@ -333,7 +333,18 @@ plain words:
   `unknown`) with the ledger facts a pass rests on and the reasons for another, the epoch and
   generation it was decided at, and its time: issued no more than 30 s ahead of the clock of the
   machine that decides, whatever clock a caller pins for the board (`TASKS_NOW`), expiring at most
-  900 s after it was issued, on that clock too. The caller gives it with the operation.
+  900 s after it was issued, on that clock too. The caller gives it with the operation, or, from
+  the app, the host asks for it.
+- **The app asks for it.** A plugin the project selects may answer for the authority by its
+  adapter ([PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md#approval-authorities)). When the owner takes a
+  guarded edge from the app with no attestation given, the Symphony asks that authority for each
+  guard, for the operation the request names, the project the activation recorded and the owner,
+  ten seconds at most, and gives the board what it answered unchanged: the board verifies it as
+  below, so the plugin adds no trust. An authority that errs, panics or does not answer in time
+  refuses the operation as `guard_unavailable`, naming the guard and why, and moves nothing; a
+  guard no plugin answers is refused as one taken with no attestation. Nothing is kept: each
+  operation asks again. The board's command line links no plugin and takes the attestation as a
+  file (`--attestation FILE`).
 
 The board accepts an observation only signed by the committed key, under the observation's own
 domain (a signature over an attestation's bytes is none), from an authority the active
@@ -454,6 +465,15 @@ again, as often as it likes, for an attempt whose worker died first.
   exit is answered ([recovery](#recovery)), the attempt's session its holder. At the bound its
   target is the bound's `exhausted` pair, where it waits on a person; a position that declares no
   recovery goes there keeping its slot and letting nothing go.
+- Admission may refuse the board's take for a reason that can pass: a dependency of the edge not
+  yet met, a slot full where the edge takes one, any condition that holds only some of the time.
+  The failure is then answered as if no automatic edge left the pair, by the position's
+  `attempt_failure` action, whose line says the edge was refused and why; a manual action leaves
+  the task waiting on a person under `attempt_failure`. That answer is no take of the board's, so
+  it spends nothing of the bound.
+- A failure nothing can answer (its position declares no `attempt_failure` action, or that
+  action is refused too) is said on its task's thread by the recovery service, once, under the
+  key `attempt/ID`: the line names the attempt and every refusal, and it is the failure's answer.
 - An attempt whose cancel took (its cancellation confirmed) is answered by the position's
   `cancellation_acknowledged` action, whatever its provider reported after: no result of a
   cancelled attempt is eligible.
@@ -462,13 +482,20 @@ again, as often as it likes, for an attempt whose worker died first.
 
 The proposal is decided on the task, the active workflow and the transitions recorded, and
 written as an operation or a recovery is, fenced on the task's version, which every transition
-moves, so a decision another write overtook is made again. An ending from a pair or
-workflow revision the task has left (it moved, was reassigned, or activation placed it elsewhere)
-is refused as `stale_task`, and one whose position declares no action for it as
-`explicit_action_required`: either stays on its attempt and moves nothing. The transition records
-what it recovered (`Transition::recovery`) under the key `attempt/ID`, an edge's and a recovery's
-alike, and an ending is answered once: a repeat answers the transition keyed by its attempt. Its
-line on the thread names the attempt and, where it ran out, the bound.
+moves, so a decision another write overtook is made again. An ending from a pair or workflow
+revision the task has left (it moved, was reassigned, or activation placed it elsewhere, whether
+the decision or admission's take finds it) is refused as `stale_task`, and one of a task no
+workflow holds as `unknown_id`, or `unsupported_activation` where none is active: none of them
+waits to pass, so each stays on its attempt, moves nothing and is said nowhere. So does a cancel
+whose position declares no action for it, refused as `explicit_action_required`. The transition
+records what it recovered (`Transition::recovery`) under the key `attempt/ID`, an edge's and a
+recovery's alike, and an ending is answered once: a repeat answers the transition keyed by its
+attempt, or, for a failure its thread said nothing could answer, writes nothing, even once the
+edge or the action could be taken. Its line on the thread names the attempt and, where it ran out,
+the bound or, where the take was refused, the refusal. The line that says nothing answers a
+failure is fenced on its key alone, not on the task's version: of two observations of one failure
+at once, one may say it on what it read while the other's take, which a prerequisite done in
+between let pass, moves the task, and both the line and the transition then stand.
 
 ## Operations
 

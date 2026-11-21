@@ -907,7 +907,7 @@ fn told(answerer: &dyn Gates, root: &Path, asked: &Asked) -> Result<String, Stri
 }
 
 /// Why `name` could not answer: it panicked while `doing` it, saying what `payload` says.
-fn panicked(name: &str, doing: &str, payload: &(dyn Any + Send)) -> String {
+pub(crate) fn panicked(name: &str, doing: &str, payload: &(dyn Any + Send)) -> String {
     let said = payload
         .downcast_ref::<&str>()
         .copied()

@@ -366,3 +366,55 @@ fn a_tasks_place_is_its_position_as_a_page_shows_it() {
     assert_eq!(super::place(&fields(json!({"workflow": newer}))), None);
     assert_eq!(super::place(&fields(json!({"workflow": "build"}))), None);
 }
+
+/// glacial-sparrow-263's post at 2026-11-20 00:54 on app/workflow-pages-follow-ups, as stored: two
+/// JSX components named in angle brackets, which once drew a notice of unsupported content holding
+/// the rest of the post, the rest again after it, and a notice for each attribute.
+const TOKENS_POST: &str = "From app/token-cost-on-pages (glacial-sparrow-263), the hunks I hold in the task page and board files, so whoever lands second merges them. apps/symphony-web/src/task-page.tsx: useContext added to the react import; tokensPart added to the ./task-live import; a TokensPanel type and two components, TokensPart and TokensBody, just before WorkflowPart; one <TokensPart key=tokens-SLUG> line after the Changes section's NearViewport. apps/symphony-web/src/task-live.ts: TASK_TOKENS_PATH in the ./wire import, tokensPart() after timelinePart(). apps/symphony-web/src/task-diff.css: two .task-tokens rules at the end. Board: apps/symphony-web/src/boardwait.tsx (one import, one useCardCost line at WaitCard's top, a .card-cost span between the slug's code and .prio); apps/symphony-web/src/styles/boardwait.css (one .waiting-slug .card-cost rule before .waiting-slug .prio); apps/symphony-web/src/kinds/board.tsx (one import; TasksPage wrapped in <CardCostsOf key=scope scope>, the key moved onto it). board.tsx and boardlive.tsx: nothing. New: card-costs.ts. Say if any of it crosses what you hold.";
+
+fn agent_post(text: &str) -> Message {
+    Message {
+        id: 16744,
+        slug: "app/workflow-pages-follow-ups".into(),
+        sender: "glacial-sparrow-263".into(),
+        recipient: None,
+        kind: "msg".into(),
+        text: text.into(),
+        ts: 1_795_132_459.79,
+    }
+}
+
+#[test]
+fn an_agents_post_naming_components_in_angle_brackets_is_drawn_as_typed_once() {
+    let tree = Tree::new();
+    let render = Render::new(&tree.root);
+    assert_eq!(
+        entry(&agent_post(TOKENS_POST), &render).blocks,
+        [symphony_api::Block::Paragraph {
+            spans: vec![symphony_api::Span::Text {
+                text: TOKENS_POST.into()
+            }]
+        }]
+    );
+    // A verdict and a brief are an agent's Markdown too.
+    let verdict = Message {
+        kind: "verdict".into(),
+        ..agent_post("changes: <Foo> and </Foo>")
+    };
+    assert_eq!(
+        serde_json::to_value(entry(&verdict, &render).blocks).unwrap(),
+        serde_json::json!([{ "type": "paragraph", "spans": [
+            { "type": "text", "text": "changes: <Foo> and </Foo>" }
+        ] }])
+    );
+    let brief = "Wrap it in <Foo>:\n\n<Foo/>\n\n- keep **this**\n";
+    let (blocks, next) = brief_part(&render, brief, 0, BRIEF_LIMIT);
+    assert_eq!(next, brief.len());
+    let shown = serde_json::to_string(&blocks).unwrap();
+    assert!(!shown.contains("unknown"), "{shown}");
+    assert!(
+        shown.contains(r#""text":"Wrap it in <Foo>:""#) && shown.contains(r#""text":"<Foo/>""#),
+        "{shown}"
+    );
+    assert!(shown.contains(r#""type":"strong""#), "{shown}");
+}

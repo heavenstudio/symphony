@@ -370,3 +370,82 @@ fn a_record_is_one_per_path_and_a_wrapper_one_per_plugin_record_and_setting() {
     assert_eq!(declared[0]["name"], "bare");
     assert!(declared[0].get("lost").is_none());
 }
+
+#[test]
+fn an_authority_measured_timed_or_looped_answers_as_linked_and_each_call_is_recorded() {
+    use symphony_plugin::authority::{Operation, Signed, Snapshot};
+    use symphony_plugin::execution::{Principal, PrincipalKind};
+    struct Ledger;
+    impl Authority for Ledger {
+        fn adapter(&self) -> &str {
+            "approvals"
+        }
+        fn attest(
+            &self,
+            root: &Path,
+            operation: &Operation,
+            within: Duration,
+        ) -> Result<Signed, String> {
+            Ok(Signed::new(
+                format!(
+                    "{} in {} within {} ms",
+                    operation.guard,
+                    root.display(),
+                    within.as_millis()
+                ),
+                "ab".repeat(64),
+            ))
+        }
+    }
+    struct Ledgered;
+    impl Plugin for Ledgered {
+        fn name(&self) -> &str {
+            "ledgered"
+        }
+        fn authorities(&self) -> Vec<&dyn Authority> {
+            vec![&Ledger]
+        }
+    }
+    static LEDGERED: Ledgered = Ledgered;
+    let operation = Operation::new(
+        "sim".into(),
+        "sim/a".into(),
+        "accept".into(),
+        "approved".into(),
+        Snapshot::new("d1".into(), 2, 3, "verify".into(), "awaiting".into()),
+        std::collections::BTreeMap::new(),
+        Principal::new(PrincipalKind::Human, "local".into(), "owner".into()),
+    );
+    let (root, within) = (Path::new("/project"), Duration::from_millis(2500));
+    let linked = Ledger.attest(root, &operation, within);
+    assert_eq!(
+        linked,
+        Ok(Signed::new(
+            "approved in /project within 2500 ms".into(),
+            "ab".repeat(64)
+        ))
+    );
+    let tree = Tree::new();
+    for (file, loopback) in [("timed.jsonl", false), ("looped.jsonl", true)] {
+        let path = tree.path(file);
+        let wrapped = measured(&LEDGERED, &path, loopback);
+        let authorities = wrapped.authorities();
+        let [authority] = authorities.as_slice() else {
+            panic!("{} authorities", authorities.len());
+        };
+        assert_eq!(authority.adapter(), "approvals");
+        assert_eq!(authority.attest(root, &operation, within), linked, "{file}");
+        let attests: Vec<_> = lines(&path)
+            .into_iter()
+            .filter(|line| line["seam"] == "authorities")
+            .collect();
+        assert_eq!(attests.len(), 1, "{file}: {attests:?}");
+        assert_eq!(
+            (&attests[0]["call"], &attests[0]["name"]),
+            (&"attest".into(), &"approvals".into()),
+            "{file}"
+        );
+        assert_eq!(attests[0]["path"] == "loopback", loopback, "{file}");
+        assert!(attests[0].get("lost").is_none(), "{file}");
+    }
+}

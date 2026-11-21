@@ -21,8 +21,8 @@ use crate::stages::{self, CLAIMED, CLOSED, Facts, Hold, Line, RELEASED, Segment,
 use crate::{ReportPlace, ReportRead, ReportTask, red};
 use std::path::{Path, PathBuf};
 use symphony_api::reports::{
-    ByStatus, DayFlow, Flow, Placed, PlacedHours, Red, ReportDay, ReportHour, Round, Sitting,
-    Spent, Spread, Wait, Waits,
+    ByStatus, DayFlow, Flow, Landed, Placed, PlacedHours, Red, ReportDay, ReportHour, Round,
+    Sitting, Spent, Spread, Wait, Waits,
 };
 
 pub const HOUR: f64 = 3_600.0;
@@ -97,7 +97,38 @@ pub fn day(project: &str, start: f64, until: f64, now: f64, read: &ReportRead) -
         reds: reds(&replayed, start, until),
         decisions: None,
         git: None,
+        // The next roll-up's to take from: the roll-up fills the hours' ([`spend::fill`]).
+        usage: None,
+        landed: landed(&replayed, read, start, until),
     }
+}
+
+/// Each top-level task of `replayed` landed from `start` to `until`, once at its last landing
+/// there, with the tokens `read` holds for it and its subtasks, oldest first.
+fn landed(replayed: &[Replayed], read: &ReportRead, start: f64, until: f64) -> Vec<Landed> {
+    let mut landed: Vec<Landed> = Vec::new();
+    for task in replayed.iter().filter(|r| r.task.parent.is_none()) {
+        let last = (task.task.lines.iter().rev())
+            .filter(|line| line.kind == "verdict" && line.text.starts_with(LANDED))
+            .map(|line| task.at(line))
+            .find(|at| start <= *at && *at < until);
+        if let Some(at) = last {
+            let slug = &task.task.slug;
+            let place = landed.partition_point(|kept| (kept.at, &kept.slug) <= (at, slug));
+            landed.insert(
+                place,
+                Landed {
+                    slug: slug.clone(),
+                    at,
+                    spent: (read.spent.iter())
+                        .filter(|(of, _)| of == slug)
+                        .map(|(_, sum)| sum.clone())
+                        .collect(),
+                },
+            );
+        }
+    }
+    landed
 }
 
 fn count<T>(items: impl Iterator<Item = T>) -> u32 {
@@ -557,6 +588,7 @@ pub fn read(folder: &Path, day: &str) -> Result<Option<ReportDay>, String> {
 }
 
 mod json;
+pub mod spend;
 
 #[cfg(test)]
 mod tests;

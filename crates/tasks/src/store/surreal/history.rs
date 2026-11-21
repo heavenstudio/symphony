@@ -3,8 +3,8 @@
 use crate::store::history::PAGE;
 
 /// The lines since `$since` that may say a status changed: every verdict, and the system lines of a
-/// move, a claim, a block by a cancelled dependency and its end, of a change to what a task's
-/// landing waits on, and of a move in the tree.
+/// move, a claim, a block by a cancelled dependency and the end of a block, of a change to what a
+/// task's landing waits on, and of a move in the tree.
 pub(in crate::store) const STATUS_LINES: &str = "SELECT slug, sid, ts, kind, text FROM message
     WHERE ts >= $since AND kind IN ['system', 'verdict']
     AND (kind = 'verdict' OR string::contains(text, $moved) OR string::contains(text, $claimed)
@@ -23,7 +23,8 @@ const WAITS_BEFORE: &str = "ts < $since AND kind = 'system' AND string::contains
 /// A line that may have taken a task into review: a move, or the end of a block that returns it
 /// there.
 const INTO_REVIEW: &str = "kind = 'system'
-    AND (string::ends_with(text, $moved_in) OR string::starts_with(text, $unblocked_in))";
+    AND (string::ends_with(text, $moved_in)
+        OR (string::starts_with(text, $unblock) AND string::contains(text, $back_in)))";
 
 /// The read, of each thread `$from` names, of its newest [`PAGE`] lines `filter` matches before the
 /// line of its `sid`: a range of the thread's keys.
@@ -48,7 +49,7 @@ pub(in crate::store) fn waits_before() -> String {
 }
 
 /// A page ([`page_query`]) of each thread's lines that may have taken it into review
-/// ([`INTO_REVIEW`], `$moved_in` and `$unblocked_in`).
+/// ([`INTO_REVIEW`], `$moved_in`, `$unblock` and `$back_in`).
 pub(in crate::store) fn into_review() -> String {
     page_query(INTO_REVIEW)
 }

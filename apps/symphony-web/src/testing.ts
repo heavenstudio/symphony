@@ -105,6 +105,9 @@ export const CASES = cases as unknown as {
     agentScreen: unknown;
     reports: unknown;
     emptyReports: unknown;
+    taskTokens: unknown;
+    emptyTaskTokens: unknown;
+    taskCosts: unknown;
     /** A board's custom workflow read, two reviews and rework in it; a board's with none. */
     workflow: unknown;
     noWorkflow: unknown;

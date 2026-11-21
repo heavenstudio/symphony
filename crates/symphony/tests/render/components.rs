@@ -123,6 +123,25 @@ fn a_component_in_a_card_text_and_in_an_agent_reply_renders() {
 }
 
 #[test]
+fn a_component_in_an_agents_post_renders_beside_its_words_typed() {
+    let tree = Tree::new();
+    let fragment = fixture(&tree).typed_reply(
+        "Here: [[item:AB-12|large]] inside <Lamp/>.\n\n[[items:AB-12]]\n",
+        "docs/x.md",
+    );
+    let blocks = symphony::blocks::fragment(&fragment, "docs/x.md");
+    let [Block::Paragraph { spans }, Block::Component { kind, .. }] = blocks.as_slice() else {
+        panic!("{blocks:?}")
+    };
+    assert_eq!(kind, "items");
+    assert!(
+        matches!(&spans[..], [Span::Text { text: before }, Span::Component { kind, .. }, Span::Text { text: after }]
+            if before == "Here: " && kind == "item" && after == " inside <Lamp/>."),
+        "{spans:?}"
+    );
+}
+
+#[test]
 fn a_threads_refresh_renders_components_too() {
     let tree = Tree::new();
     let render = fixture(&tree);
