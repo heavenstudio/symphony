@@ -121,7 +121,7 @@ pub(super) fn opened(answer: &[Value]) -> (Option<i64>, Line) {
     let found = pair.and_then(|pair| pair.first()).and_then(Value::as_i64);
     let line = match pair.and_then(|pair| pair.get(1)) {
         Some(Value::Bool(false)) => Line::NoTable,
-        Some(kept) => Line::Held(serde_json::from_value(kept.clone()).ok()),
+        Some(kept) => Line::Held(crate::objects::read(kept).ok()),
         None => Line::NoTable,
     };
     (found, line)
@@ -203,7 +203,7 @@ impl Store {
             Err(other) => return Err(other.into()),
         };
         let lines = found.last().cloned().unwrap_or(Value::Null);
-        serde_json::from_value(lines)
+        crate::objects::read(&lines)
             .map_err(|e| Failure::Stop(super::Error::Db(format!("a writer's line: {e}"))))
     }
 

@@ -57,8 +57,9 @@ orchestrator the board gives, covered closes), `messages.rs` threads, inboxes an
 status lines the alarm replays, `stamp.rs` what tells a task and its thread from the ones a reader
 read before, in one small read, `copy.rs` the whole-board copy, `opening.rs` how a store opens by
 the schema rule, `transaction.rs` the schema guard every write starts with and the one decoder
-of its answers, which reads each struct from an object alone (the crate's `objects.rs`, which
-reads an attempt's row too), `writers.rs` the line each program that opens a board to write
+of its answers, which reads each struct from an object alone (the crate's `objects.rs`, the one
+reader of the JSON the board holds as a value and of the text it drops when it cannot read it; a
+read whose refusal a caller is shown stays `serde_json`'s), `writers.rs` the line each program that opens a board to write
 keeps, which `tasks migrate` reads before it moves one
 ([TASKS](../../docs/TASKS.md#who-writes-a-board)), `recovery.rs` the recovery generation, the
 token and the writes bound to it and the authority a store is handed, with `server/recovery.rs`

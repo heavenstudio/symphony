@@ -191,7 +191,7 @@ fn taken<T: serde::de::DeserializeOwned>(
         }
     }
     value
-        .map(|value| serde_json::from_value(json(value)).map_err(|e| format!("{key}: {e}")))
+        .map(|value| crate::objects::read(&json(value)).map_err(|e| format!("{key}: {e}")))
         .transpose()
 }
 

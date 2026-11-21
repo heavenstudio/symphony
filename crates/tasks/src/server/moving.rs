@@ -168,8 +168,8 @@ fn read(path: &Path) -> Result<Option<Journal>, ServerError> {
         Err(why) if why.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(why) => return Err(io("could not read", path)(why)),
     };
-    match serde_json::from_str::<Journal>(&text) {
-        Ok(journal) if journal.format == 1 => Ok(Some(journal)),
+    match crate::objects::parse::<Journal>(&text) {
+        Some(journal) if journal.format == 1 => Ok(Some(journal)),
         _ => Err(ServerError::Io(format!(
             "{} does not read as a switch's journal: nothing was moved, and the board stays held",
             path.display()
