@@ -4947,3 +4947,38 @@ fn a_condition_that_throws_on_a_document_with_no_element_yet_is_asked_again() {
         ]
     );
 }
+
+#[test]
+fn a_wait_for_a_closed_page_takes_a_turn_of_the_browsers_between_two_looks() {
+    // The stand-in browser lists the page for three looks, then no longer. What it saw: the
+    // observer's turns that came before each look.
+    let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, |peer| {
+        let (mut looks, mut turns) = (Vec::new(), 0u32);
+        while let Some(command) = peer.next() {
+            if command["method"] == "Target.getTargets" {
+                looks.push(std::mem::take(&mut turns));
+                let listed = if looks.len() <= 3 {
+                    json!([{"targetId": "closing", "type": "page"}])
+                } else {
+                    json!([])
+                };
+                peer.reply(&command, json!({"targetInfos": listed}));
+            } else if marker(&command) {
+                turns += 1;
+                peer.reply(&command, json!({"result": {"value": null}}));
+            } else if probe(&command) {
+                peer.reply(&command, json!({"result": {"value": 0}}));
+            } else {
+                panic!("unexpected {command}");
+            }
+        }
+        looks
+    });
+    chrome.wait_closed("closing").unwrap();
+    drop(chrome);
+    let looks = peer.join().unwrap();
+    assert_eq!(looks.len(), 4, "{looks:?}");
+    // A look's own call starts one observer turn; the pause between two looks is a turn waited
+    // for, with its own.
+    assert!(looks[1..].iter().all(|turns| *turns >= 2), "{looks:?}");
+}

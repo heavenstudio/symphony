@@ -1353,6 +1353,9 @@ impl Chrome {
                     format!("{what}: still a target after {}", budget.spent()),
                 ));
             }
+            // A turn of the browser's between two looks, as a wait on a page takes: looks back
+            // to back would spend the allowance in a second and take the browser from the close.
+            self.pump(POLL)?;
         }
     }
 
