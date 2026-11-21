@@ -862,11 +862,13 @@ closest to them. This project names no verdict generator, so no generated branch
 generator added later adds its outputs' own tests to it.
 
 `just land` runs that check on the merge it lands unless `[land] check = false`, which this
-project sets: a land here is its merge, its move and its push, in seconds
-([the default landing](TASKS.md#the-default-landing)). The docs audit is evidence at a
-document change's tip ([by kind](#evidence-by-kind-of-change)); once a land moves main, the
-regenerator it starts runs it on what its round left main holding (its own commit once landed,
-with whatever main gained during the build), and a red there is one task with one owner,
+project sets, as its delivery by pull request requires: a land here makes no merge of its own,
+GitHub squashing the task's pull request once its checks pass
+([a land delivered by a pull request](TASKS.md#a-land-delivered-by-a-pull-request)). The docs
+audit is evidence at a document change's tip ([by kind](#evidence-by-kind-of-change)); once a
+land moves main, the regenerator it starts runs it on what its round left main holding (its own
+commit once landed, with whatever main gained during the build), and a red there is one task with
+one owner,
 `tests/main-red-check` at p0, closed by the round it passes on
 ([TASKS](TASKS.md#the-regenerator)). The owner's verdicts, whose commit runs the same check on
 main, are refused from that land on; the regenerator shortens the time to finding out why, to
@@ -980,7 +982,10 @@ settles documents alone or given afresh for the merged tip
 ([TASKS](TASKS.md#the-default-landing)), leaves
 the candidate on the commit approved before the merge; a fix that needed no review has none, so
 its land then drops the candidate. One that merges main before any approve gives the candidate
-nothing it can take, and drops it.
+nothing it can take, and drops it. Where a pull request delivers it, a fix that changes what the
+client is built from merges main once before its land, from a second head after its first is
+approved, keeping main's side of the generated paths, and that head is assessed, tested and
+approved as any new head ([RELEASES](RELEASES.md#the-release-candidate)).
 
 **At the land: nothing automatic, and nothing that blocks.** A land's only check on the merge is
 `[verdicts] check`, which this project turns off (`[land] check = false`, `symphony.toml`), for

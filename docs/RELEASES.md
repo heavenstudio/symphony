@@ -1681,7 +1681,8 @@ refresh points `current` at the release it installs.
 ## Who runs it
 
 The release run is the one thing that pushes a tag to `origin`: the release that run cut, and
-nothing else. An orchestrator pushes main and never a tag ([AGENTS](../AGENTS.md)). A release
+nothing else. Nobody pushes main, which GitHub's squash of each task's pull request moves, and an
+orchestrator pushes no tag ([AGENTS](../AGENTS.md#this-repository-as-its-own-project)). A release
 cannot be taken back once a project fetches it, so running `just release` or
 `just release --commit` by hand and installing its schedule are the owner's call: an orchestrator
 does either only on the owner's word. The cadence's run has that word (*The cadence*, above): a
