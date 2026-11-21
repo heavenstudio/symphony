@@ -1,5 +1,5 @@
 use super::read;
-use crate::execution::record::{
+use crate::execution::{
     Artifact, Asked, Binding, Cancellation, Cleanup, Collection, Dispatch, Ending, Identity, Lease,
     Pending, Pin, Relation, Row, State,
 };
