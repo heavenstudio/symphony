@@ -58,7 +58,8 @@ guide = "docs/TASKS.md"
 # the shipped `symphony`'s.
 on_land = [".target/bin/symphony-build", "release", "--due"]
 # PostgreSQL 18 or later is discovered on PATH; [board] postgresql can name an absolute bin
-# folder instead (docs/PROJECT_FILE.md). Only scratch boards and their tests start it so far.
+# folder instead (docs/PROJECT_FILE.md). This repository's board is on PostgreSQL since
+# 2026-11-21 (docs/analysis/board-pg-cutover.md).
 
 # A release run every 20 landings, and a green release's refresh of the machine (docs/RELEASES.md).
 [releases]
