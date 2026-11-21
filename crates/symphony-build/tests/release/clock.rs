@@ -163,12 +163,11 @@ fn a_clock_run_github_gives_no_result_of_verifies_nothing_here_and_is_asked_agai
         }
         let out = due(&fixture, now, 0);
         for said in [
-            format!("; the hosted clock's run verifies nothing here\n"),
+            "; the hosted clock's run verifies nothing here\n",
             "release: unjudged: no release, no red; the hosted clock asks again once its \
-             interval has passed, and the count's run verifies here\n"
-                .to_string(),
+             interval has passed, and the count's run verifies here\n",
         ] {
-            assert!(out.contains(&said), "{said:?} in:\n{out}");
+            assert!(out.contains(said), "{said:?} in:\n{out}");
         }
         let said = (out.lines())
             .find(|line| line.starts_with("release: verify not verified: "))
