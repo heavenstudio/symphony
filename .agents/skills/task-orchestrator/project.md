@@ -21,10 +21,11 @@ This repository's own standing instructions for an orchestrator, beside the ship
   through the active approval flow. Never forcibly cycle an active worker, edit its branch or
   change global trust.
 - A task that moves the board's schema (it raises `VERSION` in `crates/tasks/src/schema.rs`):
-  before its land, read `just release --status` and hold it while a run is in progress or a
-  release candidate is open, and for nothing else; after its land, run `just release` at once,
-  without asking, unless the land's own `--due` started a run
-  ([the cadence](../../../docs/RELEASES.md#the-cadence)).
+  before its last stamp, read `just release --status` and hold it while a run is in progress or
+  a release candidate is open, and for nothing else: its reviewer is started only once neither
+  holds, as a pull request delivers it and GitHub merges it within seconds of its approve. Once
+  the board's landed line is on its thread, run `just release` at once, without asking, unless
+  the land's own `--due` started a run ([the cadence](../../../docs/RELEASES.md#the-cadence)).
 - Bending a rule is an orchestrator's decision: where a rule here would hold development back
   for no gain the task needs (a size or first-visit budget at its line once the cut was made
   first, a wait the work does not need), decide it without a card and without asking, and say on

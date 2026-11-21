@@ -82,10 +82,13 @@ the release run's alone, never a task's.
 `just client-update` builds the client and publishes its bundle under
 `apps/symphony-server/client/public/`, which the server package embeds. A branch commits no
 distribution, whatever it changed: the regenerator a land starts rebuilds it from main's newest
-tip ([TASKS](docs/TASKS.md#the-regenerator)), so a task builds the client for its tests and
-pictures and puts the distribution back (`git checkout -- apps/symphony-server/client/public`).
-The one exception is a release candidate's fix that changes what the client is built from, which
-commits the distribution its own sources make
+tip and delivers it as a task of its own
+([TASKS](docs/TASKS.md#what-the-generators-make-delivered-by-a-pull-request)), and a land refuses
+a branch that changes it, so a task builds the client for its tests and pictures and puts the
+distribution back (`git checkout -- apps/symphony-server/client/public`). The one exception is a
+release candidate's fix that changes what the client is built from: the head its approve names
+commits the distribution its own sources make, and the branch then merges main once, keeping
+main's side of it, and delivers that second head
 ([RELEASES](docs/RELEASES.md#the-release-candidate)). `just client-check` compares a fresh build
 with the committed distribution; the rest is
 [the client's guide's](apps/symphony-web/AGENTS.md#the-build-and-the-distribution).
@@ -133,16 +136,27 @@ consuming project's.
   lands on `just settings-check` green at its tip, which is its `tests` stamp. A value that is a
   command or a program, or that decides what lands or where the board is kept, keeps `review`
   ([which](docs/PROJECT_FILE.md#the-settings-check), [TASKS](docs/TASKS.md#needed-stamps)).
-- **Landing.** An orchestrator lands a task with `just land SLUG --as HANDLE` once every stamp it
-  needs stands on its tip, never a merge by hand and without asking the owner: the land merges,
-  closes the task and pushes `main`, and one interrupted is run again
-  ([the default landing](docs/TASKS.md#the-default-landing)). A decision the owner must make is a
-  card in [DECISIONS](docs/DECISIONS.md), not a question in chat.
+- **Landing by pull request.** Nobody runs a land and nobody pushes `main`, the owner included
+  (`[land] delivery`, [GITHUB_SETUP](docs/GITHUB_SETUP.md#delivery-by-pull-request)). A task's
+  move to review dispatches it: its branch pushed, its pull request opened, its evidence written
+  there as checks. Once every stamp it needs stands on its head, GitHub squashes it within
+  seconds and the board closes the task
+  ([a land dispatched at review](docs/TASKS.md#a-land-dispatched-at-review)). So an orchestrator
+  starts the assessor when it files a task and each time it moves to review, before any
+  reviewer: a task nobody assessed at its head waits in review, and nothing merges it. A
+  dispatch that stops, a red check, a conflict or a pull request closed unmerged is said on the
+  thread to `@orchestrator`, naming what follows; `just land SLUG --as HANDLE` dispatches by
+  hand a task whose merge did not come. What dispatches is the main checkout's
+  `.target/bin/symphony-github`, a build of main put there by hand
+  (`tools/cargo.sh build -p symphony-github`, then copied) and again once a change to that
+  program lands. A decision the owner must make is a card in [DECISIONS](docs/DECISIONS.md),
+  not a question in chat.
 - **Releases.** A land starts a release run by [the cadence](docs/RELEASES.md#the-cadence), and a
   green release refreshes the machine. What an orchestrator runs without asking (a refresh's
-  retry, the run after a landing that moves the board's schema, pointing `current` forward after
-  a schema move) and what stays the owner's word (a run by hand, the schedule, publication,
-  restarting the shared server by hand, pointing `current` back) is
+  retry, the run after a landing that moves the board's schema, once the board's landed line is
+  on its thread, pointing `current` forward after a schema move) and what stays the owner's
+  word (a run by hand, the schedule, publication, restarting the shared server by hand,
+  pointing `current` back) is
   [who runs it](docs/RELEASES.md#who-runs-it), [the way back](docs/RELEASES.md#the-way-back) and
   [the orchestrator's page](.agents/skills/task-orchestrator/project.md). A pin moved by hand to
   a commit of main waits until `just tasks regenerate --status --wait` exits 0 and takes the
