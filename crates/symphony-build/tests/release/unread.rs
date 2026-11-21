@@ -40,7 +40,10 @@ fn a_run_over_a_project_file_that_does_not_load_is_red_naming_it_and_checks_noth
     ));
     for (text, wrong) in [
         (mistyped.as_str(), "ruleset"),
-        (&Fixture::project_file("every_landings = \"often\"\n"), "every_landings"),
+        (
+            &Fixture::project_file("every_landings = \"often\"\n"),
+            "every_landings",
+        ),
         ("[releases\nrefresh = false\n", "symphony.toml"),
     ] {
         land(&fixture, text);
@@ -99,7 +102,10 @@ fn a_lands_count_over_it_stops_red_without_counting_and_the_other_commands_say_o
     let args = ["--check", check.as_str(), "--due", "tools/last", &landed];
     let (code, out, err) = fixture.release_at(NOW, &args);
     assert_eq!(code, 1, "stdout:\n{out}\nstderr:\n{err}");
-    assert!(err.contains(&said) && err.contains("every_landing"), "{err}");
+    assert!(
+        err.contains(&said) && err.contains("every_landing"),
+        "{err}"
+    );
     assert!(!out.contains("landings"), "nothing is counted: {out}");
     assert!(!ran.exists(), "no check ran");
     assert_eq!(fixture.reds().keys().collect::<Vec<_>>(), [RED]);

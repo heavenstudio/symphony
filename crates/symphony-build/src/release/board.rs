@@ -622,7 +622,11 @@ fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
          key: {key}\ncheck: {name}",
         between = between(night),
         held = (night.candidate)
-            .map(if administered { held_administered } else { held })
+            .map(if administered {
+                held_administered
+            } else {
+                held
+            })
             .unwrap_or_default(),
         who = if administered {
             ADMINISTRATORS.to_string()
