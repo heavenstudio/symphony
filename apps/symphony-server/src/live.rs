@@ -118,6 +118,8 @@ pub(crate) struct Page {
     read_at: f64,
     /// Every card the page held when it was read ([`dashboard::Snapshot::held`]).
     held: Arc<dashboard::Held>,
+    /// The owner's lines under those cards ([`dashboard::Snapshot::said`]).
+    said: Arc<symphony::decided::Said>,
     /// The branches whose worktree the scan that page read could not read
     /// ([`branches::Scan::failed`]): where their cards are, `held` does not say.
     unscanned: Arc<BTreeSet<String>>,
@@ -184,6 +186,9 @@ pub(crate) struct Hub {
     callbacks: Mutex<Option<symphony::callbacks::Flusher>>,
     /// The shared server's part in the owner's asks; none on a private server, which leaves them alone.
     owner_asks: Mutex<Option<owner_asks::Kept>>,
+    /// The shared server's part in the blocks the owner's word ends ([`symphony::decided`]); none on a
+    /// private server, which leaves them alone.
+    decided: Mutex<Option<symphony::decided::Kept>>,
     /// The owner's open asks as the board last gave them, which the agent queue's cards are told
     /// ([`Hub::note_asks`]); none until the board is read.
     queue_asks: Mutex<Arc<Vec<symphony_board::Ask>>>,
@@ -282,6 +287,9 @@ pub(crate) struct Hub {
     /// The project's plugins' answers of a task's gates, kept by its branch's tip
     /// ([`symphony::gates::Kept`]): what the task page's gates read, and any other reader here.
     pub(crate) gates: symphony::gates::Kept,
+    /// The execution providers this server holds, the installed ones or a test's: a task's
+    /// attempts are resumed and viewed through them (`crate::attempts`).
+    pub(crate) providers: crate::execution::Providers,
 }
 
 /// What the hub keeps of its last scan of the branches: their own cards, when they began to be
@@ -412,6 +420,7 @@ impl Hub {
             warmed_watches: Mutex::new(BTreeMap::new()),
             callbacks: Mutex::new(None),
             owner_asks: Mutex::new(None),
+            decided: Mutex::new(None),
             queue_asks: Mutex::default(),
             reports: Mutex::new(None),
             dirty: Mutex::new(BTreeSet::new()),
@@ -456,6 +465,7 @@ impl Hub {
             }),
             going: Mutex::new(std::collections::HashSet::new()),
             gates: symphony::gates::Kept::default(),
+            providers: crate::execution::Providers::installed(),
         }
     }
 
@@ -1243,6 +1253,7 @@ impl Hub {
                     order: main.order.clone(),
                     pages: Arc::clone(&self.one_cards.read().unwrap_or_else(|e| e.into_inner())),
                     held: Arc::clone(&main.held),
+                    said: Arc::clone(&main.said),
                 })
             }
         });
@@ -1424,6 +1435,7 @@ impl Hub {
             page.order = snapshot.order;
             page.read_at = read_at;
             page.held = snapshot.held;
+            page.said = snapshot.said;
             page.unscanned = unscanned;
             self.publish(page, changes);
         } else {
@@ -1445,6 +1457,7 @@ impl Hub {
                     missing: BTreeSet::new(),
                     read_at,
                     held: snapshot.held,
+                    said: snapshot.said,
                     unscanned,
                 },
             );
@@ -2626,6 +2639,7 @@ mod health;
 mod machine_work;
 
 pub(crate) use health::{Signal, Standing};
+mod decided;
 mod owner_asks;
 mod presence;
 #[cfg(test)]
@@ -2639,6 +2653,8 @@ mod retry_tests;
 mod startup;
 mod task_asks;
 
+#[cfg(test)]
+mod decided_tests;
 #[cfg(test)]
 mod owner_asks_tests;
 

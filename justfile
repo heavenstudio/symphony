@@ -17,6 +17,9 @@ record := if path_exists(justfile_directory() / "tools/record.sh") == "true" { "
 fmt:
     @tools/cargo.sh fmt --all
 
+# After clippy it runs the board tests' raw-statement fence (crates/tasks/tests/raw_fence.rs), a
+# target of its own that reads text and starts nothing: a branch runs the targets of the tests it
+# touched, and the fence judges the files of every board target, so every branch's lint runs it.
 # Its last Rust step reads the branch against the default branch: red when it changes what a
 # consumer must do (the board schema, a consumer-API guard's call, a settings key) and no commit of
 # it says so in a `Consumer-Note` trailer (docs/RELEASES.md, "Its notes"). The step after it reads
@@ -33,6 +36,7 @@ _lint-rs:
     @tools/cargo.sh clippy --workspace --all-targets --locked -- -D warnings
     @tools/cargo.sh clippy -p symphony-api --features typescript --all-targets --locked -- -D warnings
     @tools/cargo.sh clippy -p symphony-board --features hosted-postgresql --all-targets --locked -- -D warnings
+    @tools/cargo.sh test -p symphony-board --test raw_fence --locked
     @tools/rs-bin.sh symphony-build consumer-notes --check
     @tools/rs-bin.sh symphony-build crates-check --branch .
     @just --justfile {{quote(justfile())}} client-lint
@@ -69,7 +73,7 @@ settings-check:
 symphony-ui-dist OUT="build/symphony-ui":
     @{{record}} --pipeline client build "just symphony-ui-dist" bash apps/symphony-web/build.sh {{quote(OUT)}}
 
-# apps/symphony-web/dev.js (its guide's "The dev server"), on loopback port PORT (0 for any), over
+# apps/symphony-web/dev.ts (its guide's "The dev server"), on loopback port PORT (0 for any), over
 # a server of your own (`just symphony --port 0`) on port SERVER; 8765 it refuses as either.
 # The web client's dev server: its kinds from their sources, the page loaded again on each save.
 [no-exit-message]

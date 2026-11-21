@@ -195,7 +195,7 @@ impl Home {
     /// the note is missing, does not read, or names a process that has ended.
     pub(super) fn note(&self) -> Option<Note> {
         let text = fs::read_to_string(self.dir.join(NOTE)).ok()?;
-        let note: Note = serde_json::from_str(&text).ok()?;
+        let note: Note = crate::objects::parse(&text)?;
         pid_alive(note.pid).then_some(note)
     }
 

@@ -211,13 +211,15 @@ which the `current` the refresh then points takes on) or was built at the releas
 the only writers behind are a release's own, its migrate runs with `--leave-behind`, naming them.
 A line on this host whose program is gone from its path, nothing there or a file written since
 the line's last possible write, is not counted, and is left behind the same way
-([a writer gone from its path](RELEASES.md#the-refresh)).
-Any other writer behind holds the release: the refresh names each to rebuild, moves no board of
-any project and leaves `current` where it was, until each is rebuilt and run once and the
-refresh's retry moves them all. Every board is snapshotted before the first moves; a migrate that
-fails stops the rest, the boards moved before it staying at the release's schema until the retry
-finishes the others ([RELEASES](RELEASES.md#the-refresh)). A release that keeps the schema
-`current` names moves no board.
+([a writer gone from its path](RELEASES.md#the-refresh)); so is one whose program is no build the
+project runs now (none its main checkout's `.target/bin` links name) and that has not run for
+longer than the project's `[board] stale_writer_hours`, a day by default.
+Any other writer behind holds that board alone: the refresh names each to rebuild and leaves that
+board where it was, until each is rebuilt and run once and a later refresh, or the machine's
+server's next round, moves it. No board holds another or `current`: each board is snapshotted
+just before its own move, and a migrate that fails is that board's red alone
+([RELEASES](RELEASES.md#the-refresh)). A release that keeps the schema `current` names moves only
+a board left behind it.
 
 The store takes about what it holds. Every server the board starts keeps each
 value beside its key, where compaction drops the versions a rewrite leaves, and
@@ -1120,11 +1122,26 @@ trigger; the next hourly sweep covers them. The Symphony's explicit finish actio
 sweep.
 A worktree goes, locked or not, when its HEAD is in main (detached or on a branch), nothing in
 it did not land, no live work holds it and its lock holds nobody; the branch it had checked out
-goes with it once merged, if no other worktree holds it and it still points where it did. Two
+goes with it once merged, if no other worktree holds it and it still points where it did. Three
 things keep that branch, each said as `kept branch NAME: WHY`: a land's record of its merge
 naming it, as `just land SLUG` run again finishes an interrupted land from that record and the
-branch, in a worktree of its own; and its task done by an approve no landing has closed, as what
-keeps such a task from going back to review once it is on main is its branch's tip.
+branch, in a worktree of its own; a delivery of it by pull request not yet asked to merge, whose
+land run again reads the branch's tip (from the merge's request on, a land run again goes on from
+its journal alone, and the branch goes); and its task done by an approve no landing has closed, as
+what keeps such a task from going back to review once it is on main is its branch's tip.
+A head [a pull request squashed](#a-land-delivered-by-a-pull-request) is in no history of main,
+and is in main by its receipt alone: the HEAD, or the branch's tip, is exactly the head a receipt
+kept under its own task's name records; `refs/symphony/delivered/SLUG` still names that head, so
+no commit is lost with the branch; the squash the receipt names is the commit it recorded, of
+that one parent and that tree, the tree git makes of merging the head into that parent; and that
+squash is on `origin/main` as last fetched and in main here. The sweep reads all of it from git
+and the kept file, fetches nothing and asks no host. Anything less is a head not in main, kept as
+one: a branch that moved on after its delivery, a receipt that does not read, is another task's
+or names another commit, a retained head gone or moved, a squash the remote was never seen to
+hold or the main checkout has not followed. Such a worktree and branch are said as `squashed
+into main as COMMIT by pull request #N` where a merged one says `merged into main`, and every
+rule below holds for them as for any other. The sweep deletes no retained head, no receipt and
+no branch of the remote.
 Nothing did not land when it has no tracked edit, no untracked file and no ignored file but
 build output and caches, and holds no owner verdict no commit has (an owner's dated line under a
 card, in a document of the project's entrypoint folders, that its HEAD does not hold; a worktree
@@ -1161,7 +1178,7 @@ those its executors' and reviewers' sessions are bound to once none of those is 
 in-process agent has no launch record), and those on the task's branch (an agent that left has
 released its roles). Before each removal the sweep refreshes
 sessions, launches, locks and activity and searches that tree for process working directories;
-a lock it lifts goes back if the removal is refused. A detached agent's merged
+a lock it lifts goes back if the removal is refused. A detached agent's merged or squashed
 `worktree-agent-ID` branch stays while its live or stale session still binds its worktree.
 In-process agents work only in their own `agent-ID` worktree; a different directory they create
 is not bound by their agent id. Full sessions register from the worktree they use. Each removal
@@ -1228,7 +1245,8 @@ says `cleared build output PATH (why; SIZE)`. Code: `crates/tasks/src/sweep/buil
 **`just tasks sweep --dry-run` says what a sweep would do, and does none of it.** One line per
 worktree git lists, `worktree PATH: SIZE; TASKS; MERGED; VERDICT`: what it holds on disk (the main
 checkout's line has no size), the tasks tied to it with their status (`task SLUG (STATUS)`, or `no
-task`), `merged into main` or how many commits it has that main has not, and what the sweep would
+task`), `merged into main`, `squashed into main as COMMIT by pull request #N` or how many commits
+it has that main has not, and what the sweep would
 do with it and why (`would remove: …`, `kept: …`, or `kept for an orchestrator to decide: …` for
 tracked edits, files that did not land and commits not in main). Then `set aside in PATH: SIZE`
 says what the main checkout's `FOLDER/swept/` holds against its cap (above), and its summary ends
@@ -1342,7 +1360,11 @@ reads with their JSON types, so a change that would break one fails its own task
 api promises is its calls, not the board's rules behind them, such as who may move or judge a
 task. Major 2 began at 2.0: `create` refuses `fast_fix`, including a null value. Tasks needing no
 review name their stamps through an assessment. The fields and calls held by the consumer contract
-keep their shapes. The current API is 2.4.
+keep their shapes. The current API is 2.6: minor 5 added `attempts`, `{"slug": S}`, a task's
+execution attempts as `symphony_api::TaskAttempts`, read as the board's own service under the
+project the call runs in, refused from outside a project's checkout
+([EXECUTION_ATTEMPTS](EXECUTION_ATTEMPTS.md#on-a-tasks-page)); minor 6 added what a guarded edge is
+taken with ([below](#a-task-a-custom-workflow-holds)).
 
 ### What a program outside the board keeps
 
@@ -1423,6 +1445,15 @@ active. Each answer is a type of `symphony_api::workflow`.
 - **`workflow_apply`**, `{"handle": H, "request": OperationRequest}`: one typed operation admitted
   for session `H`, which must be on the board and not have left, never for a principal the request
   names; its answer is the `OperationResult`, and its refusal names its code.
+
+Minor 6 adds what a guarded edge is taken with ([WORKFLOW](WORKFLOW.md#guards)):
+
+- **`workflow_apply`** takes `"attestations": [Signed]` beside its request, the project
+  authority's signed word for each guard of the edge; without it a guarded edge is refused
+  `guard_unavailable`.
+- **`workflow_observe`**, `{"signed": Signed}`: an authority's signed observation of its state,
+  which the board accepts only from the state it accepted before; its answer is `{"observed":
+  "accepted" | "unchanged" | "conflicted", "authority": …}`.
 
 ## The agents API
 
@@ -1837,9 +1868,34 @@ The task returns to its recorded stage; work from `in_progress` without an execu
 `ready`. A block without a recorded stage returns to `ready`, or `in_progress` with an executor.
 Resuming work respects the slot cap and retries on dispatch when a slot frees. The move is
 recorded once on the thread and reaches the current orchestrator through native STATUS/PULL
-delivery. Dispatch also reconciles a completion whose writer stopped before delivery. Decision,
-check, parked and unknown blocks stay blocked; cancelled or missing prerequisites never satisfy
-a task block.
+delivery. Dispatch also reconciles a completion whose writer stopped before delivery. Cancelled or
+missing prerequisites never satisfy a task block.
+
+The owner's word ends the two blocks that wait on the owner, the same way: back to the recorded
+stage, under the slot cap, the move recorded once and told as STATUS. A `decision:NAME` block ends
+once card NAME carries the owner's verdict that decides it, approved, rejected or dismissed, in an
+owner's line dated in or after the minute the block was recorded, on any page's copy of the card:
+main's documents or a branch's, so whichever checkout the owner's save wrote, main's or the
+worktree of the task that posted it, committed or not. The owner's newest verdict there is the
+card's: a question, or the card set back to pending, ends nothing. Its line names the card and the
+verdict, `unblocked: the owner decided NAME (reject); back to in_progress`, so the executor acts on
+what the card says a reject does. An owner's line since the block that decides nothing (a
+message, a question) leaves it blocked and is posted once on the task's thread to
+`@orchestrator`, with its card, stamp and words. A `check:owner` hold, the default landing's, ends
+once the land's `owner` stamp stands on the tip of its branch (`refs/heads/SLUG`), read by its one
+reader ([Needed stamps](#needed-stamps)): an owner's approve on the task's thread naming the tip,
+`unblocked: the owner approved 1a2b3c4; back to review`, or the owner's approve of every card
+the branch posted, committed, with nothing after it but the owner's lines and merges of the
+default branch, `unblocked: the owner approved card NAME, at 1a2b3c4; back to review`; an approve
+of another commit, or an owner's line no commit carries, ends nothing. The machine's one server
+judges both on its board clock,
+from the cards its pages hold and the board it read that tick (`crates/symphony/src/decided.rs`):
+a save needs no hook, as the page that reads the saved document again brings the line to the next
+tick, and a verdict written while no server ran, or saved by another build, is read at the first
+tick that reads the documents. The move is fenced on the block the server read
+(`Store::resume_judged`): a move or a block anew in between, the owner's or a session's, wins. A
+private server, and a board no server reaches, leave them blocked until the one server runs.
+Other check, parked and unknown blocks stay blocked.
 
 **The line.** Each open task waits on one thing, said as `KIND · WHO · WHY` since the time it took
 its status (`crates/tasks/src/waits_on.rs`), KIND one of:
@@ -2085,13 +2141,14 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   closes it with no verdict) or done by an approve standing; in progress or ready it is
   refused to `@executor`, to move it to review. Each other stamp is read at the tip: `tests`
   the task's recorded runs there, by [what clears what](#what-clears-a-red-run), `pictures` a post naming the tip with a picture, `owner` the owner's approve of the
-  tip. A missing one refuses, naming each and who gives it: `tests` or `pictures` to
+  tip, or of every card the task's branch posted ([Needed stamps](#needed-stamps)). A missing one refuses, naming each and who gives it: `tests` or `pictures` to
   `@executor`, at that tip; `review`, or an assessment of another tip, to `@orchestrator`, to
   start an assessor or staff a fresh reviewer; one waiting on `owner` alone, to
   `@orchestrator`, holds the task blocked from review (`Store::hold_blocked_on`, keeping its
   slot, on `check:owner`, the owner's approve of the tip, which reads as his decision: [what a
   task waits on](#what-a-task-waits-on)), or leaves it done by its approve, until the owner approves the tip
-  on the task's page. A stamp a [gate decision](#gate-decisions) waived for the tip is not
+  on the task's page, or the cards its branch posted with their lines committed, which returns a
+  held task to review by itself, told as its STATUS. A stamp a [gate decision](#gate-decisions) waived for the tip is not
   needed there; a raise one gave must be carried in its file at the tip. A land of a task that needed no review says on its landing line the stamps and the
   whole tip they stood on (`landed SLUG on main at MERGE; its needs (tests) stood at SHA`),
   the commit it vouched for, as an approve names one.
@@ -2324,8 +2381,11 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   ([RELEASES](RELEASES.md#the-cadence)).
 
 The merge of the task's tip is one step of the land, the one a hosted pull request's
-merge would take the place of: the approval before it and the record, the move, the
-push and the close after it stay as they are.
+merge takes the place of under `[land] delivery`: the approval before it and the record, the move,
+the push and the close after it stay as they are. There no land needs running at all: the task's
+move to review dispatches it, the host merges once its last stamp stands, and the watcher closes
+the task ([a land dispatched at review](#a-land-dispatched-at-review)); `just land SLUG` arms one
+that reached done without a dispatch and settles a merge no watcher saw.
 
 **Bounded.** The merge's commit, with its hooks, and the check each run in a process group
 of its own, which the land ends whole past `[land] timeout_seconds` (an hour unless the project says;
@@ -2533,9 +2593,10 @@ nothing here is reached. This repository sets none.
 
 The board names no host. The command is the project's own program, run in the main checkout as
 `COMMAND VERB --request FILE`, FILE one JSON object and its standard output another whose `state`
-says what it came to; [`symphony-github deliver`](GITHUB.md#delivering-a-land) is one. Its four
-verbs are `publish`, `merge`, `result` and `landed` (`crates/tasks/src/land/delivery.rs`), and it
-decides nothing: what a task needs and whether it stands is
+says what it came to; [`symphony-github deliver`](GITHUB.md#delivering-a-land) is one. Its verbs
+are `publish`, `arm`, `merge`, `disarm`, `close`, `result` and `landed`
+(`crates/tasks/src/land/delivery.rs`, `crates/tasks/src/land/dispatch.rs`), and it decides
+nothing: what a task needs and whether it stands is
 [the evidence](#the-evidence-of-a-task-at-its-head) the land reads and hands it.
 
 It delivers nothing past a check the project asks for. The default land runs `[verdicts] check`
@@ -2551,14 +2612,25 @@ A land keeps a journal of the delivery in the lands' folder, written before each
    [what the regenerator made](#what-the-generators-make-delivered-by-a-pull-request), as is one
    that merges a commit the remote default does not hold and is not
    [an import of the upstream](#an-import-delivered-by-a-pull-request): another history, which a
-   squash would flatten ([UPSTREAM_DOWNSTREAM](UPSTREAM_DOWNSTREAM.md)). A task that is not
+   squash would flatten ([UPSTREAM_DOWNSTREAM](UPSTREAM_DOWNSTREAM.md)). The refusal of
+   generated outputs tells `@executor` to put them back as the default branch has them, but for a
+   release candidate's fix, a head that holds `release-candidate` and beyond it no commit the
+   remote default holds: that head keeps the outputs its own sources make, approved naming it,
+   and the branch delivers a merge of the default branch that keeps the default branch's
+   ([RELEASES](RELEASES.md#the-release-candidate)). With a candidate held that the head does not
+   hold, the refusal says how a fix of it is rebased first. A task that is not
    eligible at its head is refused before anything is published.
 2. **Eligible.** `publish` makes the head and its evidence public and answers the pull request,
    which the task is bound to from then on. The evidence is read again: of another revision, it is
    published again or refused, never merged as it was.
-3. **Merge requested.** One `merge`, a squash of that pull request at that head, or a merge
+3. **Armed.** `arm` turns on the host's own merge of that head, by the squash and the text a
+   merge asks: the host merges it once every check it requires passes, `symphony/eligible` among
+   them, and the watcher closes the task ([below](#a-land-dispatched-at-review)). A pull request
+   the host would merge now (its evidence standing, no other check to wait on) takes no such
+   arming, answered `mergeable`, and the land asks the merge itself.
+4. **Merge requested.** One `merge`, a squash of that pull request at that head, or a merge
    commit for an import.
-4. **Merged remotely.** The commit the host made is proved by git alone: on the fetched default
+5. **Merged remotely.** The commit the host made is proved by git alone: on the fetched default
    branch, of one parent, its tree the merge of that parent and the head (an import's proof is
    [its own](#an-import-delivered-by-a-pull-request)). A receipt of the head and the commit is kept
    for good (`receipts/` in the lands' folder), and the head stays reachable under
@@ -2566,11 +2638,11 @@ A land keeps a journal of the delivery in the lands' folder, written before each
    does not go back to review. A slug is delivered once: the release run counts, holds a release
    and reads its notes by that receipt and that head, so neither is ever replaced
    ([below](#a-slug-is-delivered-once)).
-5. **Reconciled.** A clean main checkout whose default branch the remote's descends from is
+6. **Reconciled.** A clean main checkout whose default branch the remote's descends from is
    fast-forwarded. A dirty or diverged one is left as it is, the land answering "landed remotely,
    reconciliation pending" once on the thread, and a land run again closes the task once the
    checkout can follow. Nothing here is reset, merged or pushed for it.
-6. **Closed**, then what follows a land: the landed line names the commit, the head and the pull
+7. **Closed**, then what follows a land: the landed line names the commit, the head and the pull
    request, once; `[board] on_land` runs with the commit, once; and `landed` tells the program on
    every run that reaches here, as the verb is safe to ask twice and a run cut short before it
    told nobody.
@@ -2596,6 +2668,72 @@ run, by `result`:
 One limit holds by design: evidence withdrawn after the last reading and before the host acts on
 a request already made does not recall it. The receipt names the revision that was read.
 
+#### A land dispatched at review
+
+Nobody runs a land of a task the host delivers: a write to the board that can change its evidence
+starts its dispatch, the host merges it once its last stamp stands, within seconds, and the
+watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
+
+- **What dispatches.** A top-level task's move to review, and after it each later move,
+  assessment (`tasks needs`), verdict and gate decision, starts `tasks land SLUG --dispatch`
+  detached from the main checkout, as the one who wrote, with the land's mark; the write returns
+  at once and its lines go to `dispatch.log` in the lands' folder. The move to review leaves
+  `SLUG.dispatching` there, naming who moved it, until a dispatch binds the task's pull request,
+  and from then on its binding is what a later write dispatches it by: so a first dispatch that
+  stopped before it published is made again by the next write, and a task never moved to review,
+  or delivered and closed, starts none. A dispatch that stops says why on the task's thread, to
+  `@orchestrator`, with the `just land SLUG --dispatch` that dispatches it again: nobody reads its
+  log. A board that `TASKS_SERVER` names (a test's) starts one only under `TASKS_DISPATCH=on`;
+  `TASKS_DISPATCH=off` starts none anywhere. One dispatch runs at a time under the land's lock,
+  and one asked while another runs runs after it.
+- **What a dispatch does.** What a land does up to the publication, the refusals at the head
+  above among it (each goes to the thread, to whom it names, and nothing is pushed); then the head
+  pushed, never forced, its pull request opened ready and the checks written from the evidence at
+  that head, whatever it says, and the host's merge armed. `symphony/eligible` is pending while a
+  stamp is not given yet (an assessment, a review, the owner's approve), fails where one is red at
+  the head or evidence that stood there was withdrawn, and passes once every stamp stands: so a
+  reviewer's approve, or the owner's, is what lets the host merge, and a task in review stays
+  there until it does. A check belongs to its commit, so a green eligible on one head merges
+  nothing at another; a new commit is pushed to the same pull request at the next dispatch, the
+  merge armed across it and pending until the approve names the new head. One whose head and
+  evidence are as last published asks the host nothing more. Armed only while the task is in
+  review, blocked or done: a task moved back to work (a changes verdict) has its merge turned off
+  first and its checks said again after, so no check published meanwhile lets the host merge it,
+  and stays so until it moves to review.
+- **Who watches.** One watcher per project, `tasks land --watch` (`watch.lock` in the lands'
+  folder, `watch.log` its lines), started by each arming where none runs, which reads each armed
+  task every `[land] watch_seconds` (30) and ends once none is left. Armed means the host answered
+  an arming and has not answered a disarm since: a publication between keeps it so, as the host
+  keeps its merge armed across a push, and one that stopped before the host answered its arming
+  again (an answer lost, a host away) has its pull request read every round, whatever its checks
+  said, and is published and armed again. A refusal a round stops at (a head refused at the head,
+  an arming refused) holds until what it names changes, so it is said on the thread once at the
+  branch's head, however many rounds read it again (`SLUG.said` in the lands' folder keeps the
+  last one said, by a land, a dispatch or a round). A task whose evidence does not
+  stand yet costs it no read of the host, which merges nothing while eligible is pending; it reads
+  its evidence again, so a write no command dispatches for (the owner's through the Symphony, a run
+  recorded at the head) is published at its next round. One whose evidence stands has its pull
+  request read: merged, the commit is proved and the task closed from review or done alike, the
+  checkout fast-forwarded and `[board] on_land` and the regenerator started, as a land closes one
+  ([above](#a-land-delivered-by-a-pull-request)). A merge no watcher saw (a reboot) is settled by
+  the next dispatch or `just land SLUG`.
+- **A merge that does not come**, once the evidence stood (before, the task is in review and its
+  evidence says what is missing). The host's merge is turned off first, so a check that passes
+  later merges nothing behind the board, and one line says why, to `@orchestrator`:
+
+| What the watcher reads | What follows |
+| --- | --- |
+| A check that is not the Symphony's red at the head (a CI the repository adds), or the host reporting the pull request in conflict with the default branch | the task back to in progress (from done by review): its executor merges the default branch once, or puts the check right, and moves it to review, which dispatches it again |
+| The pull request closed unmerged, by someone | back to in progress, naming it; the next dispatch opens another |
+| Neither merged nor red once `[land] merge_within_minutes` (30) passed since its evidence stood (review time counts for nothing) | the task stays where it is, the work not at fault: `just land SLUG` arms it again |
+| Any of these where the task cannot go back (cancelled or closed, a document save, which stays pending and shown, or what the regenerator made, which it cancels and makes again) | `tools/delivery-failed-SLUG` filed to `@orchestrator`, naming the pull request and why; a second failure is a line on the one open |
+
+A task cancelled while its pull request is open has it closed unmerged, its merge off and its
+branch left. A close the host does not make is asked again by the watcher's next round while its
+merge is armed; one no longer armed, which nothing merges, is said to `@orchestrator` with the
+`just land SLUG --dispatch` that closes it. One the host merged at a head its branch has moved
+past is held for reconciliation, by name, as any merge of another head.
+
 #### A slug is delivered once
 
 A second delivery of a slug is refused, never made over the first. A landed task moves no
@@ -2620,8 +2758,9 @@ a squash by its receipt, and a release candidate advances to the head the receip
 ([RELEASES](RELEASES.md#the-cadence)); a land run again after it was cut while dispatching starts
 the regenerator, which makes nothing twice, and no release run a second time, so a release run
 its landing made due is asked for by the next landing or the release run's `--due`, run by hand
-([RELEASES](RELEASES.md#the-cadence)). The sweep keeps the worktree and branch of a squashed
-head, which it finds in no history.
+([RELEASES](RELEASES.md#the-cadence)). The sweep takes the worktree and branch of a squashed
+head by that receipt, once git bears it out and the main checkout holds the squash
+(the worktree sweep, under "Finished worktrees go by themselves" above); the retained head stays.
 
 ### An import delivered by a pull request
 
@@ -3093,6 +3232,23 @@ landing](#the-default-landing)).
   `workflow/no-second-build-in-review`, [CHECKS](CHECKS.md#no-second-build-in-review)), and what
   an executor reads before it asks for review. It is refused for a task the board does not hold,
   outside a checkout of its repository, and with no tip to read.
+- **The `owner` stamp** stands on a tip T by one reader, which the land, the task page's gate
+  and its Approve offer, and the end of a `check:owner` hold all go by (`read::owner_at`, the
+  cards' part `crates/tasks/src/stamps/posted.rs`): the owner's `approve SHA` naming T on the
+  task's thread, or the owner's approve of the cards the task posted for the owner's look, read
+  from git in the main checkout, never from a worktree's files. The cards' approve stands when
+  the branch posted a card (one of a register in a project document at T that the merge base of
+  T with the default branch holds no copy of, the owner's lines and its mark aside, as the pages
+  read a branch's posted cards), each card it posted has `approved` as its newest owner verdict
+  at T, committed (a reject, a question, pending, dismissed or none, on any of them, and it does
+  not), and nothing came after the newest of those approves but the owner's lines: every commit
+  on T's first-parent line after the one the owner's page showed when the owner gave it (the
+  commit before the first that carries the approve) adds the owner's lines under those cards
+  and nothing else, or is a merge of the default branch that is git's own merge of its two
+  parents. Any other commit after it, code, a document or a card's text, keeps it from
+  standing, whoever reviewed it: the owner asked for a look of their own, and its reading names
+  that commit. Met by the cards, the reading names them, `Approved by the owner on card NAME, at
+  1a2b3c4`, which the task page shows and the land's line carries. It is never waived.
 - **The needs** are the board's own field `fields._board.needs`, out of `just tasks field`'s
   reach as the red mark is: the stamps, the tip the assessment read (none, from
   the brief), who made it and why. `just tasks needs SLUG STAMP… [--tip TIP] --why WHY --as
@@ -3839,7 +3995,37 @@ total beside it; each `tokens` is `{"input", "cache_write_5m", "cache_write_1h",
 (`landed SLUG on main at SHA; 71.6k tokens in 6 calls (executor 51.5k, reviewer 20.1k; round 1
 51.5k, round 2 20.1k), $0.08 estimated at API list prices read 2026-11-16`), each amount with
 its unit, so no number in it reads as a commit. A copy of the board carries the rows
-(`Dump.usages`). The pages draw none of it yet.
+(`Dump.usages`).
+
+The pages draw the same figures, each with the day its prices were read and as an estimate, never
+money spent ([What the tokens cost](#what-the-tokens-cost)):
+
+- **A task's page** has *Tokens and estimated cost* last, under its thread, closed until opened, which
+  reads `/api/task-tokens?slug=SLUG` (`show --json`'s `tokens` without its `rows`) and draws the
+  total with its kinds, a table by role and one by review round, and the models no price was found
+  for; a task with none says *No tokens recorded for this task.* and draws no table.
+- **A board card** shows its task's cost all told, its subtasks' with it, beside its slug (`$1.23`,
+  `$1.23+` where some tokens had no price, `unpriced` where none had, its title saying the rest),
+  read apart from the board's
+  listings, which carry none of it: the cards drawn in one turn are asked for together
+  (`/api/task-costs?slugs=[…]`, at most `TASK_COSTS_MOST`, 200, a read: `Store::spent_under`, one
+  round trip), each once until its record changes, so no heartbeat that adds tokens reads again.
+  A task with none shows no figure.
+- **The Agents page** gives each agent its tokens and cost under its line, from the agents API.
+- **Reports** has *Tokens and cost*: the cost and the tokens of each hour, day or week by role
+  (orchestrators, executors, reviewers and the rest), and below them the window's own: tokens and
+  cost all told, each top-level task landed in the window priced once with its subtasks (the
+  median and the ten dearest, each a link to its page), and the review rounds after the first
+  against the first rounds, from the [day files](analysis/reports-and-monitoring.md#the-day-files).
+  An hour's tokens are what the board's `usage` gained between two hourly roll-ups, shared among
+  the hours between them by time: an hour no two roll-ups span is a gap, never a zero.
+
+`just tasks stats` ends with the same reading of its window's day files: tokens and cost by day
+and role, the landed tasks' median and ten dearest, and the review rounds against the first, a
+day no two roll-ups span saying `no record`; `--json` carries it as `tokens`: `prices`, `per_day`
+(each `day` with its `by_role`, `null` for no record), and `landed` (`tasks`, `without`,
+`median_dollars`, `dearest`, `first_round`, `later_rounds`, `again`). Without day files (a private server's board, or a board that
+`TASKS_SERVER` names) it says there are none and prints the rest.
 
 The table moves the board to schema 19, which a build on schema 18 reads unharmed (the
 Symphony, the shared server among them): it opens a board one schema ahead to read
@@ -4015,6 +4201,14 @@ to its `MOVE` line, so the executor and reviewer stop at once (the owner's `done
 an approve verdict, which says no more). The thread keeps every line as written. Post milestones only, address what someone must act on, never
 acknowledge a message, and never repeat a post on a subtask and its parent.
 A session without a channel keeps `just tasks inbox`.
+
+In the Symphony an agent's post or verdict, a task's brief and an ask's answer are drawn as a
+document's body is: bold, italics, inline code, links, lists, tables, fenced code, pictures,
+`[[wiki links]]`, a card named in bold and `[[name:argument]]` components all show. Raw HTML
+does not: `Vec<String>`, `<TokensPart key=x>` or a `<details>` named in a post is the words
+typed, drawn once, never an element or a notice of unsupported content, as in a card's note
+(`convert_post`, `crates/symphony/src/render/markdown.rs`). The owner's words are the text typed,
+but for a line naming a file they attached, which shows the file.
 
 The owner reads the board and every thread in the Symphony, sends messages
 to anyone on a task, changes its priority from p0 to p4 and cancels open tasks.

@@ -17,9 +17,10 @@ use super::{
 };
 use crate::store::statement::both;
 use crate::workflow::recover::{self as plan, Recovery};
-use crate::workflow::{Trigger, board_service};
+use crate::workflow::{Recovered, Trigger, board_service};
 use serde_json::json;
 use symphony_api::workflow::Pair;
+use symphony_plugin::execution::Principal;
 
 /// Which exit a recovery answers, and so which action and which check.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,7 +101,9 @@ impl Store {
 
     /// `Store::leave`'s first step: each task a custom workflow holds on which `handle` holds a
     /// role but the orchestrator's, recovered by its position's `lost_holder` action, before the
-    /// leave lets go of the rest. Nothing to read on a board with no workflow active.
+    /// leave lets go of the rest. Nothing to read on a board with no workflow active. A session
+    /// that left already holds only what a manual recovery kept for a person, and leaves no
+    /// more: refused as every write refuses a session that left, before any recovery.
     pub(in crate::store) fn recover_leaving(&self, handle: &str) -> Result<(), Error> {
         if self.workflow_active()?.is_none() {
             return Ok(());
@@ -111,6 +114,9 @@ impl Store {
                 json!({"actor": handle}),
             )
         })?;
+        if !slugs.is_empty() && self.session(handle)?.row.left_at.is_some() {
+            return Err(Error::Refused(crate::store::left_actor(handle)));
+        }
         let host = Host::local();
         for slug in slugs {
             self.recover_exit(&slug, handle, None, Exit::Leaving, handle, &host)?;
@@ -159,40 +165,38 @@ impl Store {
                 at,
             )
             .map_err(refusal)?;
-            let slots = match &recovery.transition {
-                Some(t) => {
-                    let taking = Taking {
-                        status: &t.status,
-                        acquires: recovery.acquires,
-                        held: decided.holds_now(),
-                        holds: decided.holds_at(&t.to),
-                        add: &[],
-                        what: format!("{slug} cannot move to {} by its recovery", named(&t.to)),
-                    };
-                    self.taken(&decided, taking, &principal)?
-                }
-                None => Vec::new(),
-            };
+            let slots = self.recovery_slots(&decided, &recovery, &principal)?;
             let vars = vars(&decided, &recovery, holder, role, seen, slots, by, at);
             let guarded = !vars["slots"].as_array().is_none_or(Vec::is_empty);
-            let logged = surreal::logged("$slug", "$sender", "'system'", "$said", "NONE");
-            let guard = if guarded { sql_cap::GUARD } else { "" };
-            let body = both(
-                format!("{}{logged}{guard}", sql::APPLY),
-                pg::workflow::apply(
-                    &pg::logged(
-                        "v ->> 'slug'",
-                        "v ->> 'sender'",
-                        "'system'",
-                        "v ->> 'said'",
-                        "NULL",
-                    ),
-                    guarded,
-                ),
-            );
-            self.written(body, vars, slug)?;
+            self.written(applied(guarded), vars, slug)?;
             Ok(recovery.transition)
         })
+    }
+
+    /// The slot counters `recovery`'s move holds under the cap, as `principal` takes it on what
+    /// `decided` read ([`Store::taken`]); none for a stay or a role let go alone.
+    pub(super) fn recovery_slots(
+        &self,
+        decided: &Decided,
+        recovery: &Recovery,
+        principal: &Principal,
+    ) -> Result<Vec<Value>, Failure> {
+        let Some(t) = &recovery.transition else {
+            return Ok(Vec::new());
+        };
+        let taking = Taking {
+            status: &t.status,
+            acquires: recovery.acquires,
+            held: decided.holds_now(),
+            holds: decided.holds_at(&t.to),
+            add: &[],
+            what: format!(
+                "{} cannot move to {} by its recovery",
+                decided.task.slug,
+                named(&t.to)
+            ),
+        };
+        self.taken(decided, taking, principal)
     }
 
     /// The fence on a lost holder's session, as read: refused while it holds (live, stale or
@@ -216,13 +220,34 @@ impl Store {
     }
 }
 
-/// The write's variables: the roles the holder held that it relies on, those it drops, its
-/// transition, if any, and its line.
+/// The write of a recovery (`sql::APPLY`), its line on the thread by the system, and the slot
+/// counters it holds guarded after it when `guarded`.
+pub(super) fn applied(guarded: bool) -> crate::store::statement::Statement<'static> {
+    let logged = surreal::logged("$slug", "$sender", "'system'", "$said", "NONE");
+    let guard = if guarded { sql_cap::GUARD } else { "" };
+    both(
+        format!("{}{logged}{guard}", sql::APPLY),
+        pg::workflow::apply(
+            &pg::logged(
+                "v ->> 'slug'",
+                "v ->> 'sender'",
+                "'system'",
+                "v ->> 'said'",
+                "NULL",
+            ),
+            guarded,
+        ),
+    )
+}
+
+/// The write's variables: the roles the holder held that it relies on (none for an attempt's
+/// ending, which names no holder, `""`), those it drops, its transition, if any, and its line, said
+/// by `by`, the session the write checks is still there unless it is the owner or the board.
 #[expect(
     clippy::too_many_arguments,
     reason = "one write's variables, each read once"
 )]
-fn vars(
+pub(super) fn vars(
     decided: &Decided,
     recovery: &Recovery,
     holder: &str,
@@ -266,8 +291,9 @@ fn vars(
     })
 }
 
-/// The recovery's line on the task's thread.
-fn said(recovery: &Recovery, holder: &str) -> String {
+/// The recovery's line on the task's thread: the holder's exit, or the attempt's ending, it
+/// answered, and where the task went.
+pub(super) fn said(recovery: &Recovery, holder: &str) -> String {
     let let_go: Vec<String> = (recovery.drop.iter())
         .map(|(h, r)| format!("{h} {r}"))
         .collect();
@@ -281,9 +307,9 @@ fn said(recovery: &Recovery, holder: &str) -> String {
         .recovery
         .as_ref()
         .expect("a recovery's transition says what it recovered");
-    let exit = match recovered.trigger {
-        Trigger::Release => "released",
-        Trigger::LostHolder => "lost",
+    let what = match (transition.key.as_deref()).and_then(|k| k.strip_prefix("attempt/")) {
+        Some(attempt) => ended(recovered, attempt),
+        None => format!("{holder}'s {} {}", recovered.role, exit(recovered.trigger)),
     };
     let from = transition.from.as_ref().unwrap_or(&transition.to);
     let went = if *from == transition.to {
@@ -292,8 +318,8 @@ fn said(recovery: &Recovery, holder: &str) -> String {
         format!("{} → {}", named(from), named(&transition.to))
     };
     let mut line = format!(
-        "the board's recovery ({}): {holder}'s {} {exit}; {went}, workflow revision {}",
-        transition.id, recovered.role, transition.revision
+        "the board's recovery ({}): {what}; {went}, workflow revision {}",
+        transition.id, transition.revision
     );
     if !let_go.is_empty() {
         line.push_str(&format!("; let go: {}", let_go.join(", ")));
@@ -305,6 +331,26 @@ fn said(recovery: &Recovery, holder: &str) -> String {
         ));
     }
     line
+}
+
+/// Attempt `attempt`'s ending, as `recovered` records it: an attempt no session holds is named by
+/// its id alone, its holder.
+pub(super) fn ended(recovered: &Recovered, attempt: &str) -> String {
+    let (role, exit) = (&recovered.role, exit(recovered.trigger));
+    if attempt == recovered.holder {
+        format!("{role} attempt {attempt} {exit}")
+    } else {
+        format!("attempt {attempt} of {}'s {role} {exit}", recovered.holder)
+    }
+}
+
+fn exit(trigger: Trigger) -> &'static str {
+    match trigger {
+        Trigger::Release => "released",
+        Trigger::LostHolder => "lost",
+        Trigger::AttemptFailure => "failed",
+        Trigger::CancellationAcknowledged => "ended cancelled",
+    }
 }
 
 fn named(pair: &Pair) -> String {

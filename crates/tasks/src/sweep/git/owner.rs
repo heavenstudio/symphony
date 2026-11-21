@@ -49,7 +49,7 @@ fn owner_lines(text: &str) -> Vec<Line> {
 }
 
 /// The pathspecs of the project's document folders ([`crate::project::documents`]): "" the root.
-fn pathspecs(folders: &[String]) -> Vec<&str> {
+pub(crate) fn pathspecs(folders: &[String]) -> Vec<&str> {
     folders
         .iter()
         .map(|folder| if folder.is_empty() { "." } else { folder })

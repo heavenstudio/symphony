@@ -11,6 +11,7 @@ mod cards;
 mod components;
 mod links;
 mod parts;
+mod posts;
 mod prose;
 
 use common::Tree;

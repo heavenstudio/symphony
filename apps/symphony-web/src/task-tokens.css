@@ -1,0 +1,28 @@
+.task-tokens-body {
+  min-width: 0;
+  margin-top: 0.5rem;
+}
+.task-tokens-body p {
+  margin: 0.3rem 0;
+  overflow-wrap: anywhere;
+}
+/* The table is the shared one (its frame, padding and borders, `board.css`); what it adds is its
+   figures, right-aligned in their digits' widths and never wrapped, beside a row's name at the
+   body's weight and level with them. The estimate alone may take a second line (`$4.85 +`,
+   `unpriced`), so a phone shows the whole table with no scroll across it. */
+.task-tokens-body table {
+  font-variant-numeric: tabular-nums;
+}
+.task-tokens-body tbody th {
+  font-weight: 400;
+  white-space: nowrap;
+  vertical-align: top;
+}
+.task-tokens-body td,
+.task-tokens-body thead th + th {
+  text-align: right;
+  white-space: nowrap;
+}
+.task-tokens-body td:last-child {
+  white-space: normal;
+}

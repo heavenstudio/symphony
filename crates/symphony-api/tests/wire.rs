@@ -408,6 +408,24 @@ fn the_reports_page_reads_and_writes_back_as_the_same_json_its_gaps_none() {
     assert_eq!((flow.entered.done, flow.done), (6, Some(5)));
     // Each mark names what its commit changed; one from a server that named none reads with none.
     assert_eq!(page.marks[0].changed, ["settings", "skill work"]);
+    // A period's hours by phase and by state; one with no hour that records them has none.
+    let placed = page.buckets[0].workflow.as_ref().unwrap();
+    assert_eq!((placed.phases.len(), placed.states.len()), (3, 3));
+    assert_eq!(page.buckets[1].workflow, None);
+    // A period's tokens by role, an unpriced model's in no dollar; a period no roll-up told has
+    // none (unknown, never none spent), and the window's landed tasks are priced at one date.
+    let spend = page.buckets[0].spend.as_ref().unwrap();
+    assert_eq!(
+        spend.iter().map(|r| r.role.as_str()).collect::<Vec<_>>(),
+        ["executor", "reviewer"]
+    );
+    assert_eq!(spend[1].cost.unpriced[0].model, "gpt-x");
+    assert_eq!(page.buckets[1].spend, None);
+    let landed = page.landed.as_ref().unwrap();
+    assert_eq!((landed.tasks, landed.without, landed.again), (1, 1, 1));
+    assert_eq!(landed.median, Some(1.46));
+    assert_eq!(landed.dearest[0].slug, "sim/jump");
+    assert_eq!(page.prices, "2026-11-16");
     let old: symphony_api::report_page::ReportMark =
         serde_json::from_str(r#"{"at":1.0,"commit":"c","subject":"s"}"#).unwrap();
     assert_eq!(old.changed, Vec::<String>::new());
@@ -418,6 +436,7 @@ fn the_reports_page_reads_and_writes_back_as_the_same_json_its_gaps_none() {
         (empty.buckets.len(), empty.first, empty.marks.len()),
         (0, None, 0)
     );
+    assert_eq!((empty.landed, empty.prices.as_str()), (None, ""));
     for (word, grain) in [
         ("hour", Grain::Hour),
         ("day", Grain::Day),
@@ -657,6 +676,24 @@ fn a_day_file_reads_and_writes_back_as_the_same_json_and_its_hours_sum_to_the_sp
         (1, 1)
     );
     assert_eq!(day.subtasks.lead, None);
+    // A custom workflow's hours are an hour's own, by phase and by state, a label renamed since an
+    // entry of its own; an hour of a board that runs none has none, and writes no field for it.
+    let placed = day.hours[1].workflow.as_ref().unwrap();
+    let total =
+        |spent: &[symphony_api::reports::Spent]| -> f64 { spent.iter().map(|s| s.hours).sum() };
+    assert_eq!(
+        (total(&placed.top.phases), total(&placed.top.states)),
+        (2.0, 2.0)
+    );
+    assert_eq!(
+        (placed.top.phases.iter())
+            .map(|s| (s.id.as_str(), s.label.as_str()))
+            .collect::<Vec<_>>(),
+        [("build", "Build"), ("build", "Make"), ("verify", "Verify")]
+    );
+    assert_eq!(day.hours[0].workflow, None);
+    let first = serde_json::to_value(&day.hours[0]).unwrap();
+    assert!(first.get("workflow").is_none(), "{first}");
 }
 
 /// A figure per status is written as a map of the statuses whose figure is not zero, by name, as a
@@ -708,7 +745,11 @@ fn a_day_file_without_its_later_figures_reads_with_them_empty() {
     assert!(day.closed && day.hours.is_empty() && day.rounds.is_empty());
     assert_eq!((day.decisions, day.git), (None, None));
     let hour: ReportHour = serde_json::from_str(r#"{"start":1799982000.0}"#).unwrap();
-    assert_eq!((hour.landed, hour.decisions, hour.git), (0, None, None));
+    assert_eq!(
+        (hour.landed, hour.decisions, hour.git, hour.workflow),
+        (0, None, None, None),
+        "a file written before the workflow's hours were counted has none"
+    );
     assert!(hour.top.held == ByStatus::default() && hour.waits.approved_to_landed.is_empty());
     let hour: ReportHour =
         serde_json::from_str(r#"{"start":1799982000.0,"decisions":{"open":2,"answered":1}}"#)

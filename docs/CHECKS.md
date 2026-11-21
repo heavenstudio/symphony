@@ -321,7 +321,8 @@ audit on main after the land's round files it within minutes
      any of them matches;
    - when a public item's contract changed, the tests of the packages that call it (`git grep`
      its name).
-4. `just lint-rs` (which runs `just client-lint`), and, when `apps/symphony-web` changed, the client built (`just client-update`) for its tests and
+4. `just lint-rs` (which runs `just client-lint` and the board tests' raw-statement fence,
+   `crates/tasks/tests/raw_fence.rs`), and, when `apps/symphony-web` changed, the client built (`just client-update`) for its tests and
    pictures, its distribution never committed.
 5. Main is merged once, when the work is complete, and the targets steps 1 to 3 pick run again
    at the new tip, before review, as main may have changed what the branch's code meets
@@ -416,8 +417,16 @@ commit holds the source alone, `just client-update`'s distribution put back as m
 headless browser acceptance and the board's `perf` and `child_guard` targets
 ([the board guide](../crates/tasks/AGENTS.md)) among them. It is the release run's, and no task's.
 `just release` runs it on main's tip, as fetched from `origin`, in a clean checkout outside this
-folder (`../symphony-wt/release`), and judges the commit by that alone: it builds and tests nothing
-of the projects this machine serves, whose own gates meet a change when they take a release. A
+folder (`../symphony-wt/release`), and judges the commit by that alone, with a check of who
+bypasses the default branch's rules after it where the project names one
+([RELEASES](RELEASES.md#who-bypasses-the-rules-again)): it builds and tests nothing of the
+projects this machine serves, whose own gates meet a change when they take a release.
+Where the project names `[releases] hosted`, the same `just verify` of the same commit runs on
+GitHub's runners instead, a job for each step, and the run reads its result, files its reds and
+tags here; what GitHub does not answer is verified here
+([RELEASES](RELEASES.md#on-githubs-runners)), but in a run started by
+[the hosted clock](RELEASES.md#the-hosted-clock), which verifies nothing here. It is off unless the project says, and never a
+task's gate: no push or pull request starts it. A
 green run tags a release; a red one files each red check as a task in the
 `tests/release-red-*` series at p0 ([TASKS](TASKS.md#slots)), staffed first and filed as a fast
 fix whose orchestrator lands only a fix changing no test or check (RULES.md

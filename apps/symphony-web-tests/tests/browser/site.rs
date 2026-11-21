@@ -50,7 +50,7 @@ pub struct Answered {
     /// Its `If-None-Match`, when it named one.
     pub named: Option<String>,
     pub status: u16,
-    /// A read ahead of a visit (assets/shell.js, `ahead`): a read of the API marked as a prefetch,
+    /// A read ahead of a visit (shell/shell.ts, `ahead`): a read of the API marked as a prefetch,
     /// no page's own ([`Site::read_ahead`]).
     pub ahead: bool,
 }
@@ -1253,7 +1253,7 @@ fn serve(
             .split_once('?')
             .is_some_and(|(_, query)| symphony_api::asks_for_file(query));
         let named = headers.get("if-none-match").cloned();
-        // A read of the API marked as a prefetch is a read ahead of a visit (assets/shell.js);
+        // A read of the API marked as a prefetch is a read ahead of a visit (shell/shell.ts);
         // the shell's warmed modules are prefetches too, but no reads of the API.
         let ahead = path.starts_with("/api/")
             && headers

@@ -430,6 +430,7 @@ fn every_project_is_swept_on_its_own_and_a_failing_or_removed_one_stops_no_other
             ROUND,
             Duration::from_secs(86_400),
             rounds.reader(),
+            None,
         )]
     }));
     // Each project's next round: the clock moved on, once each project named has swept `more`

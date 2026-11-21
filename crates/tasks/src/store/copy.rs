@@ -51,6 +51,17 @@ impl Store {
     /// read before the copy is refused after it and one read before a copy that failed still
     /// holds; the new generation is then published to this store's authority, when it has one.
     pub fn copy(&self, dump: &Dump) -> Result<(), Error> {
+        self.copy_limited(dump, copy_limit)
+    }
+
+    /// [`Store::copy`], the server ending a PostgreSQL board's copy at `limit` of its client's
+    /// wait: [`copy_limit`] for every copy the board takes. A test gives a limit of its own, so a
+    /// copy it holds is ended soon while its client still waits on the server as any board's does.
+    fn copy_limited(
+        &self,
+        dump: &Dump,
+        limit: impl FnOnce(Duration) -> Duration,
+    ) -> Result<(), Error> {
         let keyed = |rows: Vec<Value>, key: &dyn Fn(&Value) -> Value| -> Vec<Value> {
             rows.into_iter()
                 .map(|mut row| {
@@ -67,8 +78,12 @@ impl Store {
         // A workflow's records go in before the tasks: the task fence finds each managed task's
         // transition among them as the task is written (`crate::schema`'s `workflow_position`).
         // A dump with none lists no table for them, so its copy says what it said before
-        // workflows; the copy empties the board's records either way.
+        // workflows; the copy empties the board's records either way. What the board accepted
+        // from an approval authority is never copied: a copy or a restore may be older than the
+        // authority's last report, so its guards are refused until the authority reports again
+        // (`crate::workflow::guard`).
         let workflow: Vec<Value> = (dump.workflow.iter())
+            .filter(|row| row.kind != "authority")
             .map(|row| json!({ "id": row.key, "kind": row.kind, "body": row.body, "at": row.at }))
             .collect();
         let workflow = (!workflow.is_empty()).then_some(("workflow", workflow));
@@ -174,7 +189,7 @@ impl Store {
         let last_ask = dump.asks.iter().map(|a| a.id).max().unwrap_or(0);
         let last_ts = dump.messages.iter().map(|m| m.ts).reduce(f64::max);
         if let Some(wait) = self.db.postgresql_wait() {
-            let limit = copy_limit(wait);
+            let limit = limit(wait);
             let generation =
                 self.copy_in_one(&tables, last, last_ts, last_task, last_ask, limit)?;
             return self.copied(&generation);

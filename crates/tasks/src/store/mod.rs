@@ -36,6 +36,7 @@ mod depends;
 mod dispatcher;
 pub(crate) mod execution;
 mod fields;
+pub(crate) mod guard;
 mod history;
 mod kept;
 mod launches;
@@ -75,7 +76,7 @@ use statement::{Statement, both};
 use surreal::reading::{native_bounds, reading};
 use surreal::session_read;
 
-pub(crate) use crate::stages::{BLOCK_LINE, UNBLOCK_LINE};
+pub(crate) use crate::stages::BLOCK_LINE;
 pub use asks::{ASK_KINDS, Ask, LATE_SECONDS, NewAsk};
 pub use callbacks::{Callback, ChatSeat, Presence};
 /// Every statement the cap on an orchestrator's open tasks sends: the plan test's to plan.
@@ -87,7 +88,7 @@ pub use messages::reviewer_verdict;
 pub use opening::{Opening, Standing};
 pub use raw::{Raw, Rows as RawRows};
 use reading::native_health;
-pub use report_lines::{ReportRead, ReportTask};
+pub use report_lines::{ReportPlace, ReportRead, ReportTask};
 pub use search::{SearchHit, SearchSource};
 pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
 pub use stage_lines::StageRecord;
@@ -841,6 +842,7 @@ impl Store {
             left: &task.status,
             status,
             roles: &roles,
+            retired: workflow::retired(&task.fields),
         };
         placing
             .reopened(&reopening, &principal, view.now)

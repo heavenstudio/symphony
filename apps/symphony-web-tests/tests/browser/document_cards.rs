@@ -731,7 +731,7 @@ fn document_card_excerpt_opened_below_a_short_windows_fold_fills_without_a_scrol
     }));
     page.open(&site.url(&format!("/{DOC}#alpha")));
     let show = "[data-doc-key=\"card:alpha\"] .section-prose .show-link";
-    // The address names the card, so the page lands on it (`land`, assets/shell.js) once its
+    // The address names the card, so the page lands on it (`land`, shell/shell.ts) once its
     // section has drawn, in an effect that runs after the button is in the page: a scroll made
     // before it is taken back to the card. So the reader's scroll waits for the landing, and is a
     // wheel, the reader's own input, which ends the landing whatever still draws around the card.

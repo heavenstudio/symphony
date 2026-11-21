@@ -65,6 +65,55 @@ pub struct ReportDay {
     /// What git was read for the hours' [`ReportHour::git`]; none where it could not be read.
     #[serde(default)]
     pub git: Option<GitRead>,
+    /// Every token the board's `usage` table held at `read`, summed by role, model and speed
+    /// (`round` 0): what the next roll-up takes from its own read to tell what the hours since
+    /// gained ([`ReportHour::tokens`]). None in a file whose roll-up read none.
+    #[serde(default)]
+    pub usage: Option<Vec<TokenSum>>,
+    /// Each top-level task landed in the day, once at its last landing in it, with the tokens it
+    /// and its subtasks took, oldest first.
+    #[serde(default)]
+    pub landed: Vec<Landed>,
+}
+
+/// Tokens of the four kinds a price tells apart and the model calls they came from (the board's
+/// `usage::Tokens`), of one role on one model at one speed. Tokens are kept, never dollars: a
+/// reader prices them at the table its build embeds, so an edit of a price reprices every day.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenSum {
+    /// The role they were spent in: a task's (`executor`, `reviewer`, `reserved`), or the
+    /// session's kind for calls made while it worked none (`orchestrator`, `worker`).
+    pub role: String,
+    /// The review round, 1 for the work up to a task's first review, in a task's
+    /// [`Landed::spent`]; 0 where rounds are not told apart.
+    #[serde(default)]
+    pub round: u32,
+    pub model: String,
+    pub speed: String,
+    #[serde(default)]
+    pub input: u64,
+    #[serde(default)]
+    pub cache_write_5m: u64,
+    #[serde(default)]
+    pub cache_write_1h: u64,
+    #[serde(default)]
+    pub cache_read: u64,
+    #[serde(default)]
+    pub output: u64,
+    #[serde(default)]
+    pub calls: u64,
+}
+
+/// A top-level task landed in a day and what it took.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Landed {
+    pub slug: String,
+    /// When its landing wrote its `landed` verdict.
+    pub at: f64,
+    /// The tokens the board recorded on it and on its subtasks up to the file's read, by role,
+    /// round, model and speed; empty where it recorded none.
+    #[serde(default)]
+    pub spent: Vec<TokenSum>,
 }
 
 /// One hour of a day: what adds up, so the hours of any span sum to that span's figure.
@@ -96,6 +145,55 @@ pub struct ReportHour {
     /// What reached the default branch; none where git could not be read.
     #[serde(default)]
     pub git: Option<GitCounts>,
+    /// The tokens the board's `usage` table gained in the hour, by role, model and speed: what it
+    /// held at a roll-up less what it held at the one before ([`ReportDay::usage`]), shared among
+    /// the hours between the two by the time of each between them, so each token is counted once.
+    /// None for an hour no pair of roll-ups spans: unknown, never none spent.
+    #[serde(default)]
+    pub tokens: Option<Vec<TokenSum>>,
+    /// Where a custom workflow's tasks spent the hour, by delivery phase and by coordination
+    /// state; left out of the file of a board that runs no workflow of its own, which stays as it
+    /// was written before this was counted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<Placed>,
+}
+
+/// The time a custom workflow's tasks spent in one hour, from the board's recorded workflow
+/// transitions alone (docs/WORKFLOW.md, "The app"): the top-level tasks and the subtasks apart, as
+/// [`ReportHour::top`] and [`ReportHour::subtasks`] are. It is never the machine's time on a
+/// task's builds and tests, which is the runs' own.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Placed {
+    #[serde(default)]
+    pub top: PlacedHours,
+    #[serde(default)]
+    pub subtasks: PlacedHours,
+}
+
+/// Task-hours by phase and by state, two totals of the same time: each hour a task spent at an
+/// open position counts once in its phase and once in its state, so the two lists sum alike and
+/// are never added together. Time at a position that projects to done or cancelled is left out, as
+/// [`Flow::task_hours`] leaves the closed statuses out.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PlacedHours {
+    /// By delivery phase, ordered by ID and then label.
+    #[serde(default)]
+    pub phases: Vec<Spent>,
+    /// By coordination state, ordered the same way.
+    #[serde(default)]
+    pub states: Vec<Spent>,
+}
+
+/// The task-hours spent in one phase or one state under one label.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Spent {
+    /// The phase's or state's stable ID.
+    pub id: String,
+    /// Its label in the definition the move that put the task there was made under: the ID where
+    /// that definition is not recorded or does not name it. A label changed later is a second
+    /// entry of the same ID from the moves made after it, so it never renames this one.
+    pub label: String,
+    pub hours: f64,
 }
 
 /// How tasks moved in one hour. A status no task held, took or spent time in is left out of its

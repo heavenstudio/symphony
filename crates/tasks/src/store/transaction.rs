@@ -160,9 +160,9 @@ impl Store {
     }
 }
 
-/// `answer` as the caller's type.
+/// `answer` as the caller's type, each struct of it read from an object ([`crate::objects`]).
 fn decoded<T: DeserializeOwned>(answer: Value) -> Result<T, Failure> {
-    serde_json::from_value(answer).map_err(|e| {
+    crate::objects::read(&answer).map_err(|e| {
         Failure::Stop(Error::Db(format!(
             "an answer not in the board's shape: {e}"
         )))
@@ -288,5 +288,80 @@ fn unset_nulls(value: &mut Value) {
         }
         Value::Array(items) => items.iter_mut().for_each(unset_nulls),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::execution::Commit;
+    use serde::Deserialize;
+    use serde_json::json;
+
+    #[derive(Debug, PartialEq, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Answer {
+        name: String,
+        at: f64,
+        #[serde(default)]
+        until: Option<f64>,
+    }
+
+    /// What `answer` decodes to as `T`, or the words of its refusal.
+    fn decode<T: DeserializeOwned>(answer: Value) -> Result<T, String> {
+        decoded(answer).map_err(|failure| match failure {
+            Failure::Stop(error) => error.to_string(),
+            Failure::Again => "again".into(),
+        })
+    }
+
+    #[test]
+    fn an_answer_reads_its_structs_from_objects_as_from_value_reads_them() {
+        let read: Answer = decode(json!({"name": "a", "at": 1.50})).unwrap();
+        assert_eq!(
+            read,
+            Answer {
+                name: "a".into(),
+                at: 1.5,
+                until: None,
+            }
+        );
+        let rows: Vec<Answer> = decode(json!([{"name": "b", "at": 2, "until": 3.25}])).unwrap();
+        assert_eq!(rows[0].until, Some(3.25));
+        let missing: Option<Answer> = decode(Value::Null).unwrap();
+        assert_eq!(missing, None);
+        let committed: Commit =
+            decode(json!({"outcome": "committed", "revision": 4, "now": 9})).unwrap();
+        assert_eq!(
+            committed,
+            Commit::Committed {
+                revision: 4,
+                now: 9,
+            }
+        );
+    }
+
+    #[test]
+    fn an_answer_not_in_the_boards_shape_is_refused_in_the_words_it_was() {
+        let says = |answer: Value| decode::<Answer>(answer).unwrap_err();
+        assert_eq!(
+            says(json!({"name": "a"})),
+            "SurrealDB: an answer not in the board's shape: missing field `at`"
+        );
+        assert_eq!(
+            says(json!({"name": "a", "at": 1, "since": 0})),
+            "SurrealDB: an answer not in the board's shape: unknown field `since`, expected one \
+             of `name`, `at`, `until`"
+        );
+        assert_eq!(
+            says(json!({"name": 1, "at": 1})),
+            "SurrealDB: an answer not in the board's shape: invalid type: number, expected a string"
+        );
+        // A struct's fields in an array's order are no answer the board's database gives.
+        assert_eq!(
+            says(json!(["a", 1])),
+            "SurrealDB: an answer not in the board's shape: invalid type: sequence, expected \
+             struct Answer"
+        );
     }
 }

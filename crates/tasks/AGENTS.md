@@ -56,8 +56,11 @@ orchestrator the board gives, covered closes), `messages.rs` threads, inboxes an
 `launches.rs` launch records and the session hold, `cap.rs` the slot cap's reads, `history.rs` the
 status lines the alarm replays, `stamp.rs` what tells a task and its thread from the ones a reader
 read before, in one small read, `copy.rs` the whole-board copy, `opening.rs` how a store opens by
-the schema rule, `transaction.rs` the schema guard every write starts with, `writers.rs` the line
-each program that opens a board to write keeps, which `tasks migrate` reads before it moves one
+the schema rule, `transaction.rs` the schema guard every write starts with and the one decoder
+of its answers, which reads each struct from an object alone (the crate's `objects.rs`, the one
+reader of the JSON the board holds as a value and of the text it drops when it cannot read it; a
+read whose refusal a caller is shown stays `serde_json`'s), `writers.rs` the line each program that opens a board to write
+keeps, which `tasks migrate` reads before it moves one
 ([TASKS](../../docs/TASKS.md#who-writes-a-board)), `recovery.rs` the recovery generation, the
 token and the writes bound to it and the authority a store is handed, with `server/recovery.rs`
 the board home's file of it and `cli/recovery.rs` `tasks recovery`
@@ -103,9 +106,7 @@ unanswered post (PULL, recovery and the reap read it). Who hears what:
 `herdr`): `startup.rs` a launch's start, `restore.rs`, `close.rs` and `cleanup.rs`, `screen.rs` what
 the owner may be looking at, `procs.rs` what under a terminal is work, `place.rs` its tab, `reap.rs`
 and `reap/` the idle sweep the Symphony runs every five minutes, `recover.rs` the resume of a
-conversation an unanswered post waits on, `attempts.rs` hc as the execution provider each launch,
-restore and close records an attempt through
-([EXECUTION_ATTEMPTS](../../docs/EXECUTION_ATTEMPTS.md#local-terminals)), `staff.rs` a staffing pass, `defaults.rs` the agent and
+conversation an unanswered post waits on, `staff.rs` a staffing pass, `defaults.rs` the agent and
 model a launch starts, `running.rs` the machine's agents. `bin/fake-hc.rs` stands in for hc and the
 app in tests.
 
@@ -113,9 +114,10 @@ app in tests.
 
 `sweep.rs` and `sweep/` are the worktree sweep: what a finished worktree sets aside (`aside.rs`),
 the build output it clears (`build_output.rs`), what the main checkout keeps (`kept.rs`), a lock's
-holder (`holder.rs`), the detached sweeps work finishing starts (`trigger.rs`). The lsof scan is the
-leaf `crates/process-cwd/`. `on_review.rs` and `on_land.rs` start `[board] on_review` and
-`[board] on_land`; `cli/commands/finish.rs` is what follows a move. `land.rs` and `land/` are
+holder (`holder.rs`), the proof of a head a pull request squashed (`delivered.rs`), the detached
+sweeps work finishing starts (`trigger.rs`). The lsof scan is the leaf `crates/process-cwd/`.
+`on_review.rs` and `on_land.rs` start `[board] on_review` and `[board] on_land`;
+`cli/commands/finish.rs` is what follows a move. `land.rs` and `land/` are
 `tasks land`, the default landing ([TASKS](../../docs/TASKS.md#the-default-landing)): `needs.rs`
 what it requires, `check_paths.rs` which tests and checks a branch changes, `moving.rs` how it moves
 the main checkout, `regenerate.rs` the regenerator ([TASKS](../../docs/TASKS.md#the-regenerator)).
@@ -127,7 +129,8 @@ task's evidence it and `tasks api` go by
 ([TASKS](../../docs/TASKS.md#a-land-delivered-by-a-pull-request)).
 `covering.rs` with `store/work/covered.rs` is a close covered by another landing
 ([TASKS](../../docs/TASKS.md#a-task-another-landing-covers)). `stamps.rs` and `stamps/read.rs` are
-the stamps' catalogue and readers ([TASKS](../../docs/TASKS.md#needed-stamps)), `gates.rs` with
+the stamps' catalogue and readers, `stamps/posted.rs` the cards a branch posted that the `owner`
+stamp's reader reads ([TASKS](../../docs/TASKS.md#needed-stamps)), `gates.rs` with
 `store/work/gates.rs` and `cli/commands/gate.rs` a task's gate decisions, which `land/needs.rs`
 reads ([TASKS](../../docs/TASKS.md#gate-decisions)), `red.rs` the red mark.
 
@@ -137,8 +140,9 @@ reads ([TASKS](../../docs/TASKS.md#gate-decisions)), `red.rs` the red mark.
 ([EXECUTION_ATTEMPTS](../../docs/EXECUTION_ATTEMPTS.md)): `coordinator.rs` admission, controls and
 the worker's step, `rules.rs` the transitions it decides on what a write read, `evidence.rs`
 collection, cleanup and eligibility, `record.rs` the row and its facts, `keys.rs` the ids and
-operation keys, `view.rs` the board scope every host of a project's attempts uses
-(`board_scope`); `store/execution.rs` with its statements is their store.
+operation keys, `reader.rs` the reads that need no provider, `view.rs` the board scope
+(`board_scope`) and an attempt on the wire; `store/execution.rs` with its statements is their
+store.
 
 ### The rules of work
 
@@ -336,7 +340,8 @@ but through `store/transaction.rs`, the store's one sender, `store/raw.rs`, whic
 own statements, and `store/database.rs`, which makes a board's database. A new statement goes
 there; a test that needs a row no command writes, or reads one, asks `Store::raw` by table, id and
 equal fields and writes no statement of its own, and one that must (the engine itself is its
-subject) is in the list `tests/store/raw_fence.rs` holds. A store test written once for both
+subject) is in the list `tests/raw_fence.rs` holds, a target of its own that `just lint-rs` runs, so
+a branch that touches any board target's tests meets it. A store test written once for both
 databases is `on_both!`'s (`tests/store/main.rs`), each run on the binary's own scratch server of
 each (`tests/store/common.rs`'s `Backend`).
 

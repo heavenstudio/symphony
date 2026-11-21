@@ -28,6 +28,18 @@ impl SweepFixture {
 
     /// [`SweepFixture::new`] with no hub yet, for a test to give it its own.
     pub(super) fn without_hub(script: &str) -> Self {
+        Self::at(script, "")
+    }
+
+    /// [`SweepFixture::new`] for a project the one server serves at `base`, `/<id>`.
+    fn serving(script: &str, base: &str) -> Self {
+        let fixture = Self::at(script, base);
+        let hub = crate::live::Hub::new(&fixture.root, &fixture.root.join("client"));
+        assert!(fixture.shared.api.set(Arc::new(hub)).is_ok());
+        fixture
+    }
+
+    fn at(script: &str, base: &str) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
             "symphony-sweep-{}-{}",
@@ -36,7 +48,14 @@ impl SweepFixture {
         ));
         std::fs::create_dir(&root).unwrap();
         let gate = Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now));
-        let shared = Shared::new(i64::from(std::process::id()), 1, &root, Some(&root), gate);
+        let shared = Shared::project(
+            i64::from(std::process::id()),
+            1,
+            &root,
+            Some(&root),
+            gate,
+            base,
+        );
         let fixture = Self {
             root,
             shared,
@@ -109,6 +128,7 @@ fn maintain_on(fixture: &mut SweepFixture, clock: &TestClock) {
         INTERVAL,
         ROUND_TIMEOUT,
         clock.reader(),
+        None,
     ));
 }
 
@@ -613,4 +633,108 @@ fn each_round_is_told_to_the_hub_whose_tick_waits_after_a_sleep_for_the_next() {
     waited("the tick still waits after the round past the wake", || {
         hub.judges().then_some(())
     });
+}
+
+#[test]
+fn each_round_of_the_one_servers_sweep_tries_its_projects_held_update_first_on_its_clock() {
+    use symphony::machine::updates::{Ledger, Update};
+    // alpha, served at /alpha, keeps a board whose database is down; the release this server
+    // stands for is installed and named by `current`, and alpha's update to its schema is open.
+    let mut fixture = SweepFixture::serving("echo round >> rounds", "/alpha");
+    let done = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&fixture.root)
+        .output()
+        .unwrap();
+    assert!(done.status.success());
+    std::fs::create_dir_all(fixture.root.join(".git/symphony/tasks")).unwrap();
+    let tree = crate::testing::Tree::new();
+    let machine = tree.path("machine");
+    let release = "release-2026-11-20";
+    let folder = symphony::machine::release::folder(&machine, release);
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join(symphony::machine::release::MANIFEST),
+        serde_json::json!({
+            "release": release, "commit": "0123456", "schema": symphony_board::SCHEMA,
+            "protocol": {"major": 0, "minor": 3}, "tasks_api": {"major": 2, "minor": 2}, "pin": 1,
+            "client": "client/x", "artifacts": [],
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(Path::new("releases").join(release), machine.join("current"))
+        .unwrap();
+    let entry: symphony::machine::Entry = serde_json::from_value(serde_json::json!({
+        "id": "alpha", "name": "alpha", "root": fixture.root.canonicalize().unwrap(), "pin": 1,
+    }))
+    .unwrap();
+    symphony::machine::Registry {
+        projects: vec![entry],
+    }
+    .write(&machine)
+    .unwrap();
+    let open = || {
+        Ledger {
+            version: symphony::machine::updates::VERSION,
+            updates: vec![Update::new("alpha", symphony_board::SCHEMA, 1, None)],
+        }
+        .write(&machine)
+        .unwrap();
+    };
+    let failed = || {
+        let ledger = Ledger::read(&machine).unwrap();
+        let update = &ledger.updates[0];
+        assert!(update.open(), "{update:?}");
+        (update.failures.iter())
+            .map(|failure| (failure.at, failure.run.clone()))
+            .collect::<Vec<_>>()
+    };
+    open();
+    let clock = TestClock::new();
+    fixture.start(maintenance_worker(
+        fixture.shared.clone(),
+        INTERVAL,
+        ROUND_TIMEOUT,
+        clock.reader(),
+        Some(crate::held::Retrying {
+            machine: machine.clone(),
+            release: release.into(),
+        }),
+    ));
+    // The round's reap comes after its retry: the ledger was written before it.
+    fixture.wait_for("rounds", "round\n");
+    let first = failed();
+    assert_eq!(first.len(), 1, "{first:?}");
+    assert_eq!(first[0].1, format!("the machine's server, {release}"));
+    // The next round, an interval on: the update tried again, its time read on the same clock.
+    open();
+    next_round(&clock, 1);
+    fixture.wait_for("rounds", "round\nround\n");
+    let second = failed();
+    assert_eq!(second.len(), 1, "{second:?}");
+    assert_eq!(second[0].0 - first[0].0, INTERVAL.as_secs_f64());
+    assert!(
+        symphony::machine::updates::try_lock(&machine)
+            .unwrap()
+            .is_some(),
+        "the round let the machine's updates lock go"
+    );
+}
+
+#[test]
+fn a_server_serving_its_one_project_at_the_root_tries_no_held_update() {
+    let fixture = SweepFixture::new("exit 0");
+    let tree = crate::testing::Tree::new();
+    let retrying = crate::held::Retrying {
+        machine: tree.path("machine"),
+        release: "release-2026-11-20".into(),
+    };
+    let clock = TestClock::new();
+    let said = crate::held::round(&fixture.shared, &retrying, ROUND_TIMEOUT, &clock.reader());
+    assert_eq!(said, Vec::<String>::new());
+    assert!(
+        !tree.path("machine").exists(),
+        "nothing was read or made there"
+    );
 }

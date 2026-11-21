@@ -10,28 +10,29 @@
 //!   is not pointed, the line naming the project that holds it, and `--status` says it too
 //!   ([`switch::standing`]). A board moved past the machine's server, a project's build then, would
 //!   leave that server reading it alone.
-//! - **The boards.** A release that keeps the board schema `current` names moves nothing. One that
-//!   raises it, or the first, with no `current`, judges each registered project's live board first,
-//!   this repository's aside (its board moves with its own main): a board moves only when every
-//!   writer seen there in the last week (the board's writer record, `crates/tasks/src/store/
-//!   writers.rs`) is a release's own, a binary of a release installed in this machine folder on
-//!   this host, which `current` takes on, or one built at the release's schema ([`lagging`]). A
-//!   line on this host whose program is gone from its path ([`gone`]) is not counted, and said. A
-//!   board whose writers lag is named with each writer to rebuild, the project's to finish, and
-//!   holds the release; one whose database does not run, or whose move could put it on a newer
-//!   SurrealDB, holds it too, red (a board on PostgreSQL runs the machine's own, which a release
-//!   neither pins nor replaces). A board below schema [`symphony_board::WRITERS_SINCE`], from
-//!   before the writer record, is behind every release and never moved here: its own `just tasks
-//!   migrate` brings it up. Only when no board holds the release is every board snapshotted
-//!   through its running database (`Home::export`: SurrealDB's export, or `pg_dump`'s of a board
-//!   on PostgreSQL), all of them before the first move, so a
-//!   snapshot that fails moves nothing; then each is moved in turn by the release's own `tasks
-//!   migrate` in its project's main checkout, the one command that moves a project's board.
-//! - **`current`**, pointed at the release once nothing holds it ([`install::point`]), which every
-//!   recipe of a project with no build of its own then runs. A move that fails stops the rest and
-//!   leaves `current` where it was, so does a failure to point it, the install's red. The boards
-//!   moved before it stay at the release's schema, ahead of `current`'s, until a retry, which
-//!   judges them at the release's schema, nothing to move, and finishes the rest.
+//! - **The boards.** A release that keeps the board schema `current` names moves only a board left
+//!   behind it. One that raises it, or the first, with no `current`, judges each registered
+//!   project's live board, this repository's aside (its board moves with its own main): a board
+//!   moves only when every writer seen there in the last week (the board's writer record,
+//!   `crates/tasks/src/store/writers.rs`) is a release's own, a binary of a release installed in
+//!   this machine folder on this host, which `current` takes on, or one built at the release's
+//!   schema ([`writers::lagging`]). A line on this host whose program is gone from its path, or
+//!   that is no build its project runs now and has not run for longer than its bound, is not
+//!   counted, and said. A board whose writers lag is named with each writer to rebuild, the
+//!   project's to finish; one whose database does not run, or whose move could put it on a newer
+//!   SurrealDB, is red (a board on PostgreSQL runs the machine's own, which a release neither pins
+//!   nor replaces). A board below schema [`symphony_board::WRITERS_SINCE`], from before the writer
+//!   record, is behind every release and never moved here: its own `just tasks migrate` brings it
+//!   up. Each board is judged and moved alone: snapshotted through its running database just before
+//!   its own move (`Home::export`: SurrealDB's export, or `pg_dump`'s of a board on PostgreSQL),
+//!   then moved by the release's own `tasks migrate` in its project's main checkout, the one
+//!   command that moves a project's board. A board that lags, red or its project's to finish, holds
+//!   neither another board nor `current`: it stays at its schema, its update failed
+//!   ([`super::updates`]).
+//! - **`current`**, pointed at the release ([`install::point`]), which every recipe of a project
+//!   with no build of its own then runs; one that cannot be pointed is the install's red, `current`
+//!   as it was. A board left behind is moved by a later refresh, or by the machine's server once
+//!   nothing holds it (`symphony::machine::held`).
 //! - **The machine's server.** A release's server follows `current` by its own reload
 //!   (`apps/symphony-server/src/reload.rs`): the refresh waits, bounded, until it answers as the
 //!   release, or says it has not yet, with what its reload said in its log since `current` moved
@@ -40,8 +41,8 @@
 //!
 //! Each project whose board is judged is one step, `refresh-ID`, ending in one of three: green
 //! (moved, or nothing to move); **the project's to finish** (writers to rebuild, a board below the
-//! writer record), green here and filed nowhere; or **red**, the refresh's own work failed, filed on
-//! the Symphony's board. Nothing here starts, stops or signals a server or a database.
+//! writer record), green here, its update's failure; or **red**, the refresh's own work failed, its
+//! update's failure too. Nothing here starts, stops or signals a server or a database.
 
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -49,7 +50,6 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use symphony_api::Front;
-use symphony_board::Writer;
 use symphony_board::server::{Engine, Home, ServerError};
 
 use super::board;
@@ -60,12 +60,12 @@ use super::install::{self, Installed};
 use super::record::{Refresh, TAKES, THEIRS};
 use super::span::Span;
 use symphony::children::command;
+use symphony::machine::moving::{self, KEPT_SNAPSHOTS};
+use symphony::machine::writers;
 use symphony::machine::{Entry, Registry, release, switch};
 
 /// What a refresh step's name starts with, before the project's id: no check takes it.
 pub(crate) const STEP: &str = "refresh";
-/// The snapshots a project's board keeps of its store before a schema move, newest first.
-const KEPT_SNAPSHOTS: usize = 5;
 /// The longest a refresh that pointed `current` waits for a release's server to follow it: its
 /// reload looks once a second and hands over by exec, so a minute's work at the machine's load.
 const RELOAD: Duration = Duration::from_secs(5 * 60);
@@ -79,21 +79,8 @@ pub(crate) const SERVER_LOG: &str = "server.log";
 const RELOAD_LINE: &str = "· Symphony reload: ";
 /// The most of that log read for what the reload said: its newest part.
 const LOG_READ: u64 = 256 * 1024;
-/// The variables no command run in a project keeps, beside the repository git was pointed at
-/// (`symphony_board::sys::GIT_VARS`: each command names its own folder): the board, session and
-/// task a run of the Symphony's names (a project's command reaches its own), the landing's marker,
-/// and the build folder and toolchain, which are the project's own.
-pub(crate) const UNSET: [&str; 9] = [
-    "TASKS_SERVER",
-    "TASKS_DATABASE",
-    "TASKS_SESSION",
-    "TASKS_TASK",
-    "TASKS_RUN_PARENT",
-    "TASKS_WORK",
-    "SYMPHONY_LAND",
-    "CARGO_TARGET_DIR",
-    "RUSTUP_TOOLCHAIN",
-];
+/// The variables no command run in a project keeps ([`moving::UNSET`]).
+pub(crate) use symphony::machine::moving::UNSET;
 
 /// What a refresh runs against: the Symphony's repository (its checkout, which holds the release's
 /// commit, and its git common dir), the machine folder, the release and its commit, where the
@@ -168,59 +155,24 @@ pub(crate) fn release(
     }
     let kept = release::current_installed(machine).map(|current| current.serves.schema);
     let target = manifest.serves.schema;
-    // This repository's board, which moves with its own main: at the release's schema while current
-    // serves an older one, or none is named, no project's board holds current (docs/RELEASES.md,
-    // "The forward move"). A release current serves already is the reconciling pass, below.
-    let ours = Home::in_common(against.ours, against.surreal).schema(symphony_board::DATABASE);
-    let forward =
-        matches!(ours, Ok(Some(at)) if at == target) && kept.is_none_or(|kept| kept < target);
-    if forward {
-        say(
-            &mut refresh,
-            out,
-            format!(
-                "this repository's board is at schema {target}, which {}: no project's board holds \
-                 current, each moving as its own writers allow",
-                kept.map_or_else(
-                    || "no release current names serves".to_string(),
-                    |kept| format!("the release current names does not serve (it serves {kept})")
-                )
-            ),
-        );
-    }
     let mut steps = Vec::new();
-    let judgement = boards(
+    let ends = boards(
         against,
         &registry,
         target,
         kept,
-        forward,
         &mut refresh,
         &mut steps,
         out,
     );
-    let clear = judgement.clear;
     // The server as it answers before `current` moves, to tell its reload's hand-off after.
-    let before = clear
-        .then(|| symphony::machine::command::running(machine, None))
-        .flatten();
+    let before = symphony::machine::command::running(machine, None);
     // Its log's length then: what its reload says of the move comes after.
     let logged = fs::metadata(machine.join(SERVER_LOG)).map_or(0, |log| log.len());
-    let pointed = clear && install::point(machine, &mut installed);
-    if clear {
-        let line = installed.said.pop().unwrap_or_default();
-        say(&mut refresh, out, line);
-    } else {
-        say(
-            &mut refresh,
-            out,
-            format!(
-                "current is not pointed at {}: {named}, until each board above can move",
-                against.tag
-            ),
-        );
-    }
-    let held = (!clear).then(|| refresh.said.last().cloned()).flatten();
+    // No board holds `current`: one that lags stays at its schema, its update failed.
+    let pointed = install::point(machine, &mut installed);
+    let line = installed.said.pop().unwrap_or_default();
+    say(&mut refresh, out, line);
     refresh.steps.push(installed.ran);
     refresh.steps.extend(steps);
     let mut server_line = None;
@@ -236,8 +188,7 @@ pub(crate) fn release(
         release: &manifest,
         kept,
         pointed,
-        held: held.as_deref(),
-        ends: &judgement.ends,
+        ends: &ends,
         front: symphony::machine::command::running(machine, None),
         writes: symphony::machine::command::writes(machine),
         server: server_line.as_deref(),
@@ -314,8 +265,6 @@ pub(crate) enum End {
     Moved { from: i64, at: f64 },
     /// Nothing to move: at the release's schema or past it, or no board made yet.
     Nothing,
-    /// Left as it was while another board, a snapshot or a failed move held every move.
-    Waiting(String),
     /// Its project's to finish, said: its writers to rebuild, or its own migrate.
     Theirs(String),
     /// The refresh's own work could not judge or move it, said; `down` when its database does not
@@ -330,39 +279,25 @@ pub(crate) struct Ended {
     pub(crate) end: End,
 }
 
-/// What the boards came to: whether nothing holds the release, and how each judged board ended.
-pub(crate) struct Judgement {
-    pub(crate) clear: bool,
-    pub(crate) ends: Vec<Ended>,
-}
-
 /// Each registered project's board brought to the release's schema `target` over `kept`, the
 /// schema of the release `current` names (none: none named), its lines said in `refresh` and to
-/// `out` and its steps put in `steps`: whether nothing holds the release, and how each board
-/// ended. A release at `kept` or behind it moves only a board left behind it, and says nothing of
-/// the rest. `forward`: this repository's board is at `target` and current serves an older one.
-/// Then, and in that reconciling pass (current already serves the schema, so no board left behind
-/// can hold it), no board holds another or current, each is snapshotted just before its own move
-/// and moved, and one that fails or lags keeps none of the rest.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the refresh's one pass over the boards, each part its own"
-)]
+/// `out` and its steps put in `steps`: how each board ended. A release at `kept` or behind it moves
+/// only a board left behind it, and says nothing of the rest. Each board is judged and moved alone
+/// (docs/RELEASES.md, "The boards"): snapshotted just before its own move, and one that lags, red or
+/// its project's to finish, holds neither another board nor `current`.
 fn boards(
     against: &Against<'_>,
     registry: &Registry,
     target: i64,
     kept: Option<i64>,
-    forward: bool,
     refresh: &mut Refresh,
     steps: &mut Vec<Ran>,
     out: &mut dyn Write,
-) -> Judgement {
+) -> Vec<Ended> {
     let reconciling = kept.is_some_and(|kept| target <= kept);
     if let Some(kept) = kept.filter(|_| reconciling) {
         say(refresh, out, no_move(against.tag, target, kept));
     }
-    let alone = forward || reconciling;
     let mut judged = Vec::new();
     for entry in &registry.projects {
         match project(entry, against) {
@@ -373,74 +308,26 @@ fn boards(
             Ok(common) => judged.push(judge(entry, &common, target, against)),
         }
     }
-    let holding: Vec<String> = (judged.iter())
-        .filter(|board| board.verdict.holds())
-        .map(|board| board.id.clone())
-        .collect();
-    // What keeps a board that can move where it is: the boards that hold the release, a snapshot
-    // that failed, or the move that failed before it. Each board alone, nothing keeps another.
-    let mut kept_by = match holding.len() {
-        _ if alone => None,
-        0 => None,
-        1 => Some(format!("{} holds the release", holding[0])),
-        _ => Some(format!("{} hold the release", holding.join(", "))),
-    };
-    // Every board's snapshot before the first move, so one that fails moves nothing; each board
-    // alone, each is snapshotted just before its own move instead.
-    if kept_by.is_none() && !alone {
-        for board in &mut judged {
-            if !matches!(board.verdict, Verdict::Move { .. }) {
-                continue;
-            }
-            if let Err(why) = snapshot(board, against) {
-                kept_by = Some(format!("the snapshot of {}'s store failed", board.id));
-                board.verdict = Verdict::Red(why);
-                break;
-            }
-        }
-    }
     let mut ends = Vec::new();
     for mut board in judged {
         let mut end = None;
         let ended = match std::mem::replace(&mut board.verdict, Verdict::Done(String::new())) {
-            Verdict::Move { live, leave, gone } => match &kept_by {
-                Some(why) => {
-                    let said = format!(
-                        "{}: its board can move from schema {live} to {target}, and stays at {live} \
-                         while {why}{gone}",
-                        board.id
-                    );
-                    end = Some(End::Waiting(said.clone()));
-                    Verdict::Done(said)
+            Verdict::Move { live, leave, gone } => match snapshot(&mut board, against)
+                .and_then(|()| moved(&mut board, live, leave, against))
+            {
+                Ok(said) => {
+                    end = Some(End::Moved {
+                        from: live,
+                        at: seen_now(),
+                    });
+                    Verdict::Done(said + &gone)
                 }
-                None => {
-                    let moving = if alone {
-                        snapshot(&mut board, against)
-                    } else {
-                        Ok(())
-                    };
-                    match moving.and_then(|()| moved(&mut board, live, leave, against)) {
-                        Ok(said) => {
-                            let said = said + &gone;
-                            end = Some(End::Moved {
-                                from: live,
-                                at: seen_now(),
-                            });
-                            Verdict::Done(said)
-                        }
-                        Err(why) => {
-                            if !alone {
-                                kept_by = Some(format!("the move of {}'s board failed", board.id));
-                            }
-                            Verdict::Red(why)
-                        }
-                    }
-                }
+                Err(why) => Verdict::Red(why),
             },
             verdict => verdict,
         };
         let end = end.unwrap_or_else(|| match &ended {
-            Verdict::Theirs { why, .. } => End::Theirs(why.clone()),
+            Verdict::Theirs(why) => End::Theirs(why.clone()),
             Verdict::Red(why) => End::Red {
                 why: why.clone(),
                 down: board.down,
@@ -451,7 +338,7 @@ fn boards(
             id: board.id.clone(),
             end,
         });
-        let theirs = matches!(ended, Verdict::Theirs { .. });
+        let theirs = matches!(ended, Verdict::Theirs(_));
         let (ran, line) = board.ended(ended, against);
         if theirs {
             refresh.theirs.push(ran.name.clone());
@@ -459,10 +346,7 @@ fn boards(
         say(refresh, out, line);
         steps.push(ran);
     }
-    Judgement {
-        clear: alone || kept_by.is_none(),
-        ends,
-    }
+    ends
 }
 
 /// Whether the board in the git common dir `common` reads behind `target`: a board left behind a
@@ -540,10 +424,9 @@ struct Judged {
 enum Verdict {
     /// Green: moved, or nothing to move, said.
     Done(String),
-    /// Its project's to finish, said with what finishes it; `holds`, whether the release waits for
-    /// it.
-    Theirs { why: String, holds: bool },
-    /// The refresh's own work cannot judge or move it, said: red, and the release waits for it.
+    /// Its project's to finish, said with what finishes it.
+    Theirs(String),
+    /// The refresh's own work cannot judge or move it, said: red.
     Red(String),
     /// To move from schema `live`, with `--leave-behind` when `leave`: the only writers behind are a
     /// release's own or gone from their paths, the latter said in `gone` ([`not_counted`]).
@@ -554,24 +437,13 @@ enum Verdict {
     },
 }
 
-impl Verdict {
-    /// Whether the release waits for the board it judged: no board moves, and `current` stays.
-    fn holds(&self) -> bool {
-        match self {
-            Verdict::Theirs { holds, .. } => *holds,
-            Verdict::Red(_) => true,
-            Verdict::Done(_) | Verdict::Move { .. } => false,
-        }
-    }
-}
-
 impl Judged {
     /// Its step, and the line it says, once it `ended`.
     fn ended(mut self, ended: Verdict, against: &Against<'_>) -> (Ran, String) {
         let id = &self.id;
         let (line, error) = match ended {
             Verdict::Done(said) => (said, None),
-            Verdict::Theirs { why, .. } => (format!("{id}: {THEIRS}: {why} ({TAKES})"), None),
+            Verdict::Theirs(why) => (format!("{id}: {THEIRS}: {why} ({TAKES})"), None),
             Verdict::Red(why) => (format!("{id}: red: {why}"), Some(why)),
             Verdict::Move { live, .. } => (
                 format!("{id}: its board is at schema {live}, not moved"),
@@ -666,46 +538,25 @@ fn verdict(board: &Judged, against: &Against<'_>) -> Verdict {
         ));
     }
     if live < symphony_board::WRITERS_SINCE {
-        return Verdict::Theirs {
-            why: format!(
-                "its board is at schema {live}, from before the board recorded who writes it \
-                 (schema {}), so it is never moved here: `cd {root} && just tasks migrate`, its own, \
-                 brings it up",
-                symphony_board::WRITERS_SINCE
-            ),
-            holds: false,
-        };
+        return Verdict::Theirs(writers::before_the_record(live, &board.root));
     }
-    let writers = match board.home.writers(symphony_board::DATABASE) {
-        Ok(writers) => writers,
+    let lines = match board.home.writers(symphony_board::DATABASE) {
+        Ok(lines) => lines,
         Err(error) => {
             return Verdict::Red(format!("{error}: nothing was moved"));
         }
     };
-    let Lagging { own, behind, gone } = lagging(writers, target, seen_now(), against.machine);
-    if !behind.is_empty() {
-        return Verdict::Theirs {
-            why: format!(
-                "its board stays at schema {live}: {} seen there in the last week {} behind {}'s \
-                 schema {target}: {}; rebuild each at schema {target} and run it once, which \
-                 records it, then an orchestrator's `just release --refresh` moves it{}",
-                match behind.len() {
-                    1 => "a writer".to_string(),
-                    n => format!("{n} writers"),
-                },
-                if behind.len() == 1 { "is" } else { "are" },
-                against.tag,
-                (behind.iter().map(said)).collect::<Vec<_>>().join("; "),
-                not_counted(&gone)
-            ),
-            holds: true,
-        };
+    let now = seen_now();
+    let runs = writers::Runs::of(&board.root);
+    let lagging = writers::lagging(lines, target, now, against.machine, &runs);
+    if !lagging.behind.is_empty() {
+        return Verdict::Theirs(lagging.holding(live, against.tag, target, now));
     }
     // The release's migrate reads the lines again, and would refuse for one not counted here.
     let moving = Verdict::Move {
         live,
-        leave: !own.is_empty() || !gone.is_empty(),
-        gone: not_counted(&gone),
+        leave: lagging.leaves(),
+        gone: lagging.not_counted(now),
     };
     // A release pins no PostgreSQL: the board's is the machine's own, which no move replaces.
     match board.home.backend() {
@@ -733,7 +584,7 @@ fn verdict(board: &Judged, against: &Against<'_>) -> Verdict {
             ));
         }
     };
-    if older(&running, &pinned) {
+    if moving::older(&running, &pinned) {
         return Verdict::Red(format!(
             "its board's database runs SurrealDB {running} and {} pins {pinned}: moving its schema \
              would replace that server, and the refresh stops no board's database, so nothing was \
@@ -744,120 +595,6 @@ fn verdict(board: &Judged, against: &Against<'_>) -> Verdict {
     moving
 }
 
-/// The writers behind a release's schema, by what each does to a move ([`lagging`]).
-struct Lagging {
-    /// A release's own, which `current` takes on: left behind by name.
-    own: Vec<Writer>,
-    /// The rest that can still write: each holds the move.
-    behind: Vec<Writer>,
-    /// Those whose program is no longer at its path, each with why: not counted.
-    gone: Vec<(Writer, Gone)>,
-}
-
-/// The writers of `lines` seen in the last week before `now` that are behind `target`: a release's
-/// own (a binary of a release installed in the machine folder `machine`, on this host), which
-/// `current` takes on; those on this host whose program is no longer there ([`gone`]), which are
-/// not counted; and the rest, which hold a move.
-fn lagging(lines: Vec<Writer>, target: i64, now: f64, machine: &Path) -> Lagging {
-    let releases = machine
-        .join(release::RELEASES)
-        .canonicalize()
-        .unwrap_or_else(|_| machine.join(release::RELEASES));
-    let host = symphony_board::sys::hostname();
-    let behind = (lines.into_iter())
-        .filter(|line| line.schema < target && now - line.seen <= symphony_board::WRITERS_RECENT);
-    let (own, rest): (Vec<Writer>, Vec<Writer>) = behind
-        .partition(|line| line.host == host && of_a_release(Path::new(&line.path), &releases));
-    let by_name = |a: &Writer, b: &Writer| {
-        (&a.program, &a.host, &a.path).cmp(&(&b.program, &b.host, &b.path))
-    };
-    let (mut behind, mut gone) = (Vec::new(), Vec::new());
-    for line in rest {
-        // Another host's path is not this machine's to look at.
-        match Some(&line)
-            .filter(|line| line.host == host)
-            .and_then(self::gone)
-        {
-            Some(why) => gone.push((line, why)),
-            None => behind.push(line),
-        }
-    }
-    behind.sort_by(by_name);
-    gone.sort_by(|a, b| by_name(&a.0, &b.0));
-    Lagging { own, behind, gone }
-}
-
-/// Why the program that wrote a line can write no more: the record keeps its path alone, and the
-/// file there is looked at, never run.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Gone {
-    /// Nothing is at its path.
-    Missing,
-    /// The file there was written after the line's last write could have been made.
-    Replaced,
-}
-
-impl Gone {
-    fn said(self) -> &'static str {
-        match self {
-            Gone::Missing => "nothing is at its path now",
-            Gone::Replaced => {
-                "the file at its path was written after it last ran there, a build that has not opened this board"
-            }
-        }
-    }
-}
-
-/// Whether the program that wrote `line`, on this host, is gone from its path. Nothing there is
-/// gone. So is a file modified more than [`symphony_board::WRITERS_EVERY`] after the line was
-/// seen: a line is written again once it is that old, so every write through the path came within
-/// that long of `seen`, and a file written later has never opened this board to write. A path that
-/// cannot be read is not gone, and neither is one whose time cannot be.
-fn gone(line: &Writer) -> Option<Gone> {
-    use std::io::ErrorKind::{NotADirectory, NotFound};
-    match fs::metadata(&line.path) {
-        Err(error) if matches!(error.kind(), NotFound | NotADirectory) => Some(Gone::Missing),
-        Err(_) => None,
-        Ok(file) => {
-            let modified = file.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
-            (modified.as_secs_f64() > line.seen + symphony_board::WRITERS_EVERY)
-                .then_some(Gone::Replaced)
-        }
-    }
-}
-
-/// What a step says of the writers it did not count, after its own words: nothing with none.
-fn not_counted(gone: &[(Writer, Gone)]) -> String {
-    if gone.is_empty() {
-        return String::new();
-    }
-    let each: Vec<String> = (gone.iter())
-        .map(|(writer, why)| format!("{}: {}", said(writer), why.said()))
-        .collect();
-    format!("; not counted, as its program is gone: {}", each.join("; "))
-}
-
-/// Whether `path` is a binary of a release in `releases`: `releases/NAME/bin/BINARY`.
-fn of_a_release(path: &Path, releases: &Path) -> bool {
-    let Ok(rest) = path.strip_prefix(releases) else {
-        return false;
-    };
-    let parts: Vec<_> = rest.components().collect();
-    parts.len() == 3 && parts[1].as_os_str() == "bin"
-}
-
-/// A writer, in words.
-fn said(writer: &Writer) -> String {
-    format!(
-        "{} at schema {} ({} on {}, last seen {} ago)",
-        writer.program,
-        writer.schema,
-        writer.path,
-        writer.host,
-        symphony_board::board_health::ago(seen_now() - writer.seen)
-    )
-}
-
 /// The time a writer's line is read by: this machine's clock, as the line is written by.
 pub(crate) fn seen_now() -> f64 {
     SystemTime::now()
@@ -865,37 +602,25 @@ pub(crate) fn seen_now() -> f64 {
         .map_or(0.0, |since| since.as_secs_f64())
 }
 
-/// `board`'s store exported through its running database before any board moves, into
+/// `board`'s store exported through its running database just before its move, into
 /// `snapshots/before-schema-TARGET-RELEASE.surql` in its folder, or `.sql` for a board on
 /// PostgreSQL (`pg_dump`'s text), the newest [`KEPT_SNAPSHOTS`] kept: kept in `board`, or why it
 /// failed.
 fn snapshot(board: &mut Judged, against: &Against<'_>) -> Result<(), String> {
-    let snapshots = board.folder.join("snapshots");
-    let kind = match board.home.backend() {
-        Ok(Engine::SurrealDb) => "surql",
-        Ok(Engine::PostgreSql) => "sql",
-        Err(e) => {
-            return Err(format!(
-                "the snapshot of its store failed, so no board was moved, this one or another: {e}"
-            ));
-        }
-    };
-    let snapshot = snapshots.join(format!(
-        "before-schema-{}-{}.{kind}",
-        board.target, against.tag
-    ));
+    let engine = board.home.backend().map_err(|e| {
+        format!("the snapshot of its store failed, so its board was not moved: {e}")
+    })?;
+    let snapshot = moving::snapshot_file(&board.folder, board.target, against.tag, engine);
     board
         .home
         .export(symphony_board::DATABASE, &snapshot)
         .map_err(|e| {
-            format!(
-                "the snapshot of its store failed, so no board was moved, this one or another: {e}"
-            )
+            format!("the snapshot of its store failed, so its board was not moved: {e}")
         })?;
     board
         .log
         .line(&format!("its store, as it ran: {}", snapshot.display()));
-    prune(&snapshots, KEPT_SNAPSHOTS);
+    moving::prune(&board.folder.join("snapshots"), KEPT_SNAPSHOTS);
     board.snapshot = Some(snapshot);
     Ok(())
 }
@@ -953,16 +678,10 @@ fn moved(
     }
 }
 
-/// The `surreal` a snapshot of the board in the git common dir `common` runs: `SYMPHONY_SURREAL`,
-/// else the one pinned beside that board, else `fallback` (the Symphony's own).
+/// The `surreal` a snapshot of the board in the git common dir `common` runs
+/// ([`moving::surreal_for`]).
 pub(crate) fn surreal_for(common: &Path, fallback: Option<&Path>) -> PathBuf {
-    let named = symphony_env::SURREAL.os().map(PathBuf::from);
-    let beside = Home::in_common(common, None).surreal().to_path_buf();
-    (named.into_iter())
-        .chain([beside.clone()])
-        .chain(fallback.map(Path::to_path_buf))
-        .find(|path| path.is_file())
-        .unwrap_or(beside)
+    moving::surreal_for(common, fallback)
 }
 
 /// The SurrealDB version the board's source pins at `commit` of the repository at `root`.
@@ -978,36 +697,6 @@ fn surreal_at(root: &Path, commit: &str) -> Option<String> {
             .strip_prefix("pub const SURREAL_VERSION: &str = \"")?;
         rest.split_once('"').map(|(version, _)| version.to_string())
     })
-}
-
-/// Whether the version `running` is older than `pinned`, part by dotted part.
-fn older(running: &str, pinned: &str) -> bool {
-    let parts = |version: &str| -> Vec<u64> {
-        (version.trim_start_matches('v').split(['.', '-', '+']))
-            .map(|part| part.parse().unwrap_or(0))
-            .collect()
-    };
-    parts(running) < parts(pinned)
-}
-
-/// Remove from `folder` the snapshots but the newest `kept`.
-fn prune(folder: &Path, kept: usize) {
-    let Ok(entries) = fs::read_dir(folder) else {
-        return;
-    };
-    let mut found: Vec<(SystemTime, PathBuf)> = (entries.filter_map(Result::ok))
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .is_some_and(|name| name.to_string_lossy().starts_with("before-schema-"))
-        })
-        .filter_map(|path| Some((fs::metadata(&path).ok()?.modified().ok()?, path)))
-        .collect();
-    found.sort();
-    let gone = found.len().saturating_sub(kept);
-    for (_, path) in found.into_iter().take(gone) {
-        let _ = fs::remove_file(path);
-    }
 }
 
 /// What the machine's server does with the release `current` now names, said: the server this

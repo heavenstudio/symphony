@@ -43,6 +43,9 @@ pub mod protocol;
 
 pub mod execution;
 
+pub mod authority;
+pub use authority::Authority;
+
 mod serve;
 pub use serve::{ENDING, WORKERS, serve, serve_on};
 
@@ -106,6 +109,10 @@ pub trait Plugin: Send + Sync {
     }
     /// What answers the project's own gates of a task ([`Gates`]).
     fn gates(&self) -> Vec<&dyn Gates> {
+        Vec::new()
+    }
+    /// The project's approval authorities it answers for, one per adapter ([`Authority`]).
+    fn authorities(&self) -> Vec<&dyn Authority> {
         Vec::new()
     }
     fn watches(&self) -> Vec<&dyn Watch> {

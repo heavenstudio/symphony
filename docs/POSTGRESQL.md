@@ -33,7 +33,11 @@ PostgreSQL server listens on its private Unix socket alone. On a scratch home it
 process that started it; on any other it outlives its starter, as the board's SurrealDB server
 does, and the next command finds it by its cluster's own record. On a scratch home a command
 run right after another meets that one's server on its way out: its start waits for the
-server's end, which the kernel reports, and then starts its own. The board's patience is that
+server's end, which the kernel reports, and then starts its own. That holds whether the
+cluster's record already says the server is stopping, or still says it is ready because the
+shutdown signal has not reached it yet: the start records each server it starts with the
+process that started it (`postgresql.starter` in the board's folder), and a server whose
+starter has ended is on its way out. The board's patience is that
 wait's backstop, and a server still stopping by then is left to finish, the refusal saying the
 machine's load and to run the command again. A server that is starting is never waited for:
 its start is refused, naming the retry. A command uses one connection

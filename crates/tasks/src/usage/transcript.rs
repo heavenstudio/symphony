@@ -145,7 +145,7 @@ impl Ledger {
         let file = folder.join(format!("{key}.json"));
         let path = transcript.to_string_lossy().into_owned();
         let mut kept = match fs::read(&file) {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|_| Kept {
+            Ok(bytes) => crate::objects::parse(&bytes).unwrap_or_else(|| Kept {
                 // Unreadable: start at the end, so nothing it held is counted again.
                 transcript: path.clone(),
                 offset: fs::metadata(transcript).map_or(0, |m| m.len()),
@@ -359,7 +359,7 @@ fn prune(folder: &Path, now: SystemTime) {
     let gone = |ledger: &Path| {
         let kept = fs::read(ledger)
             .ok()
-            .and_then(|bytes| serde_json::from_slice::<Kept>(&bytes).ok());
+            .and_then(|bytes| crate::objects::parse::<Kept>(&bytes));
         kept.is_some_and(|kept| {
             !kept.transcript.is_empty()
                 && fs::symlink_metadata(&kept.transcript)

@@ -34,6 +34,7 @@ macro_rules! on_both {
 mod amend;
 mod artifacts;
 mod asks;
+mod attempt_reads;
 mod bindings;
 mod blocked_panes;
 mod blocks;
@@ -97,7 +98,6 @@ mod pull_acknowledgements;
 mod pushes;
 mod quiet_callbacks;
 mod raw;
-mod raw_fence;
 mod realistic;
 mod recovery;
 mod red;

@@ -28,6 +28,9 @@ export const UPLOAD_ACCEPT =
   "image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain,text/markdown,text/csv,application/json,.png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.md,.csv,.json,.log,.docx,.xlsx,.pptx";
 export const QUICK_TASK_TITLE_MAX = 200;
 export const TASK_ACTION_ROUTE = "/api/task-action";
+export const TASK_TOKENS_PATH = "/api/task-tokens";
+export const TASK_COSTS_PATH = "/api/task-costs";
+export const TASK_COSTS_MOST = 200;
 export const TASK_GATES_PATH = "/api/task-gates";
 export const TASK_TIMELINE_PATH = "/api/task-timeline";
 export const TASK_DIFF_PATH = "/api/task-diff";
@@ -35,6 +38,9 @@ export const TASK_DIFF_FILE_PATH = "/api/task-diff-file";
 export const TIMELINE_EVERY = 60;
 export const TIMELINE_HISTORY_LIMIT = 256;
 export const TIMELINE_HISTORY_SOURCES = 8;
+export const TASK_ATTEMPTS_PATH = "/api/task-attempts";
+export const ATTEMPT_CONTROL_ROUTE = "/api/attempt-control";
+export const ATTEMPT_VIEW_ROUTE = "/api/attempt-view";
 export const AGENT_FOCUS_PATH = "/api/agent-focus";
 export const AGENT_SCREEN_PATH = "/api/agent-screen";
 export const WORKFLOW_PATH = "/api/workflow";
@@ -389,6 +395,49 @@ export type ReportMark = {
    */
   changed: Array<string>;
 };
+
+export type LandedSpend = {
+  /**
+   * The landed tasks the board recorded tokens for.
+   */
+  tasks: number;
+  /**
+   * The landed tasks it recorded none for: in no figure here.
+   */
+  without: number;
+  /**
+   * The median estimated cost of those with a priced token, in US dollars; none with none.
+   */
+  median: number | null;
+  /**
+   * The dearest of them, at most ten, the dearest first.
+   */
+  dearest: Array<LandedTask>;
+  /**
+   * What they took up to their first review, all told.
+   */
+  first_round: Spend;
+  /**
+   * What they took in every round after it: each review, and the fixes it asked for.
+   */
+  later_rounds: Spend;
+  /**
+   * How many of them took anything after their first round.
+   */
+  again: number;
+};
+
+export type LandedTask = {
+  slug: string;
+  /**
+   * When it landed.
+   */
+  at: number;
+  tokens: AgentTokens;
+  cost: AgentCost;
+};
+
+export type Spend = { tokens: AgentTokens; cost: AgentCost };
 
 export type RunsPage = {
   /**
@@ -1066,6 +1115,47 @@ export type AgentCost = {
 
 export type AgentUnpriced = { model: string; speed: string; tokens: AgentTokens };
 
+export type TaskTokens = {
+  total: AgentTokens;
+  cost: AgentCost;
+  /**
+   * By role, executor first.
+   */
+  by_role: Array<RoleTokens>;
+  /**
+   * By review round, the first first: round 1 is the work up to the first review, round 0 the
+   * calls of a session that worked no task.
+   */
+  by_round: Array<RoundTokens>;
+};
+
+export type RoleTokens = { role: string; tokens: AgentTokens; cost: AgentCost };
+
+export type RoundTokens = { round: number; tokens: AgentTokens; cost: AgentCost };
+
+export type TaskCosts = {
+  /**
+   * The day the API list prices every figure is estimated at were read.
+   */
+  prices: string;
+  /**
+   * Each task asked for that took any tokens, by its slug; one that took none is left out.
+   */
+  costs: Array<TaskCost>;
+};
+
+export type TaskCost = {
+  slug: string;
+  /**
+   * In US dollars, at API list prices: never money spent.
+   */
+  dollars: number;
+  /**
+   * Whether some of its tokens were of a model the price table names no price for, in no dollar.
+   */
+  unpriced: boolean;
+};
+
 export type SessionGo = {
   /**
    * Whose session it reaches: the agent's own, or for a subagent with no way in of its own,
@@ -1716,6 +1806,11 @@ export type TaskPage = {
    * none since it started.
    */
   gates?: GatesSeen | null;
+  /**
+   * How many execution attempts the task has had ([`TASK_ATTEMPTS_PATH`] reads them), left out
+   * at none: a page draws their history only for a task that has some.
+   */
+  attempts?: number;
 };
 
 export type TaskEntry = { message: Message; stamp: string; blocks: Array<Block> };
@@ -1817,6 +1912,129 @@ export type GatePast = {
 export type GateState = "missing" | "held" | "waived" | "met" | "unknown";
 
 export type GatesSeen = { count: number; waiting: number; unsigned: number };
+
+export type TaskAttempts = { attempts: Array<AttemptView> };
+
+export type AttemptView = {
+  /**
+   * Its UUID, 32 hex digits.
+   */
+  id: string;
+  /**
+   * When it was admitted, in ms since the epoch.
+   */
+  created: number;
+  /**
+   * The revision a control names, refused as stale once it moved.
+   */
+  revision: number;
+  /**
+   * Whether it holds its lane: a later attempt of the lane supersedes it.
+   */
+  current: boolean;
+  lane: string;
+  role: string;
+  handle: string | null;
+  /**
+   * The provider configuration it ran under.
+   */
+  configuration: string;
+  /**
+   * The attempt it follows, and how: `retry` or `resume`.
+   */
+  predecessor: string | null;
+  relation: string | null;
+  /**
+   * The attempt that followed it.
+   */
+  successor: string | null;
+  /**
+   * `pending`, `starting`, `unknown`, `running`, `paused`, `held` or `terminal`.
+   */
+  dispatch: string;
+  /**
+   * How a terminal attempt ended: `succeeded`, `failed`, `cancelled`, `stopped`, `rejected` or
+   * `superseded`.
+   */
+  ending: string | null;
+  /**
+   * Why it waits on a person.
+   */
+  held: string | null;
+  /**
+   * `none`, `requested`, `confirmed` or `unconfirmed`.
+   */
+  cancellation: string;
+  /**
+   * `not_started`, `collecting`, `complete`, `partial`, `failed` or `none`.
+   */
+  collection: string;
+  /**
+   * `not_due`, `running`, `complete`, `failed` or `unknown`.
+   */
+  cleanup: string;
+  /**
+   * The provider's opaque id of the resource bound to it, and its generation: a reference that
+   * outlives the handle, never an address or a credential.
+   */
+  resource: string | null;
+  generation: string | null;
+  /**
+   * The runtime conversation bound to it.
+   */
+  conversation: string | null;
+  /**
+   * Who asked for it: `KIND ISSUER/SUBJECT`.
+   */
+  initiator: string;
+  /**
+   * What the one who read it may ask of it here.
+   */
+  controls: AttemptControls;
+};
+
+export type AttemptControls = {
+  cancel: boolean;
+  /**
+   * The stop modes it may be asked: `pause`, `terminate`, `hard_stop`.
+   */
+  stop: Array<string>;
+  /**
+   * The modes a resume of it may take: `new_resource`, `reuse_with_new_generation`.
+   */
+  resume: Array<string>;
+  /**
+   * Whether a view of its resource may be asked.
+   */
+  view: boolean;
+  /**
+   * Why a control its state allows is not offered here, as a sentence the page shows: its
+   * provider is not one this server holds, or it is a local terminal its launcher steps.
+   */
+  unserved: string | null;
+};
+
+export type AttemptControl = {
+  slug: string;
+  attempt: string;
+  revision: number;
+  /**
+   * `cancel`, `stop` or `resume`.
+   */
+  act: string;
+  /**
+   * The stop's or the resume's mode, one of the attempt's [`AttemptControls`].
+   */
+  mode: string | null;
+  /**
+   * A resume's request key: the same key admits the same attempt, however often it is sent.
+   */
+  key: string | null;
+};
+
+export type AttemptViewAsk = { slug: string; attempt: string };
+
+export type AttemptLink = { url: string; valid_for_ms: number };
 
 export type TaskTimeline = {
   slug: string;

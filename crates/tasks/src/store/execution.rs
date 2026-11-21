@@ -94,6 +94,9 @@ pub(crate) struct Write {
     pub artifacts: Vec<Value>,
 }
 
+/// What a caller decides on the row it read, less what it answers: the write, or none.
+type Decide<'a> = dyn FnMut(&Value) -> Result<Option<Box<Write>>, Error> + 'a;
+
 impl Store {
     /// Admit attempt `vars["attempt"]` as [`sql::ADMIT`] says, tried again while the board moves
     /// under it. A retry or a resume names its `predecessor`, whose row `follow` is asked about on
@@ -160,6 +163,30 @@ impl Store {
         attempt: &str,
         mut decide: impl FnMut(&Value) -> Result<Decision<T>, Error>,
     ) -> Result<(Option<Commit>, T), Error> {
+        let mut answer = None;
+        let committed = self.execution_written(attempt, &mut |row| {
+            let (write, said) = match decide(row)? {
+                Decision::Nothing(said) => (None, said),
+                Decision::Write(write, said) => (Some(write), said),
+            };
+            answer = Some(said);
+            Ok(write)
+        })?;
+        match answer {
+            Some(answer) => Ok((committed, answer)),
+            None => Err(Error::Db(format!(
+                "the write of execution attempt {attempt} ended with nothing decided"
+            ))),
+        }
+    }
+
+    /// The one body of [`Store::execution_update`], whatever its caller answers: the row read, the
+    /// write `decide` gives for it fenced on that row, none where it gives none.
+    fn execution_written(
+        &self,
+        attempt: &str,
+        decide: &mut Decide<'_>,
+    ) -> Result<Option<Commit>, Error> {
         self.retrying(|| {
             let row: Option<Value> = self.read(
                 both(sql::ATTEMPT, pg::attempt()),
@@ -170,10 +197,10 @@ impl Store {
                     "there is no execution attempt {attempt}"
                 ))));
             };
-            let (write, answer) = match decide(&row).map_err(Failure::Stop)? {
-                Decision::Nothing(answer) => return Ok((None, answer)),
-                Decision::Write(write, answer) => (*write, answer),
+            let Some(write) = decide(&row).map_err(Failure::Stop)? else {
+                return Ok(None);
             };
+            let write = *write;
             let mut vars = json!({
                 "attempt": attempt,
                 "revision": row["revision"],
@@ -193,8 +220,8 @@ impl Store {
                 vars["live"] = json!(live);
                 vars["due_in"] = json!(due_in);
             }
-            let committed = self.transact(both(sql::COMMIT, pg::commit()), vars)?;
-            Ok((Some(committed), answer))
+            self.transact(both(sql::COMMIT, pg::commit()), vars)
+                .map(Some)
         })
     }
 
@@ -211,6 +238,12 @@ impl Store {
     /// Every attempt of task `slug`, oldest first.
     pub(crate) fn execution_of_task(&self, slug: &str) -> Result<Vec<Value>, Error> {
         self.retrying(|| self.read(both(sql::OF_TASK, pg::of_task()), json!({"task": slug})))
+    }
+
+    /// How many execution attempts task `slug` has had, ended ones included: whether its page has a
+    /// history of them to show. A task has few, so its rows are read and counted.
+    pub fn attempt_count(&self, slug: &str) -> Result<usize, Error> {
+        self.execution_of_task(slug).map(|rows| rows.len())
     }
 
     /// The attempts of task `slug` whose runtime may still be alive (dispatched and not known to

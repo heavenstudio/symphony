@@ -83,7 +83,7 @@ fn table<T: DeserializeOwned>(
     name: &str,
 ) -> Result<Vec<T>, String> {
     tables.remove(name).map_or(Ok(Vec::new()), |rows| {
-        serde_json::from_value(rows)
+        crate::objects::read(&rows)
             .map_err(|e| format!("the dump's {name} are not rows the copy knows: {e}"))
     })
 }

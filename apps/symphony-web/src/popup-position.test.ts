@@ -76,6 +76,8 @@ class Box {
     this.attributes.set(name, value);
     // A list placed as scrolling draws its scrollbar inside its width.
     if (name === "style" && value.includes("overflow-y:auto")) this.clientWidth = this.bar;
+    // Measured as tall as its options, it has nowhere to scroll, as a browser clamps it.
+    if (name === "style" && value.includes("visibility:hidden")) this.scrollTop = 0;
   }
   bar = 120;
   getAttribute(name: string) {
@@ -248,6 +250,26 @@ describe("a popup placed beside its trigger", () => {
     expect(popup.attributes.get("style")).toContain("top:270px");
     stop();
     expect(heard).toEqual([]);
+  });
+
+  it("keeps where the reader scrolled its options when the page moves it", () => {
+    const trigger = new Box("field", { left: 20, top: 30, width: 80, height: 36 });
+    const popup = new Box("field-popup", { left: 0, top: 70, width: 120, height: 200 });
+    popup.scrollHeight = 900;
+    const heard = page([trigger, popup], popup);
+    const stop = anchor("field", "field-popup");
+    expect(popup.scrollTop).toBe(0);
+    const listener = heard[1]?.[1] as (event: { type: string; target?: unknown }) => void;
+    // The reader scrolls the list to an option further down, then the page scrolls under it.
+    popup.scrollTop = 57;
+    trigger.box.top = 10;
+    listener({ type: "scroll", target: trigger });
+    expect(popup.attributes.get("style")).toContain("top:50px;");
+    expect(popup.scrollTop).toBe(57);
+    // And so does a resize, which measures it again too.
+    listener({ type: "resize" });
+    expect(popup.scrollTop).toBe(57);
+    stop();
   });
 
   it("is placed again by any event once its list is gone, which finds nothing to place", () => {

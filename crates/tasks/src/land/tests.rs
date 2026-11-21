@@ -125,6 +125,8 @@ folder = "."
             check_paths: check_paths::defaults(),
             documents: vec!["design/spec".into(), String::new()],
             upstream: None,
+            watch: WATCH,
+            merge_within: MERGE_WITHIN,
         }
     );
     assert_eq!(Settings::default().documents, ["docs"]);
@@ -382,6 +384,37 @@ fn the_timeout_bounds_each_command_and_the_network_five_minutes_at_most() {
             .unwrap_err()
             .starts_with("symphony.toml: "),
         "a timeout is a count of seconds"
+    );
+}
+
+#[test]
+fn the_watcher_rests_its_seconds_and_a_host_merges_within_its_minutes_neither_zero() {
+    assert_eq!(
+        (Settings::default().watch, Settings::default().merge_within),
+        (Duration::from_secs(30), Duration::from_secs(30 * 60))
+    );
+    let settings =
+        Settings::parse("[land]\nwatch_seconds = 5\nmerge_within_minutes = 90\n").unwrap();
+    assert_eq!(
+        (settings.watch, settings.merge_within),
+        (Duration::from_secs(5), Duration::from_secs(90 * 60))
+    );
+    assert_eq!(
+        Settings::parse("[land]\nwatch_seconds = 0\n").unwrap_err(),
+        "symphony.toml: [land] watch_seconds is 0: the watcher rests between its rounds"
+    );
+    assert_eq!(
+        Settings::parse("[land]\nmerge_within_minutes = 0\n").unwrap_err(),
+        "symphony.toml: [land] merge_within_minutes is 0: a host is given time to merge"
+    );
+    // A count of minutes past what a duration holds in seconds saturates, never wraps.
+    let far = Settings::parse(&format!("[land]\nmerge_within_minutes = {}\n", i64::MAX)).unwrap();
+    assert_eq!(far.merge_within, Duration::from_secs(u64::MAX));
+    assert!(
+        Settings::parse("[land]\nwatch_seconds = -1\n")
+            .unwrap_err()
+            .starts_with("symphony.toml: "),
+        "a rest is a count of seconds"
     );
 }
 

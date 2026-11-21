@@ -2,7 +2,8 @@
 //! machine's one server's alone, as the board's health record is, since a private server's files
 //! would write over its. The worker's board tick starts it once in each hour of the hub's clock,
 //! the first tick after the hub starts included: the tick makes the roll-up's one board read, with
-//! the store it read, and hands it, with the kept scan of the live branches' cards, to a thread of
+//! the store it read (and, on a board that runs a custom workflow, the read of its tasks' recorded
+//! transitions after it), and hands it, with the kept scan of the live branches' cards, to a thread of
 //! its own, which reads git and the documents and writes the files. That thread is never joined: a
 //! stop or a reload waits on none of it, and a roll-up a stop cut short leaves each file whole, as
 //! each is written aside and renamed. One roll-up runs at a time; an hour that comes while one runs
@@ -140,7 +141,10 @@ impl Hub {
         rollup.tried = Some(hour);
         let days = symphony::reports::due(&rollup.folder, now);
         let read = match board {
-            Some(store) => store.report_records(days[0]).map_err(|e| e.to_string()),
+            Some(store) => store
+                .report_records(days[0])
+                .and_then(|read| store.report_places(read))
+                .map_err(|e| e.to_string()),
             None => Err("the board could not be reached".into()),
         };
         let read = match read {

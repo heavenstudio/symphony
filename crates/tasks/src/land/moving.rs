@@ -31,7 +31,7 @@ impl Moving {
     /// The move named in the lands' `folder`, if one is.
     pub fn read(folder: &Path) -> Option<Moving> {
         let text = fs::read_to_string(folder.join(MOVING)).ok()?;
-        serde_json::from_str(&text).ok()
+        crate::objects::parse(&text)
     }
 
     /// Named in `folder`, whole or not at all.

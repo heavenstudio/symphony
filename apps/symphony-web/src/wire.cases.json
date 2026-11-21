@@ -3458,6 +3458,95 @@
         "workflow": 2
       }
     },
+    "attempts": {
+      "attempts": [
+        {
+          "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "created": 1763500000006,
+          "revision": 6,
+          "current": false,
+          "lane": "executor/amber",
+          "role": "executor",
+          "handle": "amber",
+          "configuration": "cloud",
+          "predecessor": null,
+          "relation": null,
+          "successor": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "dispatch": "terminal",
+          "ending": "stopped",
+          "held": null,
+          "cancellation": "none",
+          "collection": "not_started",
+          "cleanup": "not_due",
+          "resource": "res-1",
+          "generation": "g1",
+          "conversation": "conversation-1",
+          "initiator": "service host/launcher",
+          "controls": { "cancel": false, "stop": [], "resume": [], "view": true, "unserved": null }
+        },
+        {
+          "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "created": 1763500000004,
+          "revision": 4,
+          "current": true,
+          "lane": "executor/amber",
+          "role": "executor",
+          "handle": "amber",
+          "configuration": "cloud",
+          "predecessor": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "relation": "resume",
+          "successor": null,
+          "dispatch": "running",
+          "ending": null,
+          "held": null,
+          "cancellation": "none",
+          "collection": "not_started",
+          "cleanup": "not_due",
+          "resource": "res-2",
+          "generation": "g1",
+          "conversation": null,
+          "initiator": "human local/owner",
+          "controls": {
+            "cancel": true,
+            "stop": ["pause", "terminate"],
+            "resume": [],
+            "view": true,
+            "unserved": null
+          }
+        },
+        {
+          "id": "cccccccccccccccccccccccccccccccc",
+          "created": 1763500000002,
+          "revision": 2,
+          "current": true,
+          "lane": "reviewer/coral",
+          "role": "reviewer",
+          "handle": null,
+          "configuration": "lab",
+          "predecessor": null,
+          "relation": null,
+          "successor": null,
+          "dispatch": "paused",
+          "ending": null,
+          "held": null,
+          "cancellation": "none",
+          "collection": "not_started",
+          "cleanup": "not_due",
+          "resource": "lab-7",
+          "generation": null,
+          "conversation": "conversation-7",
+          "initiator": "service host/launcher",
+          "controls": {
+            "cancel": true,
+            "stop": [],
+            "resume": [],
+            "view": false,
+            "unserved": "No resume or view here: its provider lab is not one this server holds"
+          }
+        }
+      ]
+    },
+    "attemptLink": { "url": "https://provider.invalid/res-2", "valid_for_ms": 10000 },
     "agentPage": {
       "view": {
         "machine_work": {
@@ -3813,6 +3902,73 @@
             "slowest_ms": null,
             "writes": 0,
             "write_p90_ms": null
+          },
+          "spend": [
+            {
+              "role": "executor",
+              "tokens": {
+                "input": 10,
+                "cache_write_5m": 2000,
+                "cache_write_1h": 300,
+                "cache_read": 90000,
+                "output": 1500,
+                "calls": 4
+              },
+              "cost": {
+                "dollars": 2.0,
+                "input": 0.01,
+                "cache_write_5m": 0.25,
+                "cache_write_1h": 0.05,
+                "cache_read": 0.45,
+                "output": 1.24,
+                "unpriced": [],
+                "prices": "2026-11-16"
+              }
+            },
+            {
+              "role": "reviewer",
+              "tokens": {
+                "input": 10,
+                "cache_write_5m": 2000,
+                "cache_write_1h": 300,
+                "cache_read": 90000,
+                "output": 1500,
+                "calls": 4
+              },
+              "cost": {
+                "dollars": 1.0,
+                "input": 0.01,
+                "cache_write_5m": 0.25,
+                "cache_write_1h": 0.05,
+                "cache_read": 0.45,
+                "output": 0.24,
+                "unpriced": [
+                  {
+                    "model": "gpt-x",
+                    "speed": "standard",
+                    "tokens": {
+                      "input": 10,
+                      "cache_write_5m": 2000,
+                      "cache_write_1h": 300,
+                      "cache_read": 90000,
+                      "output": 1500,
+                      "calls": 4
+                    }
+                  }
+                ],
+                "prices": "2026-11-16"
+              }
+            }
+          ],
+          "workflow": {
+            "phases": [
+              { "id": "build", "label": "Build", "hours": 30.5 },
+              { "id": "verify", "label": "Verify", "hours": 6.0 }
+            ],
+            "states": [
+              { "id": "working", "label": "Working", "hours": 30.5 },
+              { "id": "awaiting", "label": "Awaiting", "hours": 6.0 }
+            ]
           }
         }
       ],
@@ -3825,7 +3981,91 @@
           "changed": ["settings"]
         }
       ],
-      "unread": ["/repo/.git/symphony/reports/2026-11-08.json: not read"]
+      "unread": ["/repo/.git/symphony/reports/2026-11-08.json: not read"],
+      "landed": {
+        "tasks": 2,
+        "without": 1,
+        "median": 1.5,
+        "dearest": [
+          {
+            "slug": "sim/jump",
+            "at": 1794189600.0,
+            "tokens": {
+              "input": 10,
+              "cache_write_5m": 2000,
+              "cache_write_1h": 300,
+              "cache_read": 90000,
+              "output": 1500,
+              "calls": 4
+            },
+            "cost": {
+              "dollars": 2.0,
+              "input": 0.01,
+              "cache_write_5m": 0.25,
+              "cache_write_1h": 0.05,
+              "cache_read": 0.45,
+              "output": 1.24,
+              "unpriced": [],
+              "prices": "2026-11-16"
+            }
+          }
+        ],
+        "first_round": {
+          "tokens": {
+            "input": 10,
+            "cache_write_5m": 2000,
+            "cache_write_1h": 300,
+            "cache_read": 90000,
+            "output": 1500,
+            "calls": 4
+          },
+          "cost": {
+            "dollars": 2.0,
+            "input": 0.01,
+            "cache_write_5m": 0.25,
+            "cache_write_1h": 0.05,
+            "cache_read": 0.45,
+            "output": 1.24,
+            "unpriced": [],
+            "prices": "2026-11-16"
+          }
+        },
+        "later_rounds": {
+          "tokens": {
+            "input": 10,
+            "cache_write_5m": 2000,
+            "cache_write_1h": 300,
+            "cache_read": 90000,
+            "output": 1500,
+            "calls": 4
+          },
+          "cost": {
+            "dollars": 1.0,
+            "input": 0.01,
+            "cache_write_5m": 0.25,
+            "cache_write_1h": 0.05,
+            "cache_read": 0.45,
+            "output": 0.24,
+            "unpriced": [
+              {
+                "model": "gpt-x",
+                "speed": "standard",
+                "tokens": {
+                  "input": 10,
+                  "cache_write_5m": 2000,
+                  "cache_write_1h": 300,
+                  "cache_read": 90000,
+                  "output": 1500,
+                  "calls": 4
+                }
+              }
+            ],
+            "prices": "2026-11-16"
+          }
+        },
+        "again": 1
+      },
+      "prices": "2026-11-16"
     },
     "emptyReports": {
       "grain": "day",
@@ -3835,7 +4075,185 @@
       "buckets": [],
       "first": null,
       "marks": [],
-      "unread": []
+      "unread": [],
+      "landed": null,
+      "prices": ""
+    },
+    "taskTokens": {
+      "total": {
+        "input": 20,
+        "cache_write_5m": 4000,
+        "cache_write_1h": 600,
+        "cache_read": 180000,
+        "output": 3000,
+        "calls": 8
+      },
+      "cost": {
+        "dollars": 3.0,
+        "input": 0.02,
+        "cache_write_5m": 0.5,
+        "cache_write_1h": 0.1,
+        "cache_read": 0.9,
+        "output": 1.48,
+        "unpriced": [
+          {
+            "model": "gpt-x",
+            "speed": "standard",
+            "tokens": {
+              "input": 10,
+              "cache_write_5m": 2000,
+              "cache_write_1h": 300,
+              "cache_read": 90000,
+              "output": 1500,
+              "calls": 4
+            }
+          }
+        ],
+        "prices": "2026-11-16"
+      },
+      "by_role": [
+        {
+          "role": "executor",
+          "tokens": {
+            "input": 10,
+            "cache_write_5m": 2000,
+            "cache_write_1h": 300,
+            "cache_read": 90000,
+            "output": 1500,
+            "calls": 4
+          },
+          "cost": {
+            "dollars": 2.0,
+            "input": 0.01,
+            "cache_write_5m": 0.25,
+            "cache_write_1h": 0.05,
+            "cache_read": 0.45,
+            "output": 1.24,
+            "unpriced": [
+              {
+                "model": "gpt-x",
+                "speed": "standard",
+                "tokens": {
+                  "input": 10,
+                  "cache_write_5m": 2000,
+                  "cache_write_1h": 300,
+                  "cache_read": 90000,
+                  "output": 1500,
+                  "calls": 4
+                }
+              }
+            ],
+            "prices": "2026-11-16"
+          }
+        },
+        {
+          "role": "reviewer",
+          "tokens": {
+            "input": 10,
+            "cache_write_5m": 2000,
+            "cache_write_1h": 300,
+            "cache_read": 90000,
+            "output": 1500,
+            "calls": 4
+          },
+          "cost": {
+            "dollars": 1.0,
+            "input": 0.01,
+            "cache_write_5m": 0.25,
+            "cache_write_1h": 0.05,
+            "cache_read": 0.45,
+            "output": 0.24,
+            "unpriced": [],
+            "prices": "2026-11-16"
+          }
+        }
+      ],
+      "by_round": [
+        {
+          "round": 1,
+          "tokens": {
+            "input": 10,
+            "cache_write_5m": 2000,
+            "cache_write_1h": 300,
+            "cache_read": 90000,
+            "output": 1500,
+            "calls": 4
+          },
+          "cost": {
+            "dollars": 2.0,
+            "input": 0.01,
+            "cache_write_5m": 0.25,
+            "cache_write_1h": 0.05,
+            "cache_read": 0.45,
+            "output": 1.24,
+            "unpriced": [
+              {
+                "model": "gpt-x",
+                "speed": "standard",
+                "tokens": {
+                  "input": 10,
+                  "cache_write_5m": 2000,
+                  "cache_write_1h": 300,
+                  "cache_read": 90000,
+                  "output": 1500,
+                  "calls": 4
+                }
+              }
+            ],
+            "prices": "2026-11-16"
+          }
+        },
+        {
+          "round": 2,
+          "tokens": {
+            "input": 10,
+            "cache_write_5m": 2000,
+            "cache_write_1h": 300,
+            "cache_read": 90000,
+            "output": 1500,
+            "calls": 4
+          },
+          "cost": {
+            "dollars": 1.0,
+            "input": 0.01,
+            "cache_write_5m": 0.25,
+            "cache_write_1h": 0.05,
+            "cache_read": 0.45,
+            "output": 0.24,
+            "unpriced": [],
+            "prices": "2026-11-16"
+          }
+        }
+      ]
+    },
+    "emptyTaskTokens": {
+      "total": {
+        "input": 0,
+        "cache_write_5m": 0,
+        "cache_write_1h": 0,
+        "cache_read": 0,
+        "output": 0,
+        "calls": 0
+      },
+      "cost": {
+        "dollars": 0.0,
+        "input": 0.0,
+        "cache_write_5m": 0.0,
+        "cache_write_1h": 0.0,
+        "cache_read": 0.0,
+        "output": 0.0,
+        "unpriced": [],
+        "prices": ""
+      },
+      "by_role": [],
+      "by_round": []
+    },
+    "taskCosts": {
+      "prices": "2026-11-16",
+      "costs": [
+        { "slug": "w/a", "dollars": 12.345, "unpriced": false },
+        { "slug": "w/b", "dollars": 0.0, "unpriced": true }
+      ]
     },
     "blocks": [
       {

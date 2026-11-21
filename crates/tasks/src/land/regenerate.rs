@@ -134,7 +134,7 @@ impl Passed {
     pub fn read(folder: &Path) -> Passed {
         fs::read_to_string(folder.join(PASSED))
             .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
+            .and_then(crate::objects::parse)
             .unwrap_or_default()
     }
 
@@ -259,7 +259,7 @@ impl State {
     /// As the lands' `folder` keeps it.
     pub fn read(folder: &Path) -> Option<State> {
         let text = fs::read_to_string(folder.join(STATE)).ok()?;
-        serde_json::from_str(&text).ok()
+        crate::objects::parse(&text)
     }
 
     /// Whether a round finished with the default branch at `tip`: its outputs found current there,
@@ -319,7 +319,7 @@ impl Checked {
     /// As the lands' `folder` keeps it.
     pub fn read(folder: &Path) -> Option<Checked> {
         let text = fs::read_to_string(folder.join(CHECKED)).ok()?;
-        serde_json::from_str(&text).ok()
+        crate::objects::parse(&text)
     }
 
     /// `state` on `tip` as this process writes it now, filed in `task`, said by `line`.
@@ -614,6 +614,7 @@ pub fn run_by(
             named: false,
             transport,
             delivery,
+            mode: super::Mode::Land,
             out: &mut *out,
         };
         let mut regenerator = Regenerator {

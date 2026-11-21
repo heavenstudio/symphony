@@ -3,7 +3,7 @@
 //! from the cards loaded in the browser.
 use serde_json::{Value, json};
 
-use crate::{SHOWN, chrome, dist, site::Site};
+use crate::{PAGE_WIDTH, SHOWN, chrome, dist, site::Site};
 
 const STAGES: [&str; 6] = [
     "concept",
@@ -146,14 +146,19 @@ fn the_board_fills_the_window_for_both_its_ghost_and_its_cards() {
             "document.querySelector('.waiting-board.waiting-ghost') !== null",
             SHOWN
         ));
-        let page_width = "Math.round(document.querySelector('main').getBoundingClientRect().width)";
-        assert_eq!(page.eval(page_width), json!(width), "{width}: the ghost");
+        // The page's main and the width the window leaves the page beside its scrollbar.
+        let widths = format!(
+            "[Math.round(document.querySelector('main').getBoundingClientRect().width), Math.round({PAGE_WIDTH})]"
+        );
+        let [main, window]: [u64; 2] = serde_json::from_value(page.eval(&widths)).unwrap();
+        assert_eq!(main, window, "{width}: the ghost");
         site.hold_route("/api/task-board", false);
         assert!(page.wait_for(
             "document.querySelector('.waiting-board .taskcard') !== null",
             SHOWN
         ));
-        assert_eq!(page.eval(page_width), json!(width), "{width}: the cards");
+        let [main, window]: [u64; 2] = serde_json::from_value(page.eval(&widths)).unwrap();
+        assert_eq!(main, window, "{width}: the cards");
     }
 }
 

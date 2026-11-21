@@ -132,6 +132,12 @@ fn scenario(exe: &str, rev: &str, filer: &str, child: &str, expected: &Value) ->
                 "instruction": false}),
             none.clone(),
         ),
+        // A project's program reading a task's execution attempts: none on a task never run.
+        held(
+            "attempts",
+            json!({"slug": "sim/held"}),
+            json!({"attempts": []}),
+        ),
         held(
             "create",
             json!({"slug": "tests/main-red-held", "title": "Red", "by": filer, "body": "",
@@ -277,6 +283,10 @@ fn scenario(exe: &str, rev: &str, filer: &str, child: &str, expected: &Value) ->
 #[test]
 fn the_calls_a_projects_programs_make_answer_the_fields_they_read() {
     let mut c = Case::new();
+    // A project's programs call from its checkout, whose project scopes its attempts.
+    let root = crate::repository(&crate::scratch("contract-project"));
+    std::fs::write(root.join("symphony.toml"), "[project]\nid = \"sim\"\n").unwrap();
+    c.env.cwd = root;
     // An orchestrator that stays, given every task filed: each task has a role to read.
     let orch = c.register_settled("orchestrator");
     c.ok(&orch, &["wait", "--timeout", "0"]);
@@ -330,7 +340,7 @@ fn version_answers_this_builds_api_and_schema_without_the_board() {
     env.vars.insert("TASKS_SERVER".into(), "127.0.0.1:1".into());
     assert_eq!(
         answer(&env, json!({"method": "version"})),
-        json!({"ok": {"api": {"major": 2, "minor": 4},
+        json!({"ok": {"api": {"major": 2, "minor": 6},
             "schema": symphony_board::schema::VERSION}})
     );
     let said = answer(&env, json!({"method": "version", "args": {"major": 2}}));

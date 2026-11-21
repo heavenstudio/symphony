@@ -19,9 +19,11 @@ import {
   linkedFigures,
   openReports,
   type Page,
+  PLACES_NAMED,
   parseGrain,
   paths,
   period,
+  placeSeries,
   ReportsPage,
   ReportsView,
   rangeName,
@@ -30,7 +32,10 @@ import {
   reportsItem,
   reportsWindow,
   SECTIONS,
+  SpendSummary,
   toggle,
+  windowSpend,
+  workflowSection,
 } from "./reports";
 import { Backoff } from "./state";
 import { asking, CASES, childrenOf, memoryStorage, reply, server } from "./testing";
@@ -280,6 +285,8 @@ describe("the answer", () => {
       first: null,
       marks: [],
       unread: [],
+      landed: null,
+      prices: "",
     });
     const empty = read(CASES.samples.emptyReports);
     expect([empty.buckets, empty.first]).toEqual([[], null]);
@@ -316,6 +323,7 @@ describe("the charts", () => {
     expect(drawn.map(([heading]) => heading)).toEqual([
       "Flow",
       "Agents",
+      "Tokens and cost",
       "Decisions and code",
       "Quality",
       "Board health",
@@ -405,6 +413,11 @@ describe("the charts", () => {
     const drawn = charts(read(CASES.samples.reports), []);
     expect(firsts(drawn, "agents")).toEqual([1.5, 1.5, 1.5, 0, 2.5]);
     expect(values(drawn, "health", 2)).toEqual([3]);
+    expect(find(drawn, "phases").series.map((one) => [one.name, one.values])).toEqual([
+      ["Build", [30.5]],
+      ["Verify", [6]],
+    ]);
+    expect(values(drawn, "states")).toEqual([30.5]);
   });
 
   it("read the wire's own fixture", () => {
@@ -416,6 +429,155 @@ describe("the charts", () => {
     expect(values(drawn, "health", 2)?.[0]).toBe(12);
     expect(values(drawn, "waits", 1)?.[0]).toBeNull();
     expect(figures(shown)[0].value).toBe("5");
+  });
+});
+
+/** A period's hours by phase and by state (`PlacedHours`), each entry `[id, label, hours]`. */
+function placed(phases: [string, string, number][], states: [string, string, number][]): Wire {
+  const entry = ([id, label, hours]: [string, string, number]) => ({ id, label, hours });
+  return { phases: phases.map(entry), states: states.map(entry) };
+}
+
+/** The three days of `wire`, Monday's and Wednesday's roll-up recording a custom workflow. */
+function workflowWire(): Wire & { buckets: Wire[] } {
+  const days = wire();
+  const [monday, , wednesday] = days.buckets;
+  if (monday) {
+    monday.workflow = placed(
+      [
+        ["build", "Build", 10],
+        ["verify", "Verify", 4],
+        ["build", "Make", 1],
+      ],
+      [
+        ["working", "Working", 9],
+        ["awaiting", "Awaiting", 4],
+        ["blocked", "Blocked", 2],
+      ],
+    );
+  }
+  if (wednesday) wednesday.workflow = placed([["build", "Make", 3]], [["working", "Working", 3]]);
+  return days;
+}
+
+describe("the workflow's charts", () => {
+  it("are left out while no period records a workflow", () => {
+    expect(workflowSection(page(), [])).toBeNull();
+    expect(charts(page(), []).map(([heading]) => heading)).not.toContain("Workflow");
+    // A server built before the field, or a board that runs none, writes none; one that names it
+    // null records none either.
+    const nulls = wire();
+    for (const one of nulls.buckets) one.workflow = null;
+    expect(workflowSection(read(nulls), [])).toBeNull();
+  });
+
+  it("follow Flow with time by phase and by state, a gap where a period records none", () => {
+    const drawn = charts(read(workflowWire()), []);
+    expect(drawn.map(([heading]) => heading).slice(0, 3)).toEqual(["Flow", "Workflow", "Agents"]);
+    const phases = find(drawn, "phases");
+    expect(phases.title).toBe("Time by phase");
+    expect(phases.unit).toBe("hours");
+    expect(phases.note).toContain("per day");
+    expect(phases.note).toContain("never counted here");
+    expect(phases.series.map((one) => [one.name, one.values])).toEqual([
+      ["Build", [10, null, 0]],
+      ["Make", [1, null, 3]],
+      ["Verify", [4, null, 0]],
+    ]);
+    expect([gap(phases, 1), gap(phases, 2)]).toEqual([true, false]);
+    expect(phases.cover).toEqual([1, 0, 5 / 11]);
+    const states = find(drawn, "states");
+    expect(states.series.map((one) => [one.name, one.values])).toEqual([
+      ["Working", [9, null, 3]],
+      ["Awaiting", [4, null, 0]],
+      ["Blocked", [2, null, 0]],
+    ]);
+    // The same hours, counted twice: each chart's own total.
+    const total = (chart: ChartData) =>
+      chart.series.flatMap((one) => one.values).reduce<number>((all, v) => all + (v ?? 0), 0);
+    expect([total(phases), total(states)]).toEqual([18, 18]);
+  });
+
+  it("name a label two IDs share by its ID too, and fold the smallest past the palette", () => {
+    const shared = read({
+      ...wire(),
+      buckets: [
+        bucket(MONDAY, MONDAY + DAY, {
+          rolled: 24,
+          workflow: placed(
+            [
+              ["review", "Review", 2],
+              ["security", "Review", 1],
+            ],
+            [],
+          ),
+        }),
+      ],
+    });
+    expect(placeSeries(shared.buckets, "phases").map(([name]) => name)).toEqual([
+      "Review (review)",
+      "Review (security)",
+    ]);
+    const many: [string, string, number][] = [6, 5, 4, 3, 2, 1].map((hours) => [
+      `p${hours}`,
+      `Phase ${hours}`,
+      hours,
+    ]);
+    const crowded = read({
+      ...wire(),
+      buckets: [bucket(MONDAY, MONDAY + DAY, { rolled: 24, workflow: placed(many, []) })],
+    });
+    const series = placeSeries(crowded.buckets, "phases");
+    expect(series).toHaveLength(PLACES_NAMED + 1);
+    expect(series.map(([name, values]) => [name, values[0]])).toEqual([
+      ["Phase 6", 6],
+      ["Phase 5", 5],
+      ["Phase 4", 4],
+      ["Phase 3", 3],
+      ["Other", 3],
+    ]);
+    const five = read({
+      ...wire(),
+      buckets: [
+        bucket(MONDAY, MONDAY + DAY, { rolled: 24, workflow: placed(many.slice(0, 5), []) }),
+      ],
+    });
+    expect(placeSeries(five.buckets, "phases").map(([name]) => name)).not.toContain("Other");
+    // An entry without its hours or its ID is not read; one without its label is named by its ID.
+    const odd = read({
+      ...wire(),
+      buckets: [
+        bucket(MONDAY, MONDAY + DAY, {
+          rolled: 24,
+          workflow: {
+            phases: [{ id: "build", hours: 1 }, { id: "", label: "X", hours: 1 }, { id: "v" }],
+            states: [],
+          },
+        }),
+      ],
+    });
+    expect(placeSeries(odd.buckets, "phases")).toEqual([["build", [1]]]);
+    expect(find(charts(odd, []), "states").series).toEqual([]);
+  });
+
+  it("hide a series hidden on its own chart alone", () => {
+    const drawn = charts(read(workflowWire()), [seriesKey("phases", "Make")]);
+    expect(find(drawn, "phases").series.map((one) => one.hidden)).toEqual([false, true, false]);
+    expect(find(drawn, "states").series.every((one) => !one.hidden)).toBe(true);
+  });
+
+  it("read the wire's own fixture", () => {
+    const drawn = charts(read(fixture), []);
+    expect(find(drawn, "phases").series.map((one) => [one.name, one.values])).toEqual([
+      ["Build", [20.5, null]],
+      ["Verify", [6, null]],
+      ["Make", [4, null]],
+    ]);
+    expect(find(drawn, "states").series.map((one) => one.name)).toEqual([
+      "Working",
+      "Awaiting",
+      "Blocked",
+    ]);
   });
 });
 
@@ -773,7 +935,7 @@ describe("the page's view", () => {
         "settings changed, settings: land without the check (4f1c0a9b2d3e)</li></ul></div>",
     );
     // Each chart mounts once it comes near the screen, its ghost in its place until then.
-    expect(html.match(/class="viewport-slot chart-slot"/g)).toHaveLength(14);
+    expect(html.match(/class="viewport-slot chart-slot"/g)).toHaveLength(16);
     expect(html).toContain('<section class="reports-section" aria-label="Board health"><h2>');
     expect(html).not.toContain("No roll-up yet");
     expect(html).not.toContain("not read");
@@ -1135,6 +1297,182 @@ describe("a window opened", () => {
     await done;
     expect(told).toEqual([]);
     expect(asked).toHaveLength(0);
+  });
+});
+
+/** `n` input tokens in one call, as the wire writes tokens. */
+const tokens = (n: number) => ({
+  input: n,
+  cache_write_5m: 0,
+  cache_write_1h: 0,
+  cache_read: 0,
+  output: 0,
+  calls: 1,
+});
+
+/** What `n` tokens cost, `dollars` in all, with `unpriced` tokens of a model with no price. */
+const cost = (dollars: number, unpriced = 0) => ({
+  dollars,
+  input: dollars,
+  cache_write_5m: 0,
+  cache_write_1h: 0,
+  cache_read: 0,
+  output: 0,
+  unpriced: unpriced > 0 ? [{ model: "gpt-x", speed: "standard", tokens: tokens(unpriced) }] : [],
+  prices: "2026-11-16",
+});
+
+/** A role's spend in a period: `n` tokens worth `dollars`, `unpriced` of them with no price. */
+const spending = (role: string, n: number, dollars: number, unpriced = 0) => ({
+  role,
+  tokens: tokens(n),
+  cost: cost(dollars, unpriced),
+});
+
+/**
+ * The fixture week with what the roll-up told of tokens: Monday's by four roles, a worker's on a
+ * model with no price; Tuesday's none, as no source recorded it; Wednesday's none, its hours with
+ * no pair of roll-ups. Two tasks landed, one with none recorded.
+ */
+function spendWire(): Wire {
+  const whole = wire();
+  const [monday, tuesday, wednesday] = whole.buckets;
+  return {
+    ...whole,
+    buckets: [
+      {
+        ...monday,
+        spend: [
+          spending("executor", 2_000_000, 8),
+          spending("reviewer", 500_000, 2),
+          spending("orchestrator", 100_000, 0.4),
+          spending("worker", 300_000, 0, 300_000),
+        ],
+      },
+      { ...tuesday, spend: null },
+      wednesday,
+    ],
+    landed: {
+      tasks: 2,
+      without: 1,
+      median: 5,
+      dearest: [
+        { slug: "sim/jump", at: MONDAY + HOUR, tokens: tokens(1_500_000), cost: cost(6) },
+        { slug: "sim/fix", at: MONDAY + 2 * HOUR, tokens: tokens(1_000_000), cost: cost(4, 9) },
+      ],
+      first_round: { tokens: tokens(2_000_000), cost: cost(7, 9) },
+      later_rounds: { tokens: tokens(500_000), cost: cost(3) },
+      again: 1,
+    },
+    prices: "2026-11-16",
+  };
+}
+
+describe("the tokens and their cost", () => {
+  it("are drawn by role, a period that told none a gap, with the prices' day in the note", () => {
+    const shown = read(spendWire());
+    const drawn = charts(shown, []);
+    const dollars = find(drawn, "cost");
+    expect(dollars.unit).toBe("dollars");
+    expect(dollars.series.map((series) => series.name)).toEqual([
+      "Orchestrators",
+      "Executors",
+      "Reviewers",
+      "Other roles",
+    ]);
+    // A worker's tokens are another role's, in no dollar: the table names no price for them.
+    expect(firsts(drawn, "cost")).toEqual([0.4, 8, 2, 0]);
+    expect(firsts(drawn, "tokens")).toEqual([100_000, 2_000_000, 500_000, 300_000]);
+    expect(dollars.series[1]?.values).toEqual([8, null, null]);
+    expect(dollars.cover).toEqual([1, 0, 0]);
+    expect([gap(dollars, 1), gap(dollars, 2)]).toEqual([true, true]);
+    expect(dollars.note).toContain("estimated at API list prices read 2026-11-16");
+    expect(dollars.note).toContain("never money spent");
+    expect(dollars.note).toContain("shared among the hours between them by time");
+    expect(find(charts(page(), []), "cost").note).toContain("read on a day not named");
+  });
+
+  it("are summed over the window, none where no period told any", () => {
+    expect(windowSpend(read(spendWire()))).toEqual({
+      dollars: 10.4,
+      tokens: 2_900_000,
+      unpriced: true,
+      told: 1,
+    });
+    expect(windowSpend(page())).toBeNull();
+  });
+
+  it("say what each landed task took, the dearest a link each, and that every dollar is an estimate", () => {
+    const html = renderToStaticMarkup(<SpendSummary page={read(spendWire())} />);
+    const said = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    expect(said).toContain(
+      "In the 1 of 3 days that told them: $10.40 + unpriced estimated, 2.9M tokens.",
+    );
+    expect(said).toContain(
+      "2 landed with tokens recorded (1 with none, in no figure), each with its subtasks: a " +
+        "median of $5.00 a task.",
+    );
+    expect(html).toContain('<a href="/task/sim/jump">sim/jump</a><span>$6.00 · 1.5M tokens</span>');
+    expect(html).toContain('<a href="/task/sim/fix">sim/fix</a><span>$4.00 + unpriced · 1M tokens');
+    expect(said).toContain(
+      "First rounds $7.00 + unpriced (2M tokens), the review rounds after them $3.00 (500k " +
+        "tokens): 1 of 2 went past their first round.",
+    );
+    expect(said).toContain(
+      "Every dollar here is estimated at API list prices read 2026-11-16, not money spent; a " +
+        "figure marked + unpriced leaves out the tokens of a model the price table does not " +
+        "name: gpt-x 9 tokens.",
+    );
+  });
+
+  it("say so where no task landed, none had tokens or no period told any", () => {
+    const none = (landed: unknown) =>
+      renderToStaticMarkup(<SpendSummary page={read({ ...wire(), landed })} />);
+    expect(none(null)).toContain("No task landed in the window.");
+    expect(none(null)).toContain(
+      "No day of the window told its tokens: an hour&#x27;s are told once two roll-ups span it.",
+    );
+    const empty = { tokens: tokens(0), cost: cost(0) };
+    expect(
+      none({ tasks: 0, without: 3, dearest: [], first_round: empty, later_rounds: empty }),
+    ).toContain("3 landed, none with tokens recorded.");
+    // Every task landed on a model with no price: their median is unpriced.
+    const unpriced = { tokens: tokens(5), cost: cost(0, 5) };
+    expect(
+      none({
+        tasks: 1,
+        dearest: [{ slug: "a/b", at: 1, ...unpriced }],
+        first_round: unpriced,
+        later_rounds: empty,
+      }),
+    ).toContain("a median of unpriced a task");
+  });
+
+  it("are drawn under their charts, and read from the wire's own sample", () => {
+    const html = view(read(spendWire()));
+    expect(html).toContain('<section class="reports-section" aria-label="Tokens and cost">');
+    expect(html).toContain('<div class="reports-spend">');
+    const sample = read(CASES.samples.reports);
+    expect(sample.prices).toBe("2026-11-16");
+    expect(sample.landed?.dearest.map((task) => task.slug)).toEqual(["sim/jump"]);
+    expect(firsts(charts(sample, []), "cost")).toEqual([0, 2, 1, 0]);
+  });
+
+  it.each([
+    ["tasks below none", { tasks: -1 }],
+    ["a median as text", { median: "5" }],
+    ["the dearest as no list", { dearest: {} }],
+    ["a dearest task with no slug", { dearest: [{ at: 1, tokens: tokens(1), cost: cost(1) }] }],
+    ["a dearest task with no cost", { dearest: [{ slug: "a/b", at: 1, tokens: tokens(1) }] }],
+    ["first rounds with no tokens", { first_round: { cost: cost(1) } }],
+    ["later rounds with no cost", { later_rounds: { tokens: tokens(1) } }],
+  ])("refuse an answer whose landed tasks have %s", (_, wrong) => {
+    const whole = spendWire();
+    expect(readReports({ ...whole, landed: { ...(whole.landed as Wire), ...wrong } })).toBeNull();
+  });
+
+  it("refuse prices that are no text", () => {
+    expect(readReports({ ...wire(), prices: 16 })).toBeNull();
   });
 });
 
