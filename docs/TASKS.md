@@ -1,18 +1,18 @@
 # Task board
 
-The standalone workspace provides the generic board and document commands, and
-the default landing, `just land SLUG` ([the default landing](#the-default-landing)),
-which `symphony init` installs in every project. Verification, certificates and the
-landing/stamp recipes in the workflow examples are supplied by a consuming project,
-whose own `land` recipe replaces the default everywhere for it; no project gate
-executable or stamp backend is bundled here. See the workspace [command ownership](../AGENTS.md#command-ownership).
-
 How several agent sessions share work, and how they, and the owner, talk
-about it. Sessions may run in any worktree of this repository; the board is the
+about it. Sessions may run in any worktree of a repository; the board is the
 same for all of them.
 
-
-Commands shown use the consuming project's recipes and board connection.
+This is the board's full reference. [Getting started](GETTING_STARTED.md) walks
+a first task from filing to landing, and [the commands](COMMANDS.md) says which
+command to reach for. The commands shown are the recipes `symphony init`
+installs in a project, the default landing among them, `just land SLUG`
+([the default landing](#the-default-landing)). A project with a landing policy
+of its own (its verification, certificates and stamps, as the `land-approve`,
+`land-stamps` and `land-request` recipes of the examples here) writes its own
+`land` recipe, which replaces the default everywhere for it; Symphony bundles
+no such policy.
 
 ## Where it lives
 
@@ -255,9 +255,12 @@ the room the old store takes comes back only once it is removed. The exports sta
 The `tasks-move` binary, the owner's to run the same way, moves the board's store to the other
 engine (`tasks-move postgresql --as HANDLE`, `tasks-move surrealdb --as HANDLE`) and puts a
 snapshot of a PostgreSQL board back over it (`tasks-move --restore SNAPSHOT --as HANDLE`): held,
-exported, copied, every row compared, then switched under a journal with a commit point. A
-failure before it leaves the board on the engine it was on, nothing is deleted, and a move cut
-short is settled by its holder's next `tasks-move`
+exported, copied, every row compared, then switched under a journal with a commit point. It
+moves the board's own database alone: a scratch board (`--database NAME`) in the same store
+stays in the old store, which is kept whole in `symphony/tasks/moved/`, and the move names each,
+so a scratch board on the new engine starts empty. A failure before the commit point leaves the
+board on the engine it was on, nothing is deleted, and a move cut short is settled by its
+holder's next `tasks-move`
 ([one board's move](analysis/board-pg-cutover.md#one-boards-move),
 [POSTGRESQL](POSTGRESQL.md#holds-snapshots-and-recovery)).
 
@@ -1010,7 +1013,7 @@ another program in its foreground). A close and a restore of one session each ho
 run, so neither starts while the other runs; one whose hold lapsed and was taken over writes
 nothing more, and a restore that lost it kills the terminal it started. A Codex record
 takes the thread its callback registered whichever is written first; one closed with no thread
-says on its thread that restore cannot resume it. See the [tasks skill](../crates/symphony/shipped/skills/tasks/SKILL.md#launch-restore-clean-up-herdr).
+says on its thread that restore cannot resume it. See the [tasks skill](../crates/symphony/shipped/skills/tasks/SKILL.md#launch-restore-clean-up-hc).
 
 An initialized JavaScript REPL can retain `kernel.js` and `trusted-worker.js` under the
 ChatGPT app's bundled `node`. Their command lines do not distinguish waiting for a cell
@@ -1782,7 +1785,7 @@ Decided with it:
 
 A task is a slug (`sim/jump-departure`, the same slug the branch and commits
 use), a title, a markdown body, a priority from `0` (most urgent) to `4`, and
-optional links: `--link docs/game/SPEC.md#Heading` to the spec it implements,
+optional links: `--link docs/SPEC.md#Heading` to the spec it implements,
 `--depends` for tasks that must be done first, `--parent` for a larger task
 or an instruction to an agent ([Subtasks](#subtasks)).
 
@@ -2313,7 +2316,10 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   which answers it once that land advanced the candidate; one covered by any other landing has
   its fix on main and not in the candidate, which is dropped. A red fixed outside this
   repository is answered by its task cancelled, saying where; one done otherwise waits for its
-  land.
+  land. Where a pull request delivers it ([below](#a-land-delivered-by-a-pull-request)), a fix
+  that changes what the client is built from is the one branch that merges main before its land:
+  once from a second head, after the head that commits its own outputs is approved
+  ([RELEASES](RELEASES.md#the-release-candidate)).
 - **Merged and checked.** In a worktree of its own (`land` in the project's `[agents]
   worktrees`, else `symphony/tasks/land/worktree`), never the main checkout: one `--no-ff`
   merge commit, "Merge branch 'SLUG'", committed through the project's git hooks, those git
@@ -2602,7 +2608,9 @@ makes no merge and no push of the default branch: the host of the project's repo
 the task's head into one commit there, and the main checkout follows it. A head that imports the
 project's upstream is the one exception, merged there by a merge commit
 ([below](#an-import-delivered-by-a-pull-request)). With no such key the land is the one above, and
-nothing here is reached. This repository sets none.
+nothing here is reached. This repository sets one: its tasks are delivered to
+`heavenstudio/symphony` by [`symphony-github deliver`](GITHUB.md#delivering-a-land), built in the
+main checkout ([AGENTS](../AGENTS.md#this-repository-as-its-own-project)).
 
 Nobody lands a task there, so an approve of one names no landing to run: it says that the task is
 done on the board and not on the default branch until the host merges it, that the host merges
@@ -4257,8 +4265,10 @@ Cancellation asks for confirmation; done and cancelled tasks cannot be cancelled
 again. The board records these writes as `owner`. In the shared app, cancellation
 also closes the task's sessions and starts the worktree sweep, as the CLI does.
 An agent message addressed to `owner` rings the app's 🔔. Creating, claiming,
-other moves and verdicts go through agents. The app files no task: what the owner
-says that waits on an agent is an [ask](#asks).
+other moves and verdicts go through agents. The app's **+** files a task from a
+line the owner writes, in `concept` under `inbox/`, for an orchestrator to brief
+([REVIEW](REVIEW.md#asking)); anything else the owner says that waits on an agent
+is an [ask](#asks).
 
 ## Asks
 
