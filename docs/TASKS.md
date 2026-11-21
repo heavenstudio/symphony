@@ -14,6 +14,9 @@ of its own (its verification, certificates and stamps, as the `land-approve`,
 `land` recipe, which replaces the default everywhere for it; Symphony bundles
 no such policy.
 
+What the owner sees of it in the app is told in two product specs:
+[the task board](product/BOARD.md) and [a task's page](product/TASK.md).
+
 ## Where it lives
 
 A SurrealDB database (namespace `sf`, database `tasks`) whose server keeps its
@@ -2763,7 +2766,12 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
   there until it does. A check belongs to its commit, so a green eligible on one head merges
   nothing at another; a new commit is pushed to the same pull request at the next dispatch, the
   merge armed across it and pending until the approve names the new head. One whose head and
-  evidence are as last published asks the host nothing more. Armed only while the task is in
+  evidence are as last published asks the host nothing more. Neither does one that runs once the
+  task landed at that head (a write's dispatch that waited for the land of its merge): its log
+  says it landed already, and the thread nothing. One whose publication the host refuses because
+  it merged that head meanwhile says so in its log alone as well, as the watcher's next round
+  closes the task; a pull request merged at another head is the refusal it was. Armed only while
+  the task is in
   review, blocked or done: a task moved back to work (a changes verdict) has its merge turned off
   first and its checks said again after, so no check published meanwhile lets the host merge it,
   and stays so until it moves to review.
@@ -4090,11 +4098,19 @@ its unit, so no number in it reads as a commit. A copy of the board carries the 
 The pages draw the same figures, each with the day its prices were read and as an estimate, never
 money spent ([What the tokens cost](#what-the-tokens-cost)):
 
-- **A task's page** has *Tokens and estimated cost* last, under its thread, closed until opened, which
-  reads `/api/task-tokens?slug=SLUG` (`show --json`'s `tokens` without its `rows`) and draws the
-  total with its kinds, a table by role and one by review round, and the models no price was found
-  for; a task with none says *No tokens recorded for this task.* and draws no table.
-- **A board card** shows its task's cost all told, its subtasks' with it, beside its slug (`$1.23`,
+- **A task's page** says the cost after the time, on its timeline, from
+  `/api/task-tokens?slug=SLUG` (`show --json`'s `tokens`, its `rows` among them): the total after
+  the task's time (`1 d 3 h in all $80.02 · 6 review rounds`), whose words, pointed at or focused,
+  say that it is an estimate and of what day's prices, its split by role and by kind, the tokens
+  and the calls; and each stage stretch's after its own (`3 h 14 m $30.75`). Each row is on
+  exactly one stretch, never a share by time, so the stretches add up to the total: an
+  in-progress stretch carries the executor's rows of its round and what was spent while the task
+  was reserved (the last of two in one round carries both), a review the reviewer's rows of the
+  round it opens, and the executor's where no in-progress stretch follows; a row this places
+  nowhere (a subtask's, round 0, another role) goes to the stretch its first call fell in. A
+  stretch's words say whose calls it carries, when they ran and how many. A task with none draws
+  no cost.
+- **A board card** shows its task's cost all told, its subtasks' with it, before its time (`$1.23 · 1 h`;
   `$1.23+` where some tokens had no price, `unpriced` where none had, its title saying the rest),
   read apart from the board's
   listings, which carry none of it: the cards drawn in one turn are asked for together

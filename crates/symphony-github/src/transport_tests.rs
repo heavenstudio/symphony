@@ -344,3 +344,112 @@ fn a_transport_that_downloads_nothing_says_so_without_the_signature() {
         ))
     );
 }
+
+fn answered(status: u16, headers: &[(&str, &str)]) -> Response {
+    Response {
+        status,
+        headers: (headers.iter())
+            .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+            .collect(),
+        body: r#"{"message":"You have exceeded a secondary rate limit."}"#.into(),
+    }
+}
+
+#[test]
+fn a_rate_limit_is_a_429_or_a_403_that_says_to_wait_or_that_none_remains() {
+    const NONE_LEFT: (&str, &str) = ("x-ratelimit-remaining", "0");
+    for (status, headers, wait) in [
+        // The primary limit: no request remains, and the window's reset is the wait.
+        (
+            403,
+            vec![NONE_LEFT, ("x-ratelimit-reset", "900")],
+            Some(Wait::Until(900)),
+        ),
+        (403, vec![NONE_LEFT], Some(Wait::Unsaid)),
+        (
+            403,
+            vec![("x-ratelimit-remaining", " 0 ")],
+            Some(Wait::Unsaid),
+        ),
+        // A secondary limit that says how long.
+        (403, vec![("retry-after", "30")], Some(Wait::For(30))),
+        (403, vec![("retry-after", "0")], Some(Wait::For(0))),
+        (403, vec![("retry-after", "-5")], Some(Wait::For(0))),
+        // `retry-after` comes before the reset where both are said.
+        (
+            403,
+            vec![
+                ("retry-after", "30"),
+                NONE_LEFT,
+                ("x-ratelimit-reset", "900"),
+            ],
+            Some(Wait::For(30)),
+        ),
+        // One that is no number of seconds is still a limit, its wait the reset or unsaid.
+        (
+            403,
+            vec![
+                ("retry-after", "Wed, 21 Oct 2026 07:28:00 GMT"),
+                ("x-ratelimit-reset", "900"),
+            ],
+            Some(Wait::Until(900)),
+        ),
+        (403, vec![("retry-after", "soon")], Some(Wait::Unsaid)),
+        // A 429 is one whatever its headers.
+        (429, vec![], Some(Wait::Unsaid)),
+        (429, vec![("retry-after", "7")], Some(Wait::For(7))),
+        (
+            429,
+            vec![("x-ratelimit-reset", "900")],
+            Some(Wait::Until(900)),
+        ),
+        (
+            429,
+            vec![("x-ratelimit-remaining", "12")],
+            Some(Wait::Unsaid),
+        ),
+        // A 403 for another reason: requests remain, or the answer says nothing of them, even
+        // where its message names a secondary limit.
+        (403, vec![], None),
+        (
+            403,
+            vec![
+                ("x-ratelimit-remaining", "12"),
+                ("x-ratelimit-reset", "900"),
+            ],
+            None,
+        ),
+        (403, vec![("x-ratelimit-remaining", "")], None),
+        (403, vec![("x-ratelimit-remaining", "none")], None),
+        (403, vec![("x-ratelimit-reset", "900")], None),
+        // No other status is one: the last request of a window also says none remains.
+        (200, vec![NONE_LEFT, ("x-ratelimit-reset", "900")], None),
+        (201, vec![("retry-after", "30")], None),
+        (401, vec![NONE_LEFT], None),
+        (404, vec![NONE_LEFT], None),
+        (422, vec![NONE_LEFT], None),
+        (422, vec![("retry-after", "30")], None),
+        (500, vec![("retry-after", "30")], None),
+        (503, vec![("retry-after", "30")], None),
+    ] {
+        assert_eq!(
+            rate_limited(&answered(status, &headers)),
+            wait,
+            "{status} {headers:?}"
+        );
+    }
+}
+
+#[test]
+fn a_wait_ends_at_its_second_or_that_many_seconds_from_now() {
+    assert_eq!(Wait::For(30).until(100), Some(130));
+    assert_eq!(Wait::For(0).until(100), Some(100));
+    assert_eq!(Wait::For(i64::MAX).until(100), Some(i64::MAX));
+    assert_eq!(Wait::Until(900).until(100), Some(900));
+    assert_eq!(
+        Wait::Until(50).until(100),
+        Some(50),
+        "a reset already past is said as it is"
+    );
+    assert_eq!(Wait::Unsaid.until(100), None);
+}

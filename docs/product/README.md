@@ -8,6 +8,8 @@ of it.
 - [The review queue](QUEUE.md) — every card waiting on the owner, in the order to answer them.
 - [Reading a document](DOCUMENT.md) — contents, comments, evidence, versions and branch comparisons.
 - [Cards and verdicts](CARDS.md) — deciding, notes, Later, branch drafts and saved history.
+- [The task board](BOARD.md) — every task by its stage, and what each waits on.
+- [A task's page](TASK.md) — its gates, timeline, brief, changes and thread, and the owner's approval.
 
 ## The form of a spec
 
@@ -37,21 +39,28 @@ A spec's pictures are taken, never drawn or pasted: `tools/product-pictures.sh` 
 its own over the fixture project (`tools/product-pictures/fixture`, a made-up recipe site with a
 few cards in three folders), takes every line of [pictures.txt](pictures.txt) with `symphony shot`
 on a phone (390x844), wide (1280x800) or both, as the line says, in the light scheme, and writes
-`pictures/NAME-phone.png` and `pictures/NAME-wide.png`. It reaches no shared server and no board,
-and stops the server it started.
+`pictures/NAME-phone.png` and `pictures/NAME-wide.png`. The fixture has a board of its own, which
+`tools/product-pictures/board.sh` fills with a few tasks, one at least in every stage and waiting
+on each kind of thing the board names. The script reaches no shared server and no project's
+board, and stops the server it started.
 
 - **A new picture** is a line in `pictures.txt`: its name, the widths a document shows it at, the
   page's path and, for a state that takes a press to reach, the steps of `symphony shot` that
-  reach it (`--click`, `--type`, `--key`). A state the fixture lacks is added to the fixture. Only
-  a picture a document shows is taken and committed.
+  reach it (`--click`, `--type`, `--key`). A state the fixture lacks is added to the fixture, a
+  task's to `board.sh`. Only a picture a document shows is taken and committed.
 - **One command retakes them all**, or those named: `tools/product-pictures.sh queue`.
 - **A retake that changes nothing writes the same bytes**, so after one, `git status docs/product`
-  lists exactly the pictures that had gone stale. That holds on one Chrome and one set of fonts: a
-  Chrome update can redraw every picture with no page changed, and the whole set is then retaken
-  and committed once.
+  lists exactly the pictures that had gone stale. That holds on one Chrome, one set of fonts and
+  one machine's scroll bars (macOS draws a wide page's bar or not by its *Show scroll bars*
+  setting and whether a mouse is plugged in): a change of any of them can redraw every picture
+  with no page changed, and the whole set is then retaken and committed once.
 - **A task that changes how a page looks retakes its pictures** and commits them with the change:
   they are the after pictures its evidence shows ([CHECKS](../CHECKS.md#evidence-by-kind-of-change)).
 - **They are committed beside the specs**, so a clone and GitHub show them. A wide picture is
   about 0.1 MB and a phone picture, at three pixels to the point, about 0.3 MB.
-- **A page that shows the time of day or an age** (the home page's greeting, "waiting 39 d") is
-  not pictured until its picture can be taken at a fixed time, as it would differ every day.
+- **Every picture is taken at one moment**, a Monday at 09:30 UTC that the script names: the
+  fixture's board is written by commands run at moments counted back from it, the server's board
+  clock is held there, and `symphony shot --clock` holds the page's own. So a page that shows an
+  age or a time ("oldest 6 d", a thread's dates) is the same picture on any day. A page whose
+  words come from somewhere else that moves (a commit's date read from git, the machine's name)
+  is pictured only once the fixture fixes that too.
