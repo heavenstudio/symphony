@@ -6,7 +6,7 @@
 //! they feed the answer, never replace the record, and a probe that cannot be asked is named
 //! `unavailable` with the answer still built from the board.
 //!
-//! The JSON is a contract, listed in docs/BOARD_API.md#the-agents-api:
+//! The JSON is a contract, listed in `docs/BOARD_API.md#the-agents-api`:
 //!
 //! ```text
 //! {"generated": ts, "probes": {"herdr": "ok"|"unavailable", "slots": "ok"|"unavailable"}, "agents": [{

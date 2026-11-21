@@ -4,8 +4,38 @@ How a Symphony release is cut, named and read. Projects that use the Symphony fo
 tags, never main ([its card](DECISIONS.md#symphony-update-command)), since other projects use it. A
 release comes from a run that verifies main in full; an urgent fix may be released out of cycle. It
 is judged by the checks this repository owns, never by a consuming project's suite: a project's
-own reds stay on its own board. The evidence and the update command that takes a release are in
-[the analysis](analysis/symphony-update.md).
+own reds stay on its own board. A project moves to a release itself, by the steps
+[below](#taking-a-release); everything after them is how this repository cuts one. The evidence
+for following tags is in [the analysis](analysis/symphony-update.md).
+
+## Taking a release
+
+Nothing moves a project to a newer Symphony but the project. In order:
+
+1. **Read what it asks of you.** A release's tag message says what a project does to take it
+   ([its notes](#its-notes)): the board's schema when it moved, a `symphony.toml` key that came or
+   went, anything to run once. `git ls-remote --tags https://github.com/heavenstudio/symphony
+   'release-*'` lists the releases, and in a clone `git tag -l --format='%(contents)' NAME` prints
+   one's message. On a machine that holds an installed release ([the install](#the-install)),
+   `just symphony-cli release-notes` prints every section since the project's own release, in
+   order.
+2. **Take the commands.** Installed from crates.io: run [the install line](#packages-on-cratesio)
+   again, which builds the newer version when one is published. Built from a clone: fetch the
+   tags, check the release's tag out and build again. A project that links the libraries by Git
+   names the tag in its `Cargo.toml` and lets Cargo move its lockfile, the related packages
+   together.
+3. **Run `symphony init` again** in the main checkout and commit what it rewrote: the skills,
+   recipes, hooks and rules the release changed. It says of each file whether it was written or
+   is current.
+4. **Move the board when the notes say its schema moved:** `just tasks migrate` in the main
+   checkout, once no session still runs the older commands
+   ([who writes a board](BOARD_OPERATIONS.md#who-writes-a-board)). An older command refuses a newer board
+   before it writes, naming what to rebuild.
+5. **Start the newer server:** `just symphony --stop`, then `just symphony`.
+
+Going back is the commands of the release before, installed or built the same way; a board that
+moved stays at the newer schema, which the older commands refuse to write. On a machine whose
+releases are installed in its machine folder it is [the way back](#the-way-back).
 
 ## A release
 

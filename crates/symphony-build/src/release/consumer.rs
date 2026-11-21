@@ -564,7 +564,7 @@ fn said(history: &[Notes], at: usize, entry: &Entry) -> String {
 }
 
 /// What a board's move from schema `was` to `now` needs of its project
-/// (docs/BOARD_OPERATIONS.md, "Who writes a board").
+/// (`docs/BOARD_OPERATIONS.md`, "Who writes a board").
 fn schema_steps(was: i64, now: i64) -> String {
     format!(
         "Board schema {was} to {now}. A board is moved only by a build at schema {now}: take this \
