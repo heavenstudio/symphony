@@ -179,10 +179,7 @@ pub fn step(line: &Line) -> Step<'_> {
             {
                 return Step::Between(was, "blocked");
             }
-            if let Some(to) = text
-                .strip_prefix(crate::store::UNBLOCK_LINE)
-                .and_then(status_word)
-            {
+            if let Some(to) = crate::stages::unblocked_to(text).and_then(status_word) {
                 return Step::Between("blocked", to);
             }
             let claimed = text.split_once(CLAIMED).is_some_and(|(by, rest)| {

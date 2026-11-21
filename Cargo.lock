@@ -3680,7 +3680,7 @@ dependencies = [
 
 [[package]]
 name = "process-cwd"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "libc",
  "test-time",
@@ -4351,6 +4351,7 @@ name = "symphony-app"
 version = "0.2.0"
 dependencies = [
  "comrak",
+ "ed25519-dalek",
  "fancy-regex",
  "gix",
  "libc",
@@ -4377,7 +4378,7 @@ version = "1.0.0"
 
 [[package]]
 name = "symphony-blocks"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4461,7 +4462,7 @@ dependencies = [
 
 [[package]]
 name = "symphony-docs"
-version = "1.0.1"
+version = "1.1.0"
 
 [[package]]
 name = "symphony-env"
@@ -4482,7 +4483,7 @@ dependencies = [
 
 [[package]]
 name = "symphony-plugin"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "serde",
  "serde_json",

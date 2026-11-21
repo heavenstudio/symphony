@@ -19,7 +19,17 @@
 # 4 %. It replaces 1,530,000, a line on every file once (1,568,481 there), which moved with how many
 # files the builds share and not with what they weigh: the builds grew 2,173 bytes, while the
 # shared chunk's change renamed 23 of the newest build's 32 files, so no reduction will do.
-client = 2_360_000
+# The tokens and estimated cost on the pages (app/token-cost-on-pages) make each build 13,976
+# bytes larger than main's newest at 8f4ccdede: Reports' Tokens and cost section 5,235
+# (reports.js +4,738, reports.css +497), the task page's tokens chunk 3,448 (loaded only when its
+# disclosure opens), the cards' cost 1,920 (board.js +1,847, board.css +73), the cost wording the
+# board, Agents, Reports and that chunk share 1,392 (a chunk of its own, spend.ts), the task page
+# 1,242, Agents 562 and the shared chunk and the shell 180. There the folder is 2,364,681 bytes
+# (that build of 798,823 beside main's 784,847 and 774,889, and 6,122 of page), 4,681 past
+# 2,360,000, where main's own folder had some 19,300 left. No reduction holds: a cut of 4,681
+# would drop a part the task's brief names, and every later build carries the same pages while
+# three builds are kept. The line is that size plus 4 %, by the orchestrator's gate decision.
+client = 2_450_000
 
 # Each binary's file; symphony-server's less the client above, which it embeds.
 [binaries]
@@ -70,7 +80,14 @@ symphony-server = 18_190_000
 # own: encoding_rs (its Big5 tables and encoder, about 72 KB), which gix-filter brings with gix's
 # attributes, and the symphony.toml decoder (project::file::File, 73.5 KB). Measured 12,393,664 at
 # c1b839b53; the line is that plus 4%, rounded down to 10,000. Independent review is required.
-symphony = 12_880_000
+# The board's store reads every answer with each struct from an object alone
+# (perf/board-derived-readers-size), which links no sequence reader beside each struct's map reader:
+# 12,492,992 on main at b6e55fd59, 12,360,880 with it (-132,112). Measured 12,360,880 at 6831be39d;
+# the line is that plus 4%, rounded down to 10,000.
+# Every other read of JSON the board holds as a value, and of text it drops when it cannot read
+# it, through that one reader (perf/board-derived-readers-step-two) took back more. Measured
+# 12,278,240 at 01987f0d9; the line is that plus 4%, rounded down to 10,000.
+symphony = 12_760_000
 # PostgreSQL board selection and lifecycle add 66,176 bytes to tasks and 49,632 to agent-send.
 # agent-send links no snapshot/recovery command body. Canonical four-binary
 # measurement: 6,479,680 / 3,037,536 bytes; each line is that plus 4%, rounded down to 10,000.
@@ -123,6 +140,11 @@ symphony = 12_880_000
 # write for every closure, readers by field of the attempt record) are
 # perf/board-derived-readers-size's. Measured 8,265,760; the line is that plus 4%, rounded down
 # to 10,000. Independent review is required.
+# Those cuts (perf/board-derived-readers-size, then perf/board-derived-readers-step-two: every
+# read of JSON the board holds through one reader, a struct from an object alone, and one fenced
+# write for every attempt decision) took back 413,184 bytes, while tools/workflow-return-to-default
+# added 99,200: 8,580,160 on main at 8804e5c5f, 8,332,128 at 01987f0d9. That plus 4% rounds above
+# this line, which stays; it comes down once tasks is under 8,259,615.
 tasks = 8_590_000
 # The board's operations on tasks a workflow holds (tools/workflow-operations) add 264,656 bytes to
 # agent-send: 3,087,168 at the runtime's d7e3b719d, 3,351,824 with them. agent-send delivers what
@@ -140,5 +162,11 @@ tasks = 8_590_000
 # task. Measured 3,351,824; the line was that plus 4%, rounded down to 10,000. Taken back since,
 # 33,056 bytes: a held task's position, the transitions and the cap's positions read by field from
 # their values, with no decoder, sort or list reader of their own (a4c15da2e, c1b839b53). Measured
-# 3,318,768 at c1b839b53; the line is that plus 4%, rounded down to 10,000.
-agent-send = 3_450_000
+# 3,318,768 at c1b839b53; the line is that plus 4%, rounded down to 10,000. The store reading every
+# answer with each struct from an object alone (perf/board-derived-readers-size) took back 115,600
+# more: 3,352,016 on main at b6e55fd59, 3,236,416 with it. Measured 3,236,416 at 6831be39d; the
+# line was that plus 4%, rounded down to 10,000. Every other read of JSON the board holds as a
+# value, and of text it drops when it cannot read it, through that reader
+# (perf/board-derived-readers-step-two) took back more. Measured 3,170,256 at 01987f0d9; the line
+# is that plus 4%, rounded down to 10,000.
+agent-send = 3_290_000

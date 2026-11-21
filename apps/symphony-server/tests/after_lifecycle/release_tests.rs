@@ -49,6 +49,7 @@ pub(super) fn installed(repo: &Repo, name: &str, mark: &str, server: Option<&str
         commit: "0000000",
         serves: Serves {
             schema: symphony_board::SCHEMA,
+            additions: symphony_board::schema::ADDITIONS,
             protocol: version,
             tasks_api: version,
             pin: symphony::machine::PIN,

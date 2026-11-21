@@ -1,4 +1,6 @@
-//! `tasks migrate`: the board moved forward to this build's schema, or made, and its schema said.
+//! `tasks migrate`: the board moved forward to this build's schema, or made, and its schema said; a
+//! board of this build's contract lacking additive steps it has takes them
+//! ([`crate::schema::ADDED`]), with no writer held, as every build of the contract writes it after.
 //! On a project's live board it runs only in the main checkout, or in any checkout of a repository
 //! with none, and it is what alone moves a live board whose default branch commits no board source
 //! ([`crate::live::may_move`]); on a scratch board it moves it as any writer would. It moves nothing
@@ -120,6 +122,8 @@ fn migrate(env: &Env, leave_behind: bool) -> Result<String, String> {
             .board_version()
             .map_err(|why| why.to_string())?,
     };
+    // The steps of its contract it has, as far as this build's go.
+    let steps_before = version_reader.additions().map_err(|why| why.to_string())?;
     let clock = Clock::of(env)?;
     let how = Opening::write().migrating();
     let how = if leave_behind {
@@ -132,13 +136,35 @@ fn migrate(env: &Env, leave_behind: bool) -> Result<String, String> {
         .board_version()
         .map_err(|e| e.to_string())?
         .unwrap_or_default();
-    Ok(match before {
+    let steps = store.additions().map_err(|e| e.to_string())?;
+    Ok(moved(&board, before, after, (steps_before, steps)))
+}
+
+/// What a migrate of `board` says: made at schema `after`, its version `before` moved to it, or,
+/// at the same version, its additive steps moved from the first of `steps` to the second; else
+/// nothing moved.
+fn moved(board: &str, before: Option<i64>, after: i64, steps: (i64, i64)) -> String {
+    match before {
         None => format!("made {board} at schema {after}"),
         Some(before) if before < after => {
             format!("moved {board} from schema {before} to {after}")
         }
+        Some(_) if steps.0 < steps.1 => format!(
+            "moved {board} at schema {after} from {} to {}",
+            additive(steps.0),
+            additive(steps.1)
+        ),
         Some(_) => format!("{board} is at schema {after}, this build's: nothing to move"),
-    })
+    }
+}
+
+/// `steps` additive steps, as a line says them.
+fn additive(steps: i64) -> String {
+    match steps {
+        0 => "no additive step".into(),
+        1 => "1 additive step".into(),
+        steps => format!("{steps} additive steps"),
+    }
 }
 
 /// Refused unless `env` runs in the main checkout of `live`'s repository, or, where it has none (a
@@ -187,7 +213,7 @@ pub(super) fn version(client: &Client) -> Result<Option<i64>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::in_main;
+    use super::{additive, in_main, moved};
     use crate::cli::Env;
     use crate::live::Live;
     use std::fs;
@@ -242,5 +268,38 @@ mod tests {
             );
         }
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_move_of_additive_steps_says_how_many_the_board_had_and_has() {
+        assert_eq!(
+            [additive(0), additive(1), additive(2)],
+            ["no additive step", "1 additive step", "2 additive steps"]
+        );
+        let board = "the board in database tasks";
+        assert_eq!(
+            moved(board, None, 28, (0, 1)),
+            "made the board in database tasks at schema 28"
+        );
+        // A move of the version says the versions alone, whatever steps came with it.
+        assert_eq!(
+            moved(board, Some(27), 28, (0, 2)),
+            "moved the board in database tasks from schema 27 to 28"
+        );
+        assert_eq!(
+            moved(board, Some(28), 28, (0, 1)),
+            "moved the board in database tasks at schema 28 from no additive step to 1 additive step"
+        );
+        assert_eq!(
+            moved(board, Some(28), 28, (1, 3)),
+            "moved the board in database tasks at schema 28 from 1 additive step to 3 additive steps"
+        );
+        // A board with as many steps as this build, or more, which it leaves as they are.
+        for steps in [(0, 0), (2, 2), (3, 1)] {
+            assert_eq!(
+                moved(board, Some(28), 28, steps),
+                "the board in database tasks is at schema 28, this build's: nothing to move"
+            );
+        }
     }
 }

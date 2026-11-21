@@ -214,13 +214,19 @@ pub(crate) fn install(install: &Install<'_>) -> Installed {
 fn served(manifest: &Manifest) -> String {
     let Serves {
         schema,
+        additions,
         protocol,
         tasks_api,
         pin,
     } = manifest.serves;
+    let steps = match additions {
+        0 => String::new(),
+        1 => " with its additive step".to_string(),
+        steps => format!(" with its {steps} additive steps"),
+    };
     format!(
-        "{} serves board schema {schema}, plugin protocol {}.{} and tasks api {}.{}, at Symphony \
-         pin {pin}",
+        "{} serves board schema {schema}{steps}, plugin protocol {}.{} and tasks api {}.{}, at \
+         Symphony pin {pin}",
         manifest.release, protocol.major, protocol.minor, tasks_api.major, tasks_api.minor
     )
 }
@@ -344,8 +350,16 @@ fn read_serves(server: &str, board: &str) -> Result<Serves, String> {
     let pin = (said.get("pin").and_then(Value::as_u64)).map_or(Ok(0), |pin| {
         u32::try_from(pin).map_err(|_| format!("the release's symphony-server names the pin {pin}"))
     })?;
+    // And one built before the contract, its additive steps: none, as it had none.
+    let additions = match said.get("additions") {
+        None => 0,
+        Some(steps) => (steps.as_i64().filter(|steps| *steps >= 0)).ok_or_else(|| {
+            format!("the release's symphony-server names the additive steps {steps}")
+        })?,
+    };
     Ok(Serves {
         schema: ours,
+        additions,
         protocol: version(&said["protocol"], "plugin protocol")?,
         tasks_api: version(&board["api"], "tasks api")?,
         pin,

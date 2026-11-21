@@ -3,6 +3,13 @@
 //! the board with them. A column added to a board after it was first written (`instruction`, the
 //! liveness columns) may be missing from an old dump, and reads as its default; a table or a column
 //! the copy does not know is refused by name ([`Dump::from_json`]), never dropped.
+//!
+//! A row of an open table ([`crate::schema::OPEN`]) is read past a field its struct does not know:
+//! an additive step's, which a build without the step reads around and whose writes keep it. Each
+//! row refuses one read exactly, as a dump is read ([`crate::objects::read_exact`]), since a copy,
+//! an export or a move to another engine made of it would drop it; every other read hands the row
+//! only the fields it names ([`open_row`], [`crate::objects::read`]), as a task's record does
+//! ([`crate::store`]'s `Beside`).
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -78,14 +85,38 @@ impl Dump {
 }
 
 /// `name`'s rows, taken out of `tables`: none when the dump has no such table (a board from before it).
+/// Read exactly ([`crate::objects::read_exact`]): a row with a field the copy does not know is
+/// refused, as the copy would drop it.
 fn table<T: DeserializeOwned>(
     tables: &mut Map<String, Value>,
     name: &str,
 ) -> Result<Vec<T>, String> {
     tables.remove(name).map_or(Ok(Vec::new()), |rows| {
-        serde_json::from_value(rows)
+        crate::objects::read_exact(&rows)
             .map_err(|e| format!("the dump's {name} are not rows the copy knows: {e}"))
     })
+}
+
+/// Whether `name` is a struct of an open table's rows ([`crate::schema::OPEN`]), by the name its
+/// `Deserialize` gives: what the store's reader hands only the fields the struct names, but where
+/// it reads exactly ([`crate::objects`]). A match, so each struct's reader, whose name is its own
+/// constant, decides it as it is compiled, and only an open table's row names its fields.
+#[inline(always)]
+pub(crate) fn open_row(name: &str) -> bool {
+    matches!(
+        name,
+        "TaskRow"
+            | "LinkRow"
+            | "SessionRow"
+            | "RoleRow"
+            | "MessageRow"
+            | "DeliveryRow"
+            | "DeliveryKeyRow"
+            | "BarredKeyRow"
+            | "TaskSessionRow"
+            | "AskRow"
+            | "UsageRow"
+    )
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -417,6 +448,43 @@ mod tests {
             serde_json::to_value(&role).unwrap(),
             serde_json::json!({"slug": "a", "handle": "h", "role": "executor", "since": 1.0})
         );
+    }
+
+    /// Each open table with the struct its rows are read as, in `schema::OPEN`'s order: a table
+    /// added there, or a struct renamed, without its line here fails.
+    #[test]
+    fn the_open_rows_are_the_structs_of_the_open_tables() {
+        use std::any::type_name;
+        let read_as = [
+            ("task", type_name::<TaskRow>()),
+            ("link", type_name::<LinkRow>()),
+            ("session", type_name::<SessionRow>()),
+            ("role", type_name::<RoleRow>()),
+            ("message", type_name::<MessageRow>()),
+            ("delivery", type_name::<DeliveryRow>()),
+            ("delivery_key", type_name::<DeliveryKeyRow>()),
+            ("barred_key", type_name::<BarredKeyRow>()),
+            ("task_session", type_name::<TaskSessionRow>()),
+            ("ask", type_name::<AskRow>()),
+            ("usage", type_name::<UsageRow>()),
+        ];
+        assert_eq!(read_as.map(|(table, _)| table), crate::schema::OPEN);
+        for (table, path) in read_as {
+            assert!(
+                open_row(path.rsplit("::").next().unwrap()),
+                "{table}: {path}"
+            );
+        }
+        for closed in [
+            "HeldRow",
+            "WorkflowRow",
+            "Dump",
+            "Snapshot",
+            "taskrow",
+            "TaskRow ",
+        ] {
+            assert!(!open_row(closed), "{closed}");
+        }
     }
 
     #[test]

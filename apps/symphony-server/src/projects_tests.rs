@@ -1769,6 +1769,7 @@ fn a_project_naming_a_linked_plugin_says_it_holds_the_machine_on_a_projects_buil
         commit: "abc".into(),
         serves: Serves {
             schema: symphony_board::SCHEMA,
+            additions: symphony_board::schema::ADDITIONS,
             protocol: version,
             tasks_api: version,
             pin: symphony::machine::PIN,

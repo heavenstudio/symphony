@@ -54,7 +54,7 @@ project's pin ([when a landing owes one](docs/CHECKS.md#what-a-landing-tells-a-c
   route in every link and on the wire. Its reads, saves and commits name the file `Project::file`
   maps it to, and every walk goes through `Project::walk`, so what an entrypoint leaves out is
   never listed or read. The Symphony's own routes (`symphony_api::SYMPHONY_ROUTES`, which
-  `assets/shell.js` repeats) win over every entrypoint.
+  `apps/symphony-web/shell/shell.ts` repeats) win over every entrypoint.
 - **The one server** serves every project the machine folder's registry holds, each under
   `/<id>/`. It is the server of the release installed on the machine (`current`) while every
   registered project's plugins answer from a process, which any host serves, and a project's build
@@ -166,8 +166,9 @@ standing rules in [RULES.md](RULES.md).
 tools: `crates/symphony/tests/hooks/own_names.rs` fails on an old state or tool name
 outside the fences it lists, each with its reason (a past incident's record in
 `docs/history/`), and on the first consuming project's name, in any spelling or identifier
-built from it, in a tracked file's text or path: say "the consuming project". The state
-folders are named once, in `crates/tasks/src/folders.rs`.
+built from it, in a tracked file's text or path: say "the consuming project". It passes over
+the owner's own dated lines under a card of a register, saved as they said them, and judges
+every other line. The state folders are named once, in `crates/tasks/src/folders.rs`.
 
 **Memory lives in the repository.** Nothing goes in an agent's own memory folder
 (`~/.claude/projects/…/memory/`): what must outlast a session is guidance here or in a
@@ -212,7 +213,10 @@ not a question in chat.
 
 **Releases.** A land starts a release run (`just release`, below) once `[releases]
 every_landings` tasks (20) have landed since the last release or run ([the
-cadence](docs/RELEASES.md#the-cadence)), and a green release refreshes the machine: the release
+cadence](docs/RELEASES.md#the-cadence)), or, where `[releases] hosted` has the release verified
+on GitHub's runners, once `hosted_every_minutes` passed since the last run started, that run
+verifying nothing here ([the hosted clock](docs/RELEASES.md#the-hosted-clock)), and a green
+release refreshes the machine: the release
 installed in the machine folder ([the install](docs/RELEASES.md#the-install)), each registered
 project's board moved to its schema once every writer seen there in the last week is on the
 release, `current` pointed at it, and the machine's server following `current` by its own reload
@@ -227,7 +231,7 @@ orchestrator who landed it starts at once without asking
 ([the cadence](docs/RELEASES.md#the-cadence)).
 A schema move never waits for the owner: when this board is at a schema the release `current`
 names does not serve, the refresh of a green release serving it points `current` forward itself
-([the forward move](docs/RELEASES.md#the-refresh)). Where one did not, its failed update's task
+([the refresh](docs/RELEASES.md#the-refresh)). Where one did not, its failed update's task
 filed ([an update](docs/RELEASES.md#an-update)), an orchestrator points `current` forward at that
 release at once, without asking, and says so on that task's thread; another project's pages then
 save nothing until its board moves, which its own update's task tells. Restarting the shared

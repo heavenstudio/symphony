@@ -76,6 +76,9 @@ impl Hub {
             // The owner's asks are the one server's to close, as it alone hands saves to the board.
             *hub.owner_asks.get_mut().unwrap_or_else(|e| e.into_inner()) =
                 Some(super::owner_asks::Kept::default());
+            // So are the blocks the owner's word ends: one server moves them, from its pages.
+            *hub.decided.get_mut().unwrap_or_else(|e| e.into_inner()) =
+                Some(symphony::decided::Kept::default());
             // The board's health record is the one server's alone: `tasks status` reads it,
             // and a private server's passes would write over it.
             let mut env = symphony::children::board_env();

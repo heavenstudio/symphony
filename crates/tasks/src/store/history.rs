@@ -9,7 +9,7 @@ use super::surreal::history as sql;
 use super::{Error, Store};
 use crate::alarm::{self, ARROW, CLAIMED, Line, MOVED, Step, UNDER, WAITS_SET};
 use crate::json_object::object;
-use crate::stages::{BLOCK_LINE, UNBLOCK_LINE};
+use crate::stages::{BACK_TO, BLOCK_LINE, UNBLOCKED};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -24,7 +24,7 @@ fn status_vars(since: f64) -> Value {
         ("moved", Value::from(MOVED)),
         ("claimed", Value::from(CLAIMED)),
         ("block", Value::from(BLOCK_LINE)),
-        ("unblock", Value::from(UNBLOCK_LINE)),
+        ("unblock", Value::from(UNBLOCKED)),
         ("waits", Value::from(WAITS_SET)),
         ("under", Value::from(UNDER)),
     ])
@@ -63,8 +63,7 @@ impl Store {
             .and_then(|board| board.get(alarm::FIXED))
             .and_then(|fixed| fixed.get(record.tip))
             .and_then(|ends| ends.get(alarm::written_key(record.at)));
-        let Some(first) =
-            value.and_then(|value| serde_json::from_value::<alarm::Tip>(value.clone()).ok())
+        let Some(first) = value.and_then(|value| crate::objects::read::<alarm::Tip>(value).ok())
         else {
             return Ok(None);
         };
@@ -123,7 +122,8 @@ impl Store {
     pub fn entered_review(&self, slugs: &[&str]) -> Result<HashMap<String, f64>, Error> {
         let vars = json!({
             "moved_in": format!("{ARROW}review"),
-            "unblocked_in": format!("{UNBLOCK_LINE}review"),
+            "unblock": UNBLOCKED,
+            "back_in": format!("{BACK_TO}review"),
         });
         let into = |line: &Line| matches!(alarm::step(line), Step::Between(_, "review"));
         let found = self.newest(slugs, &(sql::into_review(), pg::into_review()), &vars, into)?;
@@ -187,7 +187,7 @@ mod tests {
         for since in [0.0, -0.0, f64::MAX] {
             let expected = json!({
                 "since": since, "moved": MOVED, "claimed": CLAIMED,
-                "block": BLOCK_LINE, "unblock": UNBLOCK_LINE,
+                "block": BLOCK_LINE, "unblock": UNBLOCKED,
                 "waits": WAITS_SET, "under": UNDER,
             });
             assert_eq!(status_vars(since).to_string(), expected.to_string());

@@ -376,12 +376,40 @@ fn the_fragment_reader_preserves_entities_attributes_and_unsupported_content() {
             text: "kept".into()
         }
     );
+    // An element it cannot draw is named alone where it stands, and what it holds is drawn once,
+    // after it, never inside the notice as well.
     assert_eq!(
-        typed[2],
-        Block::Unknown {
-            tag: "widget".into(),
-            text: "visible".into()
-        }
+        typed[2..],
+        [
+            Block::Unknown {
+                tag: "widget".into(),
+                text: String::new()
+            },
+            Block::Group {
+                blocks: vec![paragraph("visible")]
+            }
+        ]
+    );
+    // In a line too: an element no inline kind names is read as blocks there.
+    assert_eq!(
+        blocks::parse("<p>a <blink>old</blink> b</p>", &[], "docs/x.md"),
+        [Block::Paragraph {
+            spans: vec![
+                text("a "),
+                Span::Blocks {
+                    blocks: vec![
+                        Block::Unknown {
+                            tag: "blink".into(),
+                            text: String::new()
+                        },
+                        Block::Group {
+                            blocks: vec![paragraph("old")]
+                        }
+                    ]
+                },
+                text(" b"),
+            ]
+        }]
     );
     let unsupported = blocks::parse(
         "<p surprise='yes'>retained</p><span class='media' data-media='9'></span>",

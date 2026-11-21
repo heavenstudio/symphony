@@ -21,7 +21,7 @@ impl Store {
                 json!({"slug": slug}),
             )
         })?;
-        serde_json::from_value(body).map_err(|e| {
+        crate::objects::read(&body).map_err(|e| {
             Error::Db(format!(
                 "a workflow transition not in the board's shape: {e}"
             ))

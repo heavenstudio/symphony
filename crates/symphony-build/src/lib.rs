@@ -9,6 +9,7 @@ use std::io::Write;
 
 mod commands;
 mod release;
+mod replace;
 
 /// The temporary project tree the unit tests share with the library's tests.
 #[cfg(test)]

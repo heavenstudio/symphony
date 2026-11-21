@@ -121,7 +121,14 @@ impl Store {
                 // whole-board copy (its staging and its swap) and a rebind are held to the store's
                 // own schema, a reader's too.
                 let ahead = self.reader && matches!(run, Run::Guarded { .. });
-                schema::guard_vars(&mut vars, self.schema, ahead, &self.refusal, REFUSED);
+                schema::guard_vars(
+                    &mut vars,
+                    self.schema,
+                    ahead,
+                    &self.refusal,
+                    &self.steps_taken(body, run),
+                    REFUSED,
+                );
                 (
                     schema::GUARD,
                     matches!(run, Run::Guarded { dispatch: true }),
@@ -160,9 +167,33 @@ impl Store {
     }
 }
 
-/// `answer` as the caller's type.
+impl Store {
+    /// What a write run as `run` takes of the board's additive steps ([`schema::Steps`]): a
+    /// whole-board copy, its staging and a rebind exactly the store's own; an ordinary write at
+    /// least the highest step whose table its statement, as it is sent, names on either engine
+    /// ([`schema::needs`]). Whatever a word misses the database refuses itself, before anything
+    /// of the transaction is written: an undefined table on a STRICT board, an undefined field.
+    fn steps_taken(&self, body: &Statement, run: Run) -> schema::Steps {
+        let board = &self.refusal.board;
+        match run {
+            Run::Staging | Run::Own => schema::Steps::exactly(self.additions, board, self.schema),
+            Run::Guarded { .. } | Run::Unguarded => {
+                let texts = std::iter::once(body.surreal.as_ref()).chain(body.postgres_text());
+                let needed = texts
+                    .filter_map(|text| schema::needs(text, &self.added))
+                    .max_by_key(|(_, step)| *step);
+                match needed {
+                    Some((table, step)) => schema::Steps::naming(table, step, board, self.schema),
+                    None => schema::Steps::any(),
+                }
+            }
+        }
+    }
+}
+
+/// `answer` as the caller's type, each struct of it read from an object ([`crate::objects`]).
 fn decoded<T: DeserializeOwned>(answer: Value) -> Result<T, Failure> {
-    serde_json::from_value(answer).map_err(|e| {
+    crate::objects::read(&answer).map_err(|e| {
         Failure::Stop(Error::Db(format!(
             "an answer not in the board's shape: {e}"
         )))
@@ -290,3 +321,82 @@ fn unset_nulls(value: &mut Value) {
         _ => {}
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::execution::Commit;
+    use serde::Deserialize;
+    use serde_json::json;
+
+    #[derive(Debug, PartialEq, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Answer {
+        name: String,
+        at: f64,
+        #[serde(default)]
+        until: Option<f64>,
+    }
+
+    /// What `answer` decodes to as `T`, or the words of its refusal.
+    fn decode<T: DeserializeOwned>(answer: Value) -> Result<T, String> {
+        decoded(answer).map_err(|failure| match failure {
+            Failure::Stop(error) => error.to_string(),
+            Failure::Again => "again".into(),
+        })
+    }
+
+    #[test]
+    fn an_answer_reads_its_structs_from_objects_as_from_value_reads_them() {
+        let read: Answer = decode(json!({"name": "a", "at": 1.50})).unwrap();
+        assert_eq!(
+            read,
+            Answer {
+                name: "a".into(),
+                at: 1.5,
+                until: None,
+            }
+        );
+        let rows: Vec<Answer> = decode(json!([{"name": "b", "at": 2, "until": 3.25}])).unwrap();
+        assert_eq!(rows[0].until, Some(3.25));
+        let missing: Option<Answer> = decode(Value::Null).unwrap();
+        assert_eq!(missing, None);
+        let committed: Commit =
+            decode(json!({"outcome": "committed", "revision": 4, "now": 9})).unwrap();
+        assert_eq!(
+            committed,
+            Commit::Committed {
+                revision: 4,
+                now: 9,
+            }
+        );
+    }
+
+    #[test]
+    fn an_answer_not_in_the_boards_shape_is_refused_in_the_words_it_was() {
+        let says = |answer: Value| decode::<Answer>(answer).unwrap_err();
+        assert_eq!(
+            says(json!({"name": "a"})),
+            "SurrealDB: an answer not in the board's shape: missing field `at`"
+        );
+        assert_eq!(
+            says(json!({"name": "a", "at": 1, "since": 0})),
+            "SurrealDB: an answer not in the board's shape: unknown field `since`, expected one \
+             of `name`, `at`, `until`"
+        );
+        assert_eq!(
+            says(json!({"name": 1, "at": 1})),
+            "SurrealDB: an answer not in the board's shape: invalid type: number, expected a string"
+        );
+        // A struct's fields in an array's order are no answer the board's database gives.
+        assert_eq!(
+            says(json!(["a", 1])),
+            "SurrealDB: an answer not in the board's shape: invalid type: sequence, expected \
+             struct Answer"
+        );
+    }
+}
+
+#[cfg(test)]
+#[path = "transaction_tests.rs"]
+mod guard_tests;

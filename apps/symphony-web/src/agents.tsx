@@ -6,6 +6,7 @@ import { Fragment, useEffect, useReducer, useRef, useState } from "react";
 import {
   type AgentsRead,
   agentLine,
+  agentSpent,
   connectedAgents,
   connection,
   Followed,
@@ -303,11 +304,13 @@ export function AgentLines({
   const holding = held(tasks, handle);
   const done = finished(holding);
   const followed = followedTasks(following.rows, tasks, handle);
+  const spent = agentSpent(agent);
   return (
     <div className="agent">
       <strong>{handle}</strong>{" "}
       <span className={`chip health-${agent.health}`}>{agent.health}</span>
       <p className="muted">{agentLine(agent)}</p>
+      {spent !== null && <p className="muted agent-spent">{spent}</p>}
       <GoToSession handle={handle} go={agent.go} local={local} scope={following.scope} />
       <PhaseChips rows={shownScoped(work, { agent: handle }, true)} />
       <details className="agent-connection">

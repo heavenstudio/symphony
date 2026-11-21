@@ -136,7 +136,11 @@ again before review (but where a pull request delivers the land and the candidat
 delivered head, which no delivery merges: there it never merges `release-candidate`, and one not
 yet published or approved is rebased onto it instead) and never merges main before its land,
 and commits the client its own
-sources make when it changes what the client is built from; its task's text says so. Its own land
+sources make when it changes what the client is built from; its task's text says so. Where a pull
+request delivers the land, such a fix of the client is approved naming that commit whatever its
+assessment names, then merges main once, keeping main's side of every generated path, and that
+merge is approved again and delivered, the candidate taking the commit approved before it
+([RELEASES](docs/RELEASES.md#the-release-candidate)). Its own land
 moves the candidate, and the land that answers the last red starts the candidate's rerun. A red
 whose fix landed with another red's task is closed as covered by that landing, which answers it
 once that land advanced the candidate; closing one as covered by any other landing drops the
@@ -202,7 +206,9 @@ goes through one named helper: in Rust `test_time::wait::until` for a test's wai
 reads what an event dropped under load would have said (`apps/symphony-server/src/backstop.rs`),
 the board store's retry (`crates/tasks/src/store/mod.rs`), `reload/retry.rs`'s `backoff` and
 the GitHub program's `deliver::rest` between two reads of the checks it wrote
-(`crates/symphony-github/src/deliver.rs`); in the React client `src/timing.ts`'s `retryWait` (the
+(`crates/symphony-github/src/deliver.rs`) and the delivery watcher's `dispatch::rest` between two
+rounds of reading whether the host merged, which no event tells this machine
+(`crates/tasks/src/land/dispatch.rs`); in the React client `src/timing.ts`'s `retryWait` (the
 next of a `Backoff`'s waits), `Debounce` (whose rests take each other's place), `deadline` and
 `tick` (to the next minute), with `Backoff` and `tryAgain` (`src/state.ts`), and in its unit
 tests `src/testing.ts`'s `until` for a condition and `turn()` for a turn of the event loop. A

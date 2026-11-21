@@ -64,7 +64,7 @@ impl<'a> Reader<'a> {
             .execution_facts(id)?
             .into_iter()
             .map(|value| {
-                let fact = serde_json::from_value(value["fact"].clone()).map_err(|e| {
+                let fact = crate::objects::read(&value["fact"]).map_err(|e| {
                     Refusal::Board(Error::Db(format!(
                         "an execution fact not in the board's shape: {e}"
                     )))

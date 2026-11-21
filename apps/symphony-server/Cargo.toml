@@ -34,7 +34,7 @@ libc = "0.2"
 symphony-api = { path = "../../crates/symphony-api", version = "=0.2.0" }
 symphony = { package = "symphony-app", path = "../../crates/symphony", version = "=0.2.0" }
 # The plugins a host binary installs before it serves (`binary::run`).
-symphony-plugin = { path = "../../crates/symphony-plugin", version = "1.0.1" }
+symphony-plugin = { path = "../../crates/symphony-plugin", version = "1.1.0" }
 symphony-board = { path = "../../crates/tasks", version = "=0.2.0" }
 # Its variables, each by its one SYMPHONY_ name.
 symphony-env = { path = "../../crates/symphony-env", version = "1.0.0" }

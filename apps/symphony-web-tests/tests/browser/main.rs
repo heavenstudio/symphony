@@ -75,7 +75,9 @@ mod tabs;
 mod task_attempts;
 mod task_diff;
 mod task_gates;
+mod task_posts;
 mod timeline;
+mod token_costs;
 mod touch;
 mod waiting_board;
 mod workflow_board;
@@ -126,9 +128,30 @@ fn announced(what: &str, said: &std::sync::mpsc::Receiver<String>) -> Result<Str
     .unwrap_or_else(|stall| Err(stall.to_string()))
 }
 /// A page script that leaves the page no IndexedDB, as a browser without one: the client cache's
-/// store misses every read and keeps nothing (`assets/cache.js`), so a return visit to the board
+/// store misses every read and keeps nothing (`shell/cache.ts`), so a return visit to the board
 /// or the queue draws from the server under its ghost, as one the device has no copy for does.
 const NO_STORE: &str = "Object.defineProperty(window, 'indexedDB', { value: undefined });";
+
+/// The width the window leaves a page beside its scrollbar, as a script's expression: the window's
+/// (`innerWidth`) less a scrollbar's thickness, probed on a box of its own that scrolls. The page
+/// keeps that room whether or not it scrolls (`scrollbar-gutter: stable` on its root,
+/// styles/board.css), and so do its fixed controls, so what fills the window is this wide. Chrome
+/// draws a classic scrollbar, 15 px of every width, or an overlay one, none, as the machine's
+/// settings choose (macOS's automatic scroll bars are classic while a mouse is attached; a phone's
+/// emulation draws overlay ones), so it is never `innerWidth` alone; nor
+/// `document.documentElement.clientWidth`, which leaves the gutter out only while the page
+/// scrolls. It is read from the window, not from the root's own box, so a rule that narrows the
+/// root (a `max-width` or a margin on `html`) narrows what fills the window and not this.
+const PAGE_WIDTH: &str = "(() => { const probe = document.createElement('div'); \
+    probe.style.cssText = 'position:absolute;top:0;left:0;width:100px;height:100px;overflow:scroll;visibility:hidden'; \
+    document.documentElement.append(probe); const bar = probe.offsetWidth - probe.clientWidth; \
+    probe.remove(); return innerWidth - bar; })()";
+
+/// `script`, a page function of the window's width, called with [`PAGE_WIDTH`], as a script's
+/// expression.
+fn at_page_width(script: &str) -> String {
+    format!("({script})({PAGE_WIDTH})")
+}
 
 /// Hold, from the page's first script on, every timer of the asks' retry the page sets
 /// ([`symphony_web_tests::RETRY_MS`]: a failed read of a document's questions or of the chat's
@@ -193,7 +216,7 @@ fn the_ask_poll_hold_keeps_a_retry_left_waiting_and_lets_a_cleared_one_go() {
 /// A page script that keeps every idle callback the page asks for, none run by the browser, until
 /// the test runs them ([`RUN_IDLE`]): `window.idle` holds them. The shell asks the idle browser
 /// for its warm-up and its read-ahead in the task that marks the page ready
-/// (`data-navigation=ready`, shell.js), and for nothing where the browser saves data or its link
+/// (`data-navigation=ready`, shell.ts), and for nothing where the browser saves data or its link
 /// is too slow: so a page that is ready has asked for every one it will, and one that asked for
 /// none warms and reads nothing, with no window to wait through to see it.
 const HOLD_IDLE: &str =

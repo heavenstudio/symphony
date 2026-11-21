@@ -35,7 +35,7 @@ struct Ask {
 /// whatever process has its pid, its start unknown; an error when it cannot be read.
 fn read_ask(path: &Path) -> std::io::Result<Option<Ask>> {
     match fs::read_to_string(path) {
-        Ok(text) => Ok(Some(serde_json::from_str(&text).unwrap_or_default())),
+        Ok(text) => Ok(Some(crate::objects::parse(&text).unwrap_or_default())),
         Err(problem)
             if matches!(
                 problem.kind(),

@@ -79,7 +79,7 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["src/**/*.test.{ts,tsx}"],
+    include: ["src/**/*.test.{ts,tsx}", "shell/*.test.ts"],
     // A test waits on its condition, never for a time of its own (time is Vitest's fake timers, a
     // wait for a condition testing.ts's `until`). The one time a test, a hook or a wait has is a
     // backstop only a stall reaches (a machine asleep, a process stopped). The report beside

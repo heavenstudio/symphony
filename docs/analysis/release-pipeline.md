@@ -288,10 +288,14 @@ tasks land:
 
 - **On this machine** the count of landings stays as it is. It is there so the machine is not
   always under a run's load, and no run is added beside it.
-- **On GitHub**, once [the hosted run](#the-hosted-run-on-github) exists and its trial has said
-  how long a run takes, a run of main's tip may start on a clock set from that length: a run of
-  an hour started about every half hour, so at most two run at once. It is the whole run on one
-  commit, never a partial round, and a tip already judged starts none.
+- **On GitHub**, where [the hosted run](#the-hosted-run-on-github) is on, a run of main's tip
+  starts on a clock set from how long a run there takes, which the trial measured at 49 minutes
+  (workflow run 44903375883). The example of a run of an hour started every half hour, two at
+  once, is not built: one run at a time holds the release's lock, so the interval is the least
+  time between two starts and a run longer than it is followed by the next. It is the whole run
+  on one commit, never a partial round, a tip already judged starts none, and a run it starts
+  verifies nothing on this machine ([RELEASES](../RELEASES.md#the-hosted-clock), which says what
+  was built and what each run still costs this machine: a landing is the tick).
 - **A red** of such a run is a red of main as any other, naming the landings since the last
   green run, fewer than today's because the runs are closer.
 
@@ -353,7 +357,10 @@ and each test now has a time and a timeout of its own under one scheduler
 
 Once the GitHub plugin is in, a release's checks run on GitHub's CI, and a project without the
 plugin keeps the local run exactly as it is. The design, approved on
-[its card](../DECISIONS.md#release-run-on-github) and not built yet:
+[its card](../DECISIONS.md#release-run-on-github). Its workflow is in the tree, and `just
+release` starts it where a project turns it on, which this repository has not
+([RELEASES](../RELEASES.md#on-githubs-runners), which says what was built and what was left for
+later: a rerun of named steps and the rerun of a failure alone stay on this machine):
 
 **Optional by the plugin.** The release run verifies locally unless the project's GitHub
 integration is installed, its repository identity verified and hosted verification turned on,
@@ -366,10 +373,13 @@ with the commit as its input: never on a push or a pull request, since a task's 
 ([the landing design](github-pr-landing.md#checks-github-requires)). It checks out that commit
 and runs that commit's own `just verify`, a step or a lane to a job:
 
-- one job builds every test binary once and hands it to the tests' jobs as an archive, where
-  nextest's can carry them; else each job builds its own, which the trial settles;
 - one job each for the lint, the client check, the size check, the docs audit, the crates and
-  semver checks, and for each lane of the tests;
+  semver checks, the hosted board's check and the tests, the jobs being the steps the commit's
+  `tools/verify.sh` names;
+- the tests one job: their one build is the build folder itself, since all their lanes but one run
+  by Cargo over it to keep their fixtures shared, and a nextest archive carries only what nextest
+  runs. Jobs of a few lanes each would take that folder from one build, or each build its own,
+  which the trial's measure of the folder and of the build decides;
 - every job runs whatever the others did, as the steps do now, and uploads its log and its line
   of `steps.tsv`.
 
@@ -440,8 +450,9 @@ work for a run. The deterministic reds would have been found as they were.
 measured a run. From then a run of main's tip may follow a clock set from a run's length
 ([C](#c-main-judged-in-smaller-steps)), which this machine's load never allowed.
 
-It waits for `tools/github-pr-delivery`, whose credential and repository binding it uses. Its
-first step is the trial: the workflow on one commit, by hand, measured.
+`just release` starting it uses the credential and repository binding of the GitHub plugin
+(`tools/github-pr-delivery`), and waits for the trial: the workflow started by hand on one
+commit, and measured.
 
 ## The candidate's bounds
 
@@ -489,7 +500,7 @@ Tasks:
 - **To be filed by the orchestrator**, which the board then names: B's rerun inside the run, with
   the candidate's reruns bound counting only what fails alone; the hosted run's trial, after
   `tools/github-pr-delivery`; the hosted run in `just release`, after the trial; and the hosted
-  run's clock, after both.
+  run's clock, after both (`tools/release-hosted-clock`).
 
 Neither a card nor a task:
 

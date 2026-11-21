@@ -23,7 +23,7 @@ export function publish(event: string): void {
   dispatchEvent(new Event(event));
 }
 
-/** A live update about to be drawn keeps what the reader looks at in place (shell.js). */
+/** A live update about to be drawn keeps what the reader looks at in place (shell.ts). */
 export function holdPlace(rows: string): void {
   (snapshot("reviewHoldPlace") as ((rows: string) => void) | undefined)?.(rows);
 }
@@ -42,7 +42,7 @@ export function field(value: unknown, key: string): unknown {
  * Draw again each time the window says one of `events`, at once, within the event, as the Dioxus
  * frame did. React would leave an update from a window event to its scheduler, a later task that
  * can come after the next frame, where the shell gives the focus back to `+` after Escape on a
- * loading sheet (`assets/shell.js`): `+` would still be hidden then, and the focus would fall to
+ * loading sheet (`shell/shell.ts`): `+` would still be hidden then, and the focus would fall to
  * the body.
  */
 export function useWindowEvents(events: readonly string[]): void {

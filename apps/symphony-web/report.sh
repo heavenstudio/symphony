@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The bundle report of a build: each kind's first visit and what it defers, file by file with its
-# bytes as built and gzipped, read from Vite's manifest in OUT/.modules/web (report.js,
+# bytes as built and gzipped, read from Vite's manifest in OUT/.modules/web (report.ts,
 # src/bundle-report.ts). It reads a build and writes nothing.
 #
 #     apps/symphony-web/report.sh OUT       OUT as build.sh took it (`just symphony-ui-dist OUT`)
