@@ -250,7 +250,10 @@ fn the_store_keeps_reads_by_format_and_project_and_holds_the_approved_caps() {
     for (n, &(named, wait)) in NAMED_OPENINGS.iter().enumerate() {
         let page = format!("/named-{n}.html");
         chrome.open(&site.url(&page));
-        assert!(chrome.wait_for("window.symphonyCache", crate::SHOWN), "{page}");
+        assert!(
+            chrome.wait_for("window.symphonyCache", crate::SHOWN),
+            "{page}"
+        );
         a_page_that_names_the_wait_for_its_database_waits_that_long(&mut chrome, named, wait);
         for (at, also) in coverage(&mut chrome).into_iter().enumerate() {
             ran[at] |= also;
