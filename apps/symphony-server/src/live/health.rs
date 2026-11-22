@@ -155,7 +155,13 @@ impl Hub {
     /// server started over records written at a held moment, as the product specs' pictures are
     /// taken (`tools/product-pictures.sh`), then reads the window those records are in.
     pub(crate) fn recorded_now(&self) -> f64 {
-        held(std::env::var("TASKS_NOW").ok().as_deref()).unwrap_or_else(|| self.now())
+        self.recorded_at(std::env::var("TASKS_NOW").ok().as_deref())
+    }
+
+    /// [`Self::recorded_now`] with `tasks_now` for what `TASKS_NOW` holds: the moment it holds the
+    /// clock at, else the hub's clock.
+    pub(crate) fn recorded_at(&self, tasks_now: Option<&str>) -> f64 {
+        held(tasks_now).unwrap_or_else(|| self.now())
     }
 
     /// Tell every page, on the server's notice, whether the board went back, or its dispatch or

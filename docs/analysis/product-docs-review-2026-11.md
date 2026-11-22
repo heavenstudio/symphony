@@ -154,6 +154,29 @@ One document each under `docs/product/`, in the form of the example. The one-par
 REVIEW.md then keeps the rules of cards and loses what the DOCUMENT and CARDS specs say better and
 what belongs to the server's guide; that is a task of its own after those two specs.
 
+- [r] **product-spec-form** — Each page of the Symphony would get a short document of its own, written for whoever uses the page: what it is for, what you do there, what it shows, its states, and how it looks on a phone, with pictures taken by one command from a made-up project. Today no document does this for any page, and no document outside this register shows a picture. One spec is written so you can judge the form: [the review queue](../product/QUEUE.md). Is this the form the other thirteen should take? Approve, or comment with what to change. [[analysis/product-docs-review-2026-11#Proposed specs]]
+  [2026-11-15 02:40] agent — Posted for the board task `docs/product-docs-review`. The example's pictures, as the command took them, wide and on a phone:
+
+    ![The queue, wide](../product/pictures/queue-wide.png) ![The queue on a phone](../product/pictures/queue-phone.png)
+
+    **What approving sets:**
+
+    - **One page, one document**, under `docs/product/`, with the same parts in the same order ([the form](../product/README.md#the-form-of-a-spec)). No source file, route or wire type in it: those stay in the reference documents, which a spec links.
+    - **Pictures are taken, never pasted.** `tools/product-pictures.sh` takes every listed page, on a phone, wide or both as a spec shows it, from a small fixture project, on a server of its own. Taken twice on one Chrome, a picture comes out byte for byte the same, so after a retake git lists the ones that went stale. No checker is added.
+    - **The task that changes a page retakes its pictures**, as its after pictures.
+
+    **Cost:**
+
+    - About 0.1 MB a wide picture and 0.3 MB a phone picture, committed beside the specs as documents' pictures already are. At three wide and one phone picture a spec, the whole set is about 8 MB.
+    - Each retake commits the changed pictures again, into every clone's history: about 0.1 to 0.4 MB for each picture of the page that changed.
+    - A Chrome update, or other fonts, can redraw every picture with no page changed. Git then shows the whole set as stale, and one retake commits the whole set again, about 8 MB.
+
+    **Earlier verdicts checked:** your approval of **pictures-in-every-clone** ("agreed with F") decides where these pictures live, committed beside the documents that show them, so that is not asked. It says nothing of what a product spec holds or how its pictures are made and kept current, and no other verdict does: that is this card.
+
+    **What it leaves for later:** the home page shows the hour's greeting and each card's age, so its picture needs the shot taken at a fixed time; that is built when its spec is written. The other thirteen specs, one paragraph each, and the ranked gaps are in the linked review.
+  [2026-11-15 06:38] owner · approved
+  [2026-11-15 11:08] agent · resolved
+
 ## Pictures
 
 Tried in this task, with nothing new built: an 80-line script starts a server of its own over a

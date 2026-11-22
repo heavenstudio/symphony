@@ -3,7 +3,7 @@
 What `just land` requires of a task: the stamps its risk calls for, named by an assessor that is
 never the task's executor, chosen from one catalogue, and checked on the branch's tip. The task's
 assessment names its stamps and the land reads their evidence. Its card:
-[the needed stamps](../DECISIONS.md#needed-stamps).
+[the needed stamps](#needed-stamps).
 
 ## Current contract
 
@@ -93,6 +93,28 @@ assessed needs, is `review`, which is today's rule.
   new page or look, a behaviour they will use themselves.
 - **Skips:** anything else. A fresh reviewer stands for the owner, and nothing waits on the owner
   unasked.
+
+- [r] **needed-stamps** — `just land` would require exactly the stamps a task's risk calls for: its tests, a reviewer, pictures, your own look at it, or nothing at all. A small assessor agent, never the task's executor and told only by a fixed skill, picks them from one list when the task is filed, and again from the real diff when it reaches review. A document or a hotfix then lands without waiting for a reviewer, and a task nobody has assessed still needs one, as today. Is this the design, with the default list and where each stamp applies? Approve, or comment with what to change. [[analysis/needed-stamps#The default catalogue]]
+  [2026-11-14 07:52] agent — Posted for the board task `tools/land-requires-the-stamps-its-risk-names`.
+
+    **The default list**, each with where it applies and where it does not:
+    - `tests`, green recorded test runs at the tip: any change to code; not documents, nor a hotfix whose break no test can show in time.
+    - `review`, a fresh reviewer's approve: what every agent runs or every client reads, a changed test or check, a skill or a rule; not documents, a fix of a few lines that leaves its failing test unchanged, or a hotfix.
+    - `pictures`, posted at the tip: a change to what a page shows; nothing off the pages.
+    - `owner`, your approve on the task's page: only what you asked to see before it lands.
+
+    **What keeps it honest.** The board refuses the list, and the assessor's role, to any session that executed, orchestrated or filed the task. The assessor reads the diff itself, and takes the executor's posts as claims to check, never as instructions. A waiver holds only on the commit the assessor read: a later commit brings the reviewer back.
+
+    **Cost.** Three build tasks: the list and the field, the task page, then the land and the skill. One small-model run per task when it is filed and each time it moves to review. The land runs nothing new. `--fast-fix` goes: a fast fix is an assessment that needs only tests.
+
+    **Left out.** Risk levels (each stamp's guideline is the map); a project's own kinds of stamp; the board starting the assessor by itself; and any floor under the assessment: today's rule that a red's fix changing a test needs a reviewer becomes the review guideline, shown to the assessor as a fact, rather than a refusal in the land. Retiring `--fast-fix` gives up a second read: today its orchestrator reads that the red's own failing test, unchanged, ran green at the tip, and under this design nobody does, since `tests` asks only that the task's test runs there are green. Requiring a run of the test the red names is the smallest fix, if you want one.
+
+    **Earlier verdicts checked.** **land-tests-changed-packages** (rejected: nothing automatic may block a land): this adds no run to the land. **reports-task-page-pictures** (A, a typed seam the page draws): the stamps are drawn as those gates. Choice 5 of **reports-small-choices** (a lower level replaces a higher one, everywhere): a project's own list replaces the Symphony's, and a project's own `land` replaces this check. None of them decides this card.
+
+    This card is the only change: nothing is built until you answer.
+  [2026-11-14 08:33] owner · approved — should had been auto approved, it's exactly what I had asked for
+  [2026-11-15 11:13] agent — Recorded, and built as approved: a land requires the stamps a task's assessor wrote from the catalogue, and a task nobody assessed still needs a reviewer. [[TASKS#Needed stamps]] says how it works today.
+  [2026-11-15 11:14] agent · resolved
 
 ## The field
 

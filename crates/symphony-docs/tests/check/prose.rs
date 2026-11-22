@@ -52,6 +52,20 @@ fn a_card_slug_in_prose_is_named_with_its_place() {
     );
 }
 
+/// A card inline in a document, under the paragraph it decides and outside any register: its own
+/// lines are its record, and the prose around it is still read.
+#[test]
+fn an_inline_cards_own_lines_may_name_cards_and_the_prose_beside_it_may_not() {
+    let page = "# X\n\nThey travel by roads.\n\n- [ ] **road-width** — How wide? See **quiet-roads**.\n  [2026-09-24] agent — Posted, after quiet-roads.\n\n    **Base.** quiet-roads as it stands.\n\nWide, as road-width has it.\n";
+    let found = lint_tree("slug-inline", &[("docs/kappa/x.md", Some(page))]);
+    has(&found, &["docs/kappa/x.md:10", "road-width"]);
+    assert_eq!(
+        found.iter().filter(|p| p.contains("card slug")).count(),
+        1,
+        "{found:#?}"
+    );
+}
+
 #[test]
 fn registers_code_blocks_history_and_analysis_may_name_a_card() {
     let found = lint_tree("slug-exempt", &[]);

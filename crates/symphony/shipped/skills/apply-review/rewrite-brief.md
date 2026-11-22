@@ -2,10 +2,12 @@
 
 Work in the assigned project checkout, under its AGENTS.md, local rules and review conventions.
 
-The owner reviews the design direction as one-line decision cards in `docs/DECISIONS.md`: `[x]`
-approved, `[-]` rejected, `[?]` question, `[r]` resolved (approved, nothing left to answer),
-`[ ]` not yet answered. Under each card is its dated history: `owner` lines are the owner's
-words, `agent` lines are agent replies. A `[ ]` card is a proposal, never approved.
+The owner reviews the design direction as one-line decision cards, each at the place in its
+document where the thing it decides is said (the register, `docs/DECISIONS.md` by convention,
+holds those with no such place): `[x]` approved, `[-]` rejected, `[?]` question, `[r]` resolved
+(approved, nothing left to answer), `[ ]` not yet answered. Under each card is its dated
+history: `owner` lines are the owner's words, `agent` lines are agent replies. A `[ ]` card is a
+proposal, never approved.
 
 Documents the owner disagreed with are rewritten, not pointed at the register: rewrite the files
 assigned to you so they agree with the verdicts and read as current direction to someone who
@@ -31,8 +33,10 @@ Writing rules:
 - Keep direction and the reasons that matter; cut repetition, hedging, repeated caveats,
   commentary about the review process and process history.
 - Plain words: no jargon unless defined in one line.
-- Keep a heading `docs/DECISIONS.md` links to through `[[FILE#Heading]]` while its section
-  exists; list any you rename or remove in your report. Do not edit `docs/DECISIONS.md`.
+- Keep a heading a card links to through `[[FILE#Heading]]` while its section exists; list any
+  you rename or remove in your report. Do not edit a card: its line and the indented lines under
+  it stay exactly as they are and where they are, in your files too, with the passage each
+  decides kept above it.
 - Keep a relative link to a picture that still illustrates current direction. A picture a
   document shows is a file committed beside it under `docs/`, never linked from the ignored
   `artifacts/` folder (`just symphony-cli docs-audit --check` refuses one git does not track).
@@ -40,6 +44,5 @@ Writing rules:
   assign. Commit, delegate or land only within the assignment's authorization.
 
 Report back: for each file, its old and new word count (`wc -w`), the verdicts you applied by
-slug, any heading linked from the register that you renamed or removed, anything you
-deliberately left out, and any contradiction between verdicts (state it; do not resolve it by
-choosing).
+slug, any heading linked from a card that you renamed or removed, anything you deliberately
+left out, and any contradiction between verdicts (state it; do not resolve it by choosing).

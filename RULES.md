@@ -129,7 +129,7 @@ A public Rust item a consumer calls keeps working in the release that brings its
 without `#[deprecated]`: a consumer's lint denies warnings. A separate task removes it only in a
 later release, with read-only evidence that consumers have migrated, updating the consumer-API
 compile guards with it. The procedure is [CHECKS](docs/CHECKS.md#consumer-api-changes), from
-[its card](docs/DECISIONS.md#consumer-api-break-release).
+[its card](docs/analysis/release-candidate.md#consumer-api-break-release).
 
 ### `code/no-timed-waits`
 
@@ -271,11 +271,14 @@ a rejected approach keeps one line and a pointer.
 ### `docs/no-ledger-in-documents`
 
 A document describes intent, behaviour and options, and a guide states each rule and its reason
-in plain words. The owner's exact words and the dated history of who decided what live in the
-decision register (`docs/DECISIONS.md`) and on task threads; a document whose reason matters
-links its card ([REVIEW](docs/REVIEW.md#slugs-in-prose)).
-`crates/symphony/tests/hooks/owner_words.rs` fails on the shapes it knows, and a reviewer reads
-for the others.
+in plain words. The owner's exact words and the dated history of who decided what live on the
+cards, each card's dated lines, and on task threads. A card sits at the place in its document
+where the thing it decides is said, never in a section at the document's end, and in the
+decision register (`docs/DECISIONS.md`) only when no document says it
+([REVIEW](docs/REVIEW.md#where-a-card-is-written)). The prose around a card says how things are,
+and where the reason matters it links the card ([REVIEW](docs/REVIEW.md#slugs-in-prose)).
+`crates/symphony/tests/hooks/owner_words.rs` fails on the shapes it knows outside a card's own
+lines, and a reviewer reads for the others.
 
 ### `docs/one-topic-per-doc`
 
@@ -330,7 +333,7 @@ scratch repository and a scratch board, never the real worktrees or the live boa
 
 A consuming project's checkout on this machine is read-only to an agent working here: nothing in
 it is changed but what a release's refresh moves there, and an act the owner's word names, such
-as a pin's commit made once by hand ([its card](docs/DECISIONS.md#consumer-manifest-line)).
+as a pin's commit made once by hand ([its card](docs/RELEASES.md#consumer-manifest-line)).
 
 ### `commits/only-the-land-pushes`
 

@@ -146,8 +146,9 @@ consuming project's.
   hand a task whose merge did not come. What dispatches is the main checkout's
   `.target/bin/symphony-github`, a build of main put there by hand
   (`tools/cargo.sh build -p symphony-github`, then copied) and again once a change to that
-  program lands. A decision the owner must make is a card in [DECISIONS](docs/DECISIONS.md),
-  not a question in chat.
+  program lands. A decision the owner must make is a card at the place in its document where
+  the thing it decides is said ([REVIEW](docs/REVIEW.md#where-a-card-is-written)), not a
+  question in chat.
 - **Releases.** A land starts a release run by [the cadence](docs/RELEASES.md#the-cadence), and a
   green release refreshes the machine. What an orchestrator runs without asking (a refresh's
   retry, the run after a landing that moves the board's schema, once the board's landed line is

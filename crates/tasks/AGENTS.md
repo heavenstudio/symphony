@@ -127,7 +127,7 @@ a newer board, and a change keeps what it reads:
 - A counter an older reader caches is retired where it refuses it, never removed
   (`schema::BOARD_MARKER`). A table nothing writes any more keeps its definition, as removing one
   is a schema move (the search-by-meaning tables,
-  [their card](../../docs/DECISIONS.md#board-search-by-meaning)).
+  [their card](../../docs/analysis/code-review-2026-11.md#board-search-by-meaning)).
 - The `writer` table stays schemaless with no event, its line written without the schema guard,
   and the Symphony, which opens its board to read, stays uncounted (`store/writers.rs`;
   `tests/store/writers.rs`).

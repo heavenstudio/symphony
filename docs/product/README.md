@@ -17,7 +17,7 @@ of it.
 ## The form of a spec
 
 Product specs follow this approved form and the pictures' rule below
-([its card](../DECISIONS.md#product-spec-form)).
+([its card](../analysis/product-docs-review-2026-11.md#product-spec-form)).
 
 A spec is short enough to read on a phone in a few minutes, and has these parts in this order.
 A part with nothing to say is left out.
