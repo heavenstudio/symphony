@@ -83,6 +83,13 @@ impl<'a> From<Cow<'a, str>> for Statement<'a> {
 
 impl<'a> Statement<'a> {
     /// The statement `postgres`, written for PostgreSQL alone.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "every statement the store sends has its SurrealQL until SurrealDB's are removed"
+        )
+    )]
     pub fn postgres_alone(postgres: Pg<'a>) -> Statement<'a> {
         Statement {
             surreal: None,
