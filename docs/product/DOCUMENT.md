@@ -74,7 +74,8 @@ explains answers shared across main and a branch.
 | Return visit | the copy this browser kept, identified as a device copy, while freshness is checked; saves wait |
 | Connection lost | the document stays visible with a warning that it may be out of date; it reconnects by itself |
 | Read fails | an explanation and Retry; content already drawn stays visible |
-| Document missing | Document not found, with All documents and Retry; a document removed while open gets a notice |
+| Document moved | a route no file has opens the one document of its file name in its place, the heading kept, as a wikilink to that name finds it; Back skips the old route |
+| Document missing | Document not found, with All documents and Retry, and each document of the route's name when more than one has it; a document removed while open gets a notice |
 | Empty body | the document head with no body sections |
 | Save refused or fails | an error beside the editor, with the draft retained |
 | Markdown outside the document folders | a read-only page in the project's look, with heading links; no block comments, card editor or Versions and diffs |

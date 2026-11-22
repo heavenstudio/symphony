@@ -90,9 +90,10 @@ fn named_in<'a>(line: &str, slugs: &HashMap<char, Vec<&'a str>>) -> Vec<&'a str>
     found
 }
 
-/// Every card slug named in a document's prose. Registers, a card's own lines, code blocks, `docs/history/` and a top
-/// `docs/analysis/` are exempt: documents describe the design as it is now; why and when it was
-/// decided live on the cards and in the ledger.
+/// Every card slug named in a document's prose. Registers, a card's own lines, code blocks and the
+/// documents in a `history` or `analysis` folder at any depth ([`PROSE_EXEMPT`]) are exempt:
+/// documents describe the design as it is now; why and when it was decided live on the cards and
+/// in the ledger.
 pub fn history_in_prose(root: &Path) -> Result<Vec<Finding>, ReviewError> {
     let docs = scan(root)?;
     let project = crate::project::Project::of(root);
@@ -220,12 +221,11 @@ pub fn project_problems(root: &Path) -> Vec<String> {
 /// rule refuses (an agent no launch starts among them), or a required value left out is named on
 /// `err`, exit 1; a file that loads is said on `out`, exit 0. It judges no model or recipe against a
 /// list (either is any text) and, unlike the lint, reads no plugin this build holds and no document.
-/// Recognizable cross-agent model names warn
-/// without changing the exit code, judged on the settings in force, the local file's over the
-/// project file's. The local settings file beside the main checkout's project
-/// file is judged with it ([`crate::project::Project::local_problems`]): a setting it may not
-/// hold, a value the board cannot read, or the file tracked by git, is exit 1. More than one
-/// folder is exit 2.
+/// Recognizable cross-agent model names warn without changing the exit code, judged on the settings
+/// in force, the local file's over the project file's. The local settings file beside the main
+/// checkout's project file is judged with it ([`crate::project::Project::local_problems`]): a
+/// setting it may not hold, a value the board cannot read, or the file tracked by git, is exit 1.
+/// More than one folder is exit 2.
 pub fn settings(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     const USAGE: &str = "usage: symphony settings-check [DIR]";
     let root = match args {

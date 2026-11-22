@@ -63,32 +63,49 @@ fn wire<T: Serialize, U: DeserializeOwned>(value: T) -> U {
         .expect("native and wire review shapes agree")
 }
 
+/// Where the route `rel` of the checkout at `root` may have moved, when no file has it: the documents
+/// a wikilink to its file name from its own folder finds ([`crate::render::find_docs`]), so a link
+/// filed before its document moved folders still finds it. One is the document it names; more is a
+/// name documents share, which a page offers as a choice rather than open the first. None for a
+/// route a file has, one with no file name, or a name no document has.
+pub fn moved(root: &Path, rel: &str) -> Vec<String> {
+    moved_among(root, rel, &crate::render::doc_paths(root))
+}
+
+/// [`moved`] among the document routes `paths` ([`crate::render::doc_paths`]).
+fn moved_among(root: &Path, rel: &str, paths: &[String]) -> Vec<String> {
+    let Some(name) = Path::new(rel).file_name().and_then(|name| name.to_str()) else {
+        return Vec::new();
+    };
+    if root
+        .join(crate::project::Project::of(root).file(rel))
+        .is_file()
+    {
+        return Vec::new();
+    }
+    crate::render::find_docs(name, rel, paths)
+        .cloned()
+        .collect()
+}
+
 /// The tasks of `board` that link the document `rel` of the checkout at `root`: by its route, or by
-/// a route no file has any longer whose name finds `rel`, as a wikilink to that name would. Reads no
-/// board: `board` is the caller's copy of it. Only a link whose file name is `rel`'s can find it by
-/// name, so only such a link is looked for on disk, and the documents are walked once, for the first.
+/// a route no file has any longer that [`moved`] finds `rel` alone for, as its page opens it. Reads
+/// no board: `board` is the caller's copy of it. Only a link whose file name is `rel`'s can find it
+/// by name, so only such a link is looked for on disk, and the documents are walked once, for the
+/// first.
 pub fn linked(root: &Path, rel: &str, board: &[symphony_api::Task]) -> Vec<DocumentTask> {
-    let project = crate::project::Project::of(root);
     let own = Path::new(rel).file_name();
     let paths = std::cell::OnceCell::new();
     let finds = |path: &str| {
         let Some(linked) = Path::new(path).file_name().and_then(|name| name.to_str()) else {
             return false;
         };
-        // What `find_doc` finds for `linked` is named as it is, trimmed, `.md` added if it lacks it.
-        let mut found = linked.trim().to_string();
-        if !found.ends_with(".md") {
-            found.push_str(".md");
-        }
-        own.is_some_and(|own| own == found.as_str())
-            && !root.join(project.file(path)).is_file()
-            && crate::render::find_doc(
-                linked,
+        own.is_some_and(|own| own == crate::render::doc_name(linked).as_str())
+            && moved_among(
+                root,
                 path,
                 paths.get_or_init(|| crate::render::doc_paths(root)),
-            )
-            .as_deref()
-                == Some(rel)
+            ) == [rel]
     };
     board
         .iter()

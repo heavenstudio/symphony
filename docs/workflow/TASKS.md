@@ -3327,7 +3327,10 @@ a box that clips, the rows under it where they were. The pictures it follows are
 A task's `--link` lists it in the **Related tasks** panel of that document's page in the
 Symphony, beside the document (below it on a narrow screen): open work first, each row its
 title, slug and status, and finished work folded under its count. The `verdicts/…` tasks answer
-the owner, not the document, and are left out. In the other direction, write
+the owner, not the document, and are left out. A link stays as it was filed: once its document
+moves folders, the task's page still opens it, and its page still lists the task, by its file
+name, as a wikilink to that name finds it; a name two documents share opens neither, and
+**Document not found** offers both. In the other direction, write
 `[[task:sim/jump-departure]]` in any document: it renders as a link to the
 task, with its live status beside it.
 

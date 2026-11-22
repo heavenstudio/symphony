@@ -29,7 +29,7 @@ use crate::register::{
 use crate::text::splitlines;
 
 pub(crate) use cards::compare_pictures;
-pub(crate) use links::{doc_paths, find_doc};
+pub(crate) use links::{doc_name, doc_paths, find_docs};
 pub use media::{MOCKUP_NATIVE, MOCKUP_SANDBOX, is_mockup};
 
 /// What the renderer cannot draw as markup: a picture that is an `.html` file, a file in a plugin's

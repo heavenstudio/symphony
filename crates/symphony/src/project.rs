@@ -75,7 +75,8 @@ pub const PANES: [&str; 2] = ["hc", "none"];
 /// The id of a project whose folder's name has no letter or digit to make one of.
 pub const DEFAULT_ID: &str = "project";
 /// Where a project keeps its review guide, in an entrypoint's folder, in the order they are tried:
-/// the Symphony's own `docs/workflow/REVIEW.md`, and a consuming project's `docs/workflow/REVIEW.md`.
+/// `REVIEW.md` at the folder's top, which neither the Symphony nor the consuming project keeps,
+/// then `workflow/REVIEW.md`, where both keep theirs (`docs/workflow/REVIEW.md`).
 pub const GUIDES: [&str; 2] = ["REVIEW.md", "workflow/REVIEW.md"];
 /// The prefix naming a path in the repository's common git folder.
 const COMMON_DIR: &str = ".git/";

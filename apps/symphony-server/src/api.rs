@@ -60,6 +60,7 @@ pub(crate) const READS: &[&str] = &[
     "/api/feed",
     "/queue",
     "/api/document",
+    "/api/moved",
     "/api/folder",
     "/api/section",
     "/api/history",
@@ -355,6 +356,7 @@ fn arguments(asked: &Asked, request: &Request) -> Result<(), Box<Response>> {
     if matches!(
         path,
         "/api/document"
+            | "/api/moved"
             | "/api/folder"
             | "/api/section"
             | "/api/history"
@@ -520,6 +522,7 @@ async fn over_hub(shared: &Arc<Shared>, hub: Arc<Hub>, asked: Asked, request: Re
         || matches!(
             path,
             "/api/document"
+                | "/api/moved"
                 | "/api/folder"
                 | "/api/section"
                 | "/api/history"
@@ -1014,6 +1017,8 @@ fn document_response(
         "/api/history" => {
             symphony::docview::history(&render, rel, scope).map(|threads| json!(threads))
         }
+        // Where a page that found no document at its route may find it: the documents of its name.
+        "/api/moved" => Ok(json!(symphony::docview::moved(root, rel))),
         "/api/versions" => symphony::docview::target(root, rel, true)
             .map(|_| json!({"versions":symphony::versions::versions(root, rel, 0)})),
         "/api/diff" => symphony::docview::target(root, rel, true)

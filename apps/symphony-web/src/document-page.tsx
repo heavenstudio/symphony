@@ -32,6 +32,7 @@ import { readDiff, readFragment, readVersions } from "./document-read";
 import { Editor, PageContext } from "./editor";
 import { FirstSteps } from "./first";
 import { useFrame, useRefreshed } from "./frame";
+import { appPath } from "./links";
 import { PageNotices } from "./live";
 import { useMount } from "./mount";
 import { PostponeControls } from "./postpone";
@@ -99,6 +100,103 @@ export interface DocumentPageProps {
   embedded?: boolean;
 }
 
+/**
+ * The routes of the server's answer to where a document may have moved (`/api/moved`,
+ * `docview::moved`): each a route a page may link, as a path of the app; none for any other answer.
+ */
+export function readMoved(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (route): route is string => typeof route === "string" && appPath(`/${route}`),
+  );
+}
+
+/** The address of the document `route` in the checkout `scope`, the fragment `hash` (`#…`) kept. */
+export function movedAddress(scope: string, route: string, hash: string): string {
+  return `${href(scoped(scope, `/${route}`))}${hash}`;
+}
+
+/**
+ * Open `address` in this page's place, as the shell follows a link, but in the route's place in
+ * the history: Back leaves the route that has no document.
+ */
+function follow(address: string): void {
+  history.replaceState(null, "", address);
+  dispatchEvent(new PopStateEvent("popstate"));
+}
+
+/**
+ * Where the document the server has none of at `path` may be, once it said so (`asking`): the
+ * documents of its name (`/api/moved`), null until that read answered. The one document of its
+ * name is opened in this page's place, the address's fragment kept, as a link filed before its
+ * document moved names it; more than one is the reader's choice; a failed read finds none.
+ */
+function useMoved(path: string, scope: string, asking: boolean): string[] | null {
+  const [moved, setMoved] = useState<string[] | null>(null);
+  useEffect(() => {
+    setMoved(null);
+    if (!asking) return;
+    const reading = new AbortController();
+    getJson(api(scope, "/api/moved", path), reading.signal).then(
+      (value) => {
+        if (reading.signal.aborted) return;
+        const routes = readMoved(value);
+        const [only] = routes;
+        if (routes.length === 1 && only !== undefined) {
+          follow(movedAddress(scope, only, location.hash));
+        } else {
+          setMoved(routes);
+        }
+      },
+      () => {
+        if (!reading.signal.aborted) setMoved([]);
+      },
+    );
+    return () => reading.abort();
+  }, [path, scope, asking]);
+  return moved;
+}
+
+export interface MissingProps {
+  /** The route the page found no document at. */
+  path: string;
+  scope: string;
+  /** The documents of its name ([`readMoved`]): more than one is offered to choose. */
+  moved: string[];
+  /** The address's fragment (`#…`), which each choice keeps. */
+  hash: string;
+  retry: () => void;
+}
+
+/**
+ * What a page that has no document at its route says: Document not found, with All documents and
+ * Retry, and, when documents share the route's name, each of them to choose rather than the first.
+ */
+export function Missing({ path, scope, moved, hash, retry }: MissingProps) {
+  const name = moved[0]?.split("/").pop() ?? "";
+  return (
+    <Trouble
+      title="Document not found"
+      text={`There is no document at ${path}: it may have been moved, renamed or removed.`}
+      back={[scoped(scope, documentsHref(project())), "All documents"]}
+      retry={retry}
+    >
+      {moved.length > 1 && (
+        <>
+          <p>{`It may be one of the documents named ${name}:`}</p>
+          <ul className="trouble-choices">
+            {moved.map((route) => (
+              <li key={route}>
+                <a href={movedAddress(scope, route, hash)}>{route}</a>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </Trouble>
+  );
+}
+
 /** A document's page: what this device kept of it at once, then the server's, then its feed. */
 export function DocumentPage({ path, scope, embedded = false }: DocumentPageProps) {
   const frame = useFrame();
@@ -146,6 +244,9 @@ export function DocumentPage({ path, scope, embedded = false }: DocumentPageProp
   const [deviceAt, unreachable] = device ?? [null, false];
   const removed = state?.removed ?? false;
   const introStale = page.stale && !page.missing;
+  // A document the server has none of is looked for by its name before the page says so.
+  const moved = useMoved(path, scope, page.missing && !embedded);
+  const missing = page.missing && (embedded || moved !== null);
   useEffect(() => {
     if (!embedded || notice === null) return;
     notice({
@@ -168,7 +269,7 @@ export function DocumentPage({ path, scope, embedded = false }: DocumentPageProp
     page.retry.current += 1;
   };
   const ready =
-    state !== null ? (marked ? "document" : "outline") : readyWord(page.missing, trouble !== null);
+    state !== null ? (marked ? "document" : "outline") : readyWord(missing, trouble !== null);
   let body: ReactNode = null;
   if (state !== null) {
     body = (
@@ -185,14 +286,15 @@ export function DocumentPage({ path, scope, embedded = false }: DocumentPageProp
         {!embedded && <Asks key={`${scope}/${path}`} path={path} scope={scoped(scope, "")} />}
       </>
     );
-  } else if (page.missing) {
+  } else if (missing) {
     // A folder's intro shows nothing in its place: the folder is still there.
     if (!embedded) {
       body = (
-        <Trouble
-          title="Document not found"
-          text={`There is no document at ${path}: it may have been moved, renamed or removed.`}
-          back={[scoped(scope, documentsHref(project())), "All documents"]}
+        <Missing
+          path={path}
+          scope={scope}
+          moved={moved ?? NONE}
+          hash={location.hash}
           retry={retry}
         />
       );
@@ -222,7 +324,7 @@ export function DocumentPage({ path, scope, embedded = false }: DocumentPageProp
         data-ready={ready}
         data-feed={page.stale ? "stale" : "live"}
         data-cache={device ? "device" : undefined}
-        aria-busy={`${state === null && trouble === null && !page.missing}`}
+        aria-busy={`${state === null && trouble === null && !missing}`}
       >
         {body}
         {/* Until the document is shown, what kept it away is the block above's to say, once. */}
