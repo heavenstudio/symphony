@@ -359,7 +359,8 @@ pub fn armed(folder: &Path) -> Vec<Journal> {
 
 /// Who the delivery moves `task` as: its orchestrator, who holds a role on it and may move it;
 /// else `by`, who dispatched it. A round of the watcher acts so throughout, and a dispatch so for
-/// its move back to review ([`Landing::reviewed_again`]), whoever's write started it.
+/// its moves back to review ([`Landing::reviewed_again`]) and to work
+/// ([`Landing::back_to_work`]), whoever's write started it.
 fn acting(task: Option<&Task>, by: &str) -> String {
     (task.and_then(|task| task.holders("orchestrator").first().copied()))
         .unwrap_or(by)
@@ -1086,8 +1087,9 @@ impl Landing<'_> {
     }
 
     /// The task back in progress, from review, blocked or done (by review, as a done task goes
-    /// only there): why it cannot, for a task that cannot go back or that one of the project's
-    /// own makers remakes.
+    /// only there), moved as its orchestrator ([`acting`]), whoever's write started a dispatch
+    /// that found its pull request closed: why it cannot, for a task that cannot go back or that
+    /// one of the project's own makers remakes.
     fn back_to_work(&self) -> Result<(), String> {
         let slug = self.slug;
         if slug.starts_with(GENERATED) {
@@ -1101,15 +1103,16 @@ impl Landing<'_> {
             ));
         }
         let task = self.store.get(slug).map_err(|error| error.to_string())?;
+        let mover = acting(Some(&task), self.actor);
         let mut status = task.status;
         if status == "done" {
-            (self.store.move_to(slug, "review", self.actor))
+            (self.store.move_to(slug, "review", &mover))
                 .map_err(|error| format!("{slug} is done and does not go back: {error}"))?;
             status = "review".into();
         }
         match status.as_str() {
             "in_progress" => Ok(()),
-            "review" | "blocked" => (self.store.move_to(slug, "in_progress", self.actor))
+            "review" | "blocked" => (self.store.move_to(slug, "in_progress", &mover))
                 .map(drop)
                 .map_err(|error| format!("{slug} does not go back to in_progress: {error}")),
             other => Err(format!("{slug} is {other}, which does not go back to work")),

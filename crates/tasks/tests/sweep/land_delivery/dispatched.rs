@@ -725,6 +725,48 @@ fn a_pull_request_closed_by_someone_sends_the_task_back_to_work_and_is_bound_no_
 }
 
 #[test]
+fn a_pull_request_closed_found_by_an_assessors_dispatch_sends_it_back_to_work_as_its_orchestrator()
+{
+    // The dispatch an assessment write starts runs as the assessor, who holds no role on the task
+    // that may move it: the moves back to review and to work are its orchestrator's, and no task
+    // is filed for a merge that failed.
+    let (r, bare) = delivering();
+    let (people, _, tip) = ready(&r, SLUG);
+    let (host, _) = armed_green(&r, &bare, &people);
+    assert_eq!(status(&r, SLUG), "done");
+    host.close_by_hand();
+    assess(&r, SLUG, &people.assessor, &["tests", "review"], &tip);
+    let (_, result) = dispatched(&r, SLUG, &people.assessor, &host);
+    let line = result.unwrap();
+    let not_merged = format!(
+        "land {SLUG}: not merged: pull request #3 was closed without a merge; nothing merged, its \
+         auto-merge off"
+    );
+    assert_eq!(line, not_merged);
+    assert_eq!(status(&r, SLUG), "in_progress");
+    assert_eq!(
+        last_post(&r, SLUG),
+        (
+            format!(
+                "{not_merged}; {SLUG} is back in progress. Its executor merges main into the \
+                 branch once, or puts the check right, then moves it to review, which dispatches \
+                 it again"
+            ),
+            Some("@orchestrator".to_string())
+        )
+    );
+    let reopened = |by: &str| {
+        (r.board.store.thread(SLUG).unwrap().into_iter())
+            .filter(|post| post.text.starts_with(&reopened_by(SLUG, by)))
+            .count()
+    };
+    assert_eq!((reopened(&people.orch), reopened(&people.assessor)), (2, 0));
+    let filed = format!("{FAILED}{}", SLUG.replace('/', "-"));
+    assert!(r.board.store.get(&filed).is_err(), "nothing filed");
+    assert!(!Journal::path(&lands(&r), SLUG).exists());
+}
+
+#[test]
 fn the_bound_passed_leaves_it_where_it_is_its_merge_off_and_a_land_arms_it_again() {
     let (r, bare) = delivering();
     let (people, ..) = ready(&r, SLUG);

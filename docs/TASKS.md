@@ -1144,7 +1144,7 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
 | What the watcher reads | What follows |
 | --- | --- |
 | A check that is not the Symphony's red at the head (a CI the repository adds), or the host reporting the pull request in conflict with the default branch | the task back to in progress (from done by review): its executor merges the default branch once, or puts the check right, and moves it to review, which dispatches it again |
-| The pull request closed unmerged, by someone | back to in progress, naming it; the next dispatch opens another |
+| The pull request closed unmerged, by someone | back to in progress, naming it, moved as its orchestrator whoever's write's dispatch found it (an assessor's included); the next dispatch opens another |
 | Neither merged nor red once `[land] merge_within_minutes` (30) passed since its evidence stood (review time counts for nothing) | the task stays where it is, the work not at fault: `just land SLUG` arms it again |
 | Any of these where the task cannot go back (cancelled or closed, a document save, which stays pending and shown, or what the regenerator made, which it cancels and makes again) | `tools/delivery-failed-SLUG` filed to `@orchestrator`, naming the pull request and why; a second failure is a line on the one open |
 
