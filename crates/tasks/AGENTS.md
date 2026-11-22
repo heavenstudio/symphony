@@ -474,7 +474,9 @@ that database forward, and never sweeps a repository.
 
 The store's tests start one in-memory server per test binary and give each test a database of its
 own (`tests/store/common.rs`: `Fixture`, the settable clock and process table, the `Seed` a board is
-copied from, `gate.rs` for a statement held mid-write). The server is the pinned SurrealDB
+copied from, `gate.rs` for a statement held mid-write). A test that copies a whole board starts a
+server of its own on the board's engine and memtable (`BoardServer`), as the in-memory engine takes
+that copy's one transaction many times slower. The server is the pinned SurrealDB
 `tools/surreal.sh` fetches once per repository into `symphony/surreal/` in the git common dir,
 refused unless its SHA-256 is the pinned one; `SYMPHONY_SURREAL` names another binary, and
 `server/fetch_tests.rs` holds the project's fetch line to the script's pin. A fixture board under

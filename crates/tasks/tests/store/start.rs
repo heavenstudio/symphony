@@ -1,12 +1,13 @@
 //! The tests' server start ([`launch`]): it comes up whatever is left of the folder its log goes in,
 //! a server that ends before it answers is reported with its exit status and what it and its shell
 //! said, it keeps its data on the engine it is handed ([`launch_on`], [`store_held_in`]), and it
-//! reaches this machine alone, for the gates a statement waits at.
+//! reaches this machine alone, for the gates a statement waits at. A test's own server on the
+//! board's engine ([`BoardServer`]) holds its store in a folder of its own, which goes with it.
 
-use crate::common::{client, launch, launch_on, store_held_in, surreal};
+use crate::common::{BoardServer, client, launch, launch_on, store_held_in, surreal};
 use crate::gate::Gate;
 use serde_json::{Value, json};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use symphony_board::rpc::{self, Client};
 
 /// A folder of this test's own, empty.
@@ -253,5 +254,31 @@ fn the_tests_server_reaches_a_gate_on_this_machine_and_no_other_host() {
     assert!(
         elsewhere.contains("Access to network target '192.0.2.1:80' is not allowed"),
         "{elsewhere}"
+    );
+}
+
+// SurrealDB alone: exercises the SurrealDB process launcher, its engine flags, locks and HTTP gates.
+#[test]
+fn a_board_server_holds_its_store_in_a_folder_of_its_own_that_goes_with_it() {
+    let (one, two) = (BoardServer::start(), BoardServer::start());
+    let folder = one.folder().to_path_buf();
+    assert_ne!(folder, two.folder(), "each server has a folder of its own");
+    let engine = |folder: &Path| format!("surrealkv://{}", folder.join("data").display());
+    assert_eq!(store_held_in(&engine(&folder)), Ok(()));
+    assert_eq!(store_held_in(&engine(two.folder())), Ok(()));
+    let (a, b) = (one.database(), one.database());
+    assert_ne!(a.database(), b.database(), "a database each");
+    assert_eq!(a.addr(), b.addr());
+    assert_ne!(
+        a.addr(),
+        two.database().addr(),
+        "each server on a port of its own"
+    );
+    drop(one);
+    assert!(!folder.exists(), "the folder went with its server");
+    assert_eq!(
+        store_held_in(&engine(two.folder())),
+        Ok(()),
+        "the other one is still up"
     );
 }
