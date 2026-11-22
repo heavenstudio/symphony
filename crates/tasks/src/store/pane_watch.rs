@@ -150,10 +150,9 @@ impl Store {
             let open = self.open_task_sessions()?;
             let plan = look(&board, handle, &open, panes, now, &saved.watch, &saved.queued);
             if plan.unchanged(&saved.watch) { return Ok(true); }
-            let events: Vec<Event> = plan.lines.iter().enumerate().map(|(i, text)| Event {
-                key: format!("pane-{revision}-{i}"), handle: handle.into(), text: text.clone(),
-                slug: session_task(&board, handle), message: None, attempts: 0, sequence: 0,
-                pull_entries: None, pull_withheld: None, pull_said: None,
+            let events: Vec<Event> = plan.lines.iter().enumerate().map(|(i, text)| {
+                let key = format!("pane-{revision}-{i}");
+                Event::line(key, handle, text.clone(), session_task(&board, handle), None)
             }).collect();
             self.retrying(|| self.transact::<Value>(
                 both(sql::RECORD, pg::record()),
