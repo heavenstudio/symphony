@@ -79,6 +79,7 @@ One card a row, across the width, and the header's **Projects** under the name.
 
 - A Symphony started for one checkout alone (`just symphony --port 0`) serves that project at its
   root: there is no picker and no **Projects** in its header.
+- A project whose theme gives it a name of its own is listed by that name.
 - The checkout the Symphony was started from is listed even when it was never registered, last.
 - An address with no project in it, such as a bookmark from a Symphony of one project, opens that
   page of the project whose page linked it, else of the project whose `just symphony` started the
