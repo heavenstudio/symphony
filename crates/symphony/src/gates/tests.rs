@@ -503,12 +503,17 @@ fn a_task_posted_the_cards_of_its_linked_documents_that_its_texts_name_whole() {
         docs: Vec::new(),
     };
     let links = vec!["docs/DECISIONS.md#Gates".to_string()];
-    let linked = linked_cards(&links, &pending);
+    let tree = Tree::new();
+    let names = crate::docview::LinkNames::of(&tree.root);
+    let linked = linked_cards(&links, &pending, &names);
     assert_eq!(
         linked.iter().map(|c| c.slug.as_str()).collect::<Vec<_>>(),
         ["x", "y"]
     );
-    assert_eq!(linked_cards(&[], &pending), Vec::<&PendingItem>::new());
+    assert_eq!(
+        linked_cards(&[], &pending, &names),
+        Vec::<&PendingItem>::new()
+    );
     let posted = |texts: &[&str]| {
         posted_cards(&linked, texts.iter().copied())
             .iter()
@@ -531,6 +536,58 @@ fn a_task_posted_the_cards_of_its_linked_documents_that_its_texts_name_whole() {
     });
     assert_eq!(posted_cards(&linked, texts).len(), 2);
     assert_eq!(read.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn a_link_filed_before_its_document_moved_still_finds_its_cards_by_name_alone() {
+    let tree = Tree::new();
+    for path in [
+        "docs/area/MOVED.md",
+        "docs/a/SHARED.md",
+        "docs/b/SHARED.md",
+        "docs/STAYED.md",
+        "docs/area/STAYED.md",
+    ] {
+        tree.write(path, "# A document\n");
+    }
+    let pending = Pending {
+        items: vec![
+            card("docs/area/MOVED.md", "moved"),
+            card("docs/a/SHARED.md", "first"),
+            card("docs/b/SHARED.md", "second"),
+            card("docs/area/STAYED.md", "elsewhere"),
+            card("docs/STAYED.md", "stayed"),
+        ],
+        docs: Vec::new(),
+    };
+    let names = crate::docview::LinkNames::of(&tree.root);
+    let slugs = |link: &str| {
+        linked_cards(&[link.to_string()], &pending, &names)
+            .iter()
+            .map(|c| c.slug.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        slugs("docs/MOVED.md#The order"),
+        ["moved"],
+        "found by its name"
+    );
+    assert_eq!(
+        slugs("docs/MOVED"),
+        ["moved"],
+        "`.md` added, as a wikilink's"
+    );
+    assert_eq!(
+        slugs("docs/SHARED.md#h"),
+        Vec::<String>::new(),
+        "a name documents share holds none of their cards"
+    );
+    assert_eq!(
+        slugs("docs/STAYED.md"),
+        ["stayed"],
+        "a route a file has names that document alone, not another of its name"
+    );
+    assert_eq!(slugs("docs/GONE.md"), Vec::<String>::new());
 }
 
 #[test]

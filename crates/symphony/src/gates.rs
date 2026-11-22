@@ -352,16 +352,18 @@ fn names(text: &str, slug: &str) -> bool {
     })
 }
 
-/// The cards of `pending` in a document one of `links` names: the cards the task could have posted.
-pub fn linked_cards<'a>(links: &[String], pending: &'a Pending) -> Vec<&'a PendingItem> {
+/// The cards of `pending` in a document one of `links` names, as `names` reads a link: by its
+/// route, or by its name once its document moved ([`crate::docview::LinkNames`]). The cards the
+/// task could have posted.
+pub fn linked_cards<'a>(
+    links: &[String],
+    pending: &'a Pending,
+    names: &crate::docview::LinkNames<'_>,
+) -> Vec<&'a PendingItem> {
     pending
         .items
         .iter()
-        .filter(|card| {
-            links
-                .iter()
-                .any(|link| link.split('#').next() == Some(card.path.as_str()))
-        })
+        .filter(|card| links.iter().any(|link| names.names(link, &card.path)))
         .collect()
 }
 
@@ -1083,7 +1085,7 @@ fn put_together(read: &Read<'_>, root: &Path, pending: &Pending, kept: &Kept) ->
             format!("refs/heads/{}", project.default_branch).as_str(),
         ],
     );
-    let cards = linked_cards(&record.links, pending);
+    let cards = linked_cards(&record.links, pending, &crate::docview::LinkNames::of(root));
     let texts = std::iter::once(record.body.as_str()).chain(thread.iter().map(|m| m.text.as_str()));
     let posted = posted_cards(&cards, texts);
     // As before stamps: the review rounds of a top-level task, and the cards it posted.

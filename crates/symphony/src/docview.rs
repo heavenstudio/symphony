@@ -63,24 +63,27 @@ fn wire<T: Serialize, U: DeserializeOwned>(value: T) -> U {
         .expect("native and wire review shapes agree")
 }
 
-/// Where the route `rel` of the checkout at `root` may have moved, when no file has it: the documents
-/// a wikilink to its file name from its own folder finds ([`crate::render::find_docs`]), so a link
-/// filed before its document moved folders still finds it. One is the document it names; more is a
-/// name documents share, which a page offers as a choice rather than open the first. None for a
-/// route a file has, one with no file name, or a name no document has.
+/// Where the route `rel` of the checkout at `root` may have moved, when no file has it: the
+/// documents a wikilink to its file name from its own folder finds ([`crate::render::find_docs`]),
+/// so a link filed before its document moved folders still finds it. One is the document it names;
+/// more is a name documents share, which a page offers as a choice rather than open the first. None
+/// for a route a file has, one with no file name, or a name no document has.
 pub fn moved(root: &Path, rel: &str) -> Vec<String> {
-    moved_among(root, rel, &crate::render::doc_paths(root))
+    let project = crate::project::Project::of(root);
+    moved_among(root, &project, rel, &crate::render::doc_paths(root))
 }
 
-/// [`moved`] among the document routes `paths` ([`crate::render::doc_paths`]).
-fn moved_among(root: &Path, rel: &str, paths: &[String]) -> Vec<String> {
+/// [`moved`] in `project`, among its document routes `paths` ([`crate::render::doc_paths`]).
+fn moved_among(
+    root: &Path,
+    project: &crate::project::Project,
+    rel: &str,
+    paths: &[String],
+) -> Vec<String> {
     let Some(name) = Path::new(rel).file_name().and_then(|name| name.to_str()) else {
         return Vec::new();
     };
-    if root
-        .join(crate::project::Project::of(root).file(rel))
-        .is_file()
-    {
+    if root.join(project.file(rel)).is_file() {
         return Vec::new();
     }
     crate::render::find_docs(name, rel, paths)
@@ -88,33 +91,57 @@ fn moved_among(root: &Path, rel: &str, paths: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// The tasks of `board` that link the document `rel` of the checkout at `root`: by its route, or by
-/// a route no file has any longer that [`moved`] finds `rel` alone for, as its page opens it. Reads
-/// no board: `board` is the caller's copy of it. Only a link whose file name is `rel`'s can find it
-/// by name, so only such a link is looked for on disk, and the documents are walked once, for the
-/// first.
-pub fn linked(root: &Path, rel: &str, board: &[symphony_api::Task]) -> Vec<DocumentTask> {
-    let own = Path::new(rel).file_name();
-    let paths = std::cell::OnceCell::new();
-    let finds = |path: &str| {
-        let Some(linked) = Path::new(path).file_name().and_then(|name| name.to_str()) else {
+/// What the task links of the checkout at `root` name: a document by its route, or by a route no
+/// file has any longer that [`moved`] finds that document alone for, as its page opens it. A name
+/// documents share names none of them. The project is read once, and the documents walked at most
+/// once, for the first link only its name can settle: only a link whose file name is the
+/// document's is looked for on disk. The document page's tasks ([`linked`]) and the cards a task
+/// may have posted ([`crate::gates::linked_cards`]) read their links through one.
+pub struct LinkNames<'a> {
+    root: &'a Path,
+    project: std::sync::Arc<crate::project::Project>,
+    paths: std::cell::OnceCell<Vec<String>>,
+}
+
+impl<'a> LinkNames<'a> {
+    /// The links of the checkout at `root`, nothing read yet but its project.
+    pub fn of(root: &'a Path) -> Self {
+        Self {
+            root,
+            project: crate::project::Project::of(root),
+            paths: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// Whether the task link `link` (a route, a `#heading` after it or not) names the document
+    /// `rel`.
+    pub fn names(&self, link: &str, rel: &str) -> bool {
+        let path = link.split('#').next().unwrap_or_default();
+        if path == rel {
+            return true;
+        }
+        let linked = Path::new(path).file_name().and_then(|name| name.to_str());
+        let (Some(linked), Some(own)) = (linked, Path::new(rel).file_name()) else {
             return false;
         };
-        own.is_some_and(|own| own == crate::render::doc_name(linked).as_str())
+        own == crate::render::doc_name(linked).as_str()
             && moved_among(
-                root,
+                self.root,
+                &self.project,
                 path,
-                paths.get_or_init(|| crate::render::doc_paths(root)),
+                self.paths
+                    .get_or_init(|| crate::render::doc_paths(self.root)),
             ) == [rel]
-    };
+    }
+}
+
+/// The tasks of `board` that link the document `rel` of the checkout at `root`, as [`LinkNames`]
+/// reads their links. Reads no board: `board` is the caller's copy of it.
+pub fn linked(root: &Path, rel: &str, board: &[symphony_api::Task]) -> Vec<DocumentTask> {
+    let links = LinkNames::of(root);
     board
         .iter()
-        .filter(|task| {
-            task.links.iter().any(|link| {
-                let path = link.split('#').next().unwrap_or_default();
-                path == rel || finds(path)
-            })
-        })
+        .filter(|task| task.links.iter().any(|link| links.names(link, rel)))
         .map(|task| DocumentTask {
             slug: task.slug.clone(),
             title: task.title.clone(),

@@ -158,12 +158,14 @@ pub fn signoff(
     kept: &crate::gates::Kept,
 ) -> Result<Vec<(String, Vec<String>)>, String> {
     let answerers = crate::gates::answerers(&crate::project::Project::of(root), root);
+    // One reader of the links for every task: the documents are walked at most once.
+    let names = crate::docview::LinkNames::of(root);
     let mut result = Vec::new();
     for task in tasks.iter().filter(|t| {
         !["done", "blocked", "cancelled"].contains(&t.status.as_str())
             && t.roles.iter().any(|r| r.role == "executor")
     }) {
-        let cards = crate::gates::linked_cards(&task.links, pending);
+        let cards = crate::gates::linked_cards(&task.links, pending, &names);
         if cards.is_empty() && answerers.is_empty() {
             continue;
         }

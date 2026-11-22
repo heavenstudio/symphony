@@ -111,7 +111,9 @@ export function readMoved(value: unknown): string[] {
   );
 }
 
-/** The address of the document `route` in the checkout `scope`, the fragment `hash` (`#…`) kept. */
+/**
+ * The address of the document `route` in the checkout `scope`, the fragment `hash` (`#…`) kept.
+ */
 export function movedAddress(scope: string, route: string, hash: string): string {
   return `${href(scoped(scope, `/${route}`))}${hash}`;
 }
