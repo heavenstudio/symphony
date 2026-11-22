@@ -226,6 +226,18 @@ impl Store {
             .map(|_| ())
     }
 
+    /// The session is seen, as [`Store::touch`] says it, by one try alone: what the recorder of a
+    /// run says of the session its record names while the run goes on (`cli/recorder.rs`). A board
+    /// moving under it is not waited for: the recorder says it again at its next time.
+    pub(crate) fn seen_once(&self, handle: &str) -> Result<(), Error> {
+        let vars = self.acting(handle, (self.clock)(), json!({}));
+        match self.transact::<Value>(both(sql::touch(), pg::touch()), vars) {
+            Ok(_) => Ok(()),
+            Err(Failure::Again) => Err(Error::Db("the board moved under it".into())),
+            Err(Failure::Stop(error)) => Err(error),
+        }
+    }
+
     /// Let the tool calls of Claude Code agent `agent` beat for `handle` (`agent_beat`). One agent
     /// beats for one handle, the last it named. Never a session that left, nor one with a monitor of
     /// its own (an orchestrator, a main session): its monitor already beats for it, and a subagent

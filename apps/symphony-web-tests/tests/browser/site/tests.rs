@@ -278,7 +278,7 @@ fn the_cache_helpers_count_slice_and_hold_the_reads_they_are_given() {
 
 /// Asking for the answers to a read that is none of the reads counted is the test's mistake.
 #[test]
-#[should_panic]
+#[should_panic(expected = "/api/asks is none of the reads counted, [\"/api/queue\"]")]
 fn the_answers_since_a_count_are_of_a_read_that_was_counted() {
     let dist = Dist::new("/assets/shell.js", &[]);
     let site = Site::start(dist.path(), &board());
