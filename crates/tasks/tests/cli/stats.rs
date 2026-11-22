@@ -938,12 +938,13 @@ fn show_the_task_route_and_stats_say_the_same_tokens_and_cost() {
     roll(4.0);
     let mut shown: Value =
         serde_json::from_str(&t(5.0).ok("", &["show", "sim/jump", "--json"])).unwrap();
-    let mut tokens = shown["tokens"].take();
+    let tokens = shown["tokens"].take();
     assert_eq!(tokens["by_role"].as_array().unwrap().len(), 2);
     assert_eq!(tokens["by_round"].as_array().unwrap().len(), 2);
     assert_eq!(tokens["cost"]["unpriced"][0]["model"], "gpt-x");
-    tokens.as_object_mut().unwrap().remove("rows");
-    // The task page's route answers this, read into its wire type and written back the same.
+    // The task page's route answers this, its rows among it, read into its wire type and written
+    // back the same.
+    assert_eq!(tokens["rows"].as_array().unwrap().len(), 3);
     let wire: symphony_api::TaskTokens = serde_json::from_value(tokens.clone()).unwrap();
     assert_eq!(serde_json::to_value(&wire).unwrap(), tokens);
     let mut with_files = t(5.0);

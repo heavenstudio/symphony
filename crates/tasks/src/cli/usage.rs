@@ -129,6 +129,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "the limits and models in force here, and where each came from",
             ),
             (
+                "settings",
+                "the preferences the board keeps: list, set KEY VALUE, remove KEY",
+            ),
+            (
                 "stamps",
                 "the stamps a land can require, and what a task needs of them",
             ),
@@ -567,10 +571,43 @@ edit to the file holds from the next command, and on a running server from
 its next read. symphony.local.toml beside it, which git does not version,
 is read after it: a key of [agents] launch, [agents.models] or [limits] it
 writes holds in the committed one's place, named with that file and its line.
+The board's store (just tasks settings) is read between the two: a setting it
+holds is named as the store's, with the committed value it stands over.
 
 options:
   -h, --help  show this help message and exit
   --as ACTOR
+"#,
+    ),
+    (
+        "settings",
+        r#"usage: just tasks settings [-h] [--as ACTOR] [--json] ACTION [KEY] [VALUE]
+"#,
+        r#"usage: just tasks settings [-h] [--as ACTOR] [--json] ACTION [KEY] [VALUE]
+
+The preferences the board keeps for its project, read after the committed
+symphony.toml and before symphony.local.toml. `list` prints each entry with
+every change made to it: the value before and after, when, and who wrote it.
+`set KEY VALUE` stores a value, in force from the next read of the settings.
+`remove KEY` removes the entry, so the files' value holds again; its record
+stays. A key is the setting's table and key as the project file names them,
+joined by dots: limits.low_volume, agents.launch.default, agents.launch.model,
+agents.launch.effort, agents.models.reviewer, agents.panes. The store holds
+those preferences alone: a setting that holds a command or decides what lands
+is refused by name, as symphony.local.toml refuses it, and a value is judged
+as the project file's is (a limit a whole number in its range, a launch agent
+one the board starts). A refusal names the key and why, and writes nothing.
+just tasks limits names the store for each value it gives.
+
+positional arguments:
+  ACTION      list, set or remove
+  KEY         the setting (set, remove)
+  VALUE       the value to store (set)
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR  who the change is recorded as made by (set, remove)
+  --json      the entries as JSON (list)
 "#,
     ),
     (

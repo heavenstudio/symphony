@@ -1,9 +1,11 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import FIXTURE from "../../../crates/symphony-api/fixtures/task-timeline.json";
+import { carried } from "./timeline-cost";
 import {
   BAR_SPAN,
   CHAR_PX,
+  type Costs,
   capitalised,
   civil,
   clock,
@@ -15,6 +17,7 @@ import {
   failed,
   fitClass,
   fitted,
+  fittedFirst,
   GAP_PX,
   gateChanges,
   gateTone,
@@ -56,6 +59,7 @@ import {
   stretches,
   timelineEnd,
   took,
+  totalParts,
   totals,
   trimmed,
   verdictTone,
@@ -65,7 +69,7 @@ import {
   waited,
   widthFor,
 } from "./timeline-layout";
-import type { PlaceSpan, Run, RunResult, Stage, TaskTimeline } from "./wire";
+import type { PlaceSpan, Run, RunResult, Stage, TaskTimeline, TokenRow } from "./wire";
 import { TIMELINE_EVERY } from "./wire";
 import { moment } from "./words";
 
@@ -1435,9 +1439,9 @@ describe("a task's timeline laid out", () => {
       "@media (max-width: 899.98px) {\n  .tl-drawn {\n    padding-right: 40px;\n  }",
     );
     // A phone's clipped list is drawn from its end, the latest steps in view, and fades out at its
-    // top, a run's row a tap focused growing upward into the totals' room; the lanes are never
+    // top, a row a tap focused growing upward into the totals' room; the lanes are never
     // clipped, and no fade is drawn wide.
-    expect(phone).toContain("  .tl-clipped:has(.tl-sub:focus) .tl-head {\n    display: none;\n  }");
+    expect(phone).toContain("  .tl-clipped:has(.tl-row:focus) .tl-head {\n    display: none;\n  }");
     expect(phone).toContain(
       '  .tl-clipped .tl-body {\n    display: flex;\n    flex-direction: column;\n    justify-content: flex-end;\n  }\n  .tl-clipped .tl-list {\n    flex: none;\n  }\n  .tl-clipped .tl-body::after {\n    content: "";\n    position: absolute;\n    left: 0;\n    right: 0;\n    top: 0;\n    height: 28px;\n    background: linear-gradient(var(--card), transparent);\n    pointer-events: none;\n  }\n',
     );
@@ -1457,17 +1461,31 @@ describe("a task's timeline laid out", () => {
     expect(wide).toContain("  .tl-detail.tl-wide {\n    display: block;\n  }");
     expect(wide).toContain("  .tl-foot:has(.tl-detail) .tl-legend {\n    display: none;\n  }");
     expect(phone).not.toContain(":has(.tl-detail)");
-    // A run's row a tap focused says all of the run under its bar, across the row, and nothing
-    // while it has no focus: the foot keeps the legend on a phone. The row with the focus is tinted,
-    // over no word of it, where an outline would cross its time and its length.
+    // A run's row a tap focused, and a stage's that carries a cost, says all of it under its bar,
+    // across the row, and nothing while it has no focus: the foot keeps the legend on a phone. The
+    // row with the focus is tinted, over no word of it, where an outline would cross its time and
+    // its length.
     expect(phone).toContain(
-      ".tl-sub:focus {\n  outline: none;\n  border-radius: 6px;\n  background: color-mix(in srgb, var(--primary) 14%, transparent);\n}",
+      ".tl-row:focus {\n  outline: none;\n  border-radius: 6px;\n  background: color-mix(in srgb, var(--primary) 14%, transparent);\n}",
     );
     expect(phone).toContain(".tl-facts {\n  display: none;\n}");
     expect(phone).toContain(
-      ".tl-sub:focus .tl-facts {\n  grid-column: 1 / -1;\n  display: block;\n  margin-top: 4px;\n",
+      ".tl-row:focus .tl-facts {\n  grid-column: 1 / -1;\n  display: block;\n  margin-top: 4px;\n",
     );
     expect(wide).not.toContain("tl-facts");
+    // The total's cost says its words under the totals on a phone while a tap gave it the focus,
+    // and never wide, where they take the legend's place.
+    expect(phone).toContain(".tl-head .tl-cost-said {\n  display: none;\n");
+    expect(phone).toContain(
+      "  .tl-totals:has(.tl-cost:focus) + .tl-cost-said {\n    display: block;\n  }\n" +
+        // A box that clips its steps hides them while the words are said, and grows with them.
+        "  .tl-clipped:has(.tl-cost:focus) .tl-list {\n    display: none;\n  }",
+    );
+    expect(wide).not.toContain("tl-cost");
+    // The rounds and bounces follow the cost on the first line wide, and are a phone's second.
+    expect(wide).toContain(
+      "  .tl-machine.tl-wide,\n  .tl-rest.tl-wide {\n    display: inline;\n  }",
+    );
     // The builds' lane and the tests' are drawn alike, a row each for runs that overlap.
     expect(phone).toContain(
       '.tl-lane:is([data-lane="builds"], [data-lane="tests"]) .tl-track {\n  height: calc(var(--rows) * 42px + 4px);\n}',
@@ -1764,5 +1782,181 @@ describe("a custom workflow's places", () => {
     expect(unreadable && "places" in unreadable).toBe(false);
     expect(readTimeline(answer("none"))?.places).toBeUndefined();
     expect(readTimeline(aTimeline({ now: 1 }))?.places).toBeUndefined();
+  });
+});
+
+describe("each stage's cost after its time", () => {
+  /** A row of the pictures' task's tokens: `amount` dollars in `role` and `round`, its calls
+   * from `first` to `last` minutes after the task was made. */
+  function aRow(role: string, round: number, first: number, last: number, amount: number) {
+    const row: TokenRow = {
+      handle: `${role}-1`,
+      slug: pictures().slug,
+      role,
+      model: "claude-opus-5-5",
+      speed: "standard",
+      round,
+      tokens: {
+        input: 1000,
+        cache_write_5m: 0,
+        cache_write_1h: 0,
+        cache_read: 0,
+        output: 0,
+        calls: 7,
+      },
+      cost: {
+        dollars: amount,
+        input: amount,
+        cache_write_5m: 0,
+        cache_write_1h: 0,
+        cache_read: 0,
+        output: 0,
+        unpriced: [],
+        prices: "2026-11-16",
+      },
+      first: at(first),
+      last: at(last),
+    };
+    return row;
+  }
+
+  /** The pictures' task's tokens on its stages: its first work and what its claimer spent while
+   * it was reserved, round 1's reviewer, the fixes after it, and round 2's reviewer. */
+  function costs(timeline = pictures()): Costs {
+    const rows = [
+      aRow("executor", 1, 42, 150, 30.43),
+      aRow("reserved", 1, 40, 40, 0.32),
+      aRow("reviewer", 2, 155, 250, 3.78),
+      aRow("executor", 2, 153, 270, 7.03),
+      aRow("reviewer", 3, 290, 300, 0.64),
+    ];
+    return { stages: carried(timeline.stages, rows, timeline.slug), prices: "2026-11-16" };
+  }
+
+  it("tries three widths, longest first: its word, time and cost; its time and cost; its time", () => {
+    const all = ["in progress 3 h 14 m $30.75", "3 h 14 m $30.75", "3 h 14 m"];
+    // 27, 15 and 8 characters: 174, 102 and 60 px with their padding, of 12 % of the track.
+    const fits = fittedFirst(all, 12);
+    expect(fits).toEqual([
+      { text: all[0], from: 1450, to: null },
+      { text: all[1], from: 850, to: 1450 },
+      { text: all[2], from: 500, to: 850 },
+    ]);
+    expect(shown(fits, 1600)).toBe(all[0]);
+    expect(shown(fits, 1400)).toBe(all[1]);
+    expect(shown(fits, 800)).toBe(all[2]);
+    expect(shown(fits, 450)).toBe("");
+    // Room for the longest at every width: it alone.
+    expect(fittedFirst(all, 60)).toEqual([{ text: all[0], from: null, to: null }]);
+    // Room for its time and not its cost: the time, as with no cost.
+    expect(fittedFirst(all, 4)).toEqual([{ text: all[2], from: 1500, to: null }]);
+    expect(fittedFirst(all, 4)).toEqual(fitted("in progress 3 h 14 m", "3 h 14 m", 4));
+    // No room for any, and none to try.
+    expect(fittedFirst(all, 1)).toEqual([]);
+    expect(fittedFirst([], 50)).toEqual([]);
+    // A text said twice, as a stage with no cost says its time, is tried once.
+    expect(fittedFirst(["ready 41 m", "41 m", "41 m"], 10)).toEqual(
+      fitted("ready 41 m", "41 m", 10),
+    );
+  });
+
+  it("says each stretch's cost after its time in the stage lane, where it fits", () => {
+    const stage = (timeline: TaskTimeline, with_: Costs | undefined) =>
+      lanes(timeline, with_).lanes.find((lane) => lane.key === "stage") as Lane;
+    const texts = (px: number) => stage(pictures(), costs()).segs.map((seg) => shown(seg.text, px));
+    expect(texts(1600)).toEqual([
+      "ready 41 m",
+      "in progress 1 h 52 m $30.75",
+      "review 52 m $3.78",
+      "in progress 1 h 10 m $7.03",
+      "review 28 m $0.64",
+      "waiting to land 1 h 15 m",
+    ]);
+    // The second review's 28 m are 70 px of a 950 px track: room for its time (36 px) and not for
+    // its time and cost (72 px), so it shows its time, as with no cost.
+    expect(texts(950)).toEqual([
+      "ready 41 m",
+      "in progress 1 h 52 m $30.75",
+      "review 52 m $3.78",
+      "in progress 1 h 10 m $7.03",
+      "28 m",
+      "waiting to land 1 h 15 m",
+    ]);
+    // Narrower, a stretch drops its word before its cost.
+    expect(texts(500)).toEqual(["41 m", "1 h 52 m $30.75", "52 m", "1 h 10 m", "28 m", "1 h 15 m"]);
+    // Its words always say it: whose calls, when they ran, how many, and that it is an estimate.
+    const titles = stage(pictures(), costs()).segs.map((seg) => seg.title);
+    expect(titles[1]).toBe(
+      "in progress 1 h 52 m $30.75, from 09:43 to 11:35: executor $30.43, 09:44–11:32, in 7 calls; " +
+        "reserved $0.32, at 09:42, in 7 calls; estimated at API list prices read 2026-11-16, not money spent",
+    );
+    expect(titles[4]).toBe(
+      "review 28 m $0.64, from 13:37 to 14:05: reviewer $0.64, 13:52–14:02, in 7 calls; " +
+        "estimated at API list prices read 2026-11-16, not money spent",
+    );
+    // A stretch that carries nothing, and every stretch of a task with no tokens, is as it was.
+    expect(titles[0]).toBe("ready 41 m, from 09:02 to 09:43");
+    expect(titles[5]).toBe(stage(pictures(), undefined).segs[5]?.title);
+    const none: Costs = { stages: carried(pictures().stages, [], ""), prices: "2026-11-16" };
+    expect(lanes(pictures(), none)).toEqual(lanes(pictures()));
+    expect(rows(pictures(), none)).toEqual(rows(pictures()));
+  });
+
+  it("ends each stage's row on a phone with its time and its cost, and says it in its words", () => {
+    const listed = rows(pictures(), costs()).filter((row) => !row.sub);
+    expect(listed.map((row) => [row.took, row.cost])).toEqual([
+      ["41 m", undefined],
+      ["1 h 52 m", "$30.75"],
+      ["52 m", "$3.78"],
+      ["1 h 10 m", "$7.03"],
+      ["28 m", "$0.64"],
+      ["1 h 15 m", undefined],
+    ]);
+    expect(listed[2]?.title).toBe(
+      "Review, round 1 · lucid-heron: from 11:35 to 12:27, moved there by quiet-wren: " +
+        "reviewer $3.78, 11:37–13:12, in 7 calls; " +
+        "estimated at API list prices read 2026-11-16, not money spent",
+    );
+    // The runs, the gate changes and the rows' order are as with no cost.
+    const plain = rows(pictures());
+    expect(rows(pictures(), costs()).map((row) => row.label)).toEqual(
+      plain.map((row) => row.label),
+    );
+  });
+
+  it("names the day of a call made another day than its stretch began", () => {
+    const timeline = aTimeline({
+      slug: "a/b",
+      now: 3 * 86400,
+      stages: [aStage({ status: "in_progress", from: 3600 })],
+    });
+    const row = { ...aRow("executor", 1, 0, 0, 2), slug: "a/b", first: 7200, last: 86400 + 7200 };
+    const with_: Costs = { stages: carried(timeline.stages, [row], "a/b"), prices: "2026-11-16" };
+    expect(lanes(timeline, with_).lanes[0]?.segs[0]?.title).toContain(
+      ": executor $2.00, 02:00–01-02 02:00, in 7 calls; estimated",
+    );
+  });
+
+  it("keeps the row of a stage left within the minute when it carries a cost", () => {
+    const stages = [
+      aStage({ status: "in_progress", from: 0, to: 3600 }),
+      aStage({ status: "review", from: 3600, to: 3620, round: 1 }),
+      aStage({ status: "done", from: 3620 }),
+    ];
+    const timeline = aTimeline({ slug: "a/b", now: 7200, closed: 3620, stages });
+    expect(rows(timeline).map((row) => row.label)).toEqual(["In progress", "Done"]);
+    const row = { ...aRow("reviewer", 2, 0, 0, 0.21), slug: "a/b", first: 3601, last: 3619 };
+    const with_: Costs = { stages: carried(stages, [row], "a/b"), prices: "2026-11-16" };
+    expect(rows(timeline, with_).map((row) => [row.label, row.took, row.cost])).toEqual([
+      ["In progress", "1 h", undefined],
+      ["Review, round 1", "0 m", "$0.21"],
+      ["Done", null, undefined],
+    ]);
+  });
+
+  it("parts the first total where the cost goes, the two the whole of it", () => {
+    expect(totalParts(pictures())).toEqual(["6 h 18 m so far", " · 2 review rounds · 1 bounce"]);
+    expect(totalParts(pictures()).join("")).toBe(totals(pictures())[0]);
+    expect(totalParts(aTimeline({ now: 60, closed: 60 }))[0]).toBe("1 m in all");
   });
 });
