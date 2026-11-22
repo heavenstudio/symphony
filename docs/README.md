@@ -61,12 +61,13 @@ are under [Design and history](#design-and-history).
 ## Hosting and contracts
 
 For whoever runs Symphony for others or changes Symphony itself. A project on one machine needs
-none of these: its board runs on the SurrealDB that `symphony init` fetches.
+none of these: its board runs on the machine's PostgreSQL, which `symphony init` asks for
+([the setting](PROJECT_FILE.md#board)).
 
 - [Operating the board](BOARD_OPERATIONS.md) — the board's store and the schema contract between
   its builds, which build moves a live board, who writes it, its server, snapshots and holds, what
   the command may write, stuck servers, a board that went back or was copied, and board health.
-- [PostgreSQL board lifecycle](POSTGRESQL.md) — a board on PostgreSQL: scratch engine identity,
+- [PostgreSQL board lifecycle](POSTGRESQL.md) — a board on PostgreSQL: its engine identity,
   server selection, holds, snapshots, recovery and space reclamation; the hosted board, which no
   command reaches yet.
 - [Upstream and downstream repositories](UPSTREAM_DOWNSTREAM.md) — the regular import of the

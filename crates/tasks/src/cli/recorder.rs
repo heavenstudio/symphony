@@ -3005,6 +3005,9 @@ mod tests {
             if let Some(port) = port {
                 let record = format!(r#"{{"addr":"127.0.0.1:{port}","pid":1,"version":"3.3.0"}}"#);
                 fs::write(board.join("server.json"), record).unwrap();
+                // A SurrealDB board's store, which its recorded server serves: a home holding
+                // none is a board not made yet, on PostgreSQL.
+                fs::create_dir_all(board.join("data")).unwrap();
             }
             main
         }

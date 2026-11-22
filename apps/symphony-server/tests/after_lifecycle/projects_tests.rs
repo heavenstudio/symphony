@@ -78,7 +78,7 @@ impl Drop for Boards<'_> {
     fn drop(&mut self) {
         self.repo.cleanup();
         for board in &self.boards {
-            if let Err(why) = board.stop() {
+            if let Err(why) = board.stop_board() {
                 eprintln!("{}: {why}", board.dir().display());
             }
         }

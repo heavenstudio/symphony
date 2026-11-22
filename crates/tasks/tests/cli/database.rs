@@ -1,13 +1,14 @@
 //! `tasks database`: the board's database said, held stopped with every board command refused
 //! naming the hold, and released, on the board of a fixture repository of its own outside this one
-//! (no `TASKS_SERVER`), its server started by its first command and stopped when the case ends.
+//! (no `TASKS_SERVER`), on SurrealDB, its server started by its first command and stopped when the
+//! case ends.
 
 use crate::common::{NOW, surreal};
 use crate::{repository, run, scratch};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use symphony_board::cli::Env;
-use symphony_board::server::{Home, Running};
+use symphony_board::server::{Engine, Home, Running};
 use symphony_board::sys::pid_alive;
 
 /// A fixture project, `alpha`, its machine folder its own: its board's hold released and its server
@@ -24,7 +25,11 @@ impl Alpha {
         std::fs::write(root.join("symphony.toml"), "[project]\nid = \"alpha\"\n").unwrap();
         let machine = dir.join("machine");
         std::fs::create_dir_all(&machine).unwrap();
-        Alpha { root, machine }
+        let alpha = Alpha { root, machine };
+        // A board on SurrealDB, whose server, store and replays these cases are about: named
+        // before its first command, which would otherwise make it on PostgreSQL.
+        alpha.home().initialize_backend(Engine::SurrealDb).unwrap();
+        alpha
     }
 
     fn env(&self) -> Env {
@@ -599,7 +604,6 @@ impl Drop for Stopped<'_> {
 #[test]
 fn a_board_is_moved_between_engines_and_a_snapshot_restored_over_it_by_the_command() {
     use symphony_board::NewTask;
-    use symphony_board::server::Engine;
     let alpha = Alpha::new("database-move");
     let _stopped = Stopped(&alpha);
     std::fs::write(
@@ -757,7 +761,6 @@ fn installed(alpha: &Alpha, name: &str, args: &[&str]) -> (i32, String, String) 
 /// `tasks`, each run by its path under `current`.
 #[test]
 fn a_project_on_the_installed_release_moves_its_board_with_the_releases_own_program() {
-    use symphony_board::server::Engine;
     let alpha = Alpha::new("database-move-released");
     let _stopped = Stopped(&alpha);
     released(&alpha.machine);

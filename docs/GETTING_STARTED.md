@@ -4,10 +4,10 @@ Symphony on a project of your own, in the order to do it: install the commands, 
 up, write a first document and a first decision, answer it in the app, run a first task to its
 landing, then put agents on the work. Each step names the document that holds the rest.
 
-You need git, [`just`](https://just.systems), a Rust toolchain (1.99 or later) with Cargo, and a
-shell with `curl`, `tar` and `shasum` or `sha256sum`. Agents are Claude Code or Codex sessions,
-which you install and sign in to yourself. Chrome is needed only for pictures of pages
-(`symphony shot`).
+You need git, [`just`](https://just.systems), a Rust toolchain (1.99 or later) with Cargo, and
+PostgreSQL 18 or later, installed by the machine's package manager, for the board. Agents are
+Claude Code or Codex sessions, which you install and sign in to yourself. Chrome is needed only
+for pictures of pages (`symphony shot`).
 
 ## 1. Install the commands
 
@@ -60,11 +60,14 @@ their permissions and hooks (`.claude/settings.json`, `.codex/rules/`), the reci
   ```
 
 - **`docs/`**, the folder of documents the app serves.
-- **The board's database.** The board keeps its tasks in a SurrealDB server it starts itself, in
-  the repository's git folder. `init` prints the one line that fetches the version it runs and
-  checks its SHA-256; paste it as it is. Nothing else is installed for the board: PostgreSQL is
-  not needed.
-- **The board itself**, which its first command makes: `just tasks list`.
+- **The board's database.** The board keeps its tasks in a PostgreSQL server it starts itself,
+  its data in the repository's git folder. The server is the machine's own PostgreSQL, 18 or
+  later: on a Mac, `brew install postgresql@18`, then put its `bin` folder on `PATH`
+  (`export PATH="$(brew --prefix postgresql@18)/bin:$PATH"`), or name that folder with
+  `[board] postgresql` in `symphony.toml` ([the setting](PROJECT_FILE.md#board)). `init` asks
+  for it until it finds it. Nothing else is installed for the board.
+- **The board itself**, which its first command makes on PostgreSQL: `just tasks list`. Without
+  PostgreSQL that command is refused with the same setup line, and nothing is made.
 - **The registration** with the machine's server, which step 4 does.
 
 Then commit what was written:

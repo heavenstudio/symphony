@@ -224,7 +224,19 @@ fn pinned(root: &Path, now: &str) -> Env {
 
 /// The board of `root`'s project, opened to write as its command line opens it.
 pub(super) fn writer(root: &Path) -> Store {
+    on_surreal(root);
     symphony_board::cli::connect(&env(root)).unwrap()
+}
+
+/// The board of `root`'s project, when it is not made yet, named SurrealDB's: these cases start,
+/// stop and read the record of its SurrealDB server, and its first command would otherwise make
+/// it on PostgreSQL. A board that is made, or named another engine, is left as it is.
+pub(super) fn on_surreal(root: &Path) {
+    let home = Home::in_common(&root.join(".git"), Some(&surreal()));
+    if home.unmade().unwrap() {
+        home.initialize_backend(symphony_board::server::Engine::SurrealDb)
+            .unwrap();
+    }
 }
 
 #[test]
@@ -287,7 +299,8 @@ fn a_machine_hub_starts_its_selected_postgresql_board_and_keeps_its_reader_read_
 /// line it writes (a build at schema 18 or later keeps one) is that of the migrate run here after,
 /// which leaves it out.
 fn older_writer(root: &Path) -> Store {
-    let reached = symphony_board::cli::board(&env(root)).unwrap();
+    on_surreal(root);
+    let reached = symphony_board::cli::writable_board(&env(root)).unwrap();
     Store::opening(
         reached.client,
         Box::new(|| 1_000_000.0),
@@ -478,7 +491,7 @@ struct Stopped(Home);
 
 impl Drop for Stopped {
     fn drop(&mut self) {
-        let _ = self.0.stop();
+        let _ = self.0.stop_board();
     }
 }
 

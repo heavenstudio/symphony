@@ -669,17 +669,30 @@ fn reach_board(
     if let Some(hold) = home.held() {
         return Err(crate::server::ServerError::Held(hold).to_string());
     }
+    // The Symphony's read starts a board's server but never makes a board: one not made yet is
+    // refused in a reader's words for it, which say the project has no board
+    // ([`crate::board_health::absent`]), and nothing is made or started.
+    let unmade = home.unmade().map_err(|error| error.to_string())?;
+    if how == Reaching::Read && unmade {
+        let named = crate::schema::Named::of(Some(&project.id));
+        return Err(format!(
+            "{}{}: nothing was made or started; `just tasks list` in {} makes it, on PostgreSQL",
+            named.board,
+            crate::schema::NOT_MADE,
+            named.project
+        ));
+    }
+    let start = !matches!(how, Reaching::Running | Reaching::Peek);
     let running = home
-        .board_server(
-            &project.place.root,
-            !matches!(how, Reaching::Running | Reaching::Peek),
-        )
+        .board_server(&project.place.root, start)
         .map_err(|error| match error {
-            // Where the board's server comes from is the project's board guide's to say.
+            // Where the board's server comes from is the project's board guide's to say, and what
+            // a board not made yet is made on, which its start could not make it on.
             crate::server::ServerError::NoSurreal(_)
             | crate::server::ServerError::Unserved { .. } => {
                 format!("{error} ({}#where-it-lives)", project.guide())
             }
+            error if unmade && start => format!("{error} ({}#where-it-lives)", project.guide()),
             error => error.to_string(),
         })?;
     Ok(Reached {

@@ -79,7 +79,7 @@ Then, in the project's main checkout:
 
 ```sh
 symphony init        # the agents' skills, the recipes, the permissions and hooks; ends with Next:
-# … do each line of Next: (the project file, docs/, the board's SurrealDB, the board), then
+# … do each line of Next: (the project file, docs/, the board's PostgreSQL, the board), then
 git add .agents .claude .codex .gitignore justfile symphony.just symphony.toml docs
 git commit -m "Symphony installed"
 just symphony        # the app, at the address it prints

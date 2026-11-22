@@ -19,14 +19,19 @@ What the owner sees of it in the app is told in two product specs:
 
 ## Where it lives
 
-A SurrealDB database (namespace `sf`, database `tasks`) whose server keeps its
-data, its address and its log in the git common dir, `.git/symphony/tasks/`, so every
-worktree reaches the same board, a claim is one transaction, and none of it
-shows up in `git status`. Whatever needs the board starts the server when it is
-not running: the first `just tasks`, `just symphony` as it starts, a page of the
-Symphony. It starts detached, so it outlives whoever started it, and that is
-also the restart: a server that was killed is started again on the same data.
-A start says so in one line on stderr, as it takes seconds.
+A PostgreSQL database (`tasks`) on the machine's own PostgreSQL, 18 or later
+([the setting](PROJECT_FILE.md#board)), whose server keeps its data and its log in
+the git common dir, `.git/symphony/tasks/`, so every worktree reaches the same
+board, a claim is one transaction, and none of it shows up in `git status`. The
+first `just tasks` makes the board there, and is refused with the setup guidance
+on a machine without PostgreSQL. Whatever needs a board that is made starts its
+server when it is not running: a `just tasks`, `just symphony` as it starts, a page
+of the Symphony, which never makes a board. It starts detached, so it outlives
+whoever started it, and that is also the restart: a server that was killed is
+started again on the same data. A start says so in one line on stderr, as it
+takes seconds. A board made before PostgreSQL was a new board's runs on SurrealDB
+(namespace `sf`, database `tasks`, its address recorded beside its store) until
+its store is moved ([POSTGRESQL](POSTGRESQL.md)).
 The heartbeat hook never starts it. `TASKS_SERVER` (an address) and
 `TASKS_DATABASE` reach another board, as the tests do. It is working state, not
 history: `just tasks export` writes a readable snapshot to

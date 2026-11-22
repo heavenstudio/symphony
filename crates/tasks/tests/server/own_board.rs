@@ -231,6 +231,10 @@ impl Repository {
 
 impl Drop for Repository {
     fn drop(&mut self) {
+        // A board its first command made on PostgreSQL, whose server outlives that command
+        // outside a scratch place.
+        let _ = symphony_board::server::Home::in_common(&self.common(), Some(self.surreal()))
+            .stop_board();
         self.surreal.shutdown();
         let home = self.common().join(FOLDER);
         let recorded = std::fs::read_to_string(home.join("server.json"))

@@ -45,10 +45,17 @@ impl Board {
         &self.scratch.dir
     }
 
-    /// The board's database on the engine its home names, its server started.
+    /// The board's database on the engine its home names, its server started: SurrealDB's own
+    /// start for a board not made yet, as a board made before PostgreSQL was a new board's, which
+    /// the moves here begin from.
     fn database(&self) -> Database {
         let home = self.home();
-        match home.backend().unwrap() {
+        let engine = if home.unmade().unwrap() {
+            Engine::SurrealDb
+        } else {
+            home.backend().unwrap()
+        };
+        match engine {
             Engine::SurrealDb => {
                 rpc::Client::new(&home.ensure().unwrap().addr, "sf", "tasks").into()
             }
@@ -850,32 +857,34 @@ fn a_board_that_is_not_supervised_keeps_its_postgresql_between_its_commands() {
 }
 
 #[test]
-fn postgresql_makes_nothing_for_a_board_outside_a_scratch_place_that_names_no_engine() {
+fn a_board_outside_a_scratch_place_not_made_yet_is_made_on_postgresql_named_first() {
     let b = Board::new("pg-unnamed");
     assert!(
         !symphony_board::server::scratch(b.dir()),
         "the target's folder is no scratch place"
     );
     let home = b.scratch.home().telling(|_| {});
-    let pg = home.postgresql(&programs());
-    for refused in [
-        pg.ensure().map(|_| ()),
-        pg.hold(HANDLE, "a snapshot").map(|_| ()),
-        pg.snapshot(NOW).map(|_| ()),
-        pg.reclaim("tasks"),
-        pg.restore(&b.dir().join("nowhere")),
-        pg.restore_over(&b.dir().join("nowhere"), HANDLE, NOW)
-            .map(|_| ()),
-    ] {
-        let refused = refusal(refused);
-        assert!(
-            refused.contains("names no engine and is not in a scratch place"),
-            "{refused}"
-        );
-    }
-    // Nor is it made PostgreSQL in place: only a move of its store writes that identity.
+    // Naming its engine in place is a scratch home's alone.
     let made = refusal(home.initialize_backend(Engine::PostgreSql));
     assert!(made.contains("scratch"), "{made}");
-    assert!(!b.dir().join("postgresql").exists() && !b.dir().join("backend.json").exists());
-    assert_eq!(home.held(), None);
+    assert!(home.unmade().unwrap());
+    assert!(!b.dir().join("backend.json").exists());
+    // Its first start makes it on PostgreSQL, as a live board's is: the identity, then the
+    // cluster, the server outliving the start as a board's anywhere but a scratch place does.
+    let pg = home.postgresql(&programs());
+    let serving = pg.ensure().unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(
+            &std::fs::read_to_string(b.dir().join("backend.json")).unwrap()
+        )
+        .unwrap(),
+        json!({"format": 1, "engine": "postgresql"})
+    );
+    assert!(pg.data().join("PG_VERSION").is_file());
+    assert_eq!(home.backend().unwrap(), Engine::PostgreSql);
+    assert!(!home.unmade().unwrap());
+    // SurrealDB's own start is refused it now.
+    assert!(refusal(home.ensure()).contains("owns PostgreSQL data"));
+    assert_eq!(pg.stop().unwrap().map(|s| s.pid), Some(serving.pid));
+    assert!(pg.current().unwrap().is_none());
 }

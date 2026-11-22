@@ -1,26 +1,34 @@
 # PostgreSQL board lifecycle
 
-PostgreSQL serves the board whose home names it. A scratch home (a temporary folder, or a
-checkout's artifacts folder) is made a PostgreSQL board in place; a board anywhere else becomes
-one only by a move of its store, `tasks-move postgresql`
-([the cutover procedure](analysis/board-pg-cutover.md#one-boards-move)), and with no identity
-PostgreSQL makes and starts nothing there. The machine server and the board commands use the same
-home selection. This repository's board is on PostgreSQL since 2026-11-21
-([its move](analysis/board-pg-cutover.md#this-repositorys-board-moved-2026-11-21)); each other
-project's board moves after its own pin, by the `tasks-move` the release installs beside its
-`tasks`, run by its path in the machine folder (`current/bin/tasks-move postgresql --as HANDLE`,
-[the command a project runs](analysis/board-pg-cutover.md#one-boards-move)).
+PostgreSQL serves the board whose home names it, and a board not made yet: wherever its home
+is, the first board command makes it on PostgreSQL. A board on SurrealDB becomes one only by a
+move of its store, `tasks-move postgresql`
+([the cutover procedure](analysis/board-pg-cutover.md#one-boards-move)). The machine server and
+the board commands use the same home selection. This repository's board is on PostgreSQL since
+2026-11-21 ([its move](analysis/board-pg-cutover.md#this-repositorys-board-moved-2026-11-21));
+each other project's board moves after its own pin, by the `tasks-move` the release installs
+beside its `tasks`, run by its path in the machine folder
+(`current/bin/tasks-move postgresql --as HANDLE`, [the command a project runs](analysis/board-pg-cutover.md#one-boards-move)).
 
 ## The board home owns its engine
 
 The home keeps `backend.json` beside `server.json`, `hold` and `lock`. Its complete shape is
-`{"format":1,"engine":"postgresql"}` or `{"format":1,"engine":"surrealdb"}`. Without it a
-home uses SurrealDB. Unknown formats, invalid JSON, unknown engines, or data of the wrong engine
-refuse explicitly. PostgreSQL data without an identity is ambiguous, and never opens as SurrealDB.
+`{"format":1,"engine":"postgresql"}` or `{"format":1,"engine":"surrealdb"}`. Without it, a
+home that holds a SurrealDB store (`data/`, or the `reclaim/old` a reclaim cut short leaves) is a
+SurrealDB board, made before the identity, and keeps opening as one. A home that holds neither
+engine's data is a board not made yet, PostgreSQL's: the start that makes its cluster writes
+`{"format":1,"engine":"postgresql"}` first, under the starters' lock, so no cluster is ever made
+without the identity that selects it. A machine without PostgreSQL 18 or later is refused that
+start with the setup guidance ([the setting](PROJECT_FILE.md#board)), and nothing is made; the
+board is never made on SurrealDB in its place. A read of the board by the Symphony starts a
+board's server but never makes a board: one not made yet reads as none. Unknown formats, invalid
+JSON, unknown engines, an incomplete PostgreSQL data folder, or data of the wrong engine refuse
+explicitly. PostgreSQL data without an identity opens as PostgreSQL, never as SurrealDB.
 
-`Home::initialize_backend` initializes a scratch home's identity under the starters' lock. It
-accepts no existing identity of another engine and no data of the other engine. It writes and
-syncs a temporary file, renames it into place, then syncs the home. Repeating the same identity
+`Home::initialize_backend` names a scratch home's engine before it is made, under the starters'
+lock: a fixture's SurrealDB board, or its PostgreSQL one. It accepts no existing identity of
+another engine and no data of the other engine. It writes and syncs a temporary file, renames it
+into place, then syncs the home. Repeating the same identity
 keeps it. The PostgreSQL cluster is `postgresql/`; a retained SurrealDB store belongs outside the
 active home's `data/` before that home can identify itself as PostgreSQL.
 

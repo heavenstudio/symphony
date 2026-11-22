@@ -1,7 +1,9 @@
 # crates/tasks/
 
-The `symphony-board` crate (this folder) is the task board: its store over SurrealDB, the database
-server it starts in `symphony/tasks/` in the git common dir, and the binaries `tasks`
+The `symphony-board` crate (this folder) is the task board: its store over PostgreSQL, on which a
+new board is made, and over SurrealDB, which a board made before that keeps until it is moved
+(`server/backend.rs` selects one by the board's home), the database server it starts in
+`symphony/tasks/` in the git common dir, and the binaries `tasks`
 (`just tasks`), `agent-send` (`just agent-send`), `tasks-copy`, `tasks-reclaim` and `tasks-move`.
 The workspace, the Cargo wrapper and the toolchain pin are
 [the root guide's](../../AGENTS.md#rust).
@@ -275,7 +277,10 @@ The store's tests start one in-memory server per test binary and give each test 
 own (`tests/store/common.rs`). The server is the pinned SurrealDB `tools/surreal.sh` fetches once
 per repository; `SYMPHONY_SURREAL` names another binary. A fixture board under the temporary
 folder or a checkout's `artifacts/` is a scratch place: its server ends with the process that
-started it, and a fixture repository there is its own project. The PostgreSQL tests
+started it, and a fixture repository there is its own project, whose first board command makes
+its board on PostgreSQL, as any project's does. A fixture whose subject is SurrealDB names it
+before that command (`Home::initialize_backend(Engine::SurrealDb)`) or starts SurrealDB itself
+(`Home::ensure`, which makes its store); either way it stops what it started. The PostgreSQL tests
 (`tests/server/postgres.rs`) and the hosted board's (`tests/hosted/`, `just hosted-check`) need
 what [the root guide](../../AGENTS.md#what-it-needs-installed) lists.
 
