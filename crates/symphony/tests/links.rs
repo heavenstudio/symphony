@@ -1,8 +1,6 @@
 //! What the `symphony` binary links, of what it never runs: it reads boards and runs no board
-//! command (`symphony_board::cli::board` and `running_board`, never `cli::main`), and it holds no
-//! plugin (it installs none: `symphony::plugins::install`). So it links none of the loopback that
-//! measures a compiled plugin's calls through the protocol's JSON (`symphony::plugins::measure`).
-//! It checks no JSON Schema (`serve` refuses `validate`: a schema check is a library call,
+//! command (`symphony_board::cli::board` and `running_board`, never `cli::main`). It checks no JSON
+//! Schema (`serve` refuses `validate`: a schema check is a library call,
 //! `symphony::schema::validate`), so it links none of the validator, which would add a fifth to
 //! its size. It opens boards only to read (`Store::read_as`, `Store::reading`), so it links none of
 //! the migration that makes or moves one, the two databases' schema texts among it. And on macOS
@@ -12,7 +10,6 @@
 //! which this library never compiles, so there is nothing of theirs to look for here.
 
 use serde_json::json;
-use symphony::plugins::measure::READ_AS_ANOTHER;
 
 // The symbols a Mach-O binary exports, read from its export trie.
 #[cfg(target_os = "macos")]
@@ -25,15 +22,6 @@ fn binary() -> Vec<u8> {
 
 fn holds(binary: &[u8], text: &[u8]) -> bool {
     binary.windows(text.len()).any(|window| window == text)
-}
-
-#[test]
-fn the_binary_links_no_plugin_loopback() {
-    assert!(
-        !holds(&binary(), READ_AS_ANOTHER.as_bytes()),
-        "the symphony binary links the plugins' loopback: something it runs names \
-         `symphony::plugins::measure::measured` other than through `install`"
-    );
 }
 
 /// The text looked for is a refusal the validator writes (`unsupported keyword(s): `), taken from

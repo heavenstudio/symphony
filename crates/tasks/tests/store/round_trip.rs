@@ -1,10 +1,11 @@
-//! A realistic board ([`crate::realistic`]) from SurrealDB to PostgreSQL and back: SurrealDB's
-//! export, copied into PostgreSQL, reads back as that export, table by table and as one text,
-//! with the rows the copy derives from it (the counters, each sender's last word), and searches
-//! alike; PostgreSQL's is SurrealDB's text, which SurrealDB took. An import into PostgreSQL cut
-//! short leaves the board as it was, and made again ends where one never cut short does.
+//! A realistic board ([`crate::realistic`]) from SurrealDB, on the board's own engine, to
+//! PostgreSQL and back: SurrealDB's export, copied into PostgreSQL, reads back as that export,
+//! table by table and as one text, with the rows the copy derives from it (the counters, each
+//! sender's last word), and searches alike; PostgreSQL's is SurrealDB's text, which SurrealDB
+//! took. An import into PostgreSQL cut short leaves the board as it was, and made again ends where
+//! one never cut short does.
 
-use crate::common::{Backend, Fixture, Seed};
+use crate::common::{Backend, BoardServer, Fixture, Seed, postgresql};
 use crate::copy::everything;
 use crate::realistic;
 use crate::search::answered;
@@ -92,11 +93,24 @@ const SEARCHED: [&str; 12] = [
     "main",
 ];
 
+/// What each request of a test that copies the realistic board waits within: six times the
+/// clients' own wait (300 s, the same on either database), a backstop only a stall reaches
+/// ([`test_time::backstop`]). A copy is one request, so its client's wait is its whole bound, and
+/// these tests are of what a copy gives, not how soon (RULES.md `tests/no-test-fails-on-load`).
+fn patient() -> Duration {
+    test_time::backstop(postgresql().wait())
+}
+
+/// SurrealDB's side is a server on the board's own engine and memtable ([`BoardServer`]), as
+/// PostgreSQL's is the board's own server: its export is the one a board's server gives, and its
+/// copy of a whole board is the work a board's is, not the in-memory engine's many times over.
 #[test]
 fn a_realistic_board_goes_from_surrealdb_to_postgresql_and_back_whole() {
     let board = realistic::board();
-    let surreal = Fixture::on(
-        Backend::SurrealDb,
+    let wait = patient();
+    let server = BoardServer::start();
+    let surreal = Fixture::in_database(
+        server.client().waiting(wait).into(),
         Seed {
             dump: board.clone(),
         },
@@ -107,8 +121,8 @@ fn a_realistic_board_goes_from_surrealdb_to_postgresql_and_back_whole() {
         &board,
         "SurrealDB's export of the board it was given",
     );
-    let postgres = Fixture::on(
-        Backend::PostgreSql,
+    let postgres = Fixture::in_database(
+        postgresql().waiting(wait).into(),
         Seed {
             dump: exported.clone(),
         },
@@ -179,8 +193,8 @@ fn an_import_cut_short_leaves_the_board_as_it_was_and_made_again_ends_whole() {
     let board = realistic::board();
     let mut before = everything();
     before.tasks[0].fields = serde_json::from_value(json!({"probe": {"number": 1e30}})).unwrap();
-    let f = Fixture::on(
-        Backend::PostgreSql,
+    let f = Fixture::in_database(
+        postgresql().waiting(patient()).into(),
         Seed {
             dump: before.clone(),
         },

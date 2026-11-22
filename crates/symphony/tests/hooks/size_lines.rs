@@ -109,8 +109,9 @@ fn reds(sizes: &BTreeMap<String, u64>, lines: &BTreeMap<String, u64>) -> Vec<Str
             Some(&line) if size > line => reds.push(format!(
                 "{path} is {size} bytes, {} past its line of {line} ({key} in {LINES}): cut it, \
                  or move the mechanism it retells to its document or module comment, before any \
-                 raise",
-                size - line
+                 raise to {}, its size plus a tenth",
+                size - line,
+                line_for(size)
             )),
             Some(_) => {}
             None => reds.push(format!(
@@ -262,14 +263,24 @@ fn a_file_at_or_under_its_line_is_green() {
 }
 
 #[test]
-fn a_file_grown_past_its_line_is_red_by_its_name_its_bytes_and_its_line() {
+fn a_file_grown_past_its_line_is_red_by_its_name_its_bytes_its_line_and_the_line_a_raise_takes() {
     let sizes = map(&[("RULES.md", 101), ("AGENTS.md", 10)]);
     let lines = map(&[("RULES", 100), ("AGENTS", 50)]);
     assert_eq!(
         reds(&sizes, &lines),
         ["RULES.md is 101 bytes, 1 past its line of 100 (RULES in \
              crates/symphony/tests/hooks/size_lines.toml): cut it, or move the mechanism it \
-             retells to its document or module comment, before any raise"]
+             retells to its document or module comment, before any raise to 200, its size plus \
+             a tenth"]
+    );
+    // A larger file: the raise is its size plus a tenth, rounded up to a hundred.
+    let sizes = map(&[("crates/tasks/AGENTS.md", 20_714)]);
+    let red = reds(&sizes, &map(&[("crates-tasks-AGENTS", 20_000)]));
+    assert_eq!(red.len(), 1, "{red:?}");
+    assert!(
+        red[0].starts_with("crates/tasks/AGENTS.md is 20714 bytes, 714 past its line of 20000")
+            && red[0].ends_with("before any raise to 22800, its size plus a tenth"),
+        "{red:?}"
     );
 }
 
