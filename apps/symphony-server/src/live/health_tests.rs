@@ -1543,3 +1543,15 @@ fn low_disk_environment_map_keeps_filter_empty_and_last_duplicate_values() {
         );
     }
 }
+
+#[test]
+fn a_held_clock_is_a_finite_number_of_seconds_and_nothing_else() {
+    use super::health::held;
+    assert_eq!(held(Some("1772443800")), Some(1_772_443_800.0));
+    assert_eq!(held(Some("1772443800.5")), Some(1_772_443_800.5));
+    assert_eq!(held(None), None);
+    assert_eq!(held(Some("")), None);
+    assert_eq!(held(Some("soon")), None);
+    assert_eq!(held(Some("inf")), None);
+    assert_eq!(held(Some("NaN")), None);
+}
