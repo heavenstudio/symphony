@@ -48,6 +48,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 use symphony_board::land::delivery::{Journal, RECEIPTS, Receipt, Stage};
+use symphony_board::lock::Recovered as _;
 
 use super::{
     Edit, JOURNAL, OutputJob, QueuedPublication, checked, common_dir, git, made, main_ref, merge,
@@ -135,7 +136,7 @@ pub struct Save {
 /// The git common folder of the checkout at `root`, found once for each: every page read asks.
 fn common(root: &Path) -> Option<PathBuf> {
     static FOUND: Mutex<BTreeMap<PathBuf, PathBuf>> = Mutex::new(BTreeMap::new());
-    let mut found = FOUND.lock().unwrap_or_else(|e| e.into_inner());
+    let mut found = FOUND.lock().recover();
     if let Some(common) = found.get(root) {
         return Some(common.clone());
     }
@@ -626,7 +627,7 @@ impl OutputJob {
     ///
     /// The journal could not be written.
     pub(super) fn deliver(&mut self, root: &Path) -> Result<bool, String> {
-        let edit = self.job.1.clone();
+        let edit = self.job.edit.clone();
         let sequence = sequence_of(&self.path)
             .ok_or_else(|| format!("{}: not a journal entry's name", self.path.display()))?;
         let _commits = shared_lock(root, "verdict-commits.lock")?;

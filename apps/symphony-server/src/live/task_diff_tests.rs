@@ -1,10 +1,10 @@
 //! The task diff's native routes on a scratch board and repository, with validators and errors.
 use super::Hub;
-use super::read_paths_tests::{observe, served_with, store_on};
+use super::read_paths_tests::{observe, served_with};
 use crate::testing::{
     Tree,
     board::{Fixture, Seed},
-    git, repository,
+    git, repository, store_on,
 };
 use axum::http::StatusCode;
 use symphony_api::{TaskDiff, TaskDiffPatch, TaskDiffSource};

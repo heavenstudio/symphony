@@ -33,7 +33,9 @@ pub struct Board {
     /// (`symphony_board::on_land`).
     pub on_land: Vec<String>,
     /// The open tasks (in progress or in review) an orchestrator may hold before the board refuses
-    /// it new work, which the board reads itself (`symphony_board::slots`); `None` caps nothing.
+    /// it new work, which the board reads itself (`symphony_board::slots`) and judges as it judges
+    /// `[limits]`'s (`symphony_board::limits::judged`); `None` caps nothing, as a value it cannot
+    /// read does, which [`super::Project::parse`] refuses as the board says it.
     pub orchestrator_slots: Option<u32>,
     /// The pipeline alarm, which the board reads itself (`symphony_board::alarm`): review holding
     /// more than this many times the work in progress raises it; `None` is the board's default.
@@ -66,13 +68,9 @@ impl Board {
 
     /// The table as written, each path checked to stay inside the project.
     pub(super) fn from_file(file: FileBoard) -> Result<Board, String> {
-        let inside =
-            |key: &str, path: Option<String>| path.map(|path| super::inside(key, path)).transpose();
-        if file.orchestrator_slots == Some(0) {
-            return Err(
-                "[board] orchestrator_slots is 0; an orchestrator needs at least one slot".into(),
-            );
-        }
+        let inside = |key: &str, path: Option<String>| {
+            path.map(|path| super::inside(key, &path)).transpose()
+        };
         for (key, value) in [
             ("review_alarm_ratio", file.review_alarm_ratio),
             ("review_alarm_hours", file.review_alarm_hours),
@@ -131,7 +129,10 @@ impl Board {
             guide: inside("[board] guide", file.guide)?,
             on_review: file.on_review,
             on_land: file.on_land,
-            orchestrator_slots: file.orchestrator_slots,
+            orchestrator_slots: file.orchestrator_slots.and_then(|value| {
+                let cap = symphony_board::limits::judged(symphony_board::limits::SLOTS, &value);
+                cap.ok().and_then(|cap| u32::try_from(cap).ok())
+            }),
             review_alarm_ratio: file.review_alarm_ratio,
             review_alarm_hours: file.review_alarm_hours,
             review_alarm_clear_hours: file.review_alarm_clear_hours,
@@ -150,7 +151,9 @@ pub(super) struct FileBoard {
     guide: Option<String>,
     on_review: Vec<String>,
     on_land: Vec<String>,
-    orchestrator_slots: Option<u32>,
+    /// Any value the file writes, so one the board cannot read leaves the rest of the project read,
+    /// as `[limits]`'s do (`super::file::FileLimits`).
+    orchestrator_slots: Option<toml::Value>,
     review_alarm_ratio: Option<u32>,
     review_alarm_hours: Option<u32>,
     review_alarm_clear_hours: Option<u32>,

@@ -5,119 +5,43 @@ description: File a task on the board so an executor can work from the brief alo
 
 # File a task on the board
 
-Read the destination project's task conventions and permissions first. Use the
-board CLI help for supported arguments; this page describes how to prepare a brief. Load `/tasks` first if you
-are not yet attached to the board; a subagent has no monitor, so it gets its
-handle from `just tasks register` instead.
+Read the project's task conventions first. `just tasks create --help` says the arguments; this
+page says how to prepare the brief. Not attached to the board yet, get a handle with
+`just tasks register`, and pass it as `--as HANDLE`.
 
-## 0. Does this need a task at all
+1. **Does this need a task at all?** A problem met once (a one-time migration, a cleanup, a
+   repair of one machine's state) is solved by doing it: run the commands or a throwaway script,
+   say what was run and what came of it, and stop. File a task for what will be built on, run
+   again or must be reviewed, in the smallest form that solves the problem.
+2. **Look before filing.** Run `just tasks list --all` and `just tasks search "WORDS"` with the
+   work's own words. An open task that covers it gets a post (`just tasks say`), not a second
+   task; a finished one is named in the new brief.
+3. **Pick the slug**, `area/name` (`app`, `tests`, `tools`, `docs`, `skills`, …): it becomes the
+   branch name, so keep it short and distinct.
+4. **Priority and stage.** `--priority` is 0 (most urgent) to 4. `--stage` is `ready` (the
+   default, work with no design step), `design` or `concept` (an owner-signed design document is
+   still needed, which agents never sign off themselves) or `backlog` (a parked follow-up).
+5. **Links.** `--depends SLUG` names a task that must exist already and be done first, `--link
+   docs/X.md#Heading` the spec section it implements, `--parent SLUG` the larger task it is under.
+6. **Write the brief** to a file outside the tree (never committed) and pass it with
+   `--body-file`. Give the executor everything it needs without the thread:
 
-Keep it simple. A problem met once (a one-time migration, a cleanup, a repair of
-one machine's state) is solved by doing it: run the commands or a throwaway
-script, say what was run and what came of it, and stop. File no task whose
-output is a committed tool, tests and a review round for something that runs
-once, and none that hardens a script after it has done its job. File a task for
-what will be built on, run again or must be reviewed, and write the smallest
-form of it that solves the problem.
+   ```
+   what and why: the measurement or evidence that motivated it
+   spec: docs/X.md#Heading, and the approved cards it builds on ([x], [r], [a] only)
+   pending: what must not be built yet
+   touches: files and areas it changes, and tasks it must not collide with
+   acceptance: observable behaviour and error cases
+   evidence: the tests that cover the change and their green run, posted on the thread, and
+     what the kind of change calls for (before and after screenshots of a changed page)
+   gates: the focused checks the change needs, by the project's configured entrypoints (the
+     tests closest to it and its lint, never the full suite), and its landing prerequisites
+   rulings: owner answers that apply, quoted as already approved, never proposed again
+   communication: milestones only (a tip ready for review, a block, a collision, a finding, a
+     question), addressed --to @orchestrator, --to @reviewer or --to HANDLE
+   ```
 
-## 1. Look before filing
-
-Run `just tasks list --all`, which keeps the done and cancelled tasks plain
-`list` leaves out (add `--status design` etc. to narrow it), and
-`just tasks search "WORDS"` with the work's own words, and scan both for the same
-work, including a concepts-session slug already in flight. If an open task
-already covers it, add to its thread with `just tasks say` instead of filing a
-second one; if a finished one did, say so in the new brief.
-
-## 2. Pick the slug
-
-`area/name` — `app`, `tests`, `tools`, `data`, `media`, `docs`,
-`skills`, `perf`, … It becomes the branch name too, so keep it short and
-distinct from anything in the list you just ran.
-
-## 3. Priority and stage
-
-- `--priority` is 0 (most urgent) to 4; `p0` to `p4` read the same.
-- `--stage` is one of `backlog`, `concept`, `design`, `ready` (omit it for the
-  default, `ready`):
-  - `ready` — work with no design step.
-  - `design` or `concept` — an owner-signed design doc is still needed. Agents
-    never sign that off themselves.
-  - `backlog` — a parked follow-up.
-
-## 4. Links between tasks and docs
-
-- `--depends SLUG` (repeatable) names tasks that must already exist — create
-  tasks in dependency order, or create the depended-on one first.
-- `--link docs/X.md#Heading` (repeatable) points at the spec section it
-  implements.
-- `--parent SLUG` attaches it under a larger task; like `--depends`, the
-  store checks that it already exists.
-
-## 5. Write the brief
-
-Pass it with `--body-file`, written outside the tree (scratchpad or
-`artifacts/` — never committed). Give the executor everything it needs
-without the thread:
-
-```
-what and why — the measurement or evidence that motivated it
-spec: docs/X.md#Heading — approved cards it builds ([x], [r], [a] only;
-  [ ], [?], [-], [~] are not approved)
-pending: what must not be built yet
-touches: files/areas it changes, and tasks it must not collide with
-acceptance: observable behavior and error cases
-evidence: the tests that cover the change and their green run, posted on the
-  thread after implementing under the project's test policy, and what the kind
-  of change calls for (before and after screenshots of a changed page)
-gates: the focused checks the change needs (the tests closest to it and the
-  project's lint, never the full suite), review evidence and landing
-  prerequisites, using its configured entrypoints; do not invent recipes
-rulings: owner answers that apply here, quoted as already approved principles,
-  never proposed again on a card; unseen designs applying them still need review
-communication: post milestones only (tip ready for review, move to review or
-  blocked, collision, finding, verdict, question). Address action with
-  --to @orchestrator, --to @reviewer or --to HANDLE. Never acknowledge a
-  message or repeat a post on both a subtask and its parent.
-```
-
-## 6. File it
-
-`just tasks create SLUG "title" --priority N --stage STAGE --link … --depends
-… --parent … --body-file PATH`. This is the step that actually puts it on the
-board — the earlier sections only get the arguments right.
-
-A documentation brief must state the destination project's navigation, link and
-validation requirements. Review-card citations and document status conventions
-also follow that project; this skill imposes no separate document execution lane.
-
-## 8. Afterwards
-
-- Every open task has an orchestrator or waits for one, and the create's line
-  says which (`; HANDLE orchestrates it`). Filed by an orchestrator session,
-  the task is yours from the create, unless you passed `--no-role --for
-  HANDLE` (a live orchestrator, who takes it) or a parent another holds
-  already makes it theirs. Filed by any other session, the board gives it to
-  the orchestrator of the task you work on, else of your parent session, else
-  to one that stays (live past its first live line, and waiting, watching or
-  holding a task). One that orchestrates `[limits] orchestrator_tasks` open
-  tasks or more (16 unwritten), you or the `--for` one included, is passed
-  over, the line saying why; with none under its limit that stays it says
-  `it waits for an orchestrator under its limit that stays`, and the first
-  such to come is given it. On a board with no orchestrator at all, a new
-  project's, it says nothing of one.
-- Tell the owner the slug in one line.
-- Starting an executor on it is a separate step — see the task-orchestrator
-  skill.
-
-## Worked example
-
-```
-just tasks create app/scheduled-start "Start on schedule" \
-  --priority 2 --stage ready \
-  --link "docs/SPEC.md#Scheduling" \
-  --depends app/start-input \
-  --body-file artifacts/scheduled-start-brief.md --as <handle>
-```
-
-(The handle goes in `--as`: no allow rule passes a `TASKS_SESSION=` prefix.)
+7. **File it**: `just tasks create SLUG "title" --priority N --stage STAGE --link … --depends …
+   --parent … --body-file PATH --as HANDLE`. Its line says who orchestrates it, or that it waits
+   for an orchestrator. Tell the owner the slug in one line. Starting an executor on it is a
+   separate step, the task-orchestrator skill's.

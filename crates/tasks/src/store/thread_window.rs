@@ -2,7 +2,7 @@
 //! full thread read used by existing consumers. Non-system bodies never enter this projection.
 
 use super::statement::both;
-use super::{Error, Message, Store, message, refused, repr};
+use super::{Error, Message, Store, message};
 use super::{postgres::thread_window as pg, surreal::thread_window as sql};
 use crate::rows::MessageRow;
 use serde::Deserialize;
@@ -49,7 +49,7 @@ impl Store {
             )
         })?;
         if !read.known {
-            return Err(refused(format!("no task {}", repr(slug))));
+            return Err(super::work::no_task(slug));
         }
         let more = read.messages.len() > THREAD_WINDOW_LIMIT;
         let rows: Vec<_> = read

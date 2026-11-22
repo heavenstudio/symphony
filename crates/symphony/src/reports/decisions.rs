@@ -53,7 +53,7 @@ struct Step {
 }
 
 /// Whether `card` waits on the owner as it stands. Each card's thread is worked out here alone, so
-/// the server's binary holds that work once for both callers (docs/CHECKS.md, size budgets).
+/// the server's binary holds that work once for both callers (docs/workflow/CHECKS.md, size budgets).
 #[inline(never)]
 fn waits_on_owner(card: &Decision, plugins: &Plugins) -> bool {
     matches!(card.group(plugins), Group::Decide | Group::Confirm)
@@ -215,7 +215,7 @@ enum Out {
 
 /// Fill `day`'s decisions, and each hour's, from the cards of `docs`. Each list is kept in order as
 /// it is made, by time and then slug, rather than sorted: a sort costs the server's binary a sort of
-/// its own for each kind of list (docs/CHECKS.md, size budgets).
+/// its own for each kind of list (docs/workflow/CHECKS.md, size budgets).
 pub fn fill(day: &mut ReportDay, docs: &[Doc], plugins: &Plugins) {
     let mut histories: Vec<History> = Vec::new();
     for doc in docs {

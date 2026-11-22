@@ -1,4 +1,4 @@
-//! The receipts of the lands a pull request delivered (docs/TASKS.md, "A land delivered by a pull
+//! The receipts of the lands a pull request delivered (docs/workflow/TASKS.md, "A land delivered by a pull
 //! request"), as the release run reads them: `receipts/SLUG.json` in the lands' folder of the git
 //! common dir, each written by `tasks land` once it proved the commit the host made
 //! ([`symphony_board::land::delivery::Receipt`]). A squash leaves its task's head in no history

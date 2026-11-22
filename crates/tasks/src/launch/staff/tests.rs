@@ -266,17 +266,14 @@ fn a_review_goes_back_to_the_tasks_recorded_reviewer_never_to_another_idle_one()
         let board = f.store.board().unwrap();
         let task = board.tasks.iter().find(|t| t.slug == "sim/jump").unwrap();
         let held = f.store.ever_held("sim/jump").unwrap();
-        let (resumed, picked) = job_for(
-            &f.store,
-            hc,
-            &idle,
-            &board,
+        let wanted = Job {
+            board: &board,
             task,
-            "reviewer",
-            &HashSet::new(),
-            &held,
-            None,
-        )?;
+            role: "reviewer",
+            held: &held,
+            operating: None,
+        };
+        let (resumed, picked) = job_for(&f.store, hc, &idle, &HashSet::new(), &wanted)?;
         Ok::<_, Error>((resumed, picked.map(|a| a.handle.clone())))
     };
     let job = || job_in(&Running(None)).unwrap();

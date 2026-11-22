@@ -11,7 +11,7 @@
 //! [`REPORTS_READ_BYTES`], newest days first; a file past either, one that does not read, a link or
 //! anything but a regular file is named in [`ReportsPage::unread`] and left out. An agents' day file
 //! is read for its hour lines alone, by their `type` (a line of another type, or one cut short, is
-//! passed over), and every line of an hour is taken together as docs/AGENT_ACTIVITY.md, *Reading an
+//! passed over), and every line of an hour is taken together as docs/workflow/AGENT_ACTIVITY.md, *Reading an
 //! hour*, says: seconds and counts added up, peaks the largest, means weighted by the seconds each
 //! line watched (by its snapshots where none watched any), and the sessions started of the line
 //! that ran latest.
@@ -72,14 +72,15 @@ impl Folders {
     }
 }
 
-/// The answer of a window of `days` by `grain` of the project `hub` serves, at its clock: its day
+/// The answer of a window of `days` by `grain` of the project `hub` serves, at the time its
+/// records are read at ([`crate::live::Hub::recorded_now`]): its day
 /// files, from the folders found at the first read ([`crate::live::Hub::report_folders`]), and
 /// the marks from its default branch; the one the hub kept while none of them moved
 /// ([`Kept::answer`]).
 pub(crate) fn answer(hub: &crate::live::Hub, grain: Grain, days: u32) -> Answer {
     let folders = hub.report_folders.get_or_init(|| Folders::of(&hub.root));
     hub.reports_kept
-        .answer(folders, &hub.root, grain, days, hub.now())
+        .answer(folders, &hub.root, grain, days, hub.recorded_now())
 }
 
 /// The marks of `branch`, the default branch of the project at `root`, since `since`, oldest
@@ -718,7 +719,7 @@ impl Sum {
 
 /// `(peak, mean)` of `name` taken into the named sums `sums` at `weight`, a sum made for a name it
 /// has none for. A list rather than a map: a period holds a few roles and kinds, and a map costs the
-/// server's binary its own tree code (docs/CHECKS.md, size budgets).
+/// server's binary its own tree code (docs/workflow/CHECKS.md, size budgets).
 fn take(sums: &mut Vec<(String, Sum)>, name: &str, peak: f64, mean: f64, weight: f64) {
     match sums.iter_mut().find(|(kept, _)| kept == name) {
         Some((_, sum)) => sum.take(peak, mean, weight),

@@ -376,7 +376,7 @@ fn a_releases_section_says_what_git_derived_and_each_entry_under_its_heading() {
             "- The calls a consumer's code is held to changed in: \
              crates/tasks/tests/consumer_api.rs.",
             "symphony.toml:",
-            "- Keys read anew (docs/PROJECT_FILE.md says each): `[agents.launch] default`.",
+            "- Keys read anew (docs/operations/PROJECT_FILE.md says each): `[agents.launch] default`.",
             "- Keys no longer read, which `just symphony-cli settings-check` refuses as unknown: \
              `[board] installation`, `[board] old`.",
             "- `[agents] launch` is read",
@@ -507,7 +507,8 @@ fn what_a_branch_owes_is_an_entry_for_each_thing_it_changed_under_a_consumer() {
         all[1]
     );
     assert!(
-        all[2].starts_with("docs/PROJECT_FILE.md no longer lists [board] installation, ")
+        all[2]
+            .starts_with("docs/operations/PROJECT_FILE.md no longer lists [board] installation, ")
             && all[2].contains("`Consumer-Note: settings: TEXT`"),
         "{}",
         all[2]
@@ -749,7 +750,7 @@ fn the_notes_of_two_releases_come_from_git_and_the_commits_between_them() {
              consumer calls:\n- `Store::opening_on` is replaced by `Store::reading_on`; both work \
              in this release. Move to `Store::reading_on` before release-2026-11-19, which \
              removes `Store::opening_on`.\nsymphony.toml:\n- Keys read anew \
-             (docs/PROJECT_FILE.md says each): `[board] postgresql`.\n- Keys no longer read, \
+             (docs/operations/PROJECT_FILE.md says each): `[board] postgresql`.\n- Keys no longer read, \
              which `just symphony-cli settings-check` refuses as unknown: `[board] \
              installation`.\n- `symphony.local.toml` is read (added after this release was cut, \
              by the commit {late} that release-2026-11-19 holds: not in its tag's \
@@ -851,7 +852,7 @@ fn the_command_prints_every_releases_notes_and_checks_a_branch() {
         err.starts_with("consumer-notes: the board schema moves from 20 to 21")
             && err
                 .trim_end()
-                .ends_with("(docs/RELEASES.md, \"Its notes\")"),
+                .ends_with("(docs/workflow/RELEASES.md, \"Its notes\")"),
         "{err}"
     );
     // What the branch's commits would say in the next release's notes, and of the one before.

@@ -17,6 +17,7 @@ use super::surreal::callbacks as sql;
 use super::{Error, Store, refused};
 use crate::cli::agents::{Answer, Pane};
 use crate::cli::{attach, probes, pull};
+use crate::lock::Recovered as _;
 use crate::maps::Collect as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -87,6 +88,31 @@ struct Event {
     pull_said: Option<pull::Said>,
 }
 
+impl Event {
+    /// A line for `handle` under `key`, about the task `slug` or the post `message` if it names
+    /// one: never attempted, and no PULL.
+    fn line(
+        key: String,
+        handle: &str,
+        text: String,
+        slug: Option<String>,
+        message: Option<i64>,
+    ) -> Event {
+        Event {
+            key,
+            handle: handle.to_string(),
+            text,
+            slug,
+            message,
+            attempts: 0,
+            sequence: 0,
+            pull_entries: None,
+            pull_withheld: None,
+            pull_said: None,
+        }
+    }
+}
+
 /// A recipient's callback state as a dispatch reads it, with when its PULL was last checked and
 /// the lines still queued for it, which a hand-over can take back ([`Hearing::rescope`]).
 #[derive(Deserialize)]
@@ -103,6 +129,120 @@ struct Accounted {
     held: bool,
     current: bool,
     marker: Moved,
+}
+
+/// The agents view a visit took, when its recipient's look needed one, with the sessions it lists
+/// idle and those running a test ([`pull::idle_and_busy`]).
+struct Agents {
+    view: Option<crate::cli::agents::View>,
+    idle: Vec<String>,
+    busy: Vec<String>,
+}
+
+/// What a PULL due for its recipient planned ([`Store::plan_pull`]): its text and what it says,
+/// the account of what the recipient was told of it, and every entry of the whole digest, which
+/// the observation records as older dispatchers do.
+struct Pulled {
+    text: String,
+    said: pull::Said,
+    account: Account,
+    entries: BTreeSet<(String, String)>,
+}
+
+impl Pulled {
+    /// The event of this PULL for `handle`, keyed by the lease `revision` it is queued under, when
+    /// its account queues a new one ([`PullPlan::Queued`]).
+    fn event(&self, handle: &str, board: &super::Board, revision: u64) -> Option<Event> {
+        let Account {
+            plan: PullPlan::Queued,
+            awaiting: Some(awaiting),
+            ..
+        } = &self.account
+        else {
+            return None;
+        };
+        let (key, slug) = (format!("pull-{revision}"), session_task(board, handle));
+        Some(Event {
+            pull_entries: Some(awaiting.entries.clone()),
+            pull_withheld: Some(awaiting.withheld.clone()),
+            pull_said: Some(self.said.clone()),
+            ..Event::line(key, handle, self.text.clone(), slug, None)
+        })
+    }
+}
+
+/// A recipient as one visit reads it against the board the visit holds ([`Store::look`]): its
+/// stored state and the lines still queued for it, what it hears now, and whether its PULL is due.
+struct Look {
+    state: State,
+    queued: Vec<Queued>,
+    /// What it hears now, and the same compacted to the open tasks, as its record keeps it.
+    seen: attach::Seen,
+    heard: attach::Seen,
+    /// The whole board's look older dispatchers keep, compacted to the open tasks.
+    legacy: attach::Seen,
+    /// What it was told, as it hears it ([`State::heard`]).
+    before: Option<attach::Seen>,
+    /// How what it hears narrows the whole board's look ([`attach::Narrowing`]).
+    narrowing: attach::Narrowing,
+    /// Whether no newer dispatcher has written for it yet; of those, whether an older one has
+    /// ([`upgrades_legacy`]) or nobody has.
+    initializing: bool,
+    legacy_upgrade: bool,
+    first_observation: bool,
+    /// The message its inbox is read after.
+    message_floor: i64,
+    /// The open tasks' statuses an orchestrator's PULL is scheduled by; none for anyone else.
+    statuses: BTreeMap<String, String>,
+    rescoped: Rescoped,
+    agents: Agents,
+    /// Whether its PULL is due now, and when it is next due.
+    due: bool,
+    pull_at: f64,
+}
+
+impl Look {
+    /// Whether the look its state records is this one.
+    fn unchanged(&self) -> bool {
+        self.state.seen.as_ref() == Some(&self.legacy)
+            && self.state.narrowing.as_ref() == Some(&self.narrowing)
+    }
+
+    /// Whether its record is current on `board`: its look unchanged, and its inbox read to the
+    /// board's newest message.
+    fn current(&self, board: &super::Board) -> bool {
+        self.unchanged() && self.state.inbox_cursor == Some(board.latest_message)
+    }
+
+    /// Whether recording this look, with `events`, the children `unknown` whose liveness is not
+    /// known and the PULL `pulled` planned, if one is due, changes nothing its state records.
+    fn settled(
+        &self,
+        events: &[Event],
+        unknown: &BTreeSet<String>,
+        pulled: Option<&Pulled>,
+    ) -> bool {
+        let state = &self.state;
+        events.is_empty()
+            && !self.initializing
+            && state.registration_revision == state.observed_registration
+            && state.statuses == self.statuses
+            && state.unknown_children == *unknown
+            && pulled.is_none_or(|pulled| {
+                let Pulled { text, said, .. } = pulled;
+                (pulled.account).changes_nothing(state, &self.queued, text, Some(said))
+            })
+            && self.rescoped.is_empty()
+    }
+}
+
+/// Where a leased pass reads its recipient's inbox from ([`Store::message_events`]): after `floor`,
+/// where its cursor stands, or, on its `first` observation, whole, keeping what came after `floor`
+/// and, of the rest, each message (`msg`) and each line addressed to it.
+#[derive(Clone, Copy)]
+struct Inbox {
+    floor: i64,
+    first: bool,
 }
 
 /// The board marker just before and just after one of a dispatcher's own writes.
@@ -207,7 +347,7 @@ impl Store {
         )))?;
         // Delivered rows may already have been pruned by another dispatcher or the sweep.
         self.retrying(|| {
-            self.transact(
+            self.read_together(
                 both(sql::AGENT_DELIVERED, pg::agent_delivered()),
                 json!({"handle":handle, "key":key}),
             )
@@ -509,7 +649,10 @@ impl Store {
                 let Some(codex) = codex else {
                     continue;
                 };
-                let thread = callback.address.strip_prefix("codex:").unwrap_or_default();
+                let thread = callback
+                    .address
+                    .strip_prefix(crate::launch::CODEX)
+                    .unwrap_or_default();
                 if codex.threads.contains(thread) {
                     true
                 } else if let Some(terminal) = &callback.terminal {
@@ -561,7 +704,7 @@ impl Store {
     pub fn callback_inbox(&self, handle: &str) -> Result<Vec<(String, String)>, Error> {
         let chat = self.reads_chat(handle)?;
         let events: Vec<Event> = self.retrying(|| {
-            self.transact(
+            self.read_together(
                 both(sql::INBOX, pg::inbox()),
                 json!({"handle":handle, "chat":chat}),
             )
@@ -663,19 +806,16 @@ impl Store {
             live_orchestrator: false,
         };
         // Each look reads the messages afresh, as each pass does.
-        *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        let (mut board, mut sequence) = self.callback_board()?;
+        let (mut board, mut sequence) = self.fresh_board()?;
         // Each look gives what no orchestrator holds, when one that stays could take it (the
         // reader among them, on the waiting list now), and then reads the board the give left.
         if self.give_if_due(&board) {
-            *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
-            (board, sequence) = self.callback_board()?;
+            (board, sequence) = self.fresh_board()?;
         }
         // Then what the tasks a workflow holds need of the board itself, as a PULL's reader settles
         // it ([`Store::settle_held_if_due`]): a look is `tasks wait`'s, never `agent-send`'s.
         if self.settle_held_if_due(&board) {
-            *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
-            (board, sequence) = self.callback_board()?;
+            (board, sequence) = self.fresh_board()?;
         }
         let holdings = (callback.session.kind == "orchestrator")
             .then(|| self.slot_holdings())
@@ -689,7 +829,7 @@ impl Store {
         let sample = std::cell::OnceCell::new();
         let panes = || (sample.get_or_init(|| crate::cli::probes::hc_terminals(env))).clone();
         self.watch_pane(&board, &callback, &open, &panes, &visit)?;
-        self.dispatch_one(handle, &callback, &mut board, &mut sequence, &visit, None)?;
+        self.dispatch_one(handle, &callback, &mut board, &mut sequence, &visit)?;
         Ok((visit.printed(), sequence))
     }
 
@@ -806,7 +946,7 @@ impl Store {
     /// clock's agents view after it ([`Store::clock_panes`]).
     pub fn dispatch_callbacks_snapshot(&self) -> Result<Option<super::Board>, Error> {
         self.resume_task_blocks()?;
-        *self.clock_panes.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.clock_panes.lock().recover() = None;
         let callbacks = self.callbacks()?;
         if callbacks.is_empty() {
             return Ok(None);
@@ -819,10 +959,7 @@ impl Store {
 
     /// The hc terminals this tick of the server clock sampled, when its pane watch took a sample.
     pub(crate) fn clock_panes(&self) -> Option<Answer<Vec<Pane>>> {
-        self.clock_panes
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
+        self.clock_panes.lock().recover().clone()
     }
 
     /// The board as the pass read it, and whether the pass reached every recipient on this host: one
@@ -832,24 +969,20 @@ impl Store {
         callbacks: &BTreeMap<String, Callback>,
         pass: Pass,
     ) -> Result<(super::Board, bool), Error> {
-        // Each pass reads the messages afresh, once for every recipient ([`super::pool::Pool`]).
-        // The pool is plain data, whole or none, so a panic elsewhere leaves nothing half-made in it.
-        *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        let (mut board, mut sequence) = self.callback_board()?;
+        // Each pass reads the messages afresh, once for every recipient ([`Store::fresh_board`]).
+        let (mut board, mut sequence) = self.fresh_board()?;
         // A giving store's delivering pass (a write's detached dispatcher) gives what no
         // orchestrator holds first, so its recipients hear the give; an observing one keeps the
         // board as its write left it.
         if pass == Pass::Deliver && self.giving && self.give_if_due(&board) {
-            *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
-            (board, sequence) = self.callback_board()?;
+            (board, sequence) = self.fresh_board()?;
         }
         // Then what the tasks a workflow holds need of the board itself ([`Store::giving`]).
         if pass == Pass::Deliver
             && let Some(settle) = self.settling
             && settle(self, &board)
         {
-            *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
-            (board, sequence) = self.callback_board()?;
+            (board, sequence) = self.fresh_board()?;
         }
         let holdings = callbacks
             .values()
@@ -870,7 +1003,7 @@ impl Store {
         let idle = self
             .callback_idle
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .recover()
             .as_ref()
             .is_some_and(|idle| {
                 idle.marker == sequence
@@ -897,18 +1030,27 @@ impl Store {
             let env = crate::cli::Env::of_process();
             let visit = Visit::new(pass, &env, self, holdings.as_ref());
             let (handled, due) =
-                self.dispatch_one(handle, callback, &mut board, &mut sequence, &visit, None)?;
+                self.dispatch_one(handle, callback, &mut board, &mut sequence, &visit)?;
             observed &= handled;
             pull_at = pull_at.min(due);
         }
-        *self.callback_idle.lock().unwrap_or_else(|e| e.into_inner()) =
-            (observed && initial_sequence == sequence).then_some(Idle {
+        *self.callback_idle.lock().recover() = (observed && initial_sequence == sequence)
+            .then_some(Idle {
                 marker: sequence,
                 health,
                 pull_at,
                 holdings,
             });
         Ok((board, observed))
+    }
+
+    /// The board read again, with the messages read afresh: the inbox pool a pass reads every
+    /// recipient's inbox from ([`super::pool::Pool`]) is dropped first, so the next read of an
+    /// inbox reads the messages as this board has them. The pool is plain data, whole or none, so
+    /// a panic elsewhere leaves nothing half-made in it.
+    fn fresh_board(&self) -> Result<(super::Board, u64), Error> {
+        *self.inbox_pool.lock().recover() = None;
+        self.callback_board()
     }
 
     /// Direct messages need only the native outbox, never a machine/pane probe or a board digest.
@@ -960,8 +1102,9 @@ impl Store {
         Ok(held)
     }
 
-    /// One recipient's visit: whether it was reached, and when its PULL is next due. `lease` is the
-    /// revision of the recipient's lease this dispatcher holds, once it holds it.
+    /// One recipient's visit, planned without its lease: whether it was reached, and when its PULL
+    /// is next due. One whose PULL is due is made again under the lease at once ([`Store::leased`]),
+    /// and one the plan finds anything to record, queue or deliver for, once it has planned.
     fn dispatch_one(
         &self,
         handle: &str,
@@ -969,66 +1112,188 @@ impl Store {
         board: &mut super::Board,
         sequence: &mut u64,
         visit: &Visit<'_>,
-        lease: Option<u64>,
+    ) -> Result<(bool, f64), Error> {
+        let Some(look) = self.look(handle, callback, board, sequence, visit)? else {
+            return Ok((true, f64::INFINITY));
+        };
+        if look.due {
+            return self.leased(handle, callback, board, sequence, visit, look.pull_at);
+        }
+        let lines = self.changed_lines(handle, board, &look)?;
+        let mut events = line_events(handle, board, lines, look.state.revision);
+        // Message, role and task-tree writes append a board message. A plan that would read the
+        // inbox goes on to the lease below whatever it finds (the cursor or the observation has
+        // moved), and the leased pass reads it again: the plan leaves it to that one.
+        events.extend(self.message_events(handle, callback, board, None)?);
+        let (_, unknown_children) = self.stored_look(board, &look.legacy);
+        let settled = look.settled(&events, &unknown_children, None);
+        let current = look.current(board);
+        // A write's observation leaves a recipient whose look moved by the newest message alone, and
+        // whose inbox no message since could reach (the pass's pool says so, with no read of its
+        // own), to the delivering pass: the write gave it nothing to hear. Its recorded look and
+        // cursors stay where they were, as when another dispatcher held its lease, and the delivering
+        // pass moves them. Taking every recipient's lease to read an empty inbox and move its cursor
+        // was most of what one write cost.
+        let unreached = !current
+            && settled
+            && visit.pass == Pass::Observe
+            && look.state.narrowing.as_ref() == Some(&look.narrowing)
+            && look.state.seen.as_ref().is_some_and(|recorded| {
+                let mut recorded = recorded.clone();
+                recorded.latest_message = look.legacy.latest_message;
+                recorded == look.legacy
+            })
+            && !self.could_hear(handle, look.message_floor, board.latest_message)?;
+        if settled
+            && (current || unreached)
+            && (visit.pass == Pass::Observe || !self.callback_pending(handle, callback.chat)?)
+        {
+            return Ok((true, look.pull_at));
+        }
+        self.leased(handle, callback, board, sequence, visit, look.pull_at)
+    }
+
+    /// One recipient's visit under its lease, `lease` the revision of it this dispatcher holds:
+    /// whether it was reached, and when its PULL is next due. It records the recipient's look with
+    /// the events it queued, and a delivering pass delivers them.
+    fn dispatch_leased(
+        &self,
+        handle: &str,
+        callback: &Callback,
+        board: &mut super::Board,
+        sequence: &mut u64,
+        visit: &Visit<'_>,
+        lease: u64,
     ) -> Result<(bool, f64), Error> {
         // A write's observation keeps the board it read once its write committed: what the write
         // caused is read against the board as the write left it. A delivering pass reads the board
         // again under the lease, so a delayed plan cannot publish a transient from an older board.
-        if lease.is_some() && visit.pass != Pass::Observe {
+        let delivering = visit.pass != Pass::Observe;
+        if delivering {
             (*board, *sequence) = self.callback_board()?;
         }
-        let collect = visit.pass == Pass::Collect;
-        let Stored {
-            state,
-            checked_pull,
-            queued,
-        } =
-            self.retrying(|| self.read(both(sql::STORED, pg::stored()), json!({"handle":handle})))?;
-        let Some(mut state) = state else {
+        let Some(mut look) = self.look(handle, callback, board, sequence, visit)? else {
             return Ok((true, f64::INFINITY));
         };
-        state.restore_unknown();
-        let unsequenced = state.seen.is_some() && state.snapshot_sequence == 0;
-        // An observation recorded at a marker at or past this board's read a board holding this
-        // write's commit (each write a board read sees moves the marker, and this board was read
-        // after it), so what the write caused was heard there: a write's observation leaves that
-        // recipient. Reading the board again instead would cost each of many writers at once the
-        // whole board for each recipient another had observed meanwhile.
-        let count_changed = callback.session.kind == "orchestrator"
-            && visit.holdings.is_some_and(|holdings| {
-                state.heard().and_then(|before| before.open_slots())
-                    != Some(holdings.get(handle).map_or(0, BTreeSet::len))
-            });
-        if visit.pass == Pass::Observe
-            && !unsequenced
-            && state.snapshot_sequence >= *sequence
-            && !count_changed
-        {
-            return Ok((true, f64::INFINITY));
+        let lines = self.changed_lines(handle, board, &look)?;
+        // The recorded entries are the whole digest's, as older dispatchers record them; what
+        // the recipient was told of them is in the PULLs it acknowledged ([`Account`]).
+        let pulled = match look.due {
+            true => Some(self.plan_pull(
+                handle,
+                board,
+                visit,
+                &mut look.state,
+                &look.queued,
+                &look.agents,
+            )?),
+            false => None,
+        };
+        let mut events = line_events(handle, board, lines, lease);
+        events.extend((pulled.as_ref()).and_then(|pulled| pulled.event(handle, board, lease)));
+        // Message, role and task-tree writes append a board message. Once the inbox is durably
+        // copied, an unchanged observation needs only outbox retries, not another history scan.
+        let inbox = (!look.current(board)).then_some(Inbox {
+            floor: look.message_floor,
+            first: look.first_observation,
+        });
+        events.extend(self.message_events(handle, callback, board, inbox)?);
+        let (stored_seen, unknown_children) = self.stored_look(board, &look.legacy);
+        if look.settled(&events, &unknown_children, pulled.as_ref()) && look.current(board) {
+            if look.due {
+                // Fresh command Stores share this deadline even when the digest has no new
+                // entry. Its scheduling checkpoint belongs to the small lease, not Seen.
+                self.retrying(|| {
+                    self.transact::<Value>(
+                        both(sql::PULL_CHECKED, pg::pull_checked()),
+                        json!({"handle":handle, "revision":lease, "now":self.now()}),
+                    )
+                })?;
+            }
+            if !delivering || !self.callback_pending(handle, callback.chat)? {
+                return Ok((true, look.pull_at));
+            }
+            return self
+                .deliver_pending(handle, callback, lease, &|text| visit.send(callback, text))
+                .map(|held| (held, look.pull_at));
         }
-        // Planning can meet an observation newer than its shared snapshot. Recheck the marker
-        // before diffing it, including unsequenced legacy observations. A lease also rechecks the
-        // marker above, so a delayed plan cannot publish a transient from an older board.
-        if state.snapshot_sequence > *sequence || unsequenced {
-            (*board, *sequence) = self.callback_board()?;
+        let account = pulled.as_ref().map(|pulled| &pulled.account);
+        let plan = account.map(|account| &account.plan);
+        let pull_kept = match plan {
+            Some(PullPlan::Kept(key)) => Some(key),
+            _ => None,
+        };
+        let pull_replaced = matches!(plan, Some(PullPlan::Dropped | PullPlan::Queued));
+        let no_entries = BTreeSet::new();
+        let pull_current = (pulled.as_ref()).map_or(&no_entries, |pulled| &pulled.entries);
+        let pull_text = (pulled.as_ref()).map_or("", |pulled| pulled.text.as_str());
+        let pull_said = pulled.as_ref().map(|pulled| &pulled.said);
+        let Look { state, queued, .. } = &look;
+        // An inbox acknowledgement takes no lease: one of a PULL read as waiting may have come in
+        // since, and what the recipient was told with it. A PULL still waits only while its event
+        // is there undelivered: a presence sweep, which takes no lease either, prunes delivered
+        // ones, and no key is used twice. Otherwise nothing is written, and the dispatch reads and
+        // decides again. Nor is anything written once the lease lapsed and another dispatcher took
+        // it (its revision moved) while this one built: the recipient is that one's.
+        let waiting: Vec<&str> = (queued.iter().filter(|line| line.is_pull()))
+            .map(|line| line.key.as_str())
+            .collect();
+        let accounted = self.retrying(|| self.transact::<Accounted>(
+            both(sql::account(), pg::account()),
+            json!({"handle":handle, "waiting":waiting, "events":events, "seen":stored_seen, "narrowing":look.narrowing, "unknown_children":unknown_children, "snapshot_sequence":sequence, "statuses":look.statuses, "revision":lease,
+                "pull":if look.due {self.now()} else {state.pull}, "legacy_upgrade":look.legacy_upgrade,
+                "pull_queued":account.map_or(&state.pull_queued, |a| &a.queued),
+                "pull_awaiting":account.and_then(|a| a.awaiting.as_ref()),
+                "pull_account":account.map(|a| json!({"recorded":a.recorded, "unheard":a.unheard, "untold":a.untold, "withheld":a.withheld})),
+                "message_cursor":board.latest_message, "inbox_cursor":board.latest_message,
+                "computed":look.due, "pull_current":pull_current, "rescoped":look.rescoped,
+                "pull_kept":pull_kept, "pull_text":pull_text, "pull_said":pull_said, "replace_pull":pull_replaced}),
+        ))?;
+        if *sequence == accounted.marker.before {
+            *sequence = accounted.marker.after;
         }
+        self.adopt(&accounted.marker);
+        if !accounted.held {
+            return Ok((false, look.pull_at));
+        }
+        if !accounted.current {
+            return self.dispatch_leased(handle, callback, board, sequence, visit, lease);
+        }
+        if delivering {
+            let held =
+                self.deliver_pending(handle, callback, lease, &|text| visit.send(callback, text))?;
+            return Ok((held, look.pull_at));
+        }
+        Ok((true, look.pull_at))
+    }
+
+    /// `handle` as a visit reads it against `board` ([`Look`]): none when there is nothing to
+    /// observe of it ([`Store::stored_state`]), or it is no session here.
+    fn look(
+        &self,
+        handle: &str,
+        callback: &Callback,
+        board: &mut super::Board,
+        sequence: &mut u64,
+        visit: &Visit<'_>,
+    ) -> Result<Option<Look>, Error> {
+        let Some((mut state, checked_pull, queued)) =
+            self.stored_state(handle, callback, board, sequence, visit)?
+        else {
+            return Ok(None);
+        };
         let Some(session) = board
             .sessions
             .iter()
             .find(|s| s.row.handle == handle && s.row.left_at.is_none())
         else {
-            return Ok((true, f64::INFINITY));
+            return Ok(None);
         };
         let orchestrator = session.row.kind == "orchestrator";
         // What the recipient hears, and the whole board's look older dispatchers keep.
         let mut seen = attach::seen(board, handle, &session.row.kind);
         if orchestrator {
-            seen = seen.with_holdings(
-                visit.holdings.ok_or_else(|| {
-                    Error::Db("orchestrator PULL has no holdings observation".into())
-                })?,
-                handle,
-            );
+            seen = seen.with_holdings(holdings(visit)?, handle);
         }
         let mut legacy = attach::legacy_seen(board, handle, &session.row.kind);
         let active: BTreeSet<&str> = board
@@ -1050,7 +1315,7 @@ impl Store {
         // Baseline a legacy observer once. Its writer can later erase Seen's newer fields, but
         // cannot reset this marker or cursor and turn a new addressed message into old history.
         let initializing = state.delivery_version.is_none();
-        let legacy_upgrade = initializing && state.seen.is_some();
+        let legacy_upgrade = upgrades_legacy(&state);
         let first_observation = initializing && state.seen.is_none();
         let cursor = state
             .message_cursor
@@ -1095,7 +1360,6 @@ impl Store {
         let quiet = (seen.children.values())
             .chain(legacy.children.values())
             .any(|health| health.quiet());
-        let env = crate::cli::Env::of_process();
         let view = if scheduled || changed || quiet {
             Some(crate::cli::agents::describe_board(
                 self,
@@ -1108,8 +1372,9 @@ impl Store {
             None
         };
         let (idle, busy) = pull::idle_and_busy(view.as_ref(), &seen.children);
+        let agents = Agents { view, idle, busy };
         // One running a test is present however quiet the board says it is.
-        for agent in &busy {
+        for agent in &agents.busy {
             for look in [&mut seen, &mut legacy] {
                 if let Some(health) = look.children.get_mut(agent) {
                     *health = crate::Health::Live;
@@ -1117,8 +1382,8 @@ impl Store {
             }
         }
         // Compare the same effective child health that observation checkpoints persist.
-        let due =
-            scheduled || (orchestrator && attach::pull_changed(before.as_ref(), &compact(&seen)));
+        let heard = compact(&seen);
+        let due = scheduled || (orchestrator && attach::pull_changed(before.as_ref(), &heard));
         let pull_at = if !orchestrator {
             f64::INFINITY
         } else if due {
@@ -1126,161 +1391,150 @@ impl Store {
         } else {
             last_pull + 600.0
         };
-        if due && lease.is_none() {
-            return self
-                .with_callback_lease(handle, collect, |revision| {
-                    (self.dispatch_one(handle, callback, board, sequence, visit, Some(revision)))
-                        .map(|(handled, _)| handled)
-                })
-                .map(|handled| (handled, pull_at));
-        }
-        let mut lines = Vec::new();
-        if let Some(before) = &before
-            && !legacy_upgrade
-            && before != &compact(&seen)
+        let legacy = compact(&legacy);
+        let narrowing = attach::Narrowing::between(&legacy, &heard);
+        Ok(Some(Look {
+            state,
+            queued,
+            seen,
+            heard,
+            legacy,
+            before,
+            narrowing,
+            initializing,
+            legacy_upgrade,
+            first_observation,
+            message_floor,
+            statuses,
+            rescoped,
+            agents,
+            due,
+            pull_at,
+        }))
+    }
+
+    /// `handle`'s stored state, as a visit reads it against `board`: its callback state, when its
+    /// PULL was last checked, and the lines still queued for it. None when there is nothing to
+    /// observe: no state, or, for a write's observation, one recorded at or past this board. A
+    /// state recorded past the board, or before observations were sequenced, reads the board again.
+    fn stored_state(
+        &self,
+        handle: &str,
+        callback: &Callback,
+        board: &mut super::Board,
+        sequence: &mut u64,
+        visit: &Visit<'_>,
+    ) -> Result<Option<(State, f64, Vec<Queued>)>, Error> {
+        let Stored {
+            state,
+            checked_pull,
+            queued,
+        } =
+            self.retrying(|| self.read(both(sql::STORED, pg::stored()), json!({"handle":handle})))?;
+        let Some(mut state) = state else {
+            return Ok(None);
+        };
+        state.restore_unknown();
+        let unsequenced = state.seen.is_some() && state.snapshot_sequence == 0;
+        // An observation recorded at a marker at or past this board's read a board holding this
+        // write's commit (each write a board read sees moves the marker, and this board was read
+        // after it), so what the write caused was heard there: a write's observation leaves that
+        // recipient. Reading the board again instead would cost each of many writers at once the
+        // whole board for each recipient another had observed meanwhile.
+        let count_changed = callback.session.kind == "orchestrator"
+            && visit.holdings.is_some_and(|holdings| {
+                state.heard().and_then(|before| before.open_slots())
+                    != Some(holdings.get(handle).map_or(0, BTreeSet::len))
+            });
+        if visit.pass == Pass::Observe
+            && !unsequenced
+            && state.snapshot_sequence >= *sequence
+            && !count_changed
         {
-            attach::diff_on(self, board, before, &seen, handle, &mut |line| {
+            return Ok(None);
+        }
+        // Planning can meet an observation newer than its shared snapshot. Recheck the marker
+        // before diffing it, including unsequenced legacy observations. A lease also rechecks the
+        // marker above, so a delayed plan cannot publish a transient from an older board.
+        if state.snapshot_sequence > *sequence || unsequenced {
+            (*board, *sequence) = self.callback_board()?;
+        }
+        Ok(Some((state, checked_pull, queued)))
+    }
+
+    /// The lines `handle` hears of what changed since it was last told, as `look` reads it: none
+    /// before its first look, nor for an observer upgraded from a legacy one, which is baselined.
+    fn changed_lines(
+        &self,
+        handle: &str,
+        board: &super::Board,
+        look: &Look,
+    ) -> Result<Vec<String>, Error> {
+        let mut lines = Vec::new();
+        if let Some(before) = &look.before
+            && !look.legacy_upgrade
+            && before != &look.heard
+        {
+            attach::diff_on(self, board, before, &look.seen, handle, &mut |line| {
                 lines.push(event_line(line))
             })?;
         }
-        // The recorded entries are the whole digest's, as older dispatchers record them; what
-        // the recipient was told of them is in the PULLs it acknowledged ([`Account`]).
-        let mut account: Option<Account> = None;
-        let (mut pull_text, mut pull_current) = (String::new(), BTreeSet::new());
-        let mut pull_said: Option<pull::Said> = None;
-        if due {
-            let root = probes::repo_root(&env.cwd);
-            let root = root.as_deref();
-            let landed = |task: &crate::Task| root.is_some_and(|r| probes::landed(r, &task.slug));
-            let tips = probes::tips(root);
-            let holdings = visit
-                .holdings
-                .ok_or_else(|| Error::Db("orchestrator PULL has no holdings observation".into()))?;
-            let observed = pull::Observation { board, holdings };
-            let digest = pull::digest_on(
-                self,
-                observed,
-                &idle,
-                Some(&landed),
-                Some(&tips),
-                self.now(),
-                &busy,
-            )?;
-            let entries = digest.entries();
-            let digest = digest.only_for(board, handle);
-            let heard = digest.entries();
-            // A session with no terminal told idle stays told while it rests on the same beat,
-            // whatever a dispatcher that does not list it recorded since.
-            let mut idle_told = state.recall_idle(&resting(view.as_ref(), board, &heard));
-            idle_told.retain(|child, _| {
-                (board.sessions.iter()).any(|s| s.row.handle == *child && s.row.left_at.is_none())
-            });
-            // Once it acknowledged a PULL this generation queued, it hears what changed since.
-            let told = super::pull_account::told(&state, &entries);
-            let baseline = super::pull_account::baseline(&state, &heard);
-            let lines = match (baseline, &told) {
-                (Some(said), Some(told)) if !legacy_upgrade => digest.changes_since(said, told),
-                // The whole digest; after a new channel reset the account, the posts it was told
-                // stay told.
-                _ => digest.event_lines_since(
-                    &(state.acknowledged()).unwrap_or_else(|| state.pull_unanswered.clone()),
-                ),
+        Ok(lines)
+    }
+
+    /// `legacy`, the whole board's look, as it is stored for older dispatchers, each child's health
+    /// as the board says it, with the children whose liveness is unknown ([`stored_seen`]).
+    fn stored_look(
+        &self,
+        board: &super::Board,
+        legacy: &attach::Seen,
+    ) -> (attach::Seen, BTreeSet<String>) {
+        stored_seen(legacy, |handle| {
+            let Some(child) = board.sessions.iter().find(|s| s.row.handle == handle) else {
+                return crate::Health::Left;
             };
-            pull_text = (lines.iter().map(|l| event_line(l)))
-                .collect::<Vec<_>>()
-                .join("\n");
-            pull_said = Some(pull::Said {
-                idle: idle_told,
-                ..digest.said_after(baseline)
+            let held = board.tasks.iter().any(|task| {
+                task.roles.iter().any(|role| {
+                    role.handle == handle && crate::health::claimable(&role.role, &task.status)
+                })
             });
-            account = Some(match legacy_upgrade {
-                true => Account::upgrade(&state, &entries, &heard),
-                false => Account::of(&state, &queued, &entries, &heard),
-            });
-            pull_current = entries;
-        }
-        let plan = account.as_ref().map(|account| &account.plan);
-        let pull_kept = match plan {
-            Some(PullPlan::Kept(key)) => Some(key),
-            _ => None,
-        };
-        let pull_replaced = matches!(plan, Some(PullPlan::Dropped | PullPlan::Queued));
-        let revision = lease.unwrap_or(state.revision);
-        let mut events: Vec<Event> = lines
-            .into_iter()
-            .enumerate()
-            .map(|(i, text)| Event {
-                key: format!("event-{revision}-{i}"),
-                handle: handle.to_string(),
-                text,
-                slug: session_task(board, handle),
-                message: None,
-                attempts: 0,
-                sequence: 0,
-                pull_entries: None,
-                pull_withheld: None,
-                pull_said: None,
-            })
-            .collect();
-        if let Some(Account {
-            plan: PullPlan::Queued,
-            awaiting: Some(awaiting),
-            ..
-        }) = &account
-        {
-            events.push(Event {
-                key: format!("pull-{revision}"),
-                handle: handle.to_string(),
-                text: pull_text.clone(),
-                slug: session_task(board, handle),
-                message: None,
-                attempts: 0,
-                sequence: 0,
-                pull_entries: Some(awaiting.entries.clone()),
-                pull_withheld: Some(awaiting.withheld.clone()),
-                pull_said: pull_said.clone(),
-            });
-        }
-        let legacy = compact(&legacy);
-        let narrowing = attach::Narrowing::between(&legacy, &compact(&seen));
-        let unchanged =
-            state.seen.as_ref() == Some(&legacy) && state.narrowing.as_ref() == Some(&narrowing);
-        // Message, role and task-tree writes append a board message. Once the inbox is durably
-        // copied, an unchanged observation needs only outbox retries, not another history scan.
-        // A plan that would read it goes on to the lease below whatever it finds (the cursor or the
-        // observation has moved), and the leased pass reads it again: the plan leaves it to that one.
-        let inbox =
-            if lease.is_none() || (state.inbox_cursor == Some(board.latest_message) && unchanged) {
-                Vec::new()
-            } else if first_observation {
-                self.inbox(handle)?
-            } else {
-                self.inbox_pooled(handle, message_floor, board.latest_message)?
+            crate::health::health(&child.row, self.now(), &self.host, &*self.pid_alive, held)
+        })
+    }
+
+    /// What `handle` was sent, as events: each message of its inbox after where `inbox` says it is
+    /// read from (none when it says nothing), then, while it holds the chat seat, each of the
+    /// owner's chat events its outbox holds no line of yet.
+    fn message_events(
+        &self,
+        handle: &str,
+        callback: &Callback,
+        board: &super::Board,
+        inbox: Option<Inbox>,
+    ) -> Result<Vec<Event>, Error> {
+        let mut events = Vec::new();
+        if let Some(Inbox { floor, first }) = inbox {
+            let messages = match first {
+                true => self.inbox(handle)?,
+                false => self.inbox_pooled(handle, floor, board.latest_message)?,
             };
-        for message in inbox.into_iter().filter(|message| {
-            message.id > message_floor
-                || (first_observation
-                    && (message.kind == "msg" || message.recipient.as_deref() == Some(handle)))
-        }) {
-            events.push(Event {
-                key: format!("message-{}", message.id),
-                handle: handle.to_string(),
-                text: format!(
+            for message in messages.into_iter().filter(|message| {
+                message.id > floor
+                    || (first
+                        && (message.kind == "msg" || message.recipient.as_deref() == Some(handle)))
+            }) {
+                let text = format!(
                     "{} #{} {} from {} — {}",
                     crate::cli::text::event_kind(&message.kind),
                     message.id,
                     message.slug,
                     message.sender,
                     event_line(&message.text)
-                ),
-                slug: Some(message.slug),
-                message: Some(message.id),
-                attempts: 0,
-                sequence: 0,
-                pull_entries: None,
-                pull_withheld: None,
-                pull_said: None,
-            });
+                );
+                let key = format!("message-{}", message.id);
+                let slug = Some(message.slug);
+                events.push(Event::line(key, handle, text, slug, Some(message.id)));
+            }
         }
         if callback.chat {
             #[derive(Deserialize)]
@@ -1295,126 +1549,104 @@ impl Store {
                 )
             })?;
             for event in chat {
-                events.push(Event {
-                    key: format!("chat-{}", event.key),
-                    handle: handle.to_string(),
-                    text: event.text,
-                    slug: session_task(board, handle),
-                    message: None,
-                    attempts: 0,
-                    sequence: 0,
-                    pull_entries: None,
-                    pull_withheld: None,
-                    pull_said: None,
-                });
+                let key = format!("chat-{}", event.key);
+                let slug = session_task(board, handle);
+                events.push(Event::line(key, handle, event.text, slug, None));
             }
         }
-        let (stored_seen, unknown_children) = stored_seen(&legacy, |handle| {
-            let Some(child) = board.sessions.iter().find(|s| s.row.handle == handle) else {
-                return crate::Health::Left;
-            };
-            let held = board.tasks.iter().any(|task| {
-                task.roles.iter().any(|role| {
-                    role.handle == handle && crate::health::claimable(&role.role, &task.status)
-                })
-            });
-            crate::health::health(&child.row, self.now(), &self.host, &*self.pid_alive, held)
+        Ok(events)
+    }
+
+    /// The PULL due for `handle`, built again from `board` with the agents a visit saw: what it says,
+    /// and the account of what the recipient in `state` was told of it, with the lines still
+    /// `queued` for it ([`Account`]). An observer a newer dispatcher never wrote for hears the whole
+    /// digest, and has its account upgraded. Each session with no terminal it was told is idle is
+    /// read back into `state` ([`State::recall_idle`]).
+    fn plan_pull(
+        &self,
+        handle: &str,
+        board: &super::Board,
+        visit: &Visit<'_>,
+        state: &mut State,
+        queued: &[Queued],
+        agents: &Agents,
+    ) -> Result<Pulled, Error> {
+        let legacy_upgrade = upgrades_legacy(state);
+        let env = crate::cli::Env::of_process();
+        let root = probes::repo_root(&env.cwd);
+        let root = root.as_deref();
+        let landed = |task: &crate::Task| root.is_some_and(|r| probes::landed(r, &task.slug));
+        let tips = probes::tips(root);
+        let observed = pull::Observation {
+            board,
+            holdings: holdings(visit)?,
+        };
+        let digest = pull::digest_on(
+            self,
+            observed,
+            &agents.idle,
+            Some(&landed),
+            Some(&tips),
+            self.now(),
+            &agents.busy,
+        )?;
+        let entries = digest.entries();
+        let digest = digest.only_for(board, handle);
+        let heard = digest.entries();
+        // A session with no terminal told idle stays told while it rests on the same beat,
+        // whatever a dispatcher that does not list it recorded since.
+        let mut idle_told = state.recall_idle(&resting(agents.view.as_ref(), board, &heard));
+        idle_told.retain(|child, _| {
+            (board.sessions.iter()).any(|s| s.row.handle == *child && s.row.left_at.is_none())
         });
-        let settled = events.is_empty()
-            && !initializing
-            && state.registration_revision == state.observed_registration
-            && state.statuses == statuses
-            && state.unknown_children == unknown_children
-            && (account.as_ref())
-                .is_none_or(|a| a.changes_nothing(&state, &queued, &pull_text, pull_said.as_ref()))
-            && rescoped.is_empty();
-        let current = unchanged && state.inbox_cursor == Some(board.latest_message);
-        // A write's observation leaves a recipient whose look moved by the newest message alone, and
-        // whose inbox no message since could reach (the pass's pool says so, with no read of its
-        // own), to the delivering pass: the write gave it nothing to hear. Its recorded look and
-        // cursors stay where they were, as when another dispatcher held its lease, and the delivering
-        // pass moves them. Taking every recipient's lease to read an empty inbox and move its cursor
-        // was most of what one write cost.
-        let unreached = !current
-            && settled
-            && visit.pass == Pass::Observe
-            && lease.is_none()
-            && state.narrowing.as_ref() == Some(&narrowing)
-            && state.seen.as_ref().is_some_and(|recorded| {
-                let mut recorded = recorded.clone();
-                recorded.latest_message = legacy.latest_message;
-                recorded == legacy
-            })
-            && !self.could_hear(handle, message_floor, board.latest_message)?;
-        if settled && (current || unreached) {
-            if due {
-                // Fresh command Stores share this deadline even when the digest has no new
-                // entry. Its scheduling checkpoint belongs to the small lease, not Seen.
-                let revision = lease.expect("a timed checkpoint holds a lease");
-                self.retrying(|| {
-                    self.transact::<Value>(
-                        both(sql::PULL_CHECKED, pg::pull_checked()),
-                        json!({"handle":handle, "revision":revision, "now":self.now()}),
-                    )
-                })?;
-            }
-            if visit.pass == Pass::Observe || !self.callback_pending(handle, callback.chat)? {
-                return Ok((true, pull_at));
-            }
-            if let Some(revision) = lease {
-                return self
-                    .deliver_pending(handle, callback, revision, &|text| {
-                        visit.send(callback, text)
-                    })
-                    .map(|held| (held, pull_at));
-            }
-        }
-        if lease.is_none() {
-            return self
-                .with_callback_lease(handle, collect, |revision| {
-                    (self.dispatch_one(handle, callback, board, sequence, visit, Some(revision)))
-                        .map(|(handled, _)| handled)
-                })
-                .map(|handled| (handled, pull_at));
-        }
-        // An inbox acknowledgement takes no lease: one of a PULL read as waiting may have come in
-        // since, and what the recipient was told with it. A PULL still waits only while its event
-        // is there undelivered: a presence sweep, which takes no lease either, prunes delivered
-        // ones, and no key is used twice. Otherwise nothing is written, and the dispatch reads and
-        // decides again. Nor is anything written once the lease lapsed and another dispatcher took
-        // it (its revision moved) while this one built: the recipient is that one's.
-        let waiting: Vec<&str> = (queued.iter().filter(|line| line.is_pull()))
-            .map(|line| line.key.as_str())
-            .collect();
-        let accounted = self.retrying(|| self.transact::<Accounted>(
-            both(sql::account(), pg::account()),
-            json!({"handle":handle, "waiting":waiting, "events":events, "seen":stored_seen, "narrowing":narrowing, "unknown_children":unknown_children, "snapshot_sequence":sequence, "statuses":statuses, "revision":revision,
-                "pull":if due {self.now()} else {state.pull}, "legacy_upgrade":legacy_upgrade,
-                "pull_queued":account.as_ref().map_or(&state.pull_queued, |a| &a.queued),
-                "pull_awaiting":account.as_ref().and_then(|a| a.awaiting.as_ref()),
-                "pull_account":account.as_ref().map(|a| json!({"recorded":a.recorded, "unheard":a.unheard, "untold":a.untold, "withheld":a.withheld})),
-                "message_cursor":board.latest_message, "inbox_cursor":board.latest_message,
-                "computed":due, "pull_current":pull_current, "rescoped":rescoped,
-                "pull_kept":pull_kept, "pull_text":pull_text, "pull_said":pull_said, "replace_pull":pull_replaced}),
-        ))?;
-        if *sequence == accounted.marker.before {
-            *sequence = accounted.marker.after;
-        }
-        self.adopt(&accounted.marker);
-        if !accounted.held {
-            return Ok((false, pull_at));
-        }
-        if !accounted.current {
-            return self.dispatch_one(handle, callback, board, sequence, visit, lease);
-        }
-        if delivering {
-            let revision = lease.expect("writes hold a lease");
-            let held = self.deliver_pending(handle, callback, revision, &|text| {
-                visit.send(callback, text)
-            })?;
-            return Ok((held, pull_at));
-        }
-        Ok((true, pull_at))
+        // Once it acknowledged a PULL this generation queued, it hears what changed since.
+        let told = super::pull_account::told(state, &entries);
+        let baseline = super::pull_account::baseline(state, &heard);
+        let lines = match (baseline, &told) {
+            (Some(said), Some(told)) if !legacy_upgrade => digest.changes_since(said, told),
+            // The whole digest; after a new channel reset the account, the posts it was told
+            // stay told.
+            _ => digest.event_lines_since(
+                &(state.acknowledged()).unwrap_or_else(|| state.pull_unanswered.clone()),
+            ),
+        };
+        let text = (lines.iter().map(|l| event_line(l)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let said = pull::Said {
+            idle: idle_told,
+            ..digest.said_after(baseline)
+        };
+        let account = match legacy_upgrade {
+            true => Account::upgrade(state, &entries, &heard),
+            false => Account::of(state, queued, &entries, &heard),
+        };
+        Ok(Pulled {
+            text,
+            said,
+            account,
+            entries,
+        })
+    }
+
+    /// A plan's visit made again under the recipient's lease, once no other dispatcher holds it:
+    /// whether it was reached, with `pull_at`, when its PULL is next due by the plan. A collecting
+    /// pass takes a lease for a reader with no channel ([`Store::with_callback_lease`]).
+    fn leased(
+        &self,
+        handle: &str,
+        callback: &Callback,
+        board: &mut super::Board,
+        sequence: &mut u64,
+        visit: &Visit<'_>,
+        pull_at: f64,
+    ) -> Result<(bool, f64), Error> {
+        let collect = visit.pass == Pass::Collect;
+        self.with_callback_lease(handle, collect, |revision| {
+            (self.dispatch_leased(handle, callback, board, sequence, visit, revision))
+                .map(|(handled, _)| handled)
+        })
+        .map(|handled| (handled, pull_at))
     }
 
     /// The board marker as one of this dispatcher's own writes moved it. When the board stood at
@@ -1424,10 +1656,7 @@ impl Store {
     /// alone, not the whole board again. The cached snapshot is plain data, whole or none, so a
     /// panic that poisoned its lock left nothing half-made in it.
     fn adopt(&self, moved: &Moved) {
-        let mut cached = self
-            .callback_snapshot
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut cached = self.callback_snapshot.lock().recover();
         if let Some(snapshot) = cached.as_mut()
             && snapshot.callback_sequence == moved.before
         {
@@ -1545,7 +1774,7 @@ impl Store {
                     let body = sql::failure_logged();
                     // No reentrant dispatch from a delivery diagnostic.
                     self.retrying(|| {
-                        self.run_transaction::<Value>(both(&body, pg::failure_logged()), json!({
+                        self.run_transaction::<Value>(both(&body, pg::failure_logged()).posting(), json!({
                             "slug":slug, "now":self.now(), "text":format!("CALLBACK {handle} failed after 3 attempts: {why}; retained in inbox ({command} inbox --as {handle})"),
                         }), super::transaction::Run::Guarded { dispatch: false })?;
                         Ok(())
@@ -1600,6 +1829,34 @@ fn deliver_batches<T>(
     Ok(())
 }
 
+/// The slot holdings `visit` observed, which an orchestrator's look and its PULL are read with.
+fn holdings<'v>(visit: &Visit<'v>) -> Result<&'v pull::Holdings, Error> {
+    (visit.holdings)
+        .ok_or_else(|| Error::Db("orchestrator PULL has no holdings observation".into()))
+}
+
+/// Whether a visit to the recipient in `state` upgrades a legacy observer: one an older dispatcher
+/// recorded a look for and no newer one has written for since, which it baselines once.
+fn upgrades_legacy(state: &State) -> bool {
+    state.delivery_version.is_none() && state.seen.is_some()
+}
+
+/// The events of `lines`, what `handle` hears changed, keyed by the lease `revision` they are
+/// queued under.
+fn line_events(
+    handle: &str,
+    board: &super::Board,
+    lines: Vec<String>,
+    revision: u64,
+) -> Vec<Event> {
+    (lines.into_iter().enumerate())
+        .map(|(i, text)| {
+            let key = format!("event-{revision}-{i}");
+            Event::line(key, handle, text, session_task(board, handle), None)
+        })
+        .collect()
+}
+
 fn event_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -1651,7 +1908,7 @@ fn validate(address: &str) -> Result<(), String> {
         if PathBuf::from(path).is_absolute() && !path.contains('\n') {
             return Ok(());
         }
-    } else if let Some(id) = address.strip_prefix("codex:")
+    } else if let Some(id) = address.strip_prefix(crate::launch::CODEX)
         && !id.is_empty()
         && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
     {
@@ -1739,7 +1996,7 @@ fn deliver(callback: &Callback, text: &str) -> Result<(), DeliveryError> {
         }
         return result;
     }
-    let thread = address.strip_prefix("codex:").unwrap_or("");
+    let thread = address.strip_prefix(crate::launch::CODEX).unwrap_or("");
     if codex::steer(thread, text)? {
         return Ok(());
     }

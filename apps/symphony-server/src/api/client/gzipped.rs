@@ -7,7 +7,8 @@
 
 use std::collections::HashMap;
 use std::io::{self, Write};
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
+use symphony_board::lock::Recovered as _;
 
 use axum::body::Bytes;
 use axum::http::{HeaderMap, header};
@@ -95,7 +96,7 @@ impl Store {
                     *self
                         .runs
                         .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
+                        .recover()
                         .entry(hash.to_owned())
                         .or_default() += 1;
                 }
@@ -149,7 +150,7 @@ impl Store {
     }
 
     fn lock(&self) -> MutexGuard<'_, Kept> {
-        self.kept.lock().unwrap_or_else(PoisonError::into_inner)
+        self.kept.lock().recover()
     }
 
     /// The bytes kept, which the cap bounds.
@@ -160,12 +161,7 @@ impl Store {
 
     #[cfg(test)]
     pub(super) fn runs(&self, hash: &str) -> usize {
-        self.runs
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(hash)
-            .copied()
-            .unwrap_or(0)
+        self.runs.lock().recover().get(hash).copied().unwrap_or(0)
     }
 }
 

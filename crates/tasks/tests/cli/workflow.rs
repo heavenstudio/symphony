@@ -6,35 +6,7 @@ use symphony_api::workflow::Source;
 use symphony_board::workflow::{Custom, Host, written};
 use symphony_board::{NewLaunch, NewSession, NewTask};
 
-/// Work built (available, then worked by its executor), then accepted by the owner.
-pub(crate) const FLOW: &str = r#"
-[workflow]
-format = 1
-initial = { phase = "build", state = "available" }
-task_kinds = ["task"]
-phases = [
-  { id = "build", label = "Build", order = 0, phone_order = 0, column = true },
-  { id = "verify", label = "Verify", order = 1, phone_order = 1, column = true },
-]
-states = [
-  { id = "available", label = "Available" }, { id = "working", label = "Working" },
-  { id = "awaiting", label = "Awaiting" }, { id = "accepted", label = "Accepted" },
-]
-capabilities = ["owner"]
-adapters = []
-guards = []
-positions = [
-  { at = { phase = "build", state = "available" }, slot = "release", dependencies = "none", unsuccessful_dependency = "block", accepts_work = true, terminal = false, legacy = "ready", satisfies_dependencies = false, completion = "none" },
-  { at = { phase = "build", state = "working" }, staffing = "executor", slot = "acquire", dependencies = "none", unsuccessful_dependency = "block", accepts_work = true, terminal = false, legacy = "in_progress", satisfies_dependencies = false, completion = "none", recovery = { release = { target = { phase = "build", state = "available" }, manual = false, slot = "release", release_role = true, release_reservation = false }, lost_holder = { target = { phase = "build", state = "available" }, manual = false, slot = "release", release_role = true, release_reservation = false }, attempt_failure = { manual = true, slot = "retain", release_role = false, release_reservation = false }, cancellation_acknowledged = { manual = true, slot = "retain", release_role = false, release_reservation = false } } },
-  { at = { phase = "verify", state = "awaiting" }, slot = "release", dependencies = "none", unsuccessful_dependency = "block", accepts_work = false, terminal = false, legacy = "review", satisfies_dependencies = false, completion = "none" },
-  { at = { phase = "verify", state = "accepted" }, slot = "release", dependencies = "none", unsuccessful_dependency = "block", accepts_work = false, terminal = true, legacy = "done", outcome = "success", satisfies_dependencies = true, completion = "covered_close" },
-]
-edges = [
-  { id = "claim", label = "Claim", from = { phase = "build", state = "available" }, to = { phase = "build", state = "working" }, operation = "claim", authority = [{ kind = "task_role", role = "executor" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "acquire_role", role = "executor" }, { kind = "slot", policy = "acquire" }], automatic = false, human_wait = false },
-  { id = "submit", label = "Submit", from = { phase = "build", state = "working" }, to = { phase = "verify", state = "awaiting" }, operation = "request_review", authority = [{ kind = "task_role", role = "executor" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "slot", policy = "release" }], automatic = false, human_wait = false },
-  { id = "accept", label = "Accept", from = { phase = "verify", state = "awaiting" }, to = { phase = "verify", state = "accepted" }, operation = "close_covered", authority = [{ kind = "project_capability", capability = "owner" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "outcome", outcome = "success", satisfies_dependencies = true }, { kind = "slot", policy = "release" }], automatic = false, human_wait = true },
-]
-"#;
+pub(crate) use crate::common::HELD_FLOW as FLOW;
 
 /// The reviewer's position FLOW lacks: `verify/reviewing`, staffed by the reviewer the `review`
 /// edge gives from `verify/awaiting`.

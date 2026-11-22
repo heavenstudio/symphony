@@ -3,7 +3,6 @@
 //! tell, and what the hub calls after a refresh takes a kept save up again.
 
 use crate::front::{Shared, router};
-use crate::gate::Gate;
 use crate::live::Hub;
 use crate::testing::{Tree, git, repository_holding};
 use axum::body::Body;
@@ -12,7 +11,7 @@ use axum::http::{Request, StatusCode, header};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tower::ServiceExt;
 
 const HOST: &str = "127.0.0.1:8123";
@@ -32,7 +31,7 @@ fn delivering(tree: &Tree) -> PathBuf {
 }
 
 fn serving(root: &Path) -> Arc<Shared> {
-    let gate = Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now));
+    let gate = crate::testing::open_gate();
     Shared::new(1, 8123, root, None, gate)
 }
 

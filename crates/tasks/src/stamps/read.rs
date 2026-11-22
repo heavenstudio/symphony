@@ -1,4 +1,4 @@
-//! Where each stamp stands at a tip, by its reader (docs/analysis/needed-stamps.md, "The default
+//! Where each stamp stands at a tip, by its reader (docs/workflow/analysis/needed-stamps.md, "The default
 //! catalogue"): [`tests`] from the recorder's runs, [`pictures`] from the task's thread, [`owner_at`]
 //! from the thread and the cards the task's branch posted ([`super::posted`]), and [`names`], by
 //! which each of them, and the task page's review gate, knows that a line names the tip. A stamp stands on the commit its evidence names alone: evidence naming another,

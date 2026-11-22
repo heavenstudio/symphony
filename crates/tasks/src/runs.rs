@@ -1,4 +1,4 @@
-//! A project's runs as the board's recorder keeps them (docs/RUNS.md): the day files
+//! A project's runs as the board's recorder keeps them (docs/workflow/RUNS.md): the day files
 //! `symphony/runs/YYYY-MM-DD.jsonl` in the git common dir, one [`symphony_api::RunLine`] a line. A
 //! recorded operation that is a run, or a step of one ([`recorded::Run`]), appends a start line when
 //! its command starts and an end line when it ends, each to the file of the UTC day it says. Lines
@@ -20,8 +20,8 @@ pub mod refused;
 pub mod rollup;
 pub mod suites;
 
-/// The day files' folder in the git common dir: in the one folder of Symphony's there (DECISIONS:
-/// symphony-own-names).
+/// The day files' folder in the git common dir: in the one folder of Symphony's there
+/// (docs/engineering/analysis/own-names.md#symphony-own-names).
 pub const FOLDER: &str = crate::folders::RUNS;
 /// Names the day files' folder in place of the common dir's: a test's own.
 pub const FOLDER_VAR: &str = "SYMPHONY_RUNS";
@@ -157,8 +157,9 @@ pub(crate) fn lock_within(file: File, wait: Duration) -> io::Result<Option<FileL
 }
 
 /// `path` opened as `options` say, never through a link and never waiting on a FIFO, and only when
-/// it is a regular file.
-pub(crate) fn regular(path: &Path, options: &mut OpenOptions) -> io::Result<File> {
+/// it is a regular file: how every day file is opened, the runs' here and the ones the server keeps
+/// beside them.
+pub fn regular(path: &Path, options: &mut OpenOptions) -> io::Result<File> {
     let file = options
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)?;
@@ -172,7 +173,7 @@ pub(crate) fn regular(path: &Path, options: &mut OpenOptions) -> io::Result<File
 }
 
 /// Whether `file` is empty or ends a line: else a writer before was cut short in its line.
-pub(crate) fn ends_a_line(file: &File) -> io::Result<bool> {
+pub fn ends_a_line(file: &File) -> io::Result<bool> {
     let length = file.metadata()?.len();
     if length == 0 {
         return Ok(true);
@@ -226,7 +227,7 @@ pub(crate) fn date(name: &str) -> bool {
 
 /// Each day file in `folder` of a day more than `kept_days` days before `now`'s removed (the runs'
 /// keep [`KEPT_DAYS`]); nothing else there, and no link, folder or FIFO under such a name.
-pub(crate) fn prune(folder: &Path, now: f64, kept_days: u32) {
+pub fn prune(folder: &Path, now: f64, kept_days: u32) {
     let oldest = format!("{}.jsonl", run_day(now - f64::from(kept_days) * DAY_S));
     let Ok(entries) = fs::read_dir(folder) else {
         return;

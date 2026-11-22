@@ -85,7 +85,7 @@ RETURN {{
 /// Already blocked work still needs each new cancellation's reason on its thread. The line ends with
 /// the status the dependent held, `(was ready)`, which `depends` gives it back. A dependent a
 /// custom workflow holds is its workflow's: only its edges move it, whose dependency predicates
-/// refuse it while the prerequisite is cancelled (docs/WORKFLOW.md).
+/// refuse it while the prerequisite is cancelled (docs/workflow/WORKFLOW.md).
 pub(in crate::store) fn block_cancelled_dependencies(cancelling: bool) -> String {
     // Ordinary moves/creates use link_slug's index; only cancellation needs the reverse lookup.
     let scope = if cancelling {

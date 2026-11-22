@@ -18,18 +18,8 @@ pub(crate) fn server_command(command: &str) -> Option<&str> {
     (name == "symphony-server" || name == "review-server").then_some(args)
 }
 
-/// Whether process `pid` exists; one this user may not signal still exists.
-pub fn pid_alive(pid: i64) -> bool {
-    let Ok(pid) = libc::pid_t::try_from(pid) else {
-        return false;
-    };
-    if pid <= 0 {
-        return false; // 0 and below name process groups, not a process
-    }
-    // SAFETY: signal 0 sends nothing; kill only checks the process exists and may be signalled.
-    let signalled = unsafe { libc::kill(pid, 0) } == 0;
-    signalled || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-}
+/// Whether process `pid` exists; one this user may not signal still exists: the board's own test.
+pub use symphony_board::sys::pid_alive;
 
 /// Send `signal` to process `pid` (never a group: 0 and below are refused).
 pub fn signal(pid: i64, signal: libc::c_int) {
@@ -441,6 +431,10 @@ pub(crate) fn captured(mut file: File) -> std::io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// What [`output_while`] answers for a command its caller stopped before it ended, or before it
+/// started.
+const CANCELLED: &str = "command cancelled";
+
 /// Whether `timeout` has passed between two moments on either clock: the monotonic clock stops
 /// while the machine sleeps, the wall clock does not, and a command that outlasts a sleep is over
 /// its time.
@@ -460,12 +454,20 @@ pub(crate) fn outlasted(
 /// `now` reads. Regular files keep a descendant's inherited output descriptor from holding a
 /// reader or this deadline open forever. It runs without the server's session
 /// ([`symphony::children`]), whoever hands it.
+///
+/// `running` is asked before the spawn, so a command handed over once its caller stopped never
+/// starts, and at each look after the command's end is read, so a stop seen by then wins over an
+/// end it raced: no command's answer comes back once its caller stopped, however late a loaded
+/// machine lets this look.
 pub(crate) fn output_while(
     mut command: Command,
     timeout: Duration,
     mut running: impl FnMut() -> bool,
     mut now: impl FnMut() -> (Instant, SystemTime),
 ) -> Result<Output, String> {
+    if !running() {
+        return Err(CANCELLED.into());
+    }
     let out = capture().map_err(|e| e.to_string())?;
     let err = capture().map_err(|e| e.to_string())?;
     let program = command.get_program().to_string_lossy().into_owned();
@@ -483,10 +485,14 @@ pub(crate) fn output_while(
         stopped: false,
     };
     let began = now();
-    while !exited(&owned.child) {
+    loop {
+        let ended = exited(&owned.child);
         if !running() {
             let _ = owned.stop("its caller cancelled it");
-            return Err("command cancelled".into());
+            return Err(CANCELLED.into());
+        }
+        if ended {
+            break;
         }
         if outlasted(began, now(), timeout) {
             let why = format!("no answer within {} s", timeout.as_secs());
@@ -819,7 +825,7 @@ mod tests {
             ready,
             "the child must fork its descriptor-holding descendant first"
         );
-        assert_eq!(result.unwrap_err(), "command cancelled");
+        assert_eq!(result.unwrap_err(), CANCELLED);
         drop(writer);
         // A surviving descendant, which sleeps a day, would hold this pipe open.
         until("the group's end to close its pipe", || {
@@ -830,6 +836,96 @@ mod tests {
                 other => panic!("group shutdown: {other:?}"),
             }
         });
+    }
+
+    #[test]
+    fn a_command_handed_over_once_its_caller_stopped_never_starts() {
+        // No such program: a spawn would answer that it is not there, and the stop answers first.
+        let tree = crate::testing::Tree::new();
+        let mut asked = 0;
+        let result = output_while(
+            Command::new(tree.path("no-such-program")),
+            BACKSTOP,
+            || {
+                asked += 1;
+                false
+            },
+            moment,
+        );
+        assert_eq!(result.unwrap_err(), CANCELLED);
+        assert_eq!(asked, 1, "its caller is asked once, before any spawn");
+    }
+
+    #[test]
+    fn a_stop_wins_over_the_end_it_raced() {
+        use std::io::ErrorKind;
+        use std::os::fd::AsRawFd;
+
+        // The command holds the pipe's write end, and once the case lets its own go after the
+        // spawn, the pipe ends with the command: a process's descriptors close before its end can
+        // be read, so the caller stops by every look that reads it. The old order, which left the
+        // loop on an end read without asking its caller, answered Ok here whenever it read the end.
+        let (reader, writer) = symphony_board::sys::pipe().unwrap();
+        symphony_board::sys::set_nonblocking(&reader, true).unwrap();
+        let tree = crate::testing::Tree::new();
+        let ran = tree.path("ran");
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", "echo ran > \"$1\"", "fixture"])
+            .arg(&ran);
+        command.pass_fd(writer.as_raw_fd());
+        let mut writer = Some(writer);
+        let mut asked = 0;
+        let result = output_while(
+            command,
+            BACKSTOP,
+            || {
+                asked += 1;
+                if asked > 1 {
+                    drop(writer.take()); // spawned: the command's copy is the one left
+                }
+                let mut input = &reader;
+                match input.read(&mut [0]) {
+                    Ok(0) => false,
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => true,
+                    other => panic!("the command's end: {other:?}"),
+                }
+            },
+            moment,
+        );
+        assert_eq!(
+            fs::read_to_string(&ran).unwrap(),
+            "ran\n",
+            "it ran to its end"
+        );
+        assert_eq!(result.unwrap_err(), CANCELLED);
+        assert!(asked >= 2, "asked before the spawn and after: {asked}");
+    }
+
+    #[test]
+    fn a_command_its_caller_keeps_running_answers_its_end() {
+        let mut asked = 0;
+        let mut command = Command::new("sh");
+        command.args(["-c", "printf said; printf told >&2; exit 3"]);
+        let out = output_while(
+            command,
+            BACKSTOP,
+            || {
+                asked += 1;
+                true
+            },
+            moment,
+        )
+        .unwrap();
+        assert_eq!(out.status.code(), Some(3));
+        assert_eq!(
+            (&out.stdout[..], &out.stderr[..]),
+            (&b"said"[..], &b"told"[..])
+        );
+        assert!(
+            asked >= 2,
+            "asked before the spawn and at the look that read its end: {asked}"
+        );
     }
 
     /// A child that lives until the case kills it: it sleeps a day.

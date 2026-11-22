@@ -14,7 +14,8 @@
 //! signed in stays gh's and is never handled here. Nothing is kept where the policy does not hold,
 //! or a ruleset was not read whole; a record kept before stays until a verification replaces it.
 
-use crate::config::{PullRequests, Repository};
+use crate::config::Repository;
+use crate::deliver::{self, PUBLISHES, Serving};
 use crate::preflight::{self, Bypass, MAX_PAGES, Operation, PER_PAGE, Wanted};
 use crate::reconcile::{Context, Outcome};
 use crate::state::{Binding, State, Store, Verified};
@@ -217,22 +218,18 @@ fn keep(folder: &std::path::Path, reads: Vec<Read>, id: i64, now: i64) -> Result
 ///
 /// The state folder cannot be read or written.
 pub fn run(ctx: &Context<'_>, base: &str, verify: bool, out: &mut dyn Write) -> Outcome {
-    let config = match ctx.source.load() {
-        Ok(loaded) => loaded.config,
+    let Serving {
+        config, repository, ..
+    } = match deliver::served(ctx, PUBLISHES, deliver::publishes) {
+        Ok(serving) => serving,
         Err(why) => {
-            let _ = writeln!(out, "turned off: its settings do not read: {why}");
+            let _ = writeln!(out, "{why}");
             return Ok(1);
         }
     };
-    let serves = config.enabled && config.pull_requests == PullRequests::Publish;
-    let (Some(repository), Some(app)) =
-        (config.repository.clone().filter(|_| serves), config.app_id)
-    else {
-        let _ = writeln!(
-            out,
-            "turned off: the committed settings do not say enabled = true and pull_requests = \
-             \"publish\""
-        );
+    // Settings that publish and name no App do not read, so this is never said.
+    let Some(app) = config.app_id else {
+        let _ = writeln!(out, "turned off: the committed settings name no app_id");
         return Ok(1);
     };
     let folder = ctx.board.state_folder().map_err(|e| e.said().to_string())?;

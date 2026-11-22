@@ -1,0 +1,31 @@
+# The most bytes each file every agent reads at the start of a session may weigh, each under its
+# path's key: docs/workflow/CHECKS.md "Size budgets" says which files, the key, the line and its raise.
+
+# The rules and the guides.
+RULES = 22_800
+AGENTS = 17_300
+apps-symphony-web-AGENTS = 16_400
+apps-symphony-desktop-AGENTS = 4_700
+crates-tasks-AGENTS = 22_700
+
+# Each file of a shipped skill.
+crates-symphony-shipped-skills-apply-review-SKILL = 6_800
+crates-symphony-shipped-skills-apply-review-rewrite-brief = 3_500
+crates-symphony-shipped-skills-assess-task-SKILL = 4_500
+crates-symphony-shipped-skills-chat-doc-SKILL = 6_700
+crates-symphony-shipped-skills-create-task-SKILL = 3_600
+crates-symphony-shipped-skills-review-task-SKILL = 5_700
+crates-symphony-shipped-skills-task-orchestrator-SKILL = 7_500
+crates-symphony-shipped-skills-tasks-SKILL = 10_100
+crates-symphony-shipped-skills-triage-SKILL = 2_000
+crates-symphony-shipped-skills-work-SKILL = 2_300
+crates-symphony-shipped-skills-work-build = 2_100
+crates-symphony-shipped-skills-work-connected = 900
+crates-symphony-shipped-skills-work-finish = 3_300
+crates-symphony-shipped-skills-work-rare-endings = 1_600
+crates-symphony-shipped-skills-work-start = 2_500
+
+# Each project page beside an installed skill.
+agents-skills-review-task-project = 800
+agents-skills-task-orchestrator-project = 3_500
+agents-skills-work-project = 900

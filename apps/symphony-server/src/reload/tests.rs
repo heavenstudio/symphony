@@ -1,7 +1,7 @@
 use super::{Retry, RunningImage, Setup, source_event, stamp_install, watch_with};
 use crate::backstop::{self, Backstop};
 use crate::front::{Shared, told};
-use crate::gate::Gate;
+use crate::testing::handing::{Handing, event, renamed, tell_at, watching};
 use crate::testing::{Tree, git, joined, repository};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use symphony_board::lock::Recovered as _;
 
 #[test]
 fn a_source_edit_whose_event_is_lost_still_starts_a_build_within_a_period() {
@@ -75,7 +76,7 @@ fn a_source_edit_whose_event_is_lost_still_starts_a_build_within_a_period() {
         1,
         &root,
         Some(&home),
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+        crate::testing::open_gate(),
     );
     let hub = Arc::new(crate::live::Hub::new(&root, &home.join("client/public")));
     assert!(shared.api.set(hub.clone()).is_ok());
@@ -715,7 +716,7 @@ impl Reloading {
             1,
             &root,
             Some(&home),
-            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+            crate::testing::open_gate(),
         );
         let hub = Arc::new(crate::live::Hub::new(&root, &home.join("client/public")));
         assert!(shared.api.set(hub.clone()).is_ok());
@@ -801,8 +802,10 @@ impl Reloading {
         let follow = super::Follow {
             machine: self.home.clone(),
             release: "release-1".into(),
-            sockets: Vec::new(),
-            lease: std::fs::File::open(&self.root).unwrap(),
+            handed: super::Handed {
+                sockets: Vec::new(),
+                lease: std::fs::File::open(&self.root).unwrap(),
+            },
         };
         std::thread::spawn(move || {
             super::follow::<W>(&serve, &follow, &shared, backstop, retry);
@@ -1337,7 +1340,10 @@ fn a_starters_failed_hand_over_keeps_a_waiting_retrys_time_on_the_notice() {
 fn a_hand_off_look_with_no_request_to_follow_replaces_nothing() {
     use super::{HandOff, handed_over};
     let server = Reloading::new(installs_a_replacement_that_ends);
-    let lease = std::fs::File::open(&server.root).unwrap();
+    let handed = super::Handed {
+        sockets: Vec::new(),
+        lease: std::fs::File::open(&server.root).unwrap(),
+    };
     let look = |home: Option<&Path>| {
         let serve = crate::cli::Serve {
             home: home.map(Path::to_path_buf),
@@ -1346,7 +1352,7 @@ fn a_hand_off_look_with_no_request_to_follow_replaces_nothing() {
             hosts: Vec::new(),
             install: None,
         };
-        let came = handed_over(&serve, &server.shared, &[], &lease, &Retry::new());
+        let came = handed_over(&serve, &server.shared, &handed, &Retry::new());
         assert!(
             !server.shared.handover.load(Ordering::SeqCst),
             "the flag is taken"
@@ -1367,6 +1373,66 @@ fn a_hand_off_look_with_no_request_to_follow_replaces_nothing() {
     );
     assert_eq!(server.notice(), "", "no update failed");
     assert_eq!(started(&server), 0, "no replacement started");
+}
+
+/// A replacement that says it is ready while the machine folder's record cannot be written: the
+/// replacement is not recorded, so it is ended, and this generation, still serving, says that its
+/// own record could not be put back either, before the notice says the update failed. A restore
+/// that fails says why on the line before the failure it follows.
+#[test]
+fn a_hand_off_whose_record_cannot_be_written_says_its_own_was_not_restored() {
+    use super::{HandOff, handed_over};
+    let server = Reloading::new(installs_a_replacement_that_ends);
+    server.register();
+    // A replacement that says it is ready, then waits on the commit with the shell's own read, so
+    // no process of its outlives its end.
+    let replacement = server.folder().join("ready");
+    crate::fixture_script::write(
+        &replacement,
+        r#"#!/bin/sh
+ready=$(printf '%s' "$SYMPHONY_HANDOVER" | sed 's/.*"ready":\([0-9]*\).*/\1/')
+commit=$(printf '%s' "$SYMPHONY_HANDOVER" | sed 's/.*"commit":\([0-9]*\).*/\1/')
+printf R >&"$ready"
+read -r said <&"$commit"
+"#,
+        false,
+    );
+    crate::testing::assert_primed(&replacement);
+    crate::host::Handover {
+        exe: replacement,
+        root: server.root.clone(),
+        install: server.home.clone(),
+    }
+    .ask(&server.home)
+    .unwrap();
+    server.shared.ask_handover();
+    // The record is a folder holding a file, so no record is renamed over it.
+    let record = server.home.join(crate::home::ADDRESS);
+    std::fs::create_dir_all(record.join("held")).unwrap();
+    let handed = super::Handed {
+        sockets: Vec::new(),
+        lease: std::fs::File::open(&server.root).unwrap(),
+    };
+    let serve = server.serve();
+    let (came, told) = told::during(|| handed_over(&serve, &server.shared, &handed, &Retry::new()));
+    assert_eq!(came, HandOff::Failed, "{told:?}");
+    let unwritten = format!("could not write {}", record.display());
+    let restore = told
+        .iter()
+        .position(|line| {
+            line.starts_with(&format!(
+                "· Symphony reload: could not restore this server's record: {unwritten}"
+            ))
+        })
+        .unwrap_or_else(|| panic!("the failed restore is said: {told:?}"));
+    let failed = told
+        .iter()
+        .position(|line| line.starts_with(&format!("· Symphony reload: {FAILED} {unwritten}")))
+        .unwrap_or_else(|| panic!("the failed update is said: {told:?}"));
+    assert!(restore < failed, "{told:?}");
+    assert!(record.join("held").is_dir(), "nothing written over it");
+    assert!(!server.shared.stopping(), "still serving");
+    assert!(!server.shared.replaced.load(Ordering::SeqCst));
 }
 
 /// The reload loop on a period no test reaches ([`backstop::NO_PERIOD`]), from a stamped start,
@@ -1432,20 +1498,36 @@ fn a_release_servers_follow_takes_a_hand_off_and_its_stop_at_their_wakes() {
 }
 
 /// A release's server's follow of `current`, on a period no test reaches, hears the link move from
-/// the machine's own watcher of the machine folder and reads it then: a release not installed whole
-/// leaves it serving, said on the notice with when it is tried again.
+/// its own watcher of the machine folder, made before its first read and kept while it follows,
+/// and reads it then: a release not installed whole leaves it serving, said on the notice with when
+/// it is tried again. The watcher goes with the follow at its stop. The test tells the watcher's
+/// events itself: under load a real backend can lose one outright, which the follow's period is
+/// for (`backstop.rs`), and on no period a lost event would leave the follow waiting for good.
 #[test]
 fn a_release_servers_follow_reads_current_when_its_watcher_hears_the_link_move() {
+    use notify::EventKind::{Create, Modify};
+    use notify::event::{CreateKind, ModifyKind, RenameMode};
     use symphony::machine::release;
     let server = Reloading::new(installs_a_replacement_that_ends);
     let clock = Clock::new();
     let (backstop, waits) = backstop::watched();
-    let follow = server.following::<notify::RecommendedWatcher>(backstop, clock.retry());
+    let follow = server.following::<Handing<false>>(backstop, clock.retry());
     waits.begun(1);
-    // The move `release::point` makes, to a release it would refuse: a new link renamed over.
-    let link = server.home.join(".current.test");
-    std::os::unix::fs::symlink(Path::new(release::RELEASES).join("release-2"), &link).unwrap();
-    std::fs::rename(&link, server.home.join(release::CURRENT)).unwrap();
+    // Past its first read, which found no link, it waits with the machine folder watched.
+    assert_eq!(
+        watching(&server.home),
+        Some(notify::RecursiveMode::NonRecursive)
+    );
+    // The move `release::point` makes, to a release it would refuse, and what a backend says of
+    // it: the new link made beside `current`, then renamed over it.
+    point(&server.home, "release-2");
+    let (made, current) = (
+        server.home.join(".current.test").display().to_string(),
+        server.home.join(release::CURRENT).display().to_string(),
+    );
+    let over = Modify(ModifyKind::Name(RenameMode::Both));
+    tell_at(&server.home, event(Create(CreateKind::Any), [&made]));
+    tell_at(&server.home, event(over, [&made, &current]));
     assert_eq!(
         server.notice_after(""),
         format!(
@@ -1456,7 +1538,17 @@ fn a_release_servers_follow_reads_current_when_its_watcher_hears_the_link_move()
         )
     );
     assert_eq!(started(&server), 0);
+    assert_eq!(
+        watching(&server.home),
+        Some(notify::RecursiveMode::NonRecursive),
+        "still watched after the hand-off it failed"
+    );
     server.stop(follow);
+    assert_eq!(
+        watching(&server.home),
+        None,
+        "the watcher goes with the follow"
+    );
 }
 
 /// A build kept as the running image after another version's update failed leaves no retry of
@@ -1588,15 +1680,13 @@ static SEEN: Mutex<Vec<(bool, PathBuf)>> = Mutex::new(Vec::new());
 
 fn seen(watched: bool, path: &Path) -> bool {
     SEEN.lock()
-        .unwrap_or_else(|e| e.into_inner())
+        .recover()
         .iter()
         .any(|seen| *seen == (watched, path.to_path_buf()))
 }
 
 fn see(watched: bool, path: &Path) -> notify::Result<()> {
-    SEEN.lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .push((watched, path.into()));
+    SEEN.lock().recover().push((watched, path.into()));
     Ok(())
 }
 
@@ -1738,47 +1828,37 @@ fn a_reload_hands_over_only_to_a_release_installed_whole_by_its_own_folder() {
     );
 }
 
-/// A watcher event of `kind` naming `paths`.
-fn event(kind: notify::EventKind, paths: &[&str]) -> notify::Result<notify::Event> {
-    Ok(paths.iter().fold(notify::Event::new(kind), |event, path| {
-        event.add_path(PathBuf::from(path))
-    }))
-}
-
 #[test]
 fn current_moves_at_a_change_naming_its_link_a_rescan_or_the_watchers_error() {
     use notify::EventKind::{Access, Create, Modify, Remove};
     use notify::event::{AccessKind, CreateKind, ModifyKind, RemoveKind, RenameMode};
-    let renamed = Modify(ModifyKind::Name(RenameMode::Both));
+    let over = Modify(ModifyKind::Name(RenameMode::Both));
     // `point`'s new link renamed over the old, as each backend says it.
     assert!(super::moves_current(&event(
-        renamed,
-        &["/m/.current.7", "/m/current"]
+        over,
+        ["/m/.current.7", "/m/current"]
     )));
     assert!(super::moves_current(&event(
         Create(CreateKind::Any),
-        &["/m/current"]
+        ["/m/current"]
     )));
     assert!(super::moves_current(&event(
         Remove(RemoveKind::Any),
-        &["/m/current"]
+        ["/m/current"]
     )));
     // The new link made beside it, the registry written, a release installed, or the link read.
     assert!(!super::moves_current(&event(
         Create(CreateKind::Any),
-        &["/m/.current.7"]
+        ["/m/.current.7"]
     )));
-    assert!(!super::moves_current(&event(
-        renamed,
-        &["/m/projects.json"]
-    )));
+    assert!(!super::moves_current(&event(over, ["/m/projects.json"])));
     assert!(!super::moves_current(&event(
         Create(CreateKind::Folder),
-        &["/m/releases/current-2"]
+        ["/m/releases/current-2"]
     )));
     assert!(!super::moves_current(&event(
         Access(AccessKind::Any),
-        &["/m/current"]
+        ["/m/current"]
     )));
     // What a lost or failing stream says: read it again.
     assert!(super::moves_current(&Ok(notify::Event::new(Modify(
@@ -1790,79 +1870,25 @@ fn current_moves_at_a_change_naming_its_link_a_rescan_or_the_watchers_error() {
     ))));
 }
 
-/// The handler a [`Handing`] watcher was given and what it was asked to watch.
-#[derive(Default)]
-struct Handed {
-    handler: Option<Box<dyn notify::EventHandler>>,
-    watched: Vec<(PathBuf, notify::RecursiveMode)>,
-}
-
-std::thread_local! {
-    /// What the [`Handing`] watcher the test on this thread made was handed.
-    static HANDED: std::cell::RefCell<Handed> = std::cell::RefCell::default();
-}
-
-/// A watcher that hands its handler to the test ([`HANDED`]), or, when `FAILS`, fails to watch,
-/// its handler gone with it as a dropped watcher's is.
-struct Handing<const FAILS: bool>;
-
-impl<const FAILS: bool> notify::Watcher for Handing<FAILS> {
-    fn new<F: notify::EventHandler>(handler: F, _: notify::Config) -> notify::Result<Self> {
-        if !FAILS {
-            HANDED.with_borrow_mut(|handed| handed.handler = Some(Box::new(handler)));
-        }
-        Ok(Self)
-    }
-
-    fn watch(&mut self, path: &Path, mode: notify::RecursiveMode) -> notify::Result<()> {
-        if FAILS {
-            return Err(notify::Error::generic("no such folder"));
-        }
-        HANDED.with_borrow_mut(|handed| handed.watched.push((path.into(), mode)));
-        Ok(())
-    }
-
-    fn unwatch(&mut self, _: &Path) -> notify::Result<()> {
-        Ok(())
-    }
-
-    fn kind() -> notify::WatcherKind {
-        notify::WatcherKind::NullWatcher
-    }
-}
-
-/// The watcher's handler is told `event`, as its backend would.
-fn tell(event: notify::Result<notify::Event>) {
-    HANDED.with_borrow_mut(|handed| {
-        handed
-            .handler
-            .as_mut()
-            .expect("a watcher was made")
-            .handle_event(event);
-    });
-}
-
 #[test]
 fn a_release_server_hears_current_move_from_a_watch_of_the_machine_folder_alone() {
-    let machine = Path::new("/m");
+    // A folder no other test watches (`testing::handing`).
+    let machine = Path::new("/current-watch");
     let wakes = crate::backstop::Wakes::new();
-    let watcher = super::watch_current::<Handing<false>>(machine, wakes.waker());
-    assert!(watcher.is_some());
+    let watcher = super::watch_current::<Handing<false>>(machine, wakes.waker())
+        .expect("the machine folder watched");
     assert_eq!(
-        HANDED.with_borrow(|handed| handed.watched.clone()),
+        watcher.watched,
         vec![(machine.to_path_buf(), notify::RecursiveMode::NonRecursive)]
     );
-    tell(event(
+    watcher.tell(event(
         notify::EventKind::Create(notify::event::CreateKind::Any),
-        &["/m/registry.json"],
+        [machine.join("registry.json")],
     ));
     assert!(!wakes.wait(Some(Duration::ZERO)), "another entry's event");
     // A move's burst is one wake: the loop reads once it is quiet.
-    let renamed = notify::EventKind::Modify(notify::event::ModifyKind::Name(
-        notify::event::RenameMode::Any,
-    ));
-    tell(event(renamed, &["/m/current"]));
-    tell(event(renamed, &["/m/current"]));
+    watcher.tell(renamed(machine.join("current")));
+    watcher.tell(renamed(machine.join("current")));
     assert!(
         wakes.wait(Some(Duration::ZERO)),
         "the move wakes the follow"
@@ -1986,8 +2012,10 @@ fn a_release_servers_follow_says_each_attempt_and_each_reason_it_makes_none_once
     let following = super::Follow {
         machine: server.home.clone(),
         release: "release-1".into(),
-        sockets: Vec::new(),
-        lease: std::fs::File::open(&server.root).unwrap(),
+        handed: super::Handed {
+            sockets: Vec::new(),
+            lease: std::fs::File::open(&server.root).unwrap(),
+        },
     };
     let link = server.home.join(release::CURRENT);
     // The moves of `current`, each once the follow waits after the check before it, then its stop.

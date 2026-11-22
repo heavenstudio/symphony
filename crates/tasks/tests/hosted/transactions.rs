@@ -4,9 +4,9 @@
 
 use crate::cluster::{self, MAJORS, Project, refused};
 use std::time::Duration;
+use symphony_board::db::DbError;
 use symphony_board::pg::Step;
 use symphony_board::pg::hosted::Counts;
-use symphony_board::rpc::DbError;
 
 const READY: Duration = test_time::backstop(Duration::from_secs(10));
 

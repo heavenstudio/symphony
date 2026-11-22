@@ -3,7 +3,7 @@
 # a line each: `verify/STEP` or `verify/tests/LANE`, a tab, and the digest of what it reads. The
 # release run asks it before its checks (crates/symphony-build/src/release/inputs.rs), and a
 # release candidate's rerun carries the green of a step or lane whose digest is the one it was
-# green on (docs/RELEASES.md, "The rerun").
+# green on (docs/workflow/RELEASES.md, "The rerun").
 #
 # What each reads is said beside it, in tools/verify.sh and tools/test-lanes.sh (`reads`, asked
 # with `--inputs`). A digest holds, by its path and the name git gives its content at HEAD:

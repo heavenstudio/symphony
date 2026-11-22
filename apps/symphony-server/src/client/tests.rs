@@ -1,10 +1,8 @@
 use crate::front::Shared;
-use crate::gate::Gate;
 use crate::testing::Tree;
 use axum::http::{Request, StatusCode, header};
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
 
 #[test]
 fn selection_keeps_install_override_and_local_build_failures_authoritative() {
@@ -165,13 +163,7 @@ fn installed_consumer_uses_its_pinned_release_even_with_a_stale_external_client(
 }
 
 fn shared(root: &Path, directory: &Path, embedded: bool, installed: bool) -> Arc<Shared> {
-    let mut shared = Shared::new(
-        1,
-        1234,
-        root,
-        None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
+    let mut shared = Shared::new(1, 1234, root, None, crate::testing::open_gate());
     let writable = Arc::get_mut(&mut shared).unwrap();
     writable.ui_dist = directory.into();
     writable.embedded_ui = embedded;

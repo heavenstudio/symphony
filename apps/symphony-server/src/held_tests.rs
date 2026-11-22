@@ -3,16 +3,14 @@
 //! The worker that calls a round at each sweep is `front/sweep_tests.rs`'s.
 
 use std::sync::Arc;
-use std::time::Instant;
 
 use super::*;
 use crate::front::MachineClock;
-use crate::gate::Gate;
 
 fn shared(tree: &crate::testing::Tree) -> Arc<Shared> {
     let root = tree.path("alpha");
     std::fs::create_dir_all(&root).unwrap();
-    let gate = Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now));
+    let gate = crate::testing::open_gate();
     Shared::project(
         i64::from(std::process::id()),
         1,
@@ -43,6 +41,8 @@ fn a_command_runs_to_its_end_within_its_bound_and_none_runs_once_the_server_stop
         .current_dir(tree.path("alpha"));
     let stopped = host.run(never, Duration::from_secs(240)).unwrap_err();
     assert!(stopped.contains("cancelled"), "{stopped}");
+    // Never started, however late a loaded machine let the server look after a spawn.
+    assert!(!tree.path("alpha/ran").exists(), "it ran after the stop");
 }
 
 #[test]

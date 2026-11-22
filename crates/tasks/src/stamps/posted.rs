@@ -1,14 +1,16 @@
 //! The cards a task's branch posted for the owner's look, and whether the owner's approve of them
-//! stands for the `owner` stamp at the branch's tip ([`read`]; docs/TASKS.md, "Needed stamps").
+//! stands for the `owner` stamp at the branch's tip ([`read`]; docs/workflow/TASKS.md, "Needed stamps").
 //! Everything is read from git in the main checkout, never from a worktree's files: the land
 //! carries commits, so an owner's line no commit carries counts for nothing.
 //!
 //! It stands at the tip T when all of these hold:
 //!
-//! 1. **Posted.** The branch posted a card: one of a register in a project document at T whose
-//!    copy, the owner's lines and its mark aside, the merge base of T with the default branch
-//!    holds in none of its registers ([`Written`]), as the docs pages read a branch's posted
-//!    cards. A card the base holds that only the owner answered since is none the branch posted.
+//! 1. **Posted.** The branch posted a card: one in a project document at T, inline where the
+//!    thing it decides is said or in a register region, whose copy, the owner's lines and its
+//!    mark aside, the merge base of T with the default branch holds in none of its documents
+//!    ([`Written`]), as the docs pages read a branch's posted cards. A card the base holds that
+//!    only the owner answered since, or that only moved to another document, is none the branch
+//!    posted.
 //! 2. **Approved.** Each card it posted has `approved` as its newest owner verdict at T
 //!    ([`newest`]): a reject, a question, pending, dismissed or none, on any of them, and it does
 //!    not stand.
@@ -28,7 +30,8 @@ use crate::sweep::git::{ancestor, blobs, git, pathspecs, rev, stdout, under};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use symphony_docs::syntax::{
-    Card, Entry, REGION_END, REGION_START, cards, entry_line, is_continuation, lines, unseen_owner,
+    CARD_LINE, Card, Entry, REGION_END, REGION_START, cards, entry_line, is_continuation, lines,
+    unseen_owner,
 };
 
 /// Who writes the owner's lines under a card.
@@ -60,8 +63,10 @@ pub fn read(main: &Path, tip: &str) -> Posted {
 
 /// [`read`], none where git could not say.
 fn approval(main: &Path, tip: &str) -> Option<Posted> {
-    let default =
-        crate::live::default_branch(Some(main)).unwrap_or_else(|| crate::live::MAIN.into());
+    // A default branch the project file's rule refuses names no branch to read the cards on.
+    let default = crate::live::default_branch(Some(main))
+        .ok()?
+        .unwrap_or_else(|| crate::live::MAIN.into());
     let default_tip = rev(main, &format!("refs/heads/{default}^{{commit}}"))?;
     let base = fork(main, tip, &default_tip)?;
     let folders = crate::project::documents_at(main);
@@ -78,13 +83,12 @@ fn approval(main: &Path, tip: &str) -> Option<Posted> {
     args.extend(&specs);
     let changed = names(main, &args)?;
     let at_tip: Vec<Card> = (texts(main, tip, &changed)?.into_iter().flatten())
-        .filter(|text| text.contains(REGION_START))
         .flat_map(|text| cards(&lines(&text)))
         .collect();
     if at_tip.is_empty() {
         return Some(Posted::Nothing);
     }
-    let held = registers(main, &base, &specs)?;
+    let held = carded(main, &base, &specs)?;
     let mut forked: BTreeMap<String, Vec<Written>> = BTreeMap::new();
     for text in texts(main, &base, &held)?.into_iter().flatten() {
         for card in cards(&lines(&text)) {
@@ -121,7 +125,7 @@ fn approval(main: &Path, tip: &str) -> Option<Posted> {
     let Some(before) = first_other(main, tip, &base, &default_tip, &named, &folders)? else {
         return Some(Posted::Nothing);
     };
-    let carried = (registers(main, &before, &specs).and_then(|held| texts(main, &before, &held)))?
+    let carried = (carded(main, &before, &specs).and_then(|held| texts(main, &before, &held)))?
         .into_iter()
         .flatten()
         .any(|text| {
@@ -417,10 +421,21 @@ fn names(main: &Path, args: &[&str]) -> Option<Vec<String>> {
     )
 }
 
-/// The documents of `rev` under the pathspecs `specs` that hold a register; none where git could
-/// not say.
-fn registers(main: &Path, rev: &str, specs: &[&str]) -> Option<Vec<String>> {
-    let mut args = vec!["grep", "-l", "-z", "-F", "-e", REGION_START, rev, "--"];
+/// The documents of `rev` under the pathspecs `specs` that may hold a card, a register's marker
+/// or a card's line anywhere in them; none where git could not say.
+fn carded(main: &Path, rev: &str, specs: &[&str]) -> Option<Vec<String>> {
+    let mut args = vec![
+        "grep",
+        "-l",
+        "-z",
+        "-E",
+        "-e",
+        REGION_START,
+        "-e",
+        CARD_LINE,
+        rev,
+        "--",
+    ];
     args.extend(specs);
     let done = git(main, &args)?;
     // 1 is a grep that found none.

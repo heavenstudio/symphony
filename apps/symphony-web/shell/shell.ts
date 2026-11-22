@@ -486,8 +486,9 @@ addEventListener("touchcancel", releaseTouch, { capture: true, passive: true });
 addEventListener(
   "scrollend",
   (event) => {
-    if (!touchScroll) return;
-    touchScroll.scrollers.delete(event.target as Node);
+    // Only the end of one of the touch's own scrollers ends it: another box's, the page's own
+    // after a script scrolled it, can come between a release and the touch's first scroll event.
+    if (!touchScroll?.scrollers.delete(event.target as Node)) return;
     if (!touchScroll.down && touchScroll.scrollers.size === 0) clearTouchScroll();
   },
   { capture: true, passive: true },
@@ -778,7 +779,7 @@ function warm() {
   );
 }
 
-// Read ahead (docs/analysis/client-cache.md, "Read ahead"): once a page has drawn its data, its
+// Read ahead (docs/engineering/analysis/client-cache.md, "Read ahead"): once a page has drawn its data, its
 // feed is open and the browser is idle, the first AHEAD task and document links it shows on the
 // screen are read into the client cache one after another, at the lowest priority and outside the
 // page's own reads (cache.ts, `ahead`), so opening one draws at once: a task's page and its

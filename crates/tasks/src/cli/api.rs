@@ -24,13 +24,6 @@ use serde_json::{Map, Value, json};
 use std::io::{BufRead, Read, Write};
 
 mod assessment;
-#[path = "api/assessment/context.rs"]
-mod context;
-#[cfg_attr(
-    not(test),
-    expect(unused_imports, reason = "preserve connect-only compatibility entries")
-)]
-pub use context::{run, serve};
 
 /// The api's major: version 2 refuses the retired `create.fast_fix` argument.
 pub const MAJOR: i64 = 2;
@@ -130,6 +123,8 @@ impl Args {
     }
 }
 
+/// Read calls from `input`, answer each on `out`; exit 2 if the input is not a call at all.
+/// `context` is the native CLI's effective context; without one a call that needs it is refused.
 pub(super) fn run_in<F: FnOnce() -> Result<Store, String>>(
     input: &mut dyn Read,
     out: &mut dyn Write,
@@ -169,6 +164,7 @@ pub(super) fn run_in<F: FnOnce() -> Result<Store, String>>(
     code
 }
 
+/// Answer one call or list per nonblank input line, flushing each answer over one lazy connection.
 pub(super) fn serve_in<F: FnOnce() -> Result<Store, String>>(
     input: &mut dyn BufRead,
     out: &mut dyn Write,
@@ -319,9 +315,10 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
     board: &mut Lazy<F>,
 ) -> Result<Value, Fail> {
     let method = a.method.clone();
+    // `NAME: HOW` binds an argument by how it is read, `as TYPE` where nothing else says its type.
     macro_rules! args {
-        ($($name:ident: $how:ident $(($default:expr))?),* $(,)?) => {
-            $(let $name = args!(@ $name $how $($default)?);)*
+        ($($name:ident: $how:ident $(($default:expr))? $(as $ty:ty)?),* $(,)?) => {
+            $(let $name $(: $ty)? = args!(@ $name $how $($default)?);)*
             a.end()?;
         };
         (@ $name:ident need) => { a.need(stringify!($name))? };
@@ -349,12 +346,10 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         }
         "touch" => {
             args!(handle: actor);
-            let handle: String = handle;
             return none(board.get()?.touch(&handle));
         }
         "bind_agent" => {
-            args!(agent: need, handle: actor, session: or(false));
-            let (agent, handle): (String, String) = (agent, handle);
+            args!(agent: need as String, handle: actor, session: or(false));
             // Through `just tasks`, which an agent runs unasked: no binding, whose id staffing may
             // record as the handle's conversation ([`crate::launch::may_bind`]).
             if let Some(env) = &board.context {
@@ -369,12 +364,11 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         }
         "reattach" => {
             args!(handle: actor, pid: take);
-            let handle: String = handle;
             shape::session(&board.get()?.reattach(&handle, pid)?)
         }
         "revive" | "leave" => {
             args!(handle: actor);
-            let (handle, store): (String, _) = (handle, board.get()?);
+            let store = board.get()?;
             return none(if method == "revive" {
                 store.revive(&handle)
             } else {
@@ -382,8 +376,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             });
         }
         "session" => {
-            args!(handle: need);
-            let handle: String = handle;
+            args!(handle: need as String);
             shape::session(&board.get()?.session(&handle)?)
         }
         "sessions" => {
@@ -398,8 +391,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             )
         }
         "handle_for_agent" => {
-            args!(agent: need);
-            let agent: String = agent;
+            args!(agent: need as String);
             json!(board.get()?.handle_for_agent(&agent)?.as_deref())
         }
         "bound_agents" => {
@@ -424,13 +416,11 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             shape::launch(&board.get()?.record_launch(&new)?)
         }
         "task_sessions" => {
-            args!(slug: need);
-            let slug: String = slug;
+            args!(slug: need as String);
             shape::launches(&board.get()?.task_sessions(&slug)?)
         }
         "sessions_of" => {
-            args!(handle: need);
-            let handle: String = handle;
+            args!(handle: need as String);
             shape::launches(&board.get()?.sessions_of(&handle)?)
         }
         "all_task_sessions" => {
@@ -442,9 +432,10 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             shape::launches(&board.get()?.open_task_sessions()?)
         }
         "close_task_session" => {
-            args!(slug: need, handle: actor, why: need, restore: need);
-            let (slug, handle, why, restore): (String, String, String, String) =
-                (slug, handle, why, restore);
+            args!(
+                slug: need as String, handle: actor, why: need as String,
+                restore: need as String,
+            );
             return none(
                 board
                     .get()?
@@ -452,8 +443,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             );
         }
         "reopen_task_session" => {
-            args!(slug: need, handle: actor, pane: need);
-            let (slug, handle, pane): (String, String, String) = (slug, handle, pane);
+            args!(slug: need as String, handle: actor, pane: need as String);
             return none(board.get()?.reopen_task_session(&slug, &handle, &pane));
         }
         // Tasks
@@ -473,15 +463,15 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             }
         }
         "amend" => {
-            args!(slug: need, title: need, links: or(Vec::<String>::new()), by: actor);
-            let (slug, title, by): (String, String, String) = (slug, title, by);
-            let links: Vec<String> = links;
+            args!(
+                slug: need as String, title: need as String,
+                links: or(Vec::<String>::new()), by: actor,
+            );
             shape::task(&board.get()?.amend(&slug, &title, &links, &by)?)
         }
         // What a program outside the board keeps of a task, and writes it again by.
         "bound" => {
-            args!(slug: need);
-            let slug: String = slug;
+            args!(slug: need as String);
             json!(board.get()?.bound(&slug)?)
         }
         "edit_bound" => {
@@ -493,8 +483,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         }
         // This project's, so the board is not reached.
         "integration_state" => {
-            args!(name: need);
-            let name: String = name;
+            args!(name: need as String);
             let Some(env) = &board.context else {
                 return Err(Fail::Error(format!(
                     "{method}: this entry was given no folder to find the project from"
@@ -506,8 +495,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         }
         // Read-only: the task's evidence at its branch's head, as the land reads it.
         "evidence" => {
-            args!(slug: need, head: take);
-            let (slug, head): (String, Option<String>) = (slug, head);
+            args!(slug: need as String, head: take as Option<String>);
             let context = board.context.clone().ok_or_else(|| {
                 Fail::Error("evidence: it is read from a checkout of the task's repository".into())
             })?;
@@ -517,89 +505,73 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             json!(&snapshot)
         }
         "mark_red" => {
-            args!(slug: need, red: need, by: actor);
-            let (slug, red, by): (String, String, String) = (slug, red, by);
+            args!(slug: need as String, red: need as String, by: actor);
             shape::task(&board.get()?.mark_red(&slug, &red, &by)?)
         }
         "unmark_red" => {
-            args!(slug: need, by: actor);
-            let (slug, by): (String, String) = (slug, by);
+            args!(slug: need as String, by: actor);
             shape::task(&board.get()?.unmark_red(&slug, &by)?)
         }
         "ancestors" => {
-            args!(slug: need);
-            let slug: String = slug;
+            args!(slug: need as String);
             json!(&board.get()?.ancestors(&slug)?)
         }
         "children" => {
-            args!(slug: need);
-            let slug: String = slug;
+            args!(slug: need as String);
             shape::tasks(&board.get()?.children(&slug)?)
         }
         "descendants" => {
-            args!(slug: need);
-            let slug: String = slug;
+            args!(slug: need as String);
             shape::tasks(&board.get()?.descendants(&slug)?)
         }
         "set_parent" => {
-            args!(slug: need, parent: take, by: actor);
-            let (slug, parent, by): (String, Option<String>, String) = (slug, parent, by);
+            args!(slug: need as String, parent: take as Option<String>, by: actor);
             shape::task(&board.get()?.set_parent(&slug, parent.as_deref(), &by)?)
         }
         "get" => {
-            args!(slug: need);
-            let slug: String = slug;
+            args!(slug: need as String);
             shape::task(&board.get()?.get(&slug)?)
         }
         "tasks" => {
-            args!(status: take);
-            let status: Option<String> = status;
+            args!(status: take as Option<String>);
             shape::tasks(&board.get()?.tasks(status.as_deref())?)
         }
         "tasks_for_branch" => {
-            args!(branch: need);
-            let branch: String = branch;
+            args!(branch: need as String);
             shape::tasks(&board.get()?.tasks_for_branch(&branch)?)
         }
         "linked_to" => {
-            args!(doc: need);
-            let doc: String = doc;
+            args!(doc: need as String);
             shape::tasks(&board.get()?.linked_to(&doc)?)
         }
         "claimable" => {
-            args!(handle: need);
-            let handle: String = handle;
+            args!(handle: need as String);
             json!(&board.get()?.claimable(&handle)?)
         }
         "claim" => {
-            args!(slug: need, handle: actor);
-            let (slug, handle): (String, String) = (slug, handle);
+            args!(slug: need as String, handle: actor);
             shape::task(&board.get()?.claim(&slug, &handle)?)
         }
         "reserve" => {
-            args!(slug: need, handle: actor, ttl: or(crate::health::RESERVE_SECONDS));
-            let (slug, handle): (String, String) = (slug, handle);
+            args!(slug: need as String, handle: actor, ttl: or(crate::health::RESERVE_SECONDS));
             shape::task(&board.get()?.reserve(&slug, &handle, ttl)?)
         }
         "take_role" => {
-            args!(slug: need, handle: actor, role: need);
-            let (slug, handle, role): (String, String, String) = (slug, handle, role);
+            args!(slug: need as String, handle: actor, role: need as String);
             shape::task(&board.get()?.take_role(&slug, &handle, &role)?)
         }
         "release" => {
-            args!(slug: need, handle: actor, role: take);
-            let (slug, handle, role): (String, String, Option<String>) = (slug, handle, role);
+            args!(slug: need as String, handle: actor, role: take as Option<String>);
             shape::task(&board.get()?.release(&slug, &handle, role.as_deref())?)
         }
-        // A custom workflow (docs/WORKFLOW.md): an agent session's reads and operations, the
+        // A custom workflow (docs/workflow/WORKFLOW.md): an agent session's reads and operations, the
         // principal the session the call names, as the local host binds it.
         "workflow_read" => {
             args!();
             json!(board.get()?.workflow_read()?)
         }
         "workflow_actions" => {
-            args!(slug: need, handle: actor);
-            let (slug, handle): (String, String) = (slug, handle);
+            args!(slug: need as String, handle: actor);
             let principal = crate::workflow::agent_session(&handle);
             json!(board.get()?.workflow_actions(
                 &slug,
@@ -610,10 +582,10 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         // A guarded edge's `attestations`, each its project authority's signed word, none by
         // default; `workflow_observe` hands the board that authority's signed observation.
         "workflow_apply" => {
-            args!(handle: actor, request: need, attestations: take);
-            let (handle, request): (String, symphony_api::workflow::OperationRequest) =
-                (handle, request);
-            let attestations: Option<Vec<symphony_api::workflow::Signed>> = attestations;
+            args!(
+                handle: actor, request: need as symphony_api::workflow::OperationRequest,
+                attestations: take as Option<Vec<symphony_api::workflow::Signed>>,
+            );
             let principal = crate::workflow::agent_session(&handle);
             let store = board.get()?;
             json!(store.apply_attested(
@@ -624,26 +596,24 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             )?)
         }
         "workflow_observe" => {
-            args!(signed: need);
-            let signed: symphony_api::workflow::Signed = signed;
+            args!(signed: need as symphony_api::workflow::Signed);
             board.get()?.observe_authority(&signed)?.answer()
         }
-        // A task's execution attempts (docs/EXECUTION_ATTEMPTS.md), read as the board's own
+        // A task's execution attempts (docs/engineering/EXECUTION_ATTEMPTS.md), read as the board's own
         // service under its scope: the project the call runs in, and the board's database.
         "attempts" => {
-            args!(slug: need);
-            let slug: String = slug;
+            args!(slug: need as String);
             let project = project_of(board.context.as_ref())?;
             let store = board.get()?;
             store.get(&slug)?;
             json!(attempts(store, &project, &slug)?)
         }
         "move" => {
-            args!(slug: need, status: need, handle: actor, from: take, reason: take, on: take, why: take);
-            let (slug, status, handle): (String, String, String) = (slug, status, handle);
-            let from: Option<Vec<String>> = from;
-            let (reason, on, why): (Option<String>, Option<String>, Option<String>) =
-                (reason, on, why);
+            args!(
+                slug: need as String, status: need as String, handle: actor,
+                from: take as Option<Vec<String>>, reason: take as Option<String>,
+                on: take as Option<String>, why: take as Option<String>,
+            );
             let context = board.context.clone();
             let store = board.get()?;
             if status == "review" {
@@ -669,22 +639,25 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             })
         }
         "hold" => {
-            args!(slug: need, handle: actor, on: take, why: take);
-            let (slug, handle, on, why): (String, String, Option<String>, Option<String>) =
-                (slug, handle, on, why);
+            args!(
+                slug: need as String, handle: actor, on: take as Option<String>,
+                why: take as Option<String>,
+            );
             let on = blocked_on(on.as_deref(), why.as_deref())?;
             shape::task(&board.get()?.hold_blocked_on(&slug, &handle, on)?)
         }
         "verdict" => {
-            args!(slug: need, handle: actor, verdict: need, text: need);
-            let (slug, handle, verdict, text): (String, String, String, String) =
-                (slug, handle, verdict, text);
+            args!(
+                slug: need as String, handle: actor, verdict: need as String,
+                text: need as String,
+            );
             shape::task(&board.get()?.verdict(&slug, &handle, &verdict, &text)?)
         }
         "done" => {
-            args!(slug: need, handle: actor, note: need, covered_by: take);
-            let (slug, handle, note, covered_by): (String, String, String, Option<String>) =
-                (slug, handle, note, covered_by);
+            args!(
+                slug: need as String, handle: actor, note: need as String,
+                covered_by: take as Option<String>,
+            );
             let context = board.context.clone();
             let store = board.get()?;
             shape::task(&match covered_by {
@@ -696,9 +669,10 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         }
         "landed" => {
             let closes = ["review", "blocked"].map(String::from).to_vec();
-            args!(slug: need, handle: actor, text: need, requested: or(false), from: or(closes));
-            let (slug, handle, text, from): (String, String, String, Vec<String>) =
-                (slug, handle, text, from);
+            args!(
+                slug: need as String, handle: actor, text: need as String,
+                requested: or(false), from: or(closes),
+            );
             let from: Vec<&str> = from.iter().map(String::as_str).collect();
             shape::landed(
                 &board
@@ -707,14 +681,12 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             )
         }
         "ever_executed" => {
-            args!(slug: need);
-            let slug: String = slug;
+            args!(slug: need as String);
             let executed: Vec<String> = board.get()?.ever_executed(&slug)?.into_iter().collect();
             json!(&executed)
         }
         "next_for" => {
-            args!(handle: need);
-            let handle: String = handle;
+            args!(handle: need as String);
             board
                 .get()?
                 .next_for(&handle)?
@@ -723,10 +695,10 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         }
         // Messages
         "say" => {
-            args!(slug: need, sender: actor, text: need, to: take, key: take, adopt: or(false));
-            let (slug, sender, text): (String, String, String) = (slug, sender, text);
-            let (to, key): (Option<String>, Option<String>) = (to, key);
-            let adopt: bool = adopt;
+            args!(
+                slug: need as String, sender: actor, text: need as String,
+                to: take as Option<String>, key: take as Option<String>, adopt: or(false),
+            );
             let board = board.get()?;
             let said = match key.as_deref() {
                 Some(key) if adopt => {
@@ -738,9 +710,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             shape::message(&said)
         }
         "notify" => {
-            args!(slug: need, actor: actor, handle: need, text: need);
-            let (slug, actor, handle, text): (String, String, String, String) =
-                (slug, actor, handle, text);
+            args!(slug: need as String, actor: actor, handle: need as String, text: need as String);
             shape::message(&board.get()?.notify(&slug, &actor, &handle, &text)?)
         }
         "last_messages" => {
@@ -758,13 +728,11 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             json!(&posted)
         }
         "thread" => {
-            args!(slug: need);
-            let slug: String = slug;
+            args!(slug: need as String);
             shape::messages(&board.get()?.thread(&slug)?)
         }
         "threads" => {
-            args!(slugs: need);
-            let slugs: Vec<String> = slugs;
+            args!(slugs: need as Vec<String>);
             let threads = board.get()?.threads(&slugs)?;
             Value::Array(
                 slugs
@@ -774,8 +742,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             )
         }
         "in_status_since" => {
-            args!(slugs: need);
-            let slugs: Vec<String> = slugs;
+            args!(slugs: need as Vec<String>);
             let since = board.get()?.in_status_since(&slugs)?;
             shape::keyed(since.into_iter().map(|(slug, since)| (slug, json!(since))))
         }
@@ -791,13 +758,11 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             })
         }
         "inbox" => {
-            args!(handle: need);
-            let handle: String = handle;
+            args!(handle: need as String);
             shape::messages(&board.get()?.inbox(&handle)?)
         }
         "ack" => {
-            args!(handle: actor, ids: need);
-            let (handle, ids): (String, Vec<i64>) = (handle, ids);
+            args!(handle: actor, ids: need as Vec<i64>);
             return none(board.get()?.ack(&handle, &ids));
         }
         "to_owner" => {
@@ -828,14 +793,12 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             )
         }
         "hold_ask" => {
-            args!(id: need, holder: take, why: need);
-            let (holder, why): (Option<String>, String) = (holder, why);
+            args!(id: need, holder: take as Option<String>, why: need as String);
             let store = board.get()?;
             shape::ask(&store.hold_ask(id, holder.as_deref(), &why)?, store.now())
         }
         "answer_ask" => {
-            args!(id: need, by: take, answer: need);
-            let (by, answer): (Option<String>, String) = (by, answer);
+            args!(id: need, by: take as Option<String>, answer: need as String);
             if let Some(by) = &by {
                 super::check_actor(by)?;
             }
@@ -845,7 +808,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         "answer_about" => {
             args!(
                 kind: need, path: take, card: take, block: take, tree: take, task: take,
-                thread: take, by: take, answer: need,
+                thread: take, by: take as Option<String>, answer: need as String,
             );
             let about = NewAsk {
                 kind,
@@ -857,7 +820,6 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
                 thread,
                 ..NewAsk::default()
             };
-            let (by, answer): (Option<String>, String) = (by, answer);
             if let Some(by) = &by {
                 super::check_actor(by)?;
             }
@@ -868,8 +830,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
                 .map_or(Value::Null, |ask| shape::ask(&ask, now))
         }
         "close_ask" => {
-            args!(id: need, by: actor, why: need);
-            let (by, why): (String, String) = (by, why);
+            args!(id: need, by: actor, why: need as String);
             let store = board.get()?;
             shape::ask(&store.close_ask(id, &by, &why)?, store.now())
         }

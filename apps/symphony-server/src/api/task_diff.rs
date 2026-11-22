@@ -34,9 +34,12 @@ pub(super) async fn answer(
     let folder = root.clone();
     let input = crate::spawn::blocking(move || {
         let store = hub.reader().map_err(|e| super::unavailable(&e, ""))?;
-        store.get(&slug).map_err(super::task_failure)?;
-        let thread = store.thread(&slug).map_err(super::task_failure)?;
-        let sessions = store.task_sessions(&slug).map_err(super::task_failure)?;
+        // The board's server may have gone, or moved: the next read opens it anew.
+        let read = store
+            .get(&slug)
+            .and_then(|_| Ok((store.thread(&slug)?, store.task_sessions(&slug)?)))
+            .map_err(super::task_failure);
+        let (thread, sessions) = hub.read_on(&store, read)?;
         let branch = sessions
             .into_iter()
             .rev()

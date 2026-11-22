@@ -1,6 +1,6 @@
 //! A check of the release: one command run in the candidate's checkout, its output in a log of its
 //! own, recorded through the candidate's `tools/record.sh` as one test operation of the board's
-//! recorder (`tasks run`, docs/MACHINE_WORK.md), labelled `release NAME`. The steps inside it are
+//! recorder (`tasks run`, docs/workflow/MACHINE_WORK.md), labelled `release NAME`. The steps inside it are
 //! not recorded again. A candidate without the script runs it as it is.
 //!
 //! A check runs in a process group of its own and inherits no descriptor of the run's: not its lock,

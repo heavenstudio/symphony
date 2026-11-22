@@ -359,7 +359,7 @@ fn tidy_leaves_a_maker_pages_picture_slot_to_the_app() {
 }
 
 #[test]
-fn tidy_covers_every_register_file_under_docs() {
+fn tidy_covers_every_document_holding_cards_under_docs() {
     let tree = decision_tree();
     tree.write(
         "docs/pictures/lamps.md",
@@ -376,7 +376,12 @@ fn tidy_covers_every_register_file_under_docs() {
         "{text}"
     );
     assert!(text.contains("- [r] **rep-a**"), "{text}");
-    assert_eq!(tree.read("docs/notes.md"), plain);
+    // A card outside any region is inline: resolved where it sits, nothing around it moved.
+    assert!(out.contains("tidied docs/notes.md"), "{out}");
+    assert_eq!(
+        tree.read("docs/notes.md"),
+        "# Notes\n\n- [r] **not-a-register** — outside any region.\n  [2026-09-26 08:00] agent · resolved\n"
+    );
 }
 
 #[test]

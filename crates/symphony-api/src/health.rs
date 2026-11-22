@@ -1,7 +1,7 @@
 //! The board's health an hour at a time, as the machine's one Symphony server keeps it: one
 //! [`HealthHour`] a line in the day files `symphony/health/YYYY-MM-DD.jsonl` in the project's git
 //! common dir, appended as each hour ends from what the server held in memory over it, with no
-//! board request (docs/TASKS.md, *Board health*). The Reports page reads them.
+//! board request (docs/workflow/TASKS.md, *Board health*). The Reports page reads them.
 //!
 //! A line covers what its writer counted from [`HealthHour::from`] to [`HealthHour::to`], whole
 //! minutes of the hour: all of it, or the part it recorded ([`HealthHour::partial`]). An hour with
@@ -11,7 +11,7 @@
 //! stopped and another started, or a reload handed over in it) or one that slept in it; their spans
 //! never overlap, so their counts add up, the slowest request is the slowest of theirs, and each
 //! line's write percentiles are its own. Lines join the agents' hour lines (`symphony/agents/`,
-//! `docs/AGENT_ACTIVITY.md`) and the hourly roll-up's hours on [`HealthHour::start`], the hour's
+//! `docs/workflow/AGENT_ACTIVITY.md`) and the hourly roll-up's hours on [`HealthHour::start`], the hour's
 //! first second in all three. A field added later is `#[serde(default)]`, so a reader built before it
 //! reads a newer line and one after it an older one.
 

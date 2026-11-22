@@ -1,5 +1,5 @@
 //! A project's approval authority, asked by its host for an attestation when an operation needs
-//! one (docs/WORKFLOW.md, "Guards"): the operation's snapshot and the principal taking it go in,
+//! one (docs/workflow/WORKFLOW.md, "Guards"): the operation's snapshot and the principal taking it go in,
 //! the authority's signed statement comes back, and the board verifies it as it verifies one
 //! pushed to it, by the key the project commits for that authority, never by who handed it over.
 //! The seam adds no trust: an answer the board cannot verify refuses the operation.

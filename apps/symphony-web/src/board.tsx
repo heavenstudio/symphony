@@ -33,6 +33,7 @@ import {
   waitKind,
 } from "./boardwait";
 import { Button } from "./button";
+import { FirstSteps, noTasks } from "./first";
 import type { Flow } from "./flow";
 import { href } from "./project";
 import { said } from "./request";
@@ -867,6 +868,13 @@ export function TaskBoard({
           </button>
         ))}
       </nav>
+      {wait === "" && search === "" && noTasks(counts) && (
+        <FirstSteps>
+          No task is open on this board, and none finished {days === 1 ? "today" : "this week"}. Add
+          one with the + button, or have an agent file it with the create-task skill or{" "}
+          <code>just tasks create</code>:
+        </FirstSteps>
+      )}
       {flow?.strip({ waiting, wait, choose: chooseWait, open: setOpened, opened, phone })}
       {wait === "" && (
         <nav ref={tabRow} className="stage-tabs scroll-row" aria-label="Task stages">

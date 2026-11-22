@@ -1,5 +1,5 @@
 //! A plugin answering from a process of its own: its binary's `main` is [`serve`]`(&PLUGIN)`, and
-//! the host that starts it speaks the protocol on its stdin and stdout (docs/PLUGIN_PROTOCOL.md).
+//! the host that starts it speaks the protocol on its stdin and stdout (docs/engineering/PLUGIN_PROTOCOL.md).
 //!
 //! Each line read is an [`Envelope`]; a request is answered on one of [`WORKERS`] threads, so a slow
 //! call holds one worker and the others go on answering, and answers may come back in another order

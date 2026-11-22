@@ -7,6 +7,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
+use symphony_board::lock::Recovered as _;
 
 /// One request a client sent: its query text and its variables.
 #[derive(Clone, Debug)]
@@ -59,7 +60,7 @@ impl Proxy {
 /// decoded whole before, or a test's take of them all) leaves every request kept whole: what a later
 /// reader finds was each sent.
 fn sent_so_far(sent: &Mutex<Vec<Request>>) -> MutexGuard<'_, Vec<Request>> {
-    sent.lock().unwrap_or_else(|failed| failed.into_inner())
+    sent.lock().recover()
 }
 
 /// Whether an accept's failure is one that passes, so the next accept is made: a signal, or a
