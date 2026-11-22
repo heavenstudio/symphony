@@ -28,7 +28,7 @@ UPSERT counter:depends SET last += 1 RETURN NONE;
 FOR $target IN $drop { DELETE type::record('link', [$slug, 'dep', $target]); };
 FOR $target IN $add {
     UPSERT type::record('link', [$slug, 'dep', $target])
-        CONTENT { slug: $slug, kind: 'dep', target: $target } RETURN NONE;
+        SET slug = $slug, kind = 'dep', target = $target RETURN NONE;
 };
 UPDATE type::record('task', $slug) SET status = $status ?? status, updated = $now, version += 1 RETURN NONE;
 DELETE type::record('counter', ['hold', $slug]) RETURN NONE;";

@@ -1,4 +1,4 @@
-//! What a run's log says of its tests (docs/RUNS.md, *Tests*), read once the run ended ([`read`]):
+//! What a run's log says of its tests (docs/workflow/RUNS.md, *Tests*), read once the run ended ([`read`]):
 //! each test binary cargo ran, with its counts and time, and the tests that failed, each with the
 //! first line of its failure. Stable libtest writes no machine-readable report (`--format json` is
 //! nightly's), so these are its words and cargo's:

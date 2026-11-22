@@ -3,7 +3,7 @@
 //! from the cards loaded in the browser.
 use serde_json::{Value, json};
 
-use crate::{SHOWN, chrome, dist, site::Site};
+use crate::{PAGE_WIDTH, READY, SHOWN, chrome, site::Site};
 
 const STAGES: [&str; 6] = [
     "concept",
@@ -115,10 +115,7 @@ fn listing() -> Value {
 }
 
 fn open(page: &mut crate::Chrome, site: &Site, width: u32) {
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":if width <= 760 {844} else {900},"deviceScaleFactor":1,"mobile":width<=760}),
-    );
+    page.viewport(width, if width <= 760 { 844 } else { 900 }, width <= 760);
     page.open(&site.url("/tasks"));
     if width > 760 {
         assert!(page.wait_for(
@@ -127,39 +124,44 @@ fn open(page: &mut crate::Chrome, site: &Site, width: u32) {
         ));
         page.eval("const board = document.querySelector('.waiting-columns'), column = board.querySelector('.column[data-status=review]'); board.scrollLeft += column.getBoundingClientRect().left - board.getBoundingClientRect().left");
     }
-    assert!(page.wait_for("document.querySelector('[data-slug=\"review/decision\"]') !== null && document.documentElement.dataset.navigation === 'ready'",SHOWN));
+    assert!(page.wait_for(
+        &format!("document.querySelector('[data-slug=\"review/decision\"]') !== null && {READY}"),
+        SHOWN
+    ));
 }
 
 #[test]
 fn the_board_fills_the_window_for_both_its_ghost_and_its_cards() {
     for width in [390, 1600] {
-        let site = Site::start(dist(), &crate::common::fixture("board.json"));
+        let site = crate::site();
         site.set_json("/api/task-board", &listing());
         site.hold_route("/api/task-board", true);
         let Some(mut page) = chrome() else { return };
-        page.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":width<=760}),
-        );
+        page.viewport(width, 900, width <= 760);
         page.open(&site.url("/tasks"));
         assert!(page.wait_for(
             "document.querySelector('.waiting-board.waiting-ghost') !== null",
             SHOWN
         ));
-        let page_width = "Math.round(document.querySelector('main').getBoundingClientRect().width)";
-        assert_eq!(page.eval(page_width), json!(width), "{width}: the ghost");
+        // The page's main and the width the window leaves the page beside its scrollbar.
+        let widths = format!(
+            "[Math.round(document.querySelector('main').getBoundingClientRect().width), Math.round({PAGE_WIDTH})]"
+        );
+        let [main, window]: [u64; 2] = serde_json::from_value(page.eval(&widths)).unwrap();
+        assert_eq!(main, window, "{width}: the ghost");
         site.hold_route("/api/task-board", false);
         assert!(page.wait_for(
             "document.querySelector('.waiting-board .taskcard') !== null",
             SHOWN
         ));
-        assert_eq!(page.eval(page_width), json!(width), "{width}: the cards");
+        let [main, window]: [u64; 2] = serde_json::from_value(page.eval(&widths)).unwrap();
+        assert_eq!(main, window, "{width}: the cards");
     }
 }
 
 #[test]
 fn named_waits_stay_in_their_stage_in_order_with_parked_last_and_no_unnamed_block() {
-    let site = Site::start(dist(), &crate::common::fixture("board.json"));
+    let site = crate::site();
     site.set_json("/api/task-board", &listing());
     let Some(mut page) = chrome() else { return };
     open(&mut page, &site, 1440);
@@ -210,7 +212,7 @@ fn named_waits_stay_in_their_stage_in_order_with_parked_last_and_no_unnamed_bloc
 
 #[test]
 fn review_marks_follow_live_counts_without_changing_card_geometry_or_reading_details() {
-    let site = Site::start(dist(), &crate::common::fixture("board.json"));
+    let site = crate::site();
     let mut answer = listing();
     site.set_json("/api/task-board", &answer);
     let Some(mut page) = chrome() else { return };
@@ -266,7 +268,7 @@ fn review_marks_follow_live_counts_without_changing_card_geometry_or_reading_det
 
 #[test]
 fn a_wait_chip_uses_complete_counts_and_pages_one_list_across_stages() {
-    let site = Site::start(dist(), &crate::common::fixture("board.json"));
+    let site = crate::site();
     let mut complete = listing();
     complete["waiting"]["kinds"][0] = json!(["decision", 31]);
     site.set_json("/api/task-board", &complete);
@@ -349,7 +351,7 @@ fn a_wait_chip_uses_complete_counts_and_pages_one_list_across_stages() {
 
 #[test]
 fn an_unnamed_legacy_block_is_ordinary_nobody_work_in_its_original_stage() {
-    let site = Site::start(dist(), &crate::common::fixture("board.json"));
+    let site = crate::site();
     let mut legacy = task("review/decision", "review", "nobody", true, 0.0);
     legacy["waits_on"] = json!({"kind":"nobody","who":"","why":"no reason recorded","since":0.0});
     let mut answer = listing();

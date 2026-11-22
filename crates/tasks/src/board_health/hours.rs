@@ -361,9 +361,7 @@ pub fn read(folder: &Path, day: &str) -> Vec<HealthHour> {
     if file.read_to_string(&mut text).is_err() {
         return Vec::new();
     }
-    text.lines()
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .collect()
+    text.lines().filter_map(crate::objects::parse).collect()
 }
 
 #[cfg(test)]

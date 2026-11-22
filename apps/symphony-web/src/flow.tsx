@@ -1,4 +1,4 @@
-// A custom workflow on the task board (docs/WORKFLOW.md, "The app"): a chunk of its own, which the
+// A custom workflow on the task board (docs/workflow/WORKFLOW.md, "The app"): a chunk of its own, which the
 // board loads only once its listing says a workflow is active (`waiting.workflow`, its activation
 // generation), so a board its own writers keep fetches none of it. It reads the active definition
 // (`/api/workflow`) and gives the board its lanes (the phases that are columns, by their order,

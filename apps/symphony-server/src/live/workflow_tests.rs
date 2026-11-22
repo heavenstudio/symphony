@@ -1,62 +1,34 @@
 //! A custom workflow through the Symphony's routes, on a fixture project's own board: the active
 //! definition and a task's place read, the local owner's next actions previewed, an edge taken,
 //! repeated under its key and refused as stale from the revision it left, and the feed saying the
-//! board activated a workflow so a page reads the definition again (docs/WORKFLOW.md, "The app").
+//! board activated a workflow so a page reads the definition again (docs/workflow/WORKFLOW.md, "The app").
 
 use super::boards_tests::{Project, answer, asked, env, writer};
 use crate::front::Shared;
-use crate::gate::Gate;
 use crate::testing::Tree;
 use serde_json::{Value, json};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_api::workflow::Source;
 use symphony_board::workflow::{Custom, Host, written};
 
 /// The wall-clock backstop of a wait for the hub's read: only a stall reaches it.
 const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(30));
 
-/// Work built (available, worked by a held executor, or blocked by the owner), then verified
-/// (awaiting, accepted by a person); a ready task the board's writers keep starts available.
-const TWO: &str = r#"
-[workflow]
-format = 1
-initial = { phase = "build", state = "available" }
-task_kinds = ["task"]
-phases = [
-  { id = "build", label = "Build", order = 0, phone_order = 0, column = true },
-  { id = "verify", label = "Verify", order = 1, phone_order = 1, column = true },
-]
-states = [
-  { id = "available", label = "Available" }, { id = "working", label = "Working" },
-  { id = "blocked", label = "Blocked" }, { id = "awaiting", label = "Awaiting" },
-  { id = "accepted", label = "Accepted" },
-]
-capabilities = ["owner"]
-adapters = []
-guards = []
-positions = [
-  { at = { phase = "build", state = "available" }, slot = "release", dependencies = "none", unsuccessful_dependency = "block", accepts_work = true, terminal = false, legacy = "ready", satisfies_dependencies = false, completion = "none" },
-  { at = { phase = "build", state = "working" }, staffing = "executor", slot = "acquire", dependencies = "none", unsuccessful_dependency = "block", accepts_work = true, terminal = false, legacy = "in_progress", satisfies_dependencies = false, completion = "none", recovery = { release = { target = { phase = "build", state = "available" }, manual = false, slot = "release", release_role = true, release_reservation = false }, lost_holder = { target = { phase = "build", state = "available" }, manual = false, slot = "release", release_role = true, release_reservation = false }, attempt_failure = { manual = true, slot = "retain", release_role = false, release_reservation = false }, cancellation_acknowledged = { manual = true, slot = "retain", release_role = false, release_reservation = false } } },
-  { at = { phase = "build", state = "blocked" }, slot = "release", dependencies = "none", unsuccessful_dependency = "block", accepts_work = false, terminal = false, legacy = "blocked", satisfies_dependencies = false, completion = "none" },
-  { at = { phase = "verify", state = "awaiting" }, slot = "release", dependencies = "none", unsuccessful_dependency = "block", accepts_work = false, terminal = false, legacy = "review", satisfies_dependencies = false, completion = "none" },
-  { at = { phase = "verify", state = "accepted" }, slot = "release", dependencies = "none", unsuccessful_dependency = "block", accepts_work = false, terminal = true, legacy = "done", outcome = "success", satisfies_dependencies = true, completion = "covered_close" },
-]
-edges = [
-  { id = "claim", label = "Claim", from = { phase = "build", state = "available" }, to = { phase = "build", state = "working" }, operation = "claim", authority = [{ kind = "task_role", role = "executor" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "acquire_role", role = "executor" }, { kind = "slot", policy = "acquire" }], automatic = false, human_wait = false },
-  { id = "submit", label = "Submit", from = { phase = "build", state = "working" }, to = { phase = "verify", state = "awaiting" }, operation = "request_review", authority = [{ kind = "task_role", role = "executor" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "slot", policy = "release" }], automatic = false, human_wait = false },
-  { id = "block", label = "Block", from = { phase = "build", state = "available" }, to = { phase = "build", state = "blocked" }, operation = "block", authority = [{ kind = "project_capability", capability = "owner" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "block", save_resume = true }, { kind = "slot", policy = "release" }], automatic = false, human_wait = false },
-  { id = "resume", label = "Resume", from = { phase = "build", state = "blocked" }, to = { phase = "build", state = "available" }, operation = "resume", authority = [{ kind = "project_capability", capability = "owner" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "clear_block" }, { kind = "slot", policy = "release" }], automatic = false, human_wait = false },
-  { id = "accept", label = "Accept", from = { phase = "verify", state = "awaiting" }, to = { phase = "verify", state = "accepted" }, operation = "close_covered", authority = [{ kind = "project_capability", capability = "owner" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "outcome", outcome = "success", satisfies_dependencies = true }, { kind = "slot", policy = "release" }], automatic = false, human_wait = true },
-]
-
+/// A ready task the board's writers keep starts available.
+const READY: &str = r#"
 [[workflow_mappings]]
 from = { phase = "ready", state = "available" }
 to = { phase = "build", state = "available" }
 "#;
 
+/// The board's tests' `TWO` (work built, then verified), alone: [`custom`] adds [`READY`] after it.
+const TWO: &str = concat!(
+    "\n",
+    include_str!("../../../../crates/tasks/tests/fixtures/two_workflow.toml")
+);
+
 fn custom() -> Custom {
-    let (definition, mappings) = written(TWO).unwrap();
+    let (definition, mappings) = written(&format!("{TWO}{READY}")).unwrap();
     let definition = definition.unwrap();
     let revision = definition
         .revision(Source {
@@ -119,13 +91,7 @@ fn the_owner_reads_a_workflow_and_takes_an_edge_through_the_pages_routes() {
     let tree = Tree::new();
     let project = Project::made_by(&tree, "flow", writer);
     project.reads(&["flow/one"]);
-    let shared = Shared::new(
-        1,
-        1234,
-        &project.root,
-        None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
+    let shared = Shared::new(1, 1234, &project.root, None, crate::testing::open_gate());
     assert!(shared.api.set(project.hub.clone()).is_ok());
     let database = symphony::taskview::connect_in(&project.root, env(&project.root))
         .unwrap()
@@ -245,6 +211,7 @@ fn the_owner_reads_a_workflow_and_takes_an_edge_through_the_pages_routes() {
     assert_ne!(status, 200, "{stale}");
     let said = stale["error"].as_str().unwrap_or_default();
     assert!(said.contains("stale_task"), "{stale}");
+    assert!(stale.get("guard").is_none(), "no guard refused it: {stale}");
 
     reads_at(&project, "flow/one", "blocked");
     let (_, next) = answer(
@@ -265,6 +232,106 @@ fn the_owner_reads_a_workflow_and_takes_an_edge_through_the_pages_routes() {
         asked("GET", "/api/workflow-actions?slug=flow/none", None),
     );
     assert_eq!(status, 404, "{missing}");
+}
+
+/// [`TWO`] and [`READY`] with the owner's Block guarded by `approved`, which the `approvals`
+/// authority attests by a key the project commits (the curve's base point, which signs nothing
+/// here).
+fn guarded() -> Custom {
+    let text = TWO
+        .replacen("adapters = []", "adapters = [\"approvals\"]", 1)
+        .replacen(
+            "guards = []",
+            "guards = [{ id = \"approved\", adapter = \"approvals\" }]",
+            1,
+        )
+        .replacen(
+            "operation = \"block\", authority = [{ kind = \"project_capability\", capability = \"owner\" }], inputs = [], dependencies = \"none\", guards = []",
+            "operation = \"block\", authority = [{ kind = \"project_capability\", capability = \"owner\" }], inputs = [], dependencies = \"none\", guards = [\"approved\"]",
+            1,
+        );
+    assert!(text.contains("guards = [\"approved\"]"), "{text}");
+    let (definition, mappings) = written(&format!("{text}{READY}")).unwrap();
+    let definition = definition.unwrap();
+    let revision = definition
+        .revision(Source {
+            commit: "1".repeat(40),
+            project_blob: "2".repeat(40),
+        })
+        .unwrap();
+    Custom {
+        definition,
+        revision,
+        mappings,
+        authorities: vec![symphony_board::workflow::Attester {
+            adapter: "approvals".into(),
+            issuer: "ledger".into(),
+            contract: symphony_api::workflow::ATTESTATION_CONTRACT,
+            key: format!("ed25519:58{}", "66".repeat(31)),
+        }],
+        project: Some("flow".into()),
+    }
+}
+
+/// A task's guards through the page's routes: nothing on a board with no workflow, then the
+/// authority the activation commits, the guard and the edge it holds; and the owner's take of
+/// that edge refused with the guard that refused it beside the refusal's words.
+#[test]
+fn the_owner_reads_a_tasks_guards_and_a_guards_refusal_names_it_beside_its_words() {
+    let tree = Tree::new();
+    let project = Project::made_by(&tree, "flow", writer);
+    project.reads(&["flow/one"]);
+    let shared = Shared::new(1, 1234, &project.root, None, crate::testing::open_gate());
+    assert!(shared.api.set(project.hub.clone()).is_ok());
+    let database = symphony::taskview::connect_in(&project.root, env(&project.root))
+        .unwrap()
+        .database()
+        .database()
+        .to_string();
+    let guards = "/api/workflow-guards?slug=flow/one";
+    let (status, none) = answer(&shared, asked("GET", guards, None));
+    assert_eq!(status, 200, "{none}");
+    assert_eq!(none, json!({"authorities": [], "guards": [], "edges": []}));
+
+    writer(&project.root)
+        .activate_workflow(&guarded(), &Host::local())
+        .unwrap();
+    reads_at(&project, "flow/one", "available");
+    let (status, read) = answer(&shared, asked("GET", guards, None));
+    assert_eq!(status, 200, "{read}");
+    assert_eq!(
+        read,
+        json!({
+            // The authority has reported no state, and no plugin of this project answers for it.
+            "authorities": [{"adapter": "approvals", "issuer": "ledger", "conflicted": false,
+                             "admitted": 0, "asked_here": false}],
+            "guards": [{"guard": "approved", "adapter": "approvals"}],
+            "edges": [{"edge": "block", "guards": ["approved"]}],
+        })
+    );
+
+    let (_, next) = answer(
+        &shared,
+        asked("GET", "/api/workflow-actions?slug=flow/one", None),
+    );
+    let applied = json!({"slug": "flow/one", "request": {
+        "project": database, "task": "flow/one", "edge": "block", "expected": next["snapshot"],
+        "input_revisions": {}, "idempotency_key": "page:flow/one:1:block:a", "inputs": {}}});
+    let (status, refused) = answer(
+        &shared,
+        asked("POST", "/api/workflow-apply", Some(&applied)),
+    );
+    assert_eq!(status, 400, "{refused}");
+    let said = refused["error"].as_str().unwrap_or_default();
+    assert!(
+        said.starts_with("guard_unavailable: edge block is guarded by approved"),
+        "{refused}"
+    );
+    assert_eq!(
+        refused["guard"],
+        json!({"guard": "approved", "adapter": "approvals", "why": "unreported"})
+    );
+    reads_at(&project, "flow/one", "available");
 }
 
 /// The hub says a generation once it changes after its first read, and nothing for one it knows.

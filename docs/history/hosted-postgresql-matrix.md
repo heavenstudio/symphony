@@ -1,6 +1,6 @@
 # The hosted PostgreSQL matrix as run
 
-The [validation matrix](../analysis/hosted-postgresql.md#postgresql-16-and-18-validation-matrix)
+The [validation matrix](../operations/analysis/hosted-postgresql.md#postgresql-16-and-18-validation-matrix)
 of the hosted adapter, run for `tools/hosted-postgresql-adapter` on 2026-11-18. A record of
 that day's servers and numbers, not a reference: the tests it names are the proof, and they run
 again with `just hosted-check`.

@@ -76,6 +76,7 @@ fn each_task_s_places_are_its_own_transitions_named_by_the_definition_each_was_m
         let committed = Committed {
             commit: "3".repeat(40),
             custom: Some(two.clone()),
+            returning: Vec::new(),
         };
         f.store
             .follow_committed(&committed, &Host::local())

@@ -1,6 +1,6 @@
 # The board that went back on 2026-11-12
 
-Evidence, not reference: how [A board that went back](../TASKS.md#a-board-that-went-back) was first
+Evidence, not reference: how [A board that went back](../workflow/TASKS.md#a-board-that-went-back) was first
 done by hand, with the numbers of that day. The cause is on the board in
 `tools/board-database-lost-its-log`.
 

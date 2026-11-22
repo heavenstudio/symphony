@@ -2,7 +2,7 @@
 //! answers three of its own: [`review`], the board's reviewer verdicts ([`review_rounds`]), or the
 //! covered close a task is done by instead ([`review_of`]);
 //! [`check`], the project's `[verdicts] check` at the tip, from the run records the board's
-//! recorder keeps (docs/MACHINE_WORK.md), for a branch with work of its own ([`own_commits`]) and
+//! recorder keeps (docs/workflow/MACHINE_WORK.md), for a branch with work of its own ([`own_commits`]) and
 //! never an instruction subtask's; and [`owner`], a card the task posted that waits on the
 //! owner, by the sign-off lane's rule ([`posted_cards`]). A project's plugins answer its own
 //! through the gates seam (`symphony_plugin::Gates`), all asked at once ([`theirs`]), each answer
@@ -28,12 +28,13 @@ use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use symphony_api::gates::{CHECK, OWNER, REVIEW, ranked};
 use symphony_api::{Gate, GatePast, GateState, GatesSeen, Pending, PendingItem, TaskGates};
 use symphony_board::cli::machine_work::recorded::{self, Record, Step};
+use symphony_board::lock::Recovered as _;
 use symphony_board::stamps::read;
 use symphony_plugin::{Gates, TaskRef};
 
@@ -351,21 +352,23 @@ fn names(text: &str, slug: &str) -> bool {
     })
 }
 
-/// The cards of `pending` in a document one of `links` names: the cards the task could have posted.
-pub fn linked_cards<'a>(links: &[String], pending: &'a Pending) -> Vec<&'a PendingItem> {
+/// The cards of `pending` in a document one of `links` names, as `names` reads a link: by its
+/// route, or by its name once its document moved ([`crate::docview::LinkNames`]). The cards the
+/// task could have posted.
+pub fn linked_cards<'a>(
+    links: &[String],
+    pending: &'a Pending,
+    names: &crate::docview::LinkNames<'_>,
+) -> Vec<&'a PendingItem> {
     pending
         .items
         .iter()
-        .filter(|card| {
-            links
-                .iter()
-                .any(|link| link.split('#').next() == Some(card.path.as_str()))
-        })
+        .filter(|card| links.iter().any(|link| names.names(link, &card.path)))
         .collect()
 }
 
 /// The cards of `cards` the task posted: named whole by one of `texts`, its body and its thread's
-/// lines (the sign-off lane's rule, docs/TASKS.md).
+/// lines (the sign-off lane's rule, docs/workflow/TASKS.md).
 pub fn posted_cards<'a, 't>(
     cards: &[&'a PendingItem],
     mut texts: impl Iterator<Item = &'t str>,
@@ -543,12 +546,12 @@ impl Slot {
 
     /// What came back and when, once it has.
     fn answer(&self) -> Option<(Answer, Instant)> {
-        lock(&self.done).clone()
+        self.done.lock().recover().clone()
     }
 
     /// What came back, waited for until `deadline`; `None` if nothing did by then.
     fn wait_until(&self, deadline: Instant) -> Option<Answer> {
-        let mut done = lock(&self.done);
+        let mut done = self.done.lock().recover();
         loop {
             if let Some((answer, _)) = &*done {
                 return Some(answer.clone());
@@ -557,11 +560,7 @@ impl Slot {
             if left.is_zero() {
                 return None;
             }
-            done = self
-                .ready
-                .wait_timeout(done, left)
-                .unwrap_or_else(PoisonError::into_inner)
-                .0;
+            done = self.ready.wait_timeout(done, left).recover().0;
         }
     }
 }
@@ -710,7 +709,7 @@ impl Kept {
             Ok(kept_while) => kept_while,
             Err(why) => return Some(Err(why)),
         };
-        let ledgers = lock(&self.ledgers);
+        let ledgers = self.ledgers.lock().recover();
         let slot = ledgers
             .get(&Who::new(root, plugin, answerer.name()))?
             .slots
@@ -726,14 +725,19 @@ impl Kept {
     /// many it waited on and how many said no one and no time ([`answer`] keeps it): the room its
     /// page holds before it reads them.
     pub fn seen(&self, root: &Path, slug: &str) -> Option<GatesSeen> {
-        lock(&self.seen)
+        self.seen
+            .lock()
+            .recover()
             .get(&(root.to_path_buf(), slug.to_string()))
             .copied()
     }
 
     /// Keep the shape of `answer`, given for its task in the project at `root`.
     pub fn saw(&self, root: &Path, answer: &TaskGates) {
-        lock(&self.seen).insert((root.to_path_buf(), answer.slug.clone()), answer.seen());
+        self.seen
+            .lock()
+            .recover()
+            .insert((root.to_path_buf(), answer.slug.clone()), answer.seen());
     }
 
     /// Forget the shapes kept for every task `open` does not name, in every checkout, and what
@@ -741,14 +745,16 @@ impl Kept {
     /// so what is kept stays as many as the open tasks read since the server started. The hub
     /// calls it when the board's tasks change.
     pub fn keep_open(&self, open: impl Fn(&str) -> bool) {
-        lock(&self.seen).retain(|(_, slug), _| open(slug));
+        self.seen.lock().recover().retain(|(_, slug), _| open(slug));
         self.inputs.keep_open(open);
     }
 
     /// The names of the gates `answerer`, of the plugin `plugin`, has answered in the project at
     /// `root`, in the order first answered.
     pub fn names(&self, root: &Path, plugin: &str, answerer: &str) -> Vec<String> {
-        lock(&self.ledgers)
+        self.ledgers
+            .lock()
+            .recover()
             .get(&Who::new(root, plugin, answerer))
             .map(|ledger| ledger.names.clone())
             .unwrap_or_default()
@@ -767,7 +773,7 @@ impl Kept {
             Ok(kept_while) => kept_while,
             Err(why) => return Waiting::Now(Err(why)),
         };
-        let mut ledgers = lock(&self.ledgers);
+        let mut ledgers = self.ledgers.lock().recover();
         let ledger = ledgers.entry(Who::new(root, plugin, name)).or_default();
         if let Some(slot) = ledger
             .slots
@@ -795,7 +801,7 @@ impl Kept {
             ready: Condvar::new(),
         });
         if let Err(why) = start(&slot, root, answerer, &ledger.running, &self.answered) {
-            *lock(&slot.done) = Some((Err(why), Instant::now()));
+            *slot.done.lock().recover() = Some((Err(why), Instant::now()));
             self.answered.fetch_add(1, Ordering::SeqCst);
         }
         ledger.slots.insert(asked.slug.clone(), Arc::clone(&slot));
@@ -818,7 +824,7 @@ impl Kept {
             }
         };
         if let Ok(gates) = &answer {
-            let mut ledgers = lock(&self.ledgers);
+            let mut ledgers = self.ledgers.lock().recover();
             let ledger = ledgers
                 .entry(Who::new(root, plugin, answerer.name()))
                 .or_default();
@@ -894,10 +900,6 @@ pub fn answerers(project: &Project, root: &Path) -> Vec<(&'static str, &'static 
         .collect()
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
 /// What `answerer` says its answer for `asked` reads besides the tip; a panic is why it cannot.
 fn told(answerer: &dyn Gates, root: &Path, asked: &Asked) -> Result<String, String> {
     catch_unwind(AssertUnwindSafe(|| {
@@ -937,7 +939,7 @@ fn start(
             }))
             .unwrap_or_else(|panic| Err(panicked(answerer.name(), "answering", &*panic)));
             // Counted under the answer's lock, so a read that finds the answer finds it counted.
-            let mut done = lock(&slot.done);
+            let mut done = slot.done.lock().recover();
             *done = Some((answer, Instant::now()));
             answered.fetch_add(1, Ordering::SeqCst);
             drop(done);
@@ -1083,7 +1085,7 @@ fn put_together(read: &Read<'_>, root: &Path, pending: &Pending, kept: &Kept) ->
             format!("refs/heads/{}", project.default_branch).as_str(),
         ],
     );
-    let cards = linked_cards(&record.links, pending);
+    let cards = linked_cards(&record.links, pending, &crate::docview::LinkNames::of(root));
     let texts = std::iter::once(record.body.as_str()).chain(thread.iter().map(|m| m.text.as_str()));
     let posted = posted_cards(&cards, texts);
     // As before stamps: the review rounds of a top-level task, and the cards it posted.
@@ -1116,6 +1118,8 @@ fn put_together(read: &Read<'_>, root: &Path, pending: &Pending, kept: &Kept) ->
                 vec![record.slug.clone()]
             };
             let folder = read::folder(&project.artifacts, &record.slug);
+            let by_cards =
+                |tip: &str| (kept.inputs).posted(root, &record.slug, tip, default_tip.as_deref());
             let evidence = stamps::Evidence {
                 thread,
                 runs,
@@ -1124,6 +1128,7 @@ fn put_together(read: &Read<'_>, root: &Path, pending: &Pending, kept: &Kept) ->
                 branch: &branch,
                 tip: at.as_deref(),
                 cards: &posted,
+                posted: &by_cards,
             };
             stamps::stamps(record, &catalogue, &evidence)
         }

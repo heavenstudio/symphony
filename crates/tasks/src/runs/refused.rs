@@ -1,5 +1,5 @@
 //! Whether a run's log says its runner refused the command line and did nothing
-//! (docs/MACHINE_WORK.md, *A command its runner refused*), read once the run ended ([`read`]), as
+//! (docs/workflow/MACHINE_WORK.md, *A command its runner refused*), read once the run ended ([`read`]), as
 //! its tests are ([`super::suites`]). Such a run built and ran nothing, so it says nothing about
 //! the commit it was typed at: its record keeps the refusal's line ([`recorded::Run::refused`]),
 //! and a stamp's reader passes it over, no red and no green (`crate::stamps::read`).

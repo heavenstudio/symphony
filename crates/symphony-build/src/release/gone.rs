@@ -1,4 +1,4 @@
-//! A red check whose build lost files while it ran, said as what it is (docs/RELEASES.md): an
+//! A red check whose build lost files while it ran, said as what it is (docs/workflow/RELEASES.md): an
 //! environment failure, not failed tests. A target that never ran, or never compiled, because a
 //! file its own build had made was gone ([`super::rerun`] reads which from the log) failed for its
 //! build folder: what removed the file ran while the target the log names ran ([`Went`]), that

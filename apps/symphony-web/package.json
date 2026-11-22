@@ -10,10 +10,10 @@
   },
   "scripts": {
     "build": "NODE_ENV=production vite build",
-    "dev": "node dev.js",
-    "lint": "biome ci --error-on-warnings . && tsc --noEmit",
-    "minify": "node shell/minify.js",
-    "report": "node report.js",
+    "dev": "node --disable-warning=ExperimentalWarning dev.ts",
+    "lint": "biome ci --error-on-warnings . && tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
+    "minify": "node --disable-warning=ExperimentalWarning shell/minify.ts",
+    "report": "node report.ts",
     "test": "vitest run --coverage"
   },
   "dependencies": {
@@ -22,6 +22,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.7",
+    "@types/node": "26.6.6",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitest/coverage-v8": "5.1.0",

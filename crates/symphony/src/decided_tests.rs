@@ -200,6 +200,15 @@ fn the_whys_name_the_card_and_verdict_or_the_commit_approved() {
         "the owner approved 1a2b3c4"
     );
     assert_eq!(approved_why("abc"), "the owner approved abc");
+    let tip = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b";
+    assert_eq!(
+        approved_cards_why(&["layout".into()], tip),
+        "the owner approved card layout, at 1a2b3c4"
+    );
+    assert_eq!(
+        approved_cards_why(&["layout".into(), "colour".into()], tip),
+        "the owner approved cards layout, colour, at 1a2b3c4"
+    );
 }
 
 fn post(id: i64, sender: &str, kind: &str, text: &str) -> Message {
@@ -214,28 +223,28 @@ fn post(id: i64, sender: &str, kind: &str, text: &str) -> Message {
     }
 }
 
+/// The owner's approve on the thread, with no checkout to read cards in: it counts where it names
+/// the tip, the why naming that commit. The cards' own are the server's tests
+/// (`apps/symphony-server/src/live/decided_tests.rs`).
 #[test]
 fn the_owners_approve_counts_where_it_names_the_tip() {
     let tip = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b";
     let other = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
-    assert!(approves(
-        &[post(1, "owner", "msg", &format!("approve {tip}"))],
-        tip
-    ));
-    assert!(!approves(
-        &[post(1, "owner", "msg", &format!("approve {other}"))],
-        tip
-    ));
-    assert!(!approves(
-        &[post(1, "orch", "msg", &format!("approve {tip}"))],
-        tip
-    ));
-    assert!(!approves(
-        &[post(1, "owner", "system", &format!("approve {tip}"))],
-        tip
-    ));
-    assert!(!approves(&[post(1, "owner", "msg", "looks good")], tip));
-    assert!(!approves(&[], tip));
+    let nowhere = Path::new("/nowhere");
+    let approves = |thread: &[Message]| approves(thread, tip, nowhere);
+    assert_eq!(
+        approves(&[post(1, "owner", "msg", &format!("approve {tip}"))]).as_deref(),
+        Some("the owner approved 1a2b3c4")
+    );
+    for thread in [
+        vec![post(1, "owner", "msg", &format!("approve {other}"))],
+        vec![post(1, "orch", "msg", &format!("approve {tip}"))],
+        vec![post(1, "owner", "system", &format!("approve {tip}"))],
+        vec![post(1, "owner", "msg", "looks good")],
+        Vec::new(),
+    ] {
+        assert_eq!(approves(&thread), None, "{thread:?}");
+    }
 }
 
 #[test]

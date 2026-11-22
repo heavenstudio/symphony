@@ -17,7 +17,7 @@ use std::path::{Component, Path};
 /// open on an older build asks for that build's modules later, when it first shows another page
 /// kind or opens the chat, so the folder keeps them a while; but the server embeds every file
 /// kept, in its binary and in every consumer's build, about 6 MB a build. A page whose build is
-/// gone loads again onto the one served when its import fails (`apps/symphony-web/shell/shell.js`).
+/// gone loads again onto the one served when its import fails (`apps/symphony-web/shell/shell.ts`).
 /// Two previous builds is the orchestrator's choice, not the owner's, who can change it here.
 pub(crate) const KEEP: usize = 3;
 

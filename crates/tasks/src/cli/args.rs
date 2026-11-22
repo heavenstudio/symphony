@@ -222,6 +222,11 @@ const COMMANDS: &[Command] = &[
     },
     plain("limits", &[]),
     Command {
+        name: "settings",
+        pos: &[pos("action"), maybe("key"), maybe("value")],
+        opts: &[AS, opt("--json", "json", Takes::Bool)],
+    },
+    Command {
         name: "create",
         pos: &[pos("slug"), pos("title")],
         opts: &[
@@ -508,7 +513,15 @@ const COMMANDS: &[Command] = &[
             opt("--background", "background", STR),
         ],
     },
-    plain("land", SLUG),
+    Command {
+        name: "land",
+        pos: &[maybe("slug")],
+        opts: &[
+            AS,
+            opt("--dispatch", "dispatch", Takes::Bool),
+            opt("--watch", "watch", Takes::Bool),
+        ],
+    },
     Command {
         name: "regenerate",
         pos: &[],

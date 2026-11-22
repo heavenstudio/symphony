@@ -518,8 +518,18 @@ BEGIN
             || 'workflow actions ' || NEW.slug || ')';
     END IF;
     IF w IS NULL THEN
-        RAISE EXCEPTION '%', 'refused: workflow: ' || NEW.slug
-            || ' keeps its workflow position: only an activation returns a task to the board writers';
+        SELECT body INTO e FROM workflow
+            WHERE id = jsonb_build_array('event', NEW.slug, (was ->> 'revision')::bigint + 1);
+        IF e IS NULL OR e -> 'status' IS DISTINCT FROM to_jsonb(NEW.status)
+            OR e ->> 'activation' IS NULL
+            OR (SELECT body -> 'returned' FROM workflow
+                WHERE id = jsonb_build_array('activation', e -> 'activation'))
+                IS DISTINCT FROM 'true'::jsonb THEN
+            RAISE EXCEPTION '%', 'refused: workflow: ' || NEW.slug
+                || ' keeps its workflow position: only an activation that returns the board to its'
+                || ' own writers retires it, beside the transition recorded for it';
+        END IF;
+        RETURN NEW;
     END IF;
     IF was IS NOT NULL AND (w -> 'revision') IS DISTINCT FROM to_jsonb((was ->> 'revision')::bigint + 1) THEN
         RAISE EXCEPTION '%', 'refused: workflow: ' || NEW.slug || ' moves from workflow revision '

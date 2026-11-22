@@ -49,8 +49,9 @@ const LEGACY: &str = "nightly";
 /// The lock one run at a time holds, in the folder.
 const LOCK: &str = "run.lock";
 
-/// A run's record.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// A run's record. A record written out names what its run knows and leaves the rest as a run
+/// that reached none of it has it ([`Default`]), so a new field is written where it is known.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Run {
     pub(crate) version: u32,
     pub(crate) id: String,
@@ -87,11 +88,11 @@ pub(crate) struct Run {
     pub(crate) remote: String,
     #[serde(default)]
     pub(crate) unpushed: Option<Vec<String>>,
-    /// What started it, when the cadence did (docs/RELEASES.md): the landings it counted.
+    /// What started it, when the cadence did (docs/workflow/RELEASES.md): the landings it counted.
     #[serde(default)]
     pub(crate) cause: Option<String>,
     /// What the release it tagged, or the release a `--refresh` named, refreshed on the machine
-    /// (docs/RELEASES.md).
+    /// (docs/workflow/RELEASES.md).
     #[serde(default)]
     pub(crate) refreshed: Option<Refresh>,
     /// What the release it tagged, or the release a `--refresh` named, published on crates.io
@@ -113,6 +114,10 @@ pub(crate) struct Run {
     /// that reached no check.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) environment: Option<super::inputs::Environment>,
+    /// What judged each check it asked of GitHub's runners ([`super::hosted`]): the workflow run,
+    /// or this machine and why; none for a run that asked nothing there.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) hosted: Vec<super::hosted::Hosted>,
 }
 
 /// A rerun of the release candidate: the commit first judged, the round it is (2 for the first
@@ -138,7 +143,7 @@ pub(crate) struct Carried {
 }
 
 /// What a refresh step ends as when its project finishes it (writers of its board to rebuild, a
-/// board from before the writer record): green here, filed nowhere (docs/RELEASES.md).
+/// board from before the writer record): green here, filed nowhere (docs/workflow/RELEASES.md).
 pub(crate) const THEIRS: &str = "the project's to finish";
 /// What a step that is its project's to finish is said with: the command that says what taking the
 /// release asks of the project.
@@ -415,26 +420,8 @@ fn interrupted(folder: &Path, id: &str, holder: Option<&Running>, by: &str, now:
         kind: (holder.map(|h| h.kind.clone()))
             .filter(|kind| !kind.is_empty())
             .unwrap_or_else(|| "release".into()),
-        commit: String::new(),
-        tip: String::new(),
         started_at: holder.map_or_else(|| heard.map_or(now, |(first, _)| first), |h| h.started_at),
-        ended_at: 0.0,
-        result: String::new(),
-        error: None,
-        previous: None,
-        checks: Vec::new(),
-        tag: None,
-        pushed: false,
-        board: Board::default(),
-        remote: String::new(),
-        unpushed: None,
-        cause: None,
-        refreshed: None,
-        published: None,
-        rerun: None,
-        slept: 0.0,
-        inputs: None,
-        environment: None,
+        ..Run::default()
     });
     run.ended_at = heard.map_or(run.started_at, |(_, last)| last.max(run.started_at));
     let doing = match holder.and_then(|holder| holder.check.as_ref()) {
@@ -578,6 +565,9 @@ fn line(run: &Run, now: f64) -> String {
     );
     if let Some(slept) = super::span::said(run.slept) {
         said.push_str(&format!("; the machine slept {slept} under it"));
+    }
+    for judged in &run.hosted {
+        said.push_str(&format!("; {}", judged.said()));
     }
     if let Some(rerun) = &run.rerun {
         said.push_str(&format!(
@@ -764,8 +754,14 @@ pub(crate) fn push_line(remote: &str, tag: &str) -> String {
     format!("`git push --no-follow-tags {remote} refs/tags/{tag}:refs/tags/{tag}`")
 }
 
+/// A child caught between its fork and its exec, as the board's tests catch one.
+#[cfg(test)]
+#[path = "../../../../tools/test-support/mid_spawn.rs"]
+mod mid_spawn;
+
 #[cfg(test)]
 mod tests {
+    use super::mid_spawn::MidSpawn;
     use super::*;
     use crate::test_tree::Tree;
 
@@ -781,21 +777,8 @@ mod tests {
             started_at,
             ended_at: started_at + 60.0,
             result: result.into(),
-            error: None,
-            previous: None,
-            checks: Vec::new(),
-            tag: None,
-            pushed: false,
-            board: Board::default(),
             remote: "origin".into(),
-            unpushed: None,
-            cause: None,
-            refreshed: None,
-            published: None,
-            rerun: None,
-            slept: 0.0,
-            inputs: None,
-            environment: None,
+            ..Run::default()
         }
     }
 
@@ -1613,73 +1596,6 @@ mod tests {
         theirs.unlock().unwrap();
     }
 
-    /// A child another thread spawns, caught between its fork and its exec: it holds a copy of
-    /// every descriptor this process had open when it forked, as each child std forks does until
-    /// its exec, and with it the lock of each that is a locked file. It execs, and is waited for,
-    /// once this drops.
-    struct MidSpawn {
-        go: std::io::PipeWriter,
-        spawner: Option<std::thread::JoinHandle<()>>,
-    }
-
-    impl MidSpawn {
-        /// Another thread's spawn of `true`, returned once its child has forked, before it execs.
-        fn caught() -> MidSpawn {
-            use std::io::Read as _;
-            use std::os::fd::AsRawFd as _;
-            use std::os::unix::process::CommandExt as _;
-            let (mut forked, forked_by) = std::io::pipe().unwrap();
-            let (go_on, go) = std::io::pipe().unwrap();
-            let fds = (forked_by.as_raw_fd(), go_on.as_raw_fd(), go.as_raw_fd());
-            let spawner = std::thread::spawn(move || {
-                let (forked_fd, go_on_fd, go_fd) = fds;
-                let mut command = std::process::Command::new("true");
-                // SAFETY: close, write and read are async-signal-safe and touch only the child's
-                // copies of three pipe ends, which stay open in this process until the spawn
-                // returns. Its copy of the writer closed, the child goes on at a byte or at the
-                // reader's end, once this process lets go of the writer however it ends.
-                unsafe {
-                    command.pre_exec(move || {
-                        let mut byte = [0u8];
-                        libc::close(go_fd);
-                        retried(|| libc::write(forked_fd, byte.as_ptr().cast(), 1));
-                        retried(|| libc::read(go_on_fd, byte.as_mut_ptr().cast(), 1));
-                        Ok(())
-                    });
-                }
-                let child = command.spawn();
-                drop((forked_by, go_on));
-                child.unwrap().wait().unwrap();
-            });
-            let mut byte = [0];
-            forked
-                .read_exact(&mut byte)
-                .expect("the child forked and said so");
-            MidSpawn {
-                go,
-                spawner: Some(spawner),
-            }
-        }
-    }
-
-    /// `call`, made again while it fails interrupted by a signal; it allocates nothing, so a forked
-    /// child may make it before its exec.
-    fn retried(mut call: impl FnMut() -> isize) {
-        while call() < 0
-            && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
-        {}
-    }
-
-    impl Drop for MidSpawn {
-        fn drop(&mut self) {
-            use std::io::Write as _;
-            let _ = self.go.write_all(b"x");
-            if let Some(spawner) = self.spawner.take() {
-                let _ = spawner.join();
-            }
-        }
-    }
-
     /// A child another thread forks while the run's lock is held keeps a copy of the lock's file
     /// until its exec, and a lock let go by closing its file alone stays held by that copy. The
     /// run's lock lets go of itself, so a run that tries it next takes it at once, whatever child
@@ -1694,7 +1610,10 @@ mod tests {
         assert!(held.taken.is_ok());
         let bare = File::create(closed.join(LOCK)).unwrap();
         bare.try_lock().unwrap();
-        let child = MidSpawn::caught();
+        let child = MidSpawn::caught(
+            std::process::Command::new("true"),
+            std::process::Command::spawn,
+        );
         drop((held, bare));
         assert!(
             busy(&closed.join(LOCK)),

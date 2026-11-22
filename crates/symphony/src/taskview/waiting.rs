@@ -1,6 +1,6 @@
 //! What each open task the listings send waits on ([`symphony_board::waits_on`]), since when, and
 //! where a blocked one stopped; the board's orchestrators and the ready tasks waiting to start.
-//! A block that names nothing is sent in the stage it stopped in (docs/TASKS.md, "What a task
+//! A block that names nothing is sent in the stage it stopped in (docs/workflow/TASKS.md, "What a task
 //! waits on"): the board itself still holds it blocked.
 //!
 //! When a task took its status is its thread's replay ([`symphony_board::stages::in_status`]),

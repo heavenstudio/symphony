@@ -58,3 +58,27 @@ pub(super) fn dist() -> &'static Path {
         out.join("public")
     })
 }
+
+/// The device cache's store as a page runs it, made once for this run: `shell/cache.ts` with its
+/// types stripped by the client's pinned Node (`shell/strip.ts`), as the shell's build strips it
+/// before minifying. Stripping leaves each other byte in its place, so a line or offset of this is
+/// the source's, and the store's coverage names the source's lines.
+pub(super) fn store() -> &'static str {
+    static STORE: OnceLock<String> = OnceLock::new();
+    STORE.get_or_init(|| {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let done = Command::new("bash")
+            .arg(root.join("tools/node.sh"))
+            .args(["node", "--disable-warning=ExperimentalWarning"])
+            .arg(root.join("apps/symphony-web/shell/strip.ts"))
+            .arg(root.join("apps/symphony-web/shell/cache.ts"))
+            .output()
+            .expect("run apps/symphony-web/shell/strip.ts");
+        assert!(
+            done.status.success(),
+            "the store does not strip: {}",
+            String::from_utf8_lossy(&done.stderr)
+        );
+        String::from_utf8(done.stdout).expect("the stripped store is UTF-8")
+    })
+}

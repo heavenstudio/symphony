@@ -436,6 +436,89 @@ fn a_full_page_shot_takes_the_whole_document() {
     );
 }
 
+/// What a page reads of its clock: now, a Date made with no argument, one made from a time, Date
+/// called as a function, whether a Date is still a Date, and the browser's own parse and UTC.
+const CLOCK_READS: &str = "[Date.now(), new Date().getTime(), new Date(5).getTime(), \
+    Date() === new Date(Date.now()).toString(), new Date() instanceof Date, \
+    Date.parse('2026-03-02T09:30:00Z'), Date.UTC(1970, 0, 2), new Date().toISOString()]";
+
+#[test]
+fn a_shot_with_a_clock_holds_the_pages_now_still_and_leaves_every_other_date_alone() {
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    let scratch = Scratch::new("clock");
+    let picture = scratch.join("clock.png");
+    // The page writes its own now as it loads, as a page's first script would read it; a frame of
+    // its own origin reads the same clock.
+    let page = "data:text/html,<p id=at></p><iframe srcdoc=\"<script>parent.inFrame = Date.now()</script>\"></iframe>\
+        <script>document.getElementById('at').textContent = Date.now()</script>";
+    let output = shot(
+        &chrome,
+        &[
+            page,
+            "--out",
+            picture.to_str().unwrap(),
+            "--clock",
+            "1772443800",
+            "--eval",
+            CLOCK_READS,
+            "--pause",
+            "40",
+            "--eval",
+            "[Date.now(), Number(document.getElementById('at').textContent), window.inFrame]",
+        ],
+    )
+    .output()
+    .unwrap();
+    assert!(output.status.success(), "{}", said(&output));
+    let lines = printed(&output);
+    let held = 1_772_443_800_000_u64;
+    assert_eq!(
+        lines[0],
+        json!([
+            held,
+            held,
+            5,
+            true,
+            true,
+            held,
+            86_400_000,
+            "2026-03-02T09:30:00.000Z"
+        ]),
+        "{}",
+        said(&output)
+    );
+    // Still that moment after a pause, as it was for the page's own script and its frame's.
+    assert_eq!(lines[1], json!([held, held, held]), "{}", said(&output));
+    assert!(picture.is_file());
+
+    // Without one the page's clock is the machine's: this run's, within a day.
+    let output = shot(
+        &chrome,
+        &[
+            page,
+            "--out",
+            picture.to_str().unwrap(),
+            "--eval",
+            "Date.now()",
+        ],
+    )
+    .output()
+    .unwrap();
+    assert!(output.status.success(), "{}", said(&output));
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as f64;
+    let read = printed(&output)[0].as_f64().unwrap();
+    assert!(
+        (now - read).abs() < 86_400_000.0,
+        "now {now}, the page's {read}"
+    );
+}
+
 /// A page whose region on the screen, in a box that clips it, says it is busy (`aria-busy`, as a
 /// Symphony page's ghost does until its reads are in) for ninety frames after it loads, with
 /// nothing in flight meanwhile; three regions busy off the screen, none ever done: one below the
@@ -2523,7 +2606,7 @@ fn a_board_whose_next_card_shows_a_mockup_is_shot_with_the_mockup_drawn() {
     );
 }
 
-/// Resolves once the shell has begun warming the persistent modules (assets/shell.js, `warm`): it
+/// Resolves once the shell has begun warming the persistent modules (shell/shell.ts, `warm`): it
 /// does so once the page has drawn its data and gone quiet, as it starts reading ahead the links
 /// on the screen (`ahead`), so the shot's settle after it spans the page's reads ahead. Neither
 /// warming nor this wait reads this device's store.

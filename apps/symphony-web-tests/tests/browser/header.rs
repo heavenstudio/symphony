@@ -1,17 +1,18 @@
 //! The header: one name for each of the Symphony's pages, the shown page lit and never named again
 //! by a crumb, Appearance opened from it rather than from the chat sheet, and on a phone two rows
-//! that keep the Symphony's seven pages in view at 390 wide and scroll a project's more across.
-use super::{SHOWN, chrome, chrome::Chrome, look_parity, site, site::Site, texts};
+//! with the pages on one row that scrolls across what a phone 390 wide does not hold.
+use super::{READY, SHOWN, chrome, chrome::Chrome, look_parity, site, site::Site, texts};
 use serde_json::json;
 
-/// The Symphony's seven pages, then the stand-in project's own page under its plugin's label:
-/// eight, one more than a phone 390 wide holds in view.
-const PAGES: [&str; 8] = [
+/// The Symphony's eight pages, then the stand-in project's own page under its plugin's label:
+/// nine, two more than a phone 390 wide holds in view.
+const PAGES: [&str; 9] = [
     "Home",
     "Queue",
     "Docs",
     "Board",
     "Reports",
+    "Settings",
     "Runs",
     "Agents",
     "⬡ lamps",
@@ -33,19 +34,12 @@ fn content_site() -> Site {
     site
 }
 
-fn screen(page: &mut Chrome, width: u32, height: u32, mobile: bool) {
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":height,"deviceScaleFactor":if mobile { 3 } else { 1 },"mobile":mobile}),
-    );
-}
-
 fn open(page: &mut Chrome, site: &Site, path: &str, ready: &str) {
     page.open(&site.url(path));
     assert!(
         page.wait_for(
             &format!(
-                "document.documentElement.dataset.navigation === 'ready' && document.querySelector({}) !== null && document.querySelector('#appearance') !== null",
+                "{READY} && document.querySelector({}) !== null && document.querySelector('#appearance') !== null",
                 json!(ready)
             ),
             SHOWN
@@ -59,13 +53,14 @@ fn open(page: &mut Chrome, site: &Site, path: &str, ready: &str) {
 fn every_page_lights_its_one_name_and_no_crumb_repeats_it() {
     let site = content_site();
     let Some(mut page) = chrome() else { return };
-    screen(&mut page, 1440, 900, false);
+    page.viewport(1440, 900, false);
     for (path, ready, lit, crumbs) in [
         ("/", ".hero-title", "Home", &[][..]),
         ("/queue", "[data-ready=queue]", "Queue", &[]),
         ("/docs/", "[data-ready=folder]", "Docs", &[]),
         ("/tasks", ".waiting-board:not(.waiting-ghost)", "Board", &[]),
         ("/reports", "[data-ready=reports]", "Reports", &[]),
+        ("/settings", "[data-ready=settings]", "Settings", &[]),
         ("/runs", "[data-ready=runs]", "Runs", &[]),
         ("/agents", ".agents", "Agents", &[]),
         (
@@ -108,18 +103,19 @@ fn every_page_lights_its_one_name_and_no_crumb_repeats_it() {
 }
 
 /// On a phone 390 wide the header is two rows, the buttons and then the pages on one row. The
-/// Symphony's seven pages fit it; a project's own page beyond them makes the row scroll across,
-/// shaded at the edge it continues past, as the owner's header-on-a-phone card says.
+/// first seven of the Symphony's eight pages show whole there; the eighth and a project's own
+/// page beyond them are reached by scrolling the row across, shaded at the edge it continues past.
 #[test]
 fn on_a_phone_the_header_is_two_rows_and_its_pages_row_scrolls_a_project_s_more_shaded() {
     let site = content_site();
     let Some(mut page) = chrome() else { return };
-    screen(&mut page, 390, 844, true);
+    page.viewport_scaled(390, 844, 3, true);
     for (path, ready) in [
         ("/", ".hero-title"),
         ("/tasks", ".waiting-board:not(.waiting-ghost)"),
         ("/reports", "[data-ready=reports]"),
         ("/runs", "[data-ready=runs]"),
+        ("/settings", "[data-ready=settings]"),
         ("/docs/look-parity.md", ".doc-card"),
     ] {
         open(&mut page, &site, path, ready);
@@ -141,10 +137,7 @@ fn on_a_phone_the_header_is_two_rows_and_its_pages_row_scrolls_a_project_s_more_
                     const lastAtTheEnd = inView(links.at(-1));
                     pages.scrollLeft = 0;
                     const scrolls = style.overflowX === 'auto' && pages.scrollWidth > pages.clientWidth;
-                    // The project's own page set aside: the Symphony's seven.
-                    links.at(-1).style.display = 'none';
-                    const symphonysFit = pages.scrollWidth <= pages.clientWidth && links.slice(0, -1).every(inView);
-                    links.at(-1).style.display = '';
+                    const wholeAtTheStart = links.filter(inView).length;
                     return {
                         buttonsShareARow: Math.abs(mid(bell) - mid(look)) < 2,
                         pagesBelowThem: box(pages).top >= box(bell).bottom,
@@ -153,13 +146,13 @@ fn on_a_phone_the_header_is_two_rows_and_its_pages_row_scrolls_a_project_s_more_
                         shaded,
                         firstAtTheStart,
                         lastAtTheEnd,
-                        symphonysFit,
+                        wholeAtTheStart,
                         crumbsShown: [...document.querySelectorAll('.app-header .crumbs')].some(c => c.getClientRects().length > 0),
                         headerUnder100: box(document.querySelector('.app-header')).height < 100,
                     };
                 })()"#
             ),
-            json!({"buttonsShareARow":true,"pagesBelowThem":true,"pagesOnOneRow":true,"scrolls":true,"shaded":true,"firstAtTheStart":true,"lastAtTheEnd":true,"symphonysFit":true,"crumbsShown":false,"headerUnder100":true}),
+            json!({"buttonsShareARow":true,"pagesBelowThem":true,"pagesOnOneRow":true,"scrolls":true,"shaded":true,"firstAtTheStart":true,"lastAtTheEnd":true,"wholeAtTheStart":7,"crumbsShown":false,"headerUnder100":true}),
             "{path}"
         );
     }
@@ -174,7 +167,7 @@ fn a_compact_header_on_a_phone_scrolls_one_row_and_never_draws_a_page_over_a_but
     let site = content_site();
     let Some(mut page) = chrome() else { return };
     for width in [390, 320] {
-        screen(&mut page, width, 700, true);
+        page.viewport_scaled(width, 700, 3, true);
         for (path, ready) in [
             ("/", ".hero-title"),
             ("/tasks", ".waiting-board:not(.waiting-ghost)"),
@@ -213,7 +206,7 @@ fn a_compact_header_on_a_phone_scrolls_one_row_and_never_draws_a_page_over_a_but
 fn appearance_opens_from_the_header_and_the_chat_sheet_no_longer_holds_it() {
     let site = content_site();
     let Some(mut page) = chrome() else { return };
-    screen(&mut page, 1440, 900, false);
+    page.viewport(1440, 900, false);
     open(
         &mut page,
         &site,

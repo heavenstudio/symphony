@@ -38,6 +38,9 @@ mod tests;
 
 const POLL: Duration = Duration::from_millis(25);
 const PROTOCOL_CPU: Duration = Duration::from_secs(60);
+/// What [`Chrome::rooted`] asks: `null` of a document with no root element, else the time the
+/// document began, which no two documents of a page share.
+const ROOTED: &str = "document.documentElement === null ? null : performance.timeOrigin";
 const CLEANUP_CPU: Duration = Duration::from_secs(1);
 /// A wait ends at the latest this many times its allowance after it started, on the wall clock,
 /// and never sooner than [`BACKSTOP_FLOOR`]: the stalls of a page's renderer seen on a loaded
@@ -101,6 +104,8 @@ pub struct Error {
     stalled: bool,
     /// An evaluation's reply was one of [`LOST_TO_NAVIGATION`]'s.
     navigated: bool,
+    /// An evaluation's expression threw.
+    threw: bool,
 }
 
 impl Error {
@@ -110,6 +115,7 @@ impl Error {
             past_deadline: false,
             stalled: false,
             navigated: false,
+            threw: false,
         }
     }
 
@@ -119,6 +125,7 @@ impl Error {
             past_deadline: true,
             stalled: false,
             navigated: false,
+            threw: false,
         }
     }
 
@@ -128,6 +135,7 @@ impl Error {
             past_deadline: false,
             stalled: true,
             navigated: false,
+            threw: false,
         }
     }
 
@@ -382,6 +390,13 @@ impl WaitBudget {
             Some(End::Allowance) | None => Error::new(spent),
         }
     }
+}
+
+/// Whether `targets`, a `Target.getTargets` answer, lists the target `id`.
+fn listed(targets: &Value, id: &str) -> bool {
+    targets["targetInfos"]
+        .as_array()
+        .is_some_and(|infos| infos.iter().any(|info| info["targetId"] == id))
 }
 
 const CHROMES: [&str; 4] = [
@@ -683,6 +698,11 @@ fn chrome_args(profile: &Path) -> Vec<String> {
         // left page Chrome keeps for Back still gets a new frame. Chrome takes only the last
         // --disable-features given, so every feature turned off is in this one.
         "--disable-features=Translate,OptimizationHints,MediaRouter,RenderDocument",
+        // Motion as a page asks for it, whatever the machine's own setting: Chrome otherwise
+        // reads the system's "reduce motion" (on, on a hosted macOS runner) into
+        // `prefers-reduced-motion`, and a page is drawn and measured one way here and another
+        // there. A caller that wants the reduced page emulates it (`Emulation.setEmulatedMedia`).
+        "--force-prefers-no-reduced-motion",
         "--remote-debugging-port=0",
     ]
     .into_iter()
@@ -1311,11 +1331,35 @@ impl Chrome {
             }
             (None, Some(page)) => {
                 self.browser_call("Target.closeTarget", json!({"targetId": page}))?;
+                self.wait_closed(&page)?;
             }
             (None, None) => {}
         }
         self.forget_events();
         Ok(())
+    }
+
+    /// Wait until the browser lists no target `page`: `Target.closeTarget` answers once the close
+    /// is asked for, and the page goes after it, later the busier the machine. A context's
+    /// disposal answers only once its pages are gone.
+    fn wait_closed(&mut self, page: &str) -> Result<()> {
+        let mut budget = self.budget(PROTOCOL_CPU)?;
+        loop {
+            let targets = self.browser_call("Target.getTargets", json!({}))?;
+            if !listed(&targets, page) {
+                return Ok(());
+            }
+            if budget.poll(&self.owner.members()?) {
+                let what = format!("the closed page {page}");
+                return Err(budget.ended(
+                    &what,
+                    format!("{what}: still a target after {}", budget.spent()),
+                ));
+            }
+            // A turn of the browser's between two looks, as a wait on a page takes: looks back
+            // to back would spend the allowance in a second and take the browser from the close.
+            self.pump(POLL)?;
+        }
     }
 
     /// From now on, every call and wait here ends by `deadline` at the latest, whatever its own
@@ -1531,7 +1575,10 @@ impl Chrome {
             }
             let result = &value["result"];
             if let Some(exception) = result.get("exceptionDetails") {
-                return Err(Error::new(format!("{expression} threw: {exception}")));
+                return Err(Error {
+                    threw: true,
+                    ..Error::new(format!("{expression} threw: {exception}"))
+                });
             }
             Ok(Some(result["result"]["value"].clone()))
         })
@@ -1542,12 +1589,22 @@ impl Chrome {
     /// renderer stalls until the wall-clock backstop is an error naming the stall, not a false
     /// condition: it never had the turns to make the condition true. An evaluation the page's
     /// navigation took from it ([`LOST_TO_NAVIGATION`]) is a turn whose condition is not met yet,
-    /// and the document the page went to is asked again; any other error reply ends the wait. A
+    /// and the document the page went to is asked again, and so is a condition that threw on a
+    /// document not known to have had its element when it was asked ([`Chrome::rooted`]): one
+    /// with none yet, or one first seen with it only after the throw, which may have got it in
+    /// between. A throw on a document seen with its element before the ask is the condition's own
+    /// and ends the wait, as any other error reply does. A
     /// page that closed, or whose renderer crashed, before the wait or under it, ends it at once
     /// with an error saying which ([`Gone`]): Chrome answers none of its evaluations then.
     pub fn wait_for(&mut self, expression: &str, cpu: Duration) -> Result<bool> {
         let mut budget = self.page_budget(cpu)?;
+        // The document a throw of the condition was last followed by its element on.
+        let mut rooted: Option<Value> = None;
+        // The last answer, where it was a throw the wait asked again on such a document: the
+        // wait's answer if its allowance ends there, as a throw is never a false condition.
+        let mut thrown: Option<Error>;
         let state = loop {
+            thrown = None;
             if let Some(gone) = self.gone {
                 return Err(Error::gone(expression, gone));
             }
@@ -1561,6 +1618,15 @@ impl Chrome {
                 ),
                 Ok(None) => break "evaluation still pending",
                 Err(error) if error.navigated => (false, "evaluation lost to a navigation"),
+                Err(error) if error.threw => match self.rooted(&mut budget)? {
+                    None => (false, "the document has no element yet"),
+                    Some(document) if rooted.as_ref() == Some(&document) => return Err(error),
+                    Some(document) => {
+                        rooted = Some(document);
+                        thrown = Some(error);
+                        (false, "the condition threw")
+                    }
+                },
                 Err(error) => return Err(error),
             };
             if met {
@@ -1576,8 +1642,26 @@ impl Chrome {
         if budget.stalled() {
             return Err(Error::stall(expression, &budget));
         }
+        if let Some(error) = thrown {
+            return Err(error);
+        }
         eprintln!("Chrome {state} after {}: {expression}", budget.spent());
         Ok(false)
+    }
+
+    /// The page's document, by the time it began (`performance.timeOrigin`, each document's
+    /// own), once it has its root element; `None` while it has none, or as the page went on while
+    /// it was asked: a document the page has just gone to and not begun to read, which a busy
+    /// machine leaves so for a while. A condition that reads the root
+    /// (`document.documentElement.dataset`) throws there, and says nothing of the page it waits
+    /// for. This is asked after the throw, so a document it names may have got its element in
+    /// between: only a second throw on the document it named says the element was there.
+    fn rooted(&mut self, budget: &mut WaitBudget) -> Result<Option<Value>> {
+        match self.evaluate(ROOTED, budget, true) {
+            Ok(document) => Ok(document.filter(|document| !document.is_null())),
+            Err(error) if error.navigated => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     /// Observe protocol events while the real browser is paused at a fixture boundary: those of

@@ -75,6 +75,24 @@ fn status(r: &Repo, slug: &str) -> String {
     r.board.store.get(slug).unwrap().status
 }
 
+/// Returns once git would date a commit made now past the second it dated `commit` to, waited for
+/// on git's own clock (`git var GIT_COMMITTER_IDENT`): git dates to the second, so two commits of
+/// one tree, parent and message are two only a second apart.
+fn dating_past(r: &Repo, commit: &str) {
+    let dated: u64 = (git(&r.root, &["show", "-s", "--format=%ct", commit]).parse()).unwrap();
+    // `NAME <EMAIL> SECONDS ZONE`.
+    let now = || {
+        let ident = git(&r.root, &["var", "GIT_COMMITTER_IDENT"]);
+        ident.rsplit(' ').nth(1).unwrap().parse::<u64>().unwrap()
+    };
+    test_time::until_true(
+        format!("git dating a commit past {dated}, the second of {commit}"),
+        test_time::backstop(Duration::from_secs(1)),
+        || now() > dated,
+    )
+    .unwrap();
+}
+
 #[test]
 fn a_round_files_what_it_made_as_a_task_and_commits_nothing_to_the_default_branch() {
     let (r, bare) = generating(true);
@@ -191,7 +209,10 @@ fn the_land_delivers_it_as_generated_and_the_next_round_finds_the_default_branch
         )),
         "{line}"
     );
-    assert_eq!(host.verbs(), ["publish", "merge", "result", "landed"]);
+    assert_eq!(
+        host.verbs(),
+        ["publish", "arm", "merge", "result", "landed"]
+    );
     assert_eq!(host.request("merge")["method"], "squash");
     let receipt = Receipt::read(&lands(&r), &made_as.slug).unwrap();
     assert_eq!(receipt.operation, "generated");
@@ -708,6 +729,8 @@ fn a_land_cut_before_it_started_the_regenerator_loses_no_output_and_makes_none_t
         squash: Some(squash.clone()),
         held: None,
         import: None,
+        green: None,
+        armed: false,
     }
     .write(&lands(&r))
     .unwrap();
@@ -846,6 +869,9 @@ fn a_record_whose_branch_moved_or_whose_generators_changed_is_not_gone_on_from()
     let mut renamed = made_as.clone();
     renamed.made[0].generator = "another".into();
     renamed.write(&lands(&r)).unwrap();
+    // Made within the second git dated the first to, of the same tip, tree and message, it would
+    // be that very commit, named as the task cancelled: made past it, as a later round is.
+    dating_past(&r, &made_as.head);
     let (said, result) = round(&r, None);
     // The same tip, another commit made of it: a name of its own, the cancelled task's left.
     let again = pending(&r).unwrap();

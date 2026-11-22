@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::chrome::Chrome;
 use crate::site::Site;
-use crate::{SHOWN, chrome, dist, look_parity};
+use crate::{READY, SHOWN, chrome, look_parity};
 
 /// The lifecycle stages with the ordinary and the blocked tasks each counts: a stage with none
 /// of either kind among them, and counts of two digits.
@@ -83,7 +83,7 @@ fn listing() -> Value {
 }
 
 fn site() -> Site {
-    let site = Site::start(dist(), &crate::common::fixture("board.json"));
+    let site = crate::site();
     let listing = listing();
     site.set_json("/api/task-board", &listing);
     site.set_json("/api/machine-work", &listing["machine_work"]);
@@ -96,14 +96,8 @@ fn site() -> Site {
 
 /// A phone `width` wide in `scheme`, with no pointer moved yet, so a focus shows its outline.
 fn phone(page: &mut Chrome, width: u32, scheme: &str) {
-    page.call(
-        "Emulation.setEmulatedMedia",
-        json!({"features":[{"name":"prefers-color-scheme","value":scheme}]}),
-    );
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":844,"deviceScaleFactor":2,"mobile":true}),
-    );
+    page.scheme(scheme);
+    page.viewport_scaled(width, 844, 2, true);
 }
 
 fn open(page: &mut Chrome, site: &Site, path: &str, ready: &str) {
@@ -111,13 +105,29 @@ fn open(page: &mut Chrome, site: &Site, path: &str, ready: &str) {
     assert!(
         page.wait_for(
             &format!(
-                "document.documentElement.dataset.navigation === 'ready' && document.querySelector({}) !== null && document.querySelector('.app-pages[data-overflow]') !== null",
+                "{READY} && document.querySelector({}) !== null && document.querySelector('.app-pages[data-overflow]') !== null",
                 json!(ready)
             ),
             SHOWN
         ),
         "{path}: {}",
         page.eval("document.body ? document.body.innerText.slice(0, 600) : '(no body)'")
+    );
+}
+
+/// The board's tabs a machine's work adds, as they read: that work is a read of its own, which
+/// may land after the first card is drawn.
+const MACHINE_TABS: &str = "(tabs => tabs.includes('Build 2') && tabs.includes('Test 0'))([...document.querySelectorAll('.stage-tabs button')].map(tab => tab.textContent.trim()))";
+
+/// Open the board, its first card drawn and the machine's Build and Test tabs with it.
+fn board(page: &mut Chrome, site: &Site) {
+    open(page, site, "/tasks", ".waiting-board .taskcard");
+    assert!(
+        page.wait_for(MACHINE_TABS, SHOWN),
+        "the machine's tabs never drew: {}",
+        page.eval(
+            "[...document.querySelectorAll('.stage-tabs button')].map(tab => tab.textContent)"
+        )
     );
 }
 
@@ -209,7 +219,7 @@ fn shot(page: &mut Chrome, name: &str) {
     let Ok(run) = std::env::var("SYMPHONY_PHONE_LABEL_SHOTS") else {
         return;
     };
-    page.eval("document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))");
+    page.frames_with_fonts();
     let image = page.call("Page.captureScreenshot", json!({"format":"png"}));
     let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../artifacts/app/phone-navigation-labels");
@@ -268,9 +278,9 @@ fn cued(row: &Value, sides: &str, what: &str) {
     );
 }
 
-/// The Symphony's seven pages show whole at 320 and at 390, the page shown lit among them; a
-/// project's own page beyond them makes the row scroll, faded at the edge it continues past and
-/// only there, and that page, opened, is brought whole into view. The first, a middle and the
+/// The first seven of the Symphony's eight pages show whole at 320 and at 390, the page shown lit
+/// among them; the eighth and a project's own page beyond them make the row scroll, faded at the
+/// edge it continues past and only there, and the last page, opened, is brought whole into view. The first, a middle and the
 /// last page take the keyboard's focus with their outline uncut.
 #[test]
 fn a_phones_pages_show_whole_and_the_row_fades_only_where_it_continues() {
@@ -279,15 +289,15 @@ fn a_phones_pages_show_whole_and_the_row_fades_only_where_it_continues() {
     for (width, scheme) in [(320, "light"), (320, "dark"), (390, "light"), (390, "dark")] {
         let what = format!("{width} {scheme}");
         phone(&mut page, width, scheme);
-        open(&mut page, &site, "/tasks", ".waiting-board .taskcard");
+        board(&mut page, &site);
         page.eval(MEASURES);
         let row = rests(&mut page, ".app-pages", &what);
         assert_eq!(row["oneRow"], json!(true), "{what}: {row}");
-        // The Symphony's seven whole, with the project's own beyond the edge.
+        // Seven whole, with the Symphony's eighth and the project's own beyond the edge.
         assert_eq!(
             row["whole"],
             json!([
-                "Home", "Queue", "Docs", "Board", "Reports", "Runs", "Agents"
+                "Home", "Queue", "Docs", "Board", "Reports", "Settings", "Runs"
             ]),
             "{what}: {row}"
         );
@@ -298,7 +308,7 @@ fn a_phones_pages_show_whole_and_the_row_fades_only_where_it_continues() {
         for (at, name, sides) in [
             (0, "Home", "end"),
             (3, "Board", "end"),
-            (7, "⬡ lamps", "start"),
+            (8, "⬡ lamps", "start"),
         ] {
             page.eval(&format!(
                 "document.querySelectorAll('.app-pages a')[{at}].focus()"
@@ -323,12 +333,12 @@ fn a_phones_pages_show_whole_and_the_row_fades_only_where_it_continues() {
         );
         chosen(&row, "⬡ lamps", &what);
         cued(&row, "start", &format!("{what}, the last page shown"));
-        // With the Symphony's pages alone nothing is past either edge, and nothing fades.
-        page.eval("document.querySelector('.app-pages a:last-child').style.display = 'none'; document.querySelector('.app-pages').dispatchEvent(new Event('scroll'))");
-        let row = rests(&mut page, ".app-pages", &format!("{what}, seven pages"));
-        assert_eq!(row["scrolls"], json!(false), "{what}: {row}");
+        // With the Symphony's pages alone the row still scrolls to its eighth, back at its start.
+        page.eval("document.querySelector('.app-pages a:last-child').style.display = 'none'; document.querySelector('.app-pages').scrollLeft = 0; document.querySelector('.app-pages').dispatchEvent(new Event('scroll'))");
+        let row = rests(&mut page, ".app-pages", &format!("{what}, eight pages"));
+        assert_eq!(row["scrolls"], json!(true), "{what}: {row}");
         assert_eq!(row["whole"].as_array().unwrap().len(), 7, "{what}: {row}");
-        cued(&row, "none", &format!("{what}, seven pages"));
+        cued(&row, "end", &format!("{what}, eight pages"));
         assert_eq!(
             page.eval("document.documentElement.scrollWidth <= innerWidth && document.querySelector('.app-header').getBoundingClientRect().height < 100"),
             json!(true),
@@ -348,7 +358,7 @@ fn a_phones_stage_tabs_keep_the_chosen_stage_whole_with_its_count_and_its_outlin
     for (width, scheme) in [(320, "light"), (320, "dark"), (390, "light"), (390, "dark")] {
         let what = format!("{width} {scheme}");
         phone(&mut page, width, scheme);
-        open(&mut page, &site, "/tasks", ".waiting-board .taskcard");
+        board(&mut page, &site);
         page.eval(MEASURES);
         page.eval("localStorage.clear()");
         let row = rests(&mut page, ".stage-tabs", &what);
@@ -428,7 +438,8 @@ fn a_phones_stage_tabs_keep_the_chosen_stage_whole_with_its_count_and_its_outlin
 /// The wait strip is one row on a phone, so the cards start higher: its count of open tasks
 /// first, a filter pressed brought whole into view, and both rows of choices together no taller
 /// than 90 px above a first card that shows whole on the first screen. The page never scrolls
-/// sideways.
+/// sideways, and the strip never moves as a filter is pressed and released, the banner over it
+/// saying the same words.
 #[test]
 fn a_phones_wait_strip_is_one_row_that_keeps_the_pressed_filter_in_view() {
     let site = site();
@@ -436,7 +447,7 @@ fn a_phones_wait_strip_is_one_row_that_keeps_the_pressed_filter_in_view() {
     for (width, scheme) in [(320, "dark"), (390, "light")] {
         let what = format!("{width} {scheme}");
         phone(&mut page, width, scheme);
-        open(&mut page, &site, "/tasks", ".waiting-board .taskcard");
+        board(&mut page, &site);
         page.eval(MEASURES);
         let row = rests(&mut page, ".wait-strip", &what);
         assert_eq!(row["oneRow"], json!(true), "{what}: {row}");
@@ -471,7 +482,30 @@ fn a_phones_wait_strip_is_one_row_that_keeps_the_pressed_filter_in_view() {
             json!({"rows":true,"card":true,"fits":true}),
             "{what}"
         );
-        // The last filter, with nothing waiting on it, pressed: it lists across the stages.
+        // The strip stays where it is on the screen as a chip is pressed and released: the banner
+        // over it keeps its words, the board's ready total among them, which the filter's listing
+        // does not count, and the row of work under way between them keeps its room.
+        const STRIP_TOP: &str =
+            "Math.round(document.querySelector('.wait-strip').getBoundingClientRect().top)";
+        const BANNER: &str = "document.querySelector('.orchestrator-banner').textContent";
+        let (strip_top, banner) = (page.eval(STRIP_TOP), page.eval(BANNER));
+        assert_eq!(
+            banner,
+            json!(
+                "No live orchestrator. quiet-orchestrator is stale · 1 of the 31 ready tasks wait to start"
+            ),
+            "{what}"
+        );
+        // The row names the tasks no machine has by their stage, the count their tab says, so it
+        // reads apart from the strip's Working, the tasks an agent is at in any stage.
+        assert_eq!(
+            page.eval(
+                "[...document.querySelectorAll('.under-way > *')].map(cell => cell.textContent)"
+            ),
+            json!(["4 under way", "2 in progress", "2 building", "0 testing"]),
+            "{what}: the row of work under way is over the strip"
+        );
+        shot(&mut page, &format!("{width}-{scheme}-open"));
         page.eval("(chip => { chip.focus(); chip.click(); })(document.querySelector('.wait-chip.k-parked'))");
         assert!(
             page.wait_for(
@@ -484,6 +518,11 @@ fn a_phones_wait_strip_is_one_row_that_keeps_the_pressed_filter_in_view() {
         chosen(&row, "Parked 0", &what);
         ringed(&row, "Parked 0", &what);
         cued(&row, "start", &format!("{what}, Parked pressed"));
+        assert_eq!(
+            (page.eval(STRIP_TOP), page.eval(BANNER)),
+            (strip_top.clone(), banner.clone()),
+            "{what}: pressing a chip moved the strip or changed the banner's words"
+        );
         shot(&mut page, &format!("{width}-{scheme}-parked"));
         // Back to every open task: the stages return with the stage chosen before.
         page.eval(
@@ -501,5 +540,10 @@ fn a_phones_wait_strip_is_one_row_that_keeps_the_pressed_filter_in_view() {
         let row = rests(&mut page, ".wait-strip", &format!("{what}, every task"));
         chosen(&row, "73 open", &what);
         cued(&row, "end", &format!("{what}, every task"));
+        assert_eq!(
+            (page.eval(STRIP_TOP), page.eval(BANNER)),
+            (strip_top, banner),
+            "{what}: releasing the chip moved the strip or changed the banner's words"
+        );
     }
 }

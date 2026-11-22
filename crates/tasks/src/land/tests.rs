@@ -125,6 +125,8 @@ folder = "."
             check_paths: check_paths::defaults(),
             documents: vec!["design/spec".into(), String::new()],
             upstream: None,
+            watch: WATCH,
+            merge_within: MERGE_WITHIN,
         }
     );
     assert_eq!(Settings::default().documents, ["docs"]);
@@ -181,6 +183,57 @@ fn a_generators_outputs_read_as_the_symphony_reads_them() {
         let settings = Settings::parse(&text).unwrap();
         assert_eq!(settings.generators[0].outputs, read, "{written}");
     }
+}
+
+#[test]
+fn a_generators_command_names_a_program_or_is_refused_naming_its_table_and_name() {
+    let generator = |command: &[&str]| Generator {
+        name: "g".into(),
+        outputs: "gen/".into(),
+        command: command.iter().map(|word| (*word).to_string()).collect(),
+        when_changed: false,
+    };
+    // Only the first word is a program; a blank one is one, as a key's command takes it.
+    for command in [
+        &["just", "gen"][..],
+        &["true"],
+        &["tools/gen.sh", ""],
+        &[" "],
+    ] {
+        assert_eq!(
+            commanded("[land]", &generator(command)),
+            Ok(()),
+            "{command:?}"
+        );
+    }
+    for table in ["[land]", "[verdicts]"] {
+        for command in [&[][..], &[""], &["", "gen"]] {
+            assert_eq!(
+                commanded(table, &generator(command)),
+                Err(format!("{table} generator g has no command")),
+                "{command:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_default_branch_a_land_takes_is_the_files_as_written_else_main() {
+    let branch = |text: &str| Settings::parse(text).map(|settings| settings.default_branch);
+    assert_eq!(branch(""), Ok("main".into()));
+    assert_eq!(branch("[project]\nid = \"x\"\n"), Ok("main".into()));
+    assert_eq!(
+        branch("[project]\ndefault_branch = \"trunk\"\n"),
+        Ok("trunk".into())
+    );
+    assert_eq!(
+        branch("[project]\ndefault_branch = \" dev \"\n"),
+        Ok(" dev ".into())
+    );
+    assert_eq!(
+        branch("[project]\ndefault_branch = \"\"\n"),
+        Err("symphony.toml: [project] default_branch is empty".into())
+    );
 }
 
 #[test]
@@ -382,6 +435,37 @@ fn the_timeout_bounds_each_command_and_the_network_five_minutes_at_most() {
             .unwrap_err()
             .starts_with("symphony.toml: "),
         "a timeout is a count of seconds"
+    );
+}
+
+#[test]
+fn the_watcher_rests_its_seconds_and_a_host_merges_within_its_minutes_neither_zero() {
+    assert_eq!(
+        (Settings::default().watch, Settings::default().merge_within),
+        (Duration::from_secs(30), Duration::from_secs(30 * 60))
+    );
+    let settings =
+        Settings::parse("[land]\nwatch_seconds = 5\nmerge_within_minutes = 90\n").unwrap();
+    assert_eq!(
+        (settings.watch, settings.merge_within),
+        (Duration::from_secs(5), Duration::from_secs(90 * 60))
+    );
+    assert_eq!(
+        Settings::parse("[land]\nwatch_seconds = 0\n").unwrap_err(),
+        "symphony.toml: [land] watch_seconds is 0: the watcher rests between its rounds"
+    );
+    assert_eq!(
+        Settings::parse("[land]\nmerge_within_minutes = 0\n").unwrap_err(),
+        "symphony.toml: [land] merge_within_minutes is 0: a host is given time to merge"
+    );
+    // A count of minutes past what a duration holds in seconds saturates, never wraps.
+    let far = Settings::parse(&format!("[land]\nmerge_within_minutes = {}\n", i64::MAX)).unwrap();
+    assert_eq!(far.merge_within, Duration::from_secs(u64::MAX));
+    assert!(
+        Settings::parse("[land]\nwatch_seconds = -1\n")
+            .unwrap_err()
+            .starts_with("symphony.toml: "),
+        "a rest is a count of seconds"
     );
 }
 
@@ -1130,5 +1214,97 @@ fn the_pairs_passed_keep_the_newest_first_once_each_and_no_more_than_kept() {
     assert_eq!(Passed::read(&dir), passed);
     fs::write(dir.join(regenerate::PASSED), "not json").unwrap();
     assert_eq!(Passed::read(&dir), Passed::default());
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn the_watcher_says_a_task_again_only_where_its_round_differs_or_it_was_armed_again() {
+    let mut told = dispatch::Told::default();
+    assert_eq!(told.last("tools/lamp"), b"", "nothing said of it yet");
+    assert!(told.news("tools/lamp", b"armed\n".to_vec()));
+    assert!(!told.news("tools/lamp", b"armed\n".to_vec()), "the same");
+    assert!(told.news("tools/desk", b"armed\n".to_vec()), "another's");
+    assert!(told.news("tools/lamp", b"standing\n".to_vec()));
+    assert_eq!(told.last("tools/lamp"), b"standing\n");
+    // Back to what it said two rounds ago: it differs from the last, so it is said.
+    assert!(told.news("tools/lamp", b"armed\n".to_vec()));
+    // Armed no more, a task is forgotten, and armed again it is said again; the other is kept.
+    told.keep(&["tools/desk"]);
+    assert_eq!(told.last("tools/lamp"), b"");
+    assert!(told.news("tools/lamp", b"armed\n".to_vec()));
+    assert!(!told.news("tools/desk", b"armed\n".to_vec()));
+    told.keep(&[]);
+    assert!(told.news("tools/desk", b"armed\n".to_vec()));
+}
+
+#[test]
+fn the_watcher_reads_a_journal_armed_or_past_its_merge_and_none_a_person_holds() {
+    use delivery::{Journal, Stage};
+    let journal = |stage: &str, armed: bool, held: Option<&str>| -> Journal {
+        serde_json::from_value(serde_json::json!({
+            "slug": "sim/jump", "operation": "task", "stage": stage, "head": "h",
+            "base_observed": "b", "revision": "r", "title": "t", "body": "", "by": "a",
+            "closes": ["done"], "stood": "", "binding": null, "squash": null, "held": held,
+            "armed": armed,
+        }))
+        .unwrap()
+    };
+    // Short of a merge asked: watched only while armed, and never settling.
+    for (stage, armed, watched) in [
+        ("prepared", false, false),
+        ("prepared", true, true),
+        ("eligible", false, false),
+        ("eligible", true, true),
+        ("armed", false, true),
+        ("armed", true, true),
+    ] {
+        let read = journal(stage, armed, None);
+        assert_eq!(
+            (read.watched(), read.settling()),
+            (watched, false),
+            "{stage} {armed}"
+        );
+        assert!(!journal(stage, armed, Some("a person reads it")).watched());
+    }
+    // From the merge asked on its land is the watcher's to finish, armed or not, until it is
+    // dropped; one held for a person is nobody's round.
+    for stage in [
+        "merge_requested",
+        "remote_merged",
+        "reconciled",
+        "closed",
+        "dispatching",
+    ] {
+        for armed in [false, true] {
+            let read = journal(stage, armed, None);
+            assert!(read.watched() && read.settling(), "{stage} {armed}");
+            let held = journal(stage, armed, Some("a person reads it"));
+            assert!(!held.watched() && !held.settling(), "{stage} {armed} held");
+        }
+    }
+    assert_eq!(journal("reconciled", false, None).stage, Stage::Reconciled);
+}
+
+#[test]
+fn when_a_land_first_could_not_be_finished_is_kept_until_it_is_forgotten() {
+    let dir = std::env::temp_dir().join(format!("symphony-land-stopped-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    assert_eq!(dispatch::stopped(&dir, "sim/jump", 100), 100);
+    assert_eq!(
+        dispatch::stopped(&dir, "sim/jump", 900),
+        100,
+        "the first kept"
+    );
+    assert_eq!(dispatch::stopped(&dir, "sim/run", 900), 900, "each its own");
+    dispatch::unstopped(&dir, "sim/jump");
+    assert_eq!(dispatch::stopped(&dir, "sim/jump", 950), 950);
+    // A file that does not read as a time is replaced by now.
+    fs::write(
+        dir.join(format!("{}.stopped", file_stem("sim/jump"))),
+        "soon",
+    )
+    .unwrap();
+    assert_eq!(dispatch::stopped(&dir, "sim/jump", 960), 960);
+    assert_eq!(dispatch::stopped(&dir, "sim/jump", 999), 960);
     fs::remove_dir_all(&dir).unwrap();
 }

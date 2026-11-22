@@ -44,7 +44,7 @@ pub(super) struct File {
     /// `workflow` is.
     pub(super) workflow_mappings: Option<toml::Value>,
     /// The approval authorities whose signed word meets the workflow's guards, each the public
-    /// half of a key the project holds (docs/WORKFLOW.md, "Guards"), read as `workflow` is.
+    /// half of a key the project holds (docs/workflow/WORKFLOW.md, "Guards"), read as `workflow` is.
     pub(super) workflow_authorities: Option<toml::Value>,
     /// The tables and keys at the top of the file this build does not know.
     #[serde(flatten)]
@@ -170,7 +170,6 @@ pub(super) struct FilePlugins {
     /// `[plugins.process]`: a plugin's name and the command that starts its process.
     pub(super) process: BTreeMap<String, Vec<String>>,
     pub(super) timing: bool,
-    pub(super) loopback: bool,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }
@@ -277,6 +276,11 @@ pub(super) struct FileLand {
     /// The repository this one imports from (`symphony_board::land::Upstream`), strict as a
     /// generator is: a misspelt key would change what a delivery merges.
     pub(super) upstream: Option<symphony_board::land::Upstream>,
+    /// How long the delivery watcher rests between two rounds (`symphony_board::land::dispatch`).
+    pub(super) watch_seconds: u64,
+    /// How long an armed pull request whose evidence stands may stay unmerged before the watcher
+    /// disarms it.
+    pub(super) merge_within_minutes: u64,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }
@@ -292,14 +296,19 @@ impl Default for FileLand {
             check_paths: None,
             delivery: Vec::new(),
             upstream: None,
+            watch_seconds: symphony_board::land::WATCH.as_secs(),
+            merge_within_minutes: symphony_board::land::MERGE_WITHIN.as_secs() / 60,
             unknown: Unknown::new(),
         }
     }
 }
 
 /// The `[releases]` table: how often the Symphony's own release run cuts a release besides each day's,
-/// whether a green release refreshes the machine and publishes on crates.io, and the command that
-/// publishes its GitHub Release (docs/RELEASES.md).
+/// whether a green release refreshes the machine and publishes on crates.io, the command that
+/// publishes its GitHub Release, the one that verifies a commit on GitHub's machines, how often a
+/// run starts while that one is named, and the command that verifies who bypasses the default
+/// branch's rules
+/// (docs/workflow/RELEASES.md).
 #[derive(Deserialize)]
 #[serde(default)]
 pub(super) struct FileReleases {
@@ -307,6 +316,9 @@ pub(super) struct FileReleases {
     pub(super) refresh: bool,
     pub(super) publish: bool,
     pub(super) github: Vec<String>,
+    pub(super) hosted: Vec<String>,
+    pub(super) hosted_every_minutes: u32,
+    pub(super) rulesets: Vec<String>,
     pub(super) candidate_reruns: u32,
     pub(super) candidate_hours: u32,
     #[serde(flatten)]
@@ -320,6 +332,9 @@ impl Default for FileReleases {
             refresh: true,
             publish: false,
             github: Vec::new(),
+            hosted: Vec::new(),
+            hosted_every_minutes: super::Releases::HOSTED_EVERY_MINUTES,
+            rulesets: Vec::new(),
             candidate_reruns: super::Releases::CANDIDATE_RERUNS,
             candidate_hours: super::Releases::CANDIDATE_HOURS,
             unknown: Unknown::new(),

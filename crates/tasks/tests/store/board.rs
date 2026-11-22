@@ -364,6 +364,7 @@ fn claimed_mid_read<T: Send>(read: impl FnOnce(&Store) -> T + Send) -> T {
         .write(
             &format!(
                 "BEGIN TRANSACTION;
+                 DEFINE TABLE gate SCHEMALESS;
                  DEFINE FIELD stall ON task COMPUTED {{ IF (SELECT VALUE held FROM ONLY gate:read) ?? false {{ {} }}; NONE }};
                  UPSERT gate:read SET held = true;
                  COMMIT TRANSACTION;",
@@ -603,7 +604,7 @@ fn a_definition_that_fails_leaves_no_board_taken_for_made() {
         "the database made without meeting another test's definition",
         test_time::FLOOR,
         || match client.define_then("RETURN NONE;", serde_json::json!({})) {
-            Err(rpc::DbError::Conflict) => None,
+            Err(symphony_board::db::DbError::Conflict) => None,
             made => Some(made),
         },
     )

@@ -1,26 +1,28 @@
-//! A green release's install on the machine (docs/RELEASES.md, "The install"), the first step of
+//! A green release's install on the machine (docs/workflow/RELEASES.md, "The install"), the first step of
 //! its refresh, `refresh-install`: the release built once, for every project, and put in the
 //! machine folder, where the recipes of a project with no build of its own find it once `current`
 //! names it.
 //!
 //! In the run's own checkout, at the release's commit and in its build folder, it builds the
 //! release profile of the four binaries a project runs (`symphony-server`, `tasks`, `agent-send`,
-//! `symphony`), the server with no client compiled in (`SYMPHONY_CLIENT_BESIDE`): it serves the one
-//! installed beside it. The client is the distribution the commit holds
-//! (`apps/symphony-server/client/public/`), which the release's own verification compared byte for
-//! byte with a build of its sources, so nothing builds it again. What the release serves is asked
-//! of the binaries that build made, never of this program, which a retry runs from a later main: the
-//! server its plugin protocol and board schema (`symphony-server --serves`), the board its schema
-//! and its `tasks api` version (`tasks api`, the method `version`).
+//! `symphony`) and of the one that moves a board's store (`tasks-move`), the server with no
+//! client compiled in (`SYMPHONY_CLIENT_BESIDE`): it serves the one installed beside it. The
+//! client is the distribution the commit holds (`apps/symphony-server/client/public/`), which the
+//! release's own verification compared byte for byte with a build of its sources, so nothing
+//! builds it again. What the release serves is asked of the binaries that build made, never of
+//! this program, which a retry runs from a later main: the server its plugin protocol and board
+//! schema (`symphony-server --serves`), the board its schema and its `tasks api` version
+//! (`tasks api`, the method `version`).
 //!
 //! Then it installs them as `releases/NAME/` in the machine folder, whole
 //! ([`symphony::machine::release::install_noted`]), with what a project changes to take it and
-//! each release before it (`notes.md`, [`super::consumer::document_at`]). A build or an install that fails leaves no folder and
-//! `current` where it was, and is the refresh's red, filed on the Symphony's board; `just release
-//! --refresh` is the retry. A release already installed whole from the same commit is not built
-//! again. The install points nothing: the refresh points `current` at the release ([`point`]) only
-//! once nothing holds the switch and every board it moves has moved (`super::refresh`), a failure
-//! to point being this step's red. Nothing here starts, stops or signals a server.
+//! each release before it (`notes.md`, [`super::consumer::document_at`]). A build or an install
+//! that fails leaves no folder and `current` where it was, and is the refresh's red, filed on the
+//! Symphony's board; `just release --refresh` is the retry. A release already installed whole
+//! from the same commit is not built again. The install points nothing: the refresh points
+//! `current` at the release ([`point`]) only once nothing holds the switch and every board it
+//! moves has moved (`super::refresh`), a failure to point being this step's red. Nothing here
+//! starts, stops or signals a server.
 
 use std::fs;
 use std::io::Write;
@@ -39,7 +41,7 @@ pub(crate) const STEP: &str = "refresh-install";
 /// environment: the tests' stand-in for cargo. No flag sets it.
 pub(crate) const BUILDER: &str = "SYMPHONY_RELEASE_BUILDER";
 /// The packages that hold the release's binaries ([`release::BINARIES`]): the server's, the
-/// board's (`tasks` and `agent-send`) and the library's (`symphony`).
+/// board's (`tasks`, `agent-send` and `tasks-move`) and the library's (`symphony`).
 const PACKAGES: [&str; 3] = ["symphony-server", "symphony-board", "symphony-app"];
 /// The client's distribution, in the release's checkout.
 const CLIENT: &str = "apps/symphony-server/client/public";
@@ -214,13 +216,19 @@ pub(crate) fn install(install: &Install<'_>) -> Installed {
 fn served(manifest: &Manifest) -> String {
     let Serves {
         schema,
+        additions,
         protocol,
         tasks_api,
         pin,
     } = manifest.serves;
+    let steps = match additions {
+        0 => String::new(),
+        1 => " with its additive step".to_string(),
+        steps => format!(" with its {steps} additive steps"),
+    };
     format!(
-        "{} serves board schema {schema}, plugin protocol {}.{} and tasks api {}.{}, at Symphony \
-         pin {pin}",
+        "{} serves board schema {schema}{steps}, plugin protocol {}.{} and tasks api {}.{}, at \
+         Symphony pin {pin}",
         manifest.release, protocol.major, protocol.minor, tasks_api.major, tasks_api.minor
     )
 }
@@ -344,8 +352,16 @@ fn read_serves(server: &str, board: &str) -> Result<Serves, String> {
     let pin = (said.get("pin").and_then(Value::as_u64)).map_or(Ok(0), |pin| {
         u32::try_from(pin).map_err(|_| format!("the release's symphony-server names the pin {pin}"))
     })?;
+    // And one built before the contract, its additive steps: none, as it had none.
+    let additions = match said.get("additions") {
+        None => 0,
+        Some(steps) => (steps.as_i64().filter(|steps| *steps >= 0)).ok_or_else(|| {
+            format!("the release's symphony-server names the additive steps {steps}")
+        })?,
+    };
     Ok(Serves {
         schema: ours,
+        additions,
         protocol: version(&said["protocol"], "plugin protocol")?,
         tasks_api: version(&board["api"], "tasks api")?,
         pin,

@@ -7,14 +7,17 @@
 use super::Pg;
 use std::borrow::Cow;
 
-/// The opening's one read: the board's schema version, or null before its tables are made, and
-/// the line of the writer `[host, path]`, or null, or `false` where the table is not there.
+/// The opening's one read: the board's schema version, or null before its tables are made, the
+/// line of the writer `[host, path]`, or null, or `false` where the table is not there, and how
+/// many additive steps on its contract the board has.
 pub(in crate::store) const OPENING: Pg<'static> = Pg::Script(
     Cow::Borrowed(
-        "board_answer := jsonb_build_array(NULL::jsonb, false);
+        "board_answer := jsonb_build_array(NULL::jsonb, false, 0);
 IF to_regclass('meta') IS NOT NULL THEN
     board_answer := jsonb_set(board_answer, '{0}', coalesce(
         (SELECT to_jsonb(version) FROM meta WHERE id = '\"schema\"'), 'null'::jsonb));
+    board_answer := jsonb_set(board_answer, '{2}', coalesce(
+        (SELECT to_jsonb(version) FROM meta WHERE id = '\"additions\"'), '0'::jsonb));
 END IF;
 IF to_regclass('writer') IS NOT NULL THEN
     board_answer := jsonb_set(board_answer, '{1}', coalesce(

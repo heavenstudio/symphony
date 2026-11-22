@@ -50,7 +50,7 @@ pub struct Answered {
     /// Its `If-None-Match`, when it named one.
     pub named: Option<String>,
     pub status: u16,
-    /// A read ahead of a visit (assets/shell.js, `ahead`): a read of the API marked as a prefetch,
+    /// A read ahead of a visit (shell/shell.ts, `ahead`): a read of the API marked as a prefetch,
     /// no page's own ([`Site::read_ahead`]).
     pub ahead: bool,
 }
@@ -232,6 +232,9 @@ struct Shared {
     feeds: Vec<Stream>,
     /// How many feed streams were opened.
     opened_feeds: u64,
+    /// The server's notice, which each stream opened says first ([`Site::server_notice`]); none
+    /// until a test says one.
+    notice: Option<Said>,
     /// The board as its route answers it now, but for its build.
     board: serde_json::Value,
     /// The client build the board names.
@@ -242,8 +245,8 @@ struct Shared {
     failing_feeds: usize,
     failing_routes: BTreeSet<String>,
     /// Paths or targets answered 404, as the server answers a read of what it does not have, or 400,
-    /// as it refuses a write, each with its status and the server's error.
-    missing_routes: BTreeMap<String, (u16, String)>,
+    /// as it refuses a write, each with its status and the body the server answers it with.
+    missing_routes: BTreeMap<String, (u16, serde_json::Value)>,
     held_routes: BTreeSet<String>,
     /// Paths whose next request alone is held, and the requests so held, by number.
     hold_next: BTreeSet<String>,
@@ -338,6 +341,10 @@ impl Site {
                 symphony_api::RUNS_PATH,
                 serde_json::json!({"runs": [], "more": false, "pipelines": [], "unread": []}),
             ),
+            (
+                symphony_api::SETTINGS_PATH,
+                serde_json::json!({"files": [], "sections": []}),
+            ),
         ] {
             files.insert(
                 path.into(),
@@ -370,6 +377,7 @@ impl Site {
             ahead: Vec::new(),
             feeds: Vec::new(),
             opened_feeds: 0,
+            notice: None,
             board: serde_json::from_str(board).expect("a board"),
             build: build_of(&shell),
             board_delay: Duration::ZERO,
@@ -608,9 +616,10 @@ impl Site {
     pub fn miss_route(&self, path: &str, error: Option<&str>) {
         let mut shared = self.shared.lock().unwrap();
         match error {
-            Some(error) => shared
-                .missing_routes
-                .insert(path.to_owned(), (404, error.to_owned())),
+            Some(error) => shared.missing_routes.insert(
+                path.to_owned(),
+                (404, serde_json::json!({ "error": error })),
+            ),
             None => shared.missing_routes.remove(path),
         };
     }
@@ -619,13 +628,22 @@ impl Site {
     /// write it read and would not take (an operation a workflow refuses, its code first); none
     /// answers it again. `path` is a route (every query of it) or one target, its query included.
     pub fn refuse_route(&self, path: &str, error: Option<&str>) {
-        let mut shared = self.shared.lock().unwrap();
         match error {
-            Some(error) => shared
-                .missing_routes
-                .insert(path.to_owned(), (400, error.to_owned())),
-            None => shared.missing_routes.remove(path),
-        };
+            Some(error) => self.refuse_with(path, &serde_json::json!({ "error": error })),
+            None => {
+                self.shared.lock().unwrap().missing_routes.remove(path);
+            }
+        }
+    }
+
+    /// Answer a route 400 with `body`, a refusal that says more than its error, as the server
+    /// names the guard that refused a workflow's edge beside its words
+    /// (`{"error": …, "guard": …}`), until [`Site::refuse_route`] with none answers it again.
+    pub fn refuse_with(&self, path: &str, body: &serde_json::Value) {
+        let mut shared = self.shared.lock().unwrap();
+        shared
+            .missing_routes
+            .insert(path.to_owned(), (400, body.clone()));
     }
 
     /// Hold a real request until the test releases it, without a timing sleep. `path` is a route
@@ -710,8 +728,15 @@ impl Site {
         }
     }
 
+    /// The server's `message` to every page, an empty one clearing it: said on every open feed
+    /// stream, and first on each stream opened after, as the server says its notice
+    /// (apps/symphony-server/src/api.rs, `feed`). A page that opens its feed again, as a document
+    /// does once its sections near the screen, hears it on the new stream.
     pub fn server_notice(&self, message: &str) {
-        self.send(&Said::notice(message));
+        let said = Said::notice(message);
+        let mut shared = self.shared.lock().unwrap();
+        say(&mut shared, &said);
+        shared.notice = Some(said);
     }
 
     /// End every open feed stream, as a server that stops does.
@@ -805,20 +830,22 @@ impl Drop for Site {
 
 /// Say `said` on every open feed stream, in its form; the streams that are gone are dropped.
 fn send(shared: &Mutex<Shared>, said: &Said) {
+    say(&mut shared.lock().unwrap(), said);
+}
+
+/// [`send`], under the lock already held.
+fn say(shared: &mut Shared, said: &Said) {
     let (sse, frame) = (said.sse(), said.frame());
-    let mut shared = shared.lock().unwrap();
-    shared.feeds.retain_mut(|stream| {
-        let bytes = if stream.socket {
-            &frame[..]
-        } else {
-            sse.as_bytes()
-        };
-        stream
-            .out
-            .write_all(bytes)
-            .and_then(|_| stream.out.flush())
-            .is_ok()
-    });
+    shared
+        .feeds
+        .retain_mut(|stream| tell(&mut stream.out, stream.socket, &sse, &frame));
+}
+
+/// Write one thing said to a stream, as its Server-Sent Event (`sse`) or, on a WebSocket, its
+/// frame: whether the stream took it.
+fn tell(out: &mut TcpStream, socket: bool, sse: &str, frame: &[u8]) -> bool {
+    let bytes = if socket { frame } else { sse.as_bytes() };
+    out.write_all(bytes).and_then(|_| out.flush()).is_ok()
 }
 
 /// Keep feed stream `id` open until the page closes it, then count it no more: a page sends
@@ -1253,7 +1280,7 @@ fn serve(
             .split_once('?')
             .is_some_and(|(_, query)| symphony_api::asks_for_file(query));
         let named = headers.get("if-none-match").cloned();
-        // A read of the API marked as a prefetch is a read ahead of a visit (assets/shell.js);
+        // A read of the API marked as a prefetch is a read ahead of a visit (shell/shell.ts);
         // the shell's warmed modules are prefetches too, but no reads of the API.
         let ahead = path.starts_with("/api/")
             && headers
@@ -1336,7 +1363,7 @@ fn serve(
             } else {
                 "Not Found"
             };
-            let error = serde_json::json!({ "error": error }).to_string();
+            let error = error.to_string();
             let _ = write!(
                 out,
                 "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{error}",
@@ -1382,6 +1409,12 @@ fn serve(
                 if shared.ending_feeds {
                     let _ = out.flush();
                     let _ = out.shutdown(Shutdown::Both);
+                    return;
+                }
+                // The server's notice first, as the server says it on every stream it opens.
+                if let Some(notice) = &shared.notice
+                    && !tell(&mut out, socket, &notice.sse(), &notice.frame())
+                {
                     return;
                 }
                 shared.opened_feeds += 1;

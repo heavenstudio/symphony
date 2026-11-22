@@ -7,8 +7,25 @@ pub struct Failure {
     pub error: String,
 }
 
+/// A refused workflow operation: its failure, and the guard that refused it where one did
+/// ([`symphony_api::workflow::GuardRefusal`]), which the owner's route answers beside the
+/// failure's words as `guard`.
+pub struct Refused {
+    pub failure: Failure,
+    pub guard: Option<Box<symphony_api::workflow::GuardRefusal>>,
+}
+
+impl From<Failure> for Refused {
+    fn from(failure: Failure) -> Self {
+        Self {
+            failure,
+            guard: None,
+        }
+    }
+}
+
 /// How the board refuses a slug no task has (`no task 'x'`), as the board's reads refuse it.
-const NO_TASK: &str = "no task ";
+const NO_TASK: &str = symphony_board::Error::NO_TASK;
 
 /// A refusal in its words: 404 when it names a task the board lacks, as a read of that task
 /// answers, else 400.

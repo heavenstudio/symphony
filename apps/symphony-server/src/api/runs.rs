@@ -1,4 +1,4 @@
-//! The Runs page's reads (docs/RUNS.md, *The Runs page*): the list of the project's runs
+//! The Runs page's reads (docs/workflow/RUNS.md, *The Runs page*): the list of the project's runs
 //! ([`symphony_api::RUNS_PATH`]) and one run with its steps ([`symphony_api::RUN_PATH`]), from the
 //! day files the board's recorder appends beside its logs in `symphony/runs/`, folded a run at a
 //! time ([`symphony_api::fold`]); never the board, so a board slow or down leaves them as they are.
@@ -33,11 +33,12 @@ use std::hash::{DefaultHasher, Hasher as _};
 use std::io::{Read as _, Seek as _, SeekFrom};
 use std::os::unix::fs::{FileExt as _, MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use symphony_api::{
     End, RUNS_DAYS, RUNS_FILE_BYTES, RUNS_PAGE, RUNS_READ_BYTES, RunLine, RunPage, RunsPage,
     run_day, run_name,
 };
+use symphony_board::lock::Recovered as _;
 
 const DAY: f64 = 86_400.0;
 
@@ -169,7 +170,7 @@ impl Index {
     fn days(&self) -> std::sync::MutexGuard<'_, HashMap<PathBuf, Kept>> {
         #[cfg(test)]
         tests::before_day_lock();
-        self.days.lock().unwrap_or_else(PoisonError::into_inner)
+        self.days.lock().recover()
     }
 
     fn forget(&self, path: &Path) {
@@ -712,15 +713,21 @@ fn folder(hub: &crate::live::Hub) -> Result<std::path::PathBuf, (StatusCode, Str
         })
 }
 
-/// The page of runs `filters` take, of the project `hub` serves, at its clock.
+/// The page of runs `filters` take, of the project `hub` serves, at the time its records
+/// are read at ([`crate::live::Hub::recorded_now`]).
 pub(crate) fn answer(
     hub: &crate::live::Hub,
     filters: &Filters,
 ) -> Result<RunsPage, (StatusCode, String)> {
-    Ok(page(&hub.runs_index, &folder(hub)?, filters, hub.now()))
+    Ok(page(
+        &hub.runs_index,
+        &folder(hub)?,
+        filters,
+        hub.recorded_now(),
+    ))
 }
 
-/// The run `id` of the project `hub` serves and its steps, at its clock, or the status and why
+/// The run `id` of the project `hub` serves and its steps, at that time, or the status and why
 /// not: refused for an id that is no run's, none for a run no day file read holds.
 pub(crate) fn answer_run(
     hub: &crate::live::Hub,
@@ -732,7 +739,8 @@ pub(crate) fn answer_run(
             format!("run is a run's id, 32 lower-case hex digits, not {id:?}"),
         ));
     }
-    run(&hub.runs_index, &folder(hub)?, id, hub.now()).map_err(|why| (StatusCode::NOT_FOUND, why))
+    run(&hub.runs_index, &folder(hub)?, id, hub.recorded_now())
+        .map_err(|why| (StatusCode::NOT_FOUND, why))
 }
 
 #[cfg(test)]

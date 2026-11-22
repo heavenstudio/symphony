@@ -13,7 +13,17 @@ import {
   withListed,
 } from "./boardlive";
 import { ReadCursor } from "./journal";
-import { aMachine, anOperation, aTask, aWork, CASES, memoryStorage } from "./testing";
+import {
+  aListing,
+  aMachine,
+  anOperation,
+  fakeAnswer as answer,
+  aTask,
+  aWork,
+  CASES,
+  feedEvent as event,
+  memoryStorage,
+} from "./testing";
 import type { MachineWork, Task, TaskListing } from "./wire";
 import { statusNotice } from "./words";
 import { NO_WORK } from "./work";
@@ -36,30 +46,9 @@ vi.mock("react-dom", async (original) => ({
 /** The wall clock the board reads: a task updated before it by more than its window is old. */
 const NOW = 1_800_000_000_000;
 
-/** A response as the page reads one: its status, its tag and its JSON body. */
-function answer(status: number, body: unknown = null, etag = ""): Response {
-  return {
-    status,
-    ok: status >= 200 && status < 300,
-    headers: { get: (name: string) => (name === "ETag" && etag !== "" ? etag : null) },
-    json: async () => body,
-  } as unknown as Response;
-}
-
 /** A listing of `tasks`, counted as `counts`, and whatever else `more` says. */
 function listing(tasks: Task[], counts: [string, number][] = [], more: Partial<TaskListing> = {}) {
-  return {
-    machine_work: NO_WORK,
-    tasks,
-    statuses: [],
-    signoff: [],
-    counts,
-    lifecycle_counts: [],
-    next: null,
-    orchestrators: [],
-    unstarted: 0,
-    ...more,
-  };
+  return aListing(tasks, counts, { orchestrators: [], unstarted: 0, ...more });
 }
 
 type Route = (url: string, etag: string) => Response | Promise<Response>;
@@ -118,12 +107,6 @@ function later<T>(): { promise: Promise<T>; settle: (value: T) => void } {
   });
   return { promise, settle };
 }
-
-/** A feed event of `changes`, each a region and its data. */
-const event = (...changes: [string, unknown][]) => ({
-  version: 1,
-  changes: changes.map(([region, data]) => ({ region, data })),
-});
 
 const building = (slug: string, state: "queued" | "running" = "running"): MachineWork =>
   aWork([aMachine("alpha", [anOperation("alpha", "b", "build", state, { task: slug })])]);
@@ -510,6 +493,20 @@ describe("the live board's counts", () => {
     await board.machineWork();
     expect(localStorage.getItem(SHAPE)).toBe(
       "concept 0\ndesign 0\nready 2\nin_progress 0\nbuild 0\ntest 0\nreview 0\ndone 0",
+    );
+  });
+
+  it("keep that a custom workflow held the board, so its phone ghost reserves no row it lacks", async () => {
+    const waiting = { kinds: [], columns: [], workflow: 2 };
+    const { board } = live((url) =>
+      url === "/api/machine-work"
+        ? answer(200, NO_WORK)
+        : answer(200, listing([], [["ready", 2]], { statuses: ["ready"], waiting })),
+    );
+    await board.counts();
+    await board.machineWork();
+    expect(localStorage.getItem(SHAPE)).toBe(
+      "concept 0\ndesign 0\nready 2\nin_progress 0\nbuild 0\ntest 0\nreview 0\ndone 0\nworkflow",
     );
   });
 
@@ -1623,6 +1620,19 @@ describe("the task board's page", () => {
     expect(html).toContain("The task board could not be read");
     expect(html).not.toContain("ghost-kanban");
     expect(html).not.toContain('role="alert"');
+  });
+
+  it("opens a phone's ghost with the row of work under way the board it kept draws", () => {
+    vi.stubGlobal("innerWidth", 390);
+    const storage = memoryStorage();
+    vi.stubGlobal("localStorage", storage);
+    vi.stubGlobal("document", { getElementById: () => null });
+    storage.setItem(SHAPE, "ready 2");
+    expect(renderToStaticMarkup(<TasksPage scope="" />)).toContain('<div class="under-way"></div>');
+    storage.setItem(SHAPE, "ready 2\nworkflow");
+    const held = renderToStaticMarkup(<TasksPage scope="" />);
+    expect(held).not.toContain("under-way");
+    expect(held).toContain('<nav class="wait-strip"');
   });
 
   it("opens on the shape this browser kept of the board", () => {

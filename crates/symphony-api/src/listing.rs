@@ -1,5 +1,5 @@
 //! The one server's list of its projects as data, [`PROJECTS_PATH`]: what the desktop app reads of
-//! each server it follows (docs/analysis/desktop-client.md), and the task board's asks a project's
+//! each server it follows (docs/product/analysis/desktop-client.md), and the task board's asks a project's
 //! feed carries as they change ([`TaskAsks`], the feed's [`crate::Change::TaskAsks`]).
 //!
 //! The app, and a release's refresh, read only the fields the fixture test pins
@@ -39,7 +39,7 @@ pub struct ListedProject {
     pub refused: Option<String>,
     /// The line the server's project list draws under it while its board is not well: the warning
     /// its pages show while the board is unwell, else that it is slow or that no live orchestrator
-    /// staffs the work waiting to start (docs/TASKS.md, "Board health"); none while it is well.
+    /// staffs the work waiting to start (docs/workflow/TASKS.md, "Board health"); none while it is well.
     pub unwell: Option<String>,
     /// The version of its feed the counts below were read at: its feed follows from here
     /// (`/<id>/api/feed?since=`). None until its board view is read, and while it is refused.
@@ -56,7 +56,7 @@ pub struct ListedProject {
     /// declared to keep it writing); false while this build only reads it (the board is a schema
     /// ahead whose step is not) or refuses it (behind this build, or more than one schema ahead). None while it keeps no board, its board is not read yet or its last read failed for
     /// another reason, while it is refused, and from a server built before it said
-    /// (docs/RELEASES.md, "An update": a release's refresh reads it).
+    /// (docs/workflow/RELEASES.md, "An update": a release's refresh reads it).
     #[serde(default)]
     pub writes: Option<bool>,
 }

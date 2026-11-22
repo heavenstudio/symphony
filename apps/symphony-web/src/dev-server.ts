@@ -1,7 +1,7 @@
-// The web client's dev server (`just symphony-ui-dev SERVER [PORT]`, which runs `dev.js`): Vite's
+// The web client's dev server (`just symphony-ui-dev SERVER [PORT]`, which runs `dev.ts`): Vite's
 // own, over vite.config.ts, serving this package's kinds from their sources, a page reloaded on
 // each save, and handing every other request to a Symphony server of the developer's own. No kind
-// imports this module, so no build carries it: Node runs it under dev.js, and Vitest beside it.
+// imports this module, so no build carries it: Node runs it under dev.ts, and Vitest beside it.
 
 import type { InlineConfig, Plugin } from "vite";
 
@@ -16,8 +16,8 @@ export const PROXIED = "^/(?!@symphony-web/)";
 
 /** The shell's sources (package.sh's order), from this package's folder. */
 export const SHELL_SOURCES = {
-  cache: "shell/cache.js",
-  shell: "shell/shell.js",
+  cache: "shell/cache.ts",
+  shell: "shell/shell.ts",
 } as const;
 
 /** The shell's line package.sh writes the kinds' manifest in. */
@@ -36,7 +36,7 @@ export interface DevArgs {
   port: number;
 }
 
-/** The arguments `dev.js` takes, SERVER and an optional PORT, or why they cannot be. */
+/** The arguments `dev.ts` takes, SERVER and an optional PORT, or why they cannot be. */
 export function devArgs(args: readonly string[]): DevArgs {
   const [server, port = "0", ...rest] = args;
   if (server === undefined || rest.length > 0) throw new Error(USAGE);
@@ -123,7 +123,7 @@ export function devManifest(
 
 /**
  * Vite puts a kind's own styles at the end of the head, where the built shell puts them before the
- * project's theme package, which wins the cascade (shell.js, `styles`): each is moved there.
+ * project's theme package, which wins the cascade (shell.ts, `styles`): each is moved there.
  */
 export const THEME_LAST = `new MutationObserver((records) => {
   const theme = document.head.querySelector("[data-symphony-theme]");
@@ -148,7 +148,7 @@ export function devShell(
 ): string {
   const lines = shell.split("\n");
   if (lines.filter((line) => line === MANIFEST_LINE).length !== 1) {
-    throw new Error(`the checkout's shell.js needs its manifest line, ${MANIFEST_LINE}`);
+    throw new Error(`the checkout's shell.ts needs its manifest line, ${MANIFEST_LINE}`);
   }
   const manifest = devManifest(readManifest(served), kinds, base);
   return [
@@ -162,8 +162,7 @@ export function devShell(
 
 /**
  * A request as the dev server's middleware reads it. The middleware takes Node's request as
- * `unknown`: Vite's types of it name Node's, which this package does not take (no `@types/node`),
- * so in their eyes it has no `url`.
+ * `unknown` and reads these alone, so a test hands it a plain object.
  */
 export interface ShellRequest {
   method?: string | undefined;
@@ -177,7 +176,8 @@ export interface ShellResponse {
   end(body?: string): unknown;
 }
 
-/** Where the shell's sources are (absolute paths), and how they are read. */
+/** Where the shell's sources are (absolute paths), and how they are read: as JavaScript, their
+ * types stripped (dev.ts). */
 export interface Sources {
   cache: string;
   shell: string;

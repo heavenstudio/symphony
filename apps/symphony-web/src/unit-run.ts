@@ -6,7 +6,7 @@
 //   file, unless the pool's own wait ran out first ("Timeout starting forks runner."). This report
 //   names every such file, gives the load average and fails the run.
 // - Each test or hook that ran out of its time, which under the run's wall-clock backstop is a
-//   stall, with the load average as the timeout was heard (docs/CHECKS.md, "Time in tests").
+//   stall, with the load average as the timeout was heard (docs/workflow/CHECKS.md, "Time in tests").
 //
 // It reads a run as unsharded, as every run here is: Vitest reports a sharded run's every file
 // before it keeps its shard's, so under `--shard` this report would name the other shards' files
@@ -26,7 +26,7 @@ import type {
 } from "vitest/node";
 
 /** How long a test or a hook may take, in ms: a backstop only a stall reaches, the least that
- * docs/CHECKS.md ("Time in tests") gives one. Vitest's own default is 5 s per test, which load
+ * docs/workflow/CHECKS.md ("Time in tests") gives one. Vitest's own default is 5 s per test, which load
  * alone has reached. */
 export const BACKSTOP_MS = 120_000;
 

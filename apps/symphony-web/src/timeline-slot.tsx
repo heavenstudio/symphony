@@ -3,7 +3,8 @@
 // (timeline.tsx, a chunk of its own) is drawn once it has come. The box imports the chunk once it
 // nears the screen and its part of the page has something to draw, behind no other read and no
 // set wait, so the page's first draw carries none of the timeline's code or style, and nothing
-// outside the box moves when the timeline arrives as tall as it was drawn last. On a phone the box keeps that height when a read adds a step to it; wide it grows to
+// outside the box moves when the timeline arrives as tall as it was drawn last. The task's tokens
+// are asked beside it and handed to the timeline as they came, which says their cost. On a phone the box keeps that height when a read adds a step to it; wide it grows to
 // hold the whole timeline. Its style is timeline-slot.css, which the task page's kind imports.
 
 import {
@@ -15,10 +16,11 @@ import {
   useEffect,
   useState,
 } from "react";
+import { trimmed } from "./gates-model";
 import { PartsContext, usePart } from "./parts";
 import { snapshot } from "./shared";
 import { load, save } from "./storage";
-import { timelinePart } from "./task-live";
+import { timelinePart, tokensPart } from "./task-live";
 import type { HostProps } from "./timeline";
 import type { ThreadAccess } from "./timeline-messages";
 import { useVisibility } from "./viewport";
@@ -29,8 +31,8 @@ export const SLOT = "timeline-slot";
 /**
  * The box's height on a phone (the list) for a task this browser has drawn no timeline of, in
  * pixels: the most a phone's timeline shows before its "Show all", the owner's 240
- * (docs/DECISIONS.md), so the brief and the thread start near the page's top, the earliest steps
- * that do not fit fading out.
+ * (task-page-timeline-place, docs/product/analysis/reports-and-monitoring.md), so the brief and the thread
+ * start near the page's top, the earliest steps that do not fit fading out.
  */
 export const NARROW = 240;
 /**
@@ -50,12 +52,6 @@ const MOST = 0xffff_ffff;
 /** The key a task's drawn heights are kept under in this browser, before its project's id. */
 export function key(slug: string): string {
   return `timeline-height:${slug}`;
-}
-
-/** `text` without its leading and trailing whitespace, as Rust's `str::trim` (the Unicode
- * White_Space property): this module imports none of the timeline's own. */
-function trimmed(text: string): string {
-  return text.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "");
 }
 
 /** A height as Rust's `str::parse::<u32>` reads it: digits, a `+` before them allowed. */
@@ -116,7 +112,7 @@ export const RETRY = "Retry loading the timeline";
 /** The notice's id. */
 const FAILURE = "timeline-error";
 
-/** The shell's (shell/shell.js `reviewShell`): whether the page's build is gone and the page
+/** The shell's (shell/shell.ts `reviewShell`): whether the page's build is gone and the page
  * loads again, and a failed load's notice with its retry. */
 interface Shell {
   gone(): Promise<boolean>;
@@ -212,6 +208,9 @@ function SlotBox({ slug, scope, thread }: SlotProps) {
   const part = timelinePart(scope, slug);
   const parts = useContext(PartsContext);
   const answer = usePart(part);
+  // The task's tokens, whose cost the timeline says after each time: asked beside the timeline,
+  // drawn without until they come and where their read fails (the store tries it again).
+  const tokens = usePart(tokensPart(scope, slug));
   const { key } = part;
   // biome-ignore lint/correctness/useExhaustiveDependencies: a part is its key
   const read = useCallback(() => parts?.read(part) ?? Promise.resolve(), [parts, key]);
@@ -253,6 +252,7 @@ function SlotBox({ slug, scope, thread }: SlotProps) {
               thread={thread}
               details={details}
               part={answer}
+              tokens={tokens.value}
               read={read}
               onDrawn={(wideDraw, natural) => keep(slug, wideDraw, natural)}
             />

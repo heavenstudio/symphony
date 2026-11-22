@@ -3,10 +3,11 @@
 //! analyzer's terms and the same BM25 ([`super::postgres::search`]). The exact slug branch retains
 //! identifiers containing punctuation even when the analyzer splits them into words.
 //!
-//! The search by meaning the board had is deleted (DECISIONS: board-search-by-meaning). Its tables
-//! (`task_chunk` with its `embedding` field and HNSW index, `task_embedding_source`,
-//! `task_embedding_checkpoint`) keep their definitions in the schema, as removing one is a schema
-//! move, and a board that holds their rows keeps them: nothing here reads or writes them.
+//! The search by meaning the board had is deleted
+//! (docs/engineering/analysis/code-review-2026-11.md#board-search-by-meaning). Its tables (`task_chunk` with
+//! its `embedding` field and HNSW index, `task_embedding_source`, `task_embedding_checkpoint`) keep
+//! their definitions in the schema, as removing one is a schema move, and a board that holds their
+//! rows keeps them: nothing here reads or writes them.
 use super::postgres::{self, Pg};
 use super::statement::both;
 use super::surreal::search as sql;
@@ -79,7 +80,7 @@ impl Store {
         }
         let search = || both(sql::SEARCH, Pg::read(postgres::search::SEARCH.as_str()));
         let vars = json!({"query": query.trim().to_lowercase()});
-        self.retrying(|| self.transact(search(), vars.clone()))
+        self.retrying(|| self.read_together(search(), vars.clone()))
     }
 
     /// Fetch matching text for the displayed hits only. Prefer title, brief and thread context
@@ -95,7 +96,7 @@ impl Store {
         let sources = || both(sql::SOURCES, Pg::read(postgres::search::SOURCES.as_str()));
         let vars = json!({"query": query.trim().to_lowercase(), "slugs": slugs});
         let groups: BTreeMap<String, Vec<ScoredSource>> =
-            self.retrying(|| self.transact(sources(), vars.clone()))?;
+            self.retrying(|| self.read_together(sources(), vars.clone()))?;
         // array::concat limits its output to 1 MiB. Keep each SELECT's rows in the same
         // snapshot, then use the shared stable ordering to choose the best excerpt.
         Ok(best_sources(groups))

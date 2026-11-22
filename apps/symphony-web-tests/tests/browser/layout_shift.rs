@@ -8,8 +8,7 @@
 //! marks as following input too: its phone emulation marks a load's own shifts so, and a measured
 //! panel is scored from after its opening, so no shift the click itself caused is in its score.
 use super::{
-    SHOWN, chrome, chrome::Chrome, common, dist, document_landing::TWO_FRAMES, look_parity,
-    site::Site,
+    READY, SHOWN, chrome, chrome::Chrome, document_landing::TWO_FRAMES, look_parity, site::Site,
 };
 use serde_json::{Value, json};
 
@@ -105,6 +104,17 @@ pub(super) const WIDE: Width = Width {
     mobile: false,
 };
 
+/// The colour scheme a visit is measured under. A load that names none takes the machine's, which
+/// headless Chrome follows; a score that depends on it (a card's shadow is part of the box a shift
+/// moves, and the light theme's is the larger) names each and is held to that scheme's limit.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Scheme {
+    pub name: &'static str,
+}
+
+pub(super) const DARK: Scheme = Scheme { name: "dark" };
+pub(super) const LIGHT: Scheme = Scheme { name: "light" };
+
 /// What a measured load opens once its page is settled: a panel, by the control that opens it,
 /// and what it shows once its read is in.
 #[derive(Clone, Copy, Debug)]
@@ -164,26 +174,29 @@ pub(super) fn measure(
         path,
         ready,
         width,
+        None,
         open,
         before,
     ))
 }
 
 /// [`measure`] in `browser`, its page as a launch leaves it: a fresh browser's, or a fresh
-/// context's in a browser that has made other visits.
+/// context's in a browser that has made other visits. Under `scheme`, or the machine's with none.
+#[allow(clippy::too_many_arguments)]
 fn measure_in(
     browser: &mut Chrome,
     site: &Site,
     path: &str,
     ready: &str,
     width: Width,
+    scheme: Option<Scheme>,
     open: Option<Open>,
     before: &str,
 ) -> Loads {
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": width.width, "height": width.height, "deviceScaleFactor": 1, "mobile": width.mobile}),
-    );
+    if let Some(scheme) = scheme {
+        browser.scheme(scheme.name);
+    }
+    browser.viewport(width.width, width.height, width.mobile);
     let held = open.map_or("", |open| open.held);
     browser.call(
         "Page.addScriptToEvaluateOnNewDocument",
@@ -204,10 +217,7 @@ fn load(
 ) -> Vec<Shift> {
     browser.open(&site.url(path));
     assert!(
-        browser.wait_for(
-            &format!("document.documentElement.dataset.navigation === 'ready' && ({ready})"),
-            SHOWN
-        ),
+        browser.wait_for(&format!("{READY} && ({ready})"), SHOWN),
         "{path} never showed {ready}: {:?}",
         browser.eval("document.body.innerText.slice(0, 2000)")
     );
@@ -313,7 +323,7 @@ fn paragraph(text: &str) -> Value {
 /// conversation, and a document at `path` whose `sections` arrive as the server sends them: an
 /// outline without their bodies, then the bodies a later read asks for.
 pub(super) fn site(path: &str, sections: &[Value], cards: Value) -> Site {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let mut responses = look_parity::responses();
     // The task's gates as the server answers them, short enough for a line each on a phone, and
     // with its page what the server answered last (`GatesSeen`), the room they hold until then.
@@ -465,6 +475,22 @@ fn over_the_limit(page: &str, width: Width, loads: &Loads) -> Vec<String> {
         .collect()
 }
 
+/// Each phone order has a limit of its own under each scheme, light's over dark's by the shadow's
+/// area and no more; a wide window is held to every page's limit whatever the scheme and order.
+#[test]
+fn a_task_of_another_shape_has_a_limit_for_each_scheme_and_order() {
+    let limits = [
+        (DARK, PAGE_FIRST, 0.14),
+        (DARK, GATES_FIRST, 0.064),
+        (LIGHT, PAGE_FIRST, 0.156),
+        (LIGHT, GATES_FIRST, 0.069),
+    ];
+    for (scheme, order, limit) in limits {
+        assert_eq!(another_shape_limit(PHONE, scheme, order), limit);
+        assert_eq!(another_shape_limit(WIDE, scheme, order), CLS_LIMIT);
+    }
+}
+
 #[test]
 fn cls_takes_the_largest_session_window_of_every_shift() {
     let at = |at: f64, value: f64| Shift {
@@ -575,14 +601,19 @@ const GATES_FIRST: Order = Order {
     drawn: "document.querySelector('article.task .task-gates[data-gates=read]') !== null",
 };
 
-/// The score of a first visit to the task (a fresh context of `browser`) at `width`, its answers
-/// in `order`.
-fn first_visit(browser: &mut Chrome, page: &str, site: &Site, width: Width, order: Order) -> f64 {
+/// The score of a first visit to the task (a fresh context of `browser`) at `width` under
+/// `scheme`, its answers in `order`.
+fn first_visit(
+    browser: &mut Chrome,
+    page: &str,
+    site: &Site,
+    width: Width,
+    scheme: Scheme,
+    order: Order,
+) -> f64 {
     browser.fresh_context();
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": width.width, "height": width.height, "deviceScaleFactor": 1, "mobile": width.mobile}),
-    );
+    browser.scheme(scheme.name);
+    browser.viewport(width.width, width.height, width.mobile);
     browser.call(
         "Page.addScriptToEvaluateOnNewDocument",
         json!({ "source": RECORD }),
@@ -604,10 +635,7 @@ fn first_visit(browser: &mut Chrome, page: &str, site: &Site, width: Width, orde
         browser.eval("document.body.innerText.slice(0, 2000)")
     );
     assert!(
-        browser.wait_for(
-            &format!("document.documentElement.dataset.navigation === 'ready' && ({TASK_READY})"),
-            SHOWN
-        ),
+        browser.wait_for(&format!("{READY} && ({TASK_READY})"), SHOWN),
         "{page}, {}: the task never showed its thread",
         order.name
     );
@@ -618,29 +646,35 @@ fn first_visit(browser: &mut Chrome, page: &str, site: &Site, width: Width, orde
     };
     eprintln!(
         "{}",
-        report(&format!("{page}, {},", order.name), width, &loads)
+        report(
+            &format!("{page}, {}, {},", scheme.name, order.name),
+            width,
+            &loads
+        )
     );
     cls(&loads.cold)
 }
 
-/// The first visits that reach `limit(width, order)` or more, in each order at each width, each
-/// in a fresh context of `browser`.
+/// The first visits that reach `limit(width, scheme, order)` or more, in each order at each width
+/// under each scheme, each in a fresh context of `browser`.
 fn first_visit_misses(
     browser: &mut Chrome,
     page: &str,
     site: &Site,
-    limit: impl Fn(Width, Order) -> f64,
+    limit: impl Fn(Width, Scheme, Order) -> f64,
 ) -> Vec<String> {
     let mut misses = Vec::new();
-    for width in [PHONE, WIDE] {
-        for order in [PAGE_FIRST, GATES_FIRST] {
-            let score = first_visit(browser, page, site, width, order);
-            let limit = limit(width, order);
-            if score >= limit {
-                misses.push(format!(
-                    "{page} {}, {}: cls {score:.4}, limit {limit}",
-                    width.name, order.name
-                ));
+    for scheme in [DARK, LIGHT] {
+        for width in [PHONE, WIDE] {
+            for order in [PAGE_FIRST, GATES_FIRST] {
+                let score = first_visit(browser, page, site, width, scheme, order);
+                let limit = limit(width, scheme, order);
+                if score >= limit {
+                    misses.push(format!(
+                        "{page} {} {}, {}: cls {score:.4}, limit {limit}",
+                        width.name, scheme.name, order.name
+                    ));
+                }
             }
         }
     }
@@ -669,77 +703,140 @@ fn default_task() -> Site {
     site
 }
 
-/// A task of the shape the outline guesses holds still on every visit: its answers as they come,
-/// and on a first visit in each order they can come in.
+/// A task of the shape the outline guesses holds still on every visit, dark and light: its answers
+/// as they come, and on a first visit in each order they can come in.
 #[test]
 fn a_task_holds_still_while_its_thread_loads() {
     let site = default_task();
     let Some(mut browser) = chrome() else { return };
     let mut misses = Vec::new();
-    // Each width's cold and warm loads, then each first visit, in a context of its own.
-    for width in [PHONE, WIDE] {
-        browser.fresh_context();
-        let loads = measure_in(&mut browser, &site, TASK, TASK_READY, width, None, "");
-        misses.extend(over_the_limit("task", width, &loads));
+    // Each scheme's and width's cold and warm loads, then each first visit, in a context of its
+    // own.
+    for scheme in [DARK, LIGHT] {
+        for width in [PHONE, WIDE] {
+            browser.fresh_context();
+            let loads = measure_in(
+                &mut browser,
+                &site,
+                TASK,
+                TASK_READY,
+                width,
+                Some(scheme),
+                None,
+                "",
+            );
+            misses.extend(over_the_limit(
+                &format!("task, {},", scheme.name),
+                width,
+                &loads,
+            ));
+        }
     }
-    misses.extend(first_visit_misses(&mut browser, "task", &site, |_, _| {
-        CLS_LIMIT
-    }));
+    misses.extend(first_visit_misses(
+        &mut browser,
+        "task",
+        &site,
+        |_, _, _| CLS_LIMIT,
+    ));
     assert!(
         misses.is_empty(),
         "layout shift at or over {CLS_LIMIT}: {misses:#?}"
     );
 }
 
-/// A phone's first visit to a task of another shape, the page's answer drawn before the gates':
-/// it scores 0.1399. The board task `app/task-first-visit-holds-still` brings it down to
-/// `CLS_LIMIT`; until then it only goes down.
+/// A phone's first visit to a task of another shape, on the dark theme, the page's answer drawn
+/// before the gates': it scores 0.1399, one entry, the gates' slot going up 32 px under the head
+/// and from four rows to two, the timeline drawn under it:
+/// `div.task-gates-slot [13,396,364,434]→[13,364,364,243]`,
+/// `section#timeline [0,0,0,0]→[13,638,364,206]`. The owner kept that move (the card
+/// `task-first-visit-head-first` in docs/design/analysis/task-first-visit.md, every outline at once); the
+/// limit only goes down.
 const PHONE_PAGE_FIRST_LIMIT: f64 = 0.14;
-/// The same visit with the gates' answer drawn before the page's: it scores 0.0636. The board
-/// task `app/task-first-visit-holds-still` brings it down to `CLS_LIMIT`.
+/// The same visit with the gates' answer drawn before the page's: it scores 0.0636, the timeline
+/// drawn (0.0434, `[0,0,0,0]→[13,670,364,174]`) and then both going up 32 px (0.0201,
+/// `div.task-gates-slot [13,396,364,243]→[13,364,364,243]`,
+/// `section#timeline [13,670,364,174]→[13,638,364,206]`). It only goes down.
 const PHONE_GATES_FIRST_LIMIT: f64 = 0.064;
+/// [`PHONE_PAGE_FIRST_LIMIT`]'s visit on the light theme: it scores 0.1556. The same elements move
+/// the same 32 px; the box a shift moves holds the card's shadow, and the light one
+/// (`--shadow-1`, `0 4px 16px` there, `0 1px 2px` dark) reaches 20 px above the card, 28 px below
+/// and 24 px at its sides, past the screen's edges, where the dark one reaches 2, 4 and 3:
+/// `div.task-gates-slot [0,378,390,466]→[0,346,390,285]`,
+/// `section#timeline [0,0,0,0]→[0,638,390,206]`. The difference from dark is that shadow's area
+/// alone. It only goes down.
+const PHONE_PAGE_FIRST_LIGHT_LIMIT: f64 = 0.156;
+/// [`PHONE_GATES_FIRST_LIMIT`]'s visit on the light theme: it scores 0.0689 (0.0465,
+/// `section#timeline [0,0,0,0]→[0,670,390,174]`, then 0.0224,
+/// `div.task-gates-slot [0,378,390,285]→[0,346,390,285]`,
+/// `section#timeline [0,670,390,174]→[0,638,390,206]`), the same move with the light shadow's
+/// area. It only goes down.
+const PHONE_GATES_FIRST_LIGHT_LIMIT: f64 = 0.069;
 
 /// What a first visit to a task of another shape than the outline's guess scores less than: on a
-/// phone what its order measures, wide the limit of every page (0.0309 and 0.0284 there).
-fn another_shape_limit(width: Width, order: Order) -> f64 {
+/// phone what its order measures under its scheme, wide the limit of every page (0.0312 and 0.0288
+/// there dark, 0.0322 and 0.0297 light).
+fn another_shape_limit(width: Width, scheme: Scheme, order: Order) -> f64 {
     if !width.mobile {
-        CLS_LIMIT
-    } else if order == PAGE_FIRST {
-        PHONE_PAGE_FIRST_LIMIT
-    } else {
-        PHONE_GATES_FIRST_LIMIT
+        return CLS_LIMIT;
+    }
+    match (scheme == LIGHT, order == PAGE_FIRST) {
+        (false, true) => PHONE_PAGE_FIRST_LIMIT,
+        (false, false) => PHONE_GATES_FIRST_LIMIT,
+        (true, true) => PHONE_PAGE_FIRST_LIGHT_LIMIT,
+        (true, false) => PHONE_GATES_FIRST_LIGHT_LIMIT,
     }
 }
 
 /// A task of another shape than the outline's guess (the shared fixture's two gates, one of them
 /// unsigned, where the guess is four signed) holds still on a return visit, and on a first one
-/// moves what is under its gates once, by less than its order's limit.
+/// moves what is under its gates once, by less than its order's limit under each scheme.
 #[test]
 fn a_task_of_another_shape_moves_less_than_its_first_visits_limits() {
     let (sections, cards) = plain();
     let site = site("docs/PROBE.md", &sections, cards);
     let Some(mut browser) = chrome() else { return };
     let mut misses = Vec::new();
-    for width in [PHONE, WIDE] {
-        browser.fresh_context();
-        let loads = measure_in(&mut browser, &site, TASK, TASK_READY, width, None, "");
-        eprintln!("{}", report("task of another shape", width, &loads));
-        // As the answers come, a first visit is one of the two orders or both in one frame.
-        let limit =
-            another_shape_limit(width, PAGE_FIRST).max(another_shape_limit(width, GATES_FIRST));
-        let cold = cls(&loads.cold);
-        if cold >= limit {
-            misses.push(format!(
-                "{} cold, as the answers come: cls {cold:.4}, limit {limit}",
-                width.name
+    for scheme in [DARK, LIGHT] {
+        for width in [PHONE, WIDE] {
+            browser.fresh_context();
+            let loads = measure_in(
+                &mut browser,
+                &site,
+                TASK,
+                TASK_READY,
+                width,
+                Some(scheme),
+                None,
+                "",
+            );
+            eprintln!(
+                "{}",
+                report(
+                    &format!("task of another shape, {},", scheme.name),
+                    width,
+                    &loads
+                )
+            );
+            // As the answers come, a first visit is one of the two orders or both in one frame.
+            let limit = another_shape_limit(width, scheme, PAGE_FIRST).max(another_shape_limit(
+                width,
+                scheme,
+                GATES_FIRST,
             ));
-        }
-        let warm = cls(&loads.warm);
-        if warm >= CLS_LIMIT {
-            misses.push(format!(
-                "{} warm: cls {warm:.4}, limit {CLS_LIMIT}",
-                width.name
-            ));
+            let cold = cls(&loads.cold);
+            if cold >= limit {
+                misses.push(format!(
+                    "{} {} cold, as the answers come: cls {cold:.4}, limit {limit}",
+                    width.name, scheme.name
+                ));
+            }
+            let warm = cls(&loads.warm);
+            if warm >= CLS_LIMIT {
+                misses.push(format!(
+                    "{} {} warm: cls {warm:.4}, limit {CLS_LIMIT}",
+                    width.name, scheme.name
+                ));
+            }
         }
     }
     misses.extend(first_visit_misses(

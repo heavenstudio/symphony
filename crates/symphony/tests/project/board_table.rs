@@ -30,15 +30,27 @@ fn the_board_table_names_the_open_tasks_an_orchestrator_may_hold_and_none_caps_n
         Some(8)
     );
     assert_eq!(parsed("").unwrap().board.orchestrator_slots, None);
-    assert!(
-        refused("[board]\norchestrator_slots = 0\n")
-            .contains("orchestrator_slots is 0; an orchestrator needs at least one slot")
+    assert_eq!(
+        parsed("[board]\norchestrator_slots = 4294967295\n")
+            .unwrap()
+            .board
+            .orchestrator_slots,
+        Some(u32::MAX)
     );
-    for text in [
-        "[board]\norchestrator_slots = -1\n",
-        "[board]\norchestrator_slots = \"8\"\n",
+    // Refused as the board says it, which reads it as no cap.
+    for (value, why) in [
+        ("0", "an orchestrator needs at least one slot"),
+        ("-1", "an orchestrator needs at least one slot"),
+        ("\"8\"", "not a whole number"),
+        ("4294967296", "past what it can be"),
     ] {
-        assert!(refused(text).contains("orchestrator_slots"), "{text}");
+        assert_eq!(
+            refused(&format!("[board]\norchestrator_slots = {value}\n")),
+            format!(
+                "symphony.toml: [board] orchestrator_slots (line 2) is {value}; {why}; no cap on \
+                 an orchestrator's open tasks applies"
+            )
+        );
     }
 }
 
@@ -109,6 +121,36 @@ fn the_board_table_takes_the_cap_on_what_the_sweep_sets_aside_as_the_board_reads
     assert!(
         refused("[board]\nswept_cap_gb = 0\n")
             .contains("[board] swept_cap_gb is 0; it is a number of gigabytes over 0")
+    );
+}
+
+#[test]
+fn the_board_table_takes_the_hours_a_build_no_longer_run_holds_a_move_as_the_writer_rule_reads_them()
+ {
+    // The writer rule reads the bound itself; the project takes what it takes and refuses what it
+    // refuses, the rule reading anything it refuses as its default.
+    let tree = super::Tree::new();
+    let root = tree.root.clone();
+    for (text, hours) in [
+        ("", symphony::machine::writers::UNUSED_HOURS),
+        ("[board]\nstale_writer_hours = 48\n", 48),
+        ("[board]\nstale_writer_hours = 1\n", 1),
+    ] {
+        assert!(parsed(text).is_ok(), "{text}");
+        std::fs::write(root.join("symphony.toml"), text).unwrap();
+        assert_eq!(
+            symphony::machine::writers::Runs::of(&root).hours,
+            hours,
+            "{text}"
+        );
+    }
+    for value in ["0", "-1", "1.5", "\"24\""] {
+        let text = format!("[board]\nstale_writer_hours = {value}\n");
+        assert!(refused(&text).contains("stale_writer_hours"), "{text}");
+    }
+    assert!(
+        refused("[board]\nstale_writer_hours = 0\n")
+            .contains("[board] stale_writer_hours is 0; it is a whole number of hours over 0")
     );
 }
 

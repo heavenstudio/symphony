@@ -4,7 +4,7 @@
 //! panel pushes the header and the page aside;
 //! the chat sheet is one surface from the top of the window, beside the header's controls.
 use super::components::{open_panel, site};
-use super::{SHOWN, chrome, chrome::Chrome, wait_for_board};
+use super::{READY, SHOWN, at_page_width, chrome, chrome::Chrome, wait_for_board};
 use serde_json::{Value, json};
 
 /// Three cards waiting on the owner, so the pending bar shows on every page.
@@ -15,25 +15,15 @@ fn pending() -> Value {
         {"path":"docs/look-parity.md","slug":"three","href":"/docs/look-parity.md#three","branch":null}]})
 }
 
-fn viewport(page: &mut Chrome, width: u32, height: u32) {
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":height,"deviceScaleFactor":1,"mobile":width < 600}),
-    );
-}
-
-/// Two frames, so what a viewport or a click changed is laid out and painted before it is read.
-fn settle(page: &mut Chrome) {
-    page.eval("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
-}
-
 /// The dock and the controls it holds: whether it spans the window's foot, which fixed controls
-/// stick out of it, which a click at their middle would miss, and which overlap each other.
-const DOCK: &str = r#"(() => {
+/// stick out of it, which a click at their middle would miss, and which overlap each other. A
+/// page function of the window's `width`, the width it leaves the page beside its scrollbar
+/// ([`at_page_width`]).
+const DOCK: &str = r#"width => {
     const name = control => control.id || control.className;
     const dock = document.querySelector('.frame-dock')?.getBoundingClientRect();
     if (!dock) return 'no dock';
-    const width = document.documentElement.clientWidth, height = document.documentElement.clientHeight;
+    const height = document.documentElement.clientHeight;
     const controls = [...document.querySelectorAll('.frame-pending, #quick-open, .doc-toc')]
         .filter(control => getComputedStyle(control).position === 'fixed' && control.getBoundingClientRect().width > 0);
     const boxes = controls.map(control => [control, control.getBoundingClientRect()]);
@@ -44,7 +34,7 @@ const DOCK: &str = r#"(() => {
         missed: boxes.filter(([c, b]) => !c.contains(document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2))).map(([c]) => name(c)),
         overlapping: boxes.flatMap(([c, b], i) => boxes.slice(i + 1).filter(([, o]) => b.left < o.right && o.left < b.right && b.top < o.bottom && o.top < b.bottom).map(([o]) => name(c) + ' / ' + name(o))),
     };
-})()"#;
+}"#;
 
 /// Whether `selector`'s element is clear of every fixed control and of the dock, and a click at
 /// its middle reaches it.
@@ -76,9 +66,9 @@ fn foot_at_window_foot(page: &mut Chrome, width: u32) -> u32 {
     let bottom = page
         .eval("Math.ceil(document.querySelector('a.go').getBoundingClientRect().bottom + scrollY)");
     let height = u32::try_from(bottom.as_u64().unwrap()).unwrap() + 2;
-    viewport(page, width, height);
+    page.viewport(width, height, width < 600);
     page.eval("scrollTo(0,0)");
-    settle(page);
+    page.frames();
     height
 }
 
@@ -88,17 +78,18 @@ const UNDER_DOCK: &str = "(() => {const box=document.querySelector('a.go').getBo
 
 /// What the window's foot draws with nothing but the chat button to hold: whether the dock's bar
 /// draws, whether a pending bar is there, and whether the "+" sits alone in the window's corner,
-/// at the dock's lift.
-const BARE: &str = r#"(() => {
+/// at the dock's lift. A page function of the window's `width`, the width it leaves the page
+/// beside its scrollbar ([`at_page_width`]).
+const BARE: &str = r#"width => {
     const dock = document.querySelector('.frame-dock')?.getBoundingClientRect();
     const open = document.querySelector('#quick-open').getBoundingClientRect();
-    const width = document.documentElement.clientWidth, height = document.documentElement.clientHeight;
+    const height = document.documentElement.clientHeight;
     return {
         bar: !!dock && dock.width > 0 && dock.height > 0,
         pending: document.querySelector('.frame-pending') !== null,
         corner: Math.abs(height - 8 - open.bottom) < 1 && Math.abs(width - 16 - open.right) < 1,
     };
-})()"#;
+}"#;
 
 /// Whether the home's primary button is wholly in the window, and whether its foot is above the
 /// chat button's top.
@@ -110,9 +101,9 @@ fn with_nothing_pending_no_dock_draws_and_the_chat_button_sits_alone_in_the_corn
     // The stand-in answers /api/pending with no items.
     let site = site();
     let Some(mut page) = chrome() else { return };
-    let ready = "document.querySelector('#quick-open') !== null && document.documentElement.dataset.navigation === 'ready'";
+    let ready = &format!("document.querySelector('#quick-open') !== null && {READY}");
     for width in [390, 1280] {
-        viewport(&mut page, width, 900);
+        page.viewport(width, 900, width < 600);
         page.open(&site.url("/tasks"));
         assert!(page.wait_for(
             &format!(
@@ -120,18 +111,18 @@ fn with_nothing_pending_no_dock_draws_and_the_chat_button_sits_alone_in_the_corn
             ),
             SHOWN
         ));
-        settle(&mut page);
+        page.frames();
         assert_eq!(
-            page.eval(BARE),
+            page.eval(&at_page_width(BARE)),
             json!({"bar":false,"pending":false,"corner":true}),
             "at {width}px the tasks page draws no dock, and the \"+\" sits alone in the corner"
         );
         page.open(&site.url("/"));
         wait_for_board(&mut page);
         assert!(page.wait_for(ready, SHOWN));
-        settle(&mut page);
+        page.frames();
         assert_eq!(
-            page.eval(BARE),
+            page.eval(&at_page_width(BARE)),
             json!({"bar":false,"pending":false,"corner":true}),
             "at {width}px the board draws no dock, and the \"+\" sits alone in the corner"
         );
@@ -143,7 +134,7 @@ fn with_nothing_pending_no_dock_draws_and_the_chat_button_sits_alone_in_the_corn
             "at {width}px x {height}px the setup starts with the primary button in the window, its foot below the \"+\"'s top"
         );
         page.eval("document.querySelector('a.go').focus()");
-        settle(&mut page);
+        page.frames();
         assert_eq!(
             page.eval(BESIDE_CHAT),
             json!({"inView":true,"aboveChat":true}),
@@ -152,31 +143,31 @@ fn with_nothing_pending_no_dock_draws_and_the_chat_button_sits_alone_in_the_corn
     }
     // A document draws the dock only while it holds the folded contents pill, on a desktop.
     let document = site.url("/docs/look-parity.md");
-    let toc = "document.querySelector('.doc-toc details') !== null && document.documentElement.dataset.navigation === 'ready'";
-    viewport(&mut page, 1280, 800);
+    let toc = &format!("document.querySelector('.doc-toc details') !== null && {READY}");
+    page.viewport(1280, 800, false);
     page.open(&document);
     assert!(page.wait_for(toc, SHOWN));
     assert!(page.wait_for("document.querySelector('.doc-toc details').open", SHOWN));
-    settle(&mut page);
+    page.frames();
     assert_eq!(
-        page.eval(BARE),
+        page.eval(&at_page_width(BARE)),
         json!({"bar":false,"pending":false,"corner":true}),
         "a wide document with its contents open draws no dock"
     );
     page.eval("document.querySelector('.doc-toc summary').click()");
     assert!(page.wait_for("!document.querySelector('.doc-toc details').open", SHOWN));
-    settle(&mut page);
+    page.frames();
     assert_eq!(
-        page.eval(DOCK),
+        page.eval(&at_page_width(DOCK)),
         json!({"spans":true,"controls":["doc-toc","quick-open"],"outside":[],"missed":[],"overlapping":[]}),
         "folded, the contents pill brings the dock back, beside the \"+\""
     );
-    viewport(&mut page, 390, 844);
+    page.viewport(390, 844, true);
     page.open(&document);
     assert!(page.wait_for(toc, SHOWN));
-    settle(&mut page);
+    page.frames();
     assert_eq!(
-        page.eval(BARE),
+        page.eval(&at_page_width(BARE)),
         json!({"bar":false,"pending":false,"corner":true}),
         "on a phone the folded contents sit in the page, and no dock draws"
     );
@@ -191,17 +182,17 @@ fn the_dock_holds_the_floating_controls_and_a_focused_or_last_control_sits_above
     // button wholly inside the window but under the dock, its foot 2px above the window's: a
     // control the browser counts as in view, which focus scrolls only for the scroll padding.
     for width in [390, 320, 1280] {
-        viewport(&mut page, width, 900);
+        page.viewport(width, 900, width < 600);
         page.open(&site.url("/"));
         wait_for_board(&mut page);
         assert!(page.wait_for(
-            "document.querySelector('.frame-pending') !== null && document.querySelector('#quick-open') !== null && document.documentElement.dataset.navigation === 'ready'",
+            &format!("document.querySelector('.frame-pending') !== null && document.querySelector('#quick-open') !== null && {READY}"),
             SHOWN
         ));
-        settle(&mut page);
+        page.frames();
         let height = foot_at_window_foot(&mut page, width);
         assert_eq!(
-            page.eval(DOCK),
+            page.eval(&at_page_width(DOCK)),
             json!({"spans":true,"controls":["pending-nav frame-pending","quick-open"],"outside":[],"missed":[],"overlapping":[]}),
             "at {width}px, the pending bar and the chat button sit in the dock, apart"
         );
@@ -211,7 +202,7 @@ fn the_dock_holds_the_floating_controls_and_a_focused_or_last_control_sits_above
             "at {width}px x {height}px the setup starts with the primary button in the window, under the dock"
         );
         page.eval("document.querySelector('a.go').focus()");
-        settle(&mut page);
+        page.frames();
         assert_eq!(
             page.eval(&clear("a.go")),
             serde_json::from_str::<Value>(CLEAR).unwrap(),
@@ -219,7 +210,7 @@ fn the_dock_holds_the_floating_controls_and_a_focused_or_last_control_sits_above
         );
         // The page's last control, at the end of the page, clears the dock too.
         page.eval("scrollTo(0, document.documentElement.scrollHeight)");
-        settle(&mut page);
+        page.frames();
         page.eval("[...document.querySelectorAll('main a[href], main button')].filter(e => e.getBoundingClientRect().height > 0).pop().setAttribute('data-last', '')");
         assert_eq!(
             page.eval(&clear("[data-last]")),
@@ -241,9 +232,12 @@ fn the_task_boards_last_card_scrolls_clear_of_the_dock_and_chat_button() {
         site.set_json("/api/task-board", &super::polish::thirty_ready());
         let Some(mut page) = chrome() else { return };
         for (width, height) in [(390, 844), (1280, 900), (1500, 1700)] {
-            viewport(&mut page, width, height);
+            page.viewport(width, height, width < 600);
             page.open(&site.url("/tasks"));
-            assert!(page.wait_for("document.querySelector('.waiting-columns') !== null && document.documentElement.dataset.navigation === 'ready'",SHOWN));
+            assert!(page.wait_for(
+                &format!("document.querySelector('.waiting-columns') !== null && {READY}"),
+                SHOWN
+            ));
             if width <= 760 {
                 assert!(page.wait_for(
                     "document.querySelector('.stage-tabs button') !== null",
@@ -260,7 +254,7 @@ fn the_task_boards_last_card_scrolls_clear_of_the_dock_and_chat_button() {
                 "document.querySelector('[data-slug=\"load/ready-30\"]') !== null",
                 SHOWN
             ));
-            settle(&mut page);
+            page.frames();
             let shown = page.eval(&clear("[data-slug=\"load/ready-30\"]"));
             assert_eq!(shown["inView"], json!(true), "{width}px: {shown}");
             assert_eq!(shown["underControl"], json!(false), "{width}px: {shown}");
@@ -282,16 +276,18 @@ fn a_documents_contents_pill_sits_in_the_dock_and_in_the_page_on_a_phone() {
     site.set_json("/api/pending", &pending());
     let Some(mut page) = chrome() else { return };
     let document = site.url("/docs/look-parity.md");
-    let ready = "document.querySelector('.doc-toc details') !== null && document.querySelector('.frame-pending') !== null && document.documentElement.dataset.navigation === 'ready'";
+    let ready = &format!(
+        "document.querySelector('.doc-toc details') !== null && document.querySelector('.frame-pending') !== null && {READY}"
+    );
     // A wide window opens the contents beside the page; folded, the pill sits in the dock.
-    viewport(&mut page, 1280, 800);
+    page.viewport(1280, 800, false);
     page.open(&document);
     assert!(page.wait_for(ready, SHOWN));
     page.eval("document.querySelector('.doc-toc summary').click()");
     assert!(page.wait_for("!document.querySelector('.doc-toc details').open", SHOWN));
-    settle(&mut page);
+    page.frames();
     assert_eq!(
-        page.eval(DOCK),
+        page.eval(&at_page_width(DOCK)),
         json!({"spans":true,"controls":["doc-toc","pending-nav frame-pending","quick-open"],"outside":[],"missed":[],"overlapping":[]}),
         "a folded contents pill sits in the dock, apart from the pending bar and the chat button"
     );
@@ -302,10 +298,10 @@ fn a_documents_contents_pill_sits_in_the_dock_and_in_the_page_on_a_phone() {
     );
     // A phone starts with the contents folded: a pill in the page, under the document's title,
     // which opens where it is.
-    viewport(&mut page, 390, 844);
+    page.viewport(390, 844, true);
     page.open(&document);
     assert!(page.wait_for(ready, SHOWN));
-    settle(&mut page);
+    page.frames();
     let place = "(() => {const toc=document.querySelector('.doc-toc'), box=toc.getBoundingClientRect();\
         return {position:getComputedStyle(toc).position, overflow:getComputedStyle(toc).overflow, open:toc.querySelector('details').open,\
         top:Math.round(box.top + scrollY), belowHead:box.top >= document.querySelector('.doc-head').getBoundingClientRect().bottom,\
@@ -317,13 +313,13 @@ fn a_documents_contents_pill_sits_in_the_dock_and_in_the_page_on_a_phone() {
         "on a phone the folded contents are in the page, between its title and its body"
     );
     assert_eq!(
-        page.eval(DOCK)["controls"],
+        page.eval(&at_page_width(DOCK))["controls"],
         json!(["pending-nav frame-pending", "quick-open"]),
         "and not in the dock"
     );
     page.eval("document.querySelector('.doc-toc summary').click()");
     assert!(page.wait_for("document.querySelector('.doc-toc details').open", SHOWN));
-    settle(&mut page);
+    page.frames();
     let opened = page.eval(place);
     assert_eq!(
         (&opened["position"], &opened["top"]),
@@ -370,7 +366,7 @@ fn the_open_activity_panel_pushes_the_header_and_the_page_aside() {
     let site = site();
     site.set_json("/api/pending", &pending());
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1280, 800);
+    page.viewport(1280, 800, false);
     page.open(&site.url("/"));
     wait_for_board(&mut page);
     page.eval("document.getElementById('bell').click()");
@@ -380,7 +376,7 @@ fn the_open_activity_panel_pushes_the_header_and_the_page_aside() {
         "document.querySelector('#activity-panel [aria-label=\"Close activity\"]') !== null && document.getElementById('bell').getAttribute('aria-expanded') === 'true'",
         SHOWN
     ));
-    settle(&mut page);
+    page.frames();
     assert_eq!(
         page.eval(&beside("#activity-panel")),
         serde_json::from_str::<Value>(BESIDE).unwrap(),
@@ -388,25 +384,26 @@ fn the_open_activity_panel_pushes_the_header_and_the_page_aside() {
     );
     page.eval("document.querySelector('#activity-panel [aria-label=\"Close activity\"]').click()");
     assert!(page.wait_for("document.getElementById('activity-panel') === null", SHOWN));
-    settle(&mut page);
-    assert_eq!(
-        page.eval("Math.round(document.querySelector('.frame-page').getBoundingClientRect().right) === document.documentElement.clientWidth"),
-        json!(true),
-        "closing it gives the page its width back"
-    );
+    page.frames();
+    // The page's right edge, and the width the window leaves the page beside its scrollbar.
+    let [right, window]: [u64; 2] = serde_json::from_value(page.eval(&at_page_width(
+        "width => [Math.round(document.querySelector('.frame-page').getBoundingClientRect().right), width]",
+    )))
+    .unwrap();
+    assert_eq!(right, window, "closing it gives the page its width back");
 }
 
 #[test]
 fn the_chat_sheet_runs_from_the_top_of_the_window_beside_the_header_under_a_notice() {
     let site = site();
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1280, 800);
+    page.viewport(1280, 800, false);
     page.open(&site.url("/"));
     wait_for_board(&mut page);
     // A server notice above the header, as the server's own warnings draw one.
     page.eval("document.getElementById('shell-notices').innerHTML = '<div class=\"shell-notice\" role=\"status\"><p><strong>1 Symphony process from test runs is running with no parent</strong>: nothing ends it on its own.</p><code>ps -axo pid,ppid,command</code><p>lists it; stop it by pid.</p></div>'");
     open_panel(&mut page);
-    settle(&mut page);
+    page.frames();
     assert_eq!(
         page.eval("document.querySelector('.app-header').getBoundingClientRect().top > 62"),
         json!(true),

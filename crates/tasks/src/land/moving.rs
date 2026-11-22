@@ -31,7 +31,7 @@ impl Moving {
     /// The move named in the lands' `folder`, if one is.
     pub fn read(folder: &Path) -> Option<Moving> {
         let text = fs::read_to_string(folder.join(MOVING)).ok()?;
-        serde_json::from_str(&text).ok()
+        crate::objects::parse(&text)
     }
 
     /// Named in `folder`, whole or not at all.
@@ -60,6 +60,38 @@ pub(super) enum Move {
     },
     /// It moved under the land, to this commit.
     Raced(String),
+}
+
+/// What a default branch `default` that could not move to `to` from `base` says: `why`, what the
+/// land `restored` of what the move half-wrote, or that it could not, and, for a land whose record
+/// of the merge was `recorded`, that the record is dropped.
+pub(super) fn not_moved(
+    default: &str,
+    to: &str,
+    base: &str,
+    why: &str,
+    restored: &Result<Restored, String>,
+    recorded: bool,
+) -> String {
+    let mut line = format!(
+        "{default} could not move to {} in the main checkout: {why}",
+        short(to)
+    );
+    match restored {
+        Ok(restored) => {
+            if let Some(said) = restored.said(default, base) {
+                line.push_str(&format!("; {said}"));
+            }
+            if recorded {
+                line.push_str("; its record dropped: nothing landed");
+            }
+        }
+        Err(why) => line.push_str(&format!(
+            "; what the move half-wrote in the main checkout could not be restored ({why}): the \
+             next land tries again"
+        )),
+    }
+    line
 }
 
 /// One side of a path in a tree or the index: its mode and object, as git writes them.

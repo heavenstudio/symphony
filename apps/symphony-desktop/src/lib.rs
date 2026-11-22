@@ -1,6 +1,6 @@
 //! The Symphony's desktop app for the Mac, as a library: every decision the app makes, so each is
 //! tested on the host and the binary (`src/bin/symphony-desktop.rs`) only draws them in windows
-//! (docs/analysis/desktop-client.md).
+//! (docs/product/analysis/desktop-client.md).
 //!
 //! - [`address`]: the servers the app may follow, plain HTTP to this Mac and the tailnet alone;
 //! - [`navigation`]: where a server's window may go, and what opens in the system browser;
@@ -32,5 +32,6 @@ pub use address::Server;
 pub mod testing;
 
 /// The script every page the app shows runs before its own: the Notification API, its permission
-/// always denied, so a page's own notice never doubles the app's.
-pub const NOTIFICATION_STUB: &str = include_str!("notification.js");
+/// always denied, so a page's own notice never doubles the app's. TypeScript with no syntax of its
+/// own, so the page runs it as it is written.
+pub const NOTIFICATION_STUB: &str = include_str!("notification.ts");

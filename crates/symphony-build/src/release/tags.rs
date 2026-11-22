@@ -1,5 +1,5 @@
 //! Release tags: `release-YYYY-MM-DD` for a day's first release and `release-YYYY-MM-DD.N` for its
-//! Nth (N from 2), the shared interface the update command reads (docs/RELEASES.md). Their order is
+//! Nth (N from 2), the shared interface the update command reads (docs/workflow/RELEASES.md). Their order is
 //! the releases': by day, then by number, which a plain sort of the names gets wrong (`.10` before
 //! `.2`, and the day's first after its second when sorted newest first).
 

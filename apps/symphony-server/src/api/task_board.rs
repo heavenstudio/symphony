@@ -1,6 +1,9 @@
 //! Board display-stage counts and pagination share one filtered snapshot.
 
 use super::{Hub, Json, Request, Response, StatusCode, error, no_store, query};
+use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
+use symphony_board::lock::Recovered as _;
 
 /// What a listing's `status` selects beside the board's statuses: the owner's sign-off column and
 /// the display stages of work a machine builds or tests.
@@ -11,9 +14,57 @@ const SELECTABLE: [&str; 3] = ["signoff", "build", "test"];
 /// two change together.
 const PAGE: usize = 30;
 
+/// The stages whose rows are listed newest first: a finished task's.
+const FINISHED: [&str; 2] = ["done", "cancelled"];
+
+/// What a listing's rows are ordered by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Order {
+    /// A search's: the best match first.
+    Match,
+    /// A task's subtasks, the task groups and a holder's tasks: by priority.
+    Priority,
+    /// The board's: by stage, a finished stage's rows newest first and any other's by priority.
+    Stage,
+}
+
+/// A row's place in its listing, also the opaque cursor: its stage, its priority, when it was last
+/// updated (a search's row: its score) and its slug. The sort, a cursor's test and the next page's
+/// key are this one comparison ([`Key::compare`]), so a page starts where the one before it ended.
+/// A cursor is read as the four values it was written as, so what a malformed one is told stays.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(from = "(String, i64, f64, String)")]
+struct Key(String, i64, f64, String);
+
+impl From<(String, i64, f64, String)> for Key {
+    fn from((stage, priority, at, slug): (String, i64, f64, String)) -> Key {
+        Key(stage, priority, at, slug)
+    }
+}
+
+impl Key {
+    /// Slugs order by `slug_order` (`ready-3` before `ready-30`), whatever came before them.
+    fn compare(&self, other: &Key, order: Order) -> Ordering {
+        let slug = || symphony_api::slug_order(&self.3, &other.3);
+        let newest = || other.2.total_cmp(&self.2).then_with(slug);
+        let priority = || self.1.cmp(&other.1).then_with(slug);
+        match order {
+            Order::Match => newest(),
+            Order::Priority => priority(),
+            Order::Stage => self.0.cmp(&other.0).then_with(|| {
+                if FINISHED.contains(&self.0.as_str()) {
+                    newest()
+                } else {
+                    priority()
+                }
+            }),
+        }
+    }
+}
+
 /// The column of a task a custom workflow holds: this, then its phase's ID. A phase's ID is the
 /// project's own and may be any board status's word, so a phase's column never takes a status's
-/// key, and a phase named for Build or Test never takes the process overlays' (docs/WORKFLOW.md,
+/// key, and a phase named for Build or Test never takes the process overlays' (docs/workflow/WORKFLOW.md,
 /// "The app").
 pub(super) const PHASE: &str = "phase:";
 
@@ -39,7 +90,7 @@ pub(super) fn status_argument(request: &Request) -> Result<(), String> {
 }
 
 /// Whether `id` is a workflow ID's shape: a lowercase ASCII letter, then lowercase letters, digits,
-/// `_` and `-` (docs/WORKFLOW.md, "Definition format 1").
+/// `_` and `-` (docs/workflow/WORKFLOW.md, "Definition format 1").
 pub(super) fn workflow_id(id: &str) -> bool {
     id.starts_with(|c: char| c.is_ascii_lowercase())
         && id
@@ -78,10 +129,7 @@ pub(super) fn listing(
         } else {
             hub.machine_snapshot()
         },
-        hub.task_signoff
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone(),
+        hub.task_signoff.lock().recover().clone(),
         hub.workflow_generation(),
     )
 }
@@ -165,7 +213,7 @@ fn project(
         return waiting::project(request, tasks, work, signoff, workflow);
     }
     let cursor = match query(request, "cursor")
-        .map(|text| serde_json::from_str::<(String, i64, f64, String)>(&text))
+        .map(|text| serde_json::from_str::<Key>(&text))
         .transpose()
     {
         Ok(cursor) => cursor,
@@ -176,71 +224,43 @@ fn project(
             );
         }
     };
-    // Slugs order by `slug_order` (`ready-3` before `ready-30`), here and in the cursor below,
-    // which must agree with this sort for a page to start where the one before it ended.
-    let by_priority = |a: &symphony_api::Task, b: &symphony_api::Task| {
-        a.priority
-            .cmp(&b.priority)
-            .then_with(|| symphony_api::slug_order(&a.slug, &b.slug))
+    let order = if !search.is_empty() {
+        Order::Match
+    } else if parent.is_some() || roots || holder.is_some() {
+        Order::Priority
+    } else {
+        Order::Stage
     };
-    tasks.tasks.sort_by(|a, b| {
-        if !search.is_empty() {
-            return scores[&b.slug]
-                .total_cmp(&scores[&a.slug])
-                .then_with(|| symphony_api::slug_order(&a.slug, &b.slug));
-        }
-        if parent.is_some() || roots || holder.is_some() {
-            return by_priority(a, b);
-        }
-        stage(a).cmp(&stage(b)).then_with(|| {
-            if a.is_finished() {
-                b.updated
-                    .total_cmp(&a.updated)
-                    .then_with(|| symphony_api::slug_order(&a.slug, &b.slug))
+    let mut rows: Vec<(Key, symphony_api::Task)> = std::mem::take(&mut tasks.tasks)
+        .into_iter()
+        .map(|task| {
+            let at = if search.is_empty() {
+                task.updated
             } else {
-                by_priority(a, b)
-            }
+                scores[&task.slug]
+            };
+            (
+                Key(stage(&task), task.priority, at, task.slug.clone()),
+                task,
+            )
         })
-    });
-    // Whether `slug` comes after the cursor's slug, in the order above.
-    let after_slug = |slug: &str, cursor: &str| {
-        symphony_api::slug_order(slug, cursor) == std::cmp::Ordering::Greater
-    };
+        .collect();
+    rows.sort_by(|a, b| a.0.compare(&b.0, order));
     let mut counts = std::collections::BTreeMap::<String, usize>::new();
     let mut lifecycle_counts = std::collections::BTreeMap::<String, usize>::new();
     let mut parent_index = 0_usize;
-    tasks.tasks.retain(|task| {
+    rows.retain(|(key, task)| {
         *lifecycle_counts.entry(task.status.clone()).or_default() += 1;
-        let task_stage = stage(task);
+        let task_stage = &key.0;
         let count = counts.entry(task_stage.clone()).or_default();
         let index = *count;
         *count += 1;
         let selected = status
             .as_ref()
-            .is_none_or(|s| task_stage == *s || (s == "signoff" && signoff.contains(&task.slug)));
+            .is_none_or(|s| task_stage == s || (s == "signoff" && signoff.contains(&task.slug)));
         let after = cursor
             .as_ref()
-            .is_none_or(|(state, priority, updated, slug)| {
-                if !search.is_empty() {
-                    return scores[&task.slug] < *updated
-                        || (scores[&task.slug] == *updated && after_slug(&task.slug, slug));
-                }
-                let after_priority = || {
-                    task.priority > *priority
-                        || (task.priority == *priority && after_slug(&task.slug, slug))
-                };
-                if parent.is_some() || roots || holder.is_some() {
-                    return after_priority();
-                }
-                task_stage > *state
-                    || (task_stage == *state
-                        && if ["done", "cancelled"].contains(&state.as_str()) {
-                            task.updated < *updated
-                                || (task.updated == *updated && after_slug(&task.slug, slug))
-                        } else {
-                            after_priority()
-                        })
-            });
+            .is_none_or(|cursor| key.compare(cursor, order) == Ordering::Greater);
         let index = if cursor.is_some() {
             let index = parent_index;
             if selected && after {
@@ -268,26 +288,17 @@ fn project(
                     (offset..offset.saturating_add(page)).contains(&index)
                 })
     });
+    let next = rows
+        .last()
+        .map(|(key, _)| serde_json::to_string(key).expect("a task paging key serializes"));
+    tasks.tasks = rows.into_iter().map(|(_, task)| task).collect();
     for task in &mut tasks.tasks {
         task.body.clear();
     }
     // `work=0`: the reader has the machine's work from `/api/machine-work` and the feed. Its
     // recorders' heartbeats move it every sample, so a listing without it keeps one validator
-    // while its tasks and counts stand (docs/analysis/client-cache.md).
+    // while its tasks and counts stand (docs/engineering/analysis/client-cache.md).
     let without_work = query(request, "work").as_deref() == Some("0");
-    let next = tasks.tasks.last().map(|task| {
-        serde_json::to_string(&(
-            stage(task),
-            task.priority,
-            if search.is_empty() {
-                task.updated
-            } else {
-                scores[&task.slug]
-            },
-            &task.slug,
-        ))
-        .expect("a task paging key serializes")
-    });
     no_store(Json(symphony_api::TaskListing {
         machine_work: if without_work {
             symphony_api::MachineWork::default()

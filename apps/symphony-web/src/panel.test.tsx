@@ -57,7 +57,7 @@ describe("the panel's media layer", () => {
     for (const route of own) {
       expect(reachOf(route), route.path).toEqual({ pictures: chat, views: false });
     }
-    for (const path of ["tasks", "agents", "queue", "reports", "runs"]) {
+    for (const path of ["tasks", "agents", "queue", "reports", "runs", "settings"]) {
       expect(reachOf({ ...HOME, path }), path).toEqual({
         pictures: `main img, ${chat}`,
         views: true,

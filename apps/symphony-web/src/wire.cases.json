@@ -73,6 +73,7 @@
         ["/docs/", "Docs"],
         ["/tasks", "Board"],
         ["/reports", "Reports"],
+        ["/settings", "Settings"],
         ["/runs", "Runs"],
         ["/agents", "Agents"]
       ],
@@ -121,6 +122,7 @@
         ["/docs/", "Docs"],
         ["/tasks", "Board"],
         ["/reports", "Reports"],
+        ["/settings", "Settings"],
         ["/runs", "Runs"],
         ["/agents", "Agents"]
       ],
@@ -169,6 +171,7 @@
         ["/docs/", "Docs"],
         ["/tasks", "Board"],
         ["/reports", "Reports"],
+        ["/settings", "Settings"],
         ["/runs", "Runs"],
         ["/agents", "Agents"]
       ],
@@ -217,6 +220,7 @@
         ["/", "Docs"],
         ["/tasks", "Board"],
         ["/reports", "Reports"],
+        ["/settings", "Settings"],
         ["/runs", "Runs"],
         ["/agents", "Agents"]
       ],
@@ -273,6 +277,7 @@
         ["/docs/", "Docs"],
         ["/tasks", "Board"],
         ["/reports", "Reports"],
+        ["/settings", "Settings"],
         ["/runs", "Runs"],
         ["/agents", "Agents"]
       ],
@@ -3458,6 +3463,88 @@
         "workflow": 2
       }
     },
+    "taskGuards": {
+      "authorities": [
+        {
+          "adapter": "design",
+          "issuer": "ledger",
+          "epoch": "2026",
+          "generation": 12,
+          "conflicted": false,
+          "admitted": 3,
+          "asked_here": false
+        },
+        {
+          "adapter": "release",
+          "issuer": "ledger",
+          "epoch": "2026",
+          "generation": 41,
+          "conflicted": false,
+          "admitted": 3,
+          "asked_here": true
+        }
+      ],
+      "guards": [
+        { "guard": "design_signoff", "adapter": "design" },
+        {
+          "guard": "release_signoff",
+          "adapter": "release",
+          "page": "/docs/LEDGER.md#w/a:release_signoff"
+        }
+      ],
+      "edges": [{ "edge": "pass", "guards": ["release_signoff"] }],
+      "entry": {
+        "edge": "submit",
+        "label": "Submit",
+        "revision": 7,
+        "principal": { "kind": "agent", "issuer": "board", "subject": "amber-wren" },
+        "at": 1794990000.0,
+        "guards": [
+          {
+            "guard": "design_signoff",
+            "adapter": "design",
+            "issuer": "ledger",
+            "epoch": "2026",
+            "generation": 11,
+            "standing": "decided_again",
+            "record": {
+              "result": "pass",
+              "facts": ["the design was approved /docs/DECISIONS.md#design-signoff"],
+              "reasons": [],
+              "epoch": "2026",
+              "generation": 11,
+              "issued_at": 1795000000.0,
+              "expires_at": 1795000600.0,
+              "task_revision": 7,
+              "at": { "phase": "review", "state": "awaiting" },
+              "input_revisions": { "design": "r4" },
+              "principal": { "kind": "human", "issuer": "local", "subject": "owner" }
+            }
+          }
+        ]
+      }
+    },
+    "guardRefusal": {
+      "guard": "release_signoff",
+      "adapter": "release",
+      "why": "refused",
+      "record": {
+        "result": "refuse",
+        "facts": [],
+        "reasons": [
+          "a blocker is still open /task/w/a",
+          "the release check failed https://ci.example/runs/7"
+        ],
+        "epoch": "2026",
+        "generation": 41,
+        "issued_at": 1795000000.0,
+        "expires_at": 1795000600.0,
+        "task_revision": 7,
+        "at": { "phase": "review", "state": "awaiting" },
+        "input_revisions": { "design": "r4" },
+        "principal": { "kind": "human", "issuer": "local", "subject": "owner" }
+      }
+    },
     "attempts": {
       "attempts": [
         {
@@ -4079,6 +4166,167 @@
       "landed": null,
       "prices": ""
     },
+    "settings": {
+      "files": [
+        {
+          "name": "symphony.toml",
+          "scope": "project",
+          "path": "/repo/symphony.toml",
+          "found": true
+        },
+        {
+          "name": "symphony.local.toml",
+          "scope": "machine",
+          "path": "/repo/symphony.local.toml",
+          "found": false
+        }
+      ],
+      "problems": ["symphony.local.toml: [land] check (line 5) is not read"],
+      "sections": [
+        {
+          "id": "integrations",
+          "title": "Integrations and tools",
+          "about": "About Integrations and tools.",
+          "entries": [
+            {
+              "id": "herdr",
+              "name": "Herdr panes",
+              "about": "Agents' terminals in Herdr.",
+              "state": { "word": "On", "on": true, "why": "Agents' terminals open in Herdr." },
+              "needs": [
+                {
+                  "what": "the hc program",
+                  "met": true,
+                  "said": "Found on this machine: /bin/hc."
+                },
+                {
+                  "what": "a token",
+                  "met": false,
+                  "said": "Not found on this machine: <nothing> opens."
+                }
+              ],
+              "settings": [
+                {
+                  "key": "[agents] panes",
+                  "name": "What agents' terminals run in",
+                  "kind": "choice",
+                  "value": "hc",
+                  "choices": ["hc", "none"],
+                  "source": {
+                    "scope": "project",
+                    "said": "symphony.toml [agents] panes, line 10",
+                    "file": "symphony.toml",
+                    "line": 10
+                  },
+                  "scopes": ["project"],
+                  "class": "preference"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "models",
+          "title": "Models and limits",
+          "about": "About Models and limits.",
+          "entries": [
+            {
+              "id": "models",
+              "name": "The model each role runs on",
+              "about": "What a launch passes.",
+              "settings": [
+                {
+                  "key": "[agents.models] executor",
+                  "name": "The executor's model",
+                  "kind": "text",
+                  "value": "fable",
+                  "source": {
+                    "scope": "machine",
+                    "said": "symphony.local.toml [agents.models] executor, line 2",
+                    "file": "symphony.local.toml",
+                    "line": 2,
+                    "over": "symphony.toml [agents.models] executor, line 16"
+                  },
+                  "scopes": ["project", "machine"],
+                  "class": "preference"
+                },
+                {
+                  "key": "[limits] machine_agents",
+                  "name": "Agents this machine runs",
+                  "kind": "number",
+                  "value": "no limit",
+                  "source": { "said": "default: no limit" },
+                  "scopes": ["project", "machine"],
+                  "class": "preference"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "reviewed",
+          "title": "Shown here, changed by a reviewed task",
+          "about": "About Shown here, changed by a reviewed task.",
+          "entries": [
+            {
+              "id": "landing",
+              "name": "Landing",
+              "about": "What a land runs.",
+              "settings": [
+                {
+                  "key": "[land]",
+                  "name": "What a land does",
+                  "kind": "sentence",
+                  "value": "No check; pushes main; no generator; merged here.",
+                  "source": {
+                    "scope": "project",
+                    "said": "symphony.toml [land], line 36",
+                    "file": "symphony.toml",
+                    "line": 36
+                  },
+                  "scopes": ["project"],
+                  "class": "reviewed"
+                }
+              ]
+            },
+            {
+              "id": "workflow",
+              "name": "Workflow",
+              "about": "The stages a task moves through.",
+              "state": {
+                "word": "Built in",
+                "why": "The board's own workflow: no [workflow] written."
+              },
+              "source": { "said": "default: no [workflow] written" }
+            }
+          ]
+        },
+        {
+          "id": "device",
+          "title": "This device",
+          "about": "About This device.",
+          "entries": [
+            {
+              "id": "appearance",
+              "name": "Appearance",
+              "about": "A theme of this device's own.",
+              "settings": [
+                {
+                  "key": "appearance",
+                  "name": "The theme of this project's pages here",
+                  "kind": "text",
+                  "value": "kept in this browser",
+                  "source": { "scope": "device", "said": "this browser" },
+                  "scopes": ["device"],
+                  "class": "preference"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "emptySettings": { "files": [], "sections": [] },
     "taskTokens": {
       "total": {
         "input": 20,
@@ -4224,6 +4472,77 @@
             "prices": "2026-11-16"
           }
         }
+      ],
+      "rows": [
+        {
+          "handle": "executor-1",
+          "slug": "w/a",
+          "role": "executor",
+          "model": "claude-opus-5-5",
+          "speed": "standard",
+          "round": 1,
+          "tokens": {
+            "input": 10,
+            "cache_write_5m": 2000,
+            "cache_write_1h": 300,
+            "cache_read": 90000,
+            "output": 1500,
+            "calls": 4
+          },
+          "cost": {
+            "dollars": 2.0,
+            "input": 0.01,
+            "cache_write_5m": 0.25,
+            "cache_write_1h": 0.05,
+            "cache_read": 0.45,
+            "output": 1.24,
+            "unpriced": [
+              {
+                "model": "gpt-x",
+                "speed": "standard",
+                "tokens": {
+                  "input": 10,
+                  "cache_write_5m": 2000,
+                  "cache_write_1h": 300,
+                  "cache_read": 90000,
+                  "output": 1500,
+                  "calls": 4
+                }
+              }
+            ],
+            "prices": "2026-11-16"
+          },
+          "first": 1000.0,
+          "last": 1600.0
+        },
+        {
+          "handle": "reviewer-1",
+          "slug": "w/a",
+          "role": "reviewer",
+          "model": "claude-opus-5-5",
+          "speed": "standard",
+          "round": 2,
+          "tokens": {
+            "input": 10,
+            "cache_write_5m": 2000,
+            "cache_write_1h": 300,
+            "cache_read": 90000,
+            "output": 1500,
+            "calls": 4
+          },
+          "cost": {
+            "dollars": 1.0,
+            "input": 0.01,
+            "cache_write_5m": 0.25,
+            "cache_write_1h": 0.05,
+            "cache_read": 0.45,
+            "output": 0.24,
+            "unpriced": [],
+            "prices": "2026-11-16"
+          },
+          "first": 2000.0,
+          "last": 2600.0
+        }
       ]
     },
     "emptyTaskTokens": {
@@ -4246,7 +4565,8 @@
         "prices": ""
       },
       "by_role": [],
-      "by_round": []
+      "by_round": [],
+      "rows": []
     },
     "taskCosts": {
       "prices": "2026-11-16",
@@ -5381,14 +5701,15 @@
       "rust": "crates/symphony-api/src/project.rs own_pages",
       "typescript": "ownPages, src/project.ts",
       "source": [
-        "    pub fn own_pages(&self) -> [(String, &'static str); 7] {",
-        "        use page_names::{AGENTS, BOARD, DOCS, HOME, QUEUE, REPORTS, RUNS};",
+        "    pub fn own_pages(&self) -> [(String, &'static str); 8] {",
+        "        use page_names::{AGENTS, BOARD, DOCS, HOME, QUEUE, REPORTS, RUNS, SETTINGS};",
         "        [",
         "            (\"/\".into(), HOME),",
         "            (\"/queue\".into(), QUEUE),",
         "            (self.documents_href(), DOCS),",
         "            (\"/tasks\".into(), BOARD),",
         "            (\"/reports\".into(), REPORTS),",
+        "            (\"/settings\".into(), SETTINGS),",
         "            (\"/runs\".into(), RUNS),",
         "            (\"/agents\".into(), AGENTS),",
         "        ]",

@@ -172,10 +172,25 @@ describe("the board's cards' costs", () => {
     asked[0]?.answer(answer([{ slug: "w/a", dollars: 1.5, unpriced: true }]));
     await until(() => expect(costs.get("w/a")).toBeDefined());
     expect(drawn()).toContain(
-      '<span class="card-cost" title="Its tokens and its subtasks&#x27;, estimated at API list ' +
-        "prices read 2026-11-16, not money spent; + some of a model with no price, in no " +
-        'figure">$1.50+</span><span class="prio">',
+      // On the time's line, before the time; the slug's line has its slug and priority alone.
+      '<span class="age"><span class="card-cost" title="Its tokens and its subtasks&#x27;, ' +
+        "estimated at API list prices read 2026-11-16, not money spent; + some of a model with " +
+        'no price, in no figure">$1.50+</span><span class="card-cost-dot" aria-hidden="true">·' +
+        "</span>0 h</span>",
     );
+    expect(drawn()).toContain(
+      '<div class="waiting-slug"><code><span class="cut-head">w/a</span></code>' +
+        '<span class="prio">p2</span>',
+    );
+    // A card old enough to colour its time keeps its cost in the card's own colour (the sheet's).
+    const old = aTask("w/a", { updated: 5, status: "review" });
+    const oldCard = renderToStaticMarkup(
+      <CardCostsContext.Provider value={costs}>
+        <WaitCard task={old} now={5 + 8 * 86400} />
+      </CardCostsContext.Provider>,
+    );
+    expect(oldCard).toContain('<span class="age old"><span class="card-cost"');
+    expect(oldCard).toContain("</span>8 d</span>");
     mount.abort();
   });
 });

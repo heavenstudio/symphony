@@ -1,22 +1,22 @@
-//! The client cache's store (assets/cache.js) in a real browser: a kept read comes back under its
-//! format and project, another format clears it, and the approved caps, the age rule and the
-//! order decide what goes: the tasks opened last, the documents visited most
-//! (docs/analysis/client-cache.md, "What is kept"; the owner's additions on the board task
-//! perf/client-cache/build), and a read ahead asks at the lowest priority, marked as a prefetch and
-//! naming its tag, keeping what it is sent unvisited; a page going away aborts the transactions
-//! it has open and keeps again once back. The page loads the store alone,
-//! so no release build is needed. The page's clock is set by each step (`t.at`), and V8's precise
-//! coverage of the store is reported once every case has run.
+//! The client cache's store (shell/cache.ts, served here as `/assets/cache.js`) in a real
+//! browser: a kept read comes back under its format and project, another format clears it, and the
+//! approved caps, the age rule and the order decide what goes: the tasks opened last, the documents
+//! visited most (docs/engineering/analysis/client-cache.md, "What is kept"; the owner's additions on the board
+//! task perf/client-cache/build), and a read ahead asks at the lowest priority, marked as a
+//! prefetch and naming its tag, keeping what it is sent unvisited; a page going away aborts the
+//! transactions it has open and keeps again once back. The page loads the store alone, its types
+//! stripped ([`store`]), so no release build is needed. The page's clock is set by each step
+//! (`t.at`), and V8's precise coverage of the store is reported once every case has run.
 
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
+use crate::assets::store;
 use crate::chrome::Chrome;
 use crate::common;
 use crate::site::Site;
 
-const STORE: &str = include_str!("../../../symphony-web/shell/cache.js");
 const DAY: u64 = 86_400_000;
 const MB: u64 = 1_000_000;
 
@@ -79,6 +79,26 @@ window.t = {
 };
 "#;
 
+/// How long the store waits for its database to open when the page names no wait, in ms.
+const STORE_OPENING: u64 = 500;
+/// The longest wait a browser's timer takes, in ms: Chrome's fires a longer one at once.
+const LONGEST_TIMER: u64 = 2_147_483_647;
+
+/// What each `named-N.html` names for the wait on its database (`symphonyCacheOpenMs`), as its
+/// script writes it, and the one wait the store then asks a timer for: the named wait, which is
+/// any other than the store's own; the store's own for a value it ignores, none positive or no
+/// number (as `src/request.ts` ignores such a `symphonyAnswerMs`); and the longest a timer takes
+/// for one past it.
+const NAMED_OPENINGS: [(&str, u64); 7] = [
+    ("7", 7),
+    ("0", STORE_OPENING),
+    ("-5", STORE_OPENING),
+    ("\"7\"", STORE_OPENING),
+    ("NaN", STORE_OPENING),
+    ("2147483648", LONGEST_TIMER),
+    ("Infinity", LONGEST_TIMER),
+];
+
 /// A folder holding the store and the pages that load it: `/` as the shell would, and the others
 /// in a browser whose IndexedDB is missing, refused, never answers or answers past the deadline.
 fn pages() -> PathBuf {
@@ -88,7 +108,7 @@ fn pages() -> PathBuf {
     ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("assets")).unwrap();
-    std::fs::write(dir.join("assets/cache.js"), STORE).unwrap();
+    std::fs::write(dir.join("assets/cache.js"), store()).unwrap();
     std::fs::write(
         dir.join("index.html"),
         format!(
@@ -128,6 +148,17 @@ fn pages() -> PathBuf {
                 "<!DOCTYPE html><html><head><script>\
                  Object.defineProperty(window, \"indexedDB\", {{ value: {indexeddb} }});</script>\
                  </head><body><script type=\"module\" src=\"/assets/cache.js\"></script></body></html>"
+            ),
+        )
+        .unwrap();
+    }
+    // A database that never answers, in pages that each name a wait for it (`symphonyCacheOpenMs`,
+    // [`NAMED_OPENINGS`]) and keep each wait the store asks a timer for (`waits`).
+    for (at, (named, _)) in NAMED_OPENINGS.iter().enumerate() {
+        std::fs::write(
+            dir.join(format!("named-{at}.html")),
+            format!(
+                "<!DOCTYPE html><html><head><script>             Object.defineProperty(window, \"indexedDB\", {{ value: {{ open() {{ return {{}}; }} }} }});             window.symphonyCacheOpenMs = {named}; window.waits = [];             const timer = window.setTimeout;             window.setTimeout = (work, ms, ...more) => {{ window.waits.push(ms); return timer(work, ms, ...more); }};</script>             </head><body><script type=\"module\" src=\"/assets/cache.js\"></script></body></html>"
             ),
         )
         .unwrap();
@@ -212,6 +243,18 @@ fn the_store_keeps_reads_by_format_and_project_and_holds_the_approved_caps() {
         if page == "/hung.html" || page == "/late.html" {
             an_open_past_its_deadline_is_asked_for_once(&mut chrome, page);
         }
+        for (at, also) in coverage(&mut chrome).into_iter().enumerate() {
+            ran[at] |= also;
+        }
+    }
+    for (n, &(named, wait)) in NAMED_OPENINGS.iter().enumerate() {
+        let page = format!("/named-{n}.html");
+        chrome.open(&site.url(&page));
+        assert!(
+            chrome.wait_for("window.symphonyCache", crate::SHOWN),
+            "{page}"
+        );
+        a_page_that_names_the_wait_for_its_database_waits_that_long(&mut chrome, named, wait);
         for (at, also) in coverage(&mut chrome).into_iter().enumerate() {
             ran[at] |= also;
         }
@@ -1033,6 +1076,27 @@ fn an_open_that_does_not_answer_in_time_lets_the_page_go_on(chrome: &mut Chrome)
     assert!((490.0..5_000.0).contains(&waited), "waited {waited} ms");
 }
 
+/// A page that names how long its database is waited for (`symphonyCacheOpenMs`, as the browser
+/// tests of a page with its cache do) has the store wait `wait` ms, and no other: the one timer it
+/// asked for, the named wait, the store's own for a value it ignores or the longest a timer takes
+/// for one past it, after which the call goes on without the cache. That last is some 24 days,
+/// so there the read is left to it.
+fn a_page_that_names_the_wait_for_its_database_waits_that_long(
+    chrome: &mut Chrome,
+    named: &str,
+    wait: u64,
+) {
+    let asked = run(
+        chrome,
+        r#"window.reading = C.read(1, "alpha", "task:a", "page"); return window.waits;"#,
+    );
+    assert_eq!(asked, json!([wait]), "symphonyCacheOpenMs = {named}");
+    if wait <= STORE_OPENING {
+        let read = run(chrome, "return await window.reading;");
+        assert_eq!(read, json!(null), "symphonyCacheOpenMs = {named}");
+    }
+}
+
 /// However many calls follow an open that missed its deadline, answered late or never, the page
 /// asked the browser to open the database once: one that never answers is not asked again, and
 /// one that answers late is used, not opened anew.
@@ -1101,7 +1165,7 @@ fn coverage(chrome: &mut Chrome) -> Vec<bool> {
         })
         .collect();
     assert!(!scripts.is_empty(), "no coverage of the store: {taken}");
-    let mut ran = vec![false; STORE.len()];
+    let mut ran = vec![false; store().len()];
     for script in scripts {
         for (at, counted) in counts(script).into_iter().enumerate() {
             ran[at] |= counted > 0;
@@ -1126,11 +1190,12 @@ fn counts(script: &Value) -> Vec<u64> {
         })
         .collect();
     // Outer ranges first, so an inner block's count overrides its function's. The store is ASCII
-    // (a host test holds it so), so V8's UTF-16 offsets are its byte offsets.
+    // (shell/strip.test.ts holds it so), so V8's UTF-16 offsets are its byte offsets.
     ranges.sort_by_key(|&(start, end, _)| (start, std::cmp::Reverse(end)));
-    let mut counts = vec![0_u64; STORE.len()];
+    let length = store().len();
+    let mut counts = vec![0_u64; length];
     for (start, end, count) in ranges {
-        counts[start.min(STORE.len())..end.min(STORE.len())].fill(count);
+        counts[start.min(length)..end.min(length)].fill(count);
     }
     counts
 }
@@ -1143,7 +1208,7 @@ fn report(ran: &[bool]) {
     let mut never = Vec::new();
     let mut entered = Vec::new();
     let mut offset = 0;
-    for (number, line) in STORE.split_inclusive('\n').enumerate() {
+    for (number, line) in store().split_inclusive('\n').enumerate() {
         let code = line.trim();
         let start = offset;
         offset += line.len();
@@ -1165,7 +1230,7 @@ fn report(ran: &[bool]) {
         }
     }
     eprintln!(
-        "cache.js coverage: {} code lines, {whole} ran whole, {} in part, {} never; in part, what never ran: {part:?}; never: {never:?}",
+        "cache.ts coverage: {} code lines, {whole} ran whole, {} in part, {} never; in part, what never ran: {part:?}; never: {never:?}",
         whole + part.len() + never.len(),
         part.len(),
         never.len()

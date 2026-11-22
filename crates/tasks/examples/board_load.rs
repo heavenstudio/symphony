@@ -52,7 +52,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Barrier, mpsc};
 use std::time::{Duration, Instant};
 use symphony_board::rows::Dump;
-use symphony_board::rpc::{self, Client};
+use symphony_board::rpc::Client;
 use symphony_board::server::postgres::USER;
 use symphony_board::server::{Home, Running, Storage, scratch};
 use symphony_board::sys;
@@ -407,7 +407,7 @@ impl Options {
             ));
         }
         let database = arg(args, "--database").unwrap_or("load");
-        if database == DATABASE || !rpc::plain(database) {
+        if database == DATABASE || !symphony_board::db::plain(database) {
             return Err(format!(
                 "--database {database}: a plain name, never the live board's"
             ));

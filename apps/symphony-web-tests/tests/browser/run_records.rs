@@ -1,7 +1,7 @@
 //! A test run `tools/cargo.sh` sends through the board's recorder (`tasks run`), read by the real
 //! server from its checkout's work folder: the board's Build and Test columns follow it, a slice's
 //! run on its parent's card, and until anything was recorded they are one rail
-//! (docs/MACHINE_WORK.md).
+//! (docs/workflow/MACHINE_WORK.md).
 use super::{
     SHOWN, binaries, chrome, chrome::Chrome, owner_controls::ScratchBoard, restored::Native,
 };
@@ -33,7 +33,7 @@ const PROBE_WAIT: &str = "120";
 /// release; dropping the run releases it and reaps it, so a failed assertion leaves no run. On that
 /// scratch board its recorder takes the scale of its waits ([`SCALE`]), and the script waits long
 /// for its probe ([`PROBE_WAIT`]): a loaded machine never leaves a run unrecorded, or recorded for
-/// no task (docs/MACHINE_WORK.md, "A test's waits"). A recorder grown slow is the board's tests' to
+/// no task (docs/workflow/MACHINE_WORK.md, "A test's waits"). A recorder grown slow is the board's tests' to
 /// turn red.
 struct Run {
     child: Child,
@@ -88,7 +88,7 @@ impl Drop for Run {
 
 /// The page as the screenshot evidence keeps it, under `artifacts/run-columns/` of the checkout.
 fn screenshot(chrome: &mut Chrome, name: &str) {
-    chrome.eval("document.fonts.ready.then(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))))");
+    chrome.frames_with_fonts();
     let shot = chrome.call("Page.captureScreenshot", json!({"format":"png"}));
     let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../artifacts/run-columns");
     std::fs::create_dir_all(&folder).unwrap();
@@ -111,19 +111,11 @@ fn columns(chrome: &mut Chrome) -> Value {
         .eval("[...document.querySelectorAll('.waiting-columns .column')].map(e=>e.dataset.status)")
 }
 
-fn desktop() -> Value {
-    json!({"width":1600,"height":900,"deviceScaleFactor":1,"mobile":false})
-}
-
-fn phone() -> Value {
-    json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true})
-}
-
 #[test]
 fn a_recorded_test_run_moves_its_task_to_test_and_back_and_a_reviewers_stays_in_review() {
     let Some(mut chrome) = chrome() else { return };
     let fixture = Fixture::start();
-    chrome.call("Emulation.setDeviceMetricsOverride", desktop());
+    chrome.viewport(1600, 900, false);
     chrome.open(&fixture.site.url("/tasks"));
     // Build and Test remain columns before this project records its first run.
     assert!(chrome.wait_for(&format!("document.querySelector('.column[data-status=in_progress] .taskcard[data-slug=\"{WORKING}\"]') !== null && document.querySelector('main')?.dataset.feed==='live'"), SHOWN), "{}", chrome.eval("document.body.innerText"));
@@ -143,14 +135,14 @@ fn a_recorded_test_run_moves_its_task_to_test_and_back_and_a_reviewers_stays_in_
         chrome.eval("fetch('/api/task-board?counts=1&activity=1').then(r=>r.json()).then(j=>JSON.stringify(j.machine_work))")
     );
     screenshot(&mut chrome, "after-none");
-    chrome.call("Emulation.setDeviceMetricsOverride", phone());
+    chrome.viewport(390, 844, true);
     assert!(chrome.wait_for("document.querySelectorAll('.waiting-columns .column').length === 1 && document.querySelector('.column[data-status=review]') !== null",SHOWN));
     assert_eq!(
         chrome.eval("document.documentElement.scrollWidth <= innerWidth"),
         json!(true)
     );
     screenshot(&mut chrome, "after-none-phone");
-    chrome.call("Emulation.setDeviceMetricsOverride", desktop());
+    chrome.viewport(1600, 900, false);
     let mut working = Run::start(&fixture, "working", &fixture.executor);
     let mut reviewing = Run::start(&fixture, "reviewing", &fixture.reviewer);
     let mut slicing = Run::start(&fixture, "slicing", &fixture.slicer);

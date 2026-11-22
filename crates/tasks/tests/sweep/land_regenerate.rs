@@ -1798,24 +1798,83 @@ fn a_check_that_cannot_run_is_red() {
 
 #[test]
 fn a_check_past_its_time_is_filed_as_late_not_as_failed() {
+    use super::limits::{CheckGroup, written_pid};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::time::Instant;
+    /// `[land] timeout_seconds`, which the test's clock passes in one step.
+    const LIMIT: u64 = 3;
     let r = Repo::new();
+    let pid = r.dir.join("check.pid");
+    // A check that never ends by itself while the test runs: the line names the limit that ended
+    // it, which a check ending by itself would never be said to have run past.
+    let check = format!("echo $$ > '{}'; exec sleep 600", pid.display());
     project_file(
         &r,
         &format!(
-            "[verdicts]\ncheck = [\"sleep\", \"600\"]\n\n[land]\ncheck = false\ntimeout_seconds = \
-             3\n{}",
+            "[verdicts]\ncheck = [\"sh\", \"-c\", {}]\n\n[land]\ncheck = false\ntimeout_seconds = \
+             {LIMIT}\n{}",
+            toml_string(&check),
             alone(&index(&r))
         ),
     );
-    // A check that never ends by itself while the test runs: the line names the limit that ended
-    // it, which a check ending by itself would never be said to have run past.
-    let (said, result) = regenerated(&r);
+    // The clock the timeouts read stands still until the check runs, so the round's own commands
+    // (its generator, its `git merge --ff-only`), each under the same limit, take what time a
+    // loaded machine gives them and only the check runs past it.
+    let began = Instant::now();
+    let (expired, aborted) = (AtomicBool::new(false), AtomicBool::new(false));
+    let (ready_reads, abort_ticks) = (AtomicU64::new(0), AtomicU64::new(0));
+    let clock = || {
+        if written_pid(&pid).is_some() {
+            ready_reads.fetch_add(1, Ordering::SeqCst);
+        }
+        let limits = if aborted.load(Ordering::SeqCst) {
+            // A command starting after a stalled setup expires too, so the scoped regenerator
+            // can be joined before the stall is reported.
+            abort_ticks.fetch_add(1, Ordering::SeqCst) + 1
+        } else {
+            u64::from(expired.load(Ordering::SeqCst))
+        };
+        began + Duration::from_secs(limits * LIMIT)
+    };
+    let cleanup = CheckGroup(pid.clone());
+    let (said, result) = std::thread::scope(|scope| {
+        let store = r.board.other();
+        let env = r.env(&r.root);
+        let clock = &clock;
+        let regenerator = scope.spawn(move || {
+            let mut out = Vec::new();
+            let result = regenerate::run_with_clock(&store, &env, &mut out, None, clock);
+            (String::from_utf8(out).unwrap(), result)
+        });
+        let ready = test_time::until_true(
+            "the check runs and its watchdog has read the held clock twice",
+            test_time::backstop(Duration::from_secs(60)),
+            || ready_reads.load(Ordering::SeqCst) >= 2,
+        );
+        // Two reads once the check runs include its watchdog's deadline and first look, even if
+        // the watchdog started after the check: no command before it can use up this limit.
+        aborted.store(ready.is_err(), Ordering::SeqCst);
+        expired.store(true, Ordering::SeqCst);
+        let ended = test_time::until_true(
+            "the regenerator ended once its check ran past its time",
+            test_time::backstop(Duration::from_secs(60)),
+            || regenerator.is_finished(),
+        );
+        if ended.is_err() {
+            cleanup.end();
+            aborted.store(true, Ordering::SeqCst);
+        }
+        let done = regenerator.join().unwrap();
+        ended.unwrap();
+        ready.unwrap();
+        done
+    });
     assert!(result.unwrap().contains(": landed on main at "), "{said}");
     let top = head(&r.root, "main");
     assert!(
         said.contains(&format!(
-            "regenerate: the check `sleep 600` ran past the land's timeout ([land] \
-             timeout_seconds, 3 s) on main at {}; its output is in ",
+            "regenerate: the check `sh -c {check}` ran past the land's timeout ([land] \
+             timeout_seconds, {LIMIT} s) on main at {}; its output is in ",
             &top[..7]
         )) && said.contains(&format!("regenerate: red: filed {RED_CHECK}\n")),
         "{said}"

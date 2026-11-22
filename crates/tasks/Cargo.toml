@@ -21,7 +21,7 @@ include = ["src/**", "!src/bin/fake-hc.rs", "build.rs", "README.md", "LICENSE"]
 # crate's own tree, and the rest of it (tokio, the WebSocket stack) is ~260 CPU-s of build this does
 # without (docs/engineering/analysis/review-app-rust-port.md, "Clean release build").
 [dependencies]
-process-cwd = { path = "../process-cwd", version = "1.0.0" }
+process-cwd = { path = "../process-cwd", version = "1.0.1" }
 # Its variables, each by its one SYMPHONY_ name.
 symphony-env = { path = "../symphony-env", version = "1.0.0" }
 # The command a mistyped word was nearest to, shared with the `symphony` command line.
@@ -40,7 +40,7 @@ serde = { version = "1", features = ["derive"] }
 # three are the features the server's build unifies on serde_json (crates/symphony and
 # crates/symphony-schema ask for arbitrary_precision and preserve_order, axum for raw_value), asked for
 # here so the `tasks` binary, the server's board and this package's own tests are one configuration
-# (docs/CHECKS.md), and a worktree's board tests reuse the dependencies the main checkout's build of
+# (docs/workflow/CHECKS.md), and a worktree's board tests reuse the dependencies the main checkout's build of
 # `tasks` compiled.
 serde_json = { version = "1", features = ["arbitrary_precision", "float_roundtrip", "preserve_order", "raw_value"] }
 # The project file: `[project] id` (src/project.rs), and `[board] on_review`, the command a task
@@ -57,7 +57,7 @@ ed25519-dalek = { version = "3", default-features = false }
 # the free disk the board warns of is read by `statvfs` (src/board_health/disk.rs).
 libc.workspace = true
 # The hosted board's driver, linked by the `hosted-postgresql` feature alone (src/pg/hosted.rs;
-# docs/analysis/hosted-postgresql.md says why this one): PostgreSQL's protocol and SCRAM from
+# docs/operations/analysis/hosted-postgresql.md says why this one): PostgreSQL's protocol and SCRAM from
 # tokio-postgres, TLS from rustls, which verifies the chain and the name or does not connect, with
 # ring's primitives and no system library. tokio drives each pool's connections on one thread.
 tokio = { version = "1", features = ["rt", "time", "net", "sync"], optional = true }
@@ -67,7 +67,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 
 [features]
 # A board in a managed PostgreSQL reached over verified TLS (src/pg/hosted.rs,
-# docs/POSTGRESQL.md): off unless a hosted build asks for it, so no other build links its driver.
+# docs/operations/POSTGRESQL.md): off unless a hosted build asks for it, so no other build links its driver.
 hosted-postgresql = ["dep:tokio", "dep:tokio-postgres", "dep:tokio-postgres-rustls", "dep:rustls"]
 
 # The hosted board against real PostgreSQL 16 and 18 servers (tests/hosted/main.rs).

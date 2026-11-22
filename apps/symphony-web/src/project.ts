@@ -144,6 +144,7 @@ export function ownPages(view: ProjectView): [string, string][] {
     [documentsHref(view), PAGE_NAMES.DOCS],
     ["/tasks", PAGE_NAMES.BOARD],
     ["/reports", PAGE_NAMES.REPORTS],
+    ["/settings", PAGE_NAMES.SETTINGS],
     ["/runs", PAGE_NAMES.RUNS],
     ["/agents", PAGE_NAMES.AGENTS],
   ];
@@ -180,6 +181,7 @@ export function headerLinks(view: ProjectView, path: string, document: boolean):
     document && plugin === undefined,
     path === "tasks" || path.startsWith("task/"),
     path === "reports",
+    path === "settings",
     path === "runs",
     path === "agents",
   ];
@@ -210,7 +212,7 @@ export function crumbs(view: ProjectView, path: string): string[] {
 /**
  * `key` as the project's pages keep it in the browser: the machine's one server's projects share
  * its origin, so each key takes the project's id first; a server of its own keeps it as it is.
- * shell.js's `stored` is the same rule.
+ * shell.ts's `stored` is the same rule.
  */
 export function stored(view: ProjectView, key: string): string {
   const id = (view.base ?? "").replace(/^\/+/, "");

@@ -240,8 +240,9 @@ fn status(text: &str) -> Option<&str> {
     STATUSES.contains(&text).then_some(text)
 }
 
-/// Whether a verdict's text is this verdict, alone or before its `: text`.
-fn verdict_is(text: &str, verdict: &str) -> bool {
+/// Whether a verdict's text is this verdict, alone or before its `: text`, as `just tasks verdict`
+/// writes it: the one reader of that rule, for the replay here, the reports and the store.
+pub fn verdict_is(text: &str, verdict: &str) -> bool {
     text.strip_prefix(verdict)
         .is_some_and(|rest| rest.is_empty() || rest.starts_with(':'))
 }

@@ -23,7 +23,7 @@
 //! The guards are this file and `tests/consumer_api.rs` in `crates/tasks` (`symphony_board`),
 //! `apps/symphony-server`, `crates/process-cwd` and `crates/repository-read`: every package a
 //! consumer's code calls. Not held by any of them, and the project's to meet when it moves its pin
-//! (its own gate builds it on the new one, docs/RELEASES.md, *A release*): the signature of a
+//! (its own gate builds it on the new one, docs/workflow/RELEASES.md, *A release*): the signature of a
 //! function a guard names alone, and a field it reads or a method it calls on a value that is not
 //! named in a guard.
 //!

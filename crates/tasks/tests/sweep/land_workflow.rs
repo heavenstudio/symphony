@@ -1,4 +1,4 @@
-//! `tasks land` on a task a custom workflow holds (docs/WORKFLOW.md, "External effects"), in
+//! `tasks land` on a task a custom workflow holds (docs/workflow/WORKFLOW.md, "External effects"), in
 //! scratch repositories on a board of their own: it lands by the prepare and finalize edges of the
 //! default landing's adapter and by nothing else, refuses before any merge a task no such edge
 //! leaves, binds the head its approve read, withdraws a reservation that went stale, and finishes
@@ -7,6 +7,7 @@
 use super::gates::{BUDGET, GATE, decide, raise};
 use super::stamps::told;
 use super::*;
+use crate::common::pair;
 use std::collections::BTreeMap;
 use symphony_api::workflow::{InputValue, OperationRequest, Pair};
 use symphony_board::Store;
@@ -24,13 +25,6 @@ fn workflowed(r: &Repo) {
     manifest(r, &format!("\n{WORKFLOW}"));
     let followed = follow(&r.board.store, &r.root).unwrap();
     assert!(matches!(followed, Followed::Activated(_)), "{followed:?}");
-}
-
-fn pair(phase: &str, state: &str) -> Pair {
-    Pair {
-        phase: phase.into(),
-        state: state.into(),
-    }
 }
 
 fn at(r: &Repo, slug: &str) -> (Pair, u64) {

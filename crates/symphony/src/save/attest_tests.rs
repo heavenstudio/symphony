@@ -24,7 +24,7 @@ use super::*;
 use crate::taskview::page_tests::store_fixture::{Fixture, HELD_FLOW, Seed, take_edge};
 
 /// The seed of the key the project commits for its authority.
-const KEY: u8 = 7;
+pub(super) const KEY: u8 = 7;
 
 /// How a stand-in authority answers.
 #[derive(Clone, Copy, PartialEq)]
@@ -52,16 +52,16 @@ static ASKED: Mutex<Vec<(Answering, Operation)>> = Mutex::new(Vec::new());
 /// Whether a stuck authority may answer, set once the test is done with it.
 static LET_GO: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
 
-fn hex(bytes: &[u8]) -> String {
+pub(super) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn signing(seed: u8) -> SigningKey {
+pub(super) fn signing(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
 }
 
 /// `payload` signed by `seed`'s key as an observation or an attestation.
-fn signed(seed: u8, observation: bool, payload: &str) -> symphony_api::workflow::Signed {
+pub(super) fn signed(seed: u8, observation: bool, payload: &str) -> symphony_api::workflow::Signed {
     let signature = signing(seed).sign(&signed_message(observation, payload));
     symphony_api::workflow::Signed {
         payload: payload.into(),
@@ -70,7 +70,7 @@ fn signed(seed: u8, observation: bool, payload: &str) -> symphony_api::workflow:
 }
 
 /// The pass the ledger gives `operation` at its generation 1 of e1, issued now for ten minutes.
-fn pass(operation: &Operation) -> Attestation {
+pub(super) fn pass(operation: &Operation) -> Attestation {
     let issued = crate::save::epoch_now() - 1.0;
     Attestation {
         contract: ATTESTATION_CONTRACT,
@@ -130,7 +130,7 @@ impl Authority for Ledger {
 }
 
 /// A plugin of the project answering for its approval authority.
-struct Approvals(Ledger);
+pub(super) struct Approvals(Ledger);
 
 impl Plugin for Approvals {
     fn name(&self) -> &str {
@@ -141,17 +141,17 @@ impl Plugin for Approvals {
     }
 }
 
-static PASSING: Approvals = Approvals(Ledger(Answering::Pass(KEY)));
+pub(super) static PASSING: Approvals = Approvals(Ledger(Answering::Pass(KEY)));
 /// Passing too, for the test that shows it is never asked.
 static UNASKED: Approvals = Approvals(Ledger(Answering::Pass(8)));
-static OTHER_KEY: Approvals = Approvals(Ledger(Answering::Pass(9)));
-static OTHER_TASK: Approvals = Approvals(Ledger(Answering::OtherTask));
+pub(super) static OTHER_KEY: Approvals = Approvals(Ledger(Answering::Pass(9)));
+pub(super) static OTHER_TASK: Approvals = Approvals(Ledger(Answering::OtherTask));
 static UNSIGNED: Approvals = Approvals(Ledger(Answering::Unsigned));
-static CLOSED: Approvals = Approvals(Ledger(Answering::Closed));
+pub(super) static CLOSED: Approvals = Approvals(Ledger(Answering::Closed));
 static BROKEN: Approvals = Approvals(Ledger(Answering::Broken));
 static STUCK: Approvals = Approvals(Ledger(Answering::Stuck));
 
-fn plugins(plugin: &'static Approvals) -> Plugins {
+pub(super) fn plugins(plugin: &'static Approvals) -> Plugins {
     Plugins::new(vec![plugin])
 }
 
@@ -166,7 +166,7 @@ fn asked_of(answering: Answering) -> Vec<Operation> {
 
 /// [`HELD_FLOW`] with its acceptance guarded by `approved`, which the `approvals` authority
 /// attests, in the project `sim`, the key of [`KEY`] committed for it.
-fn guarded() -> Custom {
+pub(super) fn guarded() -> Custom {
     let text = HELD_FLOW
         .replacen("adapters = []", "adapters = [\"approvals\"]", 1)
         .replacen(
@@ -209,7 +209,7 @@ fn guarded() -> Custom {
 
 /// The guarded board with sim/a claimed and submitted by amber, at verify/awaiting, its authority's
 /// generation 1 of e1 accepted.
-fn awaiting() -> Fixture {
+pub(super) fn awaiting() -> Fixture {
     let f = Fixture::new(Seed::default().session("amber").task("sim/a", "ready"));
     f.store
         .activate_workflow(&guarded(), &Host::local())
@@ -232,7 +232,7 @@ fn awaiting() -> Fixture {
 }
 
 /// The owner's request of `edge` on sim/a from where it stands now.
-fn request(f: &Fixture, edge: &str) -> OperationRequest {
+pub(super) fn request(f: &Fixture, edge: &str) -> OperationRequest {
     let next = (f.store)
         .workflow_actions("sim/a", &local_owner(), &Host::local())
         .unwrap();
@@ -258,14 +258,14 @@ fn take(
     let owner = local_owner();
     let root = PathBuf::from("/project");
     let fetched = fetched_within(&f.store, &plugins(plugin), &root, request, &owner, within)
-        .map_err(|failure| format!("{} {}", failure.status, failure.error))?;
+        .map_err(|refused| format!("{} {}", refused.failure.status, refused.failure.error))?;
     (f.store
         .apply_attested(&owner, &Host::local(), request, &fetched))
     .map(drop)
     .map_err(|e| e.to_string())
 }
 
-fn at(f: &Fixture) -> Pair {
+pub(super) fn at(f: &Fixture) -> Pair {
     f.store.workflow_position("sim/a").unwrap().unwrap().at()
 }
 
@@ -361,7 +361,7 @@ fn with_no_plugin_answering_the_board_refuses_the_guard_and_a_pushed_attestation
     let root = PathBuf::from("/project");
     let none = Plugins::new(Vec::new());
     let fetched = fetched_within(&f.store, &none, &root, &request, &owner, WITHIN)
-        .unwrap_or_else(|failure| panic!("{}", failure.error));
+        .unwrap_or_else(|refused| panic!("{}", refused.failure.error));
     assert!(fetched.is_empty());
     let refused = (f.store)
         .apply_attested(&owner, &Host::local(), &request, &fetched)
@@ -408,7 +408,7 @@ fn an_unguarded_edge_or_a_board_with_no_workflow_asks_no_authority() {
     };
     let fetch = |request: &OperationRequest| {
         fetched_within(&f.store, &plugins(&UNASKED), &root, request, &owner, WITHIN)
-            .map_err(|failure| failure.error)
+            .map_err(|refused| refused.failure.error)
     };
     assert_eq!(fetch(&request), Ok(Vec::new()), "no workflow is active");
     f.store

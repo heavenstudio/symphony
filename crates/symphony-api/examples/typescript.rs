@@ -104,6 +104,7 @@ fn constants() -> String {
         ("ASK_LATE_SECONDS", api::ASK_LATE_SECONDS.to_string()),
         ("FILE_QUERY", text(api::FILE_QUERY)),
         ("REPORTS_PATH", text(api::REPORTS_PATH)),
+        ("SETTINGS_PATH", text(api::SETTINGS_PATH)),
         ("RUNS_PATH", text(api::RUNS_PATH)),
         ("RUN_PATH", text(api::RUN_PATH)),
         ("RUN_LOG_PATH", text(api::RUN_LOG_PATH)),
@@ -112,6 +113,7 @@ fn constants() -> String {
         ("RUNS_DAYS", api::RUNS_DAYS.to_string()),
         ("SCHEMA_UPDATES_PATH", text(api::SCHEMA_UPDATES_PATH)),
         ("VERSION_HEADER", text(api::VERSION_HEADER)),
+        ("GETTING_STARTED", text(api::GETTING_STARTED)),
         ("VERDICT_TASKS", text(api::VERDICT_TASKS)),
         ("UPLOAD_PATH", text(api::UPLOAD_PATH)),
         ("UPLOAD_MAX_BYTES", api::UPLOAD_MAX_BYTES.to_string()),
@@ -151,6 +153,10 @@ fn constants() -> String {
             "WORKFLOW_APPLY_ROUTE",
             text(api::workflow::WORKFLOW_APPLY_ROUTE),
         ),
+        (
+            "WORKFLOW_GUARDS_PATH",
+            text(api::workflow::WORKFLOW_GUARDS_PATH),
+        ),
     ];
     for (name, value) in constants {
         let _ = writeln!(out, "export const {name} = {value};");
@@ -166,6 +172,7 @@ fn constants() -> String {
         "DOCS": api::page_names::DOCS,
         "BOARD": api::page_names::BOARD,
         "REPORTS": api::page_names::REPORTS,
+        "SETTINGS": api::page_names::SETTINGS,
         "RUNS": api::page_names::RUNS,
         "AGENTS": api::page_names::AGENTS,
         "PROJECTS": api::page_names::PROJECTS,
@@ -216,6 +223,18 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::report_page::LandedSpend>(cfg),
         declared::<api::report_page::LandedTask>(cfg),
         declared::<api::report_page::Spend>(cfg),
+        // The Settings page's.
+        declared::<api::SettingsPage>(cfg),
+        declared::<api::SettingsFile>(cfg),
+        declared::<api::SettingsSection>(cfg),
+        declared::<api::SettingsEntry>(cfg),
+        declared::<api::EntryState>(cfg),
+        declared::<api::EntryNeed>(cfg),
+        declared::<api::Setting>(cfg),
+        declared::<api::SettingSource>(cfg),
+        declared::<api::SettingScope>(cfg),
+        declared::<api::SettingClass>(cfg),
+        declared::<api::SettingKind>(cfg),
         // The Runs page's, its schema updates too.
         declared::<api::RunsPage>(cfg),
         declared::<api::RunPage>(cfg),
@@ -264,6 +283,7 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::TaskTokens>(cfg),
         declared::<api::RoleTokens>(cfg),
         declared::<api::RoundTokens>(cfg),
+        declared::<api::TokenRow>(cfg),
         declared::<api::TaskCosts>(cfg),
         declared::<api::TaskCost>(cfg),
         declared::<api::SessionGo>(cfg),
@@ -360,6 +380,19 @@ fn task_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::workflow::Completion>(cfg),
         declared::<api::workflow::Operation>(cfg),
         declared::<api::workflow::LegacyStatus>(cfg),
+        // A task's guards as the board's records have them, and the guard that refused a take.
+        declared::<api::workflow::TaskGuards>(cfg),
+        declared::<api::workflow::GuardAuthority>(cfg),
+        declared::<api::workflow::GuardNeed>(cfg),
+        declared::<api::workflow::GuardedEdge>(cfg),
+        declared::<api::workflow::GuardEntry>(cfg),
+        declared::<api::workflow::GuardMet>(cfg),
+        declared::<api::workflow::GuardRecord>(cfg),
+        declared::<api::workflow::GuardRefusal>(cfg),
+        declared::<api::workflow::GuardWhy>(cfg),
+        declared::<api::workflow::GuardStanding>(cfg),
+        declared::<api::workflow::Attested>(cfg),
+        declared::<api::workflow::Attestee>(cfg),
         // A task's page: its brief, thread, landing offer and gates (its holders' sessions are the
         // agents page's types).
         declared::<api::TaskPage>(cfg),
@@ -1366,6 +1399,8 @@ fn samples() -> Value {
     samples.extend(agents_samples());
     samples.insert("reports".into(), json!(reports()));
     samples.insert("emptyReports".into(), json!(api::ReportsPage::default()));
+    samples.insert("settings".into(), json!(settings()));
+    samples.insert("emptySettings".into(), json!(api::SettingsPage::default()));
     samples.extend(tokens_samples());
     samples.insert("blocks".into(), json!(blocks()));
     samples.extend(
@@ -1615,16 +1650,121 @@ fn workflow_samples() -> Vec<(String, Value)> {
         effects: vec![api::workflow::Effect::ClearBlock],
     };
     let held = held_listing();
+    let (guards, refused) = guard_samples();
     [
         ("workflow", json!(read)),
         ("noWorkflow", json!(none)),
         ("nextActions", json!(next)),
         ("applied", json!(applied)),
         ("heldListing", json!(held)),
+        ("taskGuards", json!(guards)),
+        ("guardRefusal", json!(refused)),
     ]
     .into_iter()
     .map(|(name, value)| (name.to_owned(), value))
     .collect()
+}
+
+/// A task's guards and a guard's refusal, as [`workflow_samples`] holds them: at review/awaiting,
+/// which the task entered by an edge `design signoff` guards, met at a generation its authority
+/// has moved on from, with Pass review held by `release signoff`, whose authority this host asks
+/// and whose ledger has a page; and the ledger's refusal of that guard, with its two reasons.
+fn guard_samples() -> (api::workflow::TaskGuards, api::workflow::GuardRefusal) {
+    use api::workflow::{
+        Attested, Attestee, GuardAuthority, GuardEntry, GuardMet, GuardNeed, GuardRecord,
+        GuardRefusal, GuardStanding, GuardWhy, GuardedEdge, Pair, TaskGuards,
+    };
+    let record = |result, facts: &[&str], reasons: &[&str], generation| GuardRecord {
+        result,
+        facts: facts.iter().map(|fact| (*fact).to_owned()).collect(),
+        reasons: reasons.iter().map(|reason| (*reason).to_owned()).collect(),
+        epoch: "2026".into(),
+        generation,
+        issued_at: 1_795_000_000.0,
+        expires_at: 1_795_000_600.0,
+        task_revision: 7,
+        at: Pair {
+            phase: "review".into(),
+            state: "awaiting".into(),
+        },
+        input_revisions: [("design".to_owned(), "r4".to_owned())].into(),
+        principal: Attestee {
+            kind: "human".into(),
+            issuer: "local".into(),
+            subject: "owner".into(),
+        },
+    };
+    let authority = |adapter: &str, generation, asked_here| GuardAuthority {
+        adapter: adapter.into(),
+        issuer: "ledger".into(),
+        epoch: Some("2026".into()),
+        generation: Some(generation),
+        conflicted: false,
+        admitted: 3,
+        asked_here,
+    };
+    let guards = TaskGuards {
+        authorities: vec![
+            authority("design", 12, false),
+            authority("release", 41, true),
+        ],
+        guards: vec![
+            GuardNeed {
+                guard: "design_signoff".into(),
+                adapter: "design".into(),
+                page: None,
+            },
+            GuardNeed {
+                guard: "release_signoff".into(),
+                adapter: "release".into(),
+                page: Some("/docs/LEDGER.md#w/a:release_signoff".into()),
+            },
+        ],
+        edges: vec![GuardedEdge {
+            edge: "pass".into(),
+            guards: vec!["release_signoff".into()],
+        }],
+        entry: Some(GuardEntry {
+            edge: "submit".into(),
+            label: "Submit".into(),
+            revision: 7,
+            principal: Attestee {
+                kind: "agent".into(),
+                issuer: "board".into(),
+                subject: "amber-wren".into(),
+            },
+            at: 1_794_990_000.0,
+            guards: vec![GuardMet {
+                guard: "design_signoff".into(),
+                adapter: "design".into(),
+                issuer: "ledger".into(),
+                epoch: "2026".into(),
+                generation: 11,
+                standing: GuardStanding::DecidedAgain,
+                record: Some(record(
+                    Attested::Pass,
+                    &["the design was approved /docs/DECISIONS.md#design-signoff"],
+                    &[],
+                    11,
+                )),
+            }],
+        }),
+    };
+    let refused = GuardRefusal {
+        guard: "release_signoff".into(),
+        adapter: "release".into(),
+        why: GuardWhy::Refused,
+        record: Some(record(
+            Attested::Refuse,
+            &[],
+            &[
+                "a blocker is still open /task/w/a",
+                "the release check failed https://ci.example/runs/7",
+            ],
+            41,
+        )),
+    };
+    (guards, refused)
 }
 
 /// A listing that holds its tasks in their phases: one built, one awaiting review after its
@@ -2143,6 +2283,232 @@ mod document_sample {
     }
 }
 
+/// A source of the Settings sample: where `said` says a value stands.
+fn settings_source(
+    scope: Option<api::SettingScope>,
+    said: &str,
+    file: Option<(&str, u32)>,
+) -> api::SettingSource {
+    api::SettingSource {
+        scope,
+        said: said.into(),
+        file: file.map(|(name, _)| name.to_string()),
+        line: file.map(|(_, line)| line),
+        over: None,
+    }
+}
+
+/// A setting of the Settings sample: a preference of the project's, for its caller to write over.
+fn sample_setting(
+    key: &str,
+    name: &str,
+    kind: api::SettingKind,
+    value: &str,
+    source: api::SettingSource,
+) -> api::Setting {
+    api::Setting {
+        key: key.into(),
+        name: name.into(),
+        kind,
+        value: value.into(),
+        choices: Vec::new(),
+        source,
+        scopes: vec![api::SettingScope::Project],
+        class: api::SettingClass::Preference,
+    }
+}
+
+fn settings_entry(id: &str, name: &str, about: &str) -> api::SettingsEntry {
+    api::SettingsEntry {
+        id: id.into(),
+        name: name.into(),
+        about: about.into(),
+        state: None,
+        needs: Vec::new(),
+        settings: Vec::new(),
+        source: None,
+    }
+}
+
+fn settings_section(
+    id: &str,
+    title: &str,
+    entries: Vec<api::SettingsEntry>,
+) -> api::SettingsSection {
+    api::SettingsSection {
+        id: id.into(),
+        title: title.into(),
+        about: format!("About {title}."),
+        entries,
+    }
+}
+
+/// An entry with a state, a need met and one not, and a choice the project file writes.
+fn settings_herdr() -> api::SettingsEntry {
+    let need = |what: &str, met, said: &str| api::EntryNeed {
+        what: what.into(),
+        met,
+        said: said.into(),
+    };
+    api::SettingsEntry {
+        state: Some(api::EntryState {
+            word: "On".into(),
+            on: Some(true),
+            why: "Agents' terminals open in Herdr.".into(),
+        }),
+        needs: vec![
+            need("the hc program", true, "Found on this machine: /bin/hc."),
+            need(
+                "a token",
+                false,
+                "Not found on this machine: <nothing> opens.",
+            ),
+        ],
+        settings: vec![api::Setting {
+            choices: vec!["hc".into(), "none".into()],
+            ..sample_setting(
+                "[agents] panes",
+                "What agents' terminals run in",
+                api::SettingKind::Choice,
+                "hc",
+                settings_source(
+                    Some(api::SettingScope::Project),
+                    "symphony.toml [agents] panes, line 10",
+                    Some(("symphony.toml", 10)),
+                ),
+            )
+        }],
+        ..settings_entry("herdr", "Herdr panes", "Agents' terminals in Herdr.")
+    }
+}
+
+/// An entry with a setting a local file writes over the committed one, and one at its default.
+fn settings_models() -> api::SettingsEntry {
+    use api::SettingScope::{Machine, Project};
+    api::SettingsEntry {
+        settings: vec![
+            api::Setting {
+                scopes: vec![Project, Machine],
+                ..sample_setting(
+                    "[agents.models] executor",
+                    "The executor's model",
+                    api::SettingKind::Text,
+                    "fable",
+                    api::SettingSource {
+                        over: Some("symphony.toml [agents.models] executor, line 16".into()),
+                        ..settings_source(
+                            Some(Machine),
+                            "symphony.local.toml [agents.models] executor, line 2",
+                            Some(("symphony.local.toml", 2)),
+                        )
+                    },
+                )
+            },
+            api::Setting {
+                scopes: vec![Project, Machine],
+                ..sample_setting(
+                    "[limits] machine_agents",
+                    "Agents this machine runs",
+                    api::SettingKind::Number,
+                    "no limit",
+                    settings_source(None, "default: no limit", None),
+                )
+            },
+        ],
+        ..settings_entry(
+            "models",
+            "The model each role runs on",
+            "What a launch passes.",
+        )
+    }
+}
+
+/// A reviewed sentence with its file and line, and an entry that is a sentence with no setting.
+fn settings_reviewed() -> Vec<api::SettingsEntry> {
+    vec![
+        api::SettingsEntry {
+            settings: vec![api::Setting {
+                class: api::SettingClass::Reviewed,
+                ..sample_setting(
+                    "[land]",
+                    "What a land does",
+                    api::SettingKind::Sentence,
+                    "No check; pushes main; no generator; merged here.",
+                    settings_source(
+                        Some(api::SettingScope::Project),
+                        "symphony.toml [land], line 36",
+                        Some(("symphony.toml", 36)),
+                    ),
+                )
+            }],
+            ..settings_entry("landing", "Landing", "What a land runs.")
+        },
+        api::SettingsEntry {
+            state: Some(api::EntryState {
+                word: "Built in".into(),
+                on: None,
+                why: "The board's own workflow: no [workflow] written.".into(),
+            }),
+            source: Some(settings_source(
+                None,
+                "default: no [workflow] written",
+                None,
+            )),
+            ..settings_entry("workflow", "Workflow", "The stages a task moves through.")
+        },
+    ]
+}
+
+/// The device's entry: a value no file writes.
+fn settings_appearance() -> api::SettingsEntry {
+    api::SettingsEntry {
+        settings: vec![api::Setting {
+            scopes: vec![api::SettingScope::Device],
+            ..sample_setting(
+                "appearance",
+                "The theme of this project's pages here",
+                api::SettingKind::Text,
+                "kept in this browser",
+                settings_source(Some(api::SettingScope::Device), "this browser", None),
+            )
+        }],
+        ..settings_entry("appearance", "Appearance", "A theme of this device's own.")
+    }
+}
+
+/// A Settings page of every shape an entry takes: one with a state, a need met and one not, a
+/// setting a local file writes over the committed one, a reviewed sentence, an entry that is a
+/// sentence with no setting, the device's, and a problem said.
+fn settings() -> api::SettingsPage {
+    let file = |name: &str, scope, found| api::SettingsFile {
+        name: name.into(),
+        scope,
+        path: format!("/repo/{name}"),
+        found,
+    };
+    api::SettingsPage {
+        files: vec![
+            file("symphony.toml", api::SettingScope::Project, true),
+            file("symphony.local.toml", api::SettingScope::Machine, false),
+        ],
+        problems: vec!["symphony.local.toml: [land] check (line 5) is not read".into()],
+        sections: vec![
+            settings_section(
+                "integrations",
+                "Integrations and tools",
+                vec![settings_herdr()],
+            ),
+            settings_section("models", "Models and limits", vec![settings_models()]),
+            settings_section(
+                "reviewed",
+                "Shown here, changed by a reviewed task",
+                settings_reviewed(),
+            ),
+            settings_section("device", "This device", vec![settings_appearance()]),
+        ],
+    }
+}
+
 /// A window of one period every source recorded whole, with every status, wait, role and gauge it
 /// can have and none at zero, a settings change and a file not read: each member the Reports page
 /// reads a period by is written in it.
@@ -2222,14 +2588,34 @@ fn task_tokens() -> api::TaskTokens {
             api::RoundTokens {
                 round: 1,
                 tokens: executor.tokens,
-                cost: executor.cost,
+                cost: executor.cost.clone(),
             },
             api::RoundTokens {
                 round: 2,
                 tokens: reviewer.tokens,
-                cost: reviewer.cost,
+                cost: reviewer.cost.clone(),
             },
         ],
+        rows: vec![
+            token_row("executor", 1, executor.clone()),
+            token_row("reviewer", 2, reviewer),
+        ],
+    }
+}
+
+/// A row of a task's tokens: `spend` in `role` and `round`.
+fn token_row(role: &str, round: u32, spend: api::report_page::Spend) -> api::TokenRow {
+    api::TokenRow {
+        handle: format!("{role}-1"),
+        slug: "w/a".into(),
+        role: role.into(),
+        model: "claude-opus-5-5".into(),
+        speed: "standard".into(),
+        round,
+        tokens: spend.tokens,
+        cost: spend.cost,
+        first: 1000.0 * f64::from(round),
+        last: 1000.0 * f64::from(round) + 600.0,
     }
 }
 

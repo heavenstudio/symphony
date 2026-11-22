@@ -7,6 +7,7 @@ use std::os::unix::fs::PermissionsExt;
 
 const SERVES: Serves = Serves {
     schema: 18,
+    additions: 0,
     protocol: Version { major: 0, minor: 3 },
     tasks_api: Version {
         major: 1,
@@ -100,6 +101,7 @@ fn an_install_is_the_binaries_the_client_and_a_manifest_naming_each_artifacts_si
             ("bin/tasks", server - 10, None),
             ("bin/agent-send", server - 5, None),
             ("bin/symphony", server - 7, None),
+            ("bin/tasks-move", server - 5, None),
             (manifest.client.as_str(), 31 + 5 + 2, Some(3)),
         ]
     );
@@ -120,10 +122,11 @@ fn an_install_is_the_binaries_the_client_and_a_manifest_naming_each_artifacts_si
         manifest.sizes(),
         format!(
             "symphony-server {server} bytes, tasks {} bytes, agent-send {} bytes, symphony {} \
-             bytes, {} 38 bytes in 3 files",
+             bytes, tasks-move {} bytes, {} 38 bytes in 3 files",
             server - 10,
             server - 5,
             server - 7,
+            server - 5,
             manifest.client
         )
     );
@@ -178,7 +181,7 @@ fn the_same_client_has_the_same_name_and_any_change_another() {
 #[test]
 fn a_failed_install_leaves_no_folder() {
     let tree = Tree::new();
-    // No `symphony`: three of the four binaries were built.
+    // No `symphony`, the first it misses: three of the five binaries were built.
     build(&tree, &BINARIES[..3]);
     let missing = installs(&tree, "release-1").unwrap_err();
     assert_eq!(

@@ -18,7 +18,8 @@ use crate::cpu;
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 use symphony_board::Raw;
-use symphony_board::rpc::{Client, DbError};
+use symphony_board::db::DbError;
+use symphony_board::rpc::Client;
 
 /// A sender the generated board has no message of.
 const RARE: &str = "perf-rare-sender";

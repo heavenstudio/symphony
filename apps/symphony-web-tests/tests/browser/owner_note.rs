@@ -104,13 +104,8 @@ fn a_notes_line_breaks_and_paragraph_gaps_show_wide_and_at_phone_width_and_after
             page.open(&url);
         }
         for (width, phone) in [(1280, false), (390, true)] {
-            page.call(
-                "Emulation.setDeviceMetricsOverride",
-                json!({"width": width, "height": 900, "deviceScaleFactor": 1, "mobile": phone}),
-            );
-            page.eval(
-                "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-            );
+            page.viewport(width, 900, phone);
+            page.frames();
             let (owner, agent) = both(&mut page);
             let at = format!("width {width}, reload {reload}");
             assert_eq!(

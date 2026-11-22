@@ -3,7 +3,7 @@
 //! address is that repository and not the one delivered to, and its history makes nothing private
 //! public; and everything else squashed as a task, whatever it asks.
 
-use crate::deliver::{APP, Delivery, HEAD, LANDING, SLUG, snapshot};
+use crate::deliver::{APP, Delivery, HEAD, SLUG, snapshot};
 use crate::github::Fault;
 use serde_json::{Value, json};
 
@@ -18,11 +18,11 @@ const PINNED: i64 = 88;
 /// A delivery to a repository that imports from `up/stream`: the settings pin it, the default
 /// branch permits merge commits beside squash, and both repositories are public.
 fn importing(name: &str) -> Delivery {
-    let d = Delivery::new(name, &format!("upstream_id = {PINNED}\n"));
-    permits(&d, &["merge", "squash"]);
+    let d = Delivery::unverified(name, &format!("upstream_id = {PINNED}\n"));
     d.rig
         .github
         .set_repository(&json!({"allow_merge_commit": true, "private": false}));
+    permits(&d, &["merge", "squash"]).ok();
     upstream(
         &d,
         json!({"id": PINNED, "full_name": "up/stream", "private": false}),
@@ -30,10 +30,11 @@ fn importing(name: &str) -> Delivery {
     d
 }
 
-/// The default branch's rule that nobody bypasses permitting `methods`, as protected otherwise.
-fn permits(d: &Delivery, methods: &[&str]) {
+/// The default branch's rule that nobody bypasses permitting `methods`, as protected otherwise,
+/// and what verifying its rulesets said: they are kept where the policy holds.
+fn permits(d: &Delivery, methods: &[&str]) -> crate::Ran {
     let github = &d.rig.github;
-    github.protect(APP, LANDING);
+    github.protect(APP);
     github.set_ruleset(
         1,
         &json!({"rules": [
@@ -46,6 +47,7 @@ fn permits(d: &Delivery, methods: &[&str]) {
             {"type": "deletion"},
         ]}),
     );
+    d.verify()
 }
 
 /// What `up/stream` says of itself from now.
@@ -81,12 +83,17 @@ fn publish(d: &Delivery, snapshot: &Value, url: Option<&str>) -> Value {
     )
 }
 
-fn merge(d: &Delivery, method: &str, url: Option<&str>) -> Value {
-    let request = json!({
+/// What a land asks to merge pull request 100 by `method`, as a task.
+fn merge_request(method: &str) -> Value {
+    json!({
         "verb": "merge", "slug": SLUG, "by": "amber-fox-1", "head": HEAD, "repository": 77,
         "pull": 100, "method": method, "title": "Merge branch 'sim/jump'",
         "body": "the private brief", "operation": "task",
-    });
+    })
+}
+
+fn merge(d: &Delivery, method: &str, url: Option<&str>) -> Value {
+    let request = merge_request(method);
     d.ask(
         "merge",
         &url.map_or_else(|| request.clone(), |url| of(request.clone(), url)),
@@ -181,7 +188,7 @@ fn an_import_the_settings_or_the_upstream_do_not_bear_out_is_refused_before_anyt
         (
             "https://github.com/no/where",
             Box::new(|_| {}),
-            "the upstream no/where is not readable with the merging token (404)",
+            "the upstream no/where is not readable with the App's token (404)",
         ),
         (
             URL,
@@ -216,7 +223,14 @@ fn an_import_the_settings_or_the_upstream_do_not_bear_out_is_refused_before_anyt
         ),
         (
             URL,
-            Box::new(|d| permits(d, &["squash"])),
+            Box::new(|d| {
+                // Verified while the settings pinned no upstream, as a task's policy: a
+                // verification keeps nothing of one that does not hold, as this one for an import.
+                let task = format!("pull_requests = \"publish\"\napp_id = {APP}\n");
+                d.rig.enable(&task);
+                permits(d, &["squash"]).ok();
+                d.rig.enable(&format!("{task}upstream_id = {PINNED}\n"));
+            }),
             "main permits these merge methods: squash; a delivery takes exactly: merge, squash",
         ),
     ];
@@ -231,9 +245,9 @@ fn an_import_the_settings_or_the_upstream_do_not_bear_out_is_refused_before_anyt
 #[test]
 fn an_import_into_itself_or_of_other_evidence_is_refused_and_private_into_private_is_not() {
     // The repository delivered to is no upstream of its own.
-    let d = Delivery::new("import-self", "upstream_id = 77\n");
-    permits(&d, &["merge", "squash"]);
+    let d = Delivery::unverified("import-self", "upstream_id = 77\n");
     (d.rig.github).set_repository(&json!({"allow_merge_commit": true, "private": false}));
+    permits(&d, &["merge", "squash"]).ok();
     assert_eq!(
         not_pushed(
             &d,
@@ -311,4 +325,55 @@ fn an_import_whose_upstream_changed_since_it_was_published_is_not_merged() {
         "the upstream up/stream is private and o/n is not: an import would publish its history"
     );
     assert!(!d.writes().iter().any(|write| write.starts_with("PUT ")));
+}
+
+#[test]
+fn an_import_is_armed_to_merge_by_a_merge_commit_while_its_upstream_bears_it_out() {
+    let d = importing("import-armed");
+    d.rig
+        .github
+        .set_repository(&json!({"allow_auto_merge": true}));
+    let mut short = imported(Some(UPSTREAM));
+    short["stamps"][0]["standing"] = json!("missing");
+    short["eligible"] = json!(false);
+    assert_eq!(publish(&d, &short, Some(URL))["state"], "published");
+    let arm = |method: &str| {
+        let mut request = merge_request(method);
+        request["verb"] = json!("arm");
+        d.ask("arm", &of(request, URL))
+    };
+    // Squashed it would lose the upstream's history: refused before anything is asked.
+    let writes = d.writes();
+    assert!(why(&arm("squash")).starts_with("a merge is of one whole commit"));
+    assert_eq!(d.writes(), writes);
+    // The upstream turned private since: nothing turned on.
+    upstream(
+        &d,
+        json!({"id": PINNED, "full_name": "up/stream", "private": true}),
+    );
+    assert!(why(&arm("merge")).starts_with("the upstream up/stream is private"));
+    assert_eq!(d.writes(), writes);
+    upstream(
+        &d,
+        json!({"id": PINNED, "full_name": "up/stream", "private": false}),
+    );
+    assert_eq!(
+        arm("merge"),
+        json!({"state": "armed", "pull": 100, "head": HEAD})
+    );
+    let armed = d.rig.github.pulls().remove(0)["auto_merge"].clone();
+    assert_eq!(
+        (
+            &armed["merge_method"],
+            &armed["commit_title"],
+            &armed["commit_message"]
+        ),
+        (
+            &json!("merge"),
+            &json!("Merge branch 'sim/jump'"),
+            &json!(format!(
+                "Merged from {HEAD} by pull request #100, an import of {UPSTREAM}."
+            ))
+        )
+    );
 }

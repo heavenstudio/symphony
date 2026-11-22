@@ -6,8 +6,8 @@ use super::postgres::{Pg, work as pg};
 use super::statement::both;
 use super::surreal::work as sql;
 use super::{
-    Change, Error, Failure, Message, Opens, REFUSED, Say, Store, Task, Which, left_actor, refused,
-    repr, unknown_actor,
+    Change, Error, Failure, Message, Opens, REFUSED, Say, Store, Task, Which, executors_or, lapsed,
+    left_actor, refused, repr, unknown_actor,
 };
 use crate::alarm::{NOTHING, UNDER, WAS};
 use crate::health::Health;
@@ -186,8 +186,7 @@ const TRANSITIONS: [(&str, &[&str]); 7] = [
 /// has closed is one this names.
 pub fn approved(thread: &[Message]) -> Option<&Message> {
     let last = thread.iter().rev().find(|m| m.kind == "verdict")?;
-    let rest = last.text.strip_prefix("approve")?;
-    (rest.is_empty() || rest.starts_with(':')).then_some(last)
+    stages::verdict_is(&last.text, "approve").then_some(last)
 }
 
 /// Who sends an approved task no landing has closed back to review ([`Store::move_to`]).
@@ -266,7 +265,19 @@ fn plain_slug(slug: &str) -> bool {
 }
 
 pub(super) fn no_task(slug: &str) -> Error {
-    refused(format!("no task {}", repr(slug)))
+    refused(format!("{}{}", Error::NO_TASK, repr(slug)))
+}
+
+impl Error {
+    /// How the board refuses a slug no task has, before the slug as it quotes it (`no task 'x'`):
+    /// what a caller that goes on without the task, or answers that there is none, reads the
+    /// refusal by ([`Error::is_no_task`]).
+    pub const NO_TASK: &str = "no task ";
+
+    /// Whether this is the board's refusal of a slug no task has.
+    pub fn is_no_task(&self) -> bool {
+        matches!(self, Error::Refused(why) if why.starts_with(Error::NO_TASK))
+    }
 }
 
 /// slug -> parent, for every task.
@@ -342,7 +353,7 @@ impl Store {
         // Read the old value and write its replacement and history in the same transaction. A
         // concurrent edit conflicts and retries, so history always names the value replaced.
         let acts = handle != OWNER;
-        let body = || both(sql::set_priority(acts), Pg::script(pg::set_priority(acts)));
+        let body = || both(sql::set_priority(acts), Pg::script(pg::set_priority(acts))).posting();
         self.retrying(|| {
             let vars = self.acting(
                 handle,
@@ -371,7 +382,7 @@ impl Store {
             return Err(refused("a task needs a title".into()));
         }
         let acts = handle != OWNER;
-        let body = || both(sql::amend(acts), pg::amend(acts));
+        let body = || both(sql::amend(acts), pg::amend(acts)).posting();
         self.retrying(|| {
             let vars = self.acting(
                 handle,
@@ -403,7 +414,7 @@ impl Store {
         let acts = by != OWNER;
         self.retrying(|| {
             let read: Read =
-                self.transact(both(sql::TREE_READ, pg::tree_read()), json!({"actor": by}))?;
+                self.read_together(both(sql::TREE_READ, pg::tree_read()), json!({"actor": by}))?;
             if by != OWNER {
                 if !read.known {
                     return Err(Failure::Stop(refused(unknown_actor(&self.board_command(), by))));
@@ -437,7 +448,8 @@ impl Store {
                 let body = both(
                     sql::set_parent(acts, guarded, false),
                     pg::set_parent(acts, guarded, false),
-                );
+                )
+                .posting();
                 return self.written(body, vars, slug);
             };
             // The give's fences go before the move moves the task's version.
@@ -445,7 +457,8 @@ impl Store {
             let body = both(
                 sql::set_parent(acts, guarded, true),
                 pg::set_parent(acts, guarded, true),
-            );
+            )
+            .posting();
             self.written(body, pass.vars(sender, vars), slug)
         })
     }
@@ -454,12 +467,12 @@ impl Store {
     pub fn ancestors(&self, slug: &str) -> Result<Vec<String>, Error> {
         let read = sql::tree();
         let tree: Vec<(String, Option<String>)> =
-            self.retrying(|| self.transact(both(read.as_str(), pg::TREE_ONLY), json!({})))?;
+            self.retrying(|| self.read_together(both(read.as_str(), pg::TREE_ONLY), json!({})))?;
         ancestors_in(&tree.into_iter().collect(), slug)
     }
 
     /// The session and the task a run started at `place` is for, as a recorder takes them, in one
-    /// read of the board that writes nothing (docs/MACHINE_WORK.md, "For which task"):
+    /// read of the board that writes nothing (docs/workflow/MACHINE_WORK.md, "For which task"):
     ///
     /// 1. the handle `place` names, and the task it holds, else its branch's;
     /// 2. else the one live session whose in-process binding (the beat hook's) places its last tool
@@ -494,8 +507,9 @@ impl Store {
             "claude": place.claude, "branch": place.branch,
             "executing": crate::health::EXECUTING});
         let read = sql::run_for_read();
-        let found: Found =
-            self.retrying(|| self.transact(both(read.as_str(), pg::run_for_read()), vars.clone()))?;
+        let found: Found = self.retrying(|| {
+            self.read_together(both(read.as_str(), pg::run_for_read()), vars.clone())
+        })?;
         let now = self.now();
         let live = |seen: &&Seen| {
             let row = crate::rows::SessionRow {
@@ -823,19 +837,11 @@ impl Store {
             // executor's parent (the mover's when it has none) where no orchestrator holds it.
             // Blocked work a hold kept open holds its slot already, which the cap reads.
             let starting = OPEN.contains(&status) && !OPEN.contains(&current);
-            let opens = starting.then(|| {
-                let executors: Vec<String> =
-                    view.holders("executor").map(|r| r.handle.clone()).collect();
-                Opens {
-                    status: Some(status.into()),
-                    by: if executors.is_empty() {
-                        vec![handle.into()]
-                    } else {
-                        executors
-                    },
-                    what: format!("{slug} cannot go from {current} to {status}"),
-                    ..Opens::default()
-                }
+            let opens = starting.then(|| Opens {
+                status: Some(status.into()),
+                by: executors_or(view.executors(), Some(handle)),
+                what: format!("{slug} cannot go from {current} to {status}"),
+                ..Opens::default()
             });
             Ok(Change {
                 status: Some(status.into()),
@@ -895,7 +901,8 @@ impl Store {
             let body = both(
                 sql::move_as_owner(reasoned, cancelling, fenced, guarded),
                 pg::move_as_owner(reasoned, cancelling, fenced, guarded),
-            );
+            )
+            .posting();
             let vars = self.acting(
                 OWNER,
                 (self.clock)(),
@@ -988,7 +995,7 @@ impl Store {
     /// offered where an edge leaving its position gives the executor's role, nobody there holds it,
     /// and admission's preview shows nothing stopping `handle` taking that edge now
     /// ([`Store::workflow_actions`]): its reservations, dependencies and authority are the edge's,
-    /// never the board's own claim's (docs/WORKFLOW.md, "Operations").
+    /// never the board's own claim's (docs/workflow/WORKFLOW.md, "Operations").
     pub fn next_for(&self, handle: &str) -> Result<Option<Task>, Error> {
         let view = self.retrying(|| self.shown(&Which::Pullable(handle)))?;
         let me = view
@@ -1016,10 +1023,11 @@ impl Store {
         // Each candidate with its rank, and the edge to preview for one a workflow holds.
         let mut candidates: Vec<(Rank, Task, Option<String>)> = Vec::new();
         for task in tasks {
+            // The reservations that still hold it, by the rule a write lapses one by
+            // ([`super::lapsed`]): the view's tasks already leave out one past its time, and give
+            // a holder with no session `Lost`, which lapses one as no session does.
             let reservers: Vec<&str> = (task.roles.iter())
-                .filter(|r| {
-                    r.role == "reserved" && !matches!(r.health, Health::Lost | Health::Left)
-                })
+                .filter(|r| r.role == "reserved" && !lapsed(r.expires, Some(r.health), view.now).0)
                 .map(|r| r.handle.as_str())
                 .collect();
             let mine = reservers.contains(&handle);
@@ -1132,7 +1140,7 @@ impl Store {
                 continue;
             }
             let read: Read = self.retrying(|| {
-                self.transact(both(sql::EVER_HELD, pg::EVER_HELD), json!({"slug": at}))
+                self.read_together(both(sql::EVER_HELD, pg::EVER_HELD), json!({"slug": at}))
             })?;
             let root = at == slug;
             if root && !read.known {
@@ -1509,5 +1517,38 @@ mod tests {
         assert_eq!(top(&["feature", "other"]), None);
         assert_eq!(top(&["feature", "gone/work"]), None);
         assert_eq!(top(&[]), None);
+    }
+
+    /// The refusal of a slug no task has is read by how the board words it, whatever the slug's
+    /// quoting; another refusal that only names a task, and a database's error in the same words,
+    /// are not it.
+    #[test]
+    fn a_refusal_of_a_slug_no_task_has_is_read_as_one_and_no_other_is() {
+        assert!(no_task("tools/x").is_no_task());
+        assert!(no_task("it's").is_no_task());
+        assert!(no_task("").is_no_task());
+        assert_eq!(no_task("tools/x").to_string(), "no task 'tools/x'");
+        assert!(!refused("there is no task tools/x".into()).is_no_task());
+        assert!(!refused("no tasks wait".into()).is_no_task());
+        assert!(!refused(String::new()).is_no_task());
+        assert!(!Error::Db("no task 'tools/x'".into()).is_no_task());
+        // The approve standing on a thread is its last verdict, when that is an approve.
+        let verdict = |text: &str| Message {
+            id: 1,
+            slug: "tools/x".into(),
+            sender: "plum".into(),
+            recipient: None,
+            kind: "verdict".into(),
+            text: text.into(),
+            ts: 0.0,
+        };
+        let thread = [verdict("changes: one"), verdict("approve: at 1a2b3c4")];
+        assert_eq!(
+            approved(&thread).map(|m| m.text.as_str()),
+            Some("approve: at 1a2b3c4")
+        );
+        assert!(approved(&[verdict("approve"), verdict("approved by nobody")]).is_none());
+        assert!(approved(&[verdict("approve"), verdict("done: merged")]).is_none());
+        assert!(approved(&[]).is_none());
     }
 }

@@ -492,6 +492,72 @@ fn inside(path: &Path, outer: &Path) -> bool {
     path != outer && path.starts_with(outer)
 }
 
+/// Whether a worktree among `paths` is inside `outer`.
+fn holds_another(paths: &[PathBuf], outer: &Path) -> bool {
+    paths.iter().any(|other| inside(other, outer))
+}
+
+/// How long ago `path` was last touched, in seconds, when that is within `window` hours of `now`:
+/// the recent activity that keeps a worktree. A window of 0 hours keeps only a touch read as
+/// ahead of the clock.
+fn touched_within(path: &Path, now: f64, window: f64) -> Option<f64> {
+    let touched = now - git::last_touched(path, now);
+    (touched < window * 3600.0).then_some(touched)
+}
+
+/// A worktree as git lists it at one of [`remove`]'s re-reads, with every worktree's path
+/// resolved.
+#[derive(Debug, PartialEq)]
+struct Relisted {
+    entry: git::Listed,
+    paths: Vec<PathBuf>,
+}
+
+/// The worktree `path` among `trees`, while it is as `judged` was: listed still, at that head on
+/// that branch, its folder not gone for git, and no worktree inside `inside_of`, the caller's
+/// spelling of its path. None once any of those changed.
+fn as_judged(
+    trees: Vec<git::Listed>,
+    path: &Path,
+    judged: &git::Listed,
+    inside_of: &Path,
+) -> Option<Relisted> {
+    let paths: Vec<PathBuf> = trees.iter().map(|t| canonical(&t.path)).collect();
+    let entry = trees.into_iter().find(|t| t.path == path)?;
+    let changed = entry.head != judged.head
+        || entry.branch != judged.branch
+        || entry.prunable
+        || holds_another(&paths, inside_of);
+    (!changed).then_some(Relisted { entry, paths })
+}
+
+/// The worktree list read again, and `path` in it while it is [`as_judged`].
+fn relisted(
+    root: &Path,
+    path: &Path,
+    judged: &git::Listed,
+    inside_of: &Path,
+) -> Result<Option<Relisted>, String> {
+    Ok(as_judged(git::worktrees(root)?, path, judged, inside_of))
+}
+
+/// The board's facts read again, and what they say of the worktree `at` ([`Index::frees`]): none
+/// while the board holds it, or while `also`, the caller's own condition on the same read, does.
+/// `also` is asked first, whatever the board says.
+fn board_frees(
+    store: &Store,
+    paths: &[PathBuf],
+    at: &Path,
+    branch: Option<&str>,
+    unbound: &BTreeSet<String>,
+    also: impl FnOnce(&Index<'_>) -> bool,
+) -> Result<Option<bool>, String> {
+    let facts = Facts::read(store).map_err(|e| e.to_string())?;
+    let index = Index::of(&facts, paths);
+    let held = also(&index);
+    Ok(index.frees(at, branch, unbound).filter(|_| !held))
+}
+
 /// The board's facts by worktree.
 struct Index<'a> {
     /// Live and stale sessions: their worktree and handle.
@@ -680,6 +746,14 @@ impl<'a> Index<'a> {
         self.tied(path, branch).keys().all(|slug| self.done(slug))
     }
 
+    /// Whether the board lets `path` go, and how: none while a live or stale session other than
+    /// `unbound` is bound to it or a task still live keeps it, else whether every task it is tied
+    /// to is finished ([`Index::finished`]), which decides what a removal sets aside.
+    fn frees(&self, path: &Path, branch: Option<&str>, unbound: &BTreeSet<String>) -> Option<bool> {
+        let held = self.bound(path, unbound) || self.live(path, branch).is_some();
+        (!held).then(|| self.finished(path, branch))
+    }
+
     /// Why the agent that worked in `path` has finished, as the board shows it: a session is bound
     /// to it (whatever its health), none of them other than `unbound` is live or stale, and every
     /// task tied to it, at least one, is done or cancelled. None while it may still work there, or
@@ -865,14 +939,12 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
             if entry.branch.as_deref() == Some("refs/heads/main") {
                 break 'judged "kept: main is checked out there".into();
             }
-            if paths.iter().any(|other| inside(other, path)) {
+            if holds_another(&paths, path) {
                 break 'judged "kept: another worktree is inside it".into();
             }
             let finishing = o.finished.covers(path, branch);
             let window = if finishing { 0.0 } else { o.recent_hours };
-            let now = (o.now)();
-            let touched = now - git::last_touched(path, now);
-            if touched < window * 3600.0 {
+            if let Some(touched) = touched_within(path, (o.now)(), window) {
                 break 'judged format!(
                     "kept: touched {:.0} min ago, within the {window} h window of recent activity",
                     touched.max(0.0) / 60.0
@@ -1192,21 +1264,15 @@ fn remove(
     let shown = path.to_string_lossy();
     // Re-read after the slow, shared scan and earlier removals: a launch, checkout or lock
     // acquired in that window must protect this tree, even when its HEAD is still merged.
-    let trees = git::worktrees(root)?;
-    let paths: Vec<_> = trees.iter().map(|t| canonical(&t.path)).collect();
-    let Some(entry) = trees.iter().find(|t| t.path == path) else {
+    let Some(Relisted { entry, paths }) = relisted(root, path, judged, path)? else {
         return Ok(Removal::Changed);
     };
-    if entry.head != judged.head
-        || entry.branch != judged.branch
-        || entry.prunable
-        || !path.is_dir()
-        || paths.iter().any(|other| inside(other, path))
-    {
+    // Asked here alone: this is the first read of the folder since it was judged, and the two
+    // re-reads below each follow one that fails on a folder gone (the status of `left_behind`,
+    // HEAD held by `hold_head`).
+    if !path.is_dir() {
         return Ok(Removal::Changed);
     }
-    let facts = Facts::read(store).map_err(|e| e.to_string())?;
-    let index = Index::of(&facts, &paths);
     let nobody = BTreeSet::new();
     let at = canonical(path);
     let branch = entry
@@ -1219,27 +1285,24 @@ fn remove(
     } else {
         &nobody
     };
-    if index.bound(path, unbound) || index.live(path, branch).is_some() {
+    // The first read of the board here says whether its tasks are finished, which the two below
+    // compare theirs with. It and the next ask the board by `path`, as git lists it, and the last
+    // by `at`, its resolved path, which is how the board's facts are keyed: the two are one path
+    // wherever git lists a worktree resolved.
+    let Some(finished) = board_frees(store, &paths, path, branch, unbound, |_| false)? else {
         return Ok(Removal::Changed);
-    }
-    let finished = index.finished(path, branch);
+    };
     if !git::left_behind(path, finished, kept_in.folder).is_empty() {
         return Ok(Removal::Changed);
     }
     (o.pause)("checked", &shown);
     // After the status: a commit or checkout made while it ran leaves the tree clean. The
-    // lock must also be the current one before we decide whether to lift it.
-    let current = git::worktrees(root)?;
-    let Some(entry) = current.iter().find(|t| t.path == path) else {
+    // lock must also be the current one before we decide whether to lift it: so a lock is no
+    // change here, unlike at the last re-read, and no status follows, the one above having just
+    // run.
+    let Some(Relisted { entry, paths }) = relisted(root, path, judged, path)? else {
         return Ok(Removal::Changed);
     };
-    if entry.head != judged.head
-        || entry.branch != judged.branch
-        || entry.prunable
-        || current.iter().any(|t| inside(&canonical(&t.path), path))
-    {
-        return Ok(Removal::Changed);
-    }
     let lock = entry.locked.as_deref();
     let observed_lock = match lock {
         Some(reason) => {
@@ -1250,20 +1313,19 @@ fn remove(
         }
         None => None,
     };
-    let facts = Facts::read(store).map_err(|e| e.to_string())?;
-    let current_paths: Vec<_> = current.iter().map(|t| canonical(&t.path)).collect();
-    let index = Index::of(&facts, &current_paths);
-    let holder = Holder::of(lock, &*o.alive, &*o.started);
-    if index.lets_go(&holder, &at, branch, unbound).is_err()
-        || index.bound(path, unbound)
-        || index.live(path, branch).is_some()
-        || index.finished(path, branch) != finished
-    {
+    // Only here is the lock's holder asked again, on the same read of the board as the rest: it
+    // is the lock just captured, which the release below lifts.
+    let lock_keeps = |index: &Index<'_>| {
+        let holder = Holder::of(lock, &*o.alive, &*o.started);
+        index.lets_go(&holder, &at, branch, unbound).is_err()
+    };
+    if board_frees(store, &paths, path, branch, unbound, lock_keeps)? != Some(finished) {
         return Ok(Removal::Changed);
     }
-    let now = (o.now)();
+    // The window is asked from here on, not at the first re-read: the sweep's judging asked it
+    // last, and what was touched since shows after the status above.
     let window = if finishing { 0.0 } else { o.recent_hours };
-    if now - git::last_touched(path, now) < window * 3600.0 {
+    if touched_within(path, (o.now)(), window).is_some() {
         return Ok(Removal::Changed);
     }
     // A finished worktree's evidence is set aside, never removed with it. Listed now to say where
@@ -1311,32 +1373,25 @@ fn remove(
     };
     // The last snapshot is taken with HEAD and its branch held through git's removal.
     // A clean detached commit after the earlier status must not lose its only reflog.
-    let current = git::worktrees(root)?;
-    let Some(entry) = current.iter().find(|t| t.path == path) else {
+    // A worktree inside it is looked for under `at`, its resolved path, where the two re-reads
+    // above look under `path`, as git lists it; see the first read of the board.
+    let Some(Relisted { entry, paths }) = relisted(root, path, judged, &at)? else {
         return Ok(Removal::Changed);
     };
-    if entry.head != judged.head
-        || entry.branch != judged.branch
-        || entry.locked.is_some()
-        || entry.prunable
-        || current.iter().any(|t| inside(&canonical(&t.path), &at))
-    {
+    // Any lock is a change here alone: the one judged was lifted above, so this one was taken
+    // since, by someone else.
+    if entry.locked.is_some() {
         return Ok(Removal::Changed);
     }
-    let current_paths: Vec<_> = current.iter().map(|t| canonical(&t.path)).collect();
-    let facts = Facts::read(store).map_err(|e| e.to_string())?;
-    let index = Index::of(&facts, &current_paths);
-    if index.bound(&at, unbound)
-        || index.live(&at, branch).is_some()
-        || index.finished(&at, branch) != finished
-    {
+    if board_frees(store, &paths, &at, branch, unbound, |_| false)? != Some(finished) {
         return Ok(Removal::Changed);
     }
     if !git::left_behind(path, finished, kept_in.folder).is_empty() {
         return Ok(Removal::Changed);
     }
-    let now = (o.now)();
-    if now - git::last_touched(path, now) < window * 3600.0 || (o.occupied)(path) != Some(false) {
+    // The processes are asked here alone (and by a dry run, which stops before this): theirs is
+    // the last scan, after which nothing is read again.
+    if touched_within(path, (o.now)(), window).is_some() || (o.occupied)(path) != Some(false) {
         return Ok(Removal::Changed);
     }
     // No status or board scan after this tree's process scan. Ref writers remain excluded
@@ -1411,7 +1466,7 @@ fn recorded_lands(root: &Path) -> BTreeSet<String> {
         .flatten()
         .filter_map(|entry| {
             let text = std::fs::read_to_string(entry.path()).ok()?;
-            let record: crate::land::Record = serde_json::from_str(&text).ok()?;
+            let record: crate::land::Record = crate::objects::parse(&text)?;
             let at = entry.path();
             (at == crate::land::Record::path(&folder, &record.slug)
                 || at == crate::land::Record::dashed(&folder, &record.slug))
@@ -1743,6 +1798,193 @@ mod tests {
         let index = Index::of(&unread, &[]);
         let at = canonical(Path::new("/nowhere/sim/approved"));
         assert!(!index.finished(&at, None));
+    }
+
+    fn listed(path: &str, head: &str, branch: Option<&str>) -> git::Listed {
+        git::Listed {
+            path: path.into(),
+            head: head.into(),
+            branch: branch.map(|b| format!("refs/heads/{b}")),
+            ..git::Listed::default()
+        }
+    }
+
+    #[test]
+    fn a_worktree_is_as_judged_until_its_head_branch_folder_or_what_it_holds_changes() {
+        let at = Path::new("/nowhere/wt/a");
+        let judged = listed("/nowhere/wt/a", "aaa", Some("sim/a"));
+        let main = listed("/nowhere/main", "mmm", Some("main"));
+        let beside = listed("/nowhere/wt/ab", "bbb", None);
+        let trees = vec![main.clone(), judged.clone(), beside.clone()];
+        // Unchanged: its entry, and every worktree's path in git's order. A path that only starts
+        // with its name is beside it, not inside it, and its own path is not inside itself.
+        assert_eq!(
+            as_judged(trees.clone(), at, &judged, at),
+            Some(Relisted {
+                entry: judged.clone(),
+                paths: ["/nowhere/main", "/nowhere/wt/a", "/nowhere/wt/ab"]
+                    .map(PathBuf::from)
+                    .to_vec(),
+            })
+        );
+        // A lock is the caller's to judge: it comes back on the entry.
+        let locked = git::Listed {
+            locked: Some("claude agent agent-a (pid 1)".into()),
+            ..judged.clone()
+        };
+        let found = as_judged(vec![main.clone(), locked.clone()], at, &judged, at);
+        assert_eq!(found.map(|found| found.entry), Some(locked));
+        let changed = [
+            ("no longer listed", vec![main.clone(), beside.clone()]),
+            ("nothing listed", Vec::new()),
+            (
+                "another head",
+                vec![main.clone(), listed("/nowhere/wt/a", "ccc", Some("sim/a"))],
+            ),
+            (
+                "another branch",
+                vec![main.clone(), listed("/nowhere/wt/a", "aaa", Some("sim/b"))],
+            ),
+            (
+                "detached",
+                vec![main.clone(), listed("/nowhere/wt/a", "aaa", None)],
+            ),
+            (
+                "prunable",
+                vec![
+                    main.clone(),
+                    git::Listed {
+                        prunable: true,
+                        ..judged.clone()
+                    },
+                ],
+            ),
+            (
+                "a worktree inside it",
+                vec![
+                    main.clone(),
+                    judged.clone(),
+                    listed("/nowhere/wt/a/.claude/worktrees/agent-x", "ddd", None),
+                ],
+            ),
+        ];
+        for (what, trees) in changed {
+            assert_eq!(as_judged(trees, at, &judged, at), None, "{what}");
+        }
+        // The worktree inside is looked for under the path the caller names, which need not be
+        // the one it is listed by.
+        let inside_other = vec![main, judged.clone(), listed("/elsewhere/a/in", "ddd", None)];
+        assert!(as_judged(inside_other.clone(), at, &judged, at).is_some());
+        let elsewhere = Path::new("/elsewhere/a");
+        assert_eq!(as_judged(inside_other, at, &judged, elsewhere), None);
+        assert!(holds_another(&[PathBuf::from("/x/y/z")], Path::new("/x")));
+        assert!(!holds_another(&[PathBuf::from("/x")], Path::new("/x")));
+        assert!(!holds_another(&[], Path::new("/x")));
+    }
+
+    #[test]
+    fn relisting_reads_git_and_says_why_it_could_not() {
+        let gone =
+            std::env::temp_dir().join(format!("symphony-sweep-relist-gone-{}", std::process::id()));
+        let judged = listed("/nowhere/wt/a", "aaa", None);
+        assert_eq!(
+            relisted(&gone, &gone, &judged, &gone),
+            Err("git worktree list --porcelain failed".to_string())
+        );
+    }
+
+    #[test]
+    fn a_touch_keeps_a_worktree_only_within_the_window() {
+        let dir =
+            std::env::temp_dir().join(format!("symphony-sweep-touched-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let touched = git::last_touched(&dir, 0.0);
+        assert!(touched > 0.0, "the folder's own time is read");
+        let hour = touched + 3600.0;
+        let ago = touched_within(&dir, hour, 2.0).expect("an hour ago is within two");
+        assert!((ago - 3600.0).abs() < 1.0, "{ago}");
+        assert_eq!(touched_within(&dir, hour, 0.5), None);
+        // A window of no hours keeps no touch at or before the clock, not even one this instant.
+        assert_eq!(touched_within(&dir, touched, 0.0), None);
+        // A touch read as ahead of the clock is within any window, that one too, said as read.
+        assert_eq!(touched_within(&dir, touched - 60.0, 0.0), Some(-60.0));
+        assert_eq!(touched_within(&dir, touched - 60.0, 2.0), Some(-60.0));
+        std::fs::remove_dir_all(&dir).unwrap();
+        // Nothing readable is busy now: kept by any window, let go by none.
+        assert_eq!(touched_within(&dir, 500.0, 2.0), Some(0.0));
+        assert_eq!(touched_within(&dir, 500.0, 0.0), None);
+    }
+
+    #[test]
+    fn the_board_frees_a_worktree_no_session_is_bound_to_and_no_live_task_keeps() {
+        use crate::health::Health;
+        use crate::rows::SessionRow;
+        use crate::workflow::operate::tests::legacy;
+        let session = |handle: &str, at: &str, health: Health| Session {
+            row: SessionRow {
+                handle: handle.into(),
+                worktree: at.into(),
+                ..SessionRow::default()
+            },
+            health,
+        };
+        let launched = |slug: &str, at: &str| TaskSessionRow {
+            slug: slug.into(),
+            handle: "amber".into(),
+            worktree: at.into(),
+            ..TaskSessionRow::default()
+        };
+        let facts = Facts {
+            sessions: vec![
+                session("live", "/nowhere/bound", Health::Live),
+                session("stale", "/nowhere/stale", Health::Stale),
+                session("unknown", "/nowhere/unknown", Health::Unknown),
+                session("lost", "/nowhere/lost", Health::Lost),
+                session("left", "/nowhere/left", Health::Left),
+                session("closing", "/nowhere/done", Health::Live),
+            ],
+            tasks: vec![
+                legacy("sim/done", "done"),
+                legacy("sim/cancelled", "cancelled"),
+                legacy("sim/review", "review"),
+            ],
+            launches: vec![
+                launched("sim/done", "/nowhere/done"),
+                launched("sim/review", "/nowhere/review"),
+                launched("sim/done", "/nowhere/both"),
+                launched("sim/review", "/nowhere/both"),
+            ],
+            operating: None,
+        };
+        let index = Index::of(&facts, &[]);
+        let nobody = BTreeSet::new();
+        let closing = BTreeSet::from(["closing".to_string()]);
+        let frees = |at: &str, branch: Option<&str>, unbound: &BTreeSet<String>| {
+            index.frees(&canonical(Path::new(at)), branch, unbound)
+        };
+        // A session that holds its work keeps its worktree, whatever its tasks.
+        for held in ["/nowhere/bound", "/nowhere/stale", "/nowhere/unknown"] {
+            assert_eq!(frees(held, None, &nobody), None, "{held}");
+        }
+        // One lost or gone does not, and a worktree the board knows nothing of is tied to no
+        // task: every one of none is finished.
+        for free in ["/nowhere/lost", "/nowhere/left", "/nowhere/unheard"] {
+            assert_eq!(frees(free, None, &nobody), Some(true), "{free}");
+        }
+        // The sessions of a task just finished do not count as bound.
+        assert_eq!(frees("/nowhere/done", None, &nobody), None);
+        assert_eq!(frees("/nowhere/done", None, &closing), Some(true));
+        assert_eq!(frees("/nowhere/bound", None, &closing), None);
+        // A live task keeps it by a launch there or by its branch, alone or beside a finished one.
+        assert_eq!(frees("/nowhere/review", None, &nobody), None);
+        assert_eq!(frees("/nowhere/both", None, &nobody), None);
+        assert_eq!(frees("/nowhere/unheard", Some("sim/review"), &nobody), None);
+        assert_eq!(frees("/nowhere/done", Some("sim/review"), &closing), None);
+        assert_eq!(
+            frees("/nowhere/unheard", Some("sim/cancelled"), &nobody),
+            Some(true)
+        );
     }
 
     #[test]

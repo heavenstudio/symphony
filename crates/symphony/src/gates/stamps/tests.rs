@@ -12,6 +12,11 @@ const LATER: &str = "7c0ffee1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const SLUG: &str = "tools/x";
 const FOLDER: &str = "artifacts/tools/x/";
 
+/// A checkout that is not there: git says nothing of the cards a branch posted in it.
+fn nowhere() -> &'static Path {
+    Path::new("/nowhere")
+}
+
 fn task(status: &str, needs: Option<Needs>) -> Task {
     let mut fields = BTreeMap::new();
     if let Some(needs) = needs {
@@ -131,6 +136,21 @@ fn read_with(
     cards: &[&PendingItem],
     catalogue: &Catalogue,
 ) -> Vec<Gate> {
+    read_posted(record, thread, runs, tip, cards, catalogue, &|_| {
+        Posted::Nothing
+    })
+}
+
+/// [`read_with`], the cards the branch posted saying `posted` of the owner's stamp.
+fn read_posted(
+    record: &Task,
+    thread: &[Message],
+    runs: &[Record],
+    tip: Option<&str>,
+    cards: &[&PendingItem],
+    catalogue: &Catalogue,
+    posted: &dyn Fn(&str) -> Posted,
+) -> Vec<Gate> {
     let ours = [SLUG.to_string(), "tools/x/work".to_string()];
     let evidence = Evidence {
         thread,
@@ -140,6 +160,7 @@ fn read_with(
         branch: SLUG,
         tip,
         cards,
+        posted,
     };
     stamps(record, catalogue, &evidence)
 }
@@ -614,6 +635,40 @@ fn a_card_the_task_posted_holds_its_owner_stamp_needed_or_not_and_in_any_catalog
     );
 }
 
+/// The owner's approve of the cards the task's branch posted meets the `owner` stamp at the tip
+/// where the thread names no approve of it, naming the cards; what the cards say is asked only
+/// then, at the tip read.
+#[test]
+fn the_owners_stamp_is_met_by_the_approve_of_the_cards_the_branch_posted() {
+    let record = task("review", Some(assessed(&["owner"], Some(TIP))));
+    let asked = std::cell::RefCell::new(Vec::new());
+    let posted = |tip: &str| {
+        asked.borrow_mut().push(tip.to_string());
+        Posted::Approved {
+            cards: vec!["look".into()],
+        }
+    };
+    let catalogue = Catalogue::symphony();
+    let gates = read_posted(&record, &[], &[], Some(TIP), &[], &catalogue, &posted);
+    let owner = gates.iter().find(|gate| gate.name == "owner").unwrap();
+    assert_eq!(
+        (owner.state, owner.detail.as_str(), owner.link.as_deref()),
+        (
+            GateState::Met,
+            "Approved by the owner on card look, at 4be91c2",
+            None
+        )
+    );
+    assert_eq!(owner.commit.as_deref(), Some(TIP));
+    assert_eq!(*asked.borrow(), [TIP]);
+    // The thread's approve of the tip stands first: the cards are not asked.
+    asked.borrow_mut().clear();
+    let gates = read_posted(&record, &given(), &[], Some(TIP), &[], &catalogue, &posted);
+    let owner = gates.iter().find(|gate| gate.name == "owner").unwrap();
+    assert_eq!(owner.detail, "Approved by the owner at 4be91c2");
+    assert!(asked.borrow().is_empty());
+}
+
 #[test]
 fn the_owners_approve_is_one_commits_id_posted_as_an_approve_line() {
     assert_eq!(
@@ -646,21 +701,32 @@ fn the_owner_is_waited_on_while_open_or_done_by_an_approve_no_landing_closed() {
     );
     let owner = line(4, "msg", "owner", &format!("approve {TIP}"));
     for status in ["ready", "in_progress", "review", "blocked"] {
-        assert!(awaits_owner(status, &[], TIP), "{status}");
+        assert!(awaits_owner(status, &[], TIP, nowhere()), "{status}");
         assert!(
-            !awaits_owner(status, std::slice::from_ref(&owner), TIP),
+            !awaits_owner(status, std::slice::from_ref(&owner), TIP, nowhere()),
             "{status}"
         );
     }
-    assert!(awaits_owner("done", std::slice::from_ref(&approve), TIP));
+    assert!(awaits_owner(
+        "done",
+        std::slice::from_ref(&approve),
+        TIP,
+        nowhere()
+    ));
     assert!(!awaits_owner(
         "done",
         &[approve.clone(), owner.clone()],
-        TIP
+        TIP,
+        nowhere()
     ));
     // The owner's approve of another commit leaves it waiting on the tip.
     let other = line(4, "msg", "owner", &format!("approve {LATER}"));
-    assert!(awaits_owner("done", &[approve.clone(), other], TIP));
+    assert!(awaits_owner(
+        "done",
+        &[approve.clone(), other],
+        TIP,
+        nowhere()
+    ));
     // Done by a landing, a covered close or no verdict at all: nothing waits.
     let landed = line(
         5,
@@ -679,9 +745,9 @@ fn the_owner_is_waited_on_while_open_or_done_by_an_approve_no_landing_closed() {
         vec![approve.clone(), covered],
         Vec::new(),
     ] {
-        assert!(!awaits_owner("done", &thread, TIP), "{thread:?}");
+        assert!(!awaits_owner("done", &thread, TIP, nowhere()), "{thread:?}");
     }
-    assert!(!awaits_owner("cancelled", &[approve], TIP));
+    assert!(!awaits_owner("cancelled", &[approve], TIP, nowhere()));
 }
 
 #[test]

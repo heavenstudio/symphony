@@ -16,13 +16,17 @@ import type {
   Role,
   SessionGo,
   Task,
+  TaskListing,
+  TaskPage,
   View,
   Viewer,
   WorkKind,
   WorkOperation,
   WorkState,
 } from "./wire";
+import { VERSION_HEADER } from "./wire";
 import cases from "./wire.cases.json";
+import { NO_WORK } from "./work";
 
 export interface ViewCase {
   view: ProjectView;
@@ -85,6 +89,8 @@ export const CASES = cases as unknown as {
   decode: [string, [string, string][]][];
   /** `blocks` holds every kind of block, span and media, and every word they name. */
   samples: {
+    settings: unknown;
+    emptySettings: unknown;
     queue: unknown;
     emptyQueue: unknown;
     board: unknown;
@@ -116,6 +122,8 @@ export const CASES = cases as unknown as {
     applied: unknown;
     /** A waiting listing of tasks the workflow holds, one blocked in Build. */
     heldListing: unknown;
+    taskGuards: unknown;
+    guardRefusal: unknown;
     /** A task's attempts: one stopped, its resume running, one of a provider not held; a view. */
     attempts: unknown;
     attemptLink: unknown;
@@ -145,6 +153,48 @@ export function aTask(slug: string, fields: Partial<Task> = {}): Task {
     ...fields,
   };
 }
+
+/** A listing of `tasks`, counted as `counts`, with no next page; `more` says otherwise. */
+export function aListing<More extends Partial<TaskListing>>(
+  tasks: Task[],
+  counts: [string, number][] = [],
+  more: More = {} as More,
+) {
+  return {
+    machine_work: NO_WORK,
+    tasks,
+    statuses: [],
+    signoff: [],
+    counts,
+    lifecycle_counts: [],
+    next: null,
+    ...more,
+  };
+}
+
+/** The page of `task`: no brief, no children, no session and no gates; `more` says otherwise. */
+export function aTaskPage(task: Task, more: Partial<TaskPage> = {}): TaskPage {
+  return {
+    machine_work: NO_WORK,
+    task,
+    blocks: [],
+    children: [],
+    children_count: 0,
+    brief_omitted: 0,
+    brief_next: 0,
+    brief_revision: "",
+    sessions: {},
+    local: false,
+    gates: null,
+    ...more,
+  };
+}
+
+/** A feed event of `changes`, each a region and its data. */
+export const feedEvent = (...changes: [string, unknown][]) => ({
+  version: 1,
+  changes: changes.map(([region, data]) => ({ region, data })),
+});
 
 /** `handle`, an idle worker holding nothing, with nothing known of its session; `fields` say
  * otherwise. */
@@ -339,6 +389,28 @@ export const reply = (status: number, body: unknown, etag?: string) =>
     status,
     headers: etag === undefined ? {} : { ETag: etag },
   });
+
+/**
+ * A response as a read takes one, with no body to parse but the one given: its status, its JSON
+ * `body`, its tag (`etag`, none when empty) and the feed's cursor it was read at (`version`, none
+ * where the server names none).
+ */
+export function fakeAnswer(
+  status: number,
+  body: unknown = null,
+  etag = "",
+  version?: number,
+): Response {
+  const headers: Record<string, string> = {};
+  if (etag !== "") headers.ETag = etag;
+  if (version !== undefined) headers[VERSION_HEADER] = `${version}`;
+  return {
+    status,
+    ok: status >= 200 && status < 300,
+    headers: { get: (name: string) => headers[name] ?? null },
+    json: async () => body,
+  } as unknown as Response;
+}
 
 /**
  * Waits until `condition` holds, its assertions passing, as `vi.waitFor` does: it looks again every

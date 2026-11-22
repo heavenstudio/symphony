@@ -16,6 +16,7 @@ use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
+use symphony_board::lock::Recovered as _;
 use symphony_board::pg::external::Settings;
 use symphony_board::pg::hosted::{Client, Environment};
 use symphony_board::pg::{self, Step};
@@ -33,6 +34,25 @@ pub enum Certificate {
     None,
 }
 
+/// Which of `localhost`'s two addresses a server listens on, the other left to no one. A name's
+/// addresses come in an order the machine chooses, so a server on each shows a client both: the
+/// address nothing holds asked before the server's, and after it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Loopback {
+    V4,
+    V6,
+}
+
+impl Loopback {
+    /// The address, and the block of it a `pg_hba.conf` line names.
+    fn address(self) -> (&'static str, &'static str) {
+        match self {
+            Loopback::V4 => ("127.0.0.1", "127.0.0.1/32"),
+            Loopback::V6 => ("::1", "::1/128"),
+        }
+    }
+}
+
 pub struct Cluster {
     pub port: u16,
     pub socket: PathBuf,
@@ -45,7 +65,8 @@ pub struct Cluster {
 }
 
 /// Each server started, or why it did not start: a start that failed is not tried again.
-static CLUSTERS: Mutex<BTreeMap<(u32, Certificate), Started>> = Mutex::new(BTreeMap::new());
+static CLUSTERS: Mutex<BTreeMap<(u32, Certificate, Loopback), Started>> =
+    Mutex::new(BTreeMap::new());
 /// A server, or why it did not start.
 type Started = Result<&'static Cluster, String>;
 static NAMES: AtomicUsize = AtomicUsize::new(0);
@@ -172,12 +193,19 @@ fn server_certificate(dir: &Path, certificate: Certificate) {
 
 /// The server of `major` that presents `certificate`, started once for the binary.
 pub fn cluster_with(major: u32, certificate: Certificate) -> &'static Cluster {
-    let mut clusters = CLUSTERS.lock().unwrap_or_else(|held| held.into_inner());
+    cluster_on(major, certificate, Loopback::V4)
+}
+
+/// [`cluster_with`], the server listening on `loopback` alone.
+pub fn cluster_on(major: u32, certificate: Certificate, loopback: Loopback) -> &'static Cluster {
+    let mut clusters = CLUSTERS.lock().recover();
     static AT_EXIT: std::sync::Once = std::sync::Once::new();
     AT_EXIT.call_once(|| crate::store::on_exit(stop));
     let started = clusters
-        .entry((major, certificate))
-        .or_insert_with(|| start(major, certificate).map(|cluster| &*Box::leak(Box::new(cluster))));
+        .entry((major, certificate, loopback))
+        .or_insert_with(|| {
+            start(major, certificate, loopback).map(|cluster| &*Box::leak(Box::new(cluster)))
+        });
     match started {
         Ok(cluster) => cluster,
         Err(why) => panic!("{why}"),
@@ -187,12 +215,9 @@ pub fn cluster_with(major: u32, certificate: Certificate) -> &'static Cluster {
 /// At the test binary's exit: each server stopped, by its shell's input closed, and its folders
 /// removed.
 extern "C" fn stop() {
-    let clusters = CLUSTERS.lock().unwrap_or_else(|held| held.into_inner());
+    let clusters = CLUSTERS.lock().recover();
     for cluster in clusters.values().flatten() {
-        let mut shell = cluster
-            .shell
-            .lock()
-            .unwrap_or_else(|held| held.into_inner());
+        let mut shell = cluster.shell.lock().recover();
         drop(shell.stdin.take());
         let _ = shell.wait();
         let _ = std::fs::remove_dir_all(&cluster.dir);
@@ -205,9 +230,15 @@ pub fn cluster(major: u32) -> &'static Cluster {
     cluster_with(major, Certificate::Good)
 }
 
-fn start(major: u32, certificate: Certificate) -> Result<Cluster, String> {
+fn start(major: u32, certificate: Certificate, loopback: Loopback) -> Result<Cluster, String> {
     let bin = programs(major);
-    let tag = format!("{major}-{}-{}", certificate as u8, std::process::id());
+    let tag = format!(
+        "{major}-{}{}-{}",
+        certificate as u8,
+        loopback as u8,
+        std::process::id()
+    );
+    let (address, block) = loopback.address();
     let dir = std::env::temp_dir().join(format!("board-hosted-{tag}"));
     // A socket's path is short: under /tmp, as the board's own PostgreSQL keeps its.
     let socket = PathBuf::from(format!("/tmp/bh-{tag}"));
@@ -241,7 +272,7 @@ fn start(major: u32, certificate: Certificate) -> Result<Cluster, String> {
     }
     run(&mut initdb);
     let port = {
-        let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let held = std::net::TcpListener::bind((address, 0)).unwrap();
         held.local_addr().unwrap().port()
     };
     let at = |name: &str| dir.join(name).display().to_string();
@@ -252,7 +283,7 @@ fn start(major: u32, certificate: Certificate) -> Result<Cluster, String> {
     std::fs::write(
         data.join("postgresql.conf"),
         format!(
-            "listen_addresses = '127.0.0.1'\nport = {port}\n\
+            "listen_addresses = '{address}'\nport = {port}\n\
              unix_socket_directories = '{}'\nmax_connections = 60\n\
              ssl = {tls}\nssl_cert_file = '{}'\nssl_key_file = '{}'\n\
              password_encryption = 'scram-sha-256'\nfsync = off\n\
@@ -269,10 +300,10 @@ fn start(major: u32, certificate: Certificate) -> Result<Cluster, String> {
         data.join("pg_hba.conf"),
         format!(
             "local all {} trust\n\
-             {host} all weak_trust 127.0.0.1/32 trust\n\
-             {host} all weak_md5 127.0.0.1/32 md5\n\
-             {host} all weak_password 127.0.0.1/32 password\n\
-             {host} all all 127.0.0.1/32 scram-sha-256\n",
+             {host} all weak_trust {block} trust\n\
+             {host} all weak_md5 {block} md5\n\
+             {host} all weak_password {block} password\n\
+             {host} all all {block} scram-sha-256\n",
             pg::USER
         ),
     )
@@ -502,9 +533,9 @@ impl Project {
 }
 
 /// What a request was refused with.
-pub fn refused(answered: Result<Vec<pg::Answer>, symphony_board::rpc::DbError>) -> String {
+pub fn refused(answered: Result<Vec<pg::Answer>, symphony_board::db::DbError>) -> String {
     match answered {
-        Err(symphony_board::rpc::DbError::Failed(said)) => said,
+        Err(symphony_board::db::DbError::Failed(said)) => said,
         other => panic!("refused, not {other:?}"),
     }
 }

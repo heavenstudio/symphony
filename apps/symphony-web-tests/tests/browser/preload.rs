@@ -1,6 +1,6 @@
 //! A first visit to a kind of the web client (apps/symphony-web) asks for its entry and the chunks
 //! that entry imports together: the shell preloads them beside the entry (`imports` in its
-//! manifest, assets/shell.js `initialize`), so React and the frame do not wait for the entry to
+//! manifest, shell/shell.ts `initialize`), so React and the frame do not wait for the entry to
 //! come and be read first, a round trip a phone over a tailnet pays. The entry's import then
 //! takes each preloaded chunk: no chunk is asked for twice. A move into a kind keeps the page
 //! before shown, its header with it, until the kind's entry is in, and preloads only the chunks no
@@ -8,11 +8,11 @@
 
 use serde_json::json;
 
-use super::{SHOWN, STALL, assets::module, chrome, common, dist, site};
+use super::{READY, SHOWN, STALL, assets::module, chrome, common, dist, site};
 
 /// Each kind of the web client, the page that shows it and what the page draws once it is in (a
 /// task's page, the stand-in having no page of its task, says so once it has asked for it).
-const KINDS: [(&str, &str, &str); 8] = [
+const KINDS: [(&str, &str, &str); 9] = [
     ("review", "/", ".hero-title"),
     ("board", "/tasks", "[data-slug='tools/example']"),
     ("agents", "/agents", "[data-ready=agents]"),
@@ -20,6 +20,7 @@ const KINDS: [(&str, &str, &str); 8] = [
     ("queue", "/queue", "[data-ready=queue]"),
     ("reports", "/reports", "[data-ready=reports]"),
     ("runs", "/runs", "[data-ready=runs]"),
+    ("settings", "/settings", "[data-ready=settings]"),
     (
         "task",
         "/task/tools/example",
@@ -93,7 +94,7 @@ fn shows(chrome: &mut super::chrome::Chrome, selector: &str) {
     assert!(
         chrome.wait_for(
             &format!(
-                "document.querySelector({}) !== null && document.documentElement.dataset.navigation === 'ready'",
+                "document.querySelector({}) !== null && {READY}",
                 json!(selector)
             ),
             SHOWN
@@ -175,7 +176,7 @@ fn a_move_into_a_web_kind_keeps_the_page_before_shown_until_its_entry_is_in() {
     assert!(
         chrome.wait_for(
             &format!(
-                "document.querySelector({}) !== null && document.documentElement.dataset.navigation === 'ready'",
+                "document.querySelector({}) !== null && {READY}",
                 json!(board)
             ),
             SHOWN
@@ -205,7 +206,7 @@ fn a_move_into_a_web_kind_keeps_the_page_before_shown_until_its_entry_is_in() {
     assert!(
         chrome.wait_for(
             &format!(
-                "document.querySelector({}) !== null && document.documentElement.dataset.navigation === 'ready'",
+                "document.querySelector({}) !== null && {READY}",
                 json!(ready)
             ),
             SHOWN
