@@ -439,6 +439,8 @@ impl Store {
         let task = read.task.ok_or_else(|| {
             refusal(Refusal::new(
                 RefusalCode::UnknownId,
+                // A workflow's refusal, by its code, of the slug as the request named it: not
+                // the board's own refusal of a slug no task has (`work::no_task`).
                 format!("no task {slug}"),
             ))
         })?;

@@ -119,12 +119,7 @@ fn on_board<T>(
         .get(slug)
         .map_err(crate::api::task_failure)
         .and_then(|_| work(&store));
-    if let Err((status, _)) = &done
-        && [StatusCode::SERVICE_UNAVAILABLE, StatusCode::GATEWAY_TIMEOUT].contains(status)
-    {
-        hub.reader_failed(&store);
-    }
-    done
+    hub.read_on(&store, done)
 }
 
 /// What `attempt` may be asked here, by the local owner: its controls as its state, its pinned

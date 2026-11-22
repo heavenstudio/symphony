@@ -9,6 +9,7 @@ mod card_homes;
 mod common;
 #[path = "../../../../tools/test-support/script_board.rs"]
 mod fixture_script;
+mod installed_skills;
 mod installer;
 mod lifetime;
 mod named_recipes;
@@ -16,6 +17,7 @@ mod own_names;
 mod owner_words;
 mod recipe_variables;
 mod recipes;
+mod size_lines;
 #[path = "../common/mod.rs"]
 mod support;
 mod tasks_beat;

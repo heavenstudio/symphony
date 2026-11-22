@@ -176,7 +176,7 @@ impl Store {
             "block": named(&new.block), "tree": named(&new.tree), "task": task,
             "thread": named(&new.thread), "words": words,
             "at": new.at.unwrap_or_else(|| self.now()),
-            "no_task": thrown(format!("no task {}", repr(task.as_deref().unwrap_or("")))),
+            "no_task": thrown(super::work::no_task(task.as_deref().unwrap_or("")).to_string()),
         }))
     }
 

@@ -1120,3 +1120,25 @@ fn review_counts_follow_review_segments_through_changes_blocks_and_reopening() {
         assert_eq!(in_status(facts(status, 3.0), &[]).review_rounds, count);
     }
 }
+
+/// A verdict's text is a verdict alone or before its `: text`; a longer word that starts with it,
+/// a space before the colon and another case are not it.
+#[test]
+fn a_verdicts_text_is_the_word_alone_or_before_its_colon() {
+    for (text, verdict, is) in [
+        ("approve", "approve", true),
+        ("approve: at 1a2b3c", "approve", true),
+        ("approve:", "approve", true),
+        ("approved", "approve", false),
+        ("approve at 1a2b3c", "approve", false),
+        ("approve : late", "approve", false),
+        (" approve", "approve", false),
+        ("Approve", "approve", false),
+        ("changes: one", "changes", true),
+        ("changes", "approve", false),
+        ("", "approve", false),
+        ("done: merged", "done", true),
+    ] {
+        assert_eq!(verdict_is(text, verdict), is, "{text:?} as {verdict:?}");
+    }
+}

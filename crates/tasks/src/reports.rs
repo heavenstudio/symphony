@@ -17,7 +17,9 @@
 //! apart from the statuses' task-hours. A board that runs none writes the file it always wrote.
 
 use crate::cli::Env;
-use crate::stages::{self, CLAIMED, CLOSED, Facts, Hold, Line, RELEASED, Segment, Stages};
+use crate::stages::{
+    self, CLAIMED, CLOSED, Facts, Hold, Line, RELEASED, Segment, Stages, verdict_is,
+};
 use crate::{ReportPlace, ReportRead, ReportTask, red};
 use std::path::{Path, PathBuf};
 use symphony_api::reports::{
@@ -208,12 +210,6 @@ fn replay(task: &ReportTask, now: f64) -> Replayed<'_> {
         holds: stages::holds(&task.lines, task.created),
         series,
     }
-}
-
-/// Whether a verdict's text is this verdict, alone or before its `: text`.
-fn verdict_is(text: &str, verdict: &str) -> bool {
-    text.strip_prefix(verdict)
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with(':'))
 }
 
 fn is_claim(line: &Line) -> bool {
