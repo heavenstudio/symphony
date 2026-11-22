@@ -2,7 +2,9 @@
 # takes each from the fixture project (tools/product-pictures/fixture) at the widths a document
 # shows it at: WIDTHS is `phone` (pictures/NAME-phone.png), `wide` (pictures/NAME-wide.png) or
 # `both`. STEPS are options of `symphony shot`, with no spaces inside one. The pictures after the
-# line `=machine` are of the machine's one server, whose root is the project picker.
+# line `=machine` are of the machine's one server, whose root is the project picker; those after
+# the line `=theme`, of the project's own server again, the project with a theme of its own
+# (tools/product-pictures/theme.toml).
 
 home both /
 frame-activity wide / --click #bell --wait-for #activity-panel>ul>li
@@ -18,6 +20,13 @@ card both /docs/DECISIONS.md#weekly-digest-day --click .doc-actions>button --key
 board both /tasks
 board-decisions wide /tasks --click .wait-chip.k-decision
 task both /task/site/print-view
-task-thread wide /task/site/print-view --hover .task-tokens>summary --wait-for #task-send --hover .task-tokens>summary
+task-thread wide /task/site/print-view --hover [id^=composer-] --wait-for #task-send --hover #task-send
+reports both /reports
+reports-days wide /reports --click [data-grain=day]
+runs both /runs
+run wide /runs?run=5f0c2a9e41d7438b9c1e6a07d2b8e314
+appearance wide /queue --click #appearance
 =machine
 projects both /
+=theme
+theme both /queue

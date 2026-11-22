@@ -20,10 +20,10 @@ import {
   took,
   vanished,
 } from "./document-live";
-import { CASES, feeds as pageFeeds, reply, say, until } from "./testing";
+import { fakeAnswer as answered, CASES, feeds as pageFeeds, reply, say, until } from "./testing";
 import { UNREACHABLE } from "./trouble";
 import type { Document, DocumentCard, DocumentOutline, Folder, Section } from "./wire";
-import { CACHE_FORMAT, FEED_EVENT, VERSION_HEADER } from "./wire";
+import { CACHE_FORMAT, FEED_EVENT } from "./wire";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -156,14 +156,6 @@ function serverOf(): Held[] {
 /** Until `asked` holds `count`, the page's waits running meanwhile. */
 const askedFor = (asked: unknown[], count: number) =>
   until(() => expect(asked).toHaveLength(count));
-
-/** A document answer of `status`, at the feed's `cursor` when one is given, tagged `etag`. */
-function answered(status: number, body: unknown, etag = "", cursor?: number): Response {
-  const headers: Record<string, string> = {};
-  if (etag !== "") headers.ETag = etag;
-  if (cursor !== undefined) headers[VERSION_HEADER] = String(cursor);
-  return new Response(status === 304 ? null : JSON.stringify(body), { status, headers });
-}
 
 describe("a document's address", () => {
   it("names a checkout's document under its scope", () => {

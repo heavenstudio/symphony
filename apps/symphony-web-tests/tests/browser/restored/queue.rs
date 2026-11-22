@@ -2,8 +2,8 @@
 //! the queue's counts, order, scope, anchors and refresh keep the owner's reading position, and a
 //! card's Later and Undo keep the keyboard's focus.
 use crate::{
-    SHOWN, chrome, chrome::Chrome, common, components::key, dist, focus_on, site::Site, texts,
-    wait_for_board, wait_for_feed,
+    READY, SHOWN, chrome, chrome::Chrome, common, components::key, dist, focus_on, site::Site,
+    texts, wait_for_board, wait_for_feed,
 };
 use serde_json::{Value, json};
 
@@ -23,7 +23,7 @@ fn queue_fixture() -> Value {
 
 #[test]
 fn queue_stylesheet_failure_keeps_the_previous_page_and_allows_retry() {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let Some(mut browser) = chrome() else { return };
     browser.open(&site.url("/"));
     wait_for_board(&mut browser);
@@ -42,8 +42,13 @@ fn queue_stylesheet_failure_keeps_the_previous_page_and_allows_retry() {
         "a stylesheet failure must leave the previous page mounted");
     browser.call("Network.setBlockedURLs", json!({"urls":[]}));
     browser.eval("document.querySelector('#module-error button').click()");
-    assert!(browser.wait_for("document.documentElement.dataset.navigation === 'ready' && document.querySelector('[data-ready=queue] #you') !== null", SHOWN),
-        "retry must fetch the failed stylesheet and mount the queue");
+    assert!(
+        browser.wait_for(
+            &format!("{READY} && document.querySelector('[data-ready=queue] #you') !== null"),
+            SHOWN
+        ),
+        "retry must fetch the failed stylesheet and mount the queue"
+    );
     // queue.css overrides the generic card padding only when its rules actually apply.
     assert_eq!(
         browser.eval("getComputedStyle(document.getElementById('you')).paddingTop"),
@@ -68,7 +73,7 @@ fn follows_alone(site: &Site, before: usize) -> Result<(), test_time::Stall> {
 /// page, and the page shown follows the feed on a stream of its own.
 #[test]
 fn moves_between_home_and_the_queue_draw_each_page_and_keep_the_feed_both_ways() {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let mut queue = queue_fixture();
     site.set_json("/api/queue", &queue);
     let Some(mut browser) = chrome() else { return };
@@ -88,12 +93,16 @@ fn moves_between_home_and_the_queue_draw_each_page_and_keep_the_feed_both_ways()
         requestAnimationFrame(tick);"#,
     );
     // Home is the kind `review`, in its root; the queue the kind `queue`, in its own.
-    let queue_shown = "document.documentElement.dataset.navigation === 'ready' \
+    let queue_shown = &format!(
+        "{READY} \
         && document.querySelector('#review-root-queue:not([hidden]) [data-ready=queue] #you h2') !== null \
-        && document.getElementById('review-root-review')?.hidden === true";
-    let home_shown = "document.documentElement.dataset.navigation === 'ready' \
+        && document.getElementById('review-root-review')?.hidden === true"
+    );
+    let home_shown = &format!(
+        "{READY} \
         && document.querySelector('#review-root-review:not([hidden]) [data-ready=board] .hero-title') !== null \
-        && document.getElementById('review-root-queue')?.hidden === true";
+        && document.getElementById('review-root-queue')?.hidden === true"
+    );
 
     let before = site.feed_requests();
     browser.eval("document.querySelector('a[href=\"/queue\"]').click()");
@@ -146,7 +155,7 @@ fn moves_between_home_and_the_queue_draw_each_page_and_keep_the_feed_both_ways()
 /// hears the same event again and stays, following the feed.
 #[test]
 fn the_feeds_client_event_naming_another_build_loads_the_queue_again_once() {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let mut queue = queue_fixture();
     site.set_json("/api/queue", &queue);
     let Some(mut browser) = chrome() else { return };
@@ -289,7 +298,7 @@ fn press_keeping_focus(
 /// names none next and the reader stays; with another card waiting they go to its document.
 #[test]
 fn later_and_undo_keep_the_focus_on_the_cards_button() {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     site.set_json("/api/queue", &waiting_on_you(&[waiting("alpha", false)]));
     site.set_json(
         "/api/postpone",
@@ -370,7 +379,7 @@ fn later_and_undo_keep_the_focus_on_the_cards_button() {
 
 #[test]
 fn restored_queue_counts_order_scope_anchors_and_refresh_keep_reading_position() {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     site.set_json("/api/postpone", &json!({"ok":true,"changed":true}));
     let mut queue = queue_fixture();
     site.set_json("/api/queue", &queue);
@@ -438,10 +447,7 @@ fn restored_queue_counts_order_scope_anchors_and_refresh_keep_reading_position()
         "the addressed heading must match the single anchor inset within one pixel"
     );
     for width in [1280, 390] {
-        browser.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":false}),
-        );
+        browser.viewport(width, 900, false);
         browser.eval("document.getElementById('agent').scrollIntoView()");
         assert!(
             browser.wait_for(anchored, SHOWN),
@@ -450,7 +456,7 @@ fn restored_queue_counts_order_scope_anchors_and_refresh_keep_reading_position()
     }
     browser.call("Emulation.clearDeviceMetricsOverride", json!({}));
     // The restored viewport's resize must reach layout before the section is aligned.
-    browser.eval("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+    browser.frames();
     browser.eval("document.getElementById('agent').scrollIntoView()");
     assert!(
         browser.wait_for(anchored, SHOWN),

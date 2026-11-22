@@ -14,47 +14,21 @@ use symphony_board::workflow::{Custom, Host, written};
 /// The wall-clock backstop of a wait for the hub's read: only a stall reaches it.
 const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(30));
 
-/// Work built (available, worked by a held executor, or blocked by the owner), then verified
-/// (awaiting, accepted by a person); a ready task the board's writers keep starts available.
-const TWO: &str = r#"
-[workflow]
-format = 1
-initial = { phase = "build", state = "available" }
-task_kinds = ["task"]
-phases = [
-  { id = "build", label = "Build", order = 0, phone_order = 0, column = true },
-  { id = "verify", label = "Verify", order = 1, phone_order = 1, column = true },
-]
-states = [
-  { id = "available", label = "Available" }, { id = "working", label = "Working" },
-  { id = "blocked", label = "Blocked" }, { id = "awaiting", label = "Awaiting" },
-  { id = "accepted", label = "Accepted" },
-]
-capabilities = ["owner"]
-adapters = []
-guards = []
-positions = [
-  { at = { phase = "build", state = "available" }, slot = "release", dependencies = "none", unsuccessful_dependency = "block", accepts_work = true, terminal = false, legacy = "ready", satisfies_dependencies = false, completion = "none" },
-  { at = { phase = "build", state = "working" }, staffing = "executor", slot = "acquire", dependencies = "none", unsuccessful_dependency = "block", accepts_work = true, terminal = false, legacy = "in_progress", satisfies_dependencies = false, completion = "none", recovery = { release = { target = { phase = "build", state = "available" }, manual = false, slot = "release", release_role = true, release_reservation = false }, lost_holder = { target = { phase = "build", state = "available" }, manual = false, slot = "release", release_role = true, release_reservation = false }, attempt_failure = { manual = true, slot = "retain", release_role = false, release_reservation = false }, cancellation_acknowledged = { manual = true, slot = "retain", release_role = false, release_reservation = false } } },
-  { at = { phase = "build", state = "blocked" }, slot = "release", dependencies = "none", unsuccessful_dependency = "block", accepts_work = false, terminal = false, legacy = "blocked", satisfies_dependencies = false, completion = "none" },
-  { at = { phase = "verify", state = "awaiting" }, slot = "release", dependencies = "none", unsuccessful_dependency = "block", accepts_work = false, terminal = false, legacy = "review", satisfies_dependencies = false, completion = "none" },
-  { at = { phase = "verify", state = "accepted" }, slot = "release", dependencies = "none", unsuccessful_dependency = "block", accepts_work = false, terminal = true, legacy = "done", outcome = "success", satisfies_dependencies = true, completion = "covered_close" },
-]
-edges = [
-  { id = "claim", label = "Claim", from = { phase = "build", state = "available" }, to = { phase = "build", state = "working" }, operation = "claim", authority = [{ kind = "task_role", role = "executor" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "acquire_role", role = "executor" }, { kind = "slot", policy = "acquire" }], automatic = false, human_wait = false },
-  { id = "submit", label = "Submit", from = { phase = "build", state = "working" }, to = { phase = "verify", state = "awaiting" }, operation = "request_review", authority = [{ kind = "task_role", role = "executor" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "slot", policy = "release" }], automatic = false, human_wait = false },
-  { id = "block", label = "Block", from = { phase = "build", state = "available" }, to = { phase = "build", state = "blocked" }, operation = "block", authority = [{ kind = "project_capability", capability = "owner" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "block", save_resume = true }, { kind = "slot", policy = "release" }], automatic = false, human_wait = false },
-  { id = "resume", label = "Resume", from = { phase = "build", state = "blocked" }, to = { phase = "build", state = "available" }, operation = "resume", authority = [{ kind = "project_capability", capability = "owner" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "clear_block" }, { kind = "slot", policy = "release" }], automatic = false, human_wait = false },
-  { id = "accept", label = "Accept", from = { phase = "verify", state = "awaiting" }, to = { phase = "verify", state = "accepted" }, operation = "close_covered", authority = [{ kind = "project_capability", capability = "owner" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "outcome", outcome = "success", satisfies_dependencies = true }, { kind = "slot", policy = "release" }], automatic = false, human_wait = true },
-]
-
+/// A ready task the board's writers keep starts available.
+const READY: &str = r#"
 [[workflow_mappings]]
 from = { phase = "ready", state = "available" }
 to = { phase = "build", state = "available" }
 "#;
 
+/// The board's tests' `TWO` (work built, then verified) with [`READY`].
+const TWO: &str = concat!(
+    "\n",
+    include_str!("../../../../crates/tasks/tests/fixtures/two_workflow.toml")
+);
+
 fn custom() -> Custom {
-    let (definition, mappings) = written(TWO).unwrap();
+    let (definition, mappings) = written(&format!("{TWO}{READY}")).unwrap();
     let definition = definition.unwrap();
     let revision = definition
         .revision(Source {

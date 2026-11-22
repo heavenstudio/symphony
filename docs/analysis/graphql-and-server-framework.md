@@ -1,6 +1,6 @@
 # GraphQL, its library and the server's framework
 
-With the web client moving to React, TypeScript and Vite ([its card](../DECISIONS.md#client-framework)),
+With the web client moving to React, TypeScript and Vite ([its card](client-framework-comparison.md#client-framework)),
 three questions about what the port's data layer and the server are built on: whether the client
 should read the server through GraphQL, with Apollo or another client cache, in place of today's
 JSON reads and live feed; if so, which Rust GraphQL library; and whether the server should stay
@@ -55,6 +55,30 @@ of it today, as each page applies the changes it is sent, but a client that grow
 the same tasks would feel its lack. TanStack Query is the smaller way to that (10 kB, the REST
 reads unchanged), if it is ever wanted.
 
+- [r] **graphql** — Should the React client read the server through GraphQL, with Apollo or another GraphQL client and its cache, instead of today's JSON reads and live feed? The hope is better caching in the browser and faster responses; measured here, the caching is mostly built already, and the speed would come from elsewhere. A: keep the JSON reads, the live feed and the device cache the React port is built on. B: GraphQL: a schema on the server, a GraphQL client and its cache in the browser, live updates as subscriptions. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/graphql-and-server-framework#GraphQL or not]]
+  [2026-11-14 11:01] agent — Posted for the board task `inbox/evaluate-graphql-and-other-web-stacks`.
+
+    **What a page reads today,** measured on the live board: the board 12 reads and 23 kB of data before it is drawn, a task's page 4 reads and 10 kB, this register 6 reads and 17 kB. A return visit makes 3 to 5 reads of about 5 kB, every unchanged read answered empty (`304`). The server answers most reads in 1 to 2 ms and its slowest in 20 to 200 ms, all of it the work behind them.
+
+    **A, keep them.** Nothing changes in the port. Two small changes would give what one GraphQL query saves, if wanted later: a task's page asking for the task and the board together (the server already does this for documents), and the board asking for its counts and columns with the board. Over a slow phone network each saves about 0.6 s; on this machine, nothing.
+
+    **B, GraphQL.** One query a page in place of several reads. Its costs:
+    - 10 kB (urql) to 58 kB (Apollo) more on every first visit, against the queue's whole 101 kB on React.
+    - Apollo's cache lives in the page's memory and keeps nothing across visits without an add-on last released in March 2024. A query sent by POST never gets the empty `304` that makes return visits cheap today.
+    - Subscriptions need a WebSocket the server does not have, with the feed's rules rebuilt on top.
+    - A second set of generated types beside today's.
+    - The plugins' blocks and fields cross as untyped JSON, since a query cannot ask for a tree of any depth.
+    - The port's reads, feed and cache modules are replaced before its nine page tasks start.
+
+    **Why A.** Where GraphQL saves time, the same saving is open without it. Weighed in bytes, it costs more than it saves. The cache it brings is weaker here than the one built. The server's time would not change: about 0.06 ms more a query.
+
+    **The weakest point.** A normalized cache (one task kept once, every view of it updated together) is the one thing the client would gain. The live feed covers most of it today; if it is ever needed, TanStack Query gives it over the reads as they are, for 10 kB.
+
+    **Earlier verdicts checked.** **client-framework** (React, TypeScript, Vite) moved the front end and named no data layer, so it does not decide this. **client-cache** (the device cache, checked by checksum) would be partly replaced under B; that would change an approved design, so it is asked here, not assumed.
+  [2026-11-14 11:17] owner · approved — A let's keep it simple for now. Agree this seems to be solving a problem we don't have (yet?)
+  [2026-11-15 11:13] agent — Recorded: A. The React client keeps the JSON reads, the live feed and the device cache, with no GraphQL. Nothing changes: the React client is being built on them as they are.
+  [2026-11-15 11:14] agent · resolved
+
 ### Which GraphQL library, if GraphQL is taken
 
 **A: Juniper. B: async-graphql.** These are the two maintained Rust GraphQL servers; both serve
@@ -89,6 +113,22 @@ whole as a JSON value (`Json<T>`), which the blocks and the plugins' fields woul
 Juniper needs a scalar of the Symphony's own for it. Juniper is a 0.x line whose minors break
 (0.17.2 and 0.18.0 two days apart), with seven people committing in the year.
 
+- [~] **graphql-library** — If the client reads the server through GraphQL (**graphql**), which Rust library serves it? It matters only if that card is B. A: Juniper. B: async-graphql. Recommended: A, by a narrow margin. Approve and say A or B in the note, or comment. [[analysis/graphql-and-server-framework#Which GraphQL library, if GraphQL is taken]]
+  [2026-11-14 11:01] agent — Posted for the board task `inbox/evaluate-graphql-and-other-web-stacks`.
+
+    **Both work.** Each served a query on Axum in a probe and speaks subscriptions over WebSocket. Each needs a derive of its own on every wire type, as neither reads serde's.
+
+    **A, Juniper.** Released on 2026-10-30 with its Axum integration; last commit 2026-11-09. The lighter: compiled from nothing it took 54 s more CPU than a plain JSON server and 0.8 MiB more binary. Its costs: about a thirteenth of the users; no JSON value built in, so the blocks and the plugins' fields need a small scalar of the Symphony's own; a 0.x line whose minor versions break.
+
+    **B, async-graphql.** About 13 times the users, two maintainers, and it takes any serde type whole as JSON. It is maintained: asked in November 2025 whether it still was, it took on a second maintainer, who answered in December and made most of its commits since. Its costs: its newest stable is from 2026-01-20, nothing has been pushed since 2026-04-21, and its 8.0 has been a release candidate for ten months. It took 158 s more CPU and 1.5 MiB more binary.
+
+    **Why A, by a narrow margin.** Mostly the measured weight: it is the lighter to compile and to ship, a gap that grows with each of the wire's 158 types. Its recent release counts for less than it would against an abandoned library: seven quiet months, not a stall. Speed is level: 74 µs a query against 62.
+
+    **The size budget.** The server has about 0.6 MiB of room under its line, so either needs the line raised, A by less.
+
+    **Earlier verdicts checked.** No card speaks of a GraphQL library.
+  [2026-11-14 11:18] owner · dismissed
+
 ### Which server framework
 
 **A: keep Axum. B: move,** Actix Web being the strongest alternative.
@@ -112,6 +152,26 @@ server's source files and 25 of its test files. Staying costs one change when Ax
 version comes: it changes `axum::serve`, which the server calls in one place, and applies a
 30-second limit on reading a request's head that the server's listener does not have today
 ([Is anything about Axum failing](#is-anything-about-axum-failing)).
+
+- [r] **server-framework** — Should the server stay on Axum, or move to another Rust web framework (Actix Web, Rocket, Warp, bare Hyper, Poem, Salvo)? Nothing you see changes; this decides what the server is built on. A: keep Axum. B: move to Actix Web, the one serious alternative. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/graphql-and-server-framework#Which server framework]]
+  [2026-11-14 11:01] agent — Posted for the board task `inbox/evaluate-graphql-and-other-web-stacks`.
+
+    **Is Axum failing?** No. No task or bug names it, and it is 0.03 MiB of the server's binary. The server uses it thinly: one route and a fallback, with its own dispatch picking among 30 reads and 15 saves.
+
+    **The others.** Rocket cannot take the listening sockets the reload hands a new build. Poem has had no release in 15 months. Warp moves slowly, under one person's account. Salvo and ntex each rest on one person. Bare Hyper is what Axum already runs on. Actix Web is maintained, released often, and offers everything the server needs.
+
+    **Speed.** Actix Web has scored above Axum in published benchmarks; Axum's last published JSON figure is 2.7 million requests a second, about 21 µs of a core each. This server's reads take 1 to 200 ms of their own work, for a handful of browsers, so a faster framework would save microseconds no page could show.
+
+    **B's cost.** 14 of the server's files and 25 of its test files: its own listener, which the reload's hand-over and drain rely on; its layers; the projects' dispatch; the streams.
+
+    **A's cost.** Axum's next version changes `axum::serve`, which the server calls in one file: a small compile fix, plus a 30-second limit on reading a request's head that it applies, with no setting to turn it off. That would close a connection that sends nothing for 30 s, an idle browser connection among them, where today it is kept, so the server's drain on reload needs checking when it comes.
+
+    **Why A.** Nothing to fix, nothing to win at this load, and the move would rewrite the parts that are hardest to test.
+
+    **Earlier verdicts checked.** No card speaks of the server's framework; **client-framework** left the server as it is.
+  [2026-11-14 11:19] owner · approved — A
+  [2026-11-15 11:13] agent — Recorded: A, the server stays on Axum. Nothing changes, and no document said otherwise.
+  [2026-11-15 11:14] agent · resolved
 
 ### What it changes in the port
 

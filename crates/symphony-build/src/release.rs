@@ -182,7 +182,7 @@ const LATE_SECONDS: f64 = 15.0 * 60.0;
 const FINISH: Duration = Duration::from_secs(5 * 60);
 /// Why a check is red without having run.
 const NOT_STARTED: &str = "the run's time was up before it started";
-/// The time a release's install has, past its run's checks: the release build of its four binaries
+/// The time a release's install has, past its run's checks: the release build of its five binaries
 /// at the machine's load, and the questions put to them.
 const INSTALL: Duration = Duration::from_secs(3600);
 /// The time the rest of a release's refresh has, past its install: each board's snapshot and move,

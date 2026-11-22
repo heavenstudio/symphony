@@ -13,7 +13,17 @@ import {
   withListed,
 } from "./boardlive";
 import { ReadCursor } from "./journal";
-import { aMachine, anOperation, aTask, aWork, CASES, memoryStorage } from "./testing";
+import {
+  aListing,
+  aMachine,
+  anOperation,
+  fakeAnswer as answer,
+  aTask,
+  aWork,
+  CASES,
+  feedEvent as event,
+  memoryStorage,
+} from "./testing";
 import type { MachineWork, Task, TaskListing } from "./wire";
 import { statusNotice } from "./words";
 import { NO_WORK } from "./work";
@@ -36,30 +46,9 @@ vi.mock("react-dom", async (original) => ({
 /** The wall clock the board reads: a task updated before it by more than its window is old. */
 const NOW = 1_800_000_000_000;
 
-/** A response as the page reads one: its status, its tag and its JSON body. */
-function answer(status: number, body: unknown = null, etag = ""): Response {
-  return {
-    status,
-    ok: status >= 200 && status < 300,
-    headers: { get: (name: string) => (name === "ETag" && etag !== "" ? etag : null) },
-    json: async () => body,
-  } as unknown as Response;
-}
-
 /** A listing of `tasks`, counted as `counts`, and whatever else `more` says. */
 function listing(tasks: Task[], counts: [string, number][] = [], more: Partial<TaskListing> = {}) {
-  return {
-    machine_work: NO_WORK,
-    tasks,
-    statuses: [],
-    signoff: [],
-    counts,
-    lifecycle_counts: [],
-    next: null,
-    orchestrators: [],
-    unstarted: 0,
-    ...more,
-  };
+  return aListing(tasks, counts, { orchestrators: [], unstarted: 0, ...more });
 }
 
 type Route = (url: string, etag: string) => Response | Promise<Response>;
@@ -118,12 +107,6 @@ function later<T>(): { promise: Promise<T>; settle: (value: T) => void } {
   });
   return { promise, settle };
 }
-
-/** A feed event of `changes`, each a region and its data. */
-const event = (...changes: [string, unknown][]) => ({
-  version: 1,
-  changes: changes.map(([region, data]) => ({ region, data })),
-});
 
 const building = (slug: string, state: "queued" | "running" = "running"): MachineWork =>
   aWork([aMachine("alpha", [anOperation("alpha", "b", "build", state, { task: slug })])]);

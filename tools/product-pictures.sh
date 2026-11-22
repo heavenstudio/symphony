@@ -2,13 +2,15 @@
 # Retakes the product specs' pictures (docs/product/README.md, "Pictures"): every line of
 # docs/product/pictures.txt, at the widths it names, from a server of its own over a copy of the
 # fixture project (tools/product-pictures/fixture), with a machine folder of its own and a board
-# of its own, the copy's, which tools/product-pictures/board.sh fills. From the list's `=machine`
-# line on, they are the machine's one server's instead, started then over that machine folder with
-# the copy and a second project with no board (tools/product-pictures/pantry) registered in it, so
-# its root is the project picker. Every picture is taken at one moment (NOW below, on the board's
-# clock and the page's), in UTC, so a page that draws an age or a time is the same picture on any
-# day. It touches no shared server, no project's board and no terminal, and ends the servers it
-# started, the copy's board server with them.
+# of its own, the copy's, which tools/product-pictures/board.sh fills, and the runs and the hours
+# tools/product-pictures/records.sh says its machine recorded. From the list's `=machine` line on,
+# they are the machine's one server's instead, started then over that machine folder with the copy
+# and a second project with no board (tools/product-pictures/pantry) registered in it, so its root
+# is the project picker; from its `=theme` line on, the copy's own server's again, the copy with a
+# theme of its own. Every picture is taken at one moment (NOW below, on the board's clock and the
+# page's), in UTC, so a page that draws an age or a time is the same picture on any day. It touches
+# no shared server, no project's board and no terminal, and ends the servers it started, the copy's
+# board server with them.
 #
 #   tools/product-pictures.sh          retake every picture
 #   tools/product-pictures.sh NAME...  retake those named (the list's first word)
@@ -161,12 +163,23 @@ done <"$work/names"
     exit 1
 }
 
-# The machine's one server, for the list's lines from `=machine` on: the copy and the second project
-# registered in the machine folder, as `just symphony` in each checkout registers it, the copy
-# first, and the server started from the copy, as that start runs it, with the client this checkout
-# commits, which it would otherwise look for in the machine folder. The copy's board is read before
-# the server says its address; the second project's first read is asked for and answered before any
-# picture, so the project picker counts both.
+# What the machine recorded of the project, for Reports and Runs: no page has asked for it yet.
+if ! (cd "$work/project" && NOW=$NOW bash "$root/tools/product-pictures/records.sh") \
+    >>"$work/board.log" 2>&1; then
+    cat "$work/board.log" >&2
+    echo "product-pictures: the fixture's runs and hours were not written" >&2
+    exit 1
+fi
+
+# The machine's one server, for the list's lines from `=machine` on, its address left in `machine`:
+# the copy and the second project registered in the machine folder, as `just symphony` in each
+# checkout registers it, the copy first, and the server started from the copy, as that start runs
+# it, with the client this checkout commits, which it would otherwise look for in the machine
+# folder. The copy's board is read before the server says its address; the second project's first
+# read is asked for and answered before any picture, so the project picker counts both. It rolls
+# the hour up into the copy's records and records hours of its own there, which the copy's own
+# server leaves alone: the pictures that read them come before the line.
+machine=""
 machine() {
     repository pantry "$work/pantry"
     (cd "$work" && "$serve" project add "$work/project" && "$serve" project add "$work/pantry") \
@@ -177,22 +190,34 @@ machine() {
     }
     start machine 4 serve --home "$work/machine" --install "$root/apps/symphony-server" \
         --root "$work/project" --port 0 --host 127.0.0.1
-    curl --silent --show-error --max-time 60 --output /dev/null "$base/pantry/api/board" || {
+    machine="$base"
+    curl --silent --show-error --max-time 60 --output /dev/null "$machine/pantry/api/board" || {
         cat "$work/machine.log" >&2
         echo "product-pictures: the second project's board was not read" >&2
         exit 1
     }
 }
 
+own="$base"
+# Which server the line read next is taken from: the copy's own, or the machine's one server.
+from=own
 taken=0
 while read -r name widths path steps || [ -n "$name" ]; do
-    case "$name" in
-    '' | '#'*) continue ;;
-    =machine)
-        machine
+    case "$name" in '' | '#'*) continue ;; esac
+    # From the list's `=machine` line on, the pictures are the one server's, started at the first of
+    # them retaken, so a retake of none starts it.
+    if [ "$name" = "=machine" ]; then
+        from=machine
         continue
-        ;;
-    esac
+    fi
+    # From the list's `=theme` line on, the project has the theme of its own
+    # (tools/product-pictures/theme.toml), which its pages take at their next load, from its own
+    # server again: whichever pictures are retaken, those after the line are of the themed project.
+    if [ "$name" = "=theme" ]; then
+        cat "$root/tools/product-pictures/theme.toml" >>"$work/project/symphony.toml"
+        from=own
+        continue
+    fi
     if [ "$#" -gt 0 ]; then
         case " $* " in *" $name "*) ;; *) continue ;; esac
     fi
@@ -203,6 +228,12 @@ while read -r name widths path steps || [ -n "$name" ]; do
         exit 1
         ;;
     esac
+    if [ "$from" = machine ]; then
+        [ -n "$machine" ] || machine
+        base="$machine"
+    else
+        base="$own"
+    fi
     if [ "$widths" != wide ]; then
         # shellcheck disable=SC2086 # a line's steps are shot's own options, split on spaces
         "$shot" shot "$base$path" --out "$out/$name-phone.png" --phone --scheme light --clock "$NOW" --timeout 60 $steps

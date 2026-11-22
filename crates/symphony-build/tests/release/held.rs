@@ -11,7 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::rc::Rc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use serde_json::json;
 use symphony::machine::held::{self, Host, Retry};
@@ -21,6 +21,7 @@ use symphony::taskcli::CliBoard;
 use symphony_board::Raw;
 use symphony_board::rpc::Client;
 use symphony_board::server::Home;
+use symphony_board::sweep::trigger::now;
 use symphony_board::sys::Command;
 
 use super::Fixture;
@@ -33,13 +34,6 @@ const SCHEMA: i64 = symphony_board::SCHEMA;
 const BEHIND: i64 = symphony_board::SCHEMA - 1;
 /// Each command's bound, as the server's sweep gives it.
 const BOUND: Duration = Duration::from_secs(240);
-
-fn now() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs_f64()
-}
 
 /// The Symphony's checkout and a project `alpha`, both registered; the release installed with
 /// `current` naming it, its `tasks` running the board's own binary; `alpha`'s board started at

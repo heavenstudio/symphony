@@ -7,6 +7,7 @@
 use super::gates::{BUDGET, GATE, decide, raise};
 use super::stamps::told;
 use super::*;
+use crate::common::pair;
 use std::collections::BTreeMap;
 use symphony_api::workflow::{InputValue, OperationRequest, Pair};
 use symphony_board::Store;
@@ -24,13 +25,6 @@ fn workflowed(r: &Repo) {
     manifest(r, &format!("\n{WORKFLOW}"));
     let followed = follow(&r.board.store, &r.root).unwrap();
     assert!(matches!(followed, Followed::Activated(_)), "{followed:?}");
-}
-
-fn pair(phase: &str, state: &str) -> Pair {
-    Pair {
-        phase: phase.into(),
-        state: state.into(),
-    }
 }
 
 fn at(r: &Repo, slug: &str) -> (Pair, u64) {
