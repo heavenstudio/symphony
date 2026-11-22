@@ -154,3 +154,54 @@ fn no_batch_begins_at_or_past_the_deadline_by_the_clock_it_is_handed() {
     // A deadline already past sends nothing at all.
     assert_eq!(delivered_by(0.0), (vec![], vec![]));
 }
+
+/// A plain line keeps what it is given, starts unattempted and carries no PULL: on the outbox it
+/// is written in the very shape the literal it replaced wrote, `pull_said` left out.
+#[test]
+fn a_plain_line_is_unattempted_and_carries_no_pull() {
+    let message = Event::line(
+        "message-7".into(),
+        "amber-wren",
+        "MSG #7".into(),
+        None,
+        Some(7),
+    );
+    assert_eq!(
+        serde_json::to_value(&message).unwrap(),
+        json!({"key":"message-7", "handle":"amber-wren", "text":"MSG #7", "slug":null,
+            "message":7, "attempts":0, "sequence":0, "pull_entries":null, "pull_withheld":null})
+    );
+    let line = Event::line(
+        "event-3-0".into(),
+        "zinc-otter",
+        String::new(),
+        Some("p/a".into()),
+        None,
+    );
+    assert_eq!((line.slug.as_deref(), line.message), (Some("p/a"), None));
+    assert_eq!(line.text, "");
+    assert!(line.pull_entries.is_none() && line.pull_withheld.is_none());
+    assert!(line.pull_said.is_none());
+}
+
+/// A board read afresh drops the pass's inbox pool, whether one was made or not, and reads the
+/// board as it stands, the task filed since the last read on it.
+#[test]
+fn a_fresh_board_drops_the_inbox_pool_and_reads_the_board_as_it_stands() {
+    let fixture = crate::store_fixture::Fixture::empty();
+    let store = &fixture.store;
+    let pooled = || (store.inbox_pool.lock().unwrap()).is_some();
+    let (board, _) = store.fresh_board().unwrap();
+    assert!(board.tasks.is_empty());
+    assert!(!pooled());
+    store.could_hear("amber-wren", 0, 0).unwrap();
+    assert!(pooled(), "a pass's read of an inbox makes the pool");
+    fixture.task("p/filed");
+    let (board, sequence) = store.fresh_board().unwrap();
+    assert!(!pooled());
+    assert_eq!(sequence, store.board_marker().unwrap());
+    assert_eq!(
+        (board.tasks.iter().map(|t| t.slug.as_str())).collect::<Vec<_>>(),
+        ["p/filed"]
+    );
+}

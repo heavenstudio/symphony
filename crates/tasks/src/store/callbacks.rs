@@ -87,6 +87,31 @@ struct Event {
     pull_said: Option<pull::Said>,
 }
 
+impl Event {
+    /// A line for `handle` under `key`, about the task `slug` or the post `message` if it names
+    /// one: never attempted, and no PULL.
+    fn line(
+        key: String,
+        handle: &str,
+        text: String,
+        slug: Option<String>,
+        message: Option<i64>,
+    ) -> Event {
+        Event {
+            key,
+            handle: handle.to_string(),
+            text,
+            slug,
+            message,
+            attempts: 0,
+            sequence: 0,
+            pull_entries: None,
+            pull_withheld: None,
+            pull_said: None,
+        }
+    }
+}
+
 /// A recipient's callback state as a dispatch reads it, with when its PULL was last checked and
 /// the lines still queued for it, which a hand-over can take back ([`Hearing::rescope`]).
 #[derive(Deserialize)]
@@ -666,19 +691,16 @@ impl Store {
             live_orchestrator: false,
         };
         // Each look reads the messages afresh, as each pass does.
-        *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        let (mut board, mut sequence) = self.callback_board()?;
+        let (mut board, mut sequence) = self.fresh_board()?;
         // Each look gives what no orchestrator holds, when one that stays could take it (the
         // reader among them, on the waiting list now), and then reads the board the give left.
         if self.give_if_due(&board) {
-            *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
-            (board, sequence) = self.callback_board()?;
+            (board, sequence) = self.fresh_board()?;
         }
         // Then what the tasks a workflow holds need of the board itself, as a PULL's reader settles
         // it ([`Store::settle_held_if_due`]): a look is `tasks wait`'s, never `agent-send`'s.
         if self.settle_held_if_due(&board) {
-            *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
-            (board, sequence) = self.callback_board()?;
+            (board, sequence) = self.fresh_board()?;
         }
         let holdings = (callback.session.kind == "orchestrator")
             .then(|| self.slot_holdings())
@@ -835,24 +857,20 @@ impl Store {
         callbacks: &BTreeMap<String, Callback>,
         pass: Pass,
     ) -> Result<(super::Board, bool), Error> {
-        // Each pass reads the messages afresh, once for every recipient ([`super::pool::Pool`]).
-        // The pool is plain data, whole or none, so a panic elsewhere leaves nothing half-made in it.
-        *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        let (mut board, mut sequence) = self.callback_board()?;
+        // Each pass reads the messages afresh, once for every recipient ([`Store::fresh_board`]).
+        let (mut board, mut sequence) = self.fresh_board()?;
         // A giving store's delivering pass (a write's detached dispatcher) gives what no
         // orchestrator holds first, so its recipients hear the give; an observing one keeps the
         // board as its write left it.
         if pass == Pass::Deliver && self.giving && self.give_if_due(&board) {
-            *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
-            (board, sequence) = self.callback_board()?;
+            (board, sequence) = self.fresh_board()?;
         }
         // Then what the tasks a workflow holds need of the board itself ([`Store::giving`]).
         if pass == Pass::Deliver
             && let Some(settle) = self.settling
             && settle(self, &board)
         {
-            *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
-            (board, sequence) = self.callback_board()?;
+            (board, sequence) = self.fresh_board()?;
         }
         let holdings = callbacks
             .values()
@@ -912,6 +930,15 @@ impl Store {
                 holdings,
             });
         Ok((board, observed))
+    }
+
+    /// The board read again, with the messages read afresh: the inbox pool a pass reads every
+    /// recipient's inbox from ([`super::pool::Pool`]) is dropped first, so the next read of an
+    /// inbox reads the messages as this board has them. The pool is plain data, whole or none, so
+    /// a panic elsewhere leaves nothing half-made in it.
+    fn fresh_board(&self) -> Result<(super::Board, u64), Error> {
+        *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.callback_board()
     }
 
     /// Direct messages need only the native outbox, never a machine/pane probe or a board digest.
@@ -1212,17 +1239,9 @@ impl Store {
         let mut events: Vec<Event> = lines
             .into_iter()
             .enumerate()
-            .map(|(i, text)| Event {
-                key: format!("event-{revision}-{i}"),
-                handle: handle.to_string(),
-                text,
-                slug: session_task(board, handle),
-                message: None,
-                attempts: 0,
-                sequence: 0,
-                pull_entries: None,
-                pull_withheld: None,
-                pull_said: None,
+            .map(|(i, text)| {
+                let key = format!("event-{revision}-{i}");
+                Event::line(key, handle, text, session_task(board, handle), None)
             })
             .collect();
         if let Some(Account {
@@ -1231,17 +1250,12 @@ impl Store {
             ..
         }) = &account
         {
+            let (key, slug) = (format!("pull-{revision}"), session_task(board, handle));
             events.push(Event {
-                key: format!("pull-{revision}"),
-                handle: handle.to_string(),
-                text: pull_text.clone(),
-                slug: session_task(board, handle),
-                message: None,
-                attempts: 0,
-                sequence: 0,
                 pull_entries: Some(awaiting.entries.clone()),
                 pull_withheld: Some(awaiting.withheld.clone()),
                 pull_said: pull_said.clone(),
+                ..Event::line(key, handle, pull_text.clone(), slug, None)
             });
         }
         let legacy = compact(&legacy);
@@ -1265,25 +1279,22 @@ impl Store {
                 || (first_observation
                     && (message.kind == "msg" || message.recipient.as_deref() == Some(handle)))
         }) {
-            events.push(Event {
-                key: format!("message-{}", message.id),
-                handle: handle.to_string(),
-                text: format!(
-                    "{} #{} {} from {} — {}",
-                    crate::cli::text::event_kind(&message.kind),
-                    message.id,
-                    message.slug,
-                    message.sender,
-                    event_line(&message.text)
-                ),
-                slug: Some(message.slug),
-                message: Some(message.id),
-                attempts: 0,
-                sequence: 0,
-                pull_entries: None,
-                pull_withheld: None,
-                pull_said: None,
-            });
+            let text = format!(
+                "{} #{} {} from {} — {}",
+                crate::cli::text::event_kind(&message.kind),
+                message.id,
+                message.slug,
+                message.sender,
+                event_line(&message.text)
+            );
+            let key = format!("message-{}", message.id);
+            events.push(Event::line(
+                key,
+                handle,
+                text,
+                Some(message.slug),
+                Some(message.id),
+            ));
         }
         if callback.chat {
             #[derive(Deserialize)]
@@ -1298,18 +1309,14 @@ impl Store {
                 )
             })?;
             for event in chat {
-                events.push(Event {
-                    key: format!("chat-{}", event.key),
-                    handle: handle.to_string(),
-                    text: event.text,
-                    slug: session_task(board, handle),
-                    message: None,
-                    attempts: 0,
-                    sequence: 0,
-                    pull_entries: None,
-                    pull_withheld: None,
-                    pull_said: None,
-                });
+                let key = format!("chat-{}", event.key);
+                events.push(Event::line(
+                    key,
+                    handle,
+                    event.text,
+                    session_task(board, handle),
+                    None,
+                ));
             }
         }
         let (stored_seen, unknown_children) = stored_seen(&legacy, |handle| {
