@@ -685,3 +685,57 @@ fn a_stored_state_is_observed_against_a_board_at_least_as_new_as_it() {
         "unsequenced, read again"
     );
 }
+
+/// A visit with nothing to observe reaches its recipient at once, takes no lease and has no PULL
+/// due: one with no state yet, and one whose state stands for a session no longer here.
+#[test]
+fn a_visit_with_nothing_to_observe_reaches_its_recipient_and_takes_no_lease() {
+    let fixture = crate::store_fixture::Fixture::empty();
+    let store = &fixture.store;
+    let here = fixture.session("worker");
+    let env = crate::cli::Env::of_process();
+    let (mut board, marker) = store.callback_board().unwrap();
+    let mut visit = |handle: &str| {
+        let callback: Callback = serde_json::from_value(json!({
+            "handle":handle, "address":"", "host":crate::store_fixture::HOST,
+            "session":crate::rows::SessionRow::default()
+        }))
+        .unwrap();
+        let visit = Visit::new(Pass::Deliver, &env, store, None);
+        let mut sequence = marker;
+        (store.dispatch_one(handle, &callback, &mut board, &mut sequence, &visit)).unwrap()
+    };
+    assert_eq!(visit(&here), (true, f64::INFINITY), "no state yet");
+    let gone = "zinc-otter";
+    let state = store.raw().row("callback_state", gone);
+    state.put(json!({"snapshot_sequence":marker})).unwrap();
+    assert_eq!(visit(gone), (true, f64::INFINITY), "no session here");
+    for handle in [here.as_str(), gone] {
+        let lease = store.raw().row("callback_lease", handle);
+        assert!(!lease.exists().unwrap(), "{handle} took no lease");
+    }
+}
+
+/// The look kept for older dispatchers says each child of unknown liveness as the board does: one
+/// no longer on it has left. Every other child keeps its health, and only the unknown are named.
+#[test]
+fn a_stored_look_says_the_unknown_children_as_the_board_does() {
+    let fixture = crate::store_fixture::Fixture::empty();
+    let store = &fixture.store;
+    let here = fixture.session("worker");
+    let (board, _) = store.callback_board().unwrap();
+    let mut legacy = nothing_seen();
+    legacy.children = BTreeMap::from([
+        (here.clone(), crate::Health::Unknown),
+        ("zinc-otter".into(), crate::Health::Unknown),
+        ("amber-wren".into(), crate::Health::Stale),
+    ]);
+    let (stored, unknown) = store.stored_look(&board, &legacy);
+    assert_eq!(
+        unknown,
+        BTreeSet::from([here.clone(), "zinc-otter".to_string()])
+    );
+    assert_eq!(stored.children["zinc-otter"], crate::Health::Left);
+    assert_eq!(stored.children["amber-wren"], crate::Health::Stale);
+    assert_eq!(stored.children[&here], fixture.health(&here));
+}
