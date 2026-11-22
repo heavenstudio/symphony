@@ -16,11 +16,12 @@ pub(crate) use publish::{BUILDS, publish_client};
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::{Value, json};
+use symphony_board::lock::Recovered as _;
 
 use crate::asks::{self, AskError, AskStore};
 use crate::board::{Doc, render, scan, tidy, to_json};
@@ -403,7 +404,7 @@ pub fn end_with_parent() {
             )]
             std::thread::sleep(PARENT_LOOK);
         }
-        let _in_hand = IN_HAND.lock().unwrap_or_else(PoisonError::into_inner);
+        let _in_hand = IN_HAND.lock().recover();
         std::process::exit(0);
     });
 }
@@ -422,7 +423,7 @@ pub fn serve_main(input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
             Ok(_) => {}
             Err(_) => return 2,
         }
-        let _in_hand = IN_HAND.lock().unwrap_or_else(PoisonError::into_inner);
+        let _in_hand = IN_HAND.lock().recover();
         let answer = match serde_json::from_str::<Value>(&line) {
             Ok(request) => match request.get("cwd").and_then(Value::as_str) {
                 Some(dir) if std::env::set_current_dir(dir).is_err() => {

@@ -6,12 +6,13 @@
 //! connect and a close; a transaction (`BEGIN; ...; COMMIT;`) lives inside one request.
 
 use crate::cbor;
+use crate::lock::Recovered as _;
 use serde_json::{Value, json};
 use std::fmt;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 mod descriptor;
@@ -250,11 +251,7 @@ impl Client {
         let began = Instant::now();
         let caller = std::panic::Location::caller();
         let kept = loop {
-            let kept = self
-                .kept
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .pop();
+            let kept = self.kept.lock().recover().pop();
             let Some(connection) = kept else {
                 break None;
             };
@@ -389,10 +386,7 @@ impl Client {
 
     fn keep(&self, connection: Connection, reply: Reply) -> (u16, Vec<u8>) {
         if reply.open {
-            self.kept
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .push(connection);
+            self.kept.lock().recover().push(connection);
         }
         (reply.status, reply.body)
     }

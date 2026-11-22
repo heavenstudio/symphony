@@ -26,6 +26,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
+use symphony_board::lock::Recovered as _;
+
 use crate::plugins::Plugins;
 use crate::project::Project;
 use crate::register::{Decision, REGION_START, parse_decisions};
@@ -393,7 +395,7 @@ fn shapes(texts: &[String]) -> Arc<Shapes> {
         hash.update(text.as_bytes());
     }
     let key = hash.finalize().to_vec();
-    let mut parsed = PARSED.lock().unwrap_or_else(|e| e.into_inner());
+    let mut parsed = PARSED.lock().recover();
     if let Some(shapes) = parsed.get(&key) {
         return shapes.clone();
     }
@@ -855,8 +857,7 @@ fn scan_trees(root: &Path, mut all: Vec<Tree>, finished: &BTreeSet<String>) -> S
                     } else {
                         Standing::Live
                     };
-                    *done[at].lock().unwrap_or_else(|e| e.into_inner()) =
-                        tree_scan(tree, &main_shapes, &project, standing);
+                    *done[at].lock().recover() = tree_scan(tree, &main_shapes, &project, standing);
                 }
             });
         }
@@ -864,7 +865,7 @@ fn scan_trees(root: &Path, mut all: Vec<Tree>, finished: &BTreeSet<String>) -> S
     let mut out = Scan::default();
     let mut listed = Vec::new();
     for found in done {
-        let found = found.into_inner().unwrap_or_else(|e| e.into_inner());
+        let found = found.into_inner().recover();
         listed.extend(found.cards);
         out.pages.extend(found.pages);
         out.awaited.extend(found.awaited);

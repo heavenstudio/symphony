@@ -23,7 +23,6 @@ pub mod home;
 pub mod host;
 pub mod hosted;
 mod live;
-mod lock;
 pub mod log;
 mod mark;
 mod media_files;

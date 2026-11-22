@@ -1,5 +1,7 @@
 //! The combined structural and session marker identifies cached board inputs.
 
+use crate::lock::Recovered as _;
+
 use super::postgres::snapshot as pg;
 use super::statement::both;
 use super::surreal::snapshot as sql;
@@ -11,10 +13,7 @@ impl Store {
     /// reinterpreted through View on every tick so health, reservations and presence still age.
     pub(super) fn callback_board(&self) -> Result<(Board, u64), Error> {
         let marker = self.board_marker()?;
-        let mut cached = self
-            .callback_snapshot
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut cached = self.callback_snapshot.lock().recover();
         if let Some(snapshot) = cached.as_ref()
             && snapshot.callback_sequence == marker
         {

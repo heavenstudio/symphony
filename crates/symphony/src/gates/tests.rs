@@ -809,7 +809,9 @@ impl Gates for Fake {
 /// How many of the answerer `fake`'s calls `kept` runs for the plugin `plugin`, counted as each
 /// starts: with its calls held, the calls it started.
 fn running(kept: &Kept, plugin: &str) -> usize {
-    lock(&kept.ledgers)
+    kept.ledgers
+        .lock()
+        .recover()
         .get(&Who::new(Path::new("/project"), plugin, "fake"))
         .map_or(0, |ledger| ledger.running.load(Ordering::SeqCst))
 }
@@ -817,7 +819,9 @@ fn running(kept: &Kept, plugin: &str) -> usize {
 /// How many hold the answer the fake of `plugin` gives `tools/x` in `kept`: the ledger, the call
 /// under way and each read waiting on it.
 fn holding(kept: &Kept, plugin: &str) -> usize {
-    lock(&kept.ledgers)
+    kept.ledgers
+        .lock()
+        .recover()
         .get(&Who::new(Path::new("/project"), plugin, "fake"))
         .and_then(|ledger| ledger.slots.get("tools/x"))
         .map_or(0, Arc::strong_count)
@@ -1083,7 +1087,9 @@ fn a_read_while_a_call_goes_on_waits_only_what_is_left_of_the_calls_wait() {
         done: Mutex::new(None),
         ready: Condvar::new(),
     });
-    lock(&kept.ledgers)
+    kept.ledgers
+        .lock()
+        .recover()
         .entry(Who::new(root, "plugin", "fake"))
         .or_default()
         .slots

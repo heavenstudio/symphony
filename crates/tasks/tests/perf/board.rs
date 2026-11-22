@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
+use symphony_board::lock::Recovered as _;
 use symphony_board::rows::{Dump, TaskRow};
 use symphony_board::rpc::Client;
 use symphony_board::server::Storage;
@@ -102,7 +103,7 @@ impl DerefMut for Held {
 
 extern "C" fn stop_board() {
     if let Some(board) = BOARD.get() {
-        let mut board = board.lock().unwrap_or_else(|failed| failed.into_inner());
+        let mut board = board.lock().recover();
         // Statics do not drop at exit. Drop here, before the native runner inspects our children.
         drop(board.take());
     }
@@ -119,7 +120,7 @@ pub fn board() -> Held {
             Mutex::new(None)
         })
         .lock()
-        .unwrap_or_else(|failed| failed.into_inner());
+        .recover();
     held.get_or_insert_with(Board::make);
     Held(held)
 }

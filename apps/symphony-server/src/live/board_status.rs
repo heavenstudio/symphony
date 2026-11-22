@@ -3,9 +3,9 @@
 //! or unreachable, and again when a gone board turns from one to the other.
 
 use super::Hub;
-use crate::lock::Held as _;
 use serde_json::json;
 use std::path::Path;
+use symphony_board::lock::Recovered as _;
 
 impl Hub {
     /// One due worker attempt, including opening a missing store. A failed read drops that store
@@ -17,7 +17,7 @@ impl Hub {
         board: &mut Option<symphony_board::Store>,
         connect: &mut impl FnMut(&Path) -> Result<symphony_board::Store, String>,
     ) {
-        self.board_retry.lock().held().run_unless_released(
+        self.board_retry.lock().recover().run_unless_released(
             &self.retry_clock,
             &|| self.board_held(),
             || {
@@ -91,7 +91,7 @@ impl Hub {
 
     /// Keep `line`, what the pages say of a replay under way, or none: whether it changed.
     fn replaying_now(&self, line: Option<String>) -> bool {
-        let mut held = self.replaying.lock().held();
+        let mut held = self.replaying.lock().recover();
         let changed = *held != line;
         *held = line;
         changed
@@ -166,7 +166,7 @@ impl Hub {
         // A panic under these locks leaves at worst an older board observation, or some pages
         // without one event: each a whole value, and the next board read publishes what changed
         // since, so a poisoned lock is read as it is.
-        let mut held = self.tasks.lock().held();
+        let mut held = self.tasks.lock().recover();
         let was = held.error.replace(error.clone());
         self.publish_listing(Err(error.clone()));
         drop(held);
@@ -177,7 +177,7 @@ impl Hub {
         }
         let status =
             json!({"region":"tasks-status", "data":{"available":false,"slow":slow,"error":error}});
-        let mut pages = self.pages.write().held();
+        let mut pages = self.pages.write().recover();
         for page in pages.values_mut() {
             let mut changes = vec![status.clone()];
             if newly_unavailable {

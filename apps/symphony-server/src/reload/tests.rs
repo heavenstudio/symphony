@@ -1,7 +1,6 @@
 use super::{Retry, RunningImage, Setup, source_event, stamp_install, watch_with};
 use crate::backstop::{self, Backstop};
 use crate::front::{Shared, told};
-use crate::lock::Held as _;
 use crate::testing::handing::{Handing, event, renamed, tell_at, watching};
 use crate::testing::{Tree, git, joined, repository};
 use sha2::{Digest, Sha256};
@@ -11,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use symphony_board::lock::Recovered as _;
 
 #[test]
 fn a_source_edit_whose_event_is_lost_still_starts_a_build_within_a_period() {
@@ -1680,13 +1680,13 @@ static SEEN: Mutex<Vec<(bool, PathBuf)>> = Mutex::new(Vec::new());
 
 fn seen(watched: bool, path: &Path) -> bool {
     SEEN.lock()
-        .held()
+        .recover()
         .iter()
         .any(|seen| *seen == (watched, path.to_path_buf()))
 }
 
 fn see(watched: bool, path: &Path) -> notify::Result<()> {
-    SEEN.lock().held().push((watched, path.into()));
+    SEEN.lock().recover().push((watched, path.into()));
     Ok(())
 }
 

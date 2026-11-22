@@ -21,7 +21,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 mod board;
@@ -35,6 +35,7 @@ use crate::entrypoint::{SYMPHONY_ROUTES, below, join};
 pub use board::{Board, WipGuidance};
 use file::{File, FileEntrypoint};
 pub(crate) use model_warnings::warn as warn_models;
+use symphony_board::lock::Recovered as _;
 use symphony_board::project::{inside, path_in};
 // A name as an id: the board's, which judges `[project] id` by it too.
 pub use symphony_board::project::slug;
@@ -67,11 +68,6 @@ struct Seen {
 /// Each project [`Project::of`] read, by its root.
 static SEEN: LazyLock<Mutex<BTreeMap<PathBuf, Seen>>> =
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
-
-/// `mutex` held, whatever a thread that panicked holding it left.
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
 
 /// What agents' terminals run in (`hc`, herdr-core, shown in the Herdr app); `none` for a project
 /// without one.
@@ -536,7 +532,7 @@ impl Project {
 
     /// [`Project::of`], and why it is the plain project when it is.
     fn seen(root: &Path) -> (Arc<Project>, Option<String>) {
-        if let Some(held) = lock(&SEEN).get_mut(root)
+        if let Some(held) = SEEN.lock().recover().get_mut(root)
             && held
                 .stamps
                 .iter()
@@ -565,7 +561,7 @@ impl Project {
         }
         let read = Self::load_seen(root, None);
         let seen = (read.project.clone(), read.problem.clone());
-        lock(&SEEN).insert(root.to_path_buf(), read);
+        SEEN.lock().recover().insert(root.to_path_buf(), read);
         seen
     }
 
@@ -574,7 +570,7 @@ impl Project {
     /// that found a file changed meanwhile read the project afresh, and a read of the files before
     /// would only cost the next reader one more load. Whether it was kept.
     fn keep(root: &Path, started: &[(PathBuf, Stamp)], read: Seen) -> bool {
-        let mut seen = lock(&SEEN);
+        let mut seen = SEEN.lock().recover();
         let current = seen.get(root).is_some_and(|held| held.stamps == started);
         if current {
             seen.insert(root.to_path_buf(), read);

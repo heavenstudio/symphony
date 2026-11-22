@@ -30,6 +30,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use symphony_board::db::DbError;
 use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
+use symphony_board::lock::Recovered as _;
 use symphony_board::pg;
 use symphony_board::port::{NotStarted, Start};
 use symphony_board::rpc::{self, Client};
@@ -159,7 +160,7 @@ pub fn on_exit(cleanup: extern "C" fn()) {
 /// (a server that never came up is reported, log and all, by `start`).
 extern "C" fn stop_server() {
     if let Some(server) = SERVER.get() {
-        let mut shell = server.shell.lock().unwrap_or_else(|held| held.into_inner());
+        let mut shell = server.shell.lock().recover();
         let _ = shell.shutdown();
         let _ = std::fs::remove_file(&server.log);
     }

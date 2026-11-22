@@ -1,10 +1,10 @@
 //! Native reads, media and root SPA, including compatibility bookmark routes.
 
-use crate::lock::Held as _;
 use std::collections::VecDeque;
 use std::path::{Component, Path};
 use std::sync::Arc;
 use std::time::Duration;
+use symphony_board::lock::Recovered as _;
 
 use axum::body::Body;
 use axum::http::{Method, StatusCode, header};
@@ -849,7 +849,7 @@ fn agents(hub: &Hub, hosted: bool, page: Option<(AgentsAsked, bool)>) -> Result<
 
 /// A region the hub keeps of the page of the worktree `scope`, as its last read left it.
 fn page_read(hub: &Hub, scope: &str, path: &str) -> Response {
-    let pages = hub.pages.read().held();
+    let pages = hub.pages.read().recover();
     let Some(page) = pages.get(scope) else {
         return error(StatusCode::NOT_FOUND, "this worktree was removed");
     };
@@ -1367,7 +1367,7 @@ fn events_since(
     if let Some(problem) = hub.problem(scope) {
         return Err(problem);
     }
-    let pages = hub.pages.read().held();
+    let pages = hub.pages.read().recover();
     let page = pages.get(scope).ok_or("this worktree was removed")?;
     if since > page.board.version
         || page

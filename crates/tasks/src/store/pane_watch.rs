@@ -7,6 +7,7 @@ use super::{
 use crate::Board;
 use crate::cli::agents::{Answer, Pane};
 use crate::cli::attach::{self, PaneWatch};
+use crate::lock::Recovered as _;
 use crate::rows::TaskSessionRow;
 use crate::store::postgres::pane_watch as pg;
 use crate::store::statement::both;
@@ -84,7 +85,7 @@ impl Store {
         let panes = || {
             self.clock_panes
                 .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .recover()
                 .get_or_insert_with(|| crate::cli::probes::hc_terminals(&env))
                 .clone()
         };
