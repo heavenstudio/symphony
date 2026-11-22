@@ -609,7 +609,11 @@ fn a_head_moved_under_an_approve_with_no_orchestrator_goes_back_only_by_who_may_
             Some("@orchestrator".to_string())
         )
     );
-    assert!(sent_back(&r, SLUG).iter().all(|(text, _)| !text.contains("is back in review")));
+    assert!(
+        sent_back(&r, SLUG)
+            .iter()
+            .all(|(text, _)| !text.contains("is back in review"))
+    );
     // Its executor's dispatch, a session that may move it, sends it back.
     dispatched(&r, SLUG, &people.exe, &host).1.unwrap();
     assert_eq!(status(&r, SLUG), "review");
