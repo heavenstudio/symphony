@@ -29,12 +29,11 @@ files.*).
 | Head | the slug, the title, the stage, who filed it, **Priority** and **Cancel task**, what it is part of or comes after, who holds each role, and the builds and tests running for it now |
 | **Gates** | what the task waits on, and a row for each thing it needs before it lands |
 | **Subtasks** | the smaller tasks under it, each with its stage |
-| Timeline | the stages it went through and how long each took, with its reviews, builds and tests |
+| Timeline | the stages it went through, how long each took and what it cost, with its reviews, builds and tests |
 | Brief | what the task asks for, as it was filed |
 | **Changes** | the files its branch changes |
 | **Attempts** | on a project that runs tasks on a provider of its own, each run of this one |
 | **Thread** | every message and move, oldest first, then the box to write in |
-| **Tokens and estimated cost** | closed until opened: what the task spent |
 
 ## The head
 
@@ -99,14 +98,15 @@ has not seen.
 
 ## Timeline
 
-**Timeline** opens with how long the task has taken, how many times it went to review and how
-often it came back from one (*2 d so far · 2 review rounds · 1 bounce*).
+**Timeline** opens with how long the task has taken, what it cost, how many times it went to
+review and how often it came back from one (*2 d so far $80.02 · 2 review rounds · 1 bounce*):
+[What the task cost](#what-the-task-cost).
 
 On a wide screen it is lanes over the same hours, with a line at now:
 
 | Lane | Draws |
 | --- | --- |
-| **Stage** | each stage the task was in, as long as it lasted |
+| **Stage** | each stage the task was in, as long as it lasted, and its time and cost where they fit |
 | **Orchestrator**, **Executor**, **Reviewer** | when each agent held the role; a review's verdict after its bar |
 | Builds and tests | each recorded run, striped while it is going on; absent on a task with none |
 | **Other / task messages** | a mark for each message from a sender that holds no one role; a role holder's message is marked on that role's lane |
@@ -155,11 +155,34 @@ a binary file is said as such. It says what is compared: **Branch from its merge
 still open, **Landing merge** for one that landed. A press on a file opens its lines. **Refresh
 files** reads the list again; it also follows the branch by itself.
 
-## Tokens and estimated cost
+## What the task cost
 
-Closed until opened. It gives the tokens the task and its subtasks took and what they would cost
-at list prices, in all, by role and by review round, with the day those prices were read. Every
-dollar on it is an estimate. A task that recorded none says *No tokens recorded for this task.*
+The cost has no part of its own: it follows the time, in dollars, as an estimate of what the
+tokens the task and its subtasks took would cost at the API's list prices, never money spent.
+
+- **On the board**, the task's card says it on the time's line: *Done $80.02 · 1 h*.
+- **The timeline's first line** says it after the task's time: *1 d 3 h in all $80.02 · 6 review
+  rounds · 1 bounce*. Pointed at, tapped or focused, it says the rest: the day the prices were
+  read, the cost by role (executor, reviewer, reserved) and by kind (input, cache write, cache
+  read, output), and the tokens and calls. Wide, those words take the line under the lanes; on a
+  phone they stand under the totals, and the rounds and bounces take a second line.
+- **Each stage stretch** says its own after its time, as much as its label has room for:
+  *in progress 3 h 14 m $30.75*, else *3 h 14 m $30.75*, else the time alone. Its words always say
+  it: whose calls it carries, by role, each with its cost, when they ran (first to last) and how
+  many. On a phone each stage row ends with its time and its cost.
+
+A stretch carries the work done for it, never a share of its hours: an in-progress stretch its
+round's executor and what was spent while the task was reserved, a review its reviewer and, where
+no in-progress stretch follows it in its round, the executor's fixes. Ready, blocked and done
+carry nothing. Of two in-progress stretches in one round, a block between them, the last carries
+the round's executor and the words of both say so. Every cost is on exactly one stretch, so the
+stretches add up to the total, and none is split: one whose calls ran past the stretch's edge
+says when they ran. A subtask's cost is on the in-progress or review stretch its first call fell
+in, named for the subtask.
+
+A cost some of whose tokens had no price is followed by **+** (*$1.23+*), and one none of whose
+had says **unpriced**; the total's words name the models. A task that recorded no tokens shows
+no cost anywhere: its lines say only the time.
 
 ## A task in a workflow of the project's own
 

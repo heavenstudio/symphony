@@ -21,7 +21,7 @@ from = { phase = "ready", state = "available" }
 to = { phase = "build", state = "available" }
 "#;
 
-/// The board's tests' `TWO` (work built, then verified) with [`READY`].
+/// The board's tests' `TWO` (work built, then verified), alone: [`custom`] adds [`READY`] after it.
 const TWO: &str = concat!(
     "\n",
     include_str!("../../../../crates/tasks/tests/fixtures/two_workflow.toml")

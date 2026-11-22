@@ -1,9 +1,8 @@
 # An executor in this repository
 
 This repository's own standing instructions for an executor, beside the shipped skill, which
-`symphony init` never writes. A rule is said once, in [RULES.md](../../../RULES.md), the
-[root guide](../../../AGENTS.md) or [CHECKS](../../../docs/workflow/CHECKS.md): this page holds only
-what an executor needs that none of them says.
+`symphony init` never writes: only what [RULES.md](../../../RULES.md), the
+[root guide](../../../AGENTS.md) and [CHECKS](../../../docs/workflow/CHECKS.md) do not say.
 
 - Read what your tests cover of the code you added, and add the cases they miss: the edge cases
   of a function or a module are cheap to cover, a whole flow only on its usual path.

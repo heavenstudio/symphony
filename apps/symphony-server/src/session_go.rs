@@ -7,13 +7,14 @@
 //! (`[agents] panes = "hc"`), each within one deadline for all its calls
 //! ([`symphony_board::launch::go::DEADLINE`]), and one at a time for a session.
 
+use crate::api::error;
 use crate::front::Shared;
 use crate::live::Hub;
 use axum::body::to_bytes;
 use axum::extract::{ConnectInfo, Request};
-use axum::http::{StatusCode, header};
-use axum::response::{IntoResponse, Json, Response};
-use serde_json::{Value, json};
+use axum::http::StatusCode;
+use axum::response::{Json, Response};
+use serde_json::Value;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use symphony_api::{AgentFocus, AgentScreen, SessionGo};
@@ -25,15 +26,6 @@ const FOCUS_BYTES: usize = 4096;
 /// What a request from another machine is told when it asks for a focus.
 pub(crate) const NOT_HERE: &str = "a pane is shown in the Herdr app only for a page on the \
      machine its panes run on; from this one, Go to session shows the pane's screen";
-
-fn error(code: StatusCode, why: impl AsRef<str>) -> Response {
-    (
-        code,
-        [(header::CACHE_CONTROL, "no-store")],
-        Json(json!({"error": why.as_ref()})),
-    )
-        .into_response()
-}
 
 /// The address `request` came from, as its connection gave it.
 fn peer<B>(request: &axum::http::Request<B>) -> Option<IpAddr> {
@@ -190,15 +182,10 @@ pub(crate) async fn answer_focus(shared: &Arc<Shared>, request: Request) -> Resp
     if handle.is_empty() {
         return error(StatusCode::BAD_REQUEST, "handle is required");
     }
-    let Some(hub) = shared.api.get().cloned() else {
-        return error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "the Symphony server is starting",
-        );
+    let hub = match shared.hub() {
+        Ok(hub) => hub,
+        Err(starting) => return *starting,
     };
-    match crate::spawn::blocking(move || focus(&hub, &handle)).await {
-        Ok(Ok(focused)) => ([(header::CACHE_CONTROL, "no-store")], Json(focused)).into_response(),
-        Ok(Err((code, why))) => error(code, why),
-        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-    }
+    let focused = crate::spawn::blocking(move || focus(&hub, &handle).map(Json)).await;
+    crate::api::answered(focused, "")
 }

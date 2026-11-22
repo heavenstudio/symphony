@@ -9,6 +9,7 @@ use std::sync::{Arc, LazyLock, Mutex, OnceLock, RwLock, Weak, mpsc};
 use std::time::{Duration, Instant};
 
 use crate::backstop::{self, Backstop, Sweep, Wake, Waker, Wakers};
+use axum::http::StatusCode;
 use notify::{RecursiveMode, Watcher};
 use serde_json::{Value, json};
 use symphony::{branches, dashboard, taskview};
@@ -659,6 +660,22 @@ impl Hub {
         }
     }
 
+    /// `read`, made on `store`, as it is: where the board failed it (503, or 504 for one too slow),
+    /// `store` is forgotten ([`Hub::reader_failed`]), as its server may have gone, or moved. A
+    /// refusal of what was asked (404, 400, 409) keeps it.
+    pub(crate) fn read_on<T>(
+        &self,
+        store: &Arc<symphony_board::Store>,
+        read: Result<T, (StatusCode, String)>,
+    ) -> Result<T, (StatusCode, String)> {
+        if let Err((status, _)) = &read
+            && [StatusCode::SERVICE_UNAVAILABLE, StatusCode::GATEWAY_TIMEOUT].contains(status)
+        {
+            self.reader_failed(store);
+        }
+        read
+    }
+
     /// The document `rel` of the checkout at `root`, its tasks those of the board as last read that
     /// link it: a render reads no board.
     fn render_document(
@@ -743,6 +760,16 @@ impl Hub {
             .any(|file| file.exists())
     }
 
+    /// The checkout the worktree `scope` names: the project's own for none, a linked worktree's by
+    /// its id, and nothing for one that is not there (never the project's own in its place).
+    pub(crate) fn checkout(&self, scope: &str) -> Option<PathBuf> {
+        if scope.is_empty() {
+            Some(self.root.clone())
+        } else {
+            self.tree(scope)
+        }
+    }
+
     pub fn tree(&self, id: &str) -> Option<PathBuf> {
         self.trees
             .read()
@@ -818,11 +845,7 @@ impl Hub {
         rel: &str,
         tag_of: impl FnOnce(symphony_api::Document) -> String,
     ) -> Option<(String, u64)> {
-        let root = if scope.is_empty() {
-            self.root.clone()
-        } else {
-            self.tree(scope)?
-        };
+        let root = self.checkout(scope)?;
         // The copy the page holds now, and the read it came from.
         let held = |page: &Page| -> Option<u64> {
             if !page.documents.contains_key(rel) || page.missing.contains(rel) {
@@ -878,11 +901,7 @@ impl Hub {
         rel: &str,
         follow: bool,
     ) -> Result<symphony_api::Document, String> {
-        let root = if scope.is_empty() {
-            self.root.clone()
-        } else {
-            self.tree(scope).ok_or("this worktree was removed")?
-        };
+        let root = self.checkout(scope).ok_or("this worktree was removed")?;
         let removed = || "this worktree was removed".to_string();
         if !self
             .pages
@@ -936,11 +955,7 @@ impl Hub {
     }
 
     pub fn folder(&self, scope: &str, rel: &str) -> Result<symphony_api::Folder, String> {
-        let root = if scope.is_empty() {
-            self.root.clone()
-        } else {
-            self.tree(scope).ok_or("this worktree was removed")?
-        };
+        let root = self.checkout(scope).ok_or("this worktree was removed")?;
         let board = self.tasks_read().ok();
         let mut folder = symphony::docview::folder(
             &symphony::render::Render::new(root),
@@ -1508,11 +1523,7 @@ impl Hub {
             .collect();
         let mut rendered = BTreeMap::new();
         for (scope, documents) in listed.into_iter().filter_map(|(scope, followed)| {
-            let root = if scope.is_empty() {
-                self.root.clone()
-            } else {
-                self.tree(&scope)?
-            };
+            let root = self.checkout(&scope)?;
             let moved: Vec<String> = followed
                 .into_iter()
                 .filter(|(rel, held)| *held != symphony::docview::linked(&root, rel, tasks))
@@ -2695,6 +2706,9 @@ mod health_tests;
 
 #[cfg(test)]
 mod no_documents_tests;
+
+#[cfg(test)]
+mod checkout_tests;
 
 #[cfg(test)]
 mod read_paths_tests;

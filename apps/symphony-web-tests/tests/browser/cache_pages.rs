@@ -300,7 +300,8 @@ pub(super) fn answered(site: &Site, reads: &[&str]) -> Vec<usize> {
 
 /// The answers to `read`, one of `reads`, since `before` ([`answered`] of the same `reads`).
 pub(super) fn since(site: &Site, reads: &[&str], before: &[usize], read: &str) -> Vec<Answered> {
-    let at = reads.iter().position(|each| *each == read).unwrap();
+    let at = (reads.iter().position(|each| *each == read))
+        .unwrap_or_else(|| panic!("{read} is none of the reads counted, {reads:?}"));
     site.answers(read)[before[at]..].to_vec()
 }
 

@@ -889,7 +889,8 @@ holds](#the-limit-on-the-tasks-an-orchestrator-holds)):
   or a lost holder's is given on by the rules above, it waits marked with none that stays, and any
   orchestrator takes the role on it or hands it over, though no other role is taken on a done
   task. It takes no place under the limit and no slot. Ten minutes after its approve, its
-  orchestrator's PULL lists it as `approved_unlanded` until it lands ([Sessions](#sessions)). A task done by a landing, by a close
+  orchestrator's PULL lists it as `approved_unlanded` until it lands ([Sessions](#sessions)). Its
+  assessor still writes what it needs ([Needed stamps](#needed-stamps)). A task done by a landing, by a close
   as covered by another's landing or by a subtask's `done` never carries the mark.
 
 A task's own story (`--for`, the filer's work, its parent session, the task above it, the one it
@@ -1092,6 +1093,19 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
   review, blocked or done: a task moved back to work (a changes verdict) has its merge turned off
   first and its checks said again after, so no check published meanwhile lets the host merge it,
   and stays so until it moves to review.
+- **A head moved under an approve.** A delivery takes an approve naming the head alone, so a
+  task approved and not landed whose branch is at a commit its approve does not name (a merge
+  of the default branch that settles a conflict, a fix, or an approve that named no commit)
+  waits on a fresh one, which only a task in review is given. The dispatch that finds it, a
+  write's or the watcher's round, moves it back to review itself, by the board's own move from
+  done ([Tasks and roles](#tasks-and-roles)), and says so once to `@orchestrator`, naming the
+  head and the commit the approve named: its orchestrator starts its assessor and resumes its reviewer as
+  at any move to review, and nobody moves it by hand. Then it is published as any head: the
+  pull request shows the new head with `symphony/eligible` pending, its merge armed across the
+  push, until an assessment and an approve name it. An approve that comes before the
+  assessment leaves the task done, and the assessment is written all the same ([Needed
+  stamps](#needed-stamps)). One that does not go back is refused, naming `just tasks move SLUG
+  review`.
 - **Who watches.** One watcher per project, `tasks land --watch` (`watch.lock` in the lands'
   folder, `watch.log` its lines), started by each arming where none runs, which reads each armed
   task every `[land] watch_seconds` (30) and ends once none is left. A round writes a task's line
@@ -1670,7 +1684,10 @@ landing](#the-default-landing)).
   HANDLE` writes them, `none` alone for a task that needs no stamp, run in a checkout of the
   task's repository: `--tip` is resolved there to its whole commit, refused when it names none.
   It refuses a stamp the catalogue lacks, `none` beside a stamp, an empty reason and a task
-  done or cancelled. Each write is a line on the thread, which keeps every assessment: `needs
+  cancelled or done, but one approved and not landed (the `unlanded` mark, [Tasks and
+  roles](#tasks-and-roles)): it reads done while its land is still to make, of a head its
+  assessor may not have read, so its assessment is written as open work's is and leaves it
+  done. Each write is a line on the thread, which keeps every assessment: `needs
   tests, review at 1a2b3c4 (was review): a store query and its test, no page or wire; by
   HANDLE`.
 - **The assessor** is a role in name, with no row on the task: `just tasks needs` is refused,
@@ -2335,7 +2352,7 @@ another program in its foreground). A close and a restore of one session each ho
 run, so neither starts while the other runs; one whose hold lapsed and was taken over writes
 nothing more, and a restore that lost it kills the terminal it started. A Codex record
 takes the thread its callback registered whichever is written first; one closed with no thread
-says on its thread that restore cannot resume it. See the [tasks skill](../../crates/symphony/shipped/skills/tasks/SKILL.md#launch-restore-clean-up-hc).
+says on its thread that restore cannot resume it. See the [tasks skill](../../crates/symphony/shipped/skills/tasks/SKILL.md#launch-restore-clean-up).
 
 An initialized JavaScript REPL can retain `kernel.js` and `trusted-worker.js` under the
 ChatGPT app's bundled `node`. Their command lines do not distinguish waiting for a cell
@@ -2610,7 +2627,7 @@ counts as a sign of life, and so does every tool call of a subagent (below):
 
 | health | meaning |
 |---|---|
-| live | seen in the last 90 s, or inside one long tool call that could still be running |
+| live | seen in the last 90 s, inside one long tool call that could still be running, or waiting on a recorded build or test of its own that still runs |
 | stale | quiet, or its monitor has stopped: its work is still held, nobody may take it |
 | lost | gone for 10 minutes holding claimable work: that work can be claimed, on the record |
 | left | it said `just tasks leave` (its roles were released, the open work it orchestrated given to another orchestrator, or waiting for one while none stays), or it has been gone 10 minutes holding nothing anyone could claim |
@@ -2648,7 +2665,14 @@ an orchestrator never keep a child it registered alive. The hook looks at the bo
 only for a board command or a key already bound. A foreground Bash call
 reads live for as long as its timeout allows (at most 10 minutes), so a long
 `verify-full` does not look like silence; of calls running side by side, the
-one that may run longest keeps the mark, and only its own end clears it. Each
+one that may run longest keeps the mark, and only its own end clears it. A
+build or test that outlives its call (one started in the background, or moved
+there when its call's timeout ran out) keeps its session live by its recorder:
+while its command runs, the recorder of a run whose record names the session
+says it was seen, every 20 s and once more as the run ends, so the session
+is neither stale nor lost nor orphaning its task while it waits, and ages from
+the run's end as from any last sign of life
+([its session is there](MACHINE_WORK.md#recording-builds-and-tests)). Each
 tool call of a bound subagent also records, on its binding (never its session
 row, which keeps where its orchestrator ran `register`), the checkout that call
 ran in: the top folder above the hook's `cwd` and the branch checked out there,

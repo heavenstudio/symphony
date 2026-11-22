@@ -5,22 +5,24 @@
 //!
 //! In the run's own checkout, at the release's commit and in its build folder, it builds the
 //! release profile of the four binaries a project runs (`symphony-server`, `tasks`, `agent-send`,
-//! `symphony`) and of the one that moves a board's store (`tasks-move`), the server with no client compiled in (`SYMPHONY_CLIENT_BESIDE`): it serves the one
-//! installed beside it. The client is the distribution the commit holds
-//! (`apps/symphony-server/client/public/`), which the release's own verification compared byte for
-//! byte with a build of its sources, so nothing builds it again. What the release serves is asked
-//! of the binaries that build made, never of this program, which a retry runs from a later main: the
-//! server its plugin protocol and board schema (`symphony-server --serves`), the board its schema
-//! and its `tasks api` version (`tasks api`, the method `version`).
+//! `symphony`) and of the one that moves a board's store (`tasks-move`), the server with no
+//! client compiled in (`SYMPHONY_CLIENT_BESIDE`): it serves the one installed beside it. The
+//! client is the distribution the commit holds (`apps/symphony-server/client/public/`), which the
+//! release's own verification compared byte for byte with a build of its sources, so nothing
+//! builds it again. What the release serves is asked of the binaries that build made, never of
+//! this program, which a retry runs from a later main: the server its plugin protocol and board
+//! schema (`symphony-server --serves`), the board its schema and its `tasks api` version
+//! (`tasks api`, the method `version`).
 //!
 //! Then it installs them as `releases/NAME/` in the machine folder, whole
 //! ([`symphony::machine::release::install_noted`]), with what a project changes to take it and
-//! each release before it (`notes.md`, [`super::consumer::document_at`]). A build or an install that fails leaves no folder and
-//! `current` where it was, and is the refresh's red, filed on the Symphony's board; `just release
-//! --refresh` is the retry. A release already installed whole from the same commit is not built
-//! again. The install points nothing: the refresh points `current` at the release ([`point`]) only
-//! once nothing holds the switch and every board it moves has moved (`super::refresh`), a failure
-//! to point being this step's red. Nothing here starts, stops or signals a server.
+//! each release before it (`notes.md`, [`super::consumer::document_at`]). A build or an install
+//! that fails leaves no folder and `current` where it was, and is the refresh's red, filed on the
+//! Symphony's board; `just release --refresh` is the retry. A release already installed whole
+//! from the same commit is not built again. The install points nothing: the refresh points
+//! `current` at the release ([`point`]) only once nothing holds the switch and every board it
+//! moves has moved (`super::refresh`), a failure to point being this step's red. Nothing here
+//! starts, stops or signals a server.
 
 use std::fs;
 use std::io::Write;

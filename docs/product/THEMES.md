@@ -87,8 +87,9 @@ and a dark set, and each is used in its own scheme.
 A theme is values, never code. A colour, a font or a size is refused when it holds anything that
 could reach outside itself: a semicolon, a brace, an angle bracket, a comment, or an address to
 load. An imported file is refused whole, naming the value, and the look stays as it was. A
-project's settings with such a value are refused the same way, naming it, and one in a plugin's
-package is left out, which the project's settings check says.
+project's settings with such a value, or with one holding a backslash or a line break, are
+refused the same way, naming it, and one in a plugin's package is left out, which the project's
+settings check says.
 
 ### One project, one device
 
