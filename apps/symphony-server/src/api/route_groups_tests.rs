@@ -7,13 +7,7 @@ use serde_json::Value;
 
 fn shared(tree: &crate::testing::Tree) -> Arc<Shared> {
     let root = crate::testing::repository(tree);
-    Shared::new(
-        1,
-        1234,
-        &root,
-        None,
-        crate::gate::Gate::new(Arc::new(|_| Ok(None)), Arc::new(std::time::Instant::now)),
-    )
+    Shared::new(1, 1234, &root, None, crate::testing::open_gate())
 }
 
 fn get(uri: &str) -> Request {

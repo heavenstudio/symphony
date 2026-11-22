@@ -2,15 +2,10 @@
 //! board reader kept or forgotten by what a read on it answered.
 
 use super::Hub;
-use crate::testing::{
-    Tree,
-    board::{Fixture, HOST, NOW},
-    repository,
-};
+use crate::testing::{Tree, board::Fixture, repository, store_on};
 use axum::http::StatusCode;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
-use symphony_board::{Opening, Schema, Store};
 
 #[test]
 fn a_scope_names_the_projects_checkout_a_worktrees_or_none() {
@@ -38,14 +33,7 @@ fn reading(tree: &Tree) -> (Hub, Arc<AtomicUsize>) {
     let count = opened.clone();
     hub.connect_reader = Box::new(move |_| {
         count.fetch_add(1, SeqCst);
-        Store::opening(
-            fixture.other_client(),
-            Box::new(|| NOW),
-            Box::new(|_| false),
-            HOST,
-            &Opening::read().at(Schema::this_build()),
-        )
-        .map_err(|e| e.to_string())
+        Ok(store_on(&fixture.other_client()))
     });
     (hub, opened)
 }
