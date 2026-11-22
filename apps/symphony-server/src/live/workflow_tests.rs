@@ -28,12 +28,19 @@ const TWO: &str = concat!(
 );
 
 fn custom() -> Custom {
-    let (definition, mappings) = written(&format!("{TWO}{READY}")).unwrap();
+    committed(&format!("{TWO}{READY}"), '1')
+}
+
+/// The workflow `text` writes, as committed at a commit of `digit`s in a project file of its own:
+/// another text is another file, and the board takes a revision from the active one's file as the
+/// active workflow, whatever it says.
+fn committed(text: &str, digit: char) -> Custom {
+    let (definition, mappings) = written(text).unwrap();
     let definition = definition.unwrap();
     let revision = definition
         .revision(Source {
-            commit: "1".repeat(40),
-            project_blob: "2".repeat(40),
+            commit: digit.to_string().repeat(40),
+            project_blob: digit.to_string().repeat(40),
         })
         .unwrap();
     Custom {
@@ -43,6 +50,21 @@ fn custom() -> Custom {
         authorities: Vec::new(),
         project: None,
     }
+}
+
+/// Wait for the project's page to hear the generations `expected`, in order; only a stall
+/// reaches the backstop. The hub publishes a read a step after it keeps it.
+fn hears(project: &Project, expected: &[u64]) {
+    let said: Vec<Value> = (expected.iter())
+        .map(|generation| json!({"region": "workflow", "data": {"generation": generation}}))
+        .collect();
+    let heard = test_time::until_true("the page's feed to say the generations", BACKSTOP, || {
+        generations(project).len() >= said.len()
+    });
+    if let Err(stall) = heard {
+        panic!("{stall}; the feed said {:?}", published(project));
+    }
+    assert_eq!(generations(project), said);
 }
 
 /// The hub's last read of `slug`'s place on the wire, if it read the task.
@@ -120,17 +142,7 @@ fn the_owner_reads_a_workflow_and_takes_an_edge_through_the_pages_routes() {
         .unwrap();
     reads_at(&project, "flow/one", "available");
     // The activation is said on the feed once the hub reads it, so a page reads the definition.
-    // The hub publishes a read a step after it keeps it, so the wait is for the feed's own event.
-    let said = test_time::until_true("the page's feed to say the activation", BACKSTOP, || {
-        !generations(&project).is_empty()
-    });
-    if let Err(stall) = said {
-        panic!("{stall}; the feed said {:?}", published(&project));
-    }
-    assert_eq!(
-        generations(&project),
-        [json!({"region": "workflow", "data": {"generation": 1}})]
-    );
+    hears(&project, &[1]);
 
     let (status, read) = answer(&shared, asked("GET", "/api/workflow", None));
     assert_eq!(status, 200, "{read}");
@@ -163,6 +175,8 @@ fn the_owner_reads_a_workflow_and_takes_an_edge_through_the_pages_routes() {
     );
     assert_eq!(status, 200, "{next}");
     assert_eq!(next["snapshot"]["task_revision"], 1);
+    // No edge leaving its pair takes an accepted output: it names none.
+    assert_eq!(next["takes"], json!([]), "{next}");
     let action = |next: &Value, edge: &str| {
         (next["actions"].as_array().unwrap().iter())
             .find(|a| a["edge"] == edge)
@@ -232,6 +246,41 @@ fn the_owner_reads_a_workflow_and_takes_an_edge_through_the_pages_routes() {
         asked("GET", "/api/workflow-actions?slug=flow/none", None),
     );
     assert_eq!(status, 404, "{missing}");
+}
+
+/// A relabel moves no task, and the page still hears its generation: the board's own read carries
+/// it, and the activation moved the board's marker, so the hub's kept read is read again.
+#[test]
+fn a_relabel_that_moves_no_task_reaches_the_page() {
+    let tree = Tree::new();
+    let project = Project::made_by(&tree, "flow", writer);
+    project.reads(&["flow/one"]);
+    let board = writer(&project.root);
+    board.activate_workflow(&custom(), &Host::local()).unwrap();
+    reads_at(&project, "flow/one", "available");
+    hears(&project, &[1]);
+    let placed = place(&project, "flow/one");
+
+    let relabelled = committed(
+        &format!("{TWO}{READY}").replace(r#"label = "Build""#, r#"label = "Make""#),
+        '3',
+    );
+    assert_eq!(
+        board.activate_workflow(&relabelled, &Host::local()),
+        Ok(symphony_board::workflow::Followed::Activated(
+            symphony_board::workflow::Active {
+                generation: 2,
+                digest: relabelled.revision.digest.clone(),
+            }
+        ))
+    );
+    hears(&project, &[1, 2]);
+    assert_eq!(
+        place(&project, "flow/one"),
+        placed,
+        "the relabel moved no task"
+    );
+    assert_eq!(project.hub.workflow_generation(), Some(2));
 }
 
 /// [`TWO`] and [`READY`] with the owner's Block guarded by `approved`, which the `approvals`

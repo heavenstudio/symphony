@@ -3265,7 +3265,7 @@
               "alias": null,
               "authority": [{ "kind": "project_capability", "capability": "owner" }],
               "inputs": [],
-              "dependencies": "none",
+              "dependencies": "accepted_output",
               "guards": [],
               "effects": [],
               "automatic": false,
@@ -3338,7 +3338,35 @@
           "required_inputs": ["reason"],
           "unavailable": []
         }
-      ]
+      ],
+      "takes": []
+    },
+    "takingActions": {
+      "snapshot": {
+        "workflow": {
+          "format": 1,
+          "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "source": {
+            "commit": "1111111111111111111111111111111111111111",
+            "project_blob": "2222222222222222222222222222222222222222"
+          }
+        },
+        "activation_generation": 2,
+        "task_revision": 12,
+        "at": { "phase": "verify", "state": "awaiting" }
+      },
+      "actions": [
+        {
+          "edge": "accept",
+          "operation": "close_covered",
+          "destination": { "phase": "verify", "state": "accepted" },
+          "label": "Accept",
+          "responsible": [{ "kind": "project_capability", "capability": "owner" }],
+          "required_inputs": [],
+          "unavailable": []
+        }
+      ],
+      "takes": [{ "task": "w/a", "output": "w/a@3" }]
     },
     "applied": {
       "transition": "w/a@8",

@@ -82,6 +82,9 @@ describe("a board's active definition", () => {
     expect(names.get("phase:verify")).toBe("Verify");
     expect(names.get("state:awaiting")).toBe("Awaiting review");
     expect(names.get("review/awaiting")).toBe("Review · Awaiting review");
+    // The machines' lanes, on a board whose phase may be named Build too.
+    expect([names.get("build"), names.get("test")]).toEqual(["Machine build", "Machine test"]);
+    expect(names.get("phase:build")).toBe("Build");
   });
 });
 
@@ -166,6 +169,8 @@ describe("the strip of a workflow's states", () => {
 
   it("opens each phase that is no column on a desk, and chips each state with open tasks", () => {
     const drawn = markup();
+    // Led by what it holds: the workflow's own phases and states, not the board's waits.
+    expect(drawn).toMatch(/^<nav [^>]*><span class="strip-label">Workflow<\/span><button/);
     expect(drawn).toContain('data-open-stage="phase:parked"');
     expect(drawn).toContain("Parked <b>0</b>");
     expect(drawn.match(/data-state="[a-z]+"/g)).toEqual([

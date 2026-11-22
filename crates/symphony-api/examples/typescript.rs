@@ -370,6 +370,8 @@ fn task_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::workflow::OperationRequest>(cfg),
         declared::<api::workflow::NextAction>(cfg),
         declared::<api::workflow::NextActions>(cfg),
+        declared::<api::workflow::ActionsRead>(cfg),
+        declared::<api::workflow::TakenOutput>(cfg),
         declared::<api::workflow::OperationResult>(cfg),
         declared::<api::workflow::RefusalCode>(cfg),
         declared::<api::workflow::Role>(cfg),
@@ -1568,6 +1570,16 @@ fn workflow_definition() -> Value {
         reviewer.clone(),
     );
     rework["inputs"] = json!(["reason"]);
+    // The owner accepts a verified task on the accepted output of each task it depends on.
+    let mut accept = edge(
+        "accept",
+        "Accept",
+        pair("verify", "awaiting"),
+        pair("verify", "accepted"),
+        "close_covered",
+        owner.clone(),
+    );
+    accept["dependencies"] = json!("accepted_output");
     json!({
         "format": 1,
         "initial": pair("build", "available"),
@@ -1597,7 +1609,7 @@ fn workflow_definition() -> Value {
             edge("submit", "Submit", pair("build", "working"), pair("review", "awaiting"), "request_review", executor),
             rework,
             edge("pass", "Pass review", pair("review", "awaiting"), pair("verify", "awaiting"), "approve", reviewer),
-            edge("accept", "Accept", pair("verify", "awaiting"), pair("verify", "accepted"), "close_covered", owner.clone()),
+            accept,
             edge("block", "Block", pair("build", "available"), pair("build", "blocked"), "block", owner),
         ],
         "capabilities": ["owner"],
@@ -1649,12 +1661,32 @@ fn workflow_samples() -> Vec<(String, Value)> {
         next: moved,
         effects: vec![api::workflow::Effect::ClearBlock],
     };
+    // What the page reads of a task's actions: the preview, and the outputs an edge takes, none
+    // at Review; at Verify, where Accept takes the accepted output of what the task depends on.
+    let actions = api::workflow::ActionsRead {
+        snapshot: next.snapshot.clone(),
+        actions: next.actions.clone(),
+        takes: Vec::new(),
+    };
+    let taking: api::workflow::ActionsRead = serde_json::from_value(json!({
+        "snapshot": {"workflow": revision, "activation_generation": 2, "task_revision": 12,
+            "at": pair("verify", "awaiting")},
+        "actions": [
+            {"edge": "accept", "operation": "close_covered",
+             "destination": pair("verify", "accepted"), "label": "Accept",
+             "responsible": [{"kind": "project_capability", "capability": "owner"}],
+             "required_inputs": [], "unavailable": []},
+        ],
+        "takes": [{"task": "w/a", "output": "w/a@3"}],
+    }))
+    .expect("a task's actions taking accepted outputs");
     let held = held_listing();
     let (guards, refused) = guard_samples();
     [
         ("workflow", json!(read)),
         ("noWorkflow", json!(none)),
-        ("nextActions", json!(next)),
+        ("nextActions", json!(actions)),
+        ("takingActions", json!(taking)),
         ("applied", json!(applied)),
         ("heldListing", json!(held)),
         ("taskGuards", json!(guards)),

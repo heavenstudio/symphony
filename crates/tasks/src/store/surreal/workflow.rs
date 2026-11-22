@@ -78,10 +78,10 @@ RETURN {
 /// holder it read as lost is still unseen (`$seen`); then each kept task written at its version,
 /// each moved one recorded and moved, refused as stale where a task the read would select is
 /// neither kept nor moved (one filed or reopened since the read, at the old generation's pair or
-/// at none), the definition recorded once under its digest, the activation recorded, and the
-/// active generation moved to it. Each task the read selected is kept or moved, and stays
-/// selected, so a count over theirs is the whole check, and the task is named only where it
-/// refuses.
+/// at none), the definition recorded once under its digest, the activation recorded, the board's
+/// marker moved (a board read carries the generation, and a relabel moves no task) and the active
+/// generation moved to it. Each task the read selected is kept or moved, and stays selected, so a
+/// count over theirs is the whole check, and the task is named only where it refuses.
 pub(in crate::store) const ACTIVATE: &str = "
 LET $active = (SELECT VALUE body FROM ONLY workflow:['active']) ?? NONE;
 IF ($active.generation ?? 0) != $expected {
@@ -124,6 +124,7 @@ IF (SELECT VALUE kind FROM ONLY type::record('workflow', ['definition', $digest]
 };
 CREATE type::record('workflow', ['activation', $generation])
     CONTENT { kind: 'activation', body: $activation, at: $at } RETURN NONE;
+IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; };
 UPSERT workflow:['active'] CONTENT { kind: 'active', body: { generation: $generation, digest: $digest }, at: $at } RETURN NONE;
 RETURN NONE;";
 
@@ -136,7 +137,9 @@ RETURN NONE;";
 /// task the read would select is neither kept nor moved (one filed or reopened since, which would
 /// keep a position with no workflow active), as an activation is, by its slug: a closed task the
 /// return moves leaves the selection, so a count would let one task it did not plan pass beside
-/// it; and the active generation deleted: none is active after it.
+/// it; then the board's marker moved, as an activation moves it (a board read carries the
+/// generation, and a return may move no task), and the active generation deleted: none is active
+/// after it.
 pub(in crate::store) const RETURN_DEFAULT: &str = "
 LET $active = (SELECT VALUE body FROM ONLY workflow:['active']) ?? NONE;
 IF ($active.generation ?? 0) != $expected {
@@ -173,6 +176,7 @@ LET $unplanned = array::sort(array::complement($standing,
 IF array::len($unplanned) > 0 {
     THROW string::concat('refused: stale_task: ', $unplanned[0], ' was filed or reopened while its workflow returned');
 };
+IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; };
 DELETE workflow:['active'] RETURN NONE;
 RETURN NONE;";
 

@@ -81,9 +81,9 @@ fn original(task: &Task) -> &str {
         .unwrap_or("ready")
 }
 
-/// The column `task` goes in: a blocked task the board's own writers keep in the status it was
-/// blocked from, any other where every listing puts it ([`super::column`]), a task a custom
-/// workflow holds in its phase's, blocked or not.
+/// The column `task` goes in on this view: a blocked task the board's own writers keep in the
+/// status it was blocked from, any other where the waiting view puts it ([`super::column`]), a
+/// task a custom workflow holds in its phase's, blocked or not.
 fn stage(task: &Task, work: &MachineWork, activity: bool) -> String {
     if task.status == "blocked" && task.workflow.is_none() {
         original(task).to_string()

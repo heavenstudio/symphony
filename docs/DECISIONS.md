@@ -15,6 +15,7 @@ A document's first card adds its line here.
 - [Releases](workflow/RELEASES.md)
 - [Concept review](workflow/REVIEW.md)
 - [Task board](workflow/TASKS.md)
+- [Workflow definitions](workflow/WORKFLOW.md)
 - [The agents page, orchestrator-first](product/analysis/agents-page.md)
 - [Artifacts attached, not committed](workflow/analysis/attached-artifacts.md)
 - [The board at a glance](product/analysis/board-design.md)

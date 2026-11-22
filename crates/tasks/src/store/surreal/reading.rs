@@ -83,6 +83,12 @@ pub(in crate::store) fn reading(which: &Which, sessions: Sessions) -> String {
         ),
         (Sessions::Shown, _) => ("array::distinct($view_roles.handle)", SHOWN),
     };
+    // The whole board's read carries the active workflow's generation, read by its id.
+    let generation = if matches!(which, Which::All) {
+        ACTIVE_GENERATION
+    } else {
+        "NONE"
+    };
     format!(
         "{pull_lets}
              LET $tasks = ({pick});
@@ -100,6 +106,7 @@ pub(in crate::store) fn reading(which: &Which, sessions: Sessions) -> String {
                  sessions: (SELECT * OMIT id FROM {sessions} ORDER BY connected, handle),
                  held: $held,
                  latest: (SELECT VALUE last FROM ONLY counter:message) ?? 0,
+                 workflow_generation: {generation},
                  callback_sequence: $callback_sequence ?? 0,
                  has_callbacks: $has_callbacks ?? false,
                  native_presence: {NATIVE_PRESENCE},
@@ -110,6 +117,11 @@ pub(in crate::store) fn reading(which: &Which, sessions: Sessions) -> String {
              }};", super::branches::OF_TASKS
     )
 }
+
+/// The active custom workflow's activation generation, or NONE on a board that never activated
+/// one: the whole board's read carries it ([`reading`]).
+const ACTIVE_GENERATION: &str =
+    "(SELECT VALUE body.generation FROM ONLY workflow:['active']) ?? NONE";
 
 /// `$pullable` widened by the statuses that the positions an executor's claim edge leaves project
 /// to, in the active custom workflow: a task it holds is offered by its claim
