@@ -264,10 +264,7 @@ impl Drop for ScratchBoard {
 fn owner_priority_and_cancellation_update_the_task_and_open_board_without_reload() {
     let Some(mut page) = chrome() else { return };
     let Some(mut overview) = chrome() else { return };
-    overview.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    overview.viewport(1440, 900, false);
     let board = ScratchBoard::start();
     let actor = board.call("register", json!({"kind":"worker"}));
     let slug = "fixture/owner-controls";
@@ -534,10 +531,7 @@ fn a_pasted_dropped_or_picked_picture_shows_on_the_message_task_and_card_it_was_
         "# Cards\n\n<!-- register:start -->\n## Waiting\n\n### Fixture\n\n- [ ] **one** — A question.\n<!-- register:end -->\n",
     )
     .unwrap();
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":390,"height":844,"deviceScaleFactor":3,"mobile":true}),
-    );
+    page.viewport_scaled(390, 844, 3, true);
     page.open(&site.url("/docs/CARDS.md"));
     assert!(
         page.wait_for(

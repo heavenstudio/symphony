@@ -385,10 +385,7 @@ fn site_at(browser: &mut Chrome, width: layout_shift::Width) -> Site {
     site.set_json("/api/task-board", &board());
     site.set_json("/api/queue", &queue());
     board_cards(&site);
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": width.width, "height": width.height, "deviceScaleFactor": 1, "mobile": width.mobile}),
-    );
+    browser.viewport(width.width, width.height, width.mobile);
     browser.call(
         "Page.addScriptToEvaluateOnNewDocument",
         json!({ "source": layout_shift::RECORD }),
