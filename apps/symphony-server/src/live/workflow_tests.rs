@@ -5,11 +5,9 @@
 
 use super::boards_tests::{Project, answer, asked, env, writer};
 use crate::front::Shared;
-use crate::gate::Gate;
 use crate::testing::Tree;
 use serde_json::{Value, json};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_api::workflow::Source;
 use symphony_board::workflow::{Custom, Host, written};
 
@@ -119,13 +117,7 @@ fn the_owner_reads_a_workflow_and_takes_an_edge_through_the_pages_routes() {
     let tree = Tree::new();
     let project = Project::made_by(&tree, "flow", writer);
     project.reads(&["flow/one"]);
-    let shared = Shared::new(
-        1,
-        1234,
-        &project.root,
-        None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
+    let shared = Shared::new(1, 1234, &project.root, None, crate::testing::open_gate());
     assert!(shared.api.set(project.hub.clone()).is_ok());
     let database = symphony::taskview::connect_in(&project.root, env(&project.root))
         .unwrap()

@@ -46,13 +46,7 @@ fn the_client_draws_the_symphonys_pages_and_each_entrypoints_documents() {
 async fn a_listing_status_no_listing_selects_is_refused_before_the_board_is_read() {
     let tree = crate::testing::Tree::new();
     let root = crate::testing::repository(&tree);
-    let shared = crate::front::Shared::new(
-        1,
-        1234,
-        &root,
-        None,
-        crate::gate::Gate::new(Arc::new(|_| Ok(None)), Arc::new(std::time::Instant::now)),
-    );
+    let shared = crate::front::Shared::new(1, 1234, &root, None, crate::testing::open_gate());
     for (status, refused) in [
         ("nope", true),
         ("Review", true),
@@ -102,13 +96,7 @@ async fn a_listing_status_no_listing_selects_is_refused_before_the_board_is_read
 async fn next_actions_that_name_no_task_are_refused_before_the_board_is_read() {
     let tree = crate::testing::Tree::new();
     let root = crate::testing::repository(&tree);
-    let shared = crate::front::Shared::new(
-        1,
-        1234,
-        &root,
-        None,
-        crate::gate::Gate::new(Arc::new(|_| Ok(None)), Arc::new(std::time::Instant::now)),
-    );
+    let shared = crate::front::Shared::new(1, 1234, &root, None, crate::testing::open_gate());
     for uri in [
         "/api/workflow-actions",
         "/api/workflow-actions?slug=",

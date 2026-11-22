@@ -16,6 +16,9 @@ use symphony_board::live::Live;
 use symphony_board::schema::{self, COMPATIBLE, OPEN, VERSION, WRITABLE_FROM_SINCE, keeps_writes};
 use symphony_board::{Database, Error, NewTask, Opening, Program, Raw, Schema, Standing, Store};
 
+/// The additive steps this build has of its own, which every fixture step comes after.
+const OWN: i64 = schema::ADDITIONS;
+
 /// The first fixture step: the table `fixture_tag`, and the optional field `fixture_note` on every
 /// open table.
 fn one_on() -> Schema {
@@ -150,7 +153,7 @@ on_both! {
         // A build whose own step defines a field its row structs do not name.
         let store = open(&db, &Opening::write().at(one_on()));
         store.copy(&everything()).unwrap();
-        assert_eq!(additions(&db), Some(1));
+        assert_eq!(additions(&db), Some(OWN + 1));
         let clean = store.dump().unwrap();
         let raw = Raw::of(&db);
         raw.row("task", "sim/jump").set(json!({"fixture_note": "kept"})).unwrap();
@@ -177,8 +180,8 @@ on_both! {
         let db = backend.database();
         let ahead = open(&db, &Opening::write().at(two_on()));
         ahead.copy(&everything()).unwrap();
-        assert_eq!((ahead.board_version().unwrap(), additions(&db)), (Some(VERSION), Some(2)));
-        assert_eq!(ahead.additions().unwrap(), 2);
+        assert_eq!((ahead.board_version().unwrap(), additions(&db)), (Some(VERSION), Some(OWN + 2)));
+        assert_eq!(ahead.additions().unwrap(), OWN + 2);
         // Every row of every open table carries the field the steps added.
         let raw = Raw::of(&db);
         for table in OPEN {
@@ -196,17 +199,18 @@ on_both! {
             let steps = behind.additions();
             let store = open(&db, &Opening::write().at(behind));
             assert_eq!(store.additions().unwrap(), steps, "what it may use of the board");
-            if steps == 1 {
+            if steps == OWN + 1 {
                 // Its own step's table is there to write.
                 raw.row("fixture_tag", "one").create(json!({"name": "one"})).unwrap();
             }
             worked(&store, holder, priority, made);
-            assert_eq!(additions(&db), Some(2), "a build behind moves no step back");
+            assert_eq!(additions(&db), Some(OWN + 2), "a build behind moves no step back");
             // A whole-board read would leave out what its steps lack: refused, naming them.
             let why = refused(store.dump());
             assert!(
                 why.contains(&format!(
-                    "has 2 of schema {VERSION}'s additive steps and this build has {steps}"
+                    "has {} of schema {VERSION}'s additive steps and this build has {steps}",
+                    OWN + 2
                 )),
                 "{why}"
             );
@@ -240,11 +244,11 @@ on_both! {
         let gate = Program::named("gate-review", "/work/alpha/.target/debug/gate-review");
         let behind = open(&db, &Opening::write().by(gate));
         behind.copy(&everything()).unwrap();
-        assert_eq!(additions(&db), Some(0));
+        assert_eq!(additions(&db), Some(OWN));
         let not_mine = NotMine::new(&db);
         // Opened as it is: no step added, and nothing written of what its steps define.
         let ahead = open(&db, &Opening::write().at(two_on()).live(not_mine.live()));
-        assert_eq!((additions(&db), ahead.additions().unwrap()), (Some(0), 0));
+        assert_eq!((additions(&db), ahead.additions().unwrap()), (Some(OWN), OWN));
         assert!(Raw::of(&db).table("fixture_tag").get().is_err(), "no table of its steps");
         worked(&ahead, Some("amber-heron"), 2, "sim/land");
         // A reader ahead reads it too.
@@ -254,7 +258,8 @@ on_both! {
         let why = refused(ahead.dump());
         assert!(
             why.contains(&format!(
-                "has 0 of schema {VERSION}'s additive steps and this build has 2"
+                "has {OWN} of schema {VERSION}'s additive steps and this build has {}",
+                OWN + 2
             )),
             "{why}"
         );
@@ -268,9 +273,9 @@ on_both! {
         let mover = open(&db, &Opening::write().at(two_on()).migrating());
         assert_eq!(
             (additions(&db), mover.additions().unwrap(), ahead.additions().unwrap()),
-            (Some(2), 2, 2)
+            (Some(OWN + 2), OWN + 2, OWN + 2)
         );
-        assert_eq!(behind.additions().unwrap(), 0, "what it may use of the board");
+        assert_eq!(behind.additions().unwrap(), OWN, "what it may use of the board");
         Raw::of(&db).row("fixture_tag", "one").create(json!({"name": "one"})).unwrap();
         worked(&behind, None, 3, "sim/land/again");
         assert_eq!(open(&db, &Opening::write()).board_version().unwrap(), Some(VERSION));
@@ -284,7 +289,7 @@ on_both! {
         open(&db, &Opening::write().by(gate)).copy(&everything()).unwrap();
         // An additive move of a board gate-review wrote a moment ago goes ahead.
         open(&db, &Opening::write().at(two_on()).migrating());
-        assert_eq!(additions(&db), Some(2));
+        assert_eq!(additions(&db), Some(OWN + 2));
         // A breaking one is held by it, before any write.
         let breaking = || {
             two_on().then_each(
@@ -301,7 +306,7 @@ on_both! {
             )),
             "{why}"
         );
-        assert_eq!((open(&db, &Opening::write()).board_version().unwrap(), additions(&db)), (Some(VERSION), Some(2)));
+        assert_eq!((open(&db, &Opening::write()).board_version().unwrap(), additions(&db)), (Some(VERSION), Some(OWN + 2)));
         // Told to leave it behind, it moves the board, which counts its own steps on the new
         // contract, none; and every build of the contract before is refused, its steps and all.
         let newer = open(&db, &Opening::write().at(breaking()).migrating().leave_behind());
@@ -331,8 +336,8 @@ on_both! {
         // Its steps read once the board is made by a build that has one: the least of the board's
         // and its own, so a build without the step reads none.
         let made = open(&db, &Opening::write().at(one_on()));
-        assert_eq!((made.additions().unwrap(), reader.additions().unwrap()), (1, 0));
-        assert_eq!(additions(&db), Some(1));
+        assert_eq!((made.additions().unwrap(), reader.additions().unwrap()), (OWN + 1, OWN));
+        assert_eq!(additions(&db), Some(OWN + 1));
     }
 
     fn the_rule_before_the_contract_keeps_its_names_and_works_beside_additive_steps(

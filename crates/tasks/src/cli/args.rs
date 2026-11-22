@@ -222,6 +222,11 @@ const COMMANDS: &[Command] = &[
     },
     plain("limits", &[]),
     Command {
+        name: "settings",
+        pos: &[pos("action"), maybe("key"), maybe("value")],
+        opts: &[AS, opt("--json", "json", Takes::Bool)],
+    },
+    Command {
         name: "create",
         pos: &[pos("slug"), pos("title")],
         opts: &[

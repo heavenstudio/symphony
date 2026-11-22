@@ -6,7 +6,6 @@
 
 use super::Hub;
 use crate::front::{Shared, router};
-use crate::gate::Gate;
 use crate::testing::{Tree, board::surreal, git, repository_at};
 use axum::body::{Body, to_bytes};
 use axum::extract::ConnectInfo;
@@ -15,7 +14,7 @@ use serde_json::{Value, json};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError, mpsc};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_board::cli::Env;
 use symphony_board::rpc::Client;
 use symphony_board::server::Home;
@@ -253,13 +252,7 @@ fn a_machine_hub_starts_its_selected_postgresql_board_and_keeps_its_reader_read_
     let pg = home.project_postgresql(&project.root).unwrap();
     assert!(pg.current().unwrap().is_some());
     assert!(!home.dir().join("data").exists());
-    let shared = Shared::new(
-        1,
-        1234,
-        &project.root,
-        None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
+    let shared = Shared::new(1, 1234, &project.root, None, crate::testing::open_gate());
     assert!(shared.api.set(project.hub.clone()).is_ok());
     let (status, body) = answer(&shared, asked("GET", "/api/tasks", None));
     assert_eq!(status, 200, "{body}");
@@ -651,13 +644,7 @@ impl Gitless {
     /// What the project's route answers `request` once front's check that its folder holds it has
     /// passed: the save or the read itself, as `front::answer` calls it after that check.
     fn past_the_check(&self, request: Request<Body>) -> (u16, Value) {
-        let shared = Shared::new(
-            1,
-            1234,
-            &self.inner.root,
-            None,
-            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-        );
+        let shared = Shared::new(1, 1234, &self.inner.root, None, crate::testing::open_gate());
         assert!(shared.api.set(self.inner.hub.clone()).is_ok());
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -847,13 +834,7 @@ fn a_pages_save_or_read_on_a_project_emptied_under_its_server_reaches_no_board_a
 
         let inner = Project::made_in(&tree, "outer/artifacts/scratch/inner", "inner", writer);
         inner.reads(&["inner/one"]);
-        let shared = Shared::new(
-            1,
-            1234,
-            &inner.root,
-            None,
-            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-        );
+        let shared = Shared::new(1, 1234, &inner.root, None, crate::testing::open_gate());
         assert!(shared.api.set(inner.hub.clone()).is_ok());
         let save = |slug: &str| json!({ "slug": slug, "priority": (before + 1) % 5 });
         let save = |slug: &str| asked("POST", "/api/task-priority", Some(&save(slug)));

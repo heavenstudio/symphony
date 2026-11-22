@@ -116,6 +116,8 @@ struct Made {
 enum Planted {
     /// This status and body.
     Answer(u16, Value),
+    /// This status and body, under these headers.
+    Headed(u16, &'static [(&'static str, &'static str)], Value),
     /// None: the connection ends with no answer.
     Lost,
 }
@@ -238,6 +240,12 @@ impl Apps {
         if let Some(planted) = made.planted.take() {
             return match planted {
                 Planted::Answer(status, body) => Ok(respond(status, body)),
+                Planted::Headed(status, headers, body) => Ok(Response {
+                    headers: (headers.iter())
+                        .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+                        .collect(),
+                    ..respond(status, body)
+                }),
                 Planted::Lost => Err(Failure::Unknown(format!(
                     "the connection ended with no answer to Bearer {jwt}"
                 ))),
@@ -654,6 +662,30 @@ fn github_refusing_the_token_says_its_words_and_what_to_fix() {
             "give App 42 those permissions and install it on that repository",
         ],
     );
+    // A refusal is one whatever it says of the rate limit: a 422 is never the limit, though the
+    // last request a window allows says none remains, and neither is a 403 with requests left.
+    let refusals: [(u16, &'static [(&str, &str)]); 4] = [
+        (422, &[("x-ratelimit-remaining", "0")]),
+        (422, &[("retry-after", "30")]),
+        (403, &[("x-ratelimit-remaining", "12")]),
+        (403, &[]),
+    ];
+    for (status, headers) in refusals {
+        let (d, apps) = delivery("mint-refused-headed", true, "");
+        apps.plant(Planted::Headed(
+            status,
+            headers,
+            json!({"message": "Resource not accessible by integration"}),
+        ));
+        refused(
+            &d,
+            &apps,
+            &[
+                &format!("{status}: Resource not accessible by integration"),
+                "give App 42 those permissions and install it on that repository",
+            ],
+        );
+    }
     // An installation that is not the App's.
     let more = format!(
         "installation_id = 999\nkey_file = \"{}\"\n",
@@ -676,6 +708,17 @@ fn github_not_answering_is_unavailable_and_the_old_file_kept() {
     for planted in [
         Planted::Answer(502, json!({"message": "Bad Gateway"})),
         Planted::Answer(429, json!({"message": "slow down"})),
+        // The rate limit as a 403: no request remains, or a wait is named.
+        Planted::Headed(
+            403,
+            &[("x-ratelimit-remaining", "0"), ("x-ratelimit-reset", "900")],
+            json!({"message": "API rate limit exceeded"}),
+        ),
+        Planted::Headed(
+            403,
+            &[("retry-after", "30")],
+            json!({"message": "You have exceeded a secondary rate limit."}),
+        ),
         Planted::Answer(201, json!({"expires_at": clock(9_000)})),
         Planted::Answer(201, json!({"token": "ghs_odd", "expires_at": "tomorrow"})),
         Planted::Lost,
