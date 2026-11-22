@@ -430,8 +430,8 @@ fn a_watched_file_is_read_again_once_it_changes_and_not_before() {
     std::fs::write(&path, "[limits]\nmachine_agents = 7\n").unwrap();
     assert_eq!(watched.now().machine_agents, Some(7));
     let held = Held::Watched(watched.clone());
-    assert_eq!(held.now().machine_agents, Some(7));
-    assert_eq!(Held::default().now(), Limits::default());
+    assert_eq!(held.now(Stored::default).machine_agents, Some(7));
+    assert_eq!(Held::default().now(Stored::default), Limits::default());
     // A version it cannot read is said (on stderr, once) and its value takes the default.
     std::fs::write(&path, "[limits]\nmachine_agents = 0\nlow_volume = 1\n").unwrap();
     let read = watched.read();

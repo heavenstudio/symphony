@@ -58,7 +58,10 @@ targets are the folders of `tests/` with a `main.rs` that says what each holds (
 - **The rules of work**: `slots.rs` ([slots](../../docs/TASKS.md#slots)), `orchestration.rs`
   with `store/work/given.rs`
   ([the limit](../../docs/TASKS.md#the-limit-on-the-tasks-an-orchestrator-holds)), `limits.rs`,
-  `local.rs` (the one reader of the local settings file), `alarm.rs`
+  `local.rs` (the one reader of the local settings file, and the one judge of what that file and
+  the board's store may hold), `settings.rs` with `store/stored_settings.rs` and
+  `cli/commands/settings.rs` (the board's store of preferences, read between the project file and
+  the local file: [PROJECT_FILE](../../docs/PROJECT_FILE.md#the-boards-store)), `alarm.rs`
   ([the pipeline alarm](../../docs/TASKS.md#the-pipeline-alarm)), `health.rs`, `stages.rs`,
   `arm.rs`, `reports.rs`.
 - **The database server**: `server.rs` is `server::Home`, with its parts in `server/`:

@@ -123,7 +123,9 @@ consuming project's.
 - **Models and limits are settings**: `[agents] launch`, `[agents.models]` and `[limits]` in
   `symphony.toml`, a machine's own choice in `symphony.local.toml`
   ([TASKS](docs/TASKS.md#limits-and-models),
-  [PROJECT_FILE](docs/PROJECT_FILE.md#the-local-settings-file)). An Agent launch passes the model
+  [PROJECT_FILE](docs/PROJECT_FILE.md#the-local-settings-file)), and between the two the board's
+  own preferences (`just tasks settings`), which hold at once and need no landing
+  ([PROJECT_FILE](docs/PROJECT_FILE.md#the-boards-store)). An Agent launch passes the model
   `just tasks limits` names for the role, as a subagent otherwise inherits its orchestrator's.
   `just symphony-cli model ROLE MODEL` changes one.
 - **A change of settings needs no reviewer**: a change of the values `symphony.toml` gives
