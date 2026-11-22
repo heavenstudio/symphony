@@ -98,10 +98,7 @@ fn site() -> Site {
 /// The board open on a wide screen, following the feed, its default view drawn, the search's
 /// column reads held: what the stand-in has been asked so far, from which the search's reads count.
 fn opened(site: &Site, chrome: &mut Chrome) -> usize {
-    chrome.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": 1440, "height": 900, "deviceScaleFactor": 1, "mobile": false}),
-    );
+    chrome.viewport(1440, 900, false);
     chrome.open(&site.url("/tasks"));
     assert!(
         chrome.wait_for(
