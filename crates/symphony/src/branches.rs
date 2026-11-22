@@ -31,6 +31,7 @@ use crate::project::Project;
 use crate::register::{Decision, REGION_START, parse_decisions};
 use crate::text::{rstrip, splitlines};
 use sha2::{Digest, Sha256};
+use symphony_docs::syntax::CARD_LINE;
 
 /// Git processes at once: a scan is mostly waiting on them.
 const WORKERS: usize = 8;
@@ -241,10 +242,6 @@ fn merged(root: &Path, main: &str) -> HashSet<String> {
     .map(str::to_string)
     .collect()
 }
-
-/// A card's line as `git grep -E` finds it, the one [`crate::register::card_line`] reads: `- [m]
-/// **`, the mark one of the seven.
-const CARD_LINE: &str = r"^-[[:space:]]+\[[ xX?r~a-]\][[:space:]]+\*\*";
 
 /// The document pages of the project's entrypoints at `rev` that hold cards, in a register region
 /// or inline at the place they decide: where a branch's cards can be. None when git could not say.

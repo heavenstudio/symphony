@@ -18,18 +18,8 @@ pub(crate) fn server_command(command: &str) -> Option<&str> {
     (name == "symphony-server" || name == "review-server").then_some(args)
 }
 
-/// Whether process `pid` exists; one this user may not signal still exists.
-pub fn pid_alive(pid: i64) -> bool {
-    let Ok(pid) = libc::pid_t::try_from(pid) else {
-        return false;
-    };
-    if pid <= 0 {
-        return false; // 0 and below name process groups, not a process
-    }
-    // SAFETY: signal 0 sends nothing; kill only checks the process exists and may be signalled.
-    let signalled = unsafe { libc::kill(pid, 0) } == 0;
-    signalled || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-}
+/// Whether process `pid` exists; one this user may not signal still exists: the board's own test.
+pub use symphony_board::sys::pid_alive;
 
 /// Send `signal` to process `pid` (never a group: 0 and below are refused).
 pub fn signal(pid: i64, signal: libc::c_int) {

@@ -43,11 +43,7 @@ pub fn now() -> f64 {
 /// Whether work finishing in `env` may start a sweep: `TASKS_SWEEP=on` or `off` says; else only on
 /// the repository's own board, which no `TASKS_SERVER` names.
 pub fn enabled(env: &Env) -> bool {
-    match env.var("TASKS_SWEEP") {
-        Some("off") => false,
-        Some("on") => true,
-        _ => env.var("TASKS_SERVER").is_none(),
-    }
+    env.switch("TASKS_SWEEP")
 }
 
 /// The sweep's folder in the git common dir `common`, beside the board's server.

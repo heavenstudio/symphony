@@ -4,11 +4,12 @@ The procedure that moves a live board from SurrealDB to PostgreSQL: the order, w
 when, how long a board cannot be written, how to go back, and what the two stores measured side
 by side. [What a live move waits for](#the-choice) is decided: the pieces not built yet, a clean
 rehearsal, and the memory peak found and answered: it is found, under the target on a board of
-today's size, and over it on one ten times the size, which the card `board-pg-memory-at-ten-times`
-([DECISIONS](../DECISIONS.md)) decides: a board of today's size may move once the pieces and the
-rehearsal are done, with the ten-times peak left open. The pieces are landed and
-[the rehearsal](#the-rehearsal-2026-11-19) was clean. PostgreSQL serves the board whose home
-names it ([POSTGRESQL](../POSTGRESQL.md)), and `tasks-move` moves a board's store there and back.
+today's size, and over it on one ten times the size, which the card
+[`board-pg-memory-at-ten-times`](board-store-baseline.md#board-pg-memory-at-ten-times) decides: a
+board of today's size may move once the pieces and the rehearsal are done, with the ten-times peak
+left open. The pieces are landed and [the rehearsal](#the-rehearsal-2026-11-19) was clean.
+PostgreSQL serves the board whose home names it ([POSTGRESQL](../POSTGRESQL.md)), and `tasks-move`
+moves a board's store there and back.
 This repository's board [moved on 2026-11-21](#this-repositorys-board-moved-2026-11-21); the
 other projects' boards are on SurrealDB until each moves after its own pin.
 
@@ -113,21 +114,6 @@ the other way (`Home::move_to`, `crates/tasks/src/server/moving.rs`). It is a pr
 own, the owner's to run from the main checkout as `tasks-reclaim` is, and no board command: the
 `tasks` every session runs links none of it.
 
-A release installs it beside its `tasks` ([the install](../RELEASES.md#the-install)), so a
-project with no build of its own moves its board with what the release holds, at the schema
-its `tasks` writes. Its orchestrator or owner runs it from the project's main checkout by its
-path in the machine folder, since no recipe reaches it and `just tasks` would refuse a live
-board's move ([where it lives](../TASKS.md#where-it-lives)):
-
-```sh
-"$HOME/Library/Application Support/Symphony/current/bin/tasks-move" postgresql --as HANDLE
-```
-
-Elsewhere than macOS the machine folder is `$XDG_DATA_HOME/symphony`, else
-`~/.local/share/symphony`, and `SYMPHONY_MACHINE_DIR` names another. A release before the
-one that first installed it holds none: the project waits for `current` to name one that does.
-No refresh runs it: a board moves when its project says so, after its pin (step 4 above).
-
 1. **Hold.** The board is held as for any maintenance: its database is stopped, and every board
    command is refused and says why. Agents' work in progress is untouched; their board commands
    and the board's pages wait for the release. A hold its caller set before
@@ -156,6 +142,22 @@ No refresh runs it: a board moves when its project says so, after its pin (step 
 Nothing is deleted but the move's work folder. The old store, with every database it held
 beside the board's, and the export stay in `moved/`, and the snapshot with the snapshots, until
 the owner says otherwise.
+
+A release installs `tasks-move` beside its `tasks` ([the install](../RELEASES.md#the-install)),
+so a project with no build of its own moves its board with what the release holds, at the schema
+its `tasks` writes. Its orchestrator or owner runs it from the project's main checkout by its
+path in the machine folder, since no recipe reaches it and `just tasks` would refuse a live
+board's move ([where it lives](../TASKS.md#where-it-lives)):
+
+```sh
+"$HOME/Library/Application Support/Symphony/current/bin/tasks-move" postgresql --as HANDLE
+```
+
+Elsewhere than macOS the machine folder is `$XDG_DATA_HOME/symphony`, else
+`~/.local/share/symphony`, and `SYMPHONY_MACHINE_DIR` names another. A release before the
+one that first installed it holds none: the project waits for `current` to name one that does.
+No refresh runs it: a board moves when its project says so, after its pin (step 4 of
+[the order](#the-order)).
 
 **A failure.** Before the switch nothing of the board has changed places: the work folder is
 removed, the export already written stays in `moved/STAMP-ENGINE/` beside nothing else, and the
@@ -240,7 +242,8 @@ so a board that has moved keeps its read-only export.
 Step 3 of [the order](#the-order), by `tools/board-pg-this-board-moves`, whose thread has the
 commands and the read-back: `tasks-move postgresql` from the main checkout at `aa2ae8142`, board
 schema 28, then `just tasks recovery rebind` at once, under the owner's approval on the cards
-`board-pg-cutover` and `board-pg-memory-at-ten-times` ([DECISIONS](../DECISIONS.md)).
+[`board-pg-cutover`](#board-pg-cutover) and
+[`board-pg-memory-at-ten-times`](board-store-baseline.md#board-pg-memory-at-ten-times).
 
 - **The move.** 41,891 rows compared with what was read, none different. The board was held
   74 s by its hold log, and the command took 76.4 s, at a load average of 158 on sixteen cores.
@@ -296,10 +299,11 @@ prerequisites, and the memory peak.
   scratch boards ([what the comparison showed](#what-the-comparison-showed)). It was no setting,
   and one connection per command only in that a backend keeps its memory for its command's
   life: the fix is in what the reads ask the server to build. On a board ten times the size it
-  is 1.7 to 1.8 GiB, over the target, which is unchanged. The card `board-pg-memory-at-ten-times`
-  ([DECISIONS](../DECISIONS.md)) decides it, B: the memory peak no longer holds the move of a
-  board of today's size, which waits for the prerequisites and the rehearsal alone, and the
-  ten-times peak stays an open limit, not a target met.
+  is 1.7 to 1.8 GiB, over the target, which is unchanged. The card
+  [`board-pg-memory-at-ten-times`](board-store-baseline.md#board-pg-memory-at-ten-times) decides
+  it, B: the memory peak no longer holds the move of a board of today's size, which waits for
+  the prerequisites and the rehearsal alone, and the ten-times peak stays an open limit, not a
+  target met.
 
 The target was part of what the store was approved with. The cutover is the one step that takes
 a hold on a live board and a second hold to undo. Everything before it is free to do and free to

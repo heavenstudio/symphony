@@ -2,8 +2,9 @@
 
 How a project takes a Symphony release without compiling Symphony, with its own plugin code
 delivered apart from Symphony's, and how Symphony's crates, binaries and client split so that a
-change rebuilds and redistributes only what it touches. The path is chosen, on three cards in
-[DECISIONS](../DECISIONS.md). This is a design: nothing here is built yet.
+change rebuilds and redistributes only what it touches. The path is chosen, on three cards:
+[plugin-delivery-choice](#plugin-delivery-choice), [release-delivery](#release-delivery) and
+[board-schema-at-update](#board-schema-at-update). This is a design: nothing here is built yet.
 
 - **The path:** each project's plugin becomes a program of its own that the server starts and
   talks to in JSON lines (option B), and one Symphony release per machine, built here by the

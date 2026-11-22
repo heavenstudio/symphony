@@ -1,8 +1,9 @@
 # Updating a project's Symphony
 
-How a consuming project takes a newer Symphony, as decided on the update-command card in
-[DECISIONS](../DECISIONS.md), and the evidence it rests on. Each fact about the code names the file
-and function it was read in. "Read 2026-11-11" marks the state of this machine that day.
+How a consuming project takes a newer Symphony, as decided on the
+[update-command card](#symphony-update-command), and the evidence it rests on. Each fact about the
+code names the file and function it was read in. "Read 2026-11-11" marks the state of this
+machine that day.
 
 ## Releases
 

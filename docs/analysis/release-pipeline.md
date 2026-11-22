@@ -5,7 +5,7 @@ pre-certified CI (Buildmark) has that the Symphony lacks and the reverse, and th
 run that is faster and steadier, a hosted run on GitHub among them. The ask and its words are on
 the thread of the board task `docs/release-pipeline-redesign`. This page changes no check, run
 step, budget, test or setting, and builds no attestation, signer or workflow: each option's
-card in [DECISIONS](../DECISIONS.md) is answered, and what is built from them is a board task,
+card, under the option it asks about, is answered, and what is built from them is a board task,
 each named in [what follows](#what-follows).
 
 "Read 2026-11-18" marks this machine that day: an Apple M3 Max laptop, 16 cores, shared with the
@@ -567,14 +567,15 @@ What a drop falls onto is unchanged: nothing judges main beside a candidate
 
 ## What follows
 
-The cards, each answered in [DECISIONS](../DECISIONS.md):
+The cards, each answered where it sits above:
 
-- **release-run-reruns-alone**: B. The run reruns each failure alone.
-- **release-run-on-github**: the hosted design above, as written.
-- **release-main-judged-in-steps**: refused. A run is paced by its own length, more often only
-  on GitHub ([C](#c-main-judged-in-smaller-steps)).
-- **release-accepts-task-runs**: refused. The saving is in the tests, which the release run's
-  own carried greens reach ([E](#e-runs-accepted-in-place-of-running-again)).
+- **[release-run-reruns-alone](#release-run-reruns-alone)**: B. The run reruns each failure alone.
+- **[release-run-on-github](#release-run-on-github)**: the hosted design above, as written.
+- **[release-main-judged-in-steps](#release-main-judged-in-steps)**: refused. A run is paced by
+  its own length, more often only on GitHub ([C](#c-main-judged-in-smaller-steps)).
+- **[release-accepts-task-runs](#release-accepts-task-runs)**: refused. The saving is in the
+  tests, which the release run's own carried greens reach
+  ([E](#e-runs-accepted-in-place-of-running-again)).
 
 Tasks:
 

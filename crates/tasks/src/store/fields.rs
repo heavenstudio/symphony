@@ -60,7 +60,7 @@ impl Store {
                     "patch": {plugin: {name: value}},
                     "label": format!("{plugin}.{name}"),
                     "shown": shown,
-                    "missing": format!("{REFUSED}no task {}", repr(slug)),
+                    "missing": format!("{REFUSED}{}", super::work::no_task(slug)),
                 }),
             );
             self.written(body(), vars, slug)

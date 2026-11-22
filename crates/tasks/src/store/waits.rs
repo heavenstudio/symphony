@@ -51,7 +51,7 @@ impl Store {
         states
             .into_iter()
             .next()
-            .ok_or_else(|| refused(format!("no task {}", repr(slug))))
+            .ok_or_else(|| super::work::no_task(slug))
     }
 
     /// A fresh occurrence commits only against `expected`. A known committed pair returns its
@@ -152,7 +152,7 @@ impl Store {
                     "set": WAITS_SET,
                     "record": record,
                     "assessment": assessment,
-                    "missing": format!("{REFUSED}no task {}", repr(slug)),
+                    "missing": format!("{REFUSED}{}", super::work::no_task(slug)),
                     "checked": expected.is_some(),
                     "expected_status": expected.map(|state| state.status.as_str()),
                     "expected_version": expected.map(|state| state.version),

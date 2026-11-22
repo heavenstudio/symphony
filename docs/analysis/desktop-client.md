@@ -1,9 +1,9 @@
 # A desktop Symphony app
 
 What a desktop app for the Symphony would give, how it could be built, and how it would connect to
-more than one server, as proposed on the desktop-client card in [DECISIONS](../DECISIONS.md). Each
-fact about the code names the file and function it was read in. "Read 2026-11-11" marks the state
-of this machine that day.
+more than one server, as proposed on the [desktop-client](#desktop-client) card. Each fact about
+the code names the file and function it was read in. "Read 2026-11-11" marks the state of this
+machine that day.
 
 The ask: a desktop client app, to improve the experience further, above all by connecting to
 different servers.

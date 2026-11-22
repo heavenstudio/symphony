@@ -15,7 +15,9 @@
 //! as it published them asks the host nothing, and neither does one that runs once the task
 //! landed at that head: it says so in its log alone. One whose publication the host refuses
 //! because it merged that head meanwhile ([`Landing::merged_meanwhile`]) stops with no word on
-//! the thread, the merge being the watcher's to settle.
+//! the thread, the merge being the watcher's to settle. One that finds its task approved, not
+//! landed and at a head the approve does not name moves it back to review first
+//! ([`Landing::reviewed_again`]), where the fresh approve that head waits on is given.
 //!
 //! Whether the host merged is the one thing the board cannot see, and it is the watcher's
 //! ([`watch`]): one per project (`tasks land --watch`, detached, [`WATCH_LOCK`]), started by each
@@ -84,11 +86,7 @@ pub fn seconds() -> i64 {
 /// Whether a write in `env` may start a dispatch or the watcher: `TASKS_DISPATCH=on` or `off` says;
 /// else only on the repository's own board, which no `TASKS_SERVER` names, as for `on_review`.
 pub fn enabled(env: &Env) -> bool {
-    match env.var("TASKS_DISPATCH") {
-        Some("off") => false,
-        Some("on") => true,
-        _ => env.var("TASKS_SERVER").is_none(),
-    }
+    env.switch("TASKS_DISPATCH")
 }
 
 /// The lands' folder of the repository `main` is the main checkout of.
@@ -612,6 +610,7 @@ impl Landing<'_> {
         {
             return done;
         }
+        let task = self.reviewed_again(task, &tip)?;
         // Out of review with its merge armed: turned off before anything is published, as a
         // publication that keeps its evidence standing would leave the host seconds to merge a
         // task moved back to work.
@@ -651,6 +650,60 @@ impl Landing<'_> {
             task.status,
             short(&tip)
         ))
+    }
+
+    /// `task` as a dispatch goes on with it at `tip`, its branch's head: back in review, by the
+    /// board's own move from done ([`Store::move_to`]), where its reviewer approved it, no landing
+    /// has closed it ([`crate::orchestration::unlanded`]) and the approve does not name `tip`. A
+    /// delivery takes an approve naming the head alone ([`super::evidence`]), so a head moved
+    /// under an approved task (a merge of the default branch that settles a conflict, a fix)
+    /// waits on a fresh one, which only a task in review is given: said once to its orchestrator,
+    /// which starts its assessor and resumes its reviewer as at any move to review. Any other task as it
+    /// is. One that does not go back is refused, naming the move that does.
+    fn reviewed_again(&mut self, task: Task, tip: &str) -> Result<Task, Stop> {
+        let slug = self.slug;
+        if crate::orchestration::unlanded(&task).is_none() {
+            return Ok(task);
+        }
+        let thread = self.store.thread(slug)?;
+        let Ok(approval) = super::approval(&task, &thread) else {
+            return Ok(task);
+        };
+        let approved: Vec<String> = (super::named(&approval.text).into_iter())
+            .filter_map(|word| rev(&self.main, &format!("{word}^{{commit}}")))
+            .collect();
+        if approved.iter().any(|sha| sha == tip) {
+            return Ok(task);
+        }
+        let moved = format!(
+            "{slug}'s head is {}, which its approve by {} does not name ({})",
+            short(tip),
+            approval.by,
+            approved.first().map_or_else(
+                || "it names no commit".to_string(),
+                |sha| format!("it names {}", short(sha))
+            )
+        );
+        match self.store.move_to(slug, "review", self.actor) {
+            Ok(task) => {
+                let verify = self.verifying(&task);
+                self.post(
+                    &format!(
+                        "land {slug}: {moved}; {slug} is back in review{verify}. Its assessor \
+                         reads {head} and its reviewer approves it naming it; its pull \
+                         request shows {head} with `symphony/eligible` pending until then",
+                        head = short(tip)
+                    ),
+                    Some("@orchestrator"),
+                );
+                Ok(task)
+            }
+            Err(error) => Err(self.refuse(Refusal::to(
+                format!("{moved}, and it does not go back to review ({error})"),
+                "@orchestrator",
+                format!("`just tasks move {slug} review` does"),
+            ))),
+        }
     }
 
     /// The pull request `journal` is bound to, read: merged since, settled as a land settles a
@@ -773,6 +826,10 @@ impl Landing<'_> {
                 }
             });
         }
+        let task = match &tip {
+            Some(tip) => self.reviewed_again(task, tip)?,
+            None => task,
+        };
         // A head or evidence that changed since it was published, or a publication that did not
         // end: dispatched again.
         if let Some(tip) = tip {

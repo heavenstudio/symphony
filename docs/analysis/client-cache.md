@@ -1,9 +1,9 @@
 # The client cache
 
 What it takes for a Symphony page to draw at once from what the browser last held and then ask the
-server only for what changed, as proposed on the client-cache card in [DECISIONS](../DECISIONS.md),
-and the measurements it rests on. Each fact about the code names the file and function it was read
-in. "Measured 2026-11-11" marks this machine that day.
+server only for what changed, as proposed on the [client-cache](#client-cache) card, and the
+measurements it rests on. Each fact about the code names the file and function it was read in.
+"Measured 2026-11-11" marks this machine that day.
 
 The ask, as the board task `perf/client-cache` records it (2026-11-11): the client should behave like
 Apollo's cache-and-network policy. A page draws at once from what the browser last held, then asks
