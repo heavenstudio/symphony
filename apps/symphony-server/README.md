@@ -342,7 +342,7 @@ Server-Sent Event it has an increasing `id` too, and on the WebSocket none (how 
 form says an event: `symphony_api`'s feed contract). The existing board regions are
 `card`, `queue` (only the five visible cards), `counts`, `progress` and `client`. Additional list
 regions use keyed upserts/removals (`ItemChange<T>`); their `-order` events
-move one key after another (`OrderChange`). They are `queue-item`,
+move one key after another (`key` and `after`). They are `queue-item`,
 `spot-check`, `agent-queue`, `pending`, `activity`, `task`,
 `session` and `agent`. A `task` upsert is a new task; an existing task that
 changed is sent once, as `task-fields`, its changed mutable fields alone,
