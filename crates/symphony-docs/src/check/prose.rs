@@ -8,17 +8,21 @@ use crate::syntax;
 
 // --- prose: card slugs ---
 
-/// The lines of a page outside its fences and register regions, numbered from 1: the page's prose.
+/// The lines of a page outside its fences, its register regions and its cards' own lines
+/// ([`syntax::carded`]), numbered from 1: the page's prose. A card inline in a document is its
+/// record there, as a register's cards are.
 pub fn prose_lines(text: &str) -> Vec<(usize, &str)> {
     let mut found = Vec::new();
     let (mut fenced, mut register) = (false, false);
-    for (index, line) in syntax::lines(text).into_iter().enumerate() {
+    let lines = syntax::lines(text);
+    let carded = syntax::carded(&lines);
+    for (index, line) in lines.into_iter().enumerate() {
         let trimmed = line.trim_matches(syntax::is_space);
         if syntax::is_fence(line) {
             fenced = !fenced;
         } else if trimmed == syntax::REGION_START || trimmed == syntax::REGION_END {
             register = trimmed == syntax::REGION_START;
-        } else if !fenced && !register {
+        } else if !fenced && !register && !carded[index] {
             found.push((index + 1, line));
         }
     }
