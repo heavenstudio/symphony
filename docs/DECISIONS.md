@@ -5,32 +5,6 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
-## Needs your decision
-
-### People and sign-in
-
-- [ ] **verdict-note-reach** — You decided that the words of someone who may not direct agents are held until passed on. A person may still be allowed to decide. Their verdict is written on the card, where agents read it. What is left to choose is the note they write beside it. A: the note is held like their other words, so an agent sees a rejection and not its reason. B: the note is written with the verdict; deciding carries the right to say why, on that card only. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#The note beside a verdict]]
-  [2026-11-21 17:41] agent — Posted for the board task `app/users-and-identity`, a question your A on **words-without-agent-reach** does not answer. A concept: nothing is built by this card.
-
-    ![The note beside a verdict, from someone who may not direct agents](analysis/users-and-identity/verdict-note.svg)
-
-    **Base (today).** Your verdict and its note are written on the card together, and an agent is handed both at once.
-
-    **A, the note is held.**
-    - The verdict is written on the card. The note is kept by the board until someone who may direct agents passes it on.
-    - An agent sees a rejection and not its reason.
-
-    **B, written with the verdict.**
-    - The note is part of the decision and is written with it.
-    - Deciding carries the right to say why, on that card and nowhere else. Their words anywhere else stay held.
-
-    **Why B.** A verdict without its reason gives an agent nothing to act on, and a rejection read alone is acted on wrongly. The person was given the power to decide that card, which already moves agents.
-
-    **Earlier verdicts checked.**
-    - **words-without-agent-reach** (A) holds such a person's words. It was asked of comments and messages. Under it a verdict's note could be read either way, which is why this is asked.
-
-    It does not decide this.
-
 ## Auto-approved: spot-check
 
 ### Releases
@@ -52,6 +26,31 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
 
 ## Waiting on an agent
+
+### People and sign-in
+
+- [x] **verdict-note-reach** — You decided that the words of someone who may not direct agents are held until passed on. A person may still be allowed to decide. Their verdict is written on the card, where agents read it. What is left to choose is the note they write beside it. A: the note is held like their other words, so an agent sees a rejection and not its reason. B: the note is written with the verdict; deciding carries the right to say why, on that card only. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#The note beside a verdict]]
+  [2026-11-21 17:41] agent — Posted for the board task `app/users-and-identity`, a question your A on **words-without-agent-reach** does not answer. A concept: nothing is built by this card.
+
+    ![The note beside a verdict, from someone who may not direct agents](analysis/users-and-identity/verdict-note.svg)
+
+    **Base (today).** Your verdict and its note are written on the card together, and an agent is handed both at once.
+
+    **A, the note is held.**
+    - The verdict is written on the card. The note is kept by the board until someone who may direct agents passes it on.
+    - An agent sees a rejection and not its reason.
+
+    **B, written with the verdict.**
+    - The note is part of the decision and is written with it.
+    - Deciding carries the right to say why, on that card and nowhere else. Their words anywhere else stay held.
+
+    **Why B.** A verdict without its reason gives an agent nothing to act on, and a rejection read alone is acted on wrongly. The person was given the power to decide that card, which already moves agents.
+
+    **Earlier verdicts checked.**
+    - **words-without-agent-reach** (A) holds such a person's words. It was asked of comments and messages. Under it a verdict's note could be read either way, which is why this is asked.
+
+    It does not decide this.
+  [2026-11-22 19:55] owner · approved — B
 
 ### Task timeline
 
