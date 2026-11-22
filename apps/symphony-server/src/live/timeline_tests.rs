@@ -4,8 +4,9 @@
 //! with no run kept has no runs.
 
 use super::Hub;
-use super::read_paths_tests::{observe, served_with, store_on};
+use super::read_paths_tests::{observe, served_with};
 use crate::shelf;
+use crate::testing::store_on;
 use crate::testing::{
     Tree,
     board::{Fixture, NOW, Seed},

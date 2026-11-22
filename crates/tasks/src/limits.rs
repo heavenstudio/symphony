@@ -26,12 +26,15 @@
 //! the board, nor the landing that mends it. A key the table does not know is left out here and
 //! named by `tasks limits`; the Symphony's reading of the file refuses it by name and line.
 //!
-//! The local file beside it (`symphony.local.toml`, [`crate::local`]) is read after it: a
-//! `[limits]` key it writes holds in the committed one's place, named with that file and its line.
+//! The board's store ([`crate::settings`]) is read after the file: a `[limits]` entry it holds
+//! stands over the committed one, named as the store's with what it stands over ([`Read::under`]).
+//! The local file beside the project file (`symphony.local.toml`, [`crate::local`]) is read last:
+//! a `[limits]` key it writes holds in the place of both, named with that file and its line.
 
 use crate::alarm::{self, Thresholds};
 use crate::cli::Env;
 use crate::on_review::MANIFEST;
+use crate::settings::Stored;
 use crate::sweep::trigger::main_checkout;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -154,11 +157,21 @@ pub struct Read {
     pub problems: Vec<String>,
     /// `[limits] KEY (line N)` for each key of the table this build does not know, left out.
     pub unknown: Vec<String>,
+    /// By key, for each limit the board's store holds in force: what it stands over, the
+    /// committed value and where it is written, or the default ([`over_stored`]).
+    pub under: BTreeMap<&'static str, String>,
 }
 
 /// The file at `path`, as [`parse`] reads it, with the local file beside it over it
 /// ([`over`]): no file is every default, and one that cannot be read every default too, said.
 pub fn read_at(path: &Path) -> Read {
+    read_with(path, &Stored::default())
+}
+
+/// The file at `path` as [`parse`] reads it, then what the board's store holds over it
+/// ([`over_stored`]), then the local file beside it over both ([`over`]): the order every limit
+/// is read in.
+pub fn read_with(path: &Path, stored: &Stored) -> Read {
     let read = match std::fs::read_to_string(path) {
         Ok(text) => parse(&path.display().to_string(), &text),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Read::default(),
@@ -170,7 +183,38 @@ pub fn read_at(path: &Path) -> Read {
             ..Read::default()
         },
     };
-    over(read, crate::local::beside(path))
+    over(over_stored(read, stored), crate::local::beside(path))
+}
+
+/// `value`, a limit in force, as it is said: its number, or `none`.
+fn said(value: Option<usize>) -> String {
+    value.map_or_else(|| "none".to_string(), |n| n.to_string())
+}
+
+/// `read`, the committed limits, with those the board's store holds in their place, each named as
+/// the store's, and what each stands over kept ([`Read::under`]): the committed value with where
+/// it is written, or the default. What the store could not read of itself is said.
+pub fn over_stored(mut read: Read, stored: &Stored) -> Read {
+    read.problems.extend(stored.problems.iter().cloned());
+    for (key, most) in &stored.held.limits {
+        let was = match *key {
+            SLOTS => said(read.limits.orchestrator_slots.replace(*most)),
+            TASKS => said(Some(std::mem::replace(
+                &mut read.limits.orchestrator_tasks,
+                *most,
+            ))),
+            LOW => said(Some(std::mem::replace(&mut read.limits.low_volume, *most))),
+            _ => said(read.limits.machine_agents.replace(*most)),
+        };
+        let under = match read.written.get(key) {
+            Some(written) => format!("{was} ({})", written.said()),
+            None => format!("its default, {was}"),
+        };
+        read.under.insert(key, under);
+        let at = Stored::written(&format!("{TABLE}.{key}"));
+        read.written.insert(key, at);
+    }
+    read
 }
 
 /// `read`, the committed limits, with those `local` writes in their place, each named by the
@@ -190,6 +234,7 @@ pub fn over(mut read: Read, local: Result<Option<crate::local::Local>, Vec<Strin
         read.limits.set(key, *most);
         let at = local.written(&format!("[{TABLE}] {key}"), &[TABLE], key);
         read.written.insert(key, at);
+        read.under.remove(key);
     }
     read
 }
@@ -417,7 +462,7 @@ impl Stamp {
 #[derive(Debug)]
 pub struct Watched {
     path: PathBuf,
-    last: Mutex<([Stamp; 2], Read)>,
+    last: Mutex<([Stamp; 2], Stored, Read)>,
 }
 
 impl Watched {
@@ -428,7 +473,7 @@ impl Watched {
         let read = read_at(&path);
         let watched = Watched {
             path,
-            last: Mutex::new((stamp, read.clone())),
+            last: Mutex::new((stamp, Stored::default(), read.clone())),
         };
         (Arc::new(watched), read)
     }
@@ -445,21 +490,37 @@ impl Watched {
 
     /// The files as they are now, read again when either changed since the last look.
     pub fn read(&self) -> Read {
+        self.read_with(&Stored::default())
+    }
+
+    /// The files as they are now with `stored`, what the board's store holds, between them
+    /// ([`read_with`]): read again when either file or the store's entries changed since the last
+    /// look, and what is newly wrong said on stderr, once.
+    pub fn read_with(&self, stored: &Stored) -> Read {
         let stamp = Self::stamps(&self.path);
         let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
-        if last.0 != stamp {
-            let read = read_at(&self.path);
+        if last.0 != stamp || &last.1 != stored {
+            let read = read_with(&self.path, stored);
+            // A change of the store alone says only what is new: the files' problems were said.
+            let files = last.0 != stamp;
             for problem in &read.problems {
-                eprintln!("tasks: {problem}");
+                if files || !last.2.problems.contains(problem) {
+                    eprintln!("tasks: {problem}");
+                }
             }
-            *last = (stamp, read);
+            *last = (stamp, stored.clone(), read);
         }
-        last.1.clone()
+        last.2.clone()
     }
 
     /// The limits in force now.
     pub fn now(&self) -> Limits {
         self.read().limits
+    }
+
+    /// The limits in force now, over `stored` ([`Watched::read_with`]).
+    pub fn now_with(&self, stored: &Stored) -> Limits {
+        self.read_with(stored).limits
     }
 }
 
@@ -477,10 +538,12 @@ impl Default for Held {
 }
 
 impl Held {
-    pub(crate) fn now(&self) -> Limits {
+    /// The limits in force now; `stored` reads what the board's store holds, asked only where a
+    /// project file is watched: limits set here hold whatever a board keeps.
+    pub(crate) fn now(&self, stored: impl FnOnce() -> Stored) -> Limits {
         match self {
             Held::Set(limits) => *limits,
-            Held::Watched(watched) => watched.now(),
+            Held::Watched(watched) => watched.now_with(&stored()),
         }
     }
 }

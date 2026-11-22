@@ -87,7 +87,7 @@ for that rule; vocabulary variant inventories wider than those calls are left to
 
 This overlap does not replace the kit's and helpers' major-version requirements
 ([packages on crates.io](RELEASES.md#packages-on-cratesio)), or the separate versioned
-[`tasks api` contract](TASKS.md#the-tasks-api). Symphony's release checks build no consumer:
+[`tasks api` contract](BOARD_API.md#the-tasks-api). Symphony's release checks build no consumer:
 consumer-owned landing gates meet the new pin, and releases run this repository's checks alone.
 
 ## What a landing tells a consumer
@@ -122,7 +122,7 @@ is an additive step on the contract (`schema::ADDED`): the version stays, the st
 run after the contract's, and the board counts the steps it has (`meta:additions`). Builds on
 either side of an additive step read and write the board. Only a breaking step moves boards under
 their writers, and only it is held by the writers it would leave behind
-([TASKS](TASKS.md#who-writes-a-board)).
+([BOARD_OPERATIONS](BOARD_OPERATIONS.md#who-writes-a-board)).
 
 An additive step may define:
 
@@ -152,7 +152,7 @@ What each side does, on both engines:
   statement replaces such a row whole (`store/surreal/fence_tests.rs`). The whole-board dump reads
   each row exactly, handed every field, which its struct refuses by name, as a copy would drop it. The code of a step asks
   `Store::additions` before it reads or writes what the step defines.
-- A build ahead adds its steps where it may move the board ([TASKS](TASKS.md#where-it-lives)),
+- A build ahead adds its steps where it may move the board ([BOARD_OPERATIONS](BOARD_OPERATIONS.md#which-build-moves-a-live-board)),
   holding no writer, and uses the board as it is where it may not. The guard refuses, in the
   write's own transaction, a write naming a table of a step the board lacks, whatever its quoting
   or nesting, in the statement as it is sent on either engine; and the database refuses a field or
@@ -182,7 +182,7 @@ for a listed step, its own version otherwise. The schema guard reads that record
 both engines. A store the Symphony's reader opened (`symphony::taskview::connect`: the server, its
 page saves and the `symphony` commands that reach the board through it) writes a board one schema
 ahead only while the record names its schema or an older one. Every other case is refused, as for
-a step not listed ([TASKS](TASKS.md#who-writes-a-board)):
+a step not listed ([BOARD_OPERATIONS](BOARD_OPERATIONS.md#who-writes-a-board)):
 
 - a record that is missing or of any other shape;
 - a board two schemas ahead;
@@ -738,7 +738,9 @@ binary this workspace delivers (`symphony-server`, `symphony`, `tasks` and
 `just size-check` builds the four as `cargo install` builds them, with `Cargo.toml`'s
 `[profile.release]`, and runs `symphony-build size-budget`, which prints each size beside its
 budget (`symphony-build`, the commands only this repository's build and release run use, is no
-binary it delivers, and has no line).
+binary it delivers, and has no line; nor has `tasks-move`, which a release installs beside
+`tasks` for the one move of a board's store and no project links or runs by a recipe, its bytes
+said in the release's manifest and the install's line).
 Past a line it fails, naming the size, the budget and how to see what grew: `cargo bloat --release
 --crates --bin NAME` (`cargo install cargo-bloat --root DIR`, never a workspace dependency) beside
 the same at a commit within it (the last release, or before the first one, the commit that last

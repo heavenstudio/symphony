@@ -138,10 +138,24 @@ pub(crate) fn reading(
     Box::new(move || Low::check(&root, threshold))
 }
 
+/// The time `text`, a `TASKS_NOW`, holds the clock at: none where it is absent or no finite number
+/// of seconds, as the board's own commands refuse such a one.
+pub(crate) fn held(text: Option<&str>) -> Option<f64> {
+    text?.parse::<f64>().ok().filter(|now| now.is_finite())
+}
+
 impl Hub {
     /// The time on the hub's clock, in seconds since the epoch.
     pub(crate) fn now(&self) -> f64 {
         (self.clock)()
+    }
+
+    /// The time a read of what the machine recorded is made at (the reports' window, the runs'
+    /// days): the one `TASKS_NOW` holds the board's clock at, when it does, else the hub's. A
+    /// server started over records written at a held moment, as the product specs' pictures are
+    /// taken (`tools/product-pictures.sh`), then reads the window those records are in.
+    pub(crate) fn recorded_now(&self) -> f64 {
+        held(std::env::var("TASKS_NOW").ok().as_deref()).unwrap_or_else(|| self.now())
     }
 
     /// Tell every page, on the server's notice, whether the board went back, or its dispatch or

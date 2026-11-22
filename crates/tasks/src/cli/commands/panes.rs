@@ -19,7 +19,7 @@ pub(super) fn launch(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let actor = c.actor()?;
     let machine = Machine::of(c.env);
     let role = p.or("role", "executor");
-    let resolved = Defaults::configured(&machine.root)
+    let resolved = Defaults::configured_with(&machine.root, &store.stored())
         .map_err(Stop::Refused)?
         .resolve_as(Some(role), p.get("kind"), p.get("model"));
     let hc = Binary::of(c.env);

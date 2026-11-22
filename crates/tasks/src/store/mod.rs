@@ -60,6 +60,7 @@ mod spending;
 mod stage_lines;
 mod stamp;
 mod statement;
+pub(crate) mod stored_settings;
 mod surreal;
 mod thread_window;
 mod transaction;
