@@ -164,14 +164,16 @@ fn a_record_removed_starts_over_and_one_that_cannot_be_written_is_said_once() {
 
 #[test]
 fn a_record_is_one_per_path_and_a_wrapper_one_per_plugin_and_record() {
-    struct Bare;
+    // Two plugins of one name, a wrapper each: a field makes the two statics two objects, as two
+    // zero-sized ones may share an address.
+    struct Bare(&'static str);
     impl Plugin for Bare {
         fn name(&self) -> &str {
-            "bare"
+            self.0
         }
     }
-    static BARE: Bare = Bare;
-    static OTHER: Bare = Bare;
+    static BARE: Bare = Bare("bare");
+    static OTHER: Bare = Bare("bare");
     let tree = Tree::new();
     let (one, two) = (tree.path("one.jsonl"), tree.path("two.jsonl"));
     assert!(std::ptr::eq(Record::at(&one), Record::at(&one)));

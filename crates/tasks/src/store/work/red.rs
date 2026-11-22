@@ -45,7 +45,7 @@ impl Store {
     /// it is, its thread unchanged.
     pub fn mark_red(&self, slug: &str, what: &str, by: &str) -> Result<Task, Error> {
         let what = named(slug, what)?;
-        let body = || both(sql::mark_red(), pg::mark_red());
+        let body = || both(sql::mark_red(), pg::mark_red()).posting();
         self.retrying(|| {
             let mut vars = self.acting(
                 by,
@@ -87,7 +87,8 @@ impl Store {
             let body = both(
                 sql::unmark_red(fenced, guarded),
                 pg::unmark_red(fenced, guarded),
-            );
+            )
+            .posting();
             self.written(body, vars, slug)
         })
     }

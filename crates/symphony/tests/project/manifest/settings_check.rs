@@ -1,6 +1,7 @@
 //! `symphony settings-check`, the settings check a change of settings is held to in a reviewer's
 //! place: the project file's shape alone (a table or key the Symphony knows, each value of its
-//! type, each required value there), and never a name against a list.
+//! type and one its key's rule takes, each required value there), and never a model or a recipe
+//! against a list.
 
 use super::folder;
 use crate::Tree;
@@ -31,7 +32,7 @@ fn a_model_nobody_has_heard_of_passes_as_any_text_does() {
         "[agents]\nlaunch = { default = \"claude\", model = \"mythos-9\" }\n\n\
          [agents.models]\norchestrator = \"no such model\"\nexecutor = \"fable\"\n\
          reviewer = \"opus-of-next-year\"\nassessor = \"\"\n",
-        "[agents.launch]\ndefault = \"an agent nobody wrote yet\"\neffort = \"immense\"\n",
+        "[agents.launch]\ndefault = \"claude\"\neffort = \"immense\"\n",
         "[limits]\norchestrator_slots = 3\n\n[releases]\nevery_landings = 7\n",
         "[limits]\norchestrator_tasks = 16\n",
     ] {
@@ -132,7 +133,6 @@ fn warnings_report_every_mismatch_and_ignore_compatible_or_unrecognized_names() 
         "[agents.models]\nexecutor = 'gpt-6.1-sol'\n",
         "[agents.launch]\ndefault = 'claude'\n[agents.models]\nreviewer = 'fable'\nassessor = 'haiku'\n",
         "[agents.models]\nexecutor = 'a model nobody knows'\nassessor = ''\n",
-        "[agents.launch]\ndefault = 'future-agent'\n[agents.models]\nexecutor = 'fable'\n",
         "[agents.launch]\ndefault = ''\n[agents.models]\nexecutor = 'gpt-6.1-sol'\n",
     ] {
         let (code, _, err) = check(&root, text);
@@ -185,6 +185,34 @@ fn a_value_of_the_wrong_type_is_refused_naming_the_file() {
         assert!(err.contains(named), "{text}: {err}");
         assert!(err.ends_with("✖ the project file is refused.\n"), "{err}");
     }
+}
+
+#[test]
+fn an_agent_no_launch_starts_is_refused_as_a_launch_refuses_it() {
+    let tree = Tree::new();
+    let root = folder(&tree, "lamps");
+    for agent in [
+        "an agent nobody wrote yet",
+        "gemini",
+        "Claude",
+        "future-agent",
+    ] {
+        // A model of another agent beside it is no warning: the file is refused first.
+        let text =
+            format!("[agents.launch]\ndefault = {agent:?}\n[agents.models]\nexecutor = 'fable'\n");
+        let (code, out, err) = check(&root, &text);
+        assert_eq!((code, out.as_str()), (1, ""), "{text}");
+        assert_eq!(
+            err,
+            format!(
+                "symphony.toml: [agents] launch default {agent:?} is not one of codex, claude\n\
+                 ✖ the project file is refused.\n"
+            )
+        );
+    }
+    // A blank one names none, as a launch reads it: the board's own agent.
+    let (code, _, err) = check(&root, "[agents.launch]\ndefault = \" \"\n");
+    assert_eq!((code, err.as_str()), (0, ""));
 }
 
 #[test]

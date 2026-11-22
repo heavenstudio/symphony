@@ -63,8 +63,10 @@ pub fn read(main: &Path, tip: &str) -> Posted {
 
 /// [`read`], none where git could not say.
 fn approval(main: &Path, tip: &str) -> Option<Posted> {
-    let default =
-        crate::live::default_branch(Some(main)).unwrap_or_else(|| crate::live::MAIN.into());
+    // A default branch the project file's rule refuses names no branch to read the cards on.
+    let default = crate::live::default_branch(Some(main))
+        .ok()?
+        .unwrap_or_else(|| crate::live::MAIN.into());
     let default_tip = rev(main, &format!("refs/heads/{default}^{{commit}}"))?;
     let base = fork(main, tip, &default_tip)?;
     let folders = crate::project::documents_at(main);

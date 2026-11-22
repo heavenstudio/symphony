@@ -583,21 +583,88 @@ fn the_source_is_what_the_default_branch_commits_whatever_the_main_checkout_has_
         unread("main", "refs/heads/main names no commit")
     );
 
-    // The default branch: `[project] default_branch` in the main checkout's file, else none named.
-    assert_eq!(default_branch(Some(&main)), None);
-    assert_eq!(default_branch(None), None);
+    // The default branch: `[project] default_branch` in the main checkout's file, as written and
+    // by the project file's one rule, else none named.
+    assert_eq!(default_branch(Some(&main)), Ok(None));
+    assert_eq!(default_branch(None), Ok(None));
+    let empty = Err("[project] default_branch is empty".to_string());
     for (text, branch) in [
         (
             "[project]\nid = \"alpha\"\ndefault_branch = \"trunk\"\n",
-            Some("trunk"),
+            Ok(Some("trunk")),
         ),
-        ("[project]\ndefault_branch = \"  \"\n", None),
-        ("[project]\ndefault_branch = 7\n", None),
-        ("[agents]\nlaunch = \"x\"\n", None),
-        ("not toml [", None),
+        // Never trimmed, as the Symphony and the land read it: git finds no such branch.
+        ("[project]\ndefault_branch = \" dev \"\n", Ok(Some(" dev "))),
+        ("[project]\ndefault_branch = \"\"\n", empty.clone()),
+        ("[project]\ndefault_branch = \"  \"\n", empty.clone()),
+        ("[project]\ndefault_branch = \"\\t\"\n", empty.clone()),
+        ("[project]\ndefault_branch = 7\n", Ok(None)),
+        ("[agents]\nlaunch = \"x\"\n", Ok(None)),
+        ("not toml [", Ok(None)),
     ] {
         fs::write(main.join("symphony.toml"), text).unwrap();
-        assert_eq!(default_branch(Some(&main)).as_deref(), branch, "{text}");
+        assert_eq!(
+            default_branch(Some(&main)),
+            branch.map(|named| named.map(str::to_string)),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn a_default_branch_the_project_files_rule_refuses_moves_no_board() {
+    let scratch = Scratch::new("blank-branch");
+    let (main, common) = scratch.repository("alpha");
+    let live = Live {
+        project: "alpha".into(),
+        common,
+    };
+    assert_eq!(named_branch(&live), Ok(None), "none written");
+    fs::write(
+        main.join("symphony.toml"),
+        "[project]\ndefault_branch = \"trunk\"\n",
+    )
+    .unwrap();
+    assert_eq!(named_branch(&live), Ok(Some("trunk".into())));
+    fs::write(
+        main.join("symphony.toml"),
+        "[project]\ndefault_branch = \"  \"\n",
+    )
+    .unwrap();
+    let refused = Committed {
+        branch: "  ".into(),
+        source: Source::Unreadable("[project] default_branch is empty".into()),
+    };
+    assert_eq!(named_branch(&live), Err(refused));
+    // Neither a build of the board's own source nor `migrate` moves it, nor makes it.
+    for (this_build, migrating, found) in [
+        (true, true, Some(15)),
+        (true, false, Some(15)),
+        (false, true, None),
+    ] {
+        let said = |moved: Result<(), String>| {
+            let why = moved.expect_err("refused");
+            assert!(
+                why.contains("cannot be read ([project] default_branch is empty)"),
+                "{why}"
+            );
+        };
+        said(may_move(
+            &live,
+            this_build,
+            migrating,
+            found,
+            16,
+            SCRATCH_FLAG,
+        ));
+        said(may_move_postgresql(
+            &live,
+            this_build,
+            migrating,
+            found,
+            16,
+            SCRATCH_FLAG,
+        ));
     }
 }
 

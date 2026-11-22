@@ -186,6 +186,57 @@ fn a_generators_outputs_read_as_the_symphony_reads_them() {
 }
 
 #[test]
+fn a_generators_command_names_a_program_or_is_refused_naming_its_table_and_name() {
+    let generator = |command: &[&str]| Generator {
+        name: "g".into(),
+        outputs: "gen/".into(),
+        command: command.iter().map(|word| (*word).to_string()).collect(),
+        when_changed: false,
+    };
+    // Only the first word is a program; a blank one is one, as a key's command takes it.
+    for command in [
+        &["just", "gen"][..],
+        &["true"],
+        &["tools/gen.sh", ""],
+        &[" "],
+    ] {
+        assert_eq!(
+            commanded("[land]", &generator(command)),
+            Ok(()),
+            "{command:?}"
+        );
+    }
+    for table in ["[land]", "[verdicts]"] {
+        for command in [&[][..], &[""], &["", "gen"]] {
+            assert_eq!(
+                commanded(table, &generator(command)),
+                Err(format!("{table} generator g has no command")),
+                "{command:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_default_branch_a_land_takes_is_the_files_as_written_else_main() {
+    let branch = |text: &str| Settings::parse(text).map(|settings| settings.default_branch);
+    assert_eq!(branch(""), Ok("main".into()));
+    assert_eq!(branch("[project]\nid = \"x\"\n"), Ok("main".into()));
+    assert_eq!(
+        branch("[project]\ndefault_branch = \"trunk\"\n"),
+        Ok("trunk".into())
+    );
+    assert_eq!(
+        branch("[project]\ndefault_branch = \" dev \"\n"),
+        Ok(" dev ".into())
+    );
+    assert_eq!(
+        branch("[project]\ndefault_branch = \"\"\n"),
+        Err("symphony.toml: [project] default_branch is empty".into())
+    );
+}
+
+#[test]
 fn a_generator_or_branch_a_land_cannot_use_is_refused_by_name() {
     let refused = |text: &str| Settings::parse(text).unwrap_err();
     assert_eq!(

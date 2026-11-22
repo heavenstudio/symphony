@@ -249,7 +249,7 @@ impl Store {
         }
         let session = by.filter(|by| *by != OWNER);
         let acts = session.is_some();
-        let body = both(sql::give_pass(acts), pg::give_pass(acts));
+        let body = both(sql::give_pass(acts), pg::give_pass(acts)).posting();
         let now = (self.clock)();
         let sender = by.unwrap_or(BOARD);
         let vars = match session {

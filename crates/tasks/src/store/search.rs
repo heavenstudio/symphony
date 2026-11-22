@@ -80,7 +80,7 @@ impl Store {
         }
         let search = || both(sql::SEARCH, Pg::read(postgres::search::SEARCH.as_str()));
         let vars = json!({"query": query.trim().to_lowercase()});
-        self.retrying(|| self.transact(search(), vars.clone()))
+        self.retrying(|| self.read_together(search(), vars.clone()))
     }
 
     /// Fetch matching text for the displayed hits only. Prefer title, brief and thread context
@@ -96,7 +96,7 @@ impl Store {
         let sources = || both(sql::SOURCES, Pg::read(postgres::search::SOURCES.as_str()));
         let vars = json!({"query": query.trim().to_lowercase(), "slugs": slugs});
         let groups: BTreeMap<String, Vec<ScoredSource>> =
-            self.retrying(|| self.transact(sources(), vars.clone()))?;
+            self.retrying(|| self.read_together(sources(), vars.clone()))?;
         // array::concat limits its output to 1 MiB. Keep each SELECT's rows in the same
         // snapshot, then use the shared stable ordering to choose the best excerpt.
         Ok(best_sources(groups))

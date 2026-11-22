@@ -574,7 +574,7 @@ impl Store {
     }
 
     fn standing(&self, slug: &str, revision: u64) -> Result<Standing, Failure> {
-        self.transact(
+        self.read_together(
             both(surreal::effects::STANDING, pg::effects::standing()),
             json!({"slug": slug, "revision": revision}),
         )
@@ -621,7 +621,8 @@ impl Store {
             both(
                 surreal::effects::moved(&surreal_line),
                 pg::effects::moved(&pg_line),
-            ),
+            )
+            .posting_when(line.is_some()),
             vars,
         )
         .map(drop)
@@ -649,7 +650,8 @@ impl Store {
         let body = both(
             format!("{}{surreal_intent}{logged}{joins}{guard}", sql::APPLY),
             pg::workflow::apply(&format!("{pg_intent}\n    {pg_logged}{joins_pg}"), guarded),
-        );
+        )
+        .posting();
         self.written(body, vars, slug).map(drop)
     }
 }

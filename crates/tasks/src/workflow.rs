@@ -209,8 +209,9 @@ pub fn authorities(text: &str, definition: Option<&Validated>) -> Result<Vec<Att
 }
 
 /// [`authorities`] of a file already read as TOML: the value of its `workflow_authorities` and its
-/// `[project] id`, none where it has none, so a reader of the whole file reads it once, as
-/// [`written_from`] does. A blank id is none.
+/// `[project] id`, none where it has none or one the project file's rule refuses
+/// ([`crate::project::id`]), so a reader of the whole file reads it once, as [`written_from`] does.
+/// A blank id given is none.
 pub fn authorities_from(
     value: Option<toml::Value>,
     project: Option<&str>,
@@ -226,7 +227,7 @@ pub fn authorities_from(
     if !attesters.is_empty() && project.is_none_or(|id| id.trim().is_empty()) {
         return Err(
             "workflow_authorities: an attestation names the project it is for, and [project] \
-             id names none"
+             id names none (it is unwritten, blank, or no slug)"
                 .into(),
         );
     }
@@ -243,10 +244,11 @@ pub fn attested_project(text: &str) -> Option<String> {
     project_id(&table(text).ok()?)
 }
 
-/// `file`'s `[project] id`, where it is text that is not blank.
+/// `file`'s `[project] id`, where it is text the project file's rule takes ([`crate::project::id`]):
+/// one it refuses (blank, or no slug) is none, as the board's lookup of the project reads it.
 fn project_id(file: &toml::Table) -> Option<String> {
     let id = file.get("project")?.get("id")?.as_str()?;
-    (!id.trim().is_empty()).then(|| id.to_string())
+    crate::project::id(id).ok().map(str::to_string)
 }
 
 /// The workflow a commit's project file sets: a custom definition with its revision, mappings

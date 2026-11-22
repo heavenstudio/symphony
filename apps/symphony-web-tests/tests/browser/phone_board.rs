@@ -343,10 +343,12 @@ fn shared_holds_release_and_leave_other_scrolling_boxes_independent() {
 }
 
 /// A detached element cannot deliver scrollend to the shell's window listener. Removing it must
-/// release later layout holds, but not the momentum of another, still-connected scroller. The
-/// touch input is synthetic; both element scrolls and the connected scrollend are native events.
-/// Release and cancellation target the original element, before or after its removal. A second
-/// scroller also has a second contact: its release leaves the detached contact down until last.
+/// release later layout holds, but not the momentum of another, still-connected scroller, and a
+/// box the touch never scrolled ending its scroll after the release ends nothing of the touch's.
+/// The touch input and that box's scrollend are synthetic; both element scrolls and the connected
+/// scrollend are native events. Release and cancellation target the original element, before or
+/// after its removal. A second scroller also has a second contact: its release leaves the
+/// detached contact down until last.
 #[test]
 fn removed_scrollers_release_idle_holds_without_ending_connected_scrolling() {
     let site = site_of(&listing_of(&[("review", 30)]));
@@ -365,12 +367,9 @@ fn removed_scrollers_release_idle_holds_without_ending_connected_scrolling() {
         let result = page.eval(&format!(
             r#"(async () => {{
                 document.documentElement.style.overflowAnchor = 'none';
-                // The page's own scroll is over before the touch begins: its scrollend comes a
-                // frame or more later, and one landing between a release and the touch's first
-                // scroll event ends the touch as one that scrolled nothing.
-                const from = scrollY, rested = new Promise(resolve => addEventListener('scrollend', resolve, {{once:true}}));
+                // The page's scroll event comes before this frame's callbacks, ahead of the touch;
+                // its scrollend may come at any time, during the touch as well.
                 scrollTo(0,600);
-                if (scrollY !== from) await rested;
                 await new Promise(requestAnimationFrame);
                 const board = document.querySelector('.waiting-columns');
                 const row = [...board.querySelectorAll('[data-slug]')].find(row => {{
@@ -397,6 +396,9 @@ fn removed_scrollers_release_idle_holds_without_ending_connected_scrolling() {
                     if (kept) touch({release_kind:?}, kept, [firstContact]);
                     releasedConnected = removed.isConnected;
                     touch({release_kind:?}, removed, []);
+                    // A box the touch never scrolled ends its scroll: the page's, as on a slow
+                    // machine, before even the touch's first scroll event has come.
+                    document.dispatchEvent(new Event('scrollend'));
                 }};
                 const ended = kept && new Promise(resolve => kept.addEventListener('scrollend', event => {{
                     events.push(['end', event.isTrusted]);

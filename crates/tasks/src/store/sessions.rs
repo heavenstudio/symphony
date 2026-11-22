@@ -172,7 +172,7 @@ impl Store {
             .map(|parent| format!("{REFUSED}no parent session {}", repr(parent)));
         let (handle, found) = self.retrying(|| {
             let handles = both(sql::HANDLES, pg::HANDLES);
-            let taken: Vec<String> = self.transact(handles, json!({}))?;
+            let taken: Vec<String> = self.read_together(handles, json!({}))?;
             let handle = self
                 .new_handle(&taken.into_iter().collect())
                 .map_err(Failure::Stop)?;
@@ -260,7 +260,7 @@ impl Store {
             native: bool,
         }
         self.retrying(|| {
-            let found: Found = self.transact(
+            let found: Found = self.read_together(
                 both(sql::BINDING, pg::binding()),
                 json!({"agent": agent, "handle": handle}),
             )?;
@@ -426,7 +426,7 @@ impl Store {
                 pass.guard(&counted);
             }
             let vars = self.acting(handle, (self.clock)(), json!({"held": held}));
-            self.transact::<Value>(both(&body, pg.clone()), pass.vars(handle, vars))
+            self.transact::<Value>(both(&body, pg.clone()).posting(), pass.vars(handle, vars))
         })
         .map(|_| ())
     }
@@ -440,7 +440,7 @@ impl Store {
         }
         let read = sql::sessions();
         let found: Found = self.retrying(|| {
-            self.transact(both(&read, pg::sessions()), json!({"executing": EXECUTING}))
+            self.read_together(both(&read, pg::sessions()), json!({"executing": EXECUTING}))
         })?;
         let now = (self.clock)();
         let held: HashSet<&str> = found.held.iter().map(String::as_str).collect();
@@ -463,7 +463,7 @@ impl Store {
     /// The session whose tool calls beat through Claude Code session or agent id `agent`.
     pub fn handle_for_agent(&self, agent: &str) -> Result<Option<String>, Error> {
         self.retrying(|| {
-            self.transact(
+            self.read_together(
                 both(sql::HANDLE_FOR_AGENT, pg::handle_for_agent()),
                 json!({"agent": agent}),
             )
@@ -478,8 +478,9 @@ impl Store {
             handle: String,
             agent: String,
         }
-        let bound: Vec<Bound> = self
-            .retrying(|| self.transact(both(sql::BOUND_AGENTS, pg::bound_agents()), json!({})))?;
+        let bound: Vec<Bound> = self.retrying(|| {
+            self.read_together(both(sql::BOUND_AGENTS, pg::bound_agents()), json!({}))
+        })?;
         Ok(bound.into_iter().map(|b| (b.handle, b.agent)).collect_map())
     }
 
@@ -488,7 +489,7 @@ impl Store {
     /// not left: what [`Store::bound_agents`] reads, in the same one request.
     pub fn agent_bindings(&self) -> Result<BTreeMap<String, Binding>, Error> {
         let bound: Vec<BoundAgent> = self.retrying(|| {
-            self.transact(both(sql::AGENT_BINDINGS, pg::agent_bindings()), json!({}))
+            self.read_together(both(sql::AGENT_BINDINGS, pg::agent_bindings()), json!({}))
         })?;
         Ok(bound
             .into_iter()

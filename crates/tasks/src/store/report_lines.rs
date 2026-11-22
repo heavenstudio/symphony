@@ -79,8 +79,9 @@ impl Store {
     /// Every task open now, every one written at or after `since` and every one with a line at or
     /// after `since`, each with its thread: one round trip, writing nothing.
     pub fn report_records(&self, since: f64) -> Result<ReportRead, Error> {
-        let answer: Value =
-            self.retrying(|| self.transact(both(sql::READ, pg::read()), json!({"since": since})))?;
+        let answer: Value = self.retrying(|| {
+            self.read_together(both(sql::READ, pg::read()), json!({"since": since}))
+        })?;
         taken_apart(&answer)
             .ok_or_else(|| Error::Db("the reports' read is not in the board's shape".into()))
     }

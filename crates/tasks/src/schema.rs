@@ -615,6 +615,8 @@ const MUTATING: [&str; 10] = [
 
 /// Whether `sql` can change the database: it names one of the statements that do, as a whole word in
 /// any case. The board's statements are this crate's own text, every value a variable beside it.
+/// The PostgreSQL clients count a request by it; the store says what its statements do, and a
+/// debug build holds what it says to this (the store's `Statement::disagreement`).
 pub(crate) fn mutates(sql: &str) -> bool {
     sql.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .any(|word| {

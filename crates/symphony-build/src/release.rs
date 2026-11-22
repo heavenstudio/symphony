@@ -3211,15 +3211,12 @@ mod tests {
     /// [`unsaid`] with the cause the write gave.
     #[test]
     fn a_record_that_cannot_be_written_is_said_on_stderr_by_its_cause() {
-        let folder = std::env::temp_dir().join(format!("unrecorded-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&folder);
-        fs::create_dir_all(&folder).unwrap();
+        let tree = crate::test_tree::Tree::new();
         // `runs` is a file, so the record's folder cannot be made.
-        fs::write(folder.join("runs"), "").unwrap();
+        tree.write("runs", "");
         let run = run_of("1", "release", "0123456789");
         let mut err = Vec::new();
-        unsaid(&mut err, UNRECORDED, record::write(&folder, &run));
-        let _ = fs::remove_dir_all(&folder);
+        unsaid(&mut err, UNRECORDED, record::write(&tree.root, &run));
         let said = String::from_utf8(err).unwrap();
         assert!(
             said.starts_with("symphony-build release: this run could not be recorded: ")

@@ -5,7 +5,9 @@
 use std::io::Write;
 use std::path::Path;
 
-use symphony_board::launch::defaults::{AGENTS, CLAUDE_MODEL, CLAUDE_SMALLEST, ROLES};
+use symphony_board::launch::defaults::{
+    AGENT_KEY, AGENTS, CLAUDE_MODEL, CLAUDE_SMALLEST, ROLES, agent,
+};
 use symphony_board::local::Local;
 use toml::de::DeTable;
 
@@ -42,13 +44,12 @@ pub(crate) fn warn(text: &str, file: &Path, local: Option<&Local>, err: &mut dyn
         None => committed(launch, "default")
             .map_or((String::new(), None), |(agent, _)| (agent, Some(file))),
     };
-    let (named, names) = if named.trim().is_empty() {
-        (AGENTS[0], None)
-    } else {
-        match AGENTS.into_iter().find(|agent| *agent == named) {
-            Some(agent) => (agent, names),
-            None => return,
-        }
+    // The agent as a launch takes it (`symphony_board::launch::defaults::agent`): a blank one is
+    // the board's own, and one no launch starts, which the load refuses, has no models to judge.
+    let (named, names) = match agent(AGENT_KEY, Some(&named)) {
+        Ok(Some(agent)) => (agent, names),
+        Ok(None) => (AGENTS[0], None),
+        Err(_) => return,
     };
     let roles = ROLES
         .iter()
@@ -97,5 +98,47 @@ fn agent_of(model: &str) -> Option<&'static str> {
         Some("claude")
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::warn;
+    use std::path::Path;
+
+    /// What [`warn`] says of the project file `text`, with no local file.
+    fn said(text: &str) -> String {
+        let mut err = Vec::new();
+        warn(text, Path::new("/p/symphony.toml"), None, &mut err);
+        String::from_utf8(err).unwrap()
+    }
+
+    #[test]
+    fn the_agent_in_force_is_the_one_a_launch_takes_and_one_no_launch_starts_judges_no_model() {
+        let fable = "[agents.models]\nexecutor = 'fable'\n";
+        let warned = |line: usize| {
+            format!(
+                "warning: /p/symphony.toml: [agents.models] executor (line {line}) model \"fable\" \
+                 names claude, but [agents.launch] default is \"codex\"\n"
+            )
+        };
+        // None written, or a blank one, is the board's own agent; a known one is itself.
+        assert_eq!(said(fable), warned(2));
+        assert_eq!(
+            said(&format!("[agents.launch]\ndefault = ' '\n{fable}")),
+            warned(4)
+        );
+        assert_eq!(
+            said(&format!("[agents.launch]\ndefault = 'claude'\n{fable}")),
+            ""
+        );
+        // One no launch starts, which the load refuses, leaves nothing to pair a model with.
+        for agent in ["gemini", "Claude", " codex"] {
+            assert_eq!(
+                said(&format!("[agents.launch]\ndefault = {agent:?}\n{fable}")),
+                "",
+                "{agent:?}"
+            );
+        }
     }
 }

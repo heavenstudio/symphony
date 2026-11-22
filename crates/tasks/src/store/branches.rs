@@ -33,7 +33,7 @@ impl Store {
     /// callers can apply their own lifecycle policy without losing ancestry.
     pub fn tasks_for_branch(&self, branch: &str) -> Result<Vec<Task>, Error> {
         let candidates: Vec<String> = self.retrying(|| {
-            self.transact(
+            self.read_together(
                 both(sql::on_branch(), pg::on_branch()),
                 json!({"branch": branch, "slot_wanted": [branch]}),
             )

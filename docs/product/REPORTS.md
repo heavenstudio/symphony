@@ -126,7 +126,7 @@ page reads its window again every five minutes, and at once when another window 
 
 | State | What the page shows |
 | --- | --- |
-| Loading, first visit | *Loading the reports…* over the outline of four figures and two charts |
+| Loading, first visit | grey lines that stand in for four figures and two charts, which a screen reader reads as *Loading the reports…* |
 | Loading, a later visit | at once, the window as this device last kept it, with *Shown from this device, saved 14:32. Checking for changes…* until the server has answered |
 | Nothing recorded yet | *No roll-up yet.*, when the first is due, the four figures at **–** and no chart |
 | A file could not be read | **N files not read: their hours show as gaps**, which opens to name each file and why |
