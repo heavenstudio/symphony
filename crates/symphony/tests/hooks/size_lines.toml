@@ -1,35 +1,42 @@
 # The most bytes each file every agent reads at the start of a session may weigh: the rules, the
 # guides, each file of a shipped skill and each project page beside an installed skill. The hooks
 # test beside this file (size_lines.rs) is red on a file past its line, on one of them with no line
-# and on a line for a file that is not one of them (docs/CHECKS.md "Size budgets").
+# and on a line for none of them (docs/CHECKS.md "Size budgets").
 #
-# A line is the file's size in the commit that sets it plus a tenth, rounded up to a multiple of
-# 100 bytes: an added rule fits, a retold mechanism does not. A file past its line is cut first,
-# or the mechanism it retells moved to its document or module comment. A line is raised only by
-# the task's orchestrator's decision (`just tasks gate SLUG
-# crates/symphony/tests/hooks/size_lines.toml:PATH --raise NEW`, docs/TASKS.md "Gate decisions"),
+# A line's key is its file's path with its `.md` dropped and each character a bare key cannot hold
+# (`/`, `.`) made `-`, a leading one dropped (`.agents/skills/work/project.md` is
+# `agents-skills-work-project`): a raise can name a bare key where it refuses a path. A line is the file's size in the commit that sets it plus
+# a tenth, rounded up to a multiple of 100 bytes: an added rule fits, a retold mechanism does not.
+# A file past its line is cut first, or the mechanism it retells moved to its document or module
+# comment. A line is raised only by the task's orchestrator's decision (`just tasks gate SLUG
+# crates/symphony/tests/hooks/size_lines.toml:KEY --raise NEW`, docs/TASKS.md "Gate decisions"),
 # to the size plus a tenth and never higher. A new file takes a line by the same rule.
 
-".agents/skills/review-task/project.md" = 900
-".agents/skills/task-orchestrator/project.md" = 4_900
-".agents/skills/work/project.md" = 900
-"AGENTS.md" = 35_300
-"RULES.md" = 36_600
-"apps/symphony-desktop/AGENTS.md" = 7_900
-"apps/symphony-web/AGENTS.md" = 108_600
-"crates/symphony/shipped/skills/apply-review/SKILL.md" = 8_900
-"crates/symphony/shipped/skills/apply-review/rewrite-brief.md" = 4_500
-"crates/symphony/shipped/skills/assess-task/SKILL.md" = 6_300
-"crates/symphony/shipped/skills/chat-doc/SKILL.md" = 10_000
-"crates/symphony/shipped/skills/create-task/SKILL.md" = 6_500
-"crates/symphony/shipped/skills/review-task/SKILL.md" = 7_200
-"crates/symphony/shipped/skills/task-orchestrator/SKILL.md" = 11_900
-"crates/symphony/shipped/skills/tasks/SKILL.md" = 28_200
-"crates/symphony/shipped/skills/triage/SKILL.md" = 2_400
-"crates/symphony/shipped/skills/work/SKILL.md" = 2_800
-"crates/symphony/shipped/skills/work/build.md" = 2_700
-"crates/symphony/shipped/skills/work/connected.md" = 1_200
-"crates/symphony/shipped/skills/work/finish.md" = 4_400
-"crates/symphony/shipped/skills/work/rare-endings.md" = 1_800
-"crates/symphony/shipped/skills/work/start.md" = 2_900
-"crates/tasks/AGENTS.md" = 44_400
+# The rules and the guides.
+RULES = 22_800
+AGENTS = 17_300
+apps-symphony-web-AGENTS = 16_400
+apps-symphony-desktop-AGENTS = 4_700
+crates-tasks-AGENTS = 22_700
+
+# Each file of a shipped skill.
+crates-symphony-shipped-skills-apply-review-SKILL = 6_800
+crates-symphony-shipped-skills-apply-review-rewrite-brief = 3_500
+crates-symphony-shipped-skills-assess-task-SKILL = 4_500
+crates-symphony-shipped-skills-chat-doc-SKILL = 6_700
+crates-symphony-shipped-skills-create-task-SKILL = 3_600
+crates-symphony-shipped-skills-review-task-SKILL = 5_700
+crates-symphony-shipped-skills-task-orchestrator-SKILL = 7_500
+crates-symphony-shipped-skills-tasks-SKILL = 10_100
+crates-symphony-shipped-skills-triage-SKILL = 2_000
+crates-symphony-shipped-skills-work-SKILL = 2_300
+crates-symphony-shipped-skills-work-build = 2_100
+crates-symphony-shipped-skills-work-connected = 900
+crates-symphony-shipped-skills-work-finish = 3_300
+crates-symphony-shipped-skills-work-rare-endings = 1_600
+crates-symphony-shipped-skills-work-start = 2_500
+
+# Each project page beside an installed skill.
+agents-skills-review-task-project = 800
+agents-skills-task-orchestrator-project = 3_500
+agents-skills-work-project = 900
