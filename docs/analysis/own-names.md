@@ -19,8 +19,8 @@ by the thing it named and its new name.
 
 Symphony grew inside the consuming project and still carries its names: variables, state folders,
 the names of that project's own tools, and documents that name it. This is the inventory behind the
-names card in [DECISIONS](../DECISIONS.md), for the board task that renames them, and the plan for
-removing them. Nothing here renames anything.
+[names card](#symphony-own-names), for the board task that renames them, and the plan for removing
+them. Nothing here renames anything.
 
 Read 2026-11-11 on main `aaa4aed`. Each fact about the code names the file it was read in. The
 consuming project was read, never changed, at its main `f309cad`, which pins Symphony at `c9a0af8`.
@@ -82,7 +82,7 @@ These are defaults that a note on the card can change.
 2. **The consuming project's tool names** leave the code, as the table below says for each.
 3. **Prose.** Guides, AGENTS files and skills say "a consuming project". Analysis documents
    keep their measurements of the consuming project's board, since they are dated records. The
-   dated history in [DECISIONS](../DECISIONS.md) stays as written but for that project's name.
+   dated history under each card stays as written but for that project's name.
 4. **Board variables** take `SYMPHONY_` rather than the board's own `TASKS_` (`TASKS_SURREAL`,
    `TASKS_SWEEP_RECENT_HOURS`, `TASKS_WT_DIR`). This gives one prefix to look for, at the cost
    of two prefixes in the board's own guide.
@@ -468,7 +468,10 @@ Mentions only, which are reworded with the docs:
 
 Category c: 67 lines, 72 occurrences, all in `docs/`.
 
-- **[DECISIONS](../DECISIONS.md): 14 lines.** The cards' dated history. It stays as written.
+- **The cards' dated history: 14 lines**, in the register then, and now under each card where it
+  sits: 11 in [reports-and-monitoring](reports-and-monitoring.md), one each in
+  [board-design](board-design.md), [client-cache](client-cache.md) and
+  [symphony-update](symphony-update.md). It stays as written.
 - **[reports-and-monitoring](reports-and-monitoring.md): 33 lines.** Measurements of the
   consuming project's board and verify, and the gates adapter task. It keeps the name, as a dated
   record.

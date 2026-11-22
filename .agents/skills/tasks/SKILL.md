@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: e371d10ad40ab8ba files=SKILL.md -->
+<!-- symphony-stamp: 420d6cab00667bb4 files=SKILL.md -->
 
 # Work from the task board
 
@@ -61,8 +61,8 @@ CALLBACK …                                  (delivery failure; retained in inb
 
 An orchestrator's callback includes the `PULL` digest, the board's
 own answer to what nobody is doing (ready tasks with no live executor, in-progress
-ones with none, reviews with no reviewer, branches landed under an open task, idle
-agents). Act on it. Who is doing what, with each agent's task, worktree, session id,
+ones with none, reviews with no reviewer, branches landed under an open task, tasks
+approved and never landed, idle agents). Act on it. Who is doing what, with each agent's task, worktree, session id,
 terminal and state, is `just tasks agents [--json]` (the app's `/api/agents`): ask that, not hc.
 
 `BLOCKED` is a server-clock observation of an open launch you oversee under task

@@ -60,8 +60,9 @@ a measurement before and after.
 
 ## Consumer API changes
 
-A public Rust item a known consumer calls is replaced across at least two releases
-(RULES.md `code/consumer-api-two-releases`, [its card](analysis/release-candidate.md#consumer-api-break-release)):
+A public Rust item a known consumer calls is replaced across at least two releases (RULES.md
+`code/consumer-api-two-releases`,
+[its card](analysis/release-candidate.md#consumer-api-break-release)):
 
 1. Ship the replacement alongside the old item, which keeps its signature and behaviour. Do not
    mark the old item `#[deprecated]`: a consumer's lint denies warnings, so the warning itself
@@ -311,13 +312,13 @@ says.
   last edit: a run before an edit is evidence of the text before it. Typed so, each is a test
   run the recorder keeps with its commit
   ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), so its reviewer reads it as
-  recorded, like any test. A guide, or a document under
-  `docs/` but `docs/history/`, a card's own lines and a register region aside, also runs the check for the owner's words in the
-  shapes the guides gave them, dated or straight-quoted (`just test-rs -p symphony-app --test hooks
+  recorded, like any test. A guide, or a document under `docs/` but `docs/history/`, a card's own
+  lines and a register region aside, also runs the check for the owner's words in the shapes the
+  guides gave them, dated or straight-quoted (`just test-rs -p symphony-app --test hooks
   owner_words`, RULES.md `docs/no-ledger-in-documents`), and its reviewer reads for any other
-  shape. For a shipped skill,
-  `just symphony-cli init --root .` run so the installed copies and their stamps are current, and
-  the shipped skills' tests (`just test-rs -p symphony-app --lib init`). It runs no other test.
+  shape. For a shipped skill, `just symphony-cli init --root .` run so the installed copies and
+  their stamps are current, and the shipped skills' tests
+  (`just test-rs -p symphony-app --lib init`). It runs no other test.
 - **A change of settings** (values of `symphony.toml` for settings the Symphony already reads,
   with the guide's or the rules' words that repeat them): `just settings-check` at the tip, the
   project file's shape alone ([PROJECT_FILE](PROJECT_FILE.md#the-settings-check)), recorded as

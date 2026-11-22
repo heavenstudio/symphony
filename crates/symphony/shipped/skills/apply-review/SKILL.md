@@ -70,18 +70,19 @@ do not treat it as approval, and change documents only when it asks for that.
 
 4. **Turn rejections into proposals.** Where a rejection or note needs a
    replacement the owner did not fully write, add a new `[ ]` card at the place
-   it decides: in the document that says the thing, directly under the
-   paragraph or heading that says it, its line at the left margin with a blank
-   line above and below, never in a section at the document's end. That is the
-   rejected card's own place unless it decides something said elsewhere. On a
-   page that is a register of cards it goes inside the register region (between
+   it decides: in the document that says the thing, directly under the paragraph
+   or heading that says it, its line at the left margin with a blank line above
+   and below, never in a section at the document's end. That is the rejected
+   card's own place unless it decides something said elsewhere. On a page that
+   is a register of cards it goes inside the register region (between
    `register:start` and `register:end`), which the tidy pass regroups. Name the
-   card it replaces or extends, and give it a name no other card has. **Where the owner's note already states
-   the direction, make no card**: apply it to the documents and say so in the
-   reply on the original card. The owner called cards that only restate their
-   own words pointless: a card must ask for a real choice (a proposal they did
-   not write, missing detail, or pictures to judge). Where two verdicts conflict, add a card that
-   asks, and do not choose. Do not propose beyond what the notes call for.
+   card it replaces or extends, and give it a name no other card has. **Where
+   the owner's note already states the direction, make no card**: apply it to
+   the documents and say so in the reply on the original card. The owner called
+   cards that only restate their own words pointless: a card must ask for a real
+   choice (a proposal they did not write, missing detail, or pictures to judge).
+   Where two verdicts conflict, add a card that asks, and do not choose. Do not
+   propose beyond what the notes call for.
 
    **Never reopen an approved card with a question on it.** A consequence of
    the approved choice, whatever follows from it while the option chosen stays
@@ -114,14 +115,14 @@ do not treat it as approval, and change documents only when it asks for that.
    Keep card updates with the integrating session so replies remain ordered.
    Give each assignment an explicit scope, validation and commit boundary.
 
-7. **Integrate.** From the reports: fix any `[[FILE#Heading]]` link on a
-   card, in whichever document holds it, whose heading was renamed; check `just symphony-status --open`
-   shows nothing but what is waiting on the owner; check word counts went down;
-   skim each rewritten file for anything presented as decided that is only a
-   pending proposal. Run `just symphony-status --tidy` so the register ends
-   regrouped. Run the destination project's required document and link checks,
-   then follow its review and landing process. Do not assume a particular gate,
-   certificate, build recipe or landing command.
+7. **Integrate.** From the reports: fix any `[[FILE#Heading]]` link on a card,
+   in whichever document holds it, whose heading was renamed; check
+   `just symphony-status --open` shows nothing but what is waiting on the owner;
+   check word counts went down; skim each rewritten file for anything presented
+   as decided that is only a pending proposal. Run `just symphony-status --tidy`
+   so the register ends regrouped. Run the destination project's required
+   document and link checks, then follow its review and landing process. Do not
+   assume a particular gate, certificate, build recipe or landing command.
 
 8. **Report to the owner**: which cards got replies (call out comments on approved cards and what each changed), the new cards waiting on
    them (the highest-leverage first), each rewritten document with old and new

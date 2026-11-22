@@ -1,36 +1,33 @@
 //! The decision register links each document that holds a card (docs/REVIEW.md, "Where a card is
 //! written"): the list is kept by hand, so this holds it to what the documents hold, both ways.
 
+use crate::support::repo as workspace;
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::process::Command;
 use symphony::register::carded;
 
 const REGISTER: &str = "docs/DECISIONS.md";
 
-fn workspace() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
-}
-
-/// The Markdown files under `folder`, by their path from `root`, the history aside.
-fn documents(root: &Path, folder: &Path, found: &mut Vec<String>) {
-    for entry in std::fs::read_dir(folder).unwrap().flatten() {
-        let path = entry.path();
-        let name = path
-            .strip_prefix(root)
-            .unwrap()
-            .to_string_lossy()
-            .into_owned();
-        if path.is_dir() {
-            if name != "docs/history" {
-                documents(root, &path, found);
-            }
-        } else if name.ends_with(".md") {
-            found.push(name);
-        }
-    }
+/// The Markdown files git tracks under `docs/` in `root`, by their path from it, the history
+/// aside: a file not added yet is no document of the project's, as the other checks here read it.
+fn documents(root: &Path) -> Vec<String> {
+    let out = Command::new("git")
+        .current_dir(root)
+        .args(["ls-files", "-z", "--", "docs"])
+        .output()
+        .expect("git runs");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout)
+        .expect("git lists paths in UTF-8")
+        .split('\0')
+        .filter(|path| path.ends_with(".md") && !path.starts_with("docs/history/"))
+        .map(str::to_string)
+        .collect()
 }
 
 /// Whether `text` holds a card, wherever it sits, a fenced example aside.
@@ -54,11 +51,10 @@ fn listed(register: &str, heading: &str) -> BTreeSet<String> {
 #[test]
 fn the_register_lists_each_document_that_holds_a_card_and_no_other() {
     let root = workspace();
-    let mut all = Vec::new();
-    documents(&root, &root.join("docs"), &mut all);
-    let holding: BTreeSet<String> = (all.into_iter())
+    // A tracked file gone from the checkout holds no card there.
+    let holding: BTreeSet<String> = (documents(&root).into_iter())
         .filter(|name| name != REGISTER)
-        .filter(|name| holds_a_card(&std::fs::read_to_string(root.join(name)).unwrap()))
+        .filter(|name| holds_a_card(&std::fs::read_to_string(root.join(name)).unwrap_or_default()))
         .collect();
     let register = std::fs::read_to_string(root.join(REGISTER)).unwrap();
     let listed = listed(&register, "## Documents that hold cards");
@@ -86,4 +82,35 @@ fn a_list_is_read_under_its_heading_alone_and_a_fenced_card_is_no_card() {
     assert!(!holds_a_card(
         "```\n- [ ] **lamp** — An example.\n```\n- [ ] a task, no card\n"
     ));
+}
+
+#[test]
+fn a_document_is_a_tracked_markdown_file_under_docs_the_history_aside() {
+    let root = crate::scratch("card-homes");
+    let git = |args: &[&str]| crate::beat_fixture::git(&root, args);
+    git(&["init", "-q"]);
+    for (path, text) in [
+        ("docs/a.md", "- [ ] **lamp** — Twelve or twenty?\n"),
+        ("docs/analysis/b.md", "Prose.\n"),
+        ("docs/history/old.md", "- [x] **old** — Kept.\n"),
+        ("docs/notes.txt", "Not Markdown.\n"),
+        ("README.md", "Outside docs.\n"),
+        ("docs/draft.md", "- [ ] **draft** — Not added.\n"),
+    ] {
+        let file = root.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    }
+    git(&[
+        "add",
+        "docs/a.md",
+        "docs/analysis/b.md",
+        "docs/history/old.md",
+        "docs/notes.txt",
+        "README.md",
+    ]);
+    let mut found = documents(&root);
+    found.sort();
+    std::fs::remove_dir_all(&root).unwrap();
+    assert_eq!(found, ["docs/a.md", "docs/analysis/b.md"]);
 }
