@@ -131,10 +131,6 @@ fn answer_log(site: &Site) {
     );
 }
 
-fn screen(chrome: &mut Chrome, width: u32, height: u32, mobile: bool) {
-    chrome.viewport_scaled(width, height, if mobile { 3 } else { 1 }, mobile);
-}
-
 /// Waits until the page is ready and draws `drawn`.
 fn drawn(chrome: &mut Chrome, drawn: &str) {
     assert!(
@@ -198,7 +194,7 @@ fn the_runs_page_fits_a_desk_and_a_phone_and_opens_a_run_on_its_steps_failures_a
     let site = served();
     let Some(mut chrome) = chrome() else { return };
     for (width, height, phone) in [(1440, 900, false), (390, 844, true)] {
-        screen(&mut chrome, width, height, phone);
+        chrome.viewport_scaled(width, height, if phone { 3 } else { 1 }, phone);
         answer_log(&site);
         chrome.open(&site.url("/runs"));
         drawn(&mut chrome, "[data-ready=runs] .run-row");
@@ -278,7 +274,7 @@ fn a_filter_chosen_is_asked_for_and_kept_and_load_more_asks_for_the_runs_before_
         &json!({"runs": [red(), green.clone()], "more": true, "pipelines": ["test"], "unread": []}),
     );
     let Some(mut chrome) = chrome() else { return };
-    screen(&mut chrome, 390, 844, true);
+    chrome.viewport_scaled(390, 844, 3, true);
     chrome.open(&site.url("/runs"));
     drawn(&mut chrome, "[data-ready=runs] .runs-more");
     click(&mut chrome, ".runs-more");

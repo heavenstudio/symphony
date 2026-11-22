@@ -33,10 +33,6 @@ fn content_site() -> Site {
     site
 }
 
-fn screen(page: &mut Chrome, width: u32, height: u32, mobile: bool) {
-    page.viewport_scaled(width, height, if mobile { 3 } else { 1 }, mobile);
-}
-
 fn open(page: &mut Chrome, site: &Site, path: &str, ready: &str) {
     page.open(&site.url(path));
     assert!(
@@ -56,7 +52,7 @@ fn open(page: &mut Chrome, site: &Site, path: &str, ready: &str) {
 fn every_page_lights_its_one_name_and_no_crumb_repeats_it() {
     let site = content_site();
     let Some(mut page) = chrome() else { return };
-    screen(&mut page, 1440, 900, false);
+    page.viewport(1440, 900, false);
     for (path, ready, lit, crumbs) in [
         ("/", ".hero-title", "Home", &[][..]),
         ("/queue", "[data-ready=queue]", "Queue", &[]),
@@ -111,7 +107,7 @@ fn every_page_lights_its_one_name_and_no_crumb_repeats_it() {
 fn on_a_phone_the_header_is_two_rows_and_its_pages_row_scrolls_a_project_s_more_shaded() {
     let site = content_site();
     let Some(mut page) = chrome() else { return };
-    screen(&mut page, 390, 844, true);
+    page.viewport_scaled(390, 844, 3, true);
     for (path, ready) in [
         ("/", ".hero-title"),
         ("/tasks", ".waiting-board:not(.waiting-ghost)"),
@@ -171,7 +167,7 @@ fn a_compact_header_on_a_phone_scrolls_one_row_and_never_draws_a_page_over_a_but
     let site = content_site();
     let Some(mut page) = chrome() else { return };
     for width in [390, 320] {
-        screen(&mut page, width, 700, true);
+        page.viewport_scaled(width, 700, 3, true);
         for (path, ready) in [
             ("/", ".hero-title"),
             ("/tasks", ".waiting-board:not(.waiting-ghost)"),
@@ -210,7 +206,7 @@ fn a_compact_header_on_a_phone_scrolls_one_row_and_never_draws_a_page_over_a_but
 fn appearance_opens_from_the_header_and_the_chat_sheet_no_longer_holds_it() {
     let site = content_site();
     let Some(mut page) = chrome() else { return };
-    screen(&mut page, 1440, 900, false);
+    page.viewport(1440, 900, false);
     open(
         &mut page,
         &site,
