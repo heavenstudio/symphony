@@ -137,6 +137,7 @@ pub(super) fn target(
             | "/api/task-gates"
             | "/api/health"
             | symphony_api::SCHEMA_UPDATES_PATH
+            | symphony_api::SETTINGS_PATH
     ) {
         return Err(Refusal::Missing);
     }

@@ -1,19 +1,34 @@
-// A task a custom workflow holds, on its page (docs/workflow/WORKFLOW.md, "The app"): where it stands, by
-// its phase's and state's labels, with the place a block resumes at and the person a recovery by
-// hand waits on, and the local owner's next actions on it as the server offers them
+// A task a custom workflow holds, on its page (docs/workflow/WORKFLOW.md, "The app"): where it
+// stands, by its phase's and state's labels, with the place a block resumes at and the person a
+// recovery by hand waits on, and the local owner's next actions on it as the server offers them
 // (`/api/workflow-actions`): each its edge's label and destination, and one unavailable with why
 // and whom it needs, with the accepted output standing for each task it depends on where an edge
 // takes them. An action posts its edge's ID with the snapshot it was offered under, and those
-// outputs where its edge depends on them
-// (`/api/workflow-apply`) and a key kept until the server has answered, so a post sent again after
-// no answer is the same request, which the board takes once; a refusal that the task or its
-// workflow moved since prompts a refresh of the actions. A chunk of its own, which the page imports
-// for a task a workflow holds alone, so a task the board's own writers keep loads none of it; its
-// style is flow.tsx's, which it puts in the page.
+// outputs where its edge depends on them (`/api/workflow-apply`), and a key kept until the server
+// has answered, so a post sent again after no answer is the same request, which the board takes
+// once; a refusal that the task or its workflow moved since prompts a refresh of the actions.
+// Where the workflow declares guards, the task's are read beside its actions
+// (`/api/workflow-guards`) and drawn by guards.tsx: under each action a guard holds, the guards it
+// needs, and above the actions those that let the task in. An action its guards alone hold is the
+// owner's to take when this host asks each guard's authority, and a refusal that names its guard
+// is kept under that action until the task moves. A chunk of its own, which the page imports for a
+// task a workflow holds alone, so a task the board's own writers keep loads none of it; its style
+// is flow.tsx's, which it puts in the page.
 
 import { useEffect, useRef, useState } from "react";
 import { Button } from "./button";
 import { name, putStyle, readDefinition } from "./flow";
+import {
+  asksAll,
+  clock,
+  entryRows,
+  footWords,
+  GuardRows,
+  needRows,
+  readGuards,
+  readRefusal,
+  type Tried,
+} from "./guards";
 import { useMount } from "./mount";
 import { scoped } from "./project";
 import { Failure, getJson, post, said } from "./request";
@@ -22,13 +37,16 @@ import { tryAgain } from "./state";
 import {
   WORKFLOW_ACTIONS_PATH,
   WORKFLOW_APPLY_ROUTE,
+  WORKFLOW_GUARDS_PATH,
   WORKFLOW_PATH,
   type WorkflowAuthority,
+  type WorkflowGuardRefusal,
   type WorkflowManualRecovery,
   type WorkflowOperationRequest,
   type WorkflowPair,
   type WorkflowPlace,
   type WorkflowTakenOutput,
+  type WorkflowTaskGuards,
 } from "./wire";
 import { CHECKING } from "./words";
 
@@ -122,6 +140,8 @@ export interface Board {
   project: string;
   names: Map<string, string>;
   taking: Set<string>;
+  /** Whether the definition declares a guard: a task's guards are read only where it does. */
+  guarded: boolean;
 }
 
 /** The board's workflow read (`/api/workflow`) as the page reads it, or none for one it cannot. */
@@ -131,14 +151,15 @@ export function readBoard(value: unknown): Board | null {
   if (!isText(project) || !definition) return null;
   const names = new Map<string, string>();
   name(definition, names);
-  const edges = list(field(field(field(value, "workflow"), "definition"), "edges"));
+  const read = field(field(value, "workflow"), "definition");
   const taking = new Set(
-    edges
+    list(field(read, "edges"))
       .filter((edge) => field(edge, "dependencies") === "accepted_output")
       .map((edge) => field(edge, "id"))
       .filter(isText),
   );
-  return { project, names, taking };
+  const guards = field(read, "guards");
+  return { project, names, taking, guarded: Array.isArray(guards) && guards.length > 0 };
 }
 
 /** An ID as words, where its definition names it no label. */
@@ -176,7 +197,7 @@ const WHY: Record<string, string> = {
   dependency: "waits on what it depends on",
   capacity: "no slot is free",
   human_wait: "waits on a person",
-  guard_unavailable: "its check does not answer here",
+  guard_unavailable: "waits on its guard",
   explicit_action_required: "needs an explicit action",
 };
 
@@ -195,14 +216,26 @@ export function takerWords(action: Action, slug: string): string | null {
   }
 }
 
-/** Why `action` on `slug` is unavailable, and whom it needs, as its line says it; empty while it
- * is not. An edge a land or an adapter takes says so in place of asking for an explicit action. */
-export function unavailableWords(action: Action, slug: string): string {
-  if (action.unavailable.length === 0) return "";
+/** The refusal a preview lists an edge a guard holds by: it is given no attestation to decide on. */
+const GUARD = "guard_unavailable";
+
+/** Whether its guards are all that holds `action`. */
+export function guardsAlone(action: Action): boolean {
+  return action.unavailable.length > 0 && action.unavailable.every((code) => code === GUARD);
+}
+
+/**
+ * Why `action` on `slug` is unavailable, and whom it needs, as its line says it; empty while it is
+ * not. `rows` says its guards are drawn under it, each saying its own why, so the line leaves them
+ * out. An edge a land or an adapter takes says so in place of asking for an explicit action.
+ */
+export function unavailableWords(action: Action, slug: string, rows = false): string {
+  const codes = action.unavailable.filter((code) => !(rows && code === GUARD));
+  if (codes.length === 0) return "";
   const taker = takerWords(action, slug);
   const explicit = "explicit_action_required";
-  const theirs = taker !== null && action.unavailable.includes(explicit);
-  const others = action.unavailable
+  const theirs = taker !== null && codes.includes(explicit);
+  const others = codes
     .filter((code) => !(theirs && code === explicit))
     .map((code) => WHY[code] ?? "not supported here");
   const why = theirs && taker !== null ? [taker, ...others] : others;
@@ -300,18 +333,21 @@ export function unknownOutcome(error: unknown): boolean {
   return !(error instanceof Failure) || error.kind === "uncertain";
 }
 
-/** What the page read: the board's workflow (none where it could not read it) and the actions
- * (none where the server refused them, with why). */
+/** What the page read: the board's workflow (none where it could not read it), the actions
+ * (none where the server refused them, with why) and the task's guards (none where the workflow
+ * declares none, or their read was refused). */
 export interface Read {
   board: Board | null;
   offer: Offer | null;
   refused: string;
+  guards: WorkflowTaskGuards | null;
 }
 
 /**
  * The board's workflow and the actions on `slug` under `scope`, each read again on the feed's waits
  * until it has answered; none once `signal` ends. A refusal of the actions (a hosted visitor is no owner)
- * is said, and a board's read the page cannot read leaves the IDs to say themselves. `wait` is
+ * is said, and a board's read the page cannot read leaves the IDs to say themselves. The task's
+ * guards are read where the definition declares one, or an action says a guard holds it. `wait` is
  * the wait before each read again (`tryAgain`'s).
  */
 export async function readActions(
@@ -320,7 +356,7 @@ export async function readActions(
   signal: AbortSignal,
   wait?: Parameters<typeof tryAgain>[3],
 ): Promise<Read | null> {
-  const got: { board?: Board | null; offer?: Offer | null; refused?: string } = {};
+  const got: Partial<Read> = {};
   const ask = async () => {
     if (!("board" in got)) {
       try {
@@ -329,22 +365,39 @@ export async function readActions(
         if (!unknownOutcome(error)) got.board = null;
       }
     }
-    if ("offer" in got || signal.aborted) return;
-    try {
-      const path = `${WORKFLOW_ACTIONS_PATH}?slug=${encodeURIComponent(slug)}`;
-      got.offer = readOffer(await getJson(scoped(scope, path), signal));
-      got.refused = got.offer === null ? "the server's answer could not be read" : "";
-    } catch (error) {
-      if (!unknownOutcome(error)) {
-        got.offer = null;
-        got.refused = said(error);
+    const of = `?slug=${encodeURIComponent(slug)}`;
+    if (!("offer" in got) && !signal.aborted) {
+      try {
+        got.offer = readOffer(await getJson(scoped(scope, WORKFLOW_ACTIONS_PATH + of), signal));
+        got.refused = got.offer === null ? "the server's answer could not be read" : "";
+      } catch (error) {
+        if (!unknownOutcome(error)) {
+          got.offer = null;
+          got.refused = said(error);
+        }
       }
+    }
+    if (!("board" in got && "offer" in got) || "guards" in got || signal.aborted) return;
+    const held = got.offer?.actions.some((action) => action.unavailable.includes(GUARD));
+    if (!got.board?.guarded && !held) {
+      got.guards = null;
+      return;
+    }
+    try {
+      got.guards = readGuards(await getJson(scoped(scope, WORKFLOW_GUARDS_PATH + of), signal));
+    } catch (error) {
+      if (!unknownOutcome(error)) got.guards = null;
     }
   };
   await ask();
-  await tryAgain(() => !("board" in got && "offer" in got), ask, signal, wait);
+  await tryAgain(() => !("board" in got && "offer" in got && "guards" in got), ask, signal, wait);
   if (signal.aborted) return null;
-  return { board: got.board ?? null, offer: got.offer ?? null, refused: got.refused ?? "" };
+  return {
+    board: got.board ?? null,
+    offer: got.offer ?? null,
+    refused: got.refused ?? "",
+    guards: got.guards ?? null,
+  };
 }
 
 /** What taking an action came to. */
@@ -359,6 +412,8 @@ export interface Taken {
   moved: boolean;
   /** The request, kept while its answer is not known; none once the server has answered. */
   sent: Sent | null;
+  /** The guard that refused it, where the refusal names one, and the refusal's own words. */
+  guard: { refusal: WorkflowGuardRefusal; said: string } | null;
 }
 
 /**
@@ -383,12 +438,23 @@ export async function take(
       request: { ...request, idempotency_key: key },
     });
     const next = readOffer(field(field(answer, "result"), "next"));
-    return { done: true, next, said: `${action.label}: done`, moved: false, sent: null };
-  } catch (error) {
     return {
+      done: true,
+      next,
+      said: `${action.label}: done`,
+      moved: false,
+      sent: null,
+      guard: null,
+    };
+  } catch (error) {
+    const failed = error instanceof Failure ? error : null;
+    const refusal = failed && readRefusal(field(failed.answer, "guard"));
+    return {
+      guard: refusal && { refusal, said: failed?.own ?? "" },
       done: false,
       next: null,
-      said: `${action.label} was not taken: ${said(error)}`,
+      // A guard's refusal is said in its row, under the action.
+      said: `${action.label} was not taken: ${refusal ? `${words(refusal.guard)} holds it` : said(error)}`,
       moved: isStale(error),
       sent: unknownOutcome(error) ? { body, key } : null,
     };
@@ -405,6 +471,14 @@ export interface NextActionsProps {
   updated: number;
 }
 
+/** The owner's take of an edge a guard refused, kept on the page until the task's revision moves. */
+export interface Refused {
+  edge: string;
+  /** The task's workflow revision it was tried at. */
+  revision: number;
+  tried: Tried;
+}
+
 /** The task's place and the owner's next actions on it, read again on each change of the task. */
 export function NextActions({ scope, slug, place, updated }: NextActionsProps) {
   const mount = useMount();
@@ -415,6 +489,7 @@ export function NextActions({ scope, slug, place, updated }: NextActionsProps) {
   const [busy, setBusy] = useState("");
   const [result, setResult] = useState("");
   const [values, setValues] = useState<Values>({});
+  const [refused, setRefused] = useState<Refused | null>(null);
   const sent = useRef<Sent | null>(null);
   const { revision } = place;
   // biome-ignore lint/correctness/useExhaustiveDependencies: read again on each change of the task and each refresh asked, whose values the read does not use
@@ -440,7 +515,14 @@ export function NextActions({ scope, slug, place, updated }: NextActionsProps) {
     setBusy("");
     setResult(taken.said);
     setMoved(taken.moved);
-    const { next } = taken;
+    const { next, guard } = taken;
+    setRefused(
+      guard && {
+        edge: action.edge,
+        revision: offer.snapshot.task_revision,
+        tried: { ...guard, at: Date.now() },
+      },
+    );
     if (taken.done) setValues({});
     if (next) setRead((was) => was && { ...was, offer: next });
   };
@@ -454,6 +536,7 @@ export function NextActions({ scope, slug, place, updated }: NextActionsProps) {
       checking={checking}
       result={result}
       moved={moved}
+      refused={refused}
       onWrite={(edge, input, text) =>
         setValues((was) => ({ ...was, [edge]: { ...was[edge], [input]: text } }))
       }
@@ -477,6 +560,8 @@ export interface NextActionsViewProps {
   result: string;
   /** Whether a refusal said the task or its workflow moved since: a refresh is offered. */
   moved: boolean;
+  /** The owner's last take a guard refused; drawn while the task stands where it was tried. */
+  refused?: Refused | null;
   onWrite: (edge: string, input: string, text: string) => void;
   onTake: (action: Action) => void;
   onRefresh: () => void;
@@ -484,9 +569,11 @@ export interface NextActionsViewProps {
 
 /**
  * The task's place and next actions as drawn: where it stands, a recovery by hand it waits on, then
- * each action its button, its destination, its inputs and, unavailable, why and whom it needs. The
- * actions wait while the page checks, while a post is out and while their snapshot is behind the
- * task's place, whose read is on its way.
+ * the guards that let it in and the accepted outputs its edges take, then each action its button,
+ * its destination, its inputs and, unavailable, why and whom it needs, with the guards it needs
+ * under it. An action its guards alone hold is taken from here when this host asks each one's
+ * authority. The actions wait while the page checks, while a post is out and while their snapshot
+ * is behind the task's place, whose read is on its way.
  */
 export function NextActionsView({
   slug,
@@ -497,13 +584,17 @@ export function NextActionsView({
   checking,
   result,
   moved,
+  refused = null,
   onWrite,
   onTake,
   onRefresh,
 }: NextActionsViewProps) {
   const names = read?.board?.names ?? new Map<string, string>();
   const offer = read?.offer ?? null;
+  const guards = read?.guards ?? null;
   const behind = offer !== null && offer.snapshot.task_revision !== place.revision;
+  const placed = { place: (pair: WorkflowPair) => placeWords(names, pair) };
+  const entry = guards?.entry ?? null;
   return (
     <section className="flow-task" aria-label="Workflow" aria-busy={read === null || behind}>
       <p className="flow-place">
@@ -512,6 +603,19 @@ export function NextActionsView({
         {place.resume && ` · resumes at ${placeWords(names, place.resume)}`}
       </p>
       {place.manual && <p className="flow-manual">{recoveryWords(place.manual)}</p>}
+      {guards && entry && (
+        <GuardRows
+          of="entry"
+          label="Guards that let it in"
+          heading={
+            <>
+              {"Let in by "}
+              <a href="#timeline">{`${entry.label} · revision ${entry.revision} · ${clock(entry.at)}`}</a>
+            </>
+          }
+          rows={entryRows(guards, placed)}
+        />
+      )}
       {offer !== null && offer.takes.length > 0 && (
         <ul className="flow-takes" aria-label="Accepted outputs taken">
           {offer.takes.map((taken) => (
@@ -524,7 +628,29 @@ export function NextActionsView({
       {offer !== null && offer.actions.length > 0 && (
         <ul className="flow-actions" aria-label="Next actions">
           {offer.actions.map((action) => {
-            const why = unavailableWords(action, slug);
+            const tried =
+              refused !== null &&
+              refused.edge === action.edge &&
+              refused.revision === place.revision
+                ? refused.tried
+                : null;
+            const rows = guards
+              ? needRows(
+                  {
+                    edge: action.edge,
+                    label: action.label,
+                    revision: offer.snapshot.task_revision,
+                  },
+                  guards,
+                  tried,
+                  placed,
+                )
+              : [];
+            // Its guards alone hold it, and this host asks each one's authority: the take brings
+            // their word, so it is the owner's to send.
+            const asked = guardsAlone(action) && asksAll(action.edge, guards);
+            const why = asked ? "" : unavailableWords(action, slug, rows.length > 0);
+            const held = !asked && action.unavailable.length > 0;
             return (
               <li key={action.edge} data-edge={action.edge}>
                 {action.inputs.map((input) => (
@@ -533,22 +659,27 @@ export function NextActionsView({
                     <input
                       className="dx-input"
                       value={values[action.edge]?.[input] ?? ""}
-                      disabled={why !== ""}
+                      disabled={held}
                       onInput={(event) => onWrite(action.edge, input, event.currentTarget.value)}
                     />
                   </label>
                 ))}
                 <Button
                   type="button"
-                  disabled={
-                    why !== "" || busy !== "" || checking || behind || missing(action, values)
-                  }
+                  disabled={held || busy !== "" || checking || behind || missing(action, values)}
                   onClick={() => onTake(action)}
                 >
                   {checking ? CHECKING : busy === action.edge ? "Sending…" : action.label}
                 </Button>
                 <span className="flow-to">{`to ${placeWords(names, action.destination)}`}</span>
                 {why !== "" && <span className="flow-why">{why}</span>}
+                <GuardRows
+                  of={action.edge}
+                  label={`${action.label} needs`}
+                  heading={`${action.label} needs`}
+                  rows={rows}
+                  foot={footWords(rows, action.label)}
+                />
               </li>
             );
           })}

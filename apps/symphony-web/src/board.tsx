@@ -126,9 +126,18 @@ export function recallShape(kept: string | null): [string, number][] {
   return shape.length === 0 ? defaultShape() : shape;
 }
 
-/** `shape` as SHAPE keeps it. */
-export function keepShape(shape: [string, number][]): string {
-  return shape.map(([status, count]) => `${status} ${count}`).join("\n");
+/** The line SHAPE ends with when the board was a custom workflow's, which a shape's line never is. */
+const WORKFLOW = "workflow";
+
+/** `shape` as SHAPE keeps it, and whether a custom `workflow` held the board. */
+export function keepShape(shape: [string, number][], workflow = false): string {
+  const lines = shape.map(([status, count]) => `${status} ${count}`);
+  return [...lines, ...(workflow ? [WORKFLOW] : [])].join("\n");
+}
+
+/** The ghost SHAPE `kept` gives: its columns' shape, and whether a custom workflow held the board. */
+export function recallGhost(kept: string | null): { shape: [string, number][]; workflow: boolean } {
+  return { shape: recallShape(kept), workflow: (kept ?? "").split("\n").includes(WORKFLOW) };
 }
 
 /** A task's card while it loads: its box as tall as `card`'s pitch less the space under it, a bar
@@ -167,8 +176,15 @@ function GhostColumn({ status, count }: { status: string; count: number }) {
 }
 
 /** The task board before its first read: its filters and, in the `shape` it last had, its columns
- * with a card for each task they held, each as this browser last drew it. */
-export function GhostBoard({ shape }: { shape: [string, number][] }) {
+ * with a card for each task they held, each as this browser last drew it. A phone keeps the row of
+ * work under way its room, unless the board was a custom `workflow`'s, which draws none. */
+export function GhostBoard({
+  shape,
+  workflow = false,
+}: {
+  shape: [string, number][];
+  workflow?: boolean;
+}) {
   const phone = windowWidth() <= 760;
   const stages = phone ? [ghostStage(load(STAGE_KEY))] : STAGES;
   return (
@@ -189,7 +205,7 @@ export function GhostBoard({ shape }: { shape: [string, number][] }) {
           <span className="ghost-field" style={{ width: "8.125rem" }} />
         </div>
       </div>
-      {phone && <div className="under-way" />}
+      {phone && !workflow && <div className="under-way" />}
       <nav className="wait-strip" aria-hidden="true">
         <span className="open-count">0 open</span>
         {WAIT_KINDS.map((kind, index) => (
@@ -260,7 +276,7 @@ export function BoardContext({ work, connected }: { work: MachineWork; connected
 /** What the phone's row of work under way is given. */
 export interface UnderWayProps {
   /** The tasks in progress that no machine builds or tests, the blocked ones left out. */
-  working: number;
+  inProgress: number;
   /** The tasks a machine builds and those one tests; none while no machine reports its work. */
   machines: [building: number, testing: number] | null;
   /** Show a stage's lane. */
@@ -270,10 +286,12 @@ export interface UnderWayProps {
 /**
  * How much work is under way, on a phone, where one stage is mounted and the Build and Test tabs
  * are past the row's edge: every task in progress, a machine's builds and tests among them and
- * named as such, each count a button to its lane. Four equal cells in one fixed row, so a count
- * that changes, or a machine's first report, moves nothing.
+ * named as such, each count a button to its lane. The tasks no machine has are "in progress", as
+ * their tab is, never "working": the wait strip's Working counts the tasks an agent is at, in any
+ * stage. Four cells of fixed shares in one fixed row (`styles/boardwait.css`), so a count that
+ * changes, or a machine's first report, moves nothing.
  */
-export function UnderWay({ working, machines, onStage }: UnderWayProps) {
+export function UnderWay({ inProgress, machines, onStage }: UnderWayProps) {
   const [building, testing] = machines ?? [0, 0];
   const lane = (stage: string, count: number, label: string) => (
     <button type="button" data-stage={stage} onClick={() => onStage(stage)}>
@@ -283,9 +301,9 @@ export function UnderWay({ working, machines, onStage }: UnderWayProps) {
   return (
     <nav className="under-way" aria-label="Work under way">
       <span className="under-way-all">
-        <b>{working + building + testing}</b> under way
+        <b>{inProgress + building + testing}</b> under way
       </span>
-      {lane("in_progress", working, "working")}
+      {lane("in_progress", inProgress, "in progress")}
       {machines !== null && lane("build", building, "building")}
       {machines !== null && lane("test", testing, "testing")}
     </nav>
@@ -862,7 +880,7 @@ export function TaskBoard({
         !generation &&
         (wait === "" ? (
           <UnderWay
-            working={meta("in_progress")?.ordinary ?? count("in_progress")}
+            inProgress={meta("in_progress")?.ordinary ?? count("in_progress")}
             machines={machine ? [count("build"), count("test")] : null}
             onStage={show}
           />

@@ -13,6 +13,7 @@ import {
   MORE,
   PAGE,
   ROW,
+  recallGhost,
   recallShape,
   sameRow,
   searched,
@@ -245,7 +246,7 @@ describe("the approved B board", () => {
     });
     expect(html).toContain('<nav class="under-way" aria-label="Work under way">');
     expect(html).toContain('<span class="under-way-all"><b>24</b> under way</span>');
-    expect(html).toContain('data-stage="in_progress"><b>1</b> working</button>');
+    expect(html).toContain('data-stage="in_progress"><b>1</b> in progress</button>');
     expect(html).toContain('data-stage="build"><b>9</b> building</button>');
     expect(html).toContain('data-stage="test"><b>14</b> testing</button>');
     expect(html.indexOf("under-way")).toBeLessThan(html.indexOf("wait-strip"));
@@ -254,7 +255,7 @@ describe("the approved B board", () => {
     vi.stubGlobal("innerWidth", 390);
     const html = board({ counts: [["in_progress", 5]] });
     expect(html).toContain("<b>5</b> under way");
-    expect(html).toContain("<b>5</b> working");
+    expect(html).toContain("<b>5</b> in progress");
     expect(html).not.toContain("building");
     expect(html).not.toContain("testing");
     expect(board()).toContain("<b>0</b> under way");
@@ -271,10 +272,29 @@ describe("the approved B board", () => {
     const held = board({ counts: [["in_progress", 5]], waiting });
     expect(held).not.toContain("under-way");
     expect(held).toContain("wait-strip");
+    // Nor does its ghost, once the board it kept was a custom workflow's.
+    const ghost = render(<GhostBoard shape={[]} workflow />);
+    expect(ghost).not.toContain("under-way");
+    expect(ghost).toContain('<nav class="wait-strip"');
+  });
+  it("names the tasks no machine has by their stage, never as the strip's Working", () => {
+    vi.stubGlobal("innerWidth", 390);
+    const html = board({
+      counts: [["in_progress", 4]],
+      waiting: { kinds: [["working", 7]], columns: [] },
+    });
+    expect(html).toContain("<b>4</b> in progress");
+    expect(html).toContain("Working <b>7</b>");
+    // The strip's chip is the one thing the page reads as working.
+    expect(html.replace(/<[^>]*>/g, " ").match(/working/gi)).toEqual(["Working"]);
   });
   it("gives each count of the work under way its lane", () => {
     const shown: string[] = [];
-    const row = UnderWay({ working: 1, machines: [2, 3], onStage: (stage) => shown.push(stage) });
+    const row = UnderWay({
+      inProgress: 1,
+      machines: [2, 3],
+      onStage: (stage) => shown.push(stage),
+    });
     for (const cell of [row.props.children].flat(2)) cell?.props?.onClick?.();
     expect(shown).toEqual(["in_progress", "build", "test"]);
   });
@@ -419,6 +439,12 @@ describe("lazy cards and placeholders", () => {
     ]);
     expect(shape).toEqual(STAGES.map((s) => [s, s === "review" ? 4 : s === "ready" ? 6 : 0]));
     expect(recallShape(keepShape(shape))).toEqual(shape);
+    expect(recallGhost(keepShape(shape))).toEqual({ shape, workflow: false });
+    // A custom workflow's board is kept as such, its line read as no stage.
+    expect(keepShape(shape, true)).toBe(`${keepShape(shape)}\nworkflow`);
+    expect(recallGhost(keepShape(shape, true))).toEqual({ shape, workflow: true });
+    expect(recallGhost(null)).toEqual({ shape: recallShape(null), workflow: false });
+    expect(recallGhost("workflow")).toEqual({ shape: recallShape(null), workflow: true });
     expect(recallShape("invalid")).toEqual(
       STAGES.map((s) => [s, ["build", "test"].includes(s) ? 0 : 1]),
     );

@@ -138,6 +138,7 @@ const UNDER_WAY: &str =
 /// The owner read "In progress 0" on a phone while every task in progress was in a build or a
 /// test, whose tabs are past the row's edge: the first screen says how many are under way, the
 /// builds and tests among them, each count showing its lane, at both phone widths with no word cut.
+/// The tasks no machine has read "in progress", as their tab does, apart from the strip's Working.
 #[test]
 fn a_phones_first_screen_says_how_much_is_under_way_builds_and_tests_among_it() {
     let site = site_of(&listing_of(&[
@@ -152,7 +153,7 @@ fn a_phones_first_screen_says_how_much_is_under_way_builds_and_tests_among_it() 
         open_on_screen(&mut page, &site, width, 844);
         assert!(
             page.wait_for(
-                &format!("JSON.stringify({UNDER_WAY}) === JSON.stringify(['6 under way', '1 working', '2 building', '3 testing'])"),
+                &format!("JSON.stringify({UNDER_WAY}) === JSON.stringify(['6 under way', '1 in progress', '2 building', '3 testing'])"),
                 SHOWN
             ),
             "at {width} px the row read {}",
@@ -162,7 +163,8 @@ fn a_phones_first_screen_says_how_much_is_under_way_builds_and_tests_among_it() 
         assert_eq!(
             page.eval("(() => { const row = document.querySelector('.under-way').getBoundingClientRect(); return row.top >= 0 && row.bottom <= innerHeight && [...document.querySelectorAll('.under-way > *')].every(cell => cell.scrollWidth <= cell.clientWidth && cell.getBoundingClientRect().right <= innerWidth); })()"),
             json!(true),
-            "at {width} px the row is on the first screen, every count whole"
+            "at {width} px the row is on the first screen, every count whole: {}",
+            page.eval("[...document.querySelectorAll('.under-way > *')].map(cell => [cell.textContent, cell.scrollWidth, cell.clientWidth, [...cell.childNodes].map(part => { const range = document.createRange(); range.selectNodeContents(part); return range.getBoundingClientRect().width; })])")
         );
         fits(&mut page);
         for (stage, status) in [

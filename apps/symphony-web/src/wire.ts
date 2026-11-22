@@ -13,6 +13,7 @@ export const BOARD_CARDS = 5;
 export const ASK_LATE_SECONDS = 600;
 export const FILE_QUERY = "raw";
 export const REPORTS_PATH = "/api/reports";
+export const SETTINGS_PATH = "/api/settings";
 export const RUNS_PATH = "/api/runs";
 export const RUN_PATH = "/api/run";
 export const RUN_LOG_PATH = "/api/run-log";
@@ -48,6 +49,7 @@ export const AGENT_SCREEN_PATH = "/api/agent-screen";
 export const WORKFLOW_PATH = "/api/workflow";
 export const WORKFLOW_ACTIONS_PATH = "/api/workflow-actions";
 export const WORKFLOW_APPLY_ROUTE = "/api/workflow-apply";
+export const WORKFLOW_GUARDS_PATH = "/api/workflow-guards";
 export const SYMPHONY_ROUTES = [
   "tasks",
   "task",
@@ -55,6 +57,7 @@ export const SYMPHONY_ROUTES = [
   "queue",
   "reports",
   "runs",
+  "settings",
   "api",
   "assets",
   "static",
@@ -73,6 +76,7 @@ export const PAGE_NAMES = {
   DOCS: "Docs",
   BOARD: "Board",
   REPORTS: "Reports",
+  SETTINGS: "Settings",
   RUNS: "Runs",
   AGENTS: "Agents",
   PROJECTS: "Projects",
@@ -440,6 +444,148 @@ export type LandedTask = {
 };
 
 export type Spend = { tokens: AgentTokens; cost: AgentCost };
+
+export type SettingsPage = {
+  /**
+   * The files read, the project file first.
+   */
+  files: Array<SettingsFile>;
+  /**
+   * What is wrong with a file, each said whole with what holds in its place: a project file
+   * that does not load, a local file that is refused, a limit that cannot be read.
+   */
+  problems?: Array<string>;
+  sections: Array<SettingsSection>;
+};
+
+export type SettingsFile = {
+  /**
+   * Its name (`symphony.toml`).
+   */
+  name: string;
+  scope: SettingScope;
+  /**
+   * Where it is, or would be.
+   */
+  path: string;
+  /**
+   * Whether it is there.
+   */
+  found: boolean;
+};
+
+export type SettingsSection = {
+  id: string;
+  title: string;
+  /**
+   * One line under the heading.
+   */
+  about: string;
+  entries: Array<SettingsEntry>;
+};
+
+export type SettingsEntry = {
+  /**
+   * Stable among the page's entries: its anchor.
+   */
+  id: string;
+  name: string;
+  /**
+   * What it is for.
+   */
+  about: string;
+  state?: EntryState | null;
+  needs?: Array<EntryNeed>;
+  settings?: Array<Setting>;
+  /**
+   * Where it is said as a sentence in a file: for an entry that carries no setting of its own.
+   */
+  source?: SettingSource | null;
+};
+
+export type EntryState = {
+  /**
+   * Its state in a word or two (`On`, `Off`, `None selected`).
+   */
+  word: string;
+  /**
+   * On or off, for an entry that is one of the two.
+   */
+  on?: boolean | null;
+  /**
+   * Why it is so.
+   */
+  why: string;
+};
+
+export type EntryNeed = {
+  /**
+   * What is needed (`the claude program`).
+   */
+  what: string;
+  met: boolean;
+  /**
+   * What was found, or what is missing and what that means.
+   */
+  said: string;
+};
+
+export type Setting = {
+  /**
+   * Its table and key as the file spells them (`[limits] low_volume`), or the table alone for
+   * one said as a sentence (`[land]`).
+   */
+  key: string;
+  /**
+   * What it is, in words.
+   */
+  name: string;
+  kind: SettingKind;
+  /**
+   * The value in force, as shown.
+   */
+  value: string;
+  /**
+   * What a [`SettingKind::Choice`] may be.
+   */
+  choices?: Array<string>;
+  source: SettingSource;
+  /**
+   * The scopes it may be written in.
+   */
+  scopes: Array<SettingScope>;
+  class: SettingClass;
+};
+
+export type SettingSource = {
+  /**
+   * The scope of the file that wrote it; none for a default, which no file writes.
+   */
+  scope?: SettingScope | null;
+  /**
+   * Where it stands, whole, as `just tasks limits` names one
+   * (`symphony.local.toml [limits] machine_agents, line 6`), or the default said as one.
+   */
+  said: string;
+  /**
+   * The file's name, when a file wrote it.
+   */
+  file?: string | null;
+  /**
+   * Its line there, when it can be found.
+   */
+  line?: number | null;
+  /**
+   * The committed value a local file's holds over, said as [`SettingSource::said`] says one.
+   */
+  over?: string | null;
+};
+
+export type SettingScope = "project" | "machine" | "device";
+
+export type SettingClass = "preference" | "reviewed";
+
+export type SettingKind = "text" | "number" | "switch" | "choice" | "list" | "sentence";
 
 export type RunsPage = {
   /**
@@ -1812,6 +1958,103 @@ export type WorkflowLegacyStatus =
   | "done"
   | "blocked"
   | "cancelled";
+
+export type WorkflowTaskGuards = {
+  authorities: Array<WorkflowGuardAuthority>;
+  guards: Array<WorkflowGuardNeed>;
+  edges: Array<WorkflowGuardedEdge>;
+  entry?: WorkflowGuardEntry | null;
+};
+
+export type WorkflowGuardAuthority = {
+  adapter: string;
+  issuer: string;
+  epoch?: string | null;
+  generation?: number | null;
+  conflicted: boolean;
+  admitted: number;
+  asked_here: boolean;
+};
+
+export type WorkflowGuardNeed = { guard: string; adapter: string; page?: string | null };
+
+export type WorkflowGuardedEdge = { edge: string; guards: Array<string> };
+
+export type WorkflowGuardEntry = {
+  edge: string;
+  label: string;
+  revision: number;
+  principal: WorkflowAttestee;
+  /**
+   * Seconds since the Unix epoch.
+   */
+  at: number;
+  guards: Array<WorkflowGuardMet>;
+};
+
+export type WorkflowGuardMet = {
+  guard: string;
+  adapter: string;
+  issuer: string;
+  epoch: string;
+  generation: number;
+  standing: WorkflowGuardStanding;
+  record?: WorkflowGuardRecord | null;
+};
+
+export type WorkflowGuardRecord = {
+  result: WorkflowAttested;
+  facts: Array<string>;
+  reasons: Array<string>;
+  epoch: string;
+  generation: number;
+  /**
+   * Seconds since the Unix epoch.
+   */
+  issued_at: number;
+  expires_at: number;
+  task_revision: number;
+  at: WorkflowPair;
+  input_revisions: { [key in string]: string };
+  principal: WorkflowAttestee;
+};
+
+export type WorkflowGuardRefusal = {
+  guard: string;
+  adapter: string;
+  why: WorkflowGuardWhy;
+  record?: WorkflowGuardRecord | null;
+};
+
+export type WorkflowGuardWhy =
+  | "uncommitted"
+  | "unreported"
+  | "conflict"
+  | "missing"
+  | "unanswered"
+  | "unverified"
+  | "stale"
+  | "not_yours"
+  | "refused"
+  | "unknown"
+  | "unfounded"
+  | "expired"
+  | "early"
+  | "overlong"
+  | "decided_again"
+  | "not_reported";
+
+export type WorkflowGuardStanding =
+  | "met"
+  | "uncommitted"
+  | "unverified"
+  | "unreported"
+  | "conflict"
+  | "decided_again";
+
+export type WorkflowAttested = "pass" | "refuse" | "unknown";
+
+export type WorkflowAttestee = { kind: string; issuer: string; subject: string };
 
 export type TaskPage = {
   machine_work: MachineWork;

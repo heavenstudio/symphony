@@ -60,6 +60,29 @@ and `theme.rs`, a generator's in `crates/tasks/src/land.rs` and a stamp's in
 `crates/symphony/tests/project/reference.rs`, fails on a key this page lacks or one the code does
 not have.
 
+## The Settings page
+
+`/settings`, under each project and in the header after Reports, shows what is in force for the
+project and where each value comes from: one read, `/api/settings`
+(`crates/symphony/src/settings.rs`, the wire types `crates/symphony-api/src/settings.rs`), which
+the client draws and which writes nothing. Every thing it shows is an entry in one shape: its
+name, what it is for, its state and why, what it needs and whether this machine has it, and its
+settings, each with its key, its value in force, its source (the default, or the file with the
+table, the key and the line, as `just tasks limits` names one, and for a local value the committed
+one it holds over), the scopes it may be written in and its class. A setting is *reviewed* when
+the local settings file refuses its table or key by name (`PROTECTED` and `PROTECTED_KEYS` in
+`crates/tasks/src/local.rs`, the one list) and a *preference* otherwise; a reviewed table is said
+as a sentence with its file and line. Its parts are the integrations and tools (the launch agents,
+Herdr's panes, GitHub, and the plugins), the models and limits, the project's name, documents and theme,
+the reviewed settings (the landing, the board's commands, the stamps, the releases and the
+workflow) and the device's appearance. GitHub is said by what the
+`symphony-github.toml` the default branch commits writes, the branch being the one the main
+checkout's HEAD names, as that program reads it. The page runs no program and holds no copy of
+its rules, so a file that writes `enabled = true` is said as enabled in its file and never as on:
+a file the program refuses runs as off, which its own status tells. A project file that does not load is said at the top of
+the page with what holds in its place, as is a local file that is refused. The page shows a
+preference as its value alone: no control on it changes one.
+
 ## The settings check
 
 `symphony settings-check [DIR]` (`just symphony-cli settings-check`) reads the project file of DIR,
@@ -204,7 +227,9 @@ engine carries the entries.
 
 Each table serves one folder at one URL. With none written, one keeps the convention: `docs/` at
 `/docs/`, Markdown and HTML, `docs/history` listed but never read as documents. A key not listed here
-refuses the file, as a misspelt one would change what is served.
+refuses the file, as a misspelt one would change what is served. A route the Symphony answers
+itself (`symphony_api::SYMPHONY_ROUTES`: `tasks`, `queue`, `reports`, `runs`, `settings` and the
+rest) wins over every entrypoint, so one whose `url` lies on such a route refuses the file by name.
 
 | Key | Default | What it sets |
 | --- | --- | --- |
@@ -586,6 +611,11 @@ committed for its adapter leaves the workflow unsupported.
 | `issuer` | required | the name the authority signs as, which its observations and attestations repeat |
 | `contract` | required | the attestation contract it speaks, `1` in this release |
 | `key` | required | the public half of its signing key, `ed25519:` and 64 lowercase hex digits |
+| `page` | none | where its ledger shows a guard of a task: a path of the app or a web address, `{task}` and `{guard}` filled in with the task's slug and the guard's ID, which [a task's page](../workflow/WORKFLOW.md#the-app) puts on the authority's name |
+
+`page` is a link and nothing more: the board records none of it, it names no key or issuer, and
+it decides nothing the board admits. One that, filled in, is neither a path of the app nor a web
+address is refused by name.
 
 ## `[releases]`
 

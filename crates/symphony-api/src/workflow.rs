@@ -555,6 +555,11 @@ vocabulary!(Attested as "WorkflowAttested" {
 /// The principal an attestation covers, as the host authenticated it: its kind (`agent`,
 /// `human`, `service`), its issuer and its subject.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowAttestee")
+)]
 #[serde(deny_unknown_fields)]
 pub struct Attestee {
     pub kind: String,
@@ -624,6 +629,218 @@ pub struct Observation {
     pub state: String,
     pub previous: Option<AuthorityState>,
     pub at: f64,
+}
+
+/// The guards of one task a custom workflow holds, as the board's records have them
+/// (`?slug=SLUG`): what `GET` [`WORKFLOW_GUARDS_PATH`] answers the local owner, a [`TaskGuards`].
+/// It shows what the board accepted and admitted and approves nothing: the decisions stay in the
+/// project's ledger.
+pub const WORKFLOW_GUARDS_PATH: &str = "/api/workflow-guards";
+
+vocabulary!(GuardWhy as "WorkflowGuardWhy" {
+    // From the board's records, whatever was given: no authority is committed for the guard's
+    // adapter, the board accepted no state from it, or it reported two decisions at one generation.
+    Uncommitted,
+    Unreported,
+    Conflict,
+    // From what the operation was taken with: no attestation, an authority that gave none when
+    // asked, or one that does not verify by the committed key.
+    Missing,
+    Unanswered,
+    Unverified,
+    // From an attestation that verified: it covers another operation or other input revisions, or
+    // another principal; the authority refused, could not say, or passed on no decision; it is
+    // past its time, issued ahead of the clock or held for longer than one may be; or it was
+    // decided at an older generation than the board accepts, or one not reported yet.
+    Stale,
+    NotYours,
+    Refused,
+    Unknown,
+    Unfounded,
+    Expired,
+    Early,
+    Overlong,
+    DecidedAgain,
+    NotReported
+});
+
+vocabulary!(GuardStanding as "WorkflowGuardStanding" {
+    // A guard an admission met, at the state the board still accepts.
+    Met,
+    // Why it no longer stands: its authority is no longer committed, its attestation no longer
+    // verifies by the committed key, the board holds no state from its authority, the authority
+    // is in conflict, or it decided again since.
+    Uncommitted,
+    Unverified,
+    Unreported,
+    Conflict,
+    DecidedAgain
+});
+
+/// What an attestation that verified says, as a page shows it: the authority's answer with the
+/// decisions it rests on and its reasons, each the authority's own text, the generation it was
+/// decided at, its time, and the operation and principal it covers. A record of what was said,
+/// never a permit.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowGuardRecord")
+)]
+pub struct GuardRecord {
+    pub result: Attested,
+    pub facts: Vec<String>,
+    pub reasons: Vec<String>,
+    pub epoch: String,
+    pub generation: u64,
+    /// Seconds since the Unix epoch.
+    pub issued_at: f64,
+    pub expires_at: f64,
+    pub task_revision: u64,
+    pub at: Pair,
+    pub input_revisions: std::collections::BTreeMap<String, String>,
+    pub principal: Attestee,
+}
+
+impl Attestation {
+    /// What a page shows of this attestation, once it verified.
+    pub fn record(&self) -> GuardRecord {
+        GuardRecord {
+            result: self.result,
+            facts: self.facts.clone(),
+            reasons: self.reasons.clone(),
+            epoch: self.epoch.clone(),
+            generation: self.generation,
+            issued_at: self.issued_at,
+            expires_at: self.expires_at,
+            task_revision: self.task_revision,
+            at: self.at.clone(),
+            input_revisions: self.input_revisions.clone(),
+            principal: self.principal.clone(),
+        }
+    }
+}
+
+/// Why a guard refused the owner's operation, answered beside the refusal's text as `guard` by
+/// [`WORKFLOW_APPLY_ROUTE`]: which guard, whose authority, a word for why, and what the
+/// attestation given says where it verified. The text stays the refusal; a page reads the word.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowGuardRefusal")
+)]
+pub struct GuardRefusal {
+    pub guard: String,
+    pub adapter: String,
+    pub why: GuardWhy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<GuardRecord>,
+}
+
+/// An approval authority the active activation commits, with what the board accepted from it:
+/// its epoch and generation (none while it reported no state), whether it is in conflict, how
+/// many operations were admitted at it, and whether this host asks it for an attestation when
+/// the owner takes a guarded edge (a selected plugin answers for its adapter).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowGuardAuthority")
+)]
+pub struct GuardAuthority {
+    pub adapter: String,
+    pub issuer: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epoch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<u64>,
+    pub conflicted: bool,
+    pub admitted: u64,
+    pub asked_here: bool,
+}
+
+/// A guard the active workflow declares: its adapter, and the page its authority's ledger shows
+/// it on for this task, where the project file names one (`[[workflow_authorities]]`'s `page`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowGuardNeed")
+)]
+pub struct GuardNeed {
+    pub guard: String,
+    pub adapter: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<String>,
+}
+
+/// An edge leaving the task's pair that guards hold, with those guards' IDs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowGuardedEdge")
+)]
+pub struct GuardedEdge {
+    pub edge: String,
+    pub guards: Vec<String>,
+}
+
+/// A guard an admission met: the generation it was met at, whether it still stands, and what its
+/// attestation says, while that still verifies by the committed key.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowGuardMet")
+)]
+pub struct GuardMet {
+    pub guard: String,
+    pub adapter: String,
+    pub issuer: String,
+    pub epoch: String,
+    pub generation: u64,
+    pub standing: GuardStanding,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<GuardRecord>,
+}
+
+/// The transition that last brought the task into its pair by a guarded edge: the edge, by its ID
+/// and label, the task's workflow revision it wrote, who took it and when, and each guard its
+/// admission met.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowGuardEntry")
+)]
+pub struct GuardEntry {
+    pub edge: String,
+    pub label: String,
+    pub revision: u64,
+    pub principal: Attestee,
+    /// Seconds since the Unix epoch.
+    pub at: f64,
+    pub guards: Vec<GuardMet>,
+}
+
+/// What [`WORKFLOW_GUARDS_PATH`] answers: the authorities the active activation commits, the
+/// guards the workflow declares, the guarded edges leaving the task's pair, and the admission
+/// that let the task into it, none where no guarded edge enters it or the board records none.
+/// All empty on a board with no workflow active.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowTaskGuards")
+)]
+pub struct TaskGuards {
+    pub authorities: Vec<GuardAuthority>,
+    pub guards: Vec<GuardNeed>,
+    pub edges: Vec<GuardedEdge>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry: Option<GuardEntry>,
 }
 
 /// A map of text to text, refused when it names a key twice.

@@ -237,6 +237,29 @@ impl Store {
         self.apply(principal, host, request, attestations, None)
     }
 
+    /// Which guard refuses `request` taken by `principal` with `attestations`, as the board reads
+    /// it now, for a page to show beside a refusal [`Store::apply_attested`] gave
+    /// ([`admit::guard_refusal`]): none where no single guard does. A read of its own, after the
+    /// refusal, which decides nothing and writes nothing.
+    pub fn guard_refusal(
+        &self,
+        principal: &Principal,
+        request: &OperationRequest,
+        attestations: &[Signed],
+    ) -> Result<Option<symphony_api::workflow::GuardRefusal>, Error> {
+        self.retrying(|| {
+            let decided = self.decided(&request.task, principal, None)?;
+            let guarding = guarding(&decided, attestations);
+            Ok(admit::guard_refusal(
+                context(&decided),
+                &decided.facts,
+                principal,
+                request,
+                &guarding,
+            ))
+        })
+    }
+
     /// [`Store::apply_attested`], or, with what it `answered`, the automatic edge the board
     /// takes on an execution attempt's ending (`Store::observe_attempt`), admitted by the same
     /// checks, with no attestation, and written by the same write.

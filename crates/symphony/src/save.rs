@@ -16,7 +16,7 @@ mod attest;
 mod failure;
 mod quick;
 mod quick_task;
-pub use failure::Failure;
+pub use failure::{Failure, Refused};
 
 #[cfg(test)]
 mod close_tests;
@@ -261,6 +261,68 @@ impl Saves {
         ))
     }
 
+    /// The owner's workflow operation ([`WORKFLOW_APPLY`]), as [`Self::post`] takes it, a
+    /// refusal answered with the guard that refused where one did ([`Refused`]): what a page
+    /// shows beside the action, the refusal's words unchanged.
+    pub fn apply_workflow(&self, payload: &Value) -> Result<Value, Refused> {
+        if !payload.is_object() {
+            return Err(Failure::from("bad JSON: body must be a JSON object".to_string()).into());
+        }
+        if string(payload, "slug").trim().is_empty() {
+            return Err(Failure::from("slug is required".to_string()).into());
+        }
+        self.workflow_apply(payload)
+    }
+
+    fn workflow_apply(&self, payload: &Value) -> Result<Value, Refused> {
+        let request: symphony_api::workflow::OperationRequest =
+            serde_json::from_value(payload["request"].clone())
+                .map_err(|e| Failure::from(format!("request: not a workflow operation: {e}")))?;
+        if request.task != string(payload, "slug") {
+            return Err(Failure::from(format!(
+                "request: its task is {}, not the slug {}",
+                request.task,
+                string(payload, "slug")
+            ))
+            .into());
+        }
+        // A guarded edge's attestations, each the project authority's signed word: the payload's
+        // as given, or where it gives none, asked of the authorities the project's plugins answer
+        // for (attest.rs).
+        let given: Option<Vec<symphony_api::workflow::Signed>> =
+            match payload.get("attestations") {
+                None | Some(Value::Null) => None,
+                Some(given) => Some(serde_json::from_value(given.clone()).map_err(|e| {
+                    Failure::from(format!("attestations: not signed statements: {e}"))
+                })?),
+            };
+        let (store, owner) = (self.store()?, symphony_board::workflow::local_owner());
+        let attestations = match given {
+            Some(given) => given,
+            None => attest::fetched(
+                &store,
+                &crate::plugins::Plugins::of(&self.root),
+                &self.root,
+                &request,
+                &owner,
+            )?,
+        };
+        let host = symphony_board::workflow::Host::local();
+        match store.apply_attested(&owner, &host, &request, &attestations) {
+            Ok(result) => Ok(json!({"ok": true, "result": result})),
+            Err(refused) => {
+                let failure = Failure::from(refused);
+                // Which guard it was, read after the refusal: none where the board answers none,
+                // or cannot be read again.
+                let guard = (attest::guards(&failure.error))
+                    .then(|| store.guard_refusal(&owner, &request, &attestations))
+                    .and_then(|read| read.ok().flatten())
+                    .map(Box::new);
+                Err(Refused { failure, guard })
+            }
+        }
+    }
+
     pub fn post(&self, scope: &str, route: &str, payload: &Value) -> Result<Value, Failure> {
         self.post_inner(scope, route, payload, None)
     }
@@ -356,48 +418,7 @@ impl Saves {
                     .move_to(string(payload, "slug"), "cancelled", "owner")?;
                 Ok(json!({"ok":true}))
             }
-            WORKFLOW_APPLY => {
-                let request: symphony_api::workflow::OperationRequest =
-                    serde_json::from_value(payload["request"].clone())
-                        .map_err(|e| format!("request: not a workflow operation: {e}"))?;
-                if request.task != string(payload, "slug") {
-                    return Err(format!(
-                        "request: its task is {}, not the slug {}",
-                        request.task,
-                        string(payload, "slug")
-                    )
-                    .into());
-                }
-                // A guarded edge's attestations, each the project authority's signed word: the
-                // payload's as given, or where it gives none, asked of the authorities the
-                // project's plugins answer for (attest.rs).
-                let given: Option<Vec<symphony_api::workflow::Signed>> =
-                    match payload.get("attestations") {
-                        None | Some(Value::Null) => None,
-                        Some(given) => Some(
-                            serde_json::from_value(given.clone())
-                                .map_err(|e| format!("attestations: not signed statements: {e}"))?,
-                        ),
-                    };
-                let (store, owner) = (self.store()?, symphony_board::workflow::local_owner());
-                let attestations = match given {
-                    Some(given) => given,
-                    None => attest::fetched(
-                        &store,
-                        &crate::plugins::Plugins::of(&self.root),
-                        &self.root,
-                        &request,
-                        &owner,
-                    )?,
-                };
-                let result = store.apply_attested(
-                    &owner,
-                    &symphony_board::workflow::Host::local(),
-                    &request,
-                    &attestations,
-                )?;
-                Ok(json!({"ok": true, "result": result}))
-            }
+            WORKFLOW_APPLY => (self.workflow_apply(payload)).map_err(|refused| refused.failure),
             symphony_api::TASK_ACTION_ROUTE => {
                 let slug = string(payload, "slug");
                 let store = self.store()?;
