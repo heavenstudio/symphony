@@ -86,14 +86,8 @@ fn machine_work_phases_and_advisory_targets_stay_consistent_through_live_complet
         }
         install_work(&site, &work);
         if path == "/agents" {
-            chrome.call(
-                "Emulation.setDeviceMetricsOverride",
-                json!({"width":1280,"height":900,"deviceScaleFactor":1,"mobile":false}),
-            );
-            chrome.call(
-                "Emulation.setEmulatedMedia",
-                json!({"features":[{"name":"prefers-color-scheme","value":"light"}]}),
-            );
+            chrome.viewport(1280, 900, false);
+            chrome.scheme("light");
         }
         chrome.open(&site.url(path));
         assert!(

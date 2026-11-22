@@ -72,6 +72,38 @@ impl Chrome {
         );
     }
 
+    /// The window as a screen of `width` by `height` CSS px at one device pixel each, `mobile`
+    /// as a phone's browser lays a page out (its meta viewport read, overlay scrollbars). Which
+    /// widths are a phone's is each test's own rule, passed here; touch is asked for apart
+    /// (`Emulation.setTouchEmulationEnabled`).
+    pub fn viewport(&mut self, width: u32, height: u32, mobile: bool) {
+        self.viewport_scaled(width, height, 1, mobile);
+    }
+
+    /// [`Chrome::viewport`] on a screen of `scale` device pixels to each CSS px.
+    pub fn viewport_scaled(&mut self, width: u32, height: u32, scale: u32, mobile: bool) {
+        self.call(
+            "Emulation.setDeviceMetricsOverride",
+            metrics(width, height, scale, mobile),
+        );
+    }
+
+    /// The page's colour scheme (`light` or `dark`), as the operating system would set it.
+    pub fn scheme(&mut self, mode: &str) {
+        self.call("Emulation.setEmulatedMedia", media(mode));
+    }
+
+    /// Two of the page's frames, so what a viewport, a scheme or a click changed is laid out and
+    /// painted before it is read.
+    pub fn frames(&mut self) {
+        self.eval(FRAMES);
+    }
+
+    /// [`Chrome::frames`] once the page's fonts are in, as a picture or a measure of text needs.
+    pub fn frames_with_fonts(&mut self) {
+        self.eval(&format!("document.fonts.ready.then(() => {FRAMES})"));
+    }
+
     /// Go to `url` and wait for its document to be parsed.
     pub fn open(&mut self, url: &str) {
         self.0.open(url).asserted();
@@ -187,6 +219,77 @@ impl Chrome {
             );
         }
     }
+}
+
+/// A promise of two of the page's frames ([`Chrome::frames`]).
+const FRAMES: &str =
+    "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))";
+
+/// What `Emulation.setDeviceMetricsOverride` takes for [`Chrome::viewport_scaled`].
+fn metrics(width: u32, height: u32, scale: u32, mobile: bool) -> Value {
+    json!({"width": width, "height": height, "deviceScaleFactor": scale, "mobile": mobile})
+}
+
+/// What `Emulation.setEmulatedMedia` takes for [`Chrome::scheme`].
+fn media(mode: &str) -> Value {
+    json!({"features": [{"name": "prefers-color-scheme", "value": mode}]})
+}
+
+#[test]
+fn the_viewport_and_scheme_commands_carry_what_they_are_given() {
+    assert_eq!(
+        metrics(390, 844, 3, true),
+        json!({"width": 390, "height": 844, "deviceScaleFactor": 3, "mobile": true})
+    );
+    assert_eq!(
+        metrics(0, 0, 1, false),
+        json!({"width": 0, "height": 0, "deviceScaleFactor": 1, "mobile": false}),
+        "a size of 0 lifts the override of that side, as the protocol reads it"
+    );
+    assert_eq!(
+        media("dark"),
+        json!({"features": [{"name": "prefers-color-scheme", "value": "dark"}]})
+    );
+    assert_eq!(
+        media(""),
+        json!({"features": [{"name": "prefers-color-scheme", "value": ""}]}),
+        "no scheme named is the browser's own again"
+    );
+}
+
+/// The page's window, pixel ratio and scheme as [`Chrome::viewport`], [`Chrome::viewport_scaled`]
+/// and [`Chrome::scheme`] set them, each kept until set again, and a frame wait returning once
+/// its frames are drawn.
+#[test]
+fn a_page_has_the_viewport_and_the_scheme_the_harness_sets_and_draws_the_frames_it_waits() {
+    let Some(mut page) = super::chrome() else {
+        return;
+    };
+    const SEEN: &str = "[innerWidth, innerHeight, devicePixelRatio, matchMedia('(prefers-color-scheme: dark)').matches]";
+    page.viewport(1280, 900, false);
+    page.scheme("dark");
+    page.open("data:text/html,<meta name=viewport content='width=device-width,initial-scale=1'><p>page</p>");
+    assert_eq!(page.eval(SEEN), json!([1280, 900, 1, true]));
+    page.viewport_scaled(390, 844, 3, true);
+    page.scheme("light");
+    page.until(
+        "a phone's screen in the light scheme",
+        &format!("JSON.stringify({SEEN}) === '[390,844,3,false]'"),
+    );
+    page.viewport(600, 400, false);
+    page.until(
+        "one device pixel to each CSS px again, the scheme kept",
+        &format!("JSON.stringify({SEEN}) === '[600,400,1,false]'"),
+    );
+    page.eval("window.drawn = 0; (function count() { window.drawn += 1; requestAnimationFrame(count); })()");
+    let before = page.eval("window.drawn").as_u64().unwrap();
+    page.frames();
+    let between = page.eval("window.drawn").as_u64().unwrap();
+    assert!(between >= before + 2, "{before} then {between}");
+    page.frames_with_fonts();
+    let after = page.eval("window.drawn").as_u64().unwrap();
+    assert!(after >= between + 2, "{between} then {after}");
+    assert_eq!(page.eval("document.fonts.status"), json!("loaded"));
 }
 
 /// Reexecuted in a separate process as a launch's leash, with no shared mutable environment in

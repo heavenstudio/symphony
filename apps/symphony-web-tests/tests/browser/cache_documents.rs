@@ -15,9 +15,11 @@
 
 use serde_json::{Value, json};
 
-use crate::cache_pages::{PARTS, VALUES, keeps, kept, notice, shows, store_opened};
+use crate::cache_pages::{
+    PARTS, VALUES, answered, hold, keeps, kept, notice, oldest, return_held, shows, since,
+    store_opened,
+};
 use crate::chrome::{Chrome, WEB_SOCKET};
-use crate::common;
 use crate::site::{Answered, Site, asked_keys, query};
 
 const DOC: &str = "docs/kept.md";
@@ -28,7 +30,7 @@ const KEPT: [&str; 2] = [
 ];
 /// The reads a return visit checks, which the stand-in holds back to show what the page draws
 /// before any answer.
-const READS: [&str; 2] = ["/api/document", "/api/section"];
+pub(super) const READS: [&str; 2] = ["/api/document", "/api/section"];
 /// The document page is current: its feed open, nothing shown from the device.
 pub(super) const LIVE: &str = "(page => page?.dataset.feed === 'live' && !page.dataset.cache && !document.querySelector('.device-notice'))(document.querySelector('main > .document-page'))";
 /// The card's verdicts and its submit button, as `[text, disabled]`.
@@ -75,7 +77,7 @@ pub(super) fn document(path: &str, title: &str, version: u64) -> Value {
 
 /// The stand-in, serving the fixture document.
 fn site() -> Site {
-    let site = Site::start(crate::dist(), &common::fixture("board.json"));
+    let site = crate::site();
     site.set_document(&document(DOC, "Kept", 4182));
     site.set_json("/api/asks", &json!({"asks": [], "recipient": null}));
     site.set_json("/api/postponed", &json!([]));
@@ -125,42 +127,6 @@ fn visit(chrome: &mut Chrome, site: &Site) {
     shows(chrome, LIVE, "the first visit");
     keeps(chrome, &KEPT);
     keeps_bodies(chrome, &texts);
-}
-
-/// When the older of the document's kept parts was kept.
-fn oldest(chrome: &mut Chrome) -> f64 {
-    kept(chrome)
-        .iter()
-        .filter(|(part, _)| KEPT.contains(&part.as_str()))
-        .map(|(_, saved)| saved.as_f64().unwrap())
-        .fold(f64::INFINITY, f64::min)
-}
-
-/// How many answers the stand-in has sent to each of [`READS`].
-pub(super) fn answered(site: &Site) -> Vec<usize> {
-    READS.iter().map(|read| site.answers(read).len()).collect()
-}
-
-/// The answers to `read` since `before` ([`answered`]).
-pub(super) fn since(site: &Site, before: &[usize], read: &str) -> Vec<Answered> {
-    let at = READS.iter().position(|each| *each == read).unwrap();
-    site.answers(read)[before[at]..].to_vec()
-}
-
-/// Hold back [`READS`], or let them go.
-pub(super) fn hold(site: &Site, held: bool) {
-    for read in READS {
-        site.hold_route(read, held);
-    }
-}
-
-/// Open `path` again with the document's reads held back; the answers counted before it.
-fn return_held(chrome: &mut Chrome, site: &Site, path: &str) -> Vec<usize> {
-    let before = answered(site);
-    hold(site, true);
-    chrome.open("about:blank");
-    chrome.open(&site.url(path));
-    before
 }
 
 /// The page shows what this device kept, saying `said` of it.
@@ -297,8 +263,8 @@ fn a_warm_document_draws_its_outline_and_sections_before_any_answer_and_an_uncha
     visit(&mut chrome, &site);
     // The board moved while away, the document did not: its cursor is all that changed.
     site.set_document(&document(DOC, "Kept", 4190));
-    let saved = oldest(&mut chrome);
-    let before = return_held(&mut chrome, &site, &format!("/{DOC}"));
+    let saved = oldest(&mut chrome, |part| KEPT.contains(&part));
+    let before = return_held(&mut chrome, &site, &READS, &READS, &format!("/{DOC}"));
     draws(
         &mut chrome,
         &["Kept: the intro.", "Posted.", "Lamps, as kept."],
@@ -307,16 +273,16 @@ fn a_warm_document_draws_its_outline_and_sections_before_any_answer_and_an_uncha
     from_the_device(&mut chrome, &said);
     verdicts_wait(&mut chrome);
     assert_eq!(
-        answered(&site),
+        answered(&site, &READS),
         before,
         "drawn before any read was answered"
     );
-    hold(&site, false);
+    hold(&site, &READS, false);
     shows(&mut chrome, LIVE, "the warm visit, once checked");
     retitled(&mut chrome, &site, DOC, 4191, "Kept, retitled");
-    outline_once(&since(&site, &before, "/api/document"), 304);
+    outline_once(&since(&site, &READS, &before, "/api/document"), 304);
     assert_eq!(
-        since(&site, &before, "/api/section"),
+        since(&site, &READS, &before, "/api/section"),
         [],
         "every section kept is current: none is read again"
     );
@@ -352,11 +318,11 @@ fn a_warm_document_checked_at_once_opens_one_feed_naming_the_sections_it_drew_fr
     chrome.open("about:blank");
     // Nothing held: the 304 comes back as fast as the stand-in answers, before the sections' slots
     // have come near the screen and named themselves.
-    let before = answered(&site);
+    let before = answered(&site, &READS);
     chrome.open(&site.url(&format!("/{DOC}")));
     shows(&mut chrome, LIVE, "the warm visit, checked");
     retitled(&mut chrome, &site, DOC, 4183, "Kept, retitled");
-    outline_once(&since(&site, &before, "/api/document"), 304);
+    outline_once(&since(&site, &READS, &before, "/api/document"), 304);
     let opened = feed_sections(&feeds(&mut chrome));
     assert_eq!(
         opened,
@@ -379,7 +345,7 @@ fn a_304_naming_no_cursor_reads_the_outline_again_whole_at_once_and_says_nothing
         return;
     };
     visit(&mut chrome, &site);
-    let before = return_held(&mut chrome, &site, &format!("/{DOC}"));
+    let before = return_held(&mut chrome, &site, &READS, &READS, &format!("/{DOC}"));
     draws(
         &mut chrome,
         &["Kept: the intro.", "Posted.", "Lamps, as kept."],
@@ -387,9 +353,9 @@ fn a_304_naming_no_cursor_reads_the_outline_again_whole_at_once_and_says_nothing
     chrome.eval(
         "window.alerted = []; new MutationObserver(() => document.querySelectorAll('.page-notices [role=alert]').forEach(alert => alerted.push(alert.textContent))).observe(document.body, {subtree: true, childList: true, characterData: true})",
     );
-    hold(&site, false);
+    hold(&site, &READS, false);
     shows(&mut chrome, LIVE, "the warm visit, once read again");
-    let outline = since(&site, &before, "/api/document");
+    let outline = since(&site, &READS, &before, "/api/document");
     assert_eq!(
         outline
             .iter()
@@ -399,7 +365,7 @@ fn a_304_naming_no_cursor_reads_the_outline_again_whole_at_once_and_says_nothing
         "the 304 naming no cursor, then the outline whole: {outline:#?}"
     );
     assert_eq!(
-        since(&site, &before, "/api/section"),
+        since(&site, &READS, &before, "/api/section"),
         [],
         "the outline whole says every section kept is current"
     );
@@ -421,16 +387,16 @@ fn a_section_edited_or_a_card_answered_while_away_is_read_alone_redrawn_and_kept
     let mut edited = document(DOC, "Kept", 4182);
     edited["sections"][2] = prose("lamps", "l2", 30, "Lamps, edited while away.");
     site.set_document(&edited);
-    let saved = oldest(&mut chrome);
-    let before = return_held(&mut chrome, &site, &format!("/{DOC}"));
+    let saved = oldest(&mut chrome, |part| KEPT.contains(&part));
+    let before = return_held(&mut chrome, &site, &READS, &READS, &format!("/{DOC}"));
     let said = notice(&mut chrome, saved, false);
     from_the_device(&mut chrome, &said);
     draws(&mut chrome, &["Kept: the intro.", "Lamps, as kept."]);
-    hold(&site, false);
+    hold(&site, &READS, false);
     draws(&mut chrome, &["Lamps, edited while away."]);
     shows(&mut chrome, LIVE, "the edited section, once read");
-    outline_once(&since(&site, &before, "/api/document"), 200);
-    let sections = since(&site, &before, "/api/section");
+    outline_once(&since(&site, &READS, &before, "/api/document"), 200);
+    let sections = since(&site, &READS, &before, "/api/section");
     assert_eq!(
         sections
             .iter()
@@ -445,15 +411,15 @@ fn a_section_edited_or_a_card_answered_while_away_is_read_alone_redrawn_and_kept
     let mut answered_card = edited.clone();
     answered_card["threads"]["palette"] = thread(&["Posted.", "Answered while away."]);
     site.set_document(&answered_card);
-    let saved = oldest(&mut chrome);
-    let before = return_held(&mut chrome, &site, &format!("/{DOC}"));
+    let saved = oldest(&mut chrome, |part| KEPT.contains(&part));
+    let before = return_held(&mut chrome, &site, &READS, &READS, &format!("/{DOC}"));
     draws(&mut chrome, &["Lamps, edited while away.", "Posted."]);
     let said = notice(&mut chrome, saved, false);
     from_the_device(&mut chrome, &said);
-    hold(&site, false);
+    hold(&site, &READS, false);
     draws(&mut chrome, &["Answered while away."]);
     shows(&mut chrome, LIVE, "the answered card, once read");
-    let sections = since(&site, &before, "/api/section");
+    let sections = since(&site, &READS, &before, "/api/section");
     assert_eq!(
         sections
             .iter()
@@ -468,16 +434,16 @@ fn a_section_edited_or_a_card_answered_while_away_is_read_alone_redrawn_and_kept
     );
 
     // The third visit draws both from the device, and reads no section.
-    let before = return_held(&mut chrome, &site, &format!("/{DOC}"));
+    let before = return_held(&mut chrome, &site, &READS, &READS, &format!("/{DOC}"));
     draws(
         &mut chrome,
         &["Lamps, edited while away.", "Answered while away."],
     );
-    hold(&site, false);
+    hold(&site, &READS, false);
     shows(&mut chrome, LIVE, "the third visit");
     retitled(&mut chrome, &site, DOC, 4183, "Kept, retitled");
-    outline_once(&since(&site, &before, "/api/document"), 304);
-    assert_eq!(since(&site, &before, "/api/section"), []);
+    outline_once(&since(&site, &READS, &before, "/api/document"), 304);
+    assert_eq!(since(&site, &READS, &before, "/api/section"), []);
 }
 
 #[test]
@@ -488,11 +454,11 @@ fn a_document_gone_while_away_says_so_and_this_device_forgets_it() {
     };
     visit(&mut chrome, &site);
     site.miss_route("/api/document", Some("no such document"));
-    let saved = oldest(&mut chrome);
-    return_held(&mut chrome, &site, &format!("/{DOC}"));
+    let saved = oldest(&mut chrome, |part| KEPT.contains(&part));
+    return_held(&mut chrome, &site, &READS, &READS, &format!("/{DOC}"));
     let said = notice(&mut chrome, saved, false);
     from_the_device(&mut chrome, &said);
-    hold(&site, false);
+    hold(&site, &READS, false);
     shows(
         &mut chrome,
         "document.querySelector('main').innerText.includes('Document not found') && !document.querySelector('main .doc-section')",

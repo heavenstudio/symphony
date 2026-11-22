@@ -994,7 +994,6 @@ export interface HostProps {
  * placeholder shows.
  */
 export function TimelineHost({
-  slug,
   part,
   tokens,
   read,
@@ -1017,7 +1016,7 @@ export function TimelineHost({
   const asked = useRef(read);
   asked.current = read;
   useLayoutEffect(putStyle, []);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: each task starts its reads afresh
+  // Each task starts its reads afresh: its host is mounted anew (timeline-slot.tsx keys it).
   useEffect(() => {
     const reading = new AbortController();
     void readAgain(
@@ -1027,7 +1026,7 @@ export function TimelineHost({
       reading.signal,
     );
     return () => reading.abort();
-  }, [slug, every]);
+  }, [every]);
   if (shown === null) return null;
   if ("error" in shown) {
     return (

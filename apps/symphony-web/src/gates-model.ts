@@ -581,7 +581,7 @@ export function civil(days: number): [number, number, number] {
 }
 
 /** Rust's `str::trim`: `text` without the White_Space characters at either end. */
-const trimmed = (text: string) => text.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "");
+export const trimmed = (text: string) => text.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "");
 
 /** What a read that failed says, from the reason the transport gave. */
 export function failed(why: string): string {
