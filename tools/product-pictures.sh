@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Retakes the product specs' pictures (docs/product/README.md, "Pictures"): every line of
-# docs/product/pictures.txt, at the widths it names, from a server that serves a machine folder of
-# its own as the machine's one server serves the machine's: two projects registered there, copies
-# of the fixture project (tools/product-pictures/fixture, at /orchard/, with a board of its own,
-# which tools/product-pictures/board.sh fills) and of a second with no board
-# (tools/product-pictures/pantry, at /pantry/), and the project list at /. Every picture is taken
-# at one moment (NOW below, on the board's clock and the page's), in UTC, so a page that draws an
-# age or a time is the same picture on any day. It touches no shared server, no project's board
-# and no terminal, and ends the one server it started, the copy's board server with it.
+# docs/product/pictures.txt, at the widths it names, from a server of its own over a copy of the
+# fixture project (tools/product-pictures/fixture), with a machine folder of its own and a board
+# of its own, the copy's, which tools/product-pictures/board.sh fills. From the list's `=machine`
+# line on, they are the machine's one server's instead, started then over that machine folder with
+# the copy and a second project with no board (tools/product-pictures/pantry) registered in it, so
+# its root is the project picker. Every picture is taken at one moment (NOW below, on the board's
+# clock and the page's), in UTC, so a page that draws an age or a time is the same picture on any
+# day. It touches no shared server, no project's board and no terminal, and ends the servers it
+# started, the copy's board server with them.
 #
 #   tools/product-pictures.sh          retake every picture
 #   tools/product-pictures.sh NAME...  retake those named (the list's first word)
@@ -22,21 +23,17 @@ work="$(mktemp -d "${TMPDIR:-/tmp}/symphony-product-pictures.XXXXXXXX")"
 # The moment of every picture: 2026-03-02 09:30 UTC, a Monday morning.
 NOW=1772443800
 export TZ=UTC
-server=""
-reader=""
+# Every server started, each followed by its output's reader.
+started=()
 board=""
 
 finish() {
-    if [ -n "$server" ]; then
-        kill "$server" 2>/dev/null || true
-        wait "$server" 2>/dev/null || true
-    fi
-    # Its reader goes too, though a child of the server's still held its output.
-    if [ -n "$reader" ]; then
-        kill "$reader" 2>/dev/null || true
-        wait "$reader" 2>/dev/null || true
-    fi
-    # The copy's board server, which the Symphony's started, ends once its starter has: it is no
+    # Each server, then its reader, though a child of the server's still held its output.
+    for pid in ${started[@]+"${started[@]}"}; do
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+    done
+    # The copy's board server, which the Symphony's started, ends once its starters have: it is no
     # child of this script's to wait for, so it is ended by the pid it recorded and looked at until
     # it is gone (ten seconds at most), as it writes in the folder removed next.
     board="$(jq -r '.pid // empty' "$work/project/.git/symphony/tasks/server.json" 2>/dev/null || true)"
@@ -63,7 +60,6 @@ repository() {
         commit --quiet --message "The fixture"
 }
 repository fixture "$work/project"
-repository pantry "$work/pantry"
 
 shot="$("$root/tools/rs-bin.sh" --build symphony)"
 serve="$("$root/tools/rs-bin.sh" --build symphony-server)"
@@ -74,22 +70,14 @@ SYMPHONY_SURREAL="${SYMPHONY_SURREAL:-$(bash "$root/tools/surreal.sh")}"
 export SYMPHONY_SURREAL
 # TASKS_RECORDER=off: nothing here is a build or a test of a task's. No hook, sweep or terminal of
 # this machine's is the copy's: a board command there starts none, and the terminals' two
-# programs are false, so the server's own sweep of the copy's board reaches none either.
+# programs are false, so the one server's own sweep of the copy's board reaches none either.
 export SYMPHONY_MACHINE_DIR="$work/machine" TASKS_RECORDER=off TASKS_SWEEP=off \
     HC_BIN=/usr/bin/false HERDR_APP_BIN=/usr/bin/false
 unset TASKS_SESSION TASKS_TASK TASKS_SERVER TASKS_DATABASE
 mkdir "$work/machine"
-# The two projects in that machine folder's registry, the fixture first, as `just symphony` in
-# each checkout registers it.
-(cd "$work" && "$serve" project add "$work/project" && "$serve" project add "$work/pantry") \
-    >"$work/projects.log" 2>&1 || {
-    cat "$work/projects.log" >&2
-    echo "product-pictures: the projects were not registered" >&2
-    exit 1
-}
-# The board build the server's sweep of the copy's board runs, alone in a folder put first on
-# the server's PATH: a project's checkout links its own (`just symphony`), and a sweep that finds
-# none fails, which every page would say.
+# The board build a server's sweep of the copy's board runs, alone in a folder put first on the
+# servers' PATH: a project's checkout links its own (`just symphony`), and a sweep that finds none
+# fails, which every page would say.
 mkdir "$work/bin"
 ln -s "$tasks" "$work/bin/tasks"
 
@@ -101,42 +89,46 @@ ln -s "$tasks" "$work/bin/tasks"
     exit 1
 }
 
-# The server's output goes through a FIFO to a reader that keeps it whole in its log and says the
-# server's address on a second FIFO the first time the server prints it, or an empty line once the
-# output ends without one, the server having ended. The script waits for that line, `read -t` its
-# deadline. The second FIFO is held open both ways (fd 3), so neither side's open waits.
-mkfifo "$work/output" "$work/address"
-exec 3<>"$work/address"
-# The server as a start of the one server runs it, on a port of its own, over the machine folder
-# above, with the client this checkout commits, which it would otherwise look for there.
-(cd "$work/project" && PATH="$work/bin:$PATH" TASKS_NOW=$NOW \
-    exec "$serve" serve --home "$work/machine" --install "$root/apps/symphony-server" \
-    --root "$work/project" --port 0 --host 127.0.0.1) >"$work/output" 2>&1 &
-server=$!
-{
-    said=""
-    while IFS= read -r line || [ -n "$line" ]; do
-        printf '%s\n' "$line"
-        if [ -z "$said" ] && [[ $line =~ http://127\.0\.0\.1:[0-9]+ ]]; then
-            said=1
-            printf '%s\n' "${BASH_REMATCH[0]}" >&3
-        fi
-    done <"$work/output" >"$work/server.log"
-    [ -n "$said" ] || echo >&3
-} &
-reader=$!
+# `start NAME FD ARGUMENT...`: the Symphony server with ARGUMENT..., run in the copy with its board
+# clock held at NOW, its address left in `base`. Its output goes through a FIFO to a reader that
+# keeps it whole in NAME.log and says the server's address on a second FIFO the first time the
+# server prints it, or an empty line once the output ends without one, the server having ended.
+# The script waits for that line, `read -t` its deadline. The second FIFO is held open both ways
+# on FD, so neither side's open waits.
+start() {
+    local name=$1 fd=$2
+    shift 2
+    mkfifo "$work/$name.output" "$work/$name.address"
+    eval "exec $fd<>\"\$work/\$name.address\""
+    (cd "$work/project" && PATH="$work/bin:$PATH" TASKS_NOW=$NOW exec "$serve" "$@") \
+        >"$work/$name.output" 2>&1 &
+    started+=("$!")
+    {
+        said=""
+        while IFS= read -r line || [ -n "$line" ]; do
+            printf '%s\n' "$line"
+            if [ -z "$said" ] && [[ $line =~ http://127\.0\.0\.1:[0-9]+ ]]; then
+                said=1
+                printf '%s\n' "${BASH_REMATCH[0]}" >&"$fd"
+            fi
+        done <"$work/$name.output" >"$work/$name.log"
+        [ -n "$said" ] || echo >&"$fd"
+    } &
+    started+=("$!")
+    base=""
+    if ! read -r -t 60 -u "$fd" base; then
+        cat "$work/$name.log" >&2
+        echo "product-pictures: the $name server said no address in 60 s (load $(uptime | sed 's/.*averages*: //'))" >&2
+        exit 1
+    fi
+    if [ -z "$base" ]; then
+        cat "$work/$name.log" >&2
+        echo "product-pictures: the $name server ended before it said its address" >&2
+        exit 1
+    fi
+}
 
-base=""
-if ! read -r -t 60 base <&3; then
-    cat "$work/server.log" >&2
-    echo "product-pictures: the server said no address in 60 s (load $(uptime | sed 's/.*averages*: //'))" >&2
-    exit 1
-fi
-if [ -z "$base" ]; then
-    cat "$work/server.log" >&2
-    echo "product-pictures: the server ended before it said its address" >&2
-    exit 1
-fi
+start own 3 --port 0 --host 127.0.0.1 --root "$work/project"
 
 # The board: its tasks, written by the board's own commands, then every session given the name
 # the fixture has for it in place of the handle the board drew at random, and the folder it
@@ -169,9 +161,38 @@ done <"$work/names"
     exit 1
 }
 
+# The machine's one server, for the list's lines from `=machine` on: the copy and the second project
+# registered in the machine folder, as `just symphony` in each checkout registers it, the copy
+# first, and the server started from the copy, as that start runs it, with the client this checkout
+# commits, which it would otherwise look for in the machine folder. The copy's board is read before
+# the server says its address; the second project's first read is asked for and answered before any
+# picture, so the project picker counts both.
+machine() {
+    repository pantry "$work/pantry"
+    (cd "$work" && "$serve" project add "$work/project" && "$serve" project add "$work/pantry") \
+        >"$work/projects.log" 2>&1 || {
+        cat "$work/projects.log" >&2
+        echo "product-pictures: the projects were not registered" >&2
+        exit 1
+    }
+    start machine 4 serve --home "$work/machine" --install "$root/apps/symphony-server" \
+        --root "$work/project" --port 0 --host 127.0.0.1
+    curl --silent --show-error --max-time 60 --output /dev/null "$base/pantry/api/board" || {
+        cat "$work/machine.log" >&2
+        echo "product-pictures: the second project's board was not read" >&2
+        exit 1
+    }
+}
+
 taken=0
 while read -r name widths path steps || [ -n "$name" ]; do
-    case "$name" in '' | '#'*) continue ;; esac
+    case "$name" in
+    '' | '#'*) continue ;;
+    =machine)
+        machine
+        continue
+        ;;
+    esac
     if [ "$#" -gt 0 ]; then
         case " $* " in *" $name "*) ;; *) continue ;; esac
     fi

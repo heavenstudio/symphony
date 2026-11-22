@@ -41,17 +41,16 @@ address, and no wire type.
 ## Pictures
 
 A spec's pictures are taken, never drawn or pasted: `tools/product-pictures.sh` starts a server of
-its own that serves a machine of its own as the one server does, takes every line of
-[pictures.txt](pictures.txt) with `symphony shot` on a phone (390x844), wide (1280x800) or both,
-as the line says, in the light scheme, and writes `pictures/NAME-phone.png` and
-`pictures/NAME-wide.png`. That machine holds two projects: the fixture
-(`tools/product-pictures/fixture`, a made-up recipe site with a few cards in three folders), at
-`/orchard/`, and a second with no board (`tools/product-pictures/pantry`), so the project picker
-at `/` lists one of each. A line's path without a project in it is the fixture's. The fixture has
-a board of its own, which `tools/product-pictures/board.sh` fills with a few tasks, one at least
-in every stage and waiting on each kind of thing the board names, and with agents live, stale and
-lost. The script reaches no shared server, no project's board and no terminal, and stops the
-server it started.
+its own over the fixture project (`tools/product-pictures/fixture`, a made-up recipe site with a
+few cards in three folders), takes every line of [pictures.txt](pictures.txt) with `symphony shot`
+on a phone (390x844), wide (1280x800) or both, as the line says, in the light scheme, and writes
+`pictures/NAME-phone.png` and `pictures/NAME-wide.png`. The fixture has a board of its own, which
+`tools/product-pictures/board.sh` fills with a few tasks, one at least in every stage and waiting
+on each kind of thing the board names, and with agents live, stale and lost. The pictures after
+the list's `=machine` line are of the machine's one server, started then over a machine folder of
+the script's own that holds the fixture and a second project with no board
+(`tools/product-pictures/pantry`), so its `/` is the project picker with one of each. The script
+reaches no shared server, no project's board and no terminal, and stops the servers it started.
 
 - **A new picture** is a line in `pictures.txt`: its name, the widths a document shows it at, the
   page's path and, for a state that takes a press to reach, the steps of `symphony shot` that
