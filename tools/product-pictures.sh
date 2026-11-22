@@ -2,7 +2,8 @@
 # Retakes the product specs' pictures (docs/product/README.md, "Pictures"): every line of
 # docs/product/pictures.txt, at the widths it names, from a server of its own over a copy of the
 # fixture project (tools/product-pictures/fixture), with a machine folder of its own and a board
-# of its own, the copy's, which tools/product-pictures/board.sh fills. Every picture is taken at
+# of its own, the copy's, which tools/product-pictures/board.sh fills, and the runs and the hours
+# tools/product-pictures/records.sh says its machine recorded. Every picture is taken at
 # one moment (NOW below, on the board's clock and the page's), in UTC, so a page that draws an age
 # or a time is the same picture on any day. It touches no shared server and no project's board,
 # and ends the one server it started, the copy's board server with it.
@@ -144,9 +145,24 @@ done <"$work/names"
     exit 1
 }
 
+# What the machine recorded of the project, for Reports and Runs: no page has asked for it yet.
+if ! (cd "$work/project" && NOW=$NOW bash "$root/tools/product-pictures/records.sh") \
+    >>"$work/board.log" 2>&1; then
+    cat "$work/board.log" >&2
+    echo "product-pictures: the fixture's runs and hours were not written" >&2
+    exit 1
+fi
+
 taken=0
 while read -r name widths path steps || [ -n "$name" ]; do
     case "$name" in '' | '#'*) continue ;; esac
+    # From the list's `=theme` line on, the project has the theme of its own
+    # (tools/product-pictures/theme.toml), which its pages take at their next load: whichever
+    # pictures are retaken, those after the line are of the themed project.
+    if [ "$name" = "=theme" ]; then
+        cat "$root/tools/product-pictures/theme.toml" >>"$work/project/symphony.toml"
+        continue
+    fi
     if [ "$#" -gt 0 ]; then
         case " $* " in *" $name "*) ;; *) continue ;; esac
     fi
