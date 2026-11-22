@@ -535,9 +535,9 @@ impl Project {
 }
 
 /// What a request was refused with.
-pub fn refused(answered: Result<Vec<pg::Answer>, symphony_board::rpc::DbError>) -> String {
+pub fn refused(answered: Result<Vec<pg::Answer>, symphony_board::db::DbError>) -> String {
     match answered {
-        Err(symphony_board::rpc::DbError::Failed(said)) => said,
+        Err(symphony_board::db::DbError::Failed(said)) => said,
         other => panic!("refused, not {other:?}"),
     }
 }

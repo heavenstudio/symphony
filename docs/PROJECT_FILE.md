@@ -6,16 +6,17 @@ a plain project of every default. A table or key the Symphony does not know is r
 line where the project is loaded or linted (`just symphony-status --lint`), and left out, the rest
 read, where the Symphony runs with the file as it is. A file that does not load is run as the plain
 project: the server serves the project with the defaults, and every page of it says so and why,
-until it loads. Three keys nothing acted on are gone (`[agents] transports`, `[board] export` and
-`[board] disposable`), each refused as any unknown key is. The board reads its own keys (`[board]`'s
-commands and thresholds, `[limits]`, `[agents] launch`, `[agents.models]` and `[stamps]`) from the
-main checkout's copy, so a branch cannot change its own. A path is relative to the project's root
-and stays inside it, unless its key says otherwise. A key the board reads itself is judged there
-by the rule its row below says, as the Symphony judges it. The board reads a path it refuses
-(`[board] guide`, `slot_locks` and `assessments`: one that leads out of the project, or is empty)
-and an `id` it refuses as unwritten, says a limit it refuses and takes the limit's default
-([`[limits]`](#limits)), and refuses an agent, a default branch or a generator's command where it
-needs one: at a launch, a land, or a move of its live board to a newer schema.
+until it loads. Four keys are gone, three nothing acted on (`[agents] transports`, `[board]
+export` and `[board] disposable`) and `[plugins] loopback`, each refused as any unknown key is. The
+board reads its own keys (`[board]`'s commands and thresholds, `[limits]`, `[agents] launch`,
+`[agents.models]` and `[stamps]`) from the main checkout's copy, so a branch cannot change its own.
+A path is relative to the project's root and stays inside it, unless its key says otherwise. A key
+the board reads itself is judged there by the rule its row below says, as the Symphony judges it.
+The board reads a path it refuses (`[board] guide`, `slot_locks` and `assessments`: one that leads
+out of the project, or is empty) and an `id` it refuses as unwritten, says a limit it refuses and
+takes the limit's default ([`[limits]`](#limits)), and refuses an agent, a default branch or a
+generator's command where it needs one: at a launch, a land, or a move of its live board to a newer
+schema.
 
 ```toml
 [project]
@@ -244,7 +245,6 @@ neither serves no `.html` file, as its patterns serve none they leave out.
 | `crates` | `[]` | the project's plugins, each by the name its plugin declares: a host linking them, or a process of their own ([PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md)) |
 | `process` | none | `[plugins.process]`: a plugin's name, then the command that starts its process, run in the project's root |
 | `timing` | `false` | record each plugin call's time ([PLUGIN_CALLS](PLUGIN_CALLS.md)) |
-| `loopback` | `false` | send each call through a JSON round trip inside the process, and record both times |
 
 ## `[theme]`
 

@@ -197,7 +197,16 @@ impl Hosting<'_> {
             ));
         };
         let theirs = self.file_at(commit).or_else(|| {
-            let _ = super::git::fetch_line(self.root, self.remote, self.branch, within.bound);
+            let fetched = super::git::fetch_line(self.root, self.remote, self.branch, within.bound);
+            if let Err(why) = fetched {
+                let unfetched = format!(
+                    "{}/{} could not be fetched for the commit {}",
+                    self.remote,
+                    self.branch,
+                    short(commit)
+                );
+                super::unsaid(&mut std::io::stderr(), &unfetched, Err(why));
+            }
             self.file_at(commit)
         });
         match theirs {

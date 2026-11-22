@@ -99,6 +99,7 @@
 
 use crate::cli::Env;
 use crate::on_review::{self, Started};
+use crate::stamps::short;
 use crate::sweep::git::{Answer, Listed, ancestor, answers, git, rev, succeeds, told, worktrees};
 use crate::sweep::trigger;
 use crate::sys::{self, Stdio};
@@ -776,10 +777,6 @@ fn log(dir: &Path, range: &str) -> Result<Vec<Commit>, String> {
             })
         })
         .collect())
-}
-
-fn short(sha: &str) -> &str {
-    &sha[..sha.len().min(7)]
 }
 
 fn commits(n: usize) -> String {

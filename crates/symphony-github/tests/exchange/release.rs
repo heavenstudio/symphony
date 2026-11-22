@@ -200,6 +200,27 @@ fn turned_off_or_not_serving_releases_asks_github_nothing() {
 }
 
 #[test]
+fn a_release_turned_off_names_its_own_setting_and_unread_settings_say_why() {
+    let rig = Rig::new("release-off-said", "pull_requests = \"track\"");
+    assert_eq!(
+        ask(&rig, &request(TAG, COMMIT)),
+        json!({
+            "state": "refused",
+            "why": "turned off: the committed settings do not say enabled = true and releases = \
+                    \"publish\"",
+        })
+    );
+    rig.settings.set(Some("releases = \"sometimes\"\n".into()));
+    let answer = ask(&rig, &request(TAG, COMMIT));
+    let why = answer["why"].as_str().unwrap();
+    assert!(
+        why.starts_with("turned off: its settings do not read: ") && why.contains("sometimes"),
+        "{answer}"
+    );
+    assert!(!rig.dir.0.join("state").exists(), "nothing is kept");
+}
+
+#[test]
 fn another_repository_than_the_one_bound_is_refused() {
     let rig = rig("release-unbound");
     assert_eq!(ask(&rig, &request(TAG, COMMIT))["state"], "published");

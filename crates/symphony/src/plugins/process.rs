@@ -37,7 +37,7 @@
 //! ([`PageData::render`]). A register read asks every card kind of every card in one request
 //! ([`Remote::read_cards`], [`ReadCards`]), its answers kept for that read.
 //!
-//! **Measured.** Under `[plugins] timing` or `loopback` each call writes its line to the project's
+//! **Measured.** Under `[plugins] timing` each call writes its line to the project's
 //! record ([`super::measure`]) as a process call: the plugin's own time, as it says it, the host's
 //! whole wait for the answer, and the bytes of the two lines.
 
@@ -1042,7 +1042,6 @@ impl Remote {
                 round_trip_us: Some(measure::micros(round_trip)),
                 request_bytes,
                 answer_bytes,
-                lost: None,
                 failed,
             });
         }

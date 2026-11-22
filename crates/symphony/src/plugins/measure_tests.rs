@@ -1,5 +1,3 @@
-use symphony_plugin::vocabulary::GateState;
-
 use super::*;
 use crate::test_tree::Tree;
 
@@ -12,17 +10,19 @@ fn lines(path: &Path) -> Vec<serde_json::Value> {
         .collect()
 }
 
-fn new_meter(path: &Path, loopback: bool) -> Meter {
+fn new_meter(path: &Path) -> Meter {
     Meter {
         plugin: "fixture",
-        loopback,
         record: Record::at(path),
-        said: Mutex::new(BTreeSet::new()),
     }
 }
 
-fn validate(value: FieldValue) -> Validate {
-    Validate::new("effort".into(), value)
+/// The lines of the record at `path` whose seam is `seam`.
+fn of_seam(path: &Path, seam: &str) -> Vec<serde_json::Value> {
+    lines(path)
+        .into_iter()
+        .filter(|line| line["seam"] == seam)
+        .collect()
 }
 
 #[test]
@@ -34,166 +34,31 @@ fn a_duration_is_written_in_microseconds_to_the_nanosecond() {
 }
 
 #[test]
-fn a_call_that_survives_json_answers_what_its_far_side_answered_and_costs_both_ways() {
-    let trip = round_trip(
-        || panic!("the linked call is not made when the request reads back"),
-        || validate(FieldValue::Text(" 3 ".into())),
-        |asked: Validate| {
-            assert_eq!(asked.value, FieldValue::Text(" 3 ".into()));
-            Ok(FieldValue::Number(3.0))
-        },
-    );
-    assert_eq!(trip.answer, Ok(FieldValue::Number(3.0)));
-    assert_eq!(trip.lost, None);
-    let request: Request = validate(FieldValue::Text(" 3 ".into())).into();
-    assert_eq!(
-        trip.request_bytes,
-        Some(serde_json::to_string(&request).unwrap().len())
-    );
-    // The answer goes as the wire carries it: an answer, not a refusal.
-    assert_eq!(trip.answer_bytes, Some(r#"{"answer":{"Ok":3.0}}"#.len()));
-    assert!(trip.round_trip.unwrap() >= trip.call);
-}
-
-#[test]
-fn what_did_not_survive_is_said_after_what_already_had() {
-    let mut lost = None;
-    lose(&mut lost, "the request read back otherwise".into());
-    assert_eq!(lost.as_deref(), Some("the request read back otherwise"));
-    lose(&mut lost, "the answer: no".into());
-    assert_eq!(
-        lost.as_deref(),
-        Some("the request read back otherwise; the answer: no")
-    );
-}
-
-#[test]
-fn an_answer_that_does_not_read_back_is_named_and_the_plugins_own_is_kept() {
-    let trip = round_trip(
-        || panic!("the request reads back"),
-        || validate(FieldValue::Text("x".into())),
-        |_: Validate| Ok(FieldValue::Number(f64::NAN)),
-    );
-    let lost = trip.lost.unwrap();
-    assert!(lost.starts_with("the answer: "), "{lost}");
-    assert!(matches!(trip.answer, Ok(FieldValue::Number(n)) if n.is_nan()));
-    assert!(trip.round_trip.is_some());
-}
-
-#[test]
-fn an_answer_that_reads_back_otherwise_is_named_and_what_came_back_is_the_answer() {
-    let at = |at| Gate {
-        name: "certificate".into(),
-        state: GateState::default(),
-        at,
-        ..Gate::default()
-    };
-    let trip = round_trip(
-        || panic!("the request reads back"),
-        || {
-            let task = TaskRef {
-                slug: "a/b",
-                status: "review",
-                branch: "a/b",
-            };
-            AnswerGates::new("stamps".into(), "/r".into(), TaskData::of(&task), None)
-        },
-        |_: AnswerGates| Ok(vec![at(Some(f64::NAN))]),
-    );
-    assert_eq!(trip.lost.as_deref(), Some("the answer read back otherwise"));
-    assert_eq!(trip.answer, Ok(vec![at(None)]));
-}
-
-#[test]
-fn a_request_that_cannot_be_written_is_named_and_the_call_is_made_linked() {
-    use std::os::unix::ffi::OsStrExt as _;
-    let trip = round_trip(
-        || Some(Reply::Json("linked".into())),
-        || {
-            Serve::new(
-                "widgets".into(),
-                PathBuf::from(std::ffi::OsStr::from_bytes(b"/r/\xff")),
-                String::new(),
-            )
-        },
-        |_: Serve| panic!("the far side is not asked a request that was never sent"),
-    );
-    assert!(
-        trip.lost.as_deref().unwrap().starts_with("the request: "),
-        "{:?}",
-        trip.lost
-    );
-    assert_eq!(trip.answer, Some(Reply::Json("linked".into())));
-    assert_eq!(
-        (trip.round_trip, trip.request_bytes, trip.answer_bytes),
-        (None, None, None)
-    );
-}
-
-#[test]
-fn the_times_hold_the_calls_own_time_and_the_round_trip_the_jsons_besides() {
+fn a_timed_call_holds_the_calls_own_time() {
     const SLEPT: Duration = Duration::from_millis(40);
     let tree = Tree::new();
     let path = tree.path("artifacts/moves.jsonl");
-    let timed = new_meter(&path, false);
+    let timed = new_meter(&path);
     #[expect(
         clippy::disallowed_methods,
         reason = "no-timed-waits baseline: a meter's test of a call made slow by a length of time"
     )]
     timed.time::<Validate, _>("slow", || std::thread::sleep(SLEPT));
-    let looped = new_meter(&path, true);
-    let slow_answer = || {
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "no-timed-waits baseline: a meter's test of a call made slow by a length of time"
-        )]
-        std::thread::sleep(SLEPT);
-        Ok(FieldValue::Text("x".into()))
-    };
-    let slow = looped.call(
-        "slow",
-        || panic!("the request reads back"),
-        || {
-            #[expect(clippy::disallowed_methods, reason = "no-timed-waits baseline: a meter's test of a call made slow by a length of time")]
-            std::thread::sleep(SLEPT);
-            validate(FieldValue::Text("x".into()))
-        },
-        |_| slow_answer(),
-    );
-    assert_eq!(slow, Ok(FieldValue::Text("x".into())));
-    let big = "y".repeat(1_000_000);
-    let big_answer = looped.call(
-        "big",
-        || panic!("the request reads back"),
-        || validate(FieldValue::Text(big.clone())),
-        |_| Ok(FieldValue::Text(big.clone())),
-    );
-    assert_eq!(big_answer, Ok(FieldValue::Text(big)));
     let lines = lines(&path);
-    let us = |n: usize| lines[n]["us"].as_f64().unwrap();
-    let slept = micros(SLEPT);
     // Times on the wall are bounded from below alone: a loaded machine only adds to them.
-    assert!(us(0) >= slept, "{}", lines[0]);
-    assert!(us(1) >= slept, "{}", lines[1]);
-    // The round trip holds the request's making and its JSON besides the call's own time.
-    let json = |n: usize| lines[n]["round_trip_us"].as_f64().unwrap() - us(n);
-    assert!(json(1) >= slept, "{}", lines[1]);
-    // A million bytes each way are counted.
-    assert!(lines[2]["request_bytes"].as_u64().unwrap() > 1_000_000);
-    assert!(lines[2]["answer_bytes"].as_u64().unwrap() > 1_000_000);
+    assert!(
+        lines[0]["us"].as_f64().unwrap() >= micros(SLEPT),
+        "{}",
+        lines[0]
+    );
 }
 
 #[test]
 fn a_timed_call_writes_its_seam_call_name_and_time_and_nothing_of_a_round_trip() {
     let tree = Tree::new();
     let path = tree.path("artifacts/plugin-calls.jsonl");
-    let meter = new_meter(&path, false);
-    let answer = meter.call(
-        "effort",
-        || Ok(FieldValue::Number(1.0)),
-        || panic!("no request is built for a linked call"),
-        |_: Validate| panic!("no far side for a linked call"),
-    );
+    let meter = new_meter(&path);
+    let answer = meter.time::<Validate, _>("effort", || Ok::<_, String>(FieldValue::Number(1.0)));
     assert_eq!(answer, Ok(FieldValue::Number(1.0)));
     let lines = lines(&path);
     assert_eq!(lines.len(), 1);
@@ -216,55 +81,11 @@ fn a_timed_call_writes_its_seam_call_name_and_time_and_nothing_of_a_round_trip()
     assert!(line["at_ms"].as_u64().unwrap() > 1_700_000_000_000);
 }
 
-#[test]
-fn a_looped_call_writes_both_times_its_bytes_and_what_it_lost() {
-    let tree = Tree::new();
-    let path = tree.path("out/calls.jsonl");
-    let meter = new_meter(&path, true);
-    let ask = || validate(FieldValue::Text("2".into()));
-    let kept = meter.call(
-        "effort",
-        || panic!("the request reads back"),
-        ask,
-        |_| Ok(FieldValue::Number(2.0)),
-    );
-    assert_eq!(kept, Ok(FieldValue::Number(2.0)));
-    let lost = meter.call(
-        "effort",
-        || panic!("the request reads back"),
-        ask,
-        |_| Ok(FieldValue::Number(f64::INFINITY)),
-    );
-    assert!(matches!(lost, Ok(FieldValue::Number(n)) if n.is_infinite()));
-    let lines = lines(&path);
-    assert_eq!(lines.len(), 2);
-    for line in &lines {
-        assert_eq!(line["path"], "loopback");
-        assert!(line.get("failed").is_none());
-        assert!(line["round_trip_us"].as_f64().unwrap() >= line["us"].as_f64().unwrap());
-        assert!(line["request_bytes"].as_u64().unwrap() > 0);
-        assert!(line["answer_bytes"].as_u64().unwrap() > 0);
-    }
-    assert!(lines[0].get("lost").is_none());
-    assert!(
-        lines[1]["lost"]
-            .as_str()
-            .unwrap()
-            .starts_with("the answer: "),
-        "{}",
-        lines[1]
-    );
-    // Stderr names a call's loss once; the record names every one.
-    assert!(meter.said.lock().unwrap().contains("board_fields.validate"));
-}
-
 /// One timed line written into `record`.
 fn timed_into(record: &'static Record) {
     let meter = Meter {
         plugin: "fixture",
-        loopback: false,
         record,
-        said: Mutex::new(BTreeSet::new()),
     };
     meter.time::<Validate, _>("effort", || ());
 }
@@ -322,7 +143,7 @@ fn a_record_removed_and_made_again_by_another_is_the_one_written_to() {
 fn a_record_removed_starts_over_and_one_that_cannot_be_written_is_said_once() {
     let tree = Tree::new();
     let path = tree.path("artifacts/again.jsonl");
-    let meter = new_meter(&path, false);
+    let meter = new_meter(&path);
     let call = || {
         meter.time::<Validate, _>("effort", || ());
     };
@@ -334,7 +155,7 @@ fn a_record_removed_starts_over_and_one_that_cannot_be_written_is_said_once() {
     assert_eq!(lines(&path).len(), 1);
     // A record under a file, not a folder, cannot be opened.
     tree.write("blocked", "");
-    let blocked = new_meter(&tree.path("blocked/calls.jsonl"), false);
+    let blocked = new_meter(&tree.path("blocked/calls.jsonl"));
     blocked.time::<Validate, _>("effort", || ());
     blocked.time::<Validate, _>("effort", || ());
     assert!(blocked.record.warned.load(Ordering::SeqCst));
@@ -342,7 +163,7 @@ fn a_record_removed_starts_over_and_one_that_cannot_be_written_is_said_once() {
 }
 
 #[test]
-fn a_record_is_one_per_path_and_a_wrapper_one_per_plugin_record_and_setting() {
+fn a_record_is_one_per_path_and_a_wrapper_one_per_plugin_and_record() {
     struct Bare;
     impl Plugin for Bare {
         fn name(&self) -> &str {
@@ -350,29 +171,22 @@ fn a_record_is_one_per_path_and_a_wrapper_one_per_plugin_record_and_setting() {
         }
     }
     static BARE: Bare = Bare;
+    static OTHER: Bare = Bare;
     let tree = Tree::new();
     let (one, two) = (tree.path("one.jsonl"), tree.path("two.jsonl"));
     assert!(std::ptr::eq(Record::at(&one), Record::at(&one)));
     assert!(!std::ptr::eq(Record::at(&one), Record::at(&two)));
-    let timed = measured(&BARE, &one, false);
-    assert!(std::ptr::eq(timed, measured(&BARE, &one, false)));
-    assert!(!std::ptr::eq(timed, measured(&BARE, &two, false)));
-    let looped = measured(&BARE, &one, true);
-    assert!(!std::ptr::eq(timed, looped));
-    assert_eq!(looped.name(), "bare");
-    // The loopback sends the plugin's declaration once, when its wrapper is made.
-    let declared: Vec<_> = lines(&one)
-        .into_iter()
-        .filter(|line| line["seam"] == "plugin")
-        .collect();
-    assert_eq!(declared.len(), 1, "{declared:?}");
-    assert_eq!(declared[0]["call"], "declare");
-    assert_eq!(declared[0]["name"], "bare");
-    assert!(declared[0].get("lost").is_none());
+    let timed = measured(&BARE, &one);
+    assert!(std::ptr::eq(timed, measured(&BARE, &one)));
+    assert!(!std::ptr::eq(timed, measured(&BARE, &two)));
+    assert!(!std::ptr::eq(timed, measured(&OTHER, &one)));
+    assert_eq!(timed.name(), "bare");
+    // Making a wrapper is no call: what a plugin declares is read from it, untimed.
+    assert!(lines(&one).is_empty());
 }
 
 #[test]
-fn an_authority_measured_timed_or_looped_answers_as_linked_and_each_call_is_recorded() {
+fn an_authority_measured_answers_as_linked_and_its_call_is_recorded() {
     use symphony_plugin::authority::{Operation, Signed, Snapshot};
     use symphony_plugin::execution::{Principal, PrincipalKind};
     struct Ledger;
@@ -426,26 +240,119 @@ fn an_authority_measured_timed_or_looped_answers_as_linked_and_each_call_is_reco
         ))
     );
     let tree = Tree::new();
-    for (file, loopback) in [("timed.jsonl", false), ("looped.jsonl", true)] {
-        let path = tree.path(file);
-        let wrapped = measured(&LEDGERED, &path, loopback);
-        let authorities = wrapped.authorities();
-        let [authority] = authorities.as_slice() else {
-            panic!("{} authorities", authorities.len());
-        };
-        assert_eq!(authority.adapter(), "approvals");
-        assert_eq!(authority.attest(root, &operation, within), linked, "{file}");
-        let attests: Vec<_> = lines(&path)
-            .into_iter()
-            .filter(|line| line["seam"] == "authorities")
-            .collect();
-        assert_eq!(attests.len(), 1, "{file}: {attests:?}");
-        assert_eq!(
-            (&attests[0]["call"], &attests[0]["name"]),
-            (&"attest".into(), &"approvals".into()),
-            "{file}"
-        );
-        assert_eq!(attests[0]["path"] == "loopback", loopback, "{file}");
-        assert!(attests[0].get("lost").is_none(), "{file}");
+    let path = tree.path("timed.jsonl");
+    let wrapped = measured(&LEDGERED, &path);
+    let authorities = wrapped.authorities();
+    let [authority] = authorities.as_slice() else {
+        panic!("{} authorities", authorities.len());
+    };
+    assert_eq!(authority.adapter(), "approvals");
+    assert_eq!(authority.attest(root, &operation, within), linked);
+    let attests = of_seam(&path, "authorities");
+    assert_eq!(attests.len(), 1, "{attests:?}");
+    assert_eq!(
+        (
+            &attests[0]["call"],
+            &attests[0]["name"],
+            &attests[0]["path"]
+        ),
+        (&"attest".into(), &"approvals".into(), &"linked".into())
+    );
+}
+
+#[test]
+fn a_command_measured_writes_to_the_streams_it_is_handed_and_exits_as_its_own() {
+    struct Echo;
+    impl Command for Echo {
+        fn name(&self) -> &str {
+            "echo"
+        }
+        fn summary(&self) -> &str {
+            "says its arguments"
+        }
+        fn run(
+            &self,
+            args: &[String],
+            out: &mut dyn std::io::Write,
+            err: &mut dyn std::io::Write,
+        ) -> i32 {
+            let _ = out.write_all(args.join(" ").as_bytes());
+            let _ = err.write_all(format!("{} said", args.len()).as_bytes());
+            3
+        }
     }
+    struct Echoing;
+    impl Plugin for Echoing {
+        fn name(&self) -> &str {
+            "echoing"
+        }
+        fn commands(&self) -> Vec<&dyn Command> {
+            vec![&Echo]
+        }
+    }
+    static ECHOING: Echoing = Echoing;
+    let tree = Tree::new();
+    let path = tree.path("commands.jsonl");
+    let commands = measured(&ECHOING, &path).commands();
+    let [command] = commands.as_slice() else {
+        panic!("{} commands", commands.len());
+    };
+    assert_eq!(
+        (command.name(), command.summary()),
+        ("echo", "says its arguments")
+    );
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let args = ["a".to_string(), "b".to_string()];
+    assert_eq!(command.run(&args, &mut out, &mut err), 3);
+    assert_eq!(
+        (out.as_slice(), err.as_slice()),
+        (&b"a b"[..], &b"2 said"[..])
+    );
+    let runs = of_seam(&path, "commands");
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    assert_eq!(
+        (&runs[0]["call"], &runs[0]["name"]),
+        (&"run".into(), &"echo".into())
+    );
+}
+
+#[test]
+fn a_watch_is_named_by_its_paths_and_each_of_its_calls_is_recorded() {
+    struct Paths;
+    impl Watch for Paths {
+        fn paths(&self) -> Vec<String> {
+            vec!["content/".into(), "data/ships.toml".into()]
+        }
+        fn changed(&self, root: &Path) -> Option<String> {
+            Some(root.display().to_string())
+        }
+    }
+    struct Watching;
+    impl Plugin for Watching {
+        fn name(&self) -> &str {
+            "watching"
+        }
+        fn watches(&self) -> Vec<&dyn Watch> {
+            vec![&Paths]
+        }
+    }
+    static WATCHING: Watching = Watching;
+    let tree = Tree::new();
+    let path = tree.path("watches.jsonl");
+    let watches = measured(&WATCHING, &path).watches();
+    let [watch] = watches.as_slice() else {
+        panic!("{} watches", watches.len());
+    };
+    assert_eq!(watch.paths(), ["content/", "data/ships.toml"]);
+    assert_eq!(watch.changed(Path::new("/r")), Some("/r".into()));
+    watch.forget(Path::new("/r"));
+    let calls: Vec<_> = of_seam(&path, "watches")
+        .iter()
+        .map(|line| (line["call"].clone(), line["name"].clone()))
+        .collect();
+    let named = serde_json::Value::from("content/, data/ships.toml");
+    assert_eq!(
+        calls,
+        [("changed".into(), named.clone()), ("forget".into(), named)]
+    );
 }
