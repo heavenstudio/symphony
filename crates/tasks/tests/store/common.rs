@@ -77,7 +77,7 @@ impl RawWrite for Client {
     }
 }
 
-fn retry_conflicts<T>(
+pub fn retry_conflicts<T>(
     until: Instant,
     mut once: impl FnMut() -> Result<T, DbError>,
 ) -> Result<T, DbError> {

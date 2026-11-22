@@ -156,12 +156,25 @@ pub(super) fn keeps(chrome: &mut Chrome, parts: &[&str]) {
     );
 }
 
+/// A page's script naming the longest wait a timer takes for its database's open
+/// (`symphonyCacheOpenMs`, `apps/symphony-web/shell/cache.ts`): the page waits for the open
+/// itself, and only a stall, which each test's own wait says, ends it.
+const DATABASE_WAITED_FOR: &str = "window.symphonyCacheOpenMs = 2147483647;";
+
 /// This origin's store opened before a page's first visit, in a page of the site's without the
-/// client (`/api/pending`, a read no test here counts): the store keeps a scratch item, asked again
-/// until it answers, and forgets it. A fresh profile's first open makes the database against the
-/// store's 500 ms deadline, which a loaded machine can miss, and the page then keeps nothing, as
-/// it should (`shell/cache.ts`); with the database made, the page's own open makes nothing.
+/// client (`/api/pending`, a read no test here counts): the store keeps a scratch item and forgets
+/// it, so a fresh profile's database is made before the page's own open, which then makes nothing.
+///
+/// That page and every page opened after it name the wait for its database
+/// ([`DATABASE_WAITED_FOR`]): these tests are of a page with its cache, and an open, the first or
+/// a return visit's, passes the store's 500 ms deadline on a loaded machine, which leaves the page
+/// without what this device kept (`shell/cache.ts`). The deadline is the store's own tests'
+/// (`cache_store.rs`).
 pub(super) fn store_opened(chrome: &mut Chrome, site: &Site) {
+    chrome.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source": DATABASE_WAITED_FOR}),
+    );
     chrome.open(&site.url("/api/pending"));
     // The store as the shell carries it, its types stripped.
     let store = crate::assets::store();
