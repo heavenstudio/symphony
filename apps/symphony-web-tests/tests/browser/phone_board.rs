@@ -427,6 +427,12 @@ fn removed_scrollers_release_idle_holds_without_ending_connected_scrolling() {
         let result = page.eval(&format!(
             r#"(async () => {{
                 document.documentElement.style.overflowAnchor = 'none';
+                // The reader's own scroll starts with their input, which ends what holds the page's
+                // place: the board's return to the place its entry keeps (the round before's, once
+                // a slow machine rests on it) and the shell's hold after it. A script's scroll ends
+                // neither, and the hold puts the page back. That scroll's event would come after
+                // the touch had moved, so the page would be one of its scrollers.
+                dispatchEvent(new WheelEvent('wheel'));
                 // The page's scroll event comes before this frame's callbacks, ahead of the touch;
                 // its scrollend may come at any time, during the touch as well.
                 scrollTo(0,600);
