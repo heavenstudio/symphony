@@ -48,9 +48,10 @@ fn tall(path: &str) -> Value {
     };
     let link = json!({"type": "link", "href": format!("/{path}{BY_TEXT}"), "target": null,
         "title": "", "spans": [text("the order")]});
-    let intro: Vec<Value> = std::iter::once(json!({"type": "paragraph", "spans": [text("Read "), link]}))
-        .chain(lines(2))
-        .collect();
+    let intro: Vec<Value> =
+        std::iter::once(json!({"type": "paragraph", "spans": [text("Read "), link]}))
+            .chain(lines(2))
+            .collect();
     let order: Vec<Value> = std::iter::once(
         json!({"type": "heading", "level": 2, "anchor": ANCHOR, "spans": [text("The order")]}),
     )
