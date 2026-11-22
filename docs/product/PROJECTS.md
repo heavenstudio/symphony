@@ -64,7 +64,7 @@ was loaded: a reload brings the counts up to date.
 
 | State | What the page shows |
 | --- | --- |
-| A project still starting | its name, with no dot and no counts yet |
+| A project still starting | its name alone; then its dot, red with *The task board is starting* while its board is, and no counts until its board is first read |
 | A project this Symphony cannot serve | its name and, in place of its counts, why, and what serves it: *its folder is gone: run `just symphony` in its new folder*, or that this Symphony is older or lacks a part the project needs, and what to run |
 | An address no project answers | *No project is called “Orchard” here: this Symphony serves the projects below.*, then, when a project's address differs from it only in its capitals, *Did you mean orchard?* with a link, over the list |
 | A project asked for that it cannot serve | *The Symphony does not serve orchard now*, why, over the list |
@@ -80,10 +80,12 @@ One card a row, across the width, and the header's **Projects** under the name.
 - A Symphony started for one checkout alone (`just symphony --port 0`) serves that project at its
   root: there is no picker and no **Projects** in its header.
 - A project whose theme gives it a name of its own is listed by that name.
-- The checkout the Symphony was started from is listed even when it was never registered, last.
+- The checkout the Symphony was started from is listed even when it was never registered, first,
+  unless a registered checkout holds its id: then it is not listed.
 - An address with no project in it, such as a bookmark from a Symphony of one project, opens that
-  page of the project whose page linked it, else of the project whose `just symphony` started the
-  Symphony.
+  page of the project whose page linked it, or, followed from no project's page, of the project
+  the Symphony was started from. Where that project has no such page, the picker says no project
+  is called that.
 
 ## Related
 

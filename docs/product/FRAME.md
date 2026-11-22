@@ -30,8 +30,9 @@ moves between the pages with it and hears from the agents without leaving the pa
 
 - **The mark and the name** are the Symphony's, or the project's own where [its
   theme](THEMES.md#a-projects-theme) has them. They are not a link.
-- **Projects** opens [the project picker](PROJECTS.md). It is there only where one Symphony
-  serves several projects.
+- **Projects** opens [the project picker](PROJECTS.md). It is there on every page of the
+  machine's one Symphony, which serves each project under its id, however many it serves; a
+  Symphony started for one checkout alone has none.
 - **The pages**, always in this order: **Home**, **Queue**, **Docs**, **Board**, **Reports**,
   **Runs**, **Agents**, then any page the project adds of its own. The one shown is lit. A
   task's page lights **Board**, and a document or a folder lights **Docs**.
@@ -104,15 +105,17 @@ A notice floats over the foot of the window while something about the page is no
 
 | Notice | Means |
 | --- | --- |
-| *Reconnecting: the board may be out of date* | the page lost its live connection and is opening another |
+| *Reconnecting: the board may be out of date*, on a document *Reconnecting: this document may be out of date* | the page lost its live connection and is opening another |
 | *Shown from this device, saved 14:32. Checking for changes…* | the page was drawn at once from what this device kept, and the server has not answered yet |
 | *Not reachable: shown from this device, saved 14:32* | the same, and the server does not answer |
 | *The task board is unwell: …* or *The task board is starting: …* | the project's board cannot be relied on; the notice says why |
+| *The task board is unavailable. Reconnecting…*, or *The task board is slow to answer. Retrying…* | on the board, a task's page and the agents page: the board does not answer, or answers slowly |
 | *The task board is at schema N, ahead of this Symphony's …* | the board is read and nothing is written to it from here; a verdict or a message saved now is kept, and reaches no agent until then |
 | *This project's settings do not load, so it is served with the defaults: …* | the project's settings file has an error, which the notice quotes |
 
-While one of the first three shows, the buttons that act (a verdict, **Send**, **Later**) take no
-press and say *Checking…*; what is typed stays editable.
+While one of the first three shows, the buttons that save on a document or a task's page (a
+verdict, **Later**, a comment's or the task's message's **Send**) take no press and say
+*Checking…*; what is typed stays editable. The chat's **Send** is not held.
 
 ## States
 
@@ -140,8 +143,8 @@ press and say *Checking…*; what is typed stays editable.
 - The chat is a sheet over the lower part of the page, the bar and **+** under it, instead of a
   panel beside it.
 - **Recent activity** covers the page.
-- On a task's page the notices sit under its message box, at the page's end, rather than over
-  the box.
+- On a page that ends in a message box, a task's or a document's question box, the notices sit
+  under the box, at the page's end, rather than over it, at 600 points wide or less.
 
 A window narrower than a laptop's, a tablet's, keeps the header of a wide window and lays the
 panels over the page as a phone does, rather than pushing it aside.
@@ -152,7 +155,7 @@ panels over the page as a phone does, rather than pushing it aside.
   phone, until the owner answers it.
 - A task whose save is not confirmed is asked about again, and never filed twice: **Check save**
   repeats the same request.
-- A message with no words can be sent if it carries a file.
+- The chat's **Message** needs words, even with a file attached.
 - On a branch's copy of a document, the header's **Home**, **Queue**, **Board**, **Reports**,
   **Runs** and **Agents** are still the project's own; **Docs** and the crumbs stay on the
   branch.

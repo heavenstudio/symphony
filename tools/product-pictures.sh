@@ -96,7 +96,8 @@ ln -s "$tasks" "$work/bin/tasks"
 # keeps it whole in NAME.log and says the server's address on a second FIFO the first time the
 # server prints it, or an empty line once the output ends without one, the server having ended.
 # The script waits for that line, `read -t` its deadline. The second FIFO is held open both ways
-# on FD, so neither side's open waits.
+# on FD, so neither side's open waits; FD is given, through `eval`, as macOS's own bash (3.2)
+# cannot pick one itself (`exec {fd}<>`, bash 4.1).
 start() {
     local name=$1 fd=$2
     shift 2

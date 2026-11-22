@@ -37,7 +37,7 @@ The first card of [the queue](QUEUE.md), in the queue's order.
 | Part | What it says |
 | --- | --- |
 | **Next up · 1 of 5** | that it is the first of the cards that wait on the owner, and how many there are |
-| Title | the card's first sentence |
+| Title | the card's first sentence, cut at 110 characters; a card that asks for a picture is named for it, its slot's name and *picture* |
 | Summary | the rest of its text, cut short when it is long |
 | Its document | the document's title, a link to it |
 | Its task | the task's slug, for a card an agent posted on a branch that has not landed |
@@ -93,7 +93,7 @@ at noon.
 
 | State | What the page shows |
 | --- | --- |
-| Loading, first visit | *Loading the board…* over grey lines that stand in for the page |
+| Loading, first visit | grey lines that stand in for the page, which a screen reader reads as *Loading the board…* |
 | Loading, a later visit | at once, home as this device last held it, with *Shown from this device, saved 14:32. Checking for changes…* until the server answers |
 | Nothing waits on the owner | **Next up**, *Nothing waits on you. ✦* and *Every card has your verdict, and the agents have the next move. Enjoy the quiet.*, then, while any are auto-approved, *While you are here: 2 auto-approved cards could use a glance.* with a link to them; no **Then** |
 | One card waiting | **Next up · 1 of 1**, and no **Then** |
