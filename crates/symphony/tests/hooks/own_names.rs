@@ -9,6 +9,7 @@
 //!   quote's marks before the second), and inside any identifier built from it. The one fence is
 //!   the owner's own dated lines under a card ([`owner_lines`]), which no agent writes or rewrites.
 
+use crate::support::repo as workspace;
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -30,13 +31,6 @@ const FENCES: [(&str, usize, &str); 1] = [(
 /// The consuming project's name, its two words each spelled backwards so that this file names it
 /// nowhere.
 const NAME_BACKWARDS: [&str; 2] = ["rats", "yrdnuof"];
-
-fn workspace() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
-}
 
 fn git(root: &Path, args: &[&str]) -> Vec<u8> {
     let done = Command::new("git")

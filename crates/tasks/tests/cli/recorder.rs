@@ -24,11 +24,12 @@ use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use symphony_api::{End, RunLine};
 use symphony_board::cli::Env;
 use symphony_board::cli::machine_work::recorded::{self, Phase, Record, Step};
 use symphony_board::stamps::read;
+use symphony_board::sweep::trigger::now;
 use symphony_board::sys::{Child, Command, Stdio, output, wait_output};
 
 pub(crate) const MACHINE: &str = "0123456789abcdef0123456789abcdef";
@@ -389,14 +390,6 @@ fn a_recorded_command_keeps_its_arguments_streams_session_and_status() {
         !lease.exists()
     });
     gone.unwrap_or_else(|stall| panic!("{stall}: {}", holds(&folders.work)));
-}
-
-/// Seconds since the epoch, the clock a record is stamped by.
-fn now() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs_f64()
 }
 
 /// A board server that takes one connection and never answers it: once it took it, it makes the

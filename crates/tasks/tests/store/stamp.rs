@@ -1,21 +1,14 @@
 //! A task's stamp (`Store::task_stamp`): the same while nothing `get` and `thread` read of the task
 //! has changed, another after each thing that changes them.
 
-use crate::common::{Backend, Fixture, Seed};
-use symphony_board::{NewLaunch, NewTask, TaskStamp};
+use crate::common::{Backend, Fixture, Seed, under};
+use symphony_board::{NewLaunch, TaskStamp};
 
 fn stamp(f: &Fixture, slug: &str) -> TaskStamp {
     f.store
         .task_stamp(slug)
         .unwrap()
         .expect("the task has a stamp")
-}
-
-fn under(slug: &str, parent: &str) -> NewTask {
-    NewTask {
-        parent: Some(parent.into()),
-        ..NewTask::new(slug, "Jump departure", "owner")
-    }
 }
 
 on_both! {
