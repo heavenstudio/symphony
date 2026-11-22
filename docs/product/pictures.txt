@@ -11,4 +11,11 @@ card both /docs/DECISIONS.md#weekly-digest-day --click .doc-actions>button --key
 board both /tasks
 board-decisions wide /tasks --click .wait-chip.k-decision
 task both /task/site/print-view
-task-thread wide /task/site/print-view --hover .task-tokens>summary --wait-for #task-send --hover .task-tokens>summary
+task-thread wide /task/site/print-view --hover [id^=composer-] --wait-for #task-send --hover #task-send
+home both /orchard/
+frame-activity wide /orchard/ --click #bell --wait-for #activity-panel>ul>li
+frame-sheet both /docs/design/LOOK.md --click #quick-open --wait-for #quick-sheet:not([hidden])>[data-orientation]
+projects both /
+agents both /agents
+agents-connection wide /agents --hover #agent-pale-robin --click #agent-pale-robin>.agent>.agent-connection>summary
+agents-lost wide /agents --click .task-page>details:not(.machine-work)>summary --wait-for #agent-dusky-swift

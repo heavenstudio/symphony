@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Retakes the product specs' pictures (docs/product/README.md, "Pictures"): every line of
-# docs/product/pictures.txt, at the widths it names, from a server of its own over a copy of the
-# fixture project (tools/product-pictures/fixture), with a machine folder of its own and a board
-# of its own, the copy's, which tools/product-pictures/board.sh fills. Every picture is taken at
-# one moment (NOW below, on the board's clock and the page's), in UTC, so a page that draws an age
-# or a time is the same picture on any day. It touches no shared server and no project's board,
-# and ends the one server it started, the copy's board server with it.
+# docs/product/pictures.txt, at the widths it names, from a server that serves a machine folder of
+# its own as the machine's one server serves the machine's: two projects registered there, copies
+# of the fixture project (tools/product-pictures/fixture, at /orchard/, with a board of its own,
+# which tools/product-pictures/board.sh fills) and of a second with no board
+# (tools/product-pictures/pantry, at /pantry/), and the project list at /. Every picture is taken
+# at one moment (NOW below, on the board's clock and the page's), in UTC, so a page that draws an
+# age or a time is the same picture on any day. It touches no shared server, no project's board
+# and no terminal, and ends the one server it started, the copy's board server with it.
 #
 #   tools/product-pictures.sh          retake every picture
 #   tools/product-pictures.sh NAME...  retake those named (the list's first word)
@@ -49,14 +51,19 @@ finish() {
 }
 trap finish EXIT
 
-# The fixture as a repository of its own: the server serves a git checkout.
-cp -R "$root/tools/product-pictures/fixture" "$work/project"
-git -C "$work/project" init --quiet --initial-branch main
-git -C "$work/project" add --all
-# Made at a moment of its own, so a commit's id is the same in every copy.
-GIT_AUTHOR_DATE="@$((NOW - 30 * 86400)) +0000" GIT_COMMITTER_DATE="@$((NOW - 30 * 86400)) +0000" \
-    git -C "$work/project" -c user.name=Orchard -c user.email=orchard@example.invalid \
-    commit --quiet --message "The fixture"
+# `repository FOLDER TO`: tools/product-pictures/FOLDER as a repository of its own at TO, as the
+# server serves a git checkout, its one commit made at a moment of its own, so its id is the same
+# in every copy.
+repository() {
+    cp -R "$root/tools/product-pictures/$1" "$2"
+    git -C "$2" init --quiet --initial-branch main
+    git -C "$2" add --all
+    GIT_AUTHOR_DATE="@$((NOW - 30 * 86400)) +0000" GIT_COMMITTER_DATE="@$((NOW - 30 * 86400)) +0000" \
+        git -C "$2" -c user.name=Orchard -c user.email=orchard@example.invalid \
+        commit --quiet --message "The fixture"
+}
+repository fixture "$work/project"
+repository pantry "$work/pantry"
 
 shot="$("$root/tools/rs-bin.sh" --build symphony)"
 serve="$("$root/tools/rs-bin.sh" --build symphony-server)"
@@ -66,10 +73,25 @@ copy="$("$root/tools/rs-bin.sh" --build tasks-copy)"
 SYMPHONY_SURREAL="${SYMPHONY_SURREAL:-$(bash "$root/tools/surreal.sh")}"
 export SYMPHONY_SURREAL
 # TASKS_RECORDER=off: nothing here is a build or a test of a task's. No hook, sweep or terminal of
-# this machine's is the copy's: a board command there starts none.
-export SYMPHONY_MACHINE_DIR="$work/machine" TASKS_RECORDER=off TASKS_SWEEP=off HC_BIN=/usr/bin/false
+# this machine's is the copy's: a board command there starts none, and the terminals' two
+# programs are false, so the server's own sweep of the copy's board reaches none either.
+export SYMPHONY_MACHINE_DIR="$work/machine" TASKS_RECORDER=off TASKS_SWEEP=off \
+    HC_BIN=/usr/bin/false HERDR_APP_BIN=/usr/bin/false
 unset TASKS_SESSION TASKS_TASK TASKS_SERVER TASKS_DATABASE
 mkdir "$work/machine"
+# The two projects in that machine folder's registry, the fixture first, as `just symphony` in
+# each checkout registers it.
+(cd "$work" && "$serve" project add "$work/project" && "$serve" project add "$work/pantry") \
+    >"$work/projects.log" 2>&1 || {
+    cat "$work/projects.log" >&2
+    echo "product-pictures: the projects were not registered" >&2
+    exit 1
+}
+# The board build the server's sweep of the copy's board runs, alone in a folder put first on
+# the server's PATH: a project's checkout links its own (`just symphony`), and a sweep that finds
+# none fails, which every page would say.
+mkdir "$work/bin"
+ln -s "$tasks" "$work/bin/tasks"
 
 # The copy's board is made by its first command, as a project's is; the server makes none. The
 # board's own server ends with the command that started it, and the Symphony's then holds it.
@@ -85,8 +107,11 @@ mkdir "$work/machine"
 # deadline. The second FIFO is held open both ways (fd 3), so neither side's open waits.
 mkfifo "$work/output" "$work/address"
 exec 3<>"$work/address"
-(cd "$work/project" && TASKS_NOW=$NOW \
-    exec "$serve" --port 0 --host 127.0.0.1 --root "$work/project") >"$work/output" 2>&1 &
+# The server as a start of the one server runs it, on a port of its own, over the machine folder
+# above, with the client this checkout commits, which it would otherwise look for there.
+(cd "$work/project" && PATH="$work/bin:$PATH" TASKS_NOW=$NOW \
+    exec "$serve" serve --home "$work/machine" --install "$root/apps/symphony-server" \
+    --root "$work/project" --port 0 --host 127.0.0.1) >"$work/output" 2>&1 &
 server=$!
 {
     said=""

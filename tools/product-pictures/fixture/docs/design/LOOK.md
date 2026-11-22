@@ -17,8 +17,8 @@ A recipe's card shows its picture, its name, its cooking time and how many reade
 ### The recipe card
 
 - [ ] **card-picture-ratio** — A recipe card's picture is square today, which crops tall dishes such as layer cakes. A: keep it square. B: 4:5, a little taller, which shows 3 cards on a phone's screen where square shows 4. Recommended: B. Approve and say A or B in the note, or comment. [[LOOK#The recipe card]]
-  [2026-10-06 10:05] agent — Posted for the 60 recipes whose picture is taller than wide.
+  [2026-02-25 10:05] agent — Posted for the 60 recipes whose picture is taller than wide.
 
 - [ ] **card-cooked-count** — A card says how many readers cooked the recipe. Below 10 it would say "new" instead of a small number. Approve, or comment. [[LOOK#The recipe card]]
-  [2026-10-07 09:30] agent — Posted.
+  [2026-02-26 09:30] agent — Posted.
 <!-- register:end -->
