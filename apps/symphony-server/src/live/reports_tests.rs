@@ -268,12 +268,12 @@ fn a_private_server_keeps_no_day_files_and_the_shared_one_keeps_them_in_the_comm
     let tree = Tree::new();
     let root = repository(&tree);
     let fixture = Fixture::empty();
-    let start = |drain_chat: bool| {
+    let start = |one_server: bool| {
         Hub::start_watching::<notify::NullWatcher>(
             &root,
             &root.join("build/client"),
             false,
-            drain_chat,
+            one_server,
             crate::backstop::PERIOD,
             |_| Err("no board in this test".into()),
         )

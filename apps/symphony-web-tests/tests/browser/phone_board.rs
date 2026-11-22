@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use crate::chrome::Chrome;
 use crate::site::Site;
-use crate::{SHOWN, chrome, dist, wait_for_feed};
+use crate::{READY, SHOWN, chrome, wait_for_feed};
 
 /// The lifecycle columns with as many tasks as `columns` gives each.
 fn listing_of(columns: &[(&str, usize)]) -> Value {
@@ -41,20 +41,13 @@ fn listing() -> Value {
 }
 
 fn site_of(listing: &Value) -> Site {
-    let site = Site::start(dist(), &crate::common::fixture("board.json"));
+    let site = crate::site();
     site.set_json("/api/task-board", listing);
     site
 }
 
 fn site() -> Site {
     site_of(&listing())
-}
-
-fn viewport(page: &mut Chrome, width: u32, height: u32) {
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":height,"deviceScaleFactor":1,"mobile":width <= 760}),
-    );
 }
 
 /// Open the board, live, on a touch screen of 390 by 844 px.
@@ -67,11 +60,11 @@ fn open_on_screen(page: &mut Chrome, site: &Site, width: u32, height: u32) {
         "Emulation.setTouchEmulationEnabled",
         json!({"enabled":true,"maxTouchPoints":5}),
     );
-    viewport(page, width, height);
+    page.viewport(width, height, width <= 760);
     page.open(&site.url("/tasks"));
     assert!(
         page.wait_for(
-            "document.querySelector('main[data-feed=live] .waiting-board .taskcard') !== null && document.documentElement.dataset.navigation === 'ready'",
+            &format!("document.querySelector('main[data-feed=live] .waiting-board .taskcard') !== null && {READY}"),
             SHOWN
         ),
         "the board never drew live: {}",
@@ -127,9 +120,69 @@ fn a_phones_chosen_stage_survives_a_full_load() {
         SHOWN
     ));
     page.open(&site.url("/tasks"));
-    assert!(page.wait_for("document.querySelector('.waiting-columns .column[data-status=ready] .taskcard') !== null && document.documentElement.dataset.navigation === 'ready'", SHOWN));
+    assert!(page.wait_for(&format!("document.querySelector('.waiting-columns .column[data-status=ready] .taskcard') !== null && {READY}"), SHOWN));
     assert_eq!(page.eval(MOUNTED), json!(["ready"]));
     fits(&mut page);
+}
+
+/// One machine reporting no work of its own: with it the board draws its Build and Test stages.
+fn a_machine() -> Value {
+    json!({"freshness": "fresh", "unassigned": [], "machines": [{"machine_id": "alpha",
+        "label": "alpha", "producer_id": "fixture", "sequence": 1, "age_ms": 100,
+        "freshness": "fresh", "complete": true, "reason": "", "counts": null, "operations": []}]})
+}
+
+const UNDER_WAY: &str =
+    "[...document.querySelectorAll('.under-way > *')].map(cell => cell.textContent)";
+
+/// The owner read "In progress 0" on a phone while every task in progress was in a build or a
+/// test, whose tabs are past the row's edge: the first screen says how many are under way, the
+/// builds and tests among them, each count showing its lane, at both phone widths with no word cut.
+#[test]
+fn a_phones_first_screen_says_how_much_is_under_way_builds_and_tests_among_it() {
+    let site = site_of(&listing_of(&[
+        ("review", 2),
+        ("in_progress", 1),
+        ("build", 2),
+        ("test", 3),
+    ]));
+    site.set_json("/api/machine-work", &a_machine());
+    let Some(mut page) = chrome() else { return };
+    for width in [390, 320] {
+        open_on_screen(&mut page, &site, width, 844);
+        assert!(
+            page.wait_for(
+                &format!("JSON.stringify({UNDER_WAY}) === JSON.stringify(['6 under way', '1 working', '2 building', '3 testing'])"),
+                SHOWN
+            ),
+            "at {width} px the row read {}",
+            page.eval(UNDER_WAY)
+        );
+        assert_eq!(page.eval(MOUNTED), json!(["review"]));
+        assert_eq!(
+            page.eval("(() => { const row = document.querySelector('.under-way').getBoundingClientRect(); return row.top >= 0 && row.bottom <= innerHeight && [...document.querySelectorAll('.under-way > *')].every(cell => cell.scrollWidth <= cell.clientWidth && cell.getBoundingClientRect().right <= innerWidth); })()"),
+            json!(true),
+            "at {width} px the row is on the first screen, every count whole"
+        );
+        fits(&mut page);
+        for (stage, status) in [
+            ("build", "build"),
+            ("test", "test"),
+            ("in_progress", "in_progress"),
+        ] {
+            page.eval(&format!(
+                "document.querySelector('.under-way [data-stage={stage}]').click()"
+            ));
+            assert!(
+                page.wait_for(&format!("JSON.stringify({MOUNTED}) === JSON.stringify([{}]) && document.querySelector('.waiting-columns .taskcard') !== null", json!(status)), SHOWN),
+                "at {width} px {stage}'s count showed {}",
+                page.eval(MOUNTED)
+            );
+            fits(&mut page);
+        }
+        // The next width opens on Review again.
+        choose(&mut page, "Review");
+    }
 }
 
 /// A refresh starts its position hold after the finger came down. Each subsequent movement
@@ -350,10 +403,12 @@ fn shared_holds_release_and_leave_other_scrolling_boxes_independent() {
 }
 
 /// A detached element cannot deliver scrollend to the shell's window listener. Removing it must
-/// release later layout holds, but not the momentum of another, still-connected scroller. The
-/// touch input is synthetic; both element scrolls and the connected scrollend are native events.
-/// Release and cancellation target the original element, before or after its removal. A second
-/// scroller also has a second contact: its release leaves the detached contact down until last.
+/// release later layout holds, but not the momentum of another, still-connected scroller, and a
+/// box the touch never scrolled ending its scroll after the release ends nothing of the touch's.
+/// The touch input and that box's scrollend are synthetic; both element scrolls and the connected
+/// scrollend are native events. Release and cancellation target the original element, before or
+/// after its removal. A second scroller also has a second contact: its release leaves the
+/// detached contact down until last.
 #[test]
 fn removed_scrollers_release_idle_holds_without_ending_connected_scrolling() {
     let site = site_of(&listing_of(&[("review", 30)]));
@@ -372,12 +427,9 @@ fn removed_scrollers_release_idle_holds_without_ending_connected_scrolling() {
         let result = page.eval(&format!(
             r#"(async () => {{
                 document.documentElement.style.overflowAnchor = 'none';
-                // The page's own scroll is over before the touch begins: its scrollend comes a
-                // frame or more later, and one landing between a release and the touch's first
-                // scroll event ends the touch as one that scrolled nothing.
-                const from = scrollY, rested = new Promise(resolve => addEventListener('scrollend', resolve, {{once:true}}));
+                // The page's scroll event comes before this frame's callbacks, ahead of the touch;
+                // its scrollend may come at any time, during the touch as well.
                 scrollTo(0,600);
-                if (scrollY !== from) await rested;
                 await new Promise(requestAnimationFrame);
                 const board = document.querySelector('.waiting-columns');
                 const row = [...board.querySelectorAll('[data-slug]')].find(row => {{
@@ -404,6 +456,9 @@ fn removed_scrollers_release_idle_holds_without_ending_connected_scrolling() {
                     if (kept) touch({release_kind:?}, kept, [firstContact]);
                     releasedConnected = removed.isConnected;
                     touch({release_kind:?}, removed, []);
+                    // A box the touch never scrolled ends its scroll: the page's, as on a slow
+                    // machine, before even the touch's first scroll event has come.
+                    document.dispatchEvent(new Event('scrollend'));
                 }};
                 const ended = kept && new Promise(resolve => kept.addEventListener('scrollend', event => {{
                     events.push(['end', event.isTrusted]);
@@ -490,7 +545,7 @@ fn removed_scrollers_release_idle_holds_without_ending_connected_scrolling() {
 fn desktop_columns_keep_a_readable_width_and_scroll_inside_the_page_with_chat_open() {
     let site = site();
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1440, 900);
+    page.viewport(1440, 900, false);
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
         "document.querySelector('.waiting-columns .taskcard') !== null",
@@ -510,7 +565,7 @@ fn desktop_columns_keep_a_readable_width_and_scroll_inside_the_page_with_chat_op
         ])
     );
     for width in [1440, 1100, 800] {
-        viewport(&mut page, width, 900);
+        page.viewport(width, 900, width <= 760);
         for chat in [false, true] {
             if chat {
                 page.eval("document.querySelector('#quick-open').click()");
@@ -575,7 +630,7 @@ fn search_and_filters_start_collapsed_and_keep_the_query_when_toggled_at_every_w
         SHOWN
     ));
     for (width, height) in [(1440, 900), (800, 1000)] {
-        viewport(&mut page, width, height);
+        page.viewport(width, height, width <= 760);
         assert!(page.wait_for(&format!("innerWidth === {width} && document.querySelector('#board-filters')?.checkVisibility() === false && document.querySelector('.board-filters-toggle')?.checkVisibility() === true"), SHOWN));
         page.eval("document.querySelector('.board-filters-toggle').click()");
         assert!(page.wait_for("document.querySelector('#board-filters').checkVisibility() && document.querySelector('#board-filters input').value === 'found'", SHOWN));
@@ -587,7 +642,7 @@ fn search_and_filters_start_collapsed_and_keep_the_query_when_toggled_at_every_w
 fn backlog_stays_horizontal_while_pressed_and_returns_to_the_columns() {
     let site = site();
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1100, 850);
+    page.viewport(1100, 850, false);
     page.open(&site.url("/tasks"));
     assert!(page.wait_for("document.querySelector('.board-backlog') !== null", SHOWN));
     let position = page.eval("(() => { const r = document.querySelector('.board-backlog').getBoundingClientRect(); return [r.x + r.width/2, r.y + r.height/2]; })()");
@@ -603,7 +658,7 @@ fn backlog_stays_horizontal_while_pressed_and_returns_to_the_columns() {
 fn an_explicit_row_link_reveals_its_offscreen_desktop_column() {
     let site = site();
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1100, 850);
+    page.viewport(1100, 850, false);
     page.open(&site.url("/tasks#row-phone%2Freview-1"));
     assert!(page.wait_for("(() => { const board = document.querySelector('.waiting-columns'), card = document.querySelector('[data-slug=\"phone/review-1\"]'); if (!board || !card) return false; const r = card.getBoundingClientRect(), b = board.getBoundingClientRect(); return board.scrollLeft > 0 && r.left >= b.left && r.right <= b.right && r.top >= 0 && r.bottom <= innerHeight; })()", SHOWN));
 }
@@ -612,7 +667,7 @@ fn an_explicit_row_link_reveals_its_offscreen_desktop_column() {
 fn returning_from_a_list_restores_the_columns_horizontal_position() {
     let site = site();
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1100, 850);
+    page.viewport(1100, 850, false);
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
         "document.querySelector('.column[data-status=done]') !== null",

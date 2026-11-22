@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::chrome::Chrome;
 use crate::site::Site;
-use crate::{SHOWN, chrome, dist, look_parity};
+use crate::{READY, SHOWN, chrome, look_parity};
 
 /// The lifecycle stages with the ordinary and the blocked tasks each counts: a stage with none
 /// of either kind among them, and counts of two digits.
@@ -83,7 +83,7 @@ fn listing() -> Value {
 }
 
 fn site() -> Site {
-    let site = Site::start(dist(), &crate::common::fixture("board.json"));
+    let site = crate::site();
     let listing = listing();
     site.set_json("/api/task-board", &listing);
     site.set_json("/api/machine-work", &listing["machine_work"]);
@@ -96,14 +96,8 @@ fn site() -> Site {
 
 /// A phone `width` wide in `scheme`, with no pointer moved yet, so a focus shows its outline.
 fn phone(page: &mut Chrome, width: u32, scheme: &str) {
-    page.call(
-        "Emulation.setEmulatedMedia",
-        json!({"features":[{"name":"prefers-color-scheme","value":scheme}]}),
-    );
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":844,"deviceScaleFactor":2,"mobile":true}),
-    );
+    page.scheme(scheme);
+    page.viewport_scaled(width, 844, 2, true);
 }
 
 fn open(page: &mut Chrome, site: &Site, path: &str, ready: &str) {
@@ -111,7 +105,7 @@ fn open(page: &mut Chrome, site: &Site, path: &str, ready: &str) {
     assert!(
         page.wait_for(
             &format!(
-                "document.documentElement.dataset.navigation === 'ready' && document.querySelector({}) !== null && document.querySelector('.app-pages[data-overflow]') !== null",
+                "{READY} && document.querySelector({}) !== null && document.querySelector('.app-pages[data-overflow]') !== null",
                 json!(ready)
             ),
             SHOWN
@@ -209,7 +203,7 @@ fn shot(page: &mut Chrome, name: &str) {
     let Ok(run) = std::env::var("SYMPHONY_PHONE_LABEL_SHOTS") else {
         return;
     };
-    page.eval("document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))");
+    page.frames_with_fonts();
     let image = page.call("Page.captureScreenshot", json!({"format":"png"}));
     let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../artifacts/app/phone-navigation-labels");
@@ -471,7 +465,16 @@ fn a_phones_wait_strip_is_one_row_that_keeps_the_pressed_filter_in_view() {
             json!({"rows":true,"card":true,"fits":true}),
             "{what}"
         );
-        // The last filter, with nothing waiting on it, pressed: it lists across the stages.
+        // The strip stays as far under the banner as a chip is pressed and released: the row of
+        // work under way between them keeps its room under a filter. Measured from the banner's
+        // end, since the banner's own sentence is shorter under a filter and wraps anew at 320 px.
+        const STRIP_TOP: &str = "(row => Math.round(document.querySelector('.wait-strip').getBoundingClientRect().top - row.previousElementSibling.getBoundingClientRect().bottom))(document.querySelector('.under-way'))";
+        let strip_top = page.eval(STRIP_TOP);
+        assert_eq!(
+            page.eval("document.querySelector('.under-way [data-stage=in_progress]') !== null"),
+            json!(true),
+            "{what}: the row of work under way is over the strip"
+        );
         page.eval("(chip => { chip.focus(); chip.click(); })(document.querySelector('.wait-chip.k-parked'))");
         assert!(
             page.wait_for(
@@ -484,6 +487,11 @@ fn a_phones_wait_strip_is_one_row_that_keeps_the_pressed_filter_in_view() {
         chosen(&row, "Parked 0", &what);
         ringed(&row, "Parked 0", &what);
         cued(&row, "start", &format!("{what}, Parked pressed"));
+        assert_eq!(
+            page.eval(STRIP_TOP),
+            strip_top,
+            "{what}: pressing a chip moved the strip under the banner"
+        );
         shot(&mut page, &format!("{width}-{scheme}-parked"));
         // Back to every open task: the stages return with the stage chosen before.
         page.eval(
@@ -501,5 +509,10 @@ fn a_phones_wait_strip_is_one_row_that_keeps_the_pressed_filter_in_view() {
         let row = rests(&mut page, ".wait-strip", &format!("{what}, every task"));
         chosen(&row, "73 open", &what);
         cued(&row, "end", &format!("{what}, every task"));
+        assert_eq!(
+            page.eval(STRIP_TOP),
+            strip_top,
+            "{what}: releasing the chip moved the strip under the banner"
+        );
     }
 }

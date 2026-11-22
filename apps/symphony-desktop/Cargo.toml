@@ -1,4 +1,4 @@
-# The desktop app for the Mac (docs/analysis/desktop-client.md): a thin native shell whose windows
+# The desktop app for the Mac (docs/product/analysis/desktop-client.md): a thin native shell whose windows
 # show each server's own pages, and which follows every server it knows with its windows closed.
 # The library holds every decision and is tested on the host; the binary only draws them.
 [package]

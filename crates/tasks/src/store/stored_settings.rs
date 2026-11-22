@@ -11,7 +11,7 @@
 use super::postgres::stored_settings as pg;
 use super::statement::both;
 use super::surreal::stored_settings as sql;
-use super::{DbError, Error, Failure, Store, refused};
+use super::{Error, Failure, Store, refused};
 use crate::schema;
 use crate::settings::{Entry, SAID, Stored, judged, kept, named};
 use serde_json::{Value, json};
@@ -37,10 +37,9 @@ impl Store {
     pub fn stored_entries(&self) -> Result<Vec<Entry>, Error> {
         self.retrying(|| {
             let read = both(sql::ENTRIES, pg::ENTRIES);
-            let found = match self.request(read, json!({})) {
-                Ok(found) => found,
-                Err(DbError::Failed(said)) if self.db.undefined(&said) => return Ok(Vec::new()),
-                Err(other) => return Err(other.into()),
+            let read = self.request(read, json!({})).map(Some);
+            let Some(found) = self.absent_board(read, None)? else {
+                return Ok(Vec::new());
             };
             let entries = found.last().cloned().unwrap_or(Value::Null);
             crate::objects::read(&entries)
@@ -95,7 +94,11 @@ impl Store {
                 "doc": serde_json::to_value(&written).expect("an entry is JSON"),
             });
             let wrote: bool = self.retrying(|| {
-                self.transact_dispatch(both(sql::WRITE, pg::write()), vars.clone(), false)
+                self.transact_dispatch(
+                    both(sql::WRITE, pg::write()).naming(&[TABLE]),
+                    vars.clone(),
+                    false,
+                )
             })?;
             if wrote {
                 return Ok((written, true));

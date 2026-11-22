@@ -24,7 +24,7 @@ impl Store {
         if self.db.is_postgresql() {
             return Ok(());
         }
-        let tables: Vec<String> = self.retrying(|| self.transact(sql::TABLES, json!({})))?;
+        let tables: Vec<String> = self.retrying(|| self.read_together(sql::TABLES, json!({})))?;
         let staged = tables.iter().map(String::as_str).filter(|table| {
             table.starts_with("copy_")
                 && table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
@@ -62,128 +62,7 @@ impl Store {
         dump: &Dump,
         limit: impl FnOnce(Duration) -> Duration,
     ) -> Result<(), Error> {
-        let keyed = |rows: Vec<Value>, key: &dyn Fn(&Value) -> Value| -> Vec<Value> {
-            rows.into_iter()
-                .map(|mut row| {
-                    row["id"] = key(&row);
-                    row
-                })
-                .collect()
-        };
-        // SQLite's row id is the record's `sid`.
-        let with_sid = |mut row: Value| {
-            row["sid"] = row["id"].clone();
-            row
-        };
-        // A workflow's records go in before the tasks: the task fence finds each managed task's
-        // transition among them as the task is written (`crate::schema`'s `workflow_position`).
-        // A dump with none lists no table for them, so its copy says what it said before
-        // workflows; the copy empties the board's records either way. What the board accepted
-        // from an approval authority is never copied: a copy or a restore may be older than the
-        // authority's last report, so its guards are refused until the authority reports again
-        // (`crate::workflow::guard`).
-        let workflow: Vec<Value> = (dump.workflow.iter())
-            .filter(|row| row.kind != "authority")
-            .map(|row| json!({ "id": row.key, "kind": row.kind, "body": row.body, "at": row.at }))
-            .collect();
-        let workflow = (!workflow.is_empty()).then_some(("workflow", workflow));
-        let tables: Vec<(&str, Vec<Value>)> = workflow
-            .into_iter()
-            .chain([
-                (
-                    "task",
-                    keyed(
-                        values(&dump.tasks).into_iter().map(with_sid).collect(),
-                        &|r| r["slug"].clone(),
-                    ),
-                ),
-                (
-                    "link",
-                    keyed(values(&dump.task_links), &|r| {
-                        json!([r["slug"], r["kind"], r["target"]])
-                    }),
-                ),
-                (
-                    "session",
-                    keyed(values(&dump.sessions), &|r| r["handle"].clone()),
-                ),
-                (
-                    "role",
-                    keyed(values(&dump.roles), &|r| {
-                        json!([r["slug"], r["handle"], r["role"]])
-                    }),
-                ),
-                (
-                    "message",
-                    keyed(
-                        values(&dump.messages).into_iter().map(with_sid).collect(),
-                        &|r| json!([r["slug"], r["sid"]]),
-                    ),
-                ),
-                (
-                    "delivery",
-                    keyed(values(&dump.deliveries), &|r| {
-                        json!([r["message"], r["handle"]])
-                    }),
-                ),
-                (
-                    "barred_key",
-                    keyed(values(&dump.barred_keys), &|r| r["key"].clone()),
-                ),
-                (
-                    "task_session",
-                    keyed(values(&dump.task_sessions), &|r| {
-                        json!([r["slug"], r["handle"]])
-                    }),
-                ),
-                (
-                    "delivery_key",
-                    keyed(values(&dump.delivery_keys), &|r| {
-                        json!([r["slug"], r["key"]])
-                    }),
-                ),
-                (
-                    "ask",
-                    keyed(
-                        values(&dump.asks).into_iter().map(with_sid).collect(),
-                        &|r| r["sid"].clone(),
-                    ),
-                ),
-                (
-                    "usage",
-                    keyed(values(&dump.usages), &|r| {
-                        json!([
-                            r["handle"],
-                            r["slug"],
-                            r["role"],
-                            r["model"],
-                            r["speed"],
-                            r["round"]
-                        ])
-                    }),
-                ),
-                (
-                    "execution_attempt",
-                    keyed(dump.execution_attempts.clone(), &|r| r["attempt"].clone()),
-                ),
-                (
-                    "execution_fact",
-                    keyed(dump.execution_facts.clone(), &|r| {
-                        json!([r["attempt"], r["seq"]])
-                    }),
-                ),
-                (
-                    "execution_fence",
-                    keyed(dump.execution_fences.clone(), &|r| r["key"].clone()),
-                ),
-                (
-                    "execution_artifact",
-                    keyed(dump.execution_artifacts.clone(), &|r| {
-                        json!([r["attempt"], r["name"]])
-                    }),
-                ),
-            ])
-            .collect();
+        let tables = copied_tables(dump);
         let last = dump.messages.iter().map(|m| m.id).max().unwrap_or(0);
         let last_task = dump.tasks.iter().map(|t| t.id).max().unwrap_or(0);
         let last_ask = dump.asks.iter().map(|a| a.id).max().unwrap_or(0);
@@ -360,7 +239,7 @@ impl Store {
         let dump = || both(sql::DUMP, Pg::read(postgres::copy::DUMP.as_str()));
         let mut dump: Dump = if self.db.is_postgresql() {
             let (mut dump, copied): (Dump, Vec<(String, String, Value)>) =
-                read_strictly(self.retrying(|| self.transact(dump(), json!({})))?)?;
+                read_strictly(self.retrying(|| self.read_together(dump(), json!({})))?)?;
             for (slug, original, normalized) in copied {
                 let original: Value = serde_json::from_str(&original)
                     .map_err(|e| Error::Db(format!("copied fields: {e}")))?;
@@ -378,7 +257,7 @@ impl Store {
             }
             dump
         } else {
-            read_strictly(self.retrying(|| self.transact(dump(), json!({})))?)?
+            read_strictly(self.retrying(|| self.read_together(dump(), json!({})))?)?
         };
         // The execution tables' rows in the order of their ids, and each row's fields in one order
         // at every depth, as the two databases neither return rows nor order a document's fields
@@ -790,26 +669,133 @@ mod tests {
     }
 }
 
-/// The tables a move takes by the dump ([`Store::dump`], [`Store::copy`]).
-#[cfg(test)]
-const DUMPED: [&str; 16] = [
-    "task",
-    "link",
-    "session",
-    "role",
-    "message",
-    "delivery",
-    "delivery_key",
-    "barred_key",
-    "task_session",
-    "ask",
-    "usage",
-    "execution_attempt",
-    "execution_fact",
-    "execution_fence",
-    "execution_artifact",
-    "workflow",
-];
+/// The tables a copy of `dump` writes ([`Store::copy`]), in the order it writes them, each with its
+/// rows as the board keeps them: each row's record id (`id`) made from its key, and on a table
+/// whose SQLite row id the record's `sid` was, `sid` set to the dump's `id`.
+fn copied_tables(dump: &Dump) -> Vec<(&'static str, Vec<Value>)> {
+    let keyed = |rows: Vec<Value>, key: &dyn Fn(&Value) -> Value| -> Vec<Value> {
+        rows.into_iter()
+            .map(|mut row| {
+                row["id"] = key(&row);
+                row
+            })
+            .collect()
+    };
+    // SQLite's row id is the record's `sid`.
+    let with_sid = |mut row: Value| {
+        row["sid"] = row["id"].clone();
+        row
+    };
+    // A workflow's records go in before the tasks: the task fence finds each managed task's
+    // transition among them as the task is written (`crate::schema`'s `workflow_position`).
+    // A dump with none lists no table for them, so its copy says what it said before
+    // workflows; the copy empties the board's records either way. What the board accepted
+    // from an approval authority is never copied: a copy or a restore may be older than the
+    // authority's last report, so its guards are refused until the authority reports again
+    // (`crate::workflow::guard`).
+    let workflow: Vec<Value> = (dump.workflow.iter())
+        .filter(|row| row.kind != "authority")
+        .map(|row| json!({ "id": row.key, "kind": row.kind, "body": row.body, "at": row.at }))
+        .collect();
+    let workflow = (!workflow.is_empty()).then_some(("workflow", workflow));
+    workflow
+        .into_iter()
+        .chain([
+            (
+                "task",
+                keyed(
+                    values(&dump.tasks).into_iter().map(with_sid).collect(),
+                    &|r| r["slug"].clone(),
+                ),
+            ),
+            (
+                "link",
+                keyed(values(&dump.task_links), &|r| {
+                    json!([r["slug"], r["kind"], r["target"]])
+                }),
+            ),
+            (
+                "session",
+                keyed(values(&dump.sessions), &|r| r["handle"].clone()),
+            ),
+            (
+                "role",
+                keyed(values(&dump.roles), &|r| {
+                    json!([r["slug"], r["handle"], r["role"]])
+                }),
+            ),
+            (
+                "message",
+                keyed(
+                    values(&dump.messages).into_iter().map(with_sid).collect(),
+                    &|r| json!([r["slug"], r["sid"]]),
+                ),
+            ),
+            (
+                "delivery",
+                keyed(values(&dump.deliveries), &|r| {
+                    json!([r["message"], r["handle"]])
+                }),
+            ),
+            (
+                "barred_key",
+                keyed(values(&dump.barred_keys), &|r| r["key"].clone()),
+            ),
+            (
+                "task_session",
+                keyed(values(&dump.task_sessions), &|r| {
+                    json!([r["slug"], r["handle"]])
+                }),
+            ),
+            (
+                "delivery_key",
+                keyed(values(&dump.delivery_keys), &|r| {
+                    json!([r["slug"], r["key"]])
+                }),
+            ),
+            (
+                "ask",
+                keyed(
+                    values(&dump.asks).into_iter().map(with_sid).collect(),
+                    &|r| r["sid"].clone(),
+                ),
+            ),
+            (
+                "usage",
+                keyed(values(&dump.usages), &|r| {
+                    json!([
+                        r["handle"],
+                        r["slug"],
+                        r["role"],
+                        r["model"],
+                        r["speed"],
+                        r["round"]
+                    ])
+                }),
+            ),
+            (
+                "execution_attempt",
+                keyed(dump.execution_attempts.clone(), &|r| r["attempt"].clone()),
+            ),
+            (
+                "execution_fact",
+                keyed(dump.execution_facts.clone(), &|r| {
+                    json!([r["attempt"], r["seq"]])
+                }),
+            ),
+            (
+                "execution_fence",
+                keyed(dump.execution_fences.clone(), &|r| r["key"].clone()),
+            ),
+            (
+                "execution_artifact",
+                keyed(dump.execution_artifacts.clone(), &|r| {
+                    json!([r["attempt"], r["name"]])
+                }),
+            ),
+        ])
+        .collect()
+}
 
 /// The tables a move leaves, each with why nothing of the board is lost with it.
 #[cfg(test)]
@@ -838,11 +824,33 @@ const LEFT: [(&str, &str); 6] = [
 mod placed {
     use super::*;
 
+    /// A dump of no rows but a workflow's one record: every table the dump names.
+    fn with_workflow() -> Dump {
+        let workflow = crate::rows::WorkflowRow {
+            key: json!("definition"),
+            kind: "definition".into(),
+            body: serde_json::Map::new(),
+            at: 0.0,
+        };
+        Dump {
+            workflow: vec![workflow],
+            ..Dump::default()
+        }
+    }
+
+    /// The tables a move takes by the dump ([`Store::dump`], [`Store::copy`]): those the copy of
+    /// a dump that holds a workflow writes.
+    fn dumped() -> Vec<&'static str> {
+        (copied_tables(&with_workflow()).into_iter())
+            .map(|(table, _)| table)
+            .collect()
+    }
+
     /// A table added to the board is copied, carried or left on purpose: one in none of the
     /// three would be dropped by a move of the board to another engine without a word.
     #[test]
     fn every_table_of_the_board_is_copied_carried_or_left_with_its_reason() {
-        let placed: Vec<&str> = (DUMPED.into_iter())
+        let placed: Vec<&str> = (dumped().into_iter())
             .chain(CARRIED)
             .chain(LEFT.iter().map(|(table, _)| *table))
             .collect();
@@ -855,12 +863,126 @@ mod placed {
             assert_eq!(
                 placed.iter().filter(|name| *name == table).count(),
                 1,
-                "{table} is placed once among DUMPED, CARRIED and LEFT (store/copy.rs): a table a \
+                "{table} is placed once among copied_tables, CARRIED and LEFT (store/copy.rs): a table a \
                  move neither copies nor carries is lost by it"
             );
         }
         assert_eq!(placed.len(), tables.len());
         assert!(LEFT.iter().all(|(_, why)| !why.is_empty()));
+    }
+
+    #[test]
+    fn a_copy_writes_every_table_the_dump_reads_workflow_first_and_only_where_a_record_is_copied() {
+        let names = |tables: &[(&str, Vec<Value>)]| -> Vec<String> {
+            tables
+                .iter()
+                .map(|(table, _)| (*table).to_string())
+                .collect()
+        };
+        let bare = copied_tables(&Dump::default());
+        assert!(bare.iter().all(|(_, rows)| rows.is_empty()));
+        assert_eq!(names(&bare), &dumped()[1..]);
+        assert_eq!(dumped()[0], "workflow");
+        // An authority's report is never copied: a dump holding nothing else lists no workflow.
+        let report = |kind: &str| crate::rows::WorkflowRow {
+            key: json!(["workflow", kind]),
+            kind: kind.into(),
+            body: serde_json::Map::from_iter([("said".to_string(), json!(kind))]),
+            at: 7.0,
+        };
+        let reported = Dump {
+            workflow: vec![report("authority")],
+            ..Dump::default()
+        };
+        assert_eq!(names(&copied_tables(&reported)), names(&bare));
+        let kept = Dump {
+            workflow: vec![report("authority"), report("definition")],
+            ..Dump::default()
+        };
+        let tables = copied_tables(&kept);
+        assert_eq!(names(&tables), dumped());
+        assert_eq!(
+            tables[0].1,
+            vec![json!({
+                "id": ["workflow", "definition"], "kind": "definition",
+                "body": {"said": "definition"}, "at": 7.0,
+            })]
+        );
+        // The tables the dump reads back are those it writes.
+        let mut read: Vec<&str> = (postgres::copy::DUMPED.iter())
+            .map(|(_, table, _)| *table)
+            .collect();
+        let mut written = dumped();
+        read.sort_unstable();
+        written.sort_unstable();
+        assert_eq!(read, written);
+    }
+
+    #[test]
+    fn a_dump_holds_each_table_its_read_names_and_its_text_reads_back_whole() {
+        let dump = with_workflow();
+        let text = serde_json::to_value(&dump).unwrap();
+        let mut held: Vec<&str> = text
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let mut read: Vec<&str> = (postgres::copy::DUMPED.iter())
+            .map(|(name, _, _)| *name)
+            .collect();
+        held.sort_unstable();
+        read.sort_unstable();
+        assert_eq!(held, read);
+        assert_eq!(Dump::from_json(&text.to_string()), Ok(dump));
+    }
+
+    #[test]
+    fn a_copied_row_is_keyed_as_the_board_keys_its_record_and_sid_is_its_dump_id() {
+        use crate::rows::{AskRow, LinkRow, MessageRow, TaskRow};
+        let dump = Dump {
+            tasks: vec![TaskRow {
+                id: 4,
+                slug: "sim/jump".into(),
+                ..TaskRow::default()
+            }],
+            task_links: vec![LinkRow {
+                slug: "sim/jump".into(),
+                kind: "dep".into(),
+                target: "sim/land".into(),
+            }],
+            messages: vec![MessageRow {
+                id: 9,
+                slug: "sim/jump".into(),
+                ..MessageRow::default()
+            }],
+            asks: vec![AskRow {
+                id: 3,
+                ..AskRow::default()
+            }],
+            execution_facts: vec![json!({"attempt": "a1", "seq": 2})],
+            ..Dump::default()
+        };
+        let tables = copied_tables(&dump);
+        let row = |table: &str| -> &Value {
+            let (_, rows) = (tables.iter().find(|(name, _)| *name == table)).unwrap();
+            assert_eq!(rows.len(), 1, "{table}");
+            &rows[0]
+        };
+        let task = row("task");
+        assert_eq!((&task["id"], &task["sid"]), (&json!("sim/jump"), &json!(4)));
+        assert_eq!(row("link")["id"], json!(["sim/jump", "dep", "sim/land"]));
+        let message = row("message");
+        assert_eq!(
+            (&message["id"], &message["sid"]),
+            (&json!(["sim/jump", 9]), &json!(9))
+        );
+        let ask = row("ask");
+        assert_eq!((&ask["id"], &ask["sid"]), (&json!(3), &json!(3)));
+        assert_eq!(
+            row("execution_fact"),
+            &json!({"attempt": "a1", "seq": 2, "id": ["a1", 2]})
+        );
     }
 
     #[test]

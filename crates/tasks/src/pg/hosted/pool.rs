@@ -12,8 +12,10 @@
 
 use std::cell::Cell;
 use std::collections::VecDeque;
-use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
+
+use crate::lock::Recovered as _;
 
 /// How a pool makes a connection, tells whether an idle one may be lent again, and closes one.
 pub(super) trait Connector: Send + Sync {
@@ -123,7 +125,7 @@ impl<K: Connector> Pool<K> {
     }
 
     fn locked(&self) -> MutexGuard<'_, State<K::Connection>> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+        self.state.lock().recover()
     }
 
     /// A connection for this borrower alone, waited for at most `within`, and made within
@@ -205,11 +207,7 @@ impl<K: Connector> Pool<K> {
                 self.changed.notify_all();
                 return Err(Refused::Deadline);
             }
-            state = self
-                .changed
-                .wait_timeout(state, left)
-                .unwrap_or_else(PoisonError::into_inner)
-                .0;
+            state = self.changed.wait_timeout(state, left).recover().0;
         }
     }
 
@@ -247,11 +245,7 @@ impl<K: Connector> Pool<K> {
             if left.is_zero() {
                 return false;
             }
-            state = self
-                .changed
-                .wait_timeout(state, left)
-                .unwrap_or_else(PoisonError::into_inner)
-                .0;
+            state = self.changed.wait_timeout(state, left).recover().0;
         }
         true
     }

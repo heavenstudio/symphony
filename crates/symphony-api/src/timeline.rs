@@ -300,7 +300,7 @@ impl RunResult {
     }
 }
 
-/// A place a custom workflow put the task at, and when (docs/WORKFLOW.md, "The app").
+/// A place a custom workflow put the task at, and when (docs/workflow/WORKFLOW.md, "The app").
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct PlaceSpan {

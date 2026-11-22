@@ -6,7 +6,7 @@
 //! they feed the answer, never replace the record, and a probe that cannot be asked is named
 //! `unavailable` with the answer still built from the board.
 //!
-//! The JSON is a contract, listed in `docs/BOARD_API.md#the-agents-api`:
+//! The JSON is a contract, listed in `docs/engineering/BOARD_API.md#the-agents-api`:
 //!
 //! ```text
 //! {"generated": ts, "probes": {"herdr": "ok"|"unavailable", "slots": "ok"|"unavailable"}, "agents": [{
@@ -552,7 +552,7 @@ pub fn describe_board_observed(
         let nonempty = |text: Option<&str>| text.filter(|t| !t.is_empty()).map(str::to_string);
         let session_id = nonempty(row.record.map(|r| {
             r.claude_session
-                .strip_prefix("codex:")
+                .strip_prefix(crate::launch::CODEX)
                 .unwrap_or(&r.claude_session)
         }))
         .or_else(|| nonempty(row.pane.and_then(|p| p.session.as_deref())))
@@ -560,7 +560,7 @@ pub fn describe_board_observed(
         .or_else(|| {
             callbacks
                 .get(handle)
-                .and_then(|callback| callback.address.strip_prefix("codex:"))
+                .and_then(|callback| callback.address.strip_prefix(crate::launch::CODEX))
                 .map(str::to_string)
         });
         let pane = row.pane.map(|p| p.id.clone());

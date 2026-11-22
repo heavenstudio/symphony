@@ -26,10 +26,9 @@ import {
   TaskMessage,
   TaskPageView,
 } from "./task-page";
-import { aRole, aTask, memoryStorage, reply, until } from "./testing";
+import { aRole, aTask, aTaskPage, memoryStorage, reply, until } from "./testing";
 import type { Block, TaskBrief, TaskEntry, TaskPage } from "./wire";
 import { CHECKING } from "./words";
-import { NO_WORK } from "./work";
 
 beforeEach(() => {
   vi.stubGlobal("document", { getElementById: () => null, querySelector: () => null });
@@ -59,20 +58,7 @@ function aPage(
   task = aTask("fixture/task", { status: "review", priority: 1 }),
   more: Partial<TaskPage> = {},
 ): TaskPage {
-  return {
-    machine_work: NO_WORK,
-    task,
-    blocks: [],
-    children: [],
-    children_count: 0,
-    brief_omitted: 0,
-    brief_next: 0,
-    brief_revision: "",
-    sessions: {},
-    local: false,
-    gates: null,
-    ...more,
-  };
+  return aTaskPage(task, more);
 }
 
 /** A thread's part answered with `entries`, earlier ones before `before`. */

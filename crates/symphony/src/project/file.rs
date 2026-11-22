@@ -44,7 +44,7 @@ pub(super) struct File {
     /// `workflow` is.
     pub(super) workflow_mappings: Option<toml::Value>,
     /// The approval authorities whose signed word meets the workflow's guards, each the public
-    /// half of a key the project holds (docs/WORKFLOW.md, "Guards"), read as `workflow` is.
+    /// half of a key the project holds (docs/workflow/WORKFLOW.md, "Guards"), read as `workflow` is.
     pub(super) workflow_authorities: Option<toml::Value>,
     /// The tables and keys at the top of the file this build does not know.
     #[serde(flatten)]
@@ -170,7 +170,6 @@ pub(super) struct FilePlugins {
     /// `[plugins.process]`: a plugin's name and the command that starts its process.
     pub(super) process: BTreeMap<String, Vec<String>>,
     pub(super) timing: bool,
-    pub(super) loopback: bool,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }
@@ -309,7 +308,7 @@ impl Default for FileLand {
 /// publishes its GitHub Release, the one that verifies a commit on GitHub's machines, how often a
 /// run starts while that one is named, and the command that verifies who bypasses the default
 /// branch's rules
-/// (docs/RELEASES.md).
+/// (docs/workflow/RELEASES.md).
 #[derive(Deserialize)]
 #[serde(default)]
 pub(super) struct FileReleases {

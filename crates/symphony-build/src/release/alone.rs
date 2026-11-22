@@ -1,5 +1,5 @@
 //! A red test run's failures rerun alone by the run itself (RULES.md
-//! `tests/rerun-the-failure-alone`, docs/RELEASES.md "The release run", step 5). Once a check has
+//! `tests/rerun-the-failure-alone`, docs/workflow/RELEASES.md "The release run", step 5). Once a check has
 //! ended, each red step it listed that runs the tests' lanes ([`RUNNER`], verify's tests) and whose
 //! log names at most [`MOST`] failures ([`super::rerun`]: each failed test, a target that named
 //! none whole, a lane that listed none as that lane) has each of them rerun alone, one at a time,

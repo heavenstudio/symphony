@@ -2,6 +2,8 @@
 //! whether any of them could reach a recipient, made on the client from those rows
 //! ([`Store::could_hear`]), so a write's observation reads no inbox that holds nothing for it.
 
+use crate::lock::Recovered as _;
+
 use super::messages::DELIVERED;
 use super::surreal::pool as sql;
 use super::work::OWNER;
@@ -90,7 +92,7 @@ impl Store {
     /// `latest`. A pool is set whole, after its read, or not at all: a panic while the lock was held
     /// left the pool that was there before it, which is still a true read of the messages it covers.
     fn pool_through(&self, since: i64, latest: i64) -> Result<PoolGuard<'_>, Error> {
-        let mut pool = self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner());
+        let mut pool = self.inbox_pool.lock().recover();
         if !pool
             .as_ref()
             .is_some_and(|pool| pool.floor <= since && pool.latest >= latest)

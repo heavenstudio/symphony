@@ -11,9 +11,9 @@
 //! which the store sends for a read alone, is that statement and its own transaction.
 
 use super::{Ended, Refusal};
+use crate::db::DbError;
 use crate::pg::external::Share;
 use crate::pg::{Answer, RAISED};
-use crate::rpc::DbError;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,7 +24,7 @@ use tokio_postgres::types::{FromSql, IsNull, ToSql, Type, to_sql_checked};
 use tokio_postgres::{SimpleQueryMessage, error::SqlState};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
-/// The server majors this build is proved on (docs/analysis/hosted-postgresql.md).
+/// The server majors this build is proved on (docs/operations/analysis/hosted-postgresql.md).
 pub const SUPPORTED: [u32; 2] = [16, 18];
 /// How long a cancel request or a closing connection is waited for.
 const ENDING: Duration = Duration::from_secs(2);

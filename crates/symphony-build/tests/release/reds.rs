@@ -47,7 +47,7 @@ fn a_red_check_leaves_no_tag_and_files_exactly_one_red_task_a_green_rerun_closes
         red.title,
         format!("Release red: verify on {}", &planted[..12])
     );
-    assert_eq!(red.links, ["docs/RELEASES.md"]);
+    assert_eq!(red.links, ["docs/workflow/RELEASES.md"]);
     let run = fixture.runs().last().unwrap().clone();
     let log = run["checks"][0]["log"].as_str().unwrap().to_string();
     assert!(

@@ -795,6 +795,29 @@ describe("a run's read", () => {
     ]);
   });
 
+  it("keeps the run it read when a later answer is no run, reading its log on and stopping once it is read", async () => {
+    const { asked, told, waited, done } = follow(5);
+    await asking(asked, 1);
+    asked[0]?.answer(reply(200, over, "r1"));
+    await asking(asked, 2);
+    asked[1]?.answer(reply(503, {}));
+    await asking(asked, 3);
+    expect([asked[2]?.url, asked[2]?.named]).toEqual([`/api/run?run=${id(1)}`, "r1"]);
+    asked[2]?.answer(reply(200, { run: null }, "r2"));
+    await asking(asked, 4);
+    // The run read before still stands: its log is read, and the read stops once it is.
+    expect(asked[3]?.url).toBe(`/api/run-log?run=${id(1)}&tail=${RUN_LOG_TAIL}`);
+    asked[3]?.answer(reply(200, aLog(0, 3, 3, "one")));
+    await done;
+    expect(told).toEqual([
+      ["answered", id(1)],
+      ["log failed", "The server answered 503. Trying again…"],
+      ["failed", "The run's answer is not a run. Trying again…", false],
+      ["log", "one"],
+    ]);
+    expect(waited).toEqual([NOW_MS]);
+  });
+
   it("stops on a run the server has none of, and reads no log of a run that kept none", async () => {
     const gone = follow(5);
     await asking(gone.asked, 1);

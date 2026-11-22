@@ -47,4 +47,4 @@ now), screens of its own for the server list and for adding, renaming or removin
 installer that builds and signs the app at a release.
 
 How it is built is [its guide](AGENTS.md); why it is a thin shell is
-[the analysis](../../docs/analysis/desktop-client.md).
+[the analysis](../../docs/product/analysis/desktop-client.md).

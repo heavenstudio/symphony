@@ -58,7 +58,7 @@ pub const KEY: &str = "orchestrator_slots";
 
 /// One task as the ledger reads it.
 ///
-/// A task a custom workflow holds is counted by its position's slot policy (docs/WORKFLOW.md,
+/// A task a custom workflow holds is counted by its position's slot policy (docs/workflow/WORKFLOW.md,
 /// "Operations"): it holds a slot while that policy is `acquire` or `retain` ([`Entry::slot`]),
 /// whatever status the position projects to, so a reviewer's position that acquires counts as
 /// work, a held block that retains keeps its slot, and a position that releases frees it. That slot

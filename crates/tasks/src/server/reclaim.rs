@@ -464,7 +464,7 @@ fn names(info: &Value, field: &str, scope: &str, addr: &str) -> Result<Vec<Strin
             "INFO for {scope} at {addr} answered no {field} object: {info}"
         )));
     };
-    match named.keys().find(|name| !rpc::plain(name)) {
+    match named.keys().find(|name| !crate::db::plain(name)) {
         Some(name) => Err(ServerError::Reclaim(format!(
             "{name:?} at {addr} is not a plain name for a namespace or database"
         ))),

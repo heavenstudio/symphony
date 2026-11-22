@@ -90,5 +90,5 @@ wraps beside its rank, and **Later** stays under each card.
 
 ## Related
 
-- [Concept review](../REVIEW.md): cards, verdicts and how a card's group is worked out.
-- [Task board](../TASKS.md#asks): what the owner said that waits on an agent, as asks.
+- [Concept review](../workflow/REVIEW.md): cards, verdicts and how a card's group is worked out.
+- [Task board](../workflow/TASKS.md#asks): what the owner said that waits on an agent, as asks.

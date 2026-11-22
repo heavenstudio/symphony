@@ -127,7 +127,7 @@ impl Store {
                 arm: arm.is_some(),
                 placed: placing.is_some(),
             };
-            let body = || both(sql::create(&creating), Pg::script(pg::create(&creating)));
+            let body = || both(sql::create(&creating), Pg::script(pg::create(&creating))).posting();
             let mut vars = self.acting(
                 &new.by,
                 (self.clock)(),

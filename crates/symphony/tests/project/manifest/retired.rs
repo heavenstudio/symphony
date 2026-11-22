@@ -1,6 +1,7 @@
 //! The keys the Symphony reads no more (`[agents] transports`, `[board] export`,
-//! `[board] disposable`): a file that still writes one is refused as a file writing any key the
-//! Symphony does not know is, by its name and line, with nothing said of them apart.
+//! `[board] disposable`, `[plugins] loopback`): a file that still writes one is refused as a file
+//! writing any key the Symphony does not know is, by its name and line, with nothing said of them
+//! apart.
 
 use super::{folder, parsed, refused};
 use crate::Tree;
@@ -34,6 +35,9 @@ fn each_retired_key_is_refused_by_name_and_line_whatever_it_holds() {
             "[board]\ndisposable = { any = true }\n",
             "[board] disposable",
         ),
+        ("[plugins]\nloopback = true\n", "[plugins] loopback"),
+        ("[plugins]\nloopback = false\n", "[plugins] loopback"),
+        ("[plugins]\nloopback = \"yes\"\n", "[plugins] loopback"),
     ] {
         assert_eq!(
             refused(text),
@@ -88,4 +92,36 @@ fn the_settings_check_and_the_lint_refuse_it_and_say_no_retired_line() {
     assert!(err.starts_with(&format!("{REFUSAL}\n")), "{err}");
     assert!(err.contains("the project file is refused"), "{err}");
     assert!(!err.contains("does nothing"), "{err}");
+}
+
+/// A file that writes the retired loopback beside the timing that is still read, on line 4.
+const LOOPED: &str = "[plugins]\ncrates = []\ntiming = true\nloopback = true\n";
+
+/// What refuses [`LOOPED`].
+const LOOPED_REFUSAL: &str =
+    "symphony.toml: [plugins] loopback (line 4) is not a setting the Symphony knows";
+
+#[test]
+fn the_retired_loopback_is_refused_beside_the_timing_and_the_running_project_keeps_the_timing() {
+    let tree = Tree::new();
+    let root = folder(&tree, "Night Shift");
+    std::fs::write(root.join(FILE), LOOPED).unwrap();
+    assert_eq!(Project::load(&root).unwrap_err(), LOOPED_REFUSAL);
+    assert_eq!(project_problems(&root), [LOOPED_REFUSAL]);
+    let running = Project::of(&root);
+    assert_eq!(
+        running.plugin_calls,
+        symphony::project::PluginCalls { timing: true }
+    );
+    assert_eq!(Project::problem(&root), None);
+    let args = [root.to_str().unwrap().to_string()];
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    assert_eq!(symphony::lint::settings(&args, &mut out, &mut err), 1);
+    assert_eq!(
+        String::from_utf8(err).unwrap(),
+        format!("{LOOPED_REFUSAL}\n✖ the project file is refused.\n")
+    );
+    // without it the same file is read
+    let without = parsed("[plugins]\ncrates = []\ntiming = true\n").unwrap();
+    assert!(without.plugin_calls.recorded());
 }

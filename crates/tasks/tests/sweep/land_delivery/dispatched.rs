@@ -1,4 +1,4 @@
-//! A land dispatched at review (`tasks land SLUG --dispatch`, docs/TASKS.md "A land delivered by
+//! A land dispatched at review (`tasks land SLUG --dispatch`, docs/workflow/TASKS.md "A land delivered by
 //! a pull request"): the head published with its evidence whatever it says and the host's own
 //! merge of it armed, the host merging once `symphony/eligible` is green, and the watcher
 //! (`tasks land --watch`) closing the task once it has, or taking what holds the merge as a
@@ -393,6 +393,259 @@ fn a_head_or_evidence_changed_with_no_dispatch_is_published_again_by_the_watcher
     assert_eq!(line, "nothing is armed at the host: the watcher ends");
 }
 
+/// The lines that said `slug` went back to review as its approve does not name its head, each
+/// with whom it was said to.
+fn sent_back(r: &Repo, slug: &str) -> Vec<(String, Option<String>)> {
+    (r.board.store.thread(slug).unwrap().into_iter())
+        .filter(|post| post.text.contains("which its approve by"))
+        .map(|post| (post.text, post.recipient))
+        .collect()
+}
+
+/// A commit on `wt`'s branch after its approve, as a merge of main that settles a conflict is:
+/// the new head.
+fn moved_on(wt: &Path) -> String {
+    write(wt, "sim/jump.gd", "extends Node # with main\n");
+    git(wt, &["commit", "-qam", "main merged into it"]);
+    head(wt, "HEAD")
+}
+
+#[test]
+fn a_head_moved_under_an_approve_is_assessed_and_approved_again_with_no_hand_move() {
+    let (r, bare) = delivering();
+    let (people, wt, tip) = pending(&r, SLUG, "sim/jump.gd");
+    let host = Host::new(&r, &bare).arming(Arms::Always);
+    dispatched(&r, SLUG, &people.exe, &host).1.unwrap();
+    approve(&r, SLUG, &format!("{tip}: reads well"));
+    assert_eq!(status(&r, SLUG), "done");
+    // The head moves under the approve; the next write's dispatch sends it back to review.
+    let new = moved_on(&wt);
+    dispatched(&r, SLUG, &people.orch, &host).1.unwrap();
+    assert_eq!(status(&r, SLUG), "review");
+    let task = r.board.store.get(SLUG).unwrap();
+    assert!(symphony_board::orchestration::unlanded(&task).is_none());
+    let reviewer = task.holders("reviewer")[0].to_string();
+    assert_eq!(
+        sent_back(&r, SLUG),
+        [(
+            format!(
+                "land {SLUG}: {SLUG}'s head is {new7}, which its approve by {reviewer} does not \
+                 name (it names {}); {SLUG} is back in review. Its assessor reads {new7} and \
+                 its reviewer approves it naming it; its pull request shows {new7} with \
+                 `symphony/eligible` pending until then",
+                &tip[..7],
+                new7 = &new[..7]
+            ),
+            Some("@orchestrator".to_string())
+        )]
+    );
+    // Meanwhile the pull request is at the new head, pending there, its merge armed across it.
+    let published = host.request("publish");
+    assert_eq!(published["head"], new.as_str());
+    assert_eq!(published["snapshot"]["status"], "review");
+    assert_eq!(published["snapshot"]["eligible"], false);
+    assert!(host.is_armed());
+    // The approve of the new head before its assessment, which is written all the same, the
+    // task left done.
+    ran(&r, SLUG, &new, "cargo test -p sim", 0);
+    // A later round is the same reviewer's, resumed.
+    (r.board.store)
+        .verdict(
+            SLUG,
+            &reviewer,
+            "approve",
+            &format!("{new}: the merge reads well"),
+        )
+        .unwrap();
+    assess(&r, SLUG, &people.assessor, &["tests", "review"], &new);
+    assert_eq!(status(&r, SLUG), "done");
+    let (_, result) = dispatched(&r, SLUG, &people.orch, &host);
+    assert!(result.unwrap().ends_with(", as it is now"));
+    assert_eq!(host.request("publish")["snapshot"]["eligible"], true);
+    assert_eq!(status(&r, SLUG), "done", "an approve naming the head stays");
+    assert_eq!(sent_back(&r, SLUG).len(), 1);
+    // Merged and closed: landed, it takes no assessment.
+    let (said, ..) = watched(&r, &host, dispatch::seconds(), 2, &[]);
+    assert!(said.contains(&format!("landed {SLUG} on main")), "{said}");
+    assert_eq!(Receipt::read(&lands(&r), SLUG).unwrap().head, new);
+    let again = Needs {
+        stamps: vec!["tests".into()],
+        tip: Some(new.clone()),
+        by: people.assessor.clone(),
+        why: "after its land".into(),
+        import: None,
+    };
+    let refused = (r.board.store)
+        .set_needs(SLUG, &Catalogue::symphony(), &again)
+        .unwrap_err();
+    assert_eq!(
+        refused.to_string(),
+        format!("{SLUG} is done: only an open task, or one approved and not landed, is assessed")
+    );
+}
+
+#[test]
+fn a_head_moved_under_an_approve_with_no_write_is_sent_back_by_the_watcher_once() {
+    let (r, bare) = delivering();
+    let (people, wt, _) = ready(&r, SLUG);
+    // Armed, its evidence standing, and a check of another's the host still waits on.
+    let host = Host::new(&r, &bare).arming(Arms::Always);
+    host.waits();
+    dispatched(&r, SLUG, &people.orch, &host).1.unwrap();
+    assert_eq!(status(&r, SLUG), "done");
+    let new = moved_on(&wt);
+    let (said, ..) = watched(&r, &host, dispatch::seconds(), 2, &[]);
+    assert!(
+        said.contains(&format!(
+            "land {SLUG}: its head changed since it was published: publishing it again"
+        )),
+        "{said}"
+    );
+    assert_eq!(status(&r, SLUG), "review");
+    assert_eq!(host.request("publish")["head"], new.as_str());
+    assert_eq!(host.request("publish")["snapshot"]["eligible"], false);
+    assert!(host.is_armed());
+    // Said once, however many rounds read it in review.
+    let sent = sent_back(&r, SLUG);
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0].1.as_deref(), Some("@orchestrator"));
+    assert!(landings(&r, SLUG).is_empty());
+}
+
+/// The board's own line of `slug`'s move back to review from done, by `by`.
+fn reopened_by(slug: &str, by: &str) -> String {
+    format!("{slug} is back in review from done, by {by}: ")
+}
+
+/// Whether a post on `slug`'s thread names the hand move back to review.
+fn hand_move(r: &Repo, slug: &str) -> bool {
+    let hand = format!("`just tasks move {slug} review` does");
+    (r.board.store.thread(slug).unwrap().iter()).any(|post| post.text.contains(&hand))
+}
+
+#[test]
+fn an_assessors_dispatch_sends_a_head_moved_under_an_approve_back_as_its_orchestrator() {
+    // The dispatch an assessment write starts runs as the assessor, who holds no role on the task
+    // that may send it back to review: the move is its orchestrator's, with no hand move asked.
+    let (r, bare) = delivering();
+    let (people, wt, tip) = pending(&r, SLUG, "sim/jump.gd");
+    let host = Host::new(&r, &bare).arming(Arms::Always);
+    dispatched(&r, SLUG, &people.exe, &host).1.unwrap();
+    approve(&r, SLUG, &format!("{tip}: reads well"));
+    assert_eq!(status(&r, SLUG), "done");
+    let task = r.board.store.get(SLUG).unwrap();
+    assert!(task.roles.iter().all(|role| role.handle != people.assessor));
+    let reviewer = task.holders("reviewer")[0].to_string();
+    let new = moved_on(&wt);
+    assess(&r, SLUG, &people.assessor, &["tests", "review"], &new);
+    let (_, result) = dispatched(&r, SLUG, &people.assessor, &host);
+    result.unwrap();
+    assert_eq!(status(&r, SLUG), "review");
+    let thread = r.board.store.thread(SLUG).unwrap();
+    let by = |handle: &str| {
+        (thread.iter())
+            .filter(|post| post.text.starts_with(&reopened_by(SLUG, handle)))
+            .count()
+    };
+    // The board's line to its executor and its reviewer names the orchestrator as the mover.
+    assert_eq!((by(&people.orch), by(&people.assessor)), (2, 0));
+    assert_eq!(
+        sent_back(&r, SLUG),
+        [(
+            format!(
+                "land {SLUG}: {SLUG}'s head is {new7}, which its approve by {reviewer} does not \
+                 name (it names {}); {SLUG} is back in review. Its assessor reads {new7} and \
+                 its reviewer approves it naming it; its pull request shows {new7} with \
+                 `symphony/eligible` pending until then",
+                &tip[..7],
+                new7 = &new[..7]
+            ),
+            Some("@orchestrator".to_string())
+        )]
+    );
+    assert!(!hand_move(&r, SLUG));
+    // Published at the new head, pending there, its merge armed across it.
+    let published = host.request("publish");
+    assert_eq!(published["head"], new.as_str());
+    assert_eq!(published["snapshot"]["status"], "review");
+    assert_eq!(published["snapshot"]["eligible"], false);
+    assert!(host.is_armed());
+}
+
+#[test]
+fn a_head_moved_under_an_approve_with_no_orchestrator_goes_back_only_by_who_may_move_it() {
+    // No orchestrator to move as: the dispatch moves as who started it, and an assessor's is
+    // refused naming the hand move, as before; its executor's moves it.
+    let (r, bare) = delivering();
+    let (people, wt, tip) = pending(&r, SLUG, "sim/jump.gd");
+    let host = Host::new(&r, &bare).arming(Arms::Always);
+    dispatched(&r, SLUG, &people.exe, &host).1.unwrap();
+    approve(&r, SLUG, &format!("{tip}: reads well"));
+    // Its orchestrator left the board, and no other is there to be given it.
+    let store = &r.board.store;
+    store.leave(&people.orch).unwrap();
+    let task = store.get(SLUG).unwrap();
+    assert!(task.holders("orchestrator").is_empty());
+    let reviewer = task.holders("reviewer")[0].to_string();
+    let new = moved_on(&wt);
+    assess(&r, SLUG, &people.assessor, &["tests", "review"], &new);
+    let (_, result) = dispatched(&r, SLUG, &people.assessor, &host);
+    let moved = format!(
+        "{SLUG}'s head is {}, which its approve by {reviewer} does not name (it names {})",
+        &new[..7],
+        &tip[..7]
+    );
+    let line = format!(
+        "{moved}, and it does not go back to review ({} is not {SLUG}'s executor, reviewer or \
+         orchestrator, which alone send it back to review)",
+        people.assessor
+    );
+    assert_eq!(result.unwrap_err(), line);
+    assert_eq!(status(&r, SLUG), "done");
+    assert_eq!(
+        last_post(&r, SLUG),
+        (
+            format!("land refused: {line}. `just tasks move {SLUG} review` does"),
+            Some("@orchestrator".to_string())
+        )
+    );
+    assert!(
+        sent_back(&r, SLUG)
+            .iter()
+            .all(|(text, _)| !text.contains("is back in review"))
+    );
+    // Its executor's dispatch, a session that may move it, sends it back.
+    dispatched(&r, SLUG, &people.exe, &host).1.unwrap();
+    assert_eq!(status(&r, SLUG), "review");
+    let reopened = (store.thread(SLUG).unwrap().into_iter())
+        .filter(|post| post.text.starts_with(&reopened_by(SLUG, &people.exe)))
+        .count();
+    assert_eq!(reopened, 2);
+}
+
+#[test]
+fn an_approve_that_names_no_commit_goes_back_to_review_for_one_naming_the_head() {
+    // A delivery takes an approve naming the head alone: one that names none never lets the
+    // host merge, so the task waits in review, where a reviewer can name it.
+    let (r, bare) = delivering();
+    let (people, _, tip) = pending(&r, SLUG, "sim/jump.gd");
+    let host = Host::new(&r, &bare).arming(Arms::Always);
+    approve(&r, SLUG, "reads well");
+    dispatched(&r, SLUG, &people.orch, &host).1.unwrap();
+    assert_eq!(status(&r, SLUG), "review");
+    let sent = sent_back(&r, SLUG);
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert!(
+        sent[0].0.contains(&format!(
+            "{SLUG}'s head is {}, which its approve by ",
+            &tip[..7]
+        )) && sent[0].0.contains("does not name (it names no commit)"),
+        "{}",
+        sent[0].0
+    );
+    assert_eq!(host.request("publish")["snapshot"]["eligible"], false);
+}
+
 // -- a merge that fails ----------------------------------------------------------------------------
 
 #[test]
@@ -469,6 +722,48 @@ fn a_pull_request_closed_by_someone_sends_the_task_back_to_work_and_is_bound_no_
         !Journal::path(&lands(&r), SLUG).exists(),
         "the next dispatch opens another"
     );
+}
+
+#[test]
+fn a_pull_request_closed_found_by_an_assessors_dispatch_sends_it_back_to_work_as_its_orchestrator()
+{
+    // The dispatch an assessment write starts runs as the assessor, who holds no role on the task
+    // that may move it: the moves back to review and to work are its orchestrator's, and no task
+    // is filed for a merge that failed.
+    let (r, bare) = delivering();
+    let (people, _, tip) = ready(&r, SLUG);
+    let (host, _) = armed_green(&r, &bare, &people);
+    assert_eq!(status(&r, SLUG), "done");
+    host.close_by_hand();
+    assess(&r, SLUG, &people.assessor, &["tests", "review"], &tip);
+    let (_, result) = dispatched(&r, SLUG, &people.assessor, &host);
+    let line = result.unwrap();
+    let not_merged = format!(
+        "land {SLUG}: not merged: pull request #3 was closed without a merge; nothing merged, its \
+         auto-merge off"
+    );
+    assert_eq!(line, not_merged);
+    assert_eq!(status(&r, SLUG), "in_progress");
+    assert_eq!(
+        last_post(&r, SLUG),
+        (
+            format!(
+                "{not_merged}; {SLUG} is back in progress. Its executor merges main into the \
+                 branch once, or puts the check right, then moves it to review, which dispatches \
+                 it again"
+            ),
+            Some("@orchestrator".to_string())
+        )
+    );
+    let reopened = |by: &str| {
+        (r.board.store.thread(SLUG).unwrap().into_iter())
+            .filter(|post| post.text.starts_with(&reopened_by(SLUG, by)))
+            .count()
+    };
+    assert_eq!((reopened(&people.orch), reopened(&people.assessor)), (2, 0));
+    let filed = format!("{FAILED}{}", SLUG.replace('/', "-"));
+    assert!(r.board.store.get(&filed).is_err(), "nothing filed");
+    assert!(!Journal::path(&lands(&r), SLUG).exists());
 }
 
 #[test]

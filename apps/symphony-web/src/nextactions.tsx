@@ -1,4 +1,4 @@
-// A task a custom workflow holds, on its page (docs/WORKFLOW.md, "The app"): where it stands, by
+// A task a custom workflow holds, on its page (docs/workflow/WORKFLOW.md, "The app"): where it stands, by
 // its phase's and state's labels, with the place a block resumes at and the person a recovery by
 // hand waits on, and the local owner's next actions on it as the server offers them
 // (`/api/workflow-actions`): each its edge's label and destination, and one unavailable with why

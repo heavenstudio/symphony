@@ -53,6 +53,7 @@ pub(in crate::store) mod workflow_events;
 pub(in crate::store) mod write;
 pub(in crate::store) mod writers;
 
+use super::RuleParts;
 use write::WRITE;
 
 #[cfg(test)]
@@ -82,20 +83,22 @@ pub(in crate::store) const THREADS: &str = "RETURN {
     threads: $slugs.map(|$slug| (SELECT * OMIT id FROM message:[$slug, NONE]..[$slug, ..])),
 };";
 
-/// A rule's write ([`WRITE`]) with what its change adds: what a block waited on removed by a
-/// change of status out of blocked, what it waits on written (`blocked`), the move's `reason`
-/// posted after its line, the task's `needs` and its `gates` written, its mark of an approve not
-/// landed set or lifted (`unlanded`), a change of status (`moved`, whether to cancelled) settling
-/// its hold and its dependants, and the slot counters it `holds` guarded.
-pub(in crate::store) fn rule(
-    reason: bool,
-    (needs, gates): (bool, bool),
-    unlanded: bool,
-    blocked: bool,
-    moved: Option<bool>,
-    holds: bool,
-    placed: bool,
-) -> String {
+/// A rule's write ([`WRITE`]) with what its change adds ([`RuleParts`]): what a block waited on
+/// removed by a change of status out of blocked, what it waits on written (`blocked`), the move's
+/// `reason` posted after its line, the task's `needs` and its `gates` written, its mark of an
+/// approve not landed set or lifted (`unlanded`), a change of status (`moved`, whether to
+/// cancelled) settling its hold and its dependants, and the slot counters it `holds` guarded.
+pub(in crate::store) fn rule(parts: RuleParts) -> String {
+    let RuleParts {
+        placed,
+        reason,
+        blocked,
+        needs,
+        gates,
+        unlanded,
+        moved,
+        holds,
+    } = parts;
     // A task reopened under a custom workflow is placed first, so the rule's own write meets a
     // task the workflow holds at the status it moves to (`workflow::REOPEN_PLACED`).
     let mut body = String::from(if placed { workflow::REOPEN_PLACED } else { "" });
@@ -193,7 +196,8 @@ pub(in crate::store) fn transaction(guard: &str, body: &str) -> String {
     format!("BEGIN TRANSACTION;\n{guard}\n{body}\nCOMMIT TRANSACTION;")
 }
 
-/// Whether `body`'s statements put a line on a thread ([`logged`]), which its callbacks then hear.
+/// Whether `body`'s statements put a line on a thread ([`logged`]): what a debug build holds a
+/// statement that says whether it posts to ([`super::statement::Statement::disagreement`]).
 pub(in crate::store) fn posts(body: &str) -> bool {
     body.contains("CREATE type::record('message',")
 }

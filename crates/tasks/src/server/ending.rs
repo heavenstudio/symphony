@@ -131,7 +131,7 @@ impl Home {
              hold WHY --as HANDLE`, a hold that stands while it says the server still closes), \
              ends it by hand (`kill -9 {pid}`, its log then replayed at the next start) and \
              releases the hold; its ask, {}, is forgotten once it has ended \
-             (docs/BOARD_OPERATIONS.md, Stuck servers). Its log is {}",
+             (docs/operations/BOARD_OPERATIONS.md, Stuck servers). Its log is {}",
             asked.display(),
             self.dir.join(LOG).display()
         )))
@@ -287,7 +287,7 @@ mod tests {
                 "its ask, {}, is forgotten once it has ended",
                 asked.display()
             ),
-            "(docs/BOARD_OPERATIONS.md, Stuck servers)".to_string(),
+            "(docs/operations/BOARD_OPERATIONS.md, Stuck servers)".to_string(),
         ] {
             assert!(first.contains(&remedy), "{remedy} in {first}");
         }

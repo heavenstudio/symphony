@@ -1,5 +1,5 @@
-//! Who bypasses the default branch's rules, verified again by each release run (docs/RELEASES.md,
-//! "Who bypasses the rules, again"; docs/GITHUB.md, "Who bypasses the rules"). The command
+//! Who bypasses the default branch's rules, verified again by each release run (docs/workflow/RELEASES.md,
+//! "Who bypasses the rules, again"; docs/operations/GITHUB.md, "Who bypasses the rules"). The command
 //! `[releases] rulesets` names, the GitHub adapter's `symphony-github rulesets --verify` where its
 //! settings publish pull requests, is a check of the run of its own, [`NAME`], after the checks it
 //! was given, and so recorded, red unless it exits 0, filed (`tests/release-red-rulesets`) and held

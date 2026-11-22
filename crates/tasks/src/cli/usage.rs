@@ -517,11 +517,11 @@ options:
         r#"usage: just tasks workflow [-h] [--as ACTOR] [--revision N] [--key KEY] [--input NAME=TEXT] [--accept SLUG=OUTPUT] [--json] ACTION [SLUG] [EDGE]
 
 A custom workflow the board activated from the project's default branch
-(docs/WORKFLOW.md). `show` prints its revision, positions and edges, or says
-none is active. `actions SLUG` prints where the task stands, its workflow
-revision, and each edge that leaves it with what stops you taking it now: a
-preview, never a permit, and the accepted outputs it gives and takes. `apply
-SLUG EDGE --revision N` takes the edge as you, through the board's one
+(docs/workflow/WORKFLOW.md). `show` prints its revision, positions and edges,
+or says none is active. `actions SLUG` prints where the task stands, its
+workflow revision, and each edge that leaves it with what stops you taking it
+now: a preview, never a permit, and the accepted outputs it gives and takes.
+`apply SLUG EDGE --revision N` takes the edge as you, through the board's one
 admission, from the revision you read: a task moved since is refused as
 stale_task, so read its actions again. An edge depending on accepted outputs
 takes the one you name of each task it depends on (--accept): one superseded
@@ -1139,8 +1139,8 @@ outside the database. A live board that reads below it went back: its store
 lost what was written since, and every command that opens it refuses it,
 `tasks migrate` included (exit 1 here). The owner, and only the owner,
 accepts a board older on purpose (a fresh store, a restore they chose) with
---accept, naming the schema it holds: docs/BOARD_OPERATIONS.md, A board that
-went back, says how to recover one first.
+--accept, naming the schema it holds: docs/operations/BOARD_OPERATIONS.md, A
+board that went back, says how to recover one first.
 
 options:
   -h, --help         show this help message and exit
@@ -1169,7 +1169,7 @@ after an unclean end, before a replay, or of a store that went back) is kept
 until the owner removes it (rm -rf its folder); of the others the newest 3 are
 kept. Each grows towards the whole store's size as the store moves on, and the
 room a reclaim frees comes back only once the snapshots of the old store are
-removed: docs/BOARD_OPERATIONS.md, The store and its server.
+removed: docs/operations/BOARD_OPERATIONS.md, The store and its server.
 
 options:
   -h, --help  show this help message and exit

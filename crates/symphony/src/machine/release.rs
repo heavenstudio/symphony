@@ -1,9 +1,9 @@
-//! A release installed on the machine (docs/RELEASES.md, "The install"): a folder of its own in the
-//! machine folder, `releases/NAME/`, holding the four binaries every project runs and the one that moves a board's store (`bin/`), one
-//! build of the client (`client/HASH/`, which a server built the release's way serves from beside
-//! it) and `manifest.json` ([`Manifest`]): the release and its commit, the board schema, the plugin
-//! protocol and the `tasks api` version its binaries said they serve, and each artifact's path and
-//! size.
+//! A release installed on the machine (docs/workflow/RELEASES.md, "The install"): a folder of its own in the
+//! machine folder, `releases/NAME/`, holding the four binaries every project runs and the one that
+//! moves a board's store (`bin/`), one build of the client (`client/HASH/`, which a server built
+//! the release's way serves from beside it) and `manifest.json` ([`Manifest`]): the release and its
+//! commit, the board schema, the plugin protocol and the `tasks api` version its binaries said they
+//! serve, and each artifact's path and size.
 //!
 //! An install ([`install`]) is written under a temporary name beside it and renamed into place
 //! whole, so a release folder is either all there or not there: a failed install leaves none. A

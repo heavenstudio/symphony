@@ -8,7 +8,7 @@
 
 use serde_json::json;
 
-use super::{SHOWN, STALL, assets::module, chrome, common, dist, site};
+use super::{READY, SHOWN, STALL, assets::module, chrome, common, dist, site};
 
 /// Each kind of the web client, the page that shows it and what the page draws once it is in (a
 /// task's page, the stand-in having no page of its task, says so once it has asked for it).
@@ -93,7 +93,7 @@ fn shows(chrome: &mut super::chrome::Chrome, selector: &str) {
     assert!(
         chrome.wait_for(
             &format!(
-                "document.querySelector({}) !== null && document.documentElement.dataset.navigation === 'ready'",
+                "document.querySelector({}) !== null && {READY}",
                 json!(selector)
             ),
             SHOWN
@@ -175,7 +175,7 @@ fn a_move_into_a_web_kind_keeps_the_page_before_shown_until_its_entry_is_in() {
     assert!(
         chrome.wait_for(
             &format!(
-                "document.querySelector({}) !== null && document.documentElement.dataset.navigation === 'ready'",
+                "document.querySelector({}) !== null && {READY}",
                 json!(board)
             ),
             SHOWN
@@ -205,7 +205,7 @@ fn a_move_into_a_web_kind_keeps_the_page_before_shown_until_its_entry_is_in() {
     assert!(
         chrome.wait_for(
             &format!(
-                "document.querySelector({}) !== null && document.documentElement.dataset.navigation === 'ready'",
+                "document.querySelector({}) !== null && {READY}",
                 json!(ready)
             ),
             SHOWN

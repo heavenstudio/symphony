@@ -1243,7 +1243,7 @@ fn an_answer_after_its_call_was_given_up_is_logged_and_dropped_and_the_process_k
     let (let_go, held) = mpsc::channel::<()>();
     let held = Mutex::new(Some(held));
     let respond: Respond = Arc::new(move |id, _| {
-        if let Some(held) = lock(&held).take() {
+        if let Some(held) = held.lock().recover().take() {
             // Until the test lets it go, or lets go of its end.
             let _ = held.recv();
             return Said::Lines(vec![answering(id, &rendered("late"))]);
@@ -1681,11 +1681,11 @@ fn a_real_process_that_stops_reading_is_ended_in_the_wait_and_holds_no_other_cal
     let (x_failed, y_failed) = std::thread::scope(|scope| {
         // Neither call's wait begins before both calls wait: each queues its line, which begins
         // its wait, only once the test lets go of the queue.
-        let queue = lock(&connection.queue);
+        let queue = connection.queue.lock().recover();
         let xs = scope.spawn(|| failed(&x));
         let ys = scope.spawn(|| failed(&y));
         until("both calls wait", || {
-            lock(&connection.waiting).calls.len() == 2
+            connection.waiting.lock().recover().calls.len() == 2
         });
         drop(queue);
         (xs.join().unwrap(), ys.join().unwrap())
@@ -1725,7 +1725,9 @@ fn every_call_that_finds_its_process_ending_is_told_how_the_first_ended_it() {
     let released = Arc::new(AtomicBool::new(false));
     let lingering = released.clone();
     let start: Start = Box::new(move || {
-        let input = lock(&declares)
+        let input = declares
+            .lock()
+            .recover()
             .take()
             .ok_or_else(|| io::Error::other("it is started once"))?;
         Ok(Spawned {
@@ -1745,7 +1747,9 @@ fn every_call_that_finds_its_process_ending_is_told_how_the_first_ended_it() {
     std::thread::scope(|scope| {
         // One call ends it, and its process is not seen ended until the test lets it.
         scope.spawn(|| remote.end(&connection, Some("the first call's reason".into())));
-        until("it is ending", || lock(&connection.waiting).ending);
+        until("it is ending", || {
+            connection.waiting.lock().recover().ending
+        });
         // Another call ends it meanwhile, which leaves the first's reason standing.
         remote.end(&connection, Some("the second call's reason".into()));
         released.store(true, Ordering::SeqCst);
@@ -1928,7 +1932,7 @@ fn a_call_with_no_answer_is_recorded_with_why_and_without_the_plugins_time() {
         (&line["seam"], &line["call"]),
         (&"card_kinds".into(), &"recognises".into())
     );
-    for absent in ["us", "request_bytes", "answer_bytes", "lost"] {
+    for absent in ["us", "request_bytes", "answer_bytes"] {
         assert!(line.get(absent).is_none(), "{absent}: {line}");
     }
     assert!(line["round_trip_us"].as_f64().is_some(), "{line}");

@@ -7,11 +7,13 @@
 //! first is refused at once while the start runs, and the next read after a start that failed is
 //! told why, once; the one after that starts again.
 
+use crate::lock::Recovered as _;
+
 use super::starters::{Doing, Note};
 use super::{Home, ServerError};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 
 /// The starts this process runs apart, by their board's folder.
 static APART: Mutex<BTreeMap<PathBuf, Apart>> = Mutex::new(BTreeMap::new());
@@ -42,7 +44,7 @@ impl Home {
     /// Refused while this process runs a start of this board apart, naming it, or once when the
     /// last one failed, saying why; nothing when there is neither.
     pub(super) fn apart_under_way(&self) -> Result<(), ServerError> {
-        let mut apart = APART.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut apart = APART.lock().recover();
         match apart.get(&self.dir) {
             None => Ok(()),
             Some(Apart::Running(note)) => Err(self.started_apart(note)),
@@ -67,7 +69,7 @@ impl Home {
             at: crate::store::now(),
             logged: Some(logged),
         };
-        let mut apart = APART.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut apart = APART.lock().recover();
         if let Some(Apart::Running(under_way)) = apart.get(&self.dir) {
             return self.started_apart(under_way);
         }
@@ -81,7 +83,7 @@ impl Home {
             .name("board start".into())
             .spawn(move || {
                 let started = home.ensure();
-                let mut apart = APART.lock().unwrap_or_else(PoisonError::into_inner);
+                let mut apart = APART.lock().recover();
                 match started {
                     Ok(_) => {
                         apart.remove(&dir);

@@ -50,7 +50,7 @@ impl Hold {
         format!(
             "{} names the linked {plugins} {}, and a release's server serves a plugin only from its \
              process: a [plugins.process] command for {them} in {file} lets the release serve every \
-             project (docs/PLUGIN_PROTOCOL.md)",
+             project (docs/engineering/PLUGIN_PROTOCOL.md)",
             self.id,
             self.plugins.join(", "),
         )

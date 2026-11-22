@@ -8,5 +8,5 @@
 *.profdata
 /artifacts/
 /.claude/worktrees/
-# One machine's settings over symphony.toml (docs/PROJECT_FILE.md), never versioned.
+# One machine's settings over symphony.toml (docs/operations/PROJECT_FILE.md), never versioned.
 /symphony.local.toml

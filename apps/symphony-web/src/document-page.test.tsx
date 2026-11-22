@@ -11,6 +11,9 @@ import {
   GhostDocument,
   HtmlPage,
   HydratedSection,
+  Missing,
+  movedAddress,
+  readMoved,
   SANDBOX,
   Versions,
 } from "./document-page";
@@ -108,6 +111,60 @@ describe("a document before its read", () => {
   });
 });
 
+describe("a document no file has at its route", () => {
+  it("reads the routes of its name the server answers, each a path of the app, and nothing else", () => {
+    expect(readMoved(["docs/workflow/RUNS.md", "docs/product/RUNS.md"])).toEqual([
+      "docs/workflow/RUNS.md",
+      "docs/product/RUNS.md",
+    ]);
+    expect(
+      readMoved(["docs/A.md", 3, null, "/evil.example/A.md", "docs\\A.md", "docs/\nA.md"]),
+    ).toEqual(["docs/A.md"]);
+    for (const answer of [{ moved: ["docs/A.md"] }, "docs/A.md", null, undefined]) {
+      expect(readMoved(answer)).toEqual([]);
+    }
+  });
+
+  it("opens the document of its name at its route in the checkout, the heading kept", () => {
+    expect(movedAddress("", "docs/operations/analysis/board-pg-cutover.md", "#The%20order")).toBe(
+      "/docs/operations/analysis/board-pg-cutover.md#The%20order",
+    );
+    expect(movedAddress("feature-x", "docs/A.md", "")).toBe("/@feature-x/docs/A.md");
+  });
+
+  it("says it is not found, with nothing to choose when no document or one has its name", () => {
+    for (const moved of [[], ["docs/area/GONE.md"]]) {
+      const html = renderToStaticMarkup(
+        <Missing path="docs/GONE.md" scope="" moved={moved} hash="" retry={() => {}} />,
+      );
+      expect(html).toContain("<h1>Document not found</h1>");
+      expect(html).toContain(
+        "<p>There is no document at docs/GONE.md: it may have been moved, renamed or removed.</p>",
+      );
+      expect(html).toContain('<a class="trouble-back" href="/docs/">');
+      expect(html).toContain(">Retry</button>");
+      expect(html).not.toContain("trouble-choices");
+    }
+  });
+
+  it("offers each document of a name documents share, in the checkout, the heading kept", () => {
+    const html = renderToStaticMarkup(
+      <Missing
+        path="docs/RUNS.md"
+        scope="feature-x"
+        moved={["docs/product/RUNS.md", "docs/workflow/RUNS.md"]}
+        hash="#the-runs-page"
+        retry={() => {}}
+      />,
+    );
+    expect(html).toContain("<h1>Document not found</h1>");
+    expect(html).toContain(
+      '<p>It may be one of the documents named RUNS.md:</p><ul class="trouble-choices"><li><a href="/@feature-x/docs/product/RUNS.md#the-runs-page">docs/product/RUNS.md</a></li><li><a href="/@feature-x/docs/workflow/RUNS.md#the-runs-page">docs/workflow/RUNS.md</a></li></ul><p class="trouble-actions">',
+    );
+    expect(html).toContain('<a class="trouble-back" href="/@feature-x/docs/">');
+  });
+});
+
 describe("a folder before its read", () => {
   it("says it is loading", () => {
     const html = renderToStaticMarkup(<FolderPage path="docs" scope="" />);
@@ -130,7 +187,7 @@ describe("a folder with no document", () => {
     expect(html).toContain(
       '<p class="first-steps">No document is here yet. A Markdown file in this folder is a page of its own, and a card in its register waits for your verdict in the queue: <a href="',
     );
-    expect(html).toContain('/docs/GETTING_STARTED.md" target="_blank"');
+    expect(html).toContain('/docs/operations/GETTING_STARTED.md" target="_blank"');
   });
   it("says nothing once it lists a document or a folder, or draws an intro", () => {
     const entry = { kind: "doc", path: "docs/A.md", title: "A", docs: 0, waiting: 0, summary: "" };

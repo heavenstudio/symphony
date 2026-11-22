@@ -1,5 +1,5 @@
 //! The Symphony library: what the owner says in `docs/`, read and written in the shapes
-//! docs/REVIEW.md sets down.
+//! docs/workflow/REVIEW.md sets down.
 //!
 //! The owner reviews the design documents in the Symphony (`just symphony`), which writes callouts into
 //! the text and verdicts into the decision cards. A document has no status: it has versions and

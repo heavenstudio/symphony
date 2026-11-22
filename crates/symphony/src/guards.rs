@@ -1,11 +1,11 @@
 //! The guards of a task a custom workflow holds, as its page reads them
-//! ([`symphony_api::workflow::WORKFLOW_GUARDS_PATH`], docs/WORKFLOW.md, "The app"): the board's own
-//! records of what it accepted from each approval authority and what it admitted
+//! ([`symphony_api::workflow::WORKFLOW_GUARDS_PATH`], docs/workflow/WORKFLOW.md, "The app"): the
+//! board's own records of what it accepted from each approval authority and what it admitted
 //! (`symphony_board::Store::workflow_guards`), with the two things only this host knows: whether a
 //! plugin the project selects answers for an authority, so the owner's take asks it
 //! (`crate::save`), and the page the project file names for an authority's ledger
-//! (`[[workflow_authorities]]`'s `page`, docs/PROJECT_FILE.md), filled in for each guard of this
-//! task. It shows and links; nothing here approves, grants or decides a guard.
+//! (`[[workflow_authorities]]`'s `page`, docs/operations/PROJECT_FILE.md), filled in for each guard
+//! of this task. It shows and links; nothing here approves, grants or decides a guard.
 
 use std::path::Path;
 

@@ -1,6 +1,6 @@
 //! A first plugin, whole: the `[[hello:NAME]]` component, a page of its own in the header and a
 //! theme package, answering from a process of its own. It is a plugin's `src/main.rs` as
-//! docs/PLUGIN_WRITING.md walks through it, tests included.
+//! docs/engineering/PLUGIN_WRITING.md walks through it, tests included.
 
 use symphony_plugin::vocabulary::{Block, NavItem, Span};
 use symphony_plugin::{Component, Page, Plugin, Theme};

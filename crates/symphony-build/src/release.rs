@@ -1,4 +1,4 @@
-//! `symphony-build release` (`just release`): Symphony's releases (docs/RELEASES.md), a command of
+//! `symphony-build release` (`just release`): Symphony's releases (docs/workflow/RELEASES.md), a command of
 //! this repository's own build binary, which no project is given. A run takes main's tip as
 //! fetched from the remote, the commit a project can fetch, into a clean checkout of its own
 //! outside the repository's folder ([`place`]) and runs the full verification there: a release is
@@ -117,7 +117,7 @@ machine's server follows; no project's checkout, branch or pin is written. \
 A run red in a check holds its commit as the release candidate, the local branch \
 release-candidate, until its reds' own lands answer them; then it is rerun, and main's tip is run \
 only once none is held. Where [releases] hosted names a command, the full verification is asked \
-of GitHub's runners through it and run here only when they give no result (docs/RELEASES.md).
+of GitHub's runners through it and run here only when they give no result (docs/workflow/RELEASES.md).
 
 options:
   -h, --help            show this help message and exit
@@ -182,7 +182,7 @@ const LATE_SECONDS: f64 = 15.0 * 60.0;
 const FINISH: Duration = Duration::from_secs(5 * 60);
 /// Why a check is red without having run.
 const NOT_STARTED: &str = "the run's time was up before it started";
-/// The time a release's install has, past its run's checks: the release build of its four binaries
+/// The time a release's install has, past its run's checks: the release build of its five binaries
 /// at the machine's load, and the questions put to them.
 const INSTALL: Duration = Duration::from_secs(3600);
 /// The time the rest of a release's refresh has, past its install: each board's snapshot and move,
@@ -684,7 +684,8 @@ fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write
         until: options.now + DRIVER_BUILD.as_secs_f64(),
         check: None,
     };
-    let _ = record::hold(&folder, &building);
+    let held = record::hold(&folder, &building);
+    unsaid(&mut std::io::stderr(), UNHELD, held);
     let built = driver(repo, options, out);
     record::release(&folder, &building.id);
     drop(lock);
@@ -840,7 +841,7 @@ fn unread(main: &Path, problem: &str) -> String {
     format!(
         "the project file {} does not load, so nothing says what a run verifies, releases or \
          refreshes, and none is run as if its settings were unset: {problem}. The settings check \
-         reads it the same way (docs/PROJECT_FILE.md, \"The settings check\")",
+         reads it the same way (docs/operations/PROJECT_FILE.md, \"The settings check\")",
         main.join(symphony::project::FILE).display()
     )
 }
@@ -1107,7 +1108,7 @@ fn github_by_hand(
         return refused(
             err,
             "[releases] github names no command in symphony.toml, so nothing publishes a GitHub \
-             Release (docs/RELEASES.md)",
+             Release (docs/workflow/RELEASES.md)",
         );
     }
     let ordered = match ordered_releases(&repo.root) {
@@ -1211,27 +1212,12 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
             "release"
         }
         .into(),
-        commit: String::new(),
-        tip: String::new(),
         started_at: options.now,
         ended_at: options.now,
         result: "error".into(),
-        error: None,
-        previous: None,
-        checks: Vec::new(),
-        tag: None,
-        pushed: false,
-        board: record::Board::default(),
         remote: options.remote.clone(),
-        unpushed: None,
         cause: options.cause.clone(),
-        refreshed: None,
-        published: None,
-        rerun: None,
-        slept: 0.0,
-        inputs: None,
-        environment: None,
-        hosted: Vec::new(),
+        ..Run::default()
     };
     // HUP, INT and TERM stop the run, its check's group and its git, and let it say so and release
     // the lock; a signal this process was started ignoring stays ignored.
@@ -1266,7 +1252,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         until: options.now + options.timeout.as_secs_f64(),
         check: None,
     };
-    let _ = record::hold(&folder, &running);
+    unsaid(err, UNHELD, record::hold(&folder, &running));
     // The machine's updates lock, after the run's own and held to its end: the machine's server
     // tries no held update again while a run of any kind holds the release's lock.
     let _updates = machine_lock(out);
@@ -1287,7 +1273,11 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
             check: check.cloned(),
             ..running.clone()
         };
-        let _ = record::hold(&folder, &running);
+        unsaid(
+            &mut std::io::stderr(),
+            UNHELD,
+            record::hold(&folder, &running),
+        );
     };
     let within = Within {
         // The run's time is counted while the machine is awake: a sleep takes none of it.
@@ -1335,7 +1325,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         ),
     };
     // A green release, tagged and pushed, publishes on crates.io, then refreshes the machine
-    // (docs/RELEASES.md).
+    // (docs/workflow/RELEASES.md).
     if ran.is_ok()
         && !options.refresh
         && record.pushed
@@ -1596,7 +1586,7 @@ impl Refreshing<'_> {
     /// The lock's word made to cover `more` from now, so no later run takes this one for stuck.
     fn hold_for(&self, more: Duration) {
         let until = self.options.now + self.started.took().seconds + more.as_secs_f64();
-        let _ = record::hold(
+        let held = record::hold(
             self.folder,
             &Running {
                 until: until.max(self.running.until),
@@ -1604,6 +1594,7 @@ impl Refreshing<'_> {
                 ..self.running.clone()
             },
         );
+        unsaid(&mut std::io::stderr(), UNHELD, held);
     }
 
     /// The release `tag` (`commit`) published on crates.io by the run `id` ([`crates::publish`]),
@@ -1969,7 +1960,7 @@ fn held(
     record.error = Some(why);
     record.board = tell(repo, options, folder, &record, false, None);
     said(&record.board, out, err);
-    let _ = record::write(folder, &record);
+    unsaid(err, UNRECORDED, record::write(folder, &record));
     1
 }
 
@@ -2037,8 +2028,23 @@ fn outlived(
     record.error = Some(why);
     record.board = tell(repo, options, folder, &record, false, None);
     said(&record.board, out, err);
-    let _ = record::write(folder, &record);
+    unsaid(err, UNRECORDED, record::write(folder, &record));
     1
+}
+
+/// What [`unsaid`] says of a lock's word ([`record::hold`]) that was not written: a later run then
+/// reads the lock as held by a process no run knows of.
+const UNHELD: &str = "this run could not say it holds the lock";
+/// What [`unsaid`] says of a run's record ([`record::write`]) that was not written: `--status` and
+/// the next run then know nothing of this one.
+const UNRECORDED: &str = "this run could not be recorded";
+
+/// A failure the run goes on past, said on `err` where it happens, so a later line is not read as
+/// its cause: `what` and why `done` failed, and nothing when it did not.
+fn unsaid(err: &mut dyn Write, what: &str, done: Result<(), String>) {
+    if let Err(why) = done {
+        let _ = writeln!(err, "symphony-build release: {what}: {why}");
+    }
 }
 
 /// Whether `run` was red in the key `key`: the run's own when it stopped short, else a check's.
@@ -3187,6 +3193,39 @@ mod tests {
     }
 
     #[test]
+    fn a_failure_the_run_goes_on_past_is_said_where_it_happens_and_a_success_says_nothing() {
+        let mut err = Vec::new();
+        unsaid(&mut err, UNHELD, Ok(()));
+        assert!(err.is_empty(), "{}", String::from_utf8_lossy(&err));
+        unsaid(&mut err, UNHELD, Err("running.json: no space left".into()));
+        unsaid(&mut err, UNRECORDED, Err(String::new()));
+        assert_eq!(
+            String::from_utf8(err).unwrap(),
+            "symphony-build release: this run could not say it holds the lock: running.json: no \
+             space left\n\
+             symphony-build release: this run could not be recorded: \n"
+        );
+    }
+
+    /// A record [`record::write`] cannot write (its `runs` folder is a file) is said by
+    /// [`unsaid`] with the cause the write gave.
+    #[test]
+    fn a_record_that_cannot_be_written_is_said_on_stderr_by_its_cause() {
+        let tree = crate::test_tree::Tree::new();
+        // `runs` is a file, so the record's folder cannot be made.
+        tree.write("runs", "");
+        let run = run_of("1", "release", "0123456789");
+        let mut err = Vec::new();
+        unsaid(&mut err, UNRECORDED, record::write(&tree.root, &run));
+        let said = String::from_utf8(err).unwrap();
+        assert!(
+            said.starts_with("symphony-build release: this run could not be recorded: ")
+                && said.contains("runs"),
+            "{said}"
+        );
+    }
+
+    #[test]
     fn the_rulesets_check_runs_after_the_checks_given_and_takes_its_name_from_them() {
         let rulesets = || {
             let command = ["symphony-github", "rulesets", "--verify"].map(String::from);
@@ -3468,25 +3507,9 @@ mod tests {
             kind: kind.into(),
             commit: commit.into(),
             tip: commit.into(),
-            started_at: 0.0,
-            ended_at: 0.0,
             result: "red".into(),
-            error: None,
-            previous: None,
-            checks: Vec::new(),
-            tag: None,
-            pushed: false,
-            board: record::Board::default(),
             remote: "origin".into(),
-            unpushed: None,
-            cause: None,
-            refreshed: None,
-            published: None,
-            rerun: None,
-            slept: 0.0,
-            inputs: None,
-            environment: None,
-            hosted: Vec::new(),
+            ..Run::default()
         }
     }
 

@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
 use std::time::{Duration, Instant};
 use symphony_board::rows::Dump;
-use symphony_board::rpc::{self, Client};
+use symphony_board::rpc::Client;
 use symphony_board::sys;
 use symphony_board::{DATABASE, NAMESPACE, NewSession, NewTask, Store};
 
@@ -58,7 +58,7 @@ struct Options {
 impl Options {
     fn parse(args: &[String]) -> Result<Options, Failed> {
         let database = arg(args, "--database").ok_or("--database NAME is required")?;
-        if database == DATABASE || !rpc::plain(database) {
+        if database == DATABASE || !symphony_board::db::plain(database) {
             return Err("the measurement needs an explicit non-live database".into());
         }
         Ok(Options {

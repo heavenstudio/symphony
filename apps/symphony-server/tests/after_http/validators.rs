@@ -1,5 +1,5 @@
 //! Every JSON read carries a weak validator of its content, keeps `no-store`, and answers `304`
-//! with no body to a request that names it (docs/analysis/client-cache.md, "How freshness is
+//! with no body to a request that names it (docs/engineering/analysis/client-cache.md, "How freshness is
 //! checked").
 //!
 //! Some reads move on their own while the fixture is quiet: a view carrying the machine's work

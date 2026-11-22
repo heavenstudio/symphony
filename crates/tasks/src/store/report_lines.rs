@@ -79,8 +79,9 @@ impl Store {
     /// Every task open now, every one written at or after `since` and every one with a line at or
     /// after `since`, each with its thread: one round trip, writing nothing.
     pub fn report_records(&self, since: f64) -> Result<ReportRead, Error> {
-        let answer: Value =
-            self.retrying(|| self.transact(both(sql::READ, pg::read()), json!({"since": since})))?;
+        let answer: Value = self.retrying(|| {
+            self.read_together(both(sql::READ, pg::read()), json!({"since": since}))
+        })?;
         taken_apart(&answer)
             .ok_or_else(|| Error::Db("the reports' read is not in the board's shape".into()))
     }
@@ -151,7 +152,7 @@ fn placed(
 }
 
 /// The read's `answer`, its rows taken apart by hand: a reader derived for each row's shape would
-/// cost the server's binary a deserializer of its own for each (docs/CHECKS.md, size budgets).
+/// cost the server's binary a deserializer of its own for each (docs/workflow/CHECKS.md, size budgets).
 /// None when a row lacks a field it must have, or the two lists do not pair.
 fn taken_apart(answer: &Value) -> Option<ReportRead> {
     let text = |row: &Value, name: &str| row.get(name).and_then(Value::as_str).map(str::to_owned);
@@ -239,7 +240,7 @@ fn add(to: &mut TokenSum, sum: &TokenSum) {
 }
 
 /// `sum` added to the one of `sums` of its key, or put in its place: `sums` is kept in the order
-/// of their keys as it is made, which links no sort into the binaries (docs/CHECKS.md, size
+/// of their keys as it is made, which links no sort into the binaries (docs/workflow/CHECKS.md, size
 /// budgets).
 fn merge(sums: &mut Vec<TokenSum>, sum: TokenSum) {
     match sums.binary_search_by(|kept| key(kept).cmp(&key(&sum))) {

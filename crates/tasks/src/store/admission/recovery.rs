@@ -1,4 +1,4 @@
-//! Recovery of a holder's exit on a task a custom workflow holds (docs/WORKFLOW.md, "Recovery"),
+//! Recovery of a holder's exit on a task a custom workflow holds (docs/workflow/WORKFLOW.md, "Recovery"),
 //! decided by [`crate::workflow::recover`] on admission's one read and written as an admitted
 //! operation is (`sql::APPLY`): fenced on the active workflow, the task's version, each role it
 //! relies on or drops and, for a lost holder, the holder's session as it was read, so a holder that
@@ -238,6 +238,7 @@ pub(super) fn applied(guarded: bool) -> crate::store::statement::Statement<'stat
             guarded,
         ),
     )
+    .posting()
 }
 
 /// The write's variables: the roles the holder held that it relies on (none for an attempt's

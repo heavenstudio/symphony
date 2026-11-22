@@ -26,11 +26,14 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
+use symphony_board::lock::Recovered as _;
+
 use crate::plugins::Plugins;
 use crate::project::Project;
 use crate::register::{Decision, REGION_START, parse_decisions};
 use crate::text::{rstrip, splitlines};
 use sha2::{Digest, Sha256};
+use symphony_docs::syntax::CARD_LINE;
 
 /// Git processes at once: a scan is mostly waiting on them.
 const WORKERS: usize = 8;
@@ -49,12 +52,13 @@ impl Tree {
     }
 }
 
-/// A register card a branch's worktree holds that the owner is to read.
+/// A card a branch's worktree holds, inline in a document or in a register, that the owner is to
+/// read.
 #[derive(Clone, Debug)]
 pub struct BranchCard {
     pub tree: Tree,
-    /// The page's document name, `docs/DECISIONS.md`, whatever the project's documents folder is
-    /// called: [`Project::file`] is the file under the worktree.
+    /// The page's document name, as `docs/workflow/RELEASES.md`, whatever the project's documents folder
+    /// is called: [`Project::file`] is the file under the worktree.
     pub doc: String,
     /// On a live branch, the card as the branch's HEAD commit holds it, with the owner's lines its
     /// worktree holds uncommitted laid on top. A card the owner spoke on that only a draft or a
@@ -241,11 +245,21 @@ fn merged(root: &Path, main: &str) -> HashSet<String> {
     .collect()
 }
 
-/// The document pages of the project's entrypoints at `rev` that hold a register (cards): where a
-/// branch's cards can be. None when git could not say.
+/// The document pages of the project's entrypoints at `rev` that hold cards, in a register region
+/// or inline at the place they decide: where a branch's cards can be. None when git could not say.
 fn registers(at: &Path, rev: &str, project: &Project) -> Option<Vec<String>> {
     let folders = project.pathspecs();
-    let mut args = vec!["grep", "-l", "-e", REGION_START, rev, "--"];
+    let mut args = vec![
+        "grep",
+        "-l",
+        "-E",
+        "-e",
+        REGION_START,
+        "-e",
+        CARD_LINE,
+        rev,
+        "--",
+    ];
     args.extend(folders.iter().map(String::as_str));
     Some(
         git_grep(at, &args)?
@@ -381,7 +395,7 @@ fn shapes(texts: &[String]) -> Arc<Shapes> {
         hash.update(text.as_bytes());
     }
     let key = hash.finalize().to_vec();
-    let mut parsed = PARSED.lock().unwrap_or_else(|e| e.into_inner());
+    let mut parsed = PARSED.lock().recover();
     if let Some(shapes) = parsed.get(&key) {
         return shapes.clone();
     }
@@ -843,8 +857,7 @@ fn scan_trees(root: &Path, mut all: Vec<Tree>, finished: &BTreeSet<String>) -> S
                     } else {
                         Standing::Live
                     };
-                    *done[at].lock().unwrap_or_else(|e| e.into_inner()) =
-                        tree_scan(tree, &main_shapes, &project, standing);
+                    *done[at].lock().recover() = tree_scan(tree, &main_shapes, &project, standing);
                 }
             });
         }
@@ -852,7 +865,7 @@ fn scan_trees(root: &Path, mut all: Vec<Tree>, finished: &BTreeSet<String>) -> S
     let mut out = Scan::default();
     let mut listed = Vec::new();
     for found in done {
-        let found = found.into_inner().unwrap_or_else(|e| e.into_inner());
+        let found = found.into_inner().recover();
         listed.extend(found.cards);
         out.pages.extend(found.pages);
         out.awaited.extend(found.awaited);

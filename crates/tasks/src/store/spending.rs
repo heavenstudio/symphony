@@ -38,7 +38,7 @@ impl Store {
             return Ok(BTreeMap::new());
         }
         let answer: Value = self.retrying(|| {
-            self.transact(
+            self.read_together(
                 both(sql::SPENT_UNDER, pg::spent_under()),
                 json!({"slugs": slugs}),
             )

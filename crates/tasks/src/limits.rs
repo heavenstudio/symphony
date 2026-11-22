@@ -33,12 +33,13 @@
 
 use crate::alarm::{self, Thresholds};
 use crate::cli::Env;
+use crate::lock::Recovered as _;
 use crate::on_review::MANIFEST;
 use crate::settings::Stored;
 use crate::sweep::trigger::main_checkout;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 use toml::Value;
 
@@ -91,6 +92,19 @@ pub struct Limits {
     pub machine_agents: Option<usize>,
     /// When the pipeline alarm raises and clears.
     pub alarm: Thresholds,
+}
+
+impl Limits {
+    /// The limit `key` names set to `most`: one of the four whole numbers, any other key the
+    /// machine's agents, as the settings that hold only these four name them.
+    fn set(&mut self, key: &str, most: usize) {
+        match key {
+            SLOTS => self.orchestrator_slots = Some(most),
+            TASKS => self.orchestrator_tasks = most,
+            LOW => self.low_volume = most,
+            _ => self.machine_agents = Some(most),
+        }
+    }
 }
 
 impl Default for Limits {
@@ -218,12 +232,7 @@ pub fn over(mut read: Read, local: Result<Option<crate::local::Local>, Vec<Strin
         }
     };
     for (key, most) in &local.limits {
-        match *key {
-            SLOTS => read.limits.orchestrator_slots = Some(*most),
-            TASKS => read.limits.orchestrator_tasks = *most,
-            LOW => read.limits.low_volume = *most,
-            _ => read.limits.machine_agents = Some(*most),
-        }
+        read.limits.set(key, *most);
         let at = local.written(&format!("[{TABLE}] {key}"), &[TABLE], key);
         read.written.insert(key, at);
         read.under.remove(key);
@@ -270,33 +279,33 @@ pub fn parse(path: &str, text: &str) -> Read {
         .filter(|key| !KEYS.contains(&key.as_str()))
         .map(|key| setting(TABLE, key).named())
         .collect();
-    // The cap: `[limits]`'s, else `[board]`'s, where an older build reads it.
+    // The cap: `[limits]`'s, else `[board]`'s, where an older build reads it. A value the rule
+    // refuses is said in its table's words, with what holds instead.
+    let no_cap = "no cap on an orchestrator's open tasks applies";
     let slots = |table: &str, value: &Value| {
         let at = setting(table, SLOTS);
-        let (least, below) = least(SLOTS);
-        whole(value, least)
+        judged(SLOTS, value)
             .map(|cap| (cap, at.clone()))
-            .map_err(|why| {
-                let why = why.unwrap_or(below);
-                format!(
-                    "{path}: {} is {}; {why}; no cap on an orchestrator's open tasks applies",
-                    at.named(),
-                    shown(value)
-                )
-            })
+            .map_err(|why| format!("{path}: {} is {}; {why}", at.named(), shown(value)))
     };
+    // What is said of `[board]`'s cap written beside `[limits]`', after what is said of that one.
+    let mut beside = None;
     let cap = match (limits.get(SLOTS), board.get(SLOTS)) {
         (Some(ours), Some(older)) => {
             let held = slots(TABLE, ours);
-            if let (Ok((cap, at)), Ok((other, _))) = (&held, slots("board", older))
-                && cap != &other
-            {
-                read.problems.push(format!(
+            beside = match (&held, slots("board", older)) {
+                (Ok((cap, at)), Ok((other, _))) if cap != &other => Some(format!(
                     "{path}: {} is {other}, left out: {} is {cap}, which holds",
                     setting("board", SLOTS).named(),
                     at.named()
-                ));
-            }
+                )),
+                (Ok((cap, at)), Err(refused)) => Some(format!(
+                    "{refused}; left out: {} is {cap}, which holds",
+                    at.named()
+                )),
+                (Err(_), Err(refused)) => Some(format!("{refused}; {no_cap}")),
+                _ => None,
+            };
             Some(held)
         }
         (Some(ours), None) => Some(slots(TABLE, ours)),
@@ -308,54 +317,33 @@ pub fn parse(path: &str, text: &str) -> Read {
             read.limits.orchestrator_slots = Some(cap);
             read.written.insert(SLOTS, at);
         }
-        Some(Err(problem)) => read.problems.push(problem),
+        Some(Err(problem)) => read.problems.push(format!("{problem}; {no_cap}")),
         None => {}
     }
-    if let Some(value) = limits.get(TASKS) {
-        let at = setting(TABLE, TASKS);
-        let (least, below) = least(TASKS);
-        match whole(value, least) {
+    read.problems.extend(beside);
+    // The three limits that are one whole number each, and what a value that is none leaves.
+    let whole_limits = [
+        (TASKS, format!("it takes its default, {ORCHESTRATOR_TASKS}")),
+        (LOW, format!("it takes its default, {LOW_VOLUME}")),
+        (
+            MACHINE_AGENTS,
+            "no limit on the agents this machine runs applies".to_string(),
+        ),
+    ];
+    for (key, left) in whole_limits {
+        let Some(value) = limits.get(key) else {
+            continue;
+        };
+        let at = setting(TABLE, key);
+        match judged(key, value) {
             Ok(most) => {
-                read.limits.orchestrator_tasks = most;
-                read.written.insert(TASKS, at);
+                read.limits.set(key, most);
+                read.written.insert(key, at);
             }
             Err(why) => read.problems.push(format!(
-                "{path}: {} is {}; {}; it takes its default, {ORCHESTRATOR_TASKS}",
+                "{path}: {} is {}; {why}; {left}",
                 at.named(),
-                shown(value),
-                why.unwrap_or(below)
-            )),
-        }
-    }
-    if let Some(value) = limits.get(LOW) {
-        let at = setting(TABLE, LOW);
-        let (least, below) = least(LOW);
-        match whole(value, least) {
-            Ok(low) => {
-                read.limits.low_volume = low;
-                read.written.insert(LOW, at);
-            }
-            Err(why) => read.problems.push(format!(
-                "{path}: {} is {}; {}; it takes its default, {LOW_VOLUME}",
-                at.named(),
-                shown(value),
-                why.unwrap_or(below)
-            )),
-        }
-    }
-    if let Some(value) = limits.get(MACHINE_AGENTS) {
-        let at = setting(TABLE, MACHINE_AGENTS);
-        let (least, below) = least(MACHINE_AGENTS);
-        match whole(value, least) {
-            Ok(most) => {
-                read.limits.machine_agents = Some(most);
-                read.written.insert(MACHINE_AGENTS, at);
-            }
-            Err(why) => read.problems.push(format!(
-                "{path}: {} is {}; {}; no limit on the agents this machine runs applies",
-                at.named(),
-                shown(value),
-                why.unwrap_or(below)
+                shown(value)
             )),
         }
     }
@@ -372,9 +360,7 @@ pub fn parse(path: &str, text: &str) -> Read {
             continue;
         };
         let at = setting("board", key);
-        match whole(value, 1)
-            .and_then(|n| u32::try_from(n).map_err(|_| Some("past what it can be")))
-        {
+        match whole(value, 1).and_then(|n| u32::try_from(n).map_err(|_| Some(PAST))) {
             Ok(n) => {
                 *into = n;
                 alarm_written.push((key, at));
@@ -401,13 +387,33 @@ pub fn parse(path: &str, text: &str) -> Read {
     read
 }
 
+/// `value`, written for the limit `key` of [`LEAST`], as every reader of a limit takes it, wherever
+/// it is written: the project file's `[limits]`, or `[board]` for the cap, as the board reads it
+/// ([`parse`]) and the Symphony's load refuses what it cannot read; the local file and the board's
+/// store ([`crate::local`]). A whole number from its least, and the cap ([`SLOTS`]) at most
+/// [`u32::MAX`], the most the Symphony's project holds it in (`project::Board`); else why not, a
+/// value below its least told what its least says.
+///
+/// # Errors
+///
+/// Why it is not one: no whole number, below its least, or past what it can be.
+pub fn judged(key: &str, value: &Value) -> Result<usize, &'static str> {
+    let (least, below) = least(key);
+    let most = whole(value, least).map_err(|why| why.unwrap_or(below))?;
+    if key == SLOTS && u32::try_from(most).is_err() {
+        return Err(PAST);
+    }
+    Ok(most)
+}
+
+/// Why a whole number is refused that is greater than its setting can hold.
+const PAST: &str = "past what it can be";
+
 /// `value` as a whole number of at least `least`; else why not: `None` for one below it (its
 /// setting says what it is at least), else what it is.
 pub(crate) fn whole(value: &Value, least: i64) -> Result<usize, Option<&'static str>> {
     match value {
-        Value::Integer(n) if *n >= least => {
-            usize::try_from(*n).map_err(|_| Some("past what it can be"))
-        }
+        Value::Integer(n) if *n >= least => usize::try_from(*n).map_err(|_| Some(PAST)),
         Value::Integer(_) => Err(None),
         _ => Err(Some("not a whole number")),
     }
@@ -510,7 +516,7 @@ impl Watched {
     /// look, and what is newly wrong said on stderr, once.
     pub fn read_with(&self, stored: &Stored) -> Read {
         let stamp = Self::stamps(&self.path);
-        let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut last = self.last.lock().recover();
         if last.0 != stamp || &last.1 != stored {
             let read = read_with(&self.path, stored);
             // A change of the store alone says only what is new: the files' problems were said.

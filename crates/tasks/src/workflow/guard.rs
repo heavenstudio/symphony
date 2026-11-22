@@ -1,4 +1,5 @@
-//! Revision-bound guards (docs/WORKFLOW.md, "Guards"; docs/DECISIONS.md#revision-bound-project-guards
+//! Revision-bound guards (docs/workflow/WORKFLOW.md, "Guards";
+//! docs/workflow/analysis/revision-bound-transition-guards.md#revision-bound-project-guards
 //! B): a guarded edge is taken only with an attestation from the project's own approval
 //! authority, signed by the key the project commits for it, naming exactly the operation taken,
 //! and at the generation of that authority the board last accepted. The project keeps the ledger
@@ -35,7 +36,7 @@ const ATTESTATION_CONTEXT: &[u8] = b"symphony-workflow-attestation\n";
 const OBSERVATION_CONTEXT: &[u8] = b"symphony-workflow-observation\n";
 
 /// A project's approval authority, as its default branch commits it (`[[workflow_authorities]]`,
-/// docs/PROJECT_FILE.md): the adapter its guards name, the issuer it signs as, the contract it
+/// docs/operations/PROJECT_FILE.md): the adapter its guards name, the issuer it signs as, the contract it
 /// speaks, and the public half of its signing key, `ed25519:` and 64 hex digits. Activation
 /// records them, so a key changed is a new generation, and nothing else extends them: no request,
 /// task or payload names a key.

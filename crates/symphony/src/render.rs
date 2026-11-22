@@ -13,11 +13,12 @@ mod media;
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
-use std::sync::{Arc, LazyLock, Mutex, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use regex::Regex;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use symphony_board::lock::Recovered as _;
 
 use crate::edit::{frontmatter_end, heading_anchor};
 use crate::page::Document;
@@ -28,7 +29,7 @@ use crate::register::{
 use crate::text::splitlines;
 
 pub(crate) use cards::compare_pictures;
-pub(crate) use links::{doc_paths, find_doc};
+pub(crate) use links::{doc_name, doc_paths, find_docs};
 pub use media::{MOCKUP_NATIVE, MOCKUP_SANDBOX, is_mockup};
 
 /// What the renderer cannot draw as markup: a picture that is an `.html` file, a file in a plugin's
@@ -325,10 +326,7 @@ impl Render {
     #[must_use]
     pub fn with_plugins(mut self, plugins: crate::plugins::Plugins) -> Render {
         self.plugins = plugins;
-        self.cache
-            .get_mut()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clear();
+        self.cache.get_mut().recover().clear();
         self
     }
 
@@ -611,7 +609,7 @@ fn count_groups(html: &str, counts: &[(Group, usize)]) -> String {
 impl Render {
     /// The rendering of `rel` made from `version` of its file, if that is the last one.
     pub(crate) fn cached(&self, rel: &str, version: &str) -> Option<Arc<Document>> {
-        let cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
+        let cache = self.cache.lock().recover();
         cache
             .get(rel)
             .filter(|(had, _)| had == version)
@@ -619,7 +617,7 @@ impl Render {
     }
 
     pub(crate) fn remember(&self, rel: &str, version: String, doc: &Arc<Document>) {
-        let mut cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut cache = self.cache.lock().recover();
         cache.insert(rel.to_string(), (version, Arc::clone(doc)));
     }
 }

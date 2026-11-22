@@ -1,6 +1,7 @@
 //! What activating a committed workflow does to a board, decided before any write: whether this
-//! host supports the definition at all, and where each task it holds goes (docs/WORKFLOW.md,
-//! docs/DECISIONS.md#configurable-workflow-activation B). The store writes the plan in one
+//! host supports the definition at all, and where each task it holds goes (docs/workflow/WORKFLOW.md,
+//! docs/workflow/analysis/configurable-delivery-workflow.md#configurable-workflow-activation B). The
+//! store writes the plan in one
 //! transaction fenced on what it read (`crate::store::workflow`); nothing here writes.
 //!
 //! A pair the new definition still declares keeps its task; any other needs a committed mapping,
@@ -175,7 +176,7 @@ fn unsupported_dependency(dependency: Dependency) -> Option<&'static str> {
 }
 
 /// Why the board could not take `edge`, an automatic edge of `d`, on an attempt's failure at its
-/// source pair (docs/WORKFLOW.md, "Attempts"), none where it can: another automatic edge leaves
+/// source pair (docs/workflow/WORKFLOW.md, "Attempts"), none where it can: another automatic edge leaves
 /// that pair, so the board could not choose; it asks inputs, which the board has none of to give;
 /// it gives a role, which only an agent session holds, or prepares or finalizes an effect, which
 /// only its adapter takes; it is guarded, and no attestation comes with the board's take; its retry bound is exhausted to a pair on a cycle through it, which the

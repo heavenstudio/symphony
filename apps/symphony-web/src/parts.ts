@@ -1,4 +1,4 @@
-// A page's parts, each drawn from a read of its own (docs/analysis/components-draw-when-their-
+// A page's parts, each drawn from a read of its own (docs/design/analysis/components-draw-when-their-
 // data-arrives.md): a component names the part it draws (`usePart`), and the page's one store
 // draws the copy this device kept of it at once, marked stale, reads it naming that copy's tag,
 // one read a key however many components name it, tries a failed read again on the feed's waits
@@ -219,17 +219,8 @@ export class Parts<E = unknown> {
     const { part } = entry;
     let reading: Promise<void> = Promise.resolve();
     try {
-      if (part.kept) {
-        const copy = await readKept(part.kept.item, part.kept.part, part.read);
-        if (this.gone(entry)) return;
-        if (copy !== null && !entry.shown.answered && !part.absent?.(copy.value)) {
-          entry.base = copy.value;
-          entry.etag = copy.etag;
-          const value = part.merge ? part.merge(copy.value, undefined, false) : copy.value;
-          this.freshen((f) => drawn(f, part.key, copy.saved));
-          this.show(entry, { value, stale: true });
-        }
-      }
+      await this.device(entry);
+      if (this.gone(entry)) return;
       // The parts opened before this one are asked first: each waits its own device lookup only.
       await before;
       reading = this.read(part);
@@ -237,6 +228,21 @@ export class Parts<E = unknown> {
       sent();
     }
     await reading;
+  }
+
+  /** The copy this device kept of the part, drawn marked stale, unless the server answered it
+   * while the device looked. Its tag is the one the part's next read names. */
+  private async device<T>(entry: Entry<T, E>): Promise<void> {
+    const { part } = entry;
+    if (!part.kept) return;
+    const copy = await readKept(part.kept.item, part.kept.part, part.read);
+    if (this.gone(entry) || copy === null) return;
+    if (entry.shown.answered || part.absent?.(copy.value)) return;
+    entry.base = copy.value;
+    entry.etag = copy.etag;
+    const value = part.merge ? part.merge(copy.value, undefined, false) : copy.value;
+    this.freshen((f) => drawn(f, part.key, copy.saved));
+    this.show(entry, { value, stale: true });
   }
 
   /**
@@ -277,11 +283,17 @@ export class Parts<E = unknown> {
     }
   }
 
-  /** The read failed: said, and tried again after each of the feed's waits until it answers. */
+  /**
+   * The read failed: said, and tried again after each of the feed's waits until it answers. A part
+   * with nothing drawn looks on this device again: the device's store goes on without a database
+   * slow to open (shell/cache.ts), which may have opened since, and a server that does not answer
+   * is when the copy is all the page has.
+   */
   private fail<T>(entry: Entry<T, E>, thrown: unknown): void {
     const { part } = entry;
     this.freshen((f) => failed(f, part.key));
     this.show(entry, { error: errorOf(thrown), retrying: false });
+    if (entry.shown.value === undefined) void this.device(entry);
     if (entry.trying) return;
     entry.trying = true;
     void tryAgain(

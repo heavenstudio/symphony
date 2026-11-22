@@ -399,7 +399,7 @@ pub fn parse(text: &str) -> Result<Config, String> {
     if let Some(key) = retired(&written) {
         return Err(wrong(format!(
             "{key} is gone: one GitHub App reads the issues, writes a delivery's checks and \
-             merges, named by app_id, installation_id and key_file (docs/GITHUB_SETUP.md)"
+             merges, named by app_id, installation_id and key_file (docs/operations/GITHUB_SETUP.md)"
         )));
     }
     if (written.token_file.as_ref()).is_some_and(|file| !file.is_absolute()) {

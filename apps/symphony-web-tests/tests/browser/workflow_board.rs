@@ -1,4 +1,4 @@
-//! A custom workflow in the real client, wide and on a phone (docs/WORKFLOW.md, "The app"). The
+//! A custom workflow in the real client, wide and on a phone (docs/workflow/WORKFLOW.md, "The app"). The
 //! board's columns are its phases by their order (Build, then two review stages, Review and
 //! Verify), a phone's tabs the phases by their phone order, each held card names its place, and a
 //! state chip filters the board by it. The task page offers the server's next actions, one of them
@@ -16,7 +16,7 @@
 //! (`apps/symphony-server/src/live/workflow_tests.rs`). With `SYMPHONY_WORKFLOW_SHOTS` naming a
 //! folder, the flow saves its pictures there.
 
-use super::{SHOWN, chrome::Chrome, common, dist, look_parity, site::Site};
+use super::{SHOWN, chrome::Chrome, look_parity, open, samples, site::Site, texts};
 use serde_json::{Value, json};
 use std::time::{SystemTime, UNIX_EPOCH};
 use symphony_api::TASK_TIMELINE_PATH;
@@ -29,14 +29,6 @@ const SLUG: &str = "w/b";
 
 /// The server's words for an edge taken from a revision the task has left.
 const STALE: &str = "stale_task: the task is at revision 8, not 7";
-
-/// The wire's samples (`wire.cases.json`'s `samples`).
-fn samples() -> Value {
-    let cases: Value =
-        serde_json::from_str(include_str!("../../../symphony-web/src/wire.cases.json"))
-            .expect("the wire's cases");
-    cases["samples"].clone()
-}
 
 /// The time now, in the server's seconds.
 fn now() -> f64 {
@@ -123,7 +115,7 @@ fn timeline() -> Value {
 /// and its next actions, an edge taken answered with the sample's result.
 fn site() -> (Site, Value) {
     let samples = samples();
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let listing = listing(&samples);
     site.set_json("/api/task-board", &listing);
     site.set_json(WORKFLOW_PATH, &samples["workflow"]);
@@ -146,34 +138,16 @@ fn site() -> (Site, Value) {
     (site, samples)
 }
 
-/// A page of `width` (a phone's, touch and all, at 390), over the stand-in's `path`.
-fn open(page: &mut Chrome, site: &Site, path: &str, width: u32) {
-    let phone = width <= 760;
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": width, "height": if phone { 844 } else { 900 }, "deviceScaleFactor": 1, "mobile": phone}),
-    );
-    page.open(&site.url(path));
-}
-
 /// The page as its fonts and two frames leave it, saved as `NAME.png` in the folder
 /// `SYMPHONY_WORKFLOW_SHOTS` names; nothing without one.
 fn shot(page: &mut Chrome, name: &str) {
     let Some(folder) = std::env::var_os("SYMPHONY_WORKFLOW_SHOTS") else {
         return;
     };
-    page.eval("document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))");
+    page.frames_with_fonts();
     let folder = std::path::PathBuf::from(folder);
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(folder.join(format!("{name}.png")), page.screenshot()).unwrap();
-}
-
-/// The text of what `selector` matches, in order.
-fn texts(page: &mut Chrome, selector: &str) -> Value {
-    page.eval(&format!(
-        "[...document.querySelectorAll({})].map(one => one.textContent.trim())",
-        json!(selector)
-    ))
 }
 
 /// Where the card `slug` stands: its column's key and the place its mark names.
@@ -205,7 +179,7 @@ fn the_board_draws_the_workflows_phases_as_columns_and_tabs_and_filters_by_a_sta
         "the phases that are columns, by their order"
     );
     assert_eq!(
-        texts(&mut page, ".column[data-status^=\"phase:\"] > h2")
+        json!(texts(&mut page, ".column[data-status^=\"phase:\"] > h2"))
             .as_array()
             .unwrap()
             .iter()
@@ -245,12 +219,12 @@ fn the_board_draws_the_workflows_phases_as_columns_and_tabs_and_filters_by_a_sta
         json!(["phase:verify", "Verify · Awaiting review"])
     );
     assert_eq!(
-        texts(&mut page, ".state-strip .phase-open"),
+        json!(texts(&mut page, ".state-strip .phase-open")),
         json!(["Parked 0"]),
         "a phase that is no column opens as a list of its own"
     );
     assert_eq!(
-        texts(&mut page, ".state-strip .k-state"),
+        json!(texts(&mut page, ".state-strip .k-state")),
         json!(["Working 1", "Blocked 1", "Awaiting review 2"]),
         "a chip for each state with open tasks, in the definition's order"
     );
@@ -281,7 +255,7 @@ fn the_board_draws_the_workflows_phases_as_columns_and_tabs_and_filters_by_a_sta
         "document.querySelectorAll('.stage-tabs button').length > 0 && document.querySelector('[data-slug]') !== null",
         SHOWN
     ));
-    let tabs: Vec<String> = texts(&mut page, ".stage-tabs button")
+    let tabs: Vec<String> = json!(texts(&mut page, ".stage-tabs button"))
         .as_array()
         .unwrap()
         .iter()
@@ -304,6 +278,12 @@ fn the_board_draws_the_workflows_phases_as_columns_and_tabs_and_filters_by_a_sta
         json!(true),
         "no sideways scroll on a phone"
     );
+    // A workflow's lanes are phases: its board draws no row of work under way.
+    assert_eq!(
+        page.eval("document.querySelector('.under-way')"),
+        Value::Null,
+        "a custom workflow's board draws no row of work under way"
+    );
     shot(&mut page, "board-phone");
 }
 
@@ -325,11 +305,11 @@ fn the_task_page_sends_back_with_its_snapshot_and_a_stale_refusal_asks_for_a_ref
         page.eval("document.querySelector('article.task, main')?.innerText")
     );
     assert_eq!(
-        texts(&mut page, ".flow-place"),
+        json!(texts(&mut page, ".flow-place")),
         json!(["At Review · Awaiting review"])
     );
     assert_eq!(
-        texts(&mut page, ".flow-manual"),
+        json!(texts(&mut page, ".flow-manual")),
         json!(["sable-finch, its reviewer, was lost: it waits on you to move it on"]),
     );
     assert_eq!(
@@ -337,7 +317,7 @@ fn the_task_page_sends_back_with_its_snapshot_and_a_stale_refusal_asks_for_a_ref
         json!(true)
     );
     assert_eq!(
-        texts(&mut page, ".flow-actions [data-edge=pass] .flow-why"),
+        json!(texts(&mut page, ".flow-actions [data-edge=pass] .flow-why")),
         json!(["not the owner's to take: needs the reviewer"]),
         "an unavailable action names whom it needs"
     );
@@ -446,7 +426,7 @@ fn the_task_page_sends_back_with_its_snapshot_and_a_stale_refusal_asks_for_a_ref
         "{:?}",
         page.eval("document.getElementById('timeline')?.innerText")
     );
-    let totals = texts(&mut page, ".tl-totals");
+    let totals = json!(texts(&mut page, ".tl-totals"));
     let totals: Vec<&str> = totals
         .as_array()
         .unwrap()

@@ -1,13 +1,14 @@
-// The guards of a task a custom workflow holds, on its page (docs/WORKFLOW.md, "The app"): under
-// each action a guard holds, a row for each guard its edge carries, and above the actions the
-// guards the task was let into its place by, each saying whether it still stands. A row is a gate's
-// row in shape: the guard's name, its state in a word, a line saying why, and its authority with
-// what the board accepted from it. The name is the row's link: it opens, under the row, what the
-// board holds for the guard. What the authority itself points at (the decisions a pass rests on,
-// its reasons for a refusal) is drawn as links by the rule the gates link by (`links.ts`), only
-// from an attestation that verified; its ledger's page, where the project names one, is on its
-// name. The page shows and links: nothing in it approves, grants or sends an attestation, and what
-// it knows of a refusal is the owner's own take on this page, kept until the task moves.
+// The guards of a task a custom workflow holds, on its page (docs/workflow/WORKFLOW.md, "The
+// app"): under each action a guard holds, a row for each guard its edge carries, and above the
+// actions the guards the task was let into its place by, each saying whether it still stands. A row
+// is a gate's row in shape: the guard's name, its state in a word, a line saying why, and its
+// authority with what the board accepted from it. The name is the row's link: it opens, under the
+// row, what the board holds for the guard. What the authority itself points at (the decisions a
+// pass rests on, its reasons for a refusal) is drawn as links by the rule the gates link by
+// (`links.ts`), only from an attestation that verified; its ledger's page, where the project names
+// one, is on its name. The page shows and links: nothing in it approves, grants or sends an
+// attestation, and what it knows of a refusal is the owner's own take on this page, kept until the
+// task moves.
 //
 // It reads `/api/workflow-guards` beside the actions, and the guard that refused a take from the
 // refusal's own answer (`guard`, crates/symphony-api's `GuardRefusal`), by its word and never by

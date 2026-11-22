@@ -1,4 +1,4 @@
-//! The board's side of a project's approval authorities (docs/WORKFLOW.md, "Guards"): the state it
+//! The board's side of a project's approval authorities (docs/workflow/WORKFLOW.md, "Guards"): the state it
 //! accepted from each ([`Store::observe_authority`]), what a guarded edge's admission recorded
 //! ([`Store::workflow_admission`]) and the check a dispatch makes again right before an effect it
 //! cannot take back ([`Store::revalidate_dispatch`]).

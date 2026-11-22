@@ -1,6 +1,6 @@
 //! The machine's schema updates as a page reads them, [`SCHEMA_UPDATES_PATH`]: each registered
 //! project's board reaching a schema the machine's server must come to write, and how long until it
-//! did (docs/RELEASES.md, "An update"). The server reads them from the machine folder's ledger
+//! did (docs/workflow/RELEASES.md, "An update"). The server reads them from the machine folder's ledger
 //! (`symphony::machine::updates`), which a release's refresh writes, and says each in words a page
 //! draws as they come.
 
