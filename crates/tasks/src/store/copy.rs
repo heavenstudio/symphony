@@ -928,7 +928,6 @@ mod placed {
                 slug: "sim/jump".into(),
                 kind: "dep".into(),
                 target: "sim/land".into(),
-                ..LinkRow::default()
             }],
             messages: vec![MessageRow {
                 id: 9,
