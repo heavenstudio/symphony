@@ -9,31 +9,6 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### People and sign-in
 
-- [ ] **task-acts-who** — You file, move, rank and cancel tasks today. With several people, something must say who does. A: it is part of deciding; the members of the group that owns a task move, rank and cancel it, and anyone who may speak files one. B: it is a power of its own, to manage tasks, given apart from deciding. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Who acts on a task]]
-  [2026-11-21 17:41] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
-
-    ![Who may file, move, rank and cancel a task](analysis/users-and-identity/task-acts.svg)
-
-    **Base (today).** You file a task from the page, move it, rank it and cancel it. Agents act on tasks by the roles they hold there.
-
-    **A, part of deciding.**
-    - The members of the group that owns a task move, rank and cancel it, as they approve it.
-    - Anyone who may speak files a task. It goes to the group its place gives.
-
-    **B, a power of its own.**
-    - A sixth power, to manage tasks. Whoever holds it files, moves, ranks and cancels any task on the board.
-    - The owning group still decides its cards and approves its tasks.
-    - A person can run a board's tasks without deciding anything on it.
-
-    **Under both** starting an agent on a task needs the power to direct agents, and approving a task is deciding.
-
-    **Why A.** A task's order and its end are decisions about the work, and the group that owns the work makes them. B fits a team with someone who plans and does not decide. It costs a sixth power to give, and two people who can each say what is next.
-
-    **Earlier verdicts checked.**
-    - **group-answer-settles** (A) says any one member settles what their group owns. It was asked of a card's answer, not of moving or cancelling a task.
-    - **owning-group-how-named** (C) says which group a task belongs to, not what its members may do to it.
-
-    Neither decides this.
 - [ ] **verdict-note-reach** — You decided that the words of someone who may not direct agents are held until passed on. A person may still be allowed to decide. Their verdict is written on the card, where agents read it. What is left to choose is the note they write beside it. A: the note is held like their other words, so an agent sees a rejection and not its reason. B: the note is written with the verdict; deciding carries the right to say why, on that card only. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#The note beside a verdict]]
   [2026-11-21 17:41] agent — Posted for the board task `app/users-and-identity`, a question your A on **words-without-agent-reach** does not answer. A concept: nothing is built by this card.
 
@@ -77,6 +52,35 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
 
 ## Waiting on an agent
+
+### People and sign-in
+
+- [x] **task-acts-who** — You file, move, rank and cancel tasks today. With several people, something must say who does. A: it is part of deciding; the members of the group that owns a task move, rank and cancel it, and anyone who may speak files one. B: it is a power of its own, to manage tasks, given apart from deciding. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Who acts on a task]]
+  [2026-11-21 17:41] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
+
+    ![Who may file, move, rank and cancel a task](analysis/users-and-identity/task-acts.svg)
+
+    **Base (today).** You file a task from the page, move it, rank it and cancel it. Agents act on tasks by the roles they hold there.
+
+    **A, part of deciding.**
+    - The members of the group that owns a task move, rank and cancel it, as they approve it.
+    - Anyone who may speak files a task. It goes to the group its place gives.
+
+    **B, a power of its own.**
+    - A sixth power, to manage tasks. Whoever holds it files, moves, ranks and cancels any task on the board.
+    - The owning group still decides its cards and approves its tasks.
+    - A person can run a board's tasks without deciding anything on it.
+
+    **Under both** starting an agent on a task needs the power to direct agents, and approving a task is deciding.
+
+    **Why A.** A task's order and its end are decisions about the work, and the group that owns the work makes them. B fits a team with someone who plans and does not decide. It costs a sixth power to give, and two people who can each say what is next.
+
+    **Earlier verdicts checked.**
+    - **group-answer-settles** (A) says any one member settles what their group owns. It was asked of a card's answer, not of moving or cancelling a task.
+    - **owning-group-how-named** (C) says which group a task belongs to, not what its members may do to it.
+
+    Neither decides this.
+  [2026-11-22 12:44] owner · approved — A
 
 ### Task timeline
 
