@@ -556,6 +556,64 @@ mod tests {
         assert!(!board.home.dir().join(FILE).exists());
     }
 
+    /// A made board reached by a reach that starts nothing is its recorded server or none, and
+    /// nothing is started; a made PostgreSQL board whose programs are not found is refused in
+    /// discovery's own words, never as a board not made yet.
+    #[test]
+    fn a_made_boards_reach_says_what_it_found_as_it_is() {
+        let board = Board::new("made-reach");
+        fs::create_dir_all(board.home.dir().join(super::super::DATA)).unwrap();
+        let refused = board
+            .home
+            .board_server(board.home.dir(), false)
+            .unwrap_err();
+        assert!(
+            matches!(&refused, ServerError::NotUp(why) if why.starts_with("no server of the board in")),
+            "{refused:?}"
+        );
+        let recorded = Running {
+            addr: "127.0.0.1:9".into(),
+            pid: 1,
+            version: "2.3.7".into(),
+        };
+        fs::write(
+            board.home.dir().join(super::super::ADDRESS),
+            serde_json::to_string(&recorded).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            board.home.board_server(board.home.dir(), false).unwrap(),
+            recorded
+        );
+
+        let made = Board::new("made-no-postgresql");
+        made.home.initialize_backend(Engine::PostgreSql).unwrap();
+        fs::create_dir_all(made.home.dir().join(postgres::DATA)).unwrap();
+        fs::write(
+            made.home.dir().join(postgres::DATA).join("PG_VERSION"),
+            "18\n",
+        )
+        .unwrap();
+        let root = made.home.dir().join("project");
+        fs::create_dir(&root).unwrap();
+        fs::write(
+            root.join(crate::project::FILE),
+            "[board]\npostgresql = \"/no/postgresql/bin\"\n",
+        )
+        .unwrap();
+        for start in [true, false] {
+            let refused = made
+                .home
+                .board_server(&root, start)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                refused.starts_with("PostgreSQL is not at /no/postgresql/bin"),
+                "{refused}"
+            );
+        }
+    }
+
     /// A PostgreSQL board's programs are its project's, read from the main checkout whose `.git`
     /// holds its home: a home kept anywhere else is refused its stop, naming where it is, and
     /// nothing is started or signalled.
