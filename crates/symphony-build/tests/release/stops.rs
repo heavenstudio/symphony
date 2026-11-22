@@ -418,9 +418,9 @@ fn what_a_check_leaves_running_outside_its_group_holds_nothing_of_the_runs() {
     assert!(pid_alive(detached), "and the run left it alone");
 }
 
-#[test]
-fn a_lock_held_by_no_run_or_past_its_time_is_stuck_and_the_board_hears_who_holds_it() {
-    let fixture = Fixture::new();
+/// The fixture's run lock held by a detached process alone, as a helper that kept an older
+/// build's lock would hold it: that process, and its guard.
+fn held_by_a_stranger(fixture: &Fixture) -> (Child, Process) {
     fs::create_dir_all(fixture.records()).unwrap();
     let lock = fs::OpenOptions::new()
         .read(true)
@@ -430,14 +430,20 @@ fn a_lock_held_by_no_run_or_past_its_time_is_stuck_and_the_board_hears_who_holds
         .open(fixture.records().join("run.lock"))
         .unwrap();
     lock.lock().unwrap();
-    // Held by a detached process alone, as a helper that kept an older build's lock would hold it.
-    let mut holder = Command::new("sleep")
+    let holder = Command::new("sleep")
         .arg("1000")
         .stdin(lock)
         .new_session()
         .spawn()
         .unwrap();
     let held = Process(libc::pid_t::try_from(holder.id()).unwrap());
+    (holder, held)
+}
+
+#[test]
+fn a_lock_held_by_no_run_or_past_its_time_is_stuck_and_the_board_hears_who_holds_it() {
+    let fixture = Fixture::new();
+    let (mut holder, held) = held_by_a_stranger(&fixture);
     let (code, out, err) = fixture.release_at(NOW, &["--check", CHECK]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
@@ -504,6 +510,41 @@ fn a_lock_held_by_no_run_or_past_its_time_is_stuck_and_the_board_hears_who_holds
         out.contains("release: closed tests/release-red-run"),
         "{out}"
     );
+}
+
+/// A run refused at a stuck lock whose record cannot be written says so on stderr, after why it
+/// was refused, and the board hears of it all the same: the one site of `unsaid` in release.rs a
+/// test reaches, as each of its others says a result the same way.
+#[test]
+fn a_refused_run_whose_record_cannot_be_written_says_so_and_the_board_still_hears() {
+    let fixture = Fixture::new();
+    let (mut holder, held) = held_by_a_stranger(&fixture);
+    // `runs` is a file, so no record's folder can be made.
+    let runs = fixture.records().join("runs");
+    fs::write(&runs, "").unwrap();
+    let (code, out, err) = fixture.release_at(NOW, &["--check", CHECK]);
+    assert_eq!(code, 1, "{out}{err}");
+    let lines: Vec<&str> = err.lines().collect();
+    let refused =
+        (lines.iter()).position(|line| line.contains("run.lock is held, but no run says"));
+    let unrecorded = (lines.iter()).position(|line| {
+        line.starts_with("symphony-build release: this run could not be recorded: ")
+            && line.contains(&runs.display().to_string())
+    });
+    assert!(
+        refused
+            .zip(unrecorded)
+            .is_some_and(|(refused, unrecorded)| refused < unrecorded),
+        "said after the refusal, with the write's cause: {err}"
+    );
+    assert!(
+        out.contains("release: filed tests/release-red-run"),
+        "{out}"
+    );
+    assert!(runs.is_file(), "nothing written there");
+    holder.kill().unwrap();
+    holder.wait().unwrap();
+    held.ended();
 }
 
 #[test]

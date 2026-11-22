@@ -1,16 +1,5 @@
-# The most bytes each file every agent reads at the start of a session may weigh: the rules, the
-# guides, each file of a shipped skill and each project page beside an installed skill. The hooks
-# test beside this file (size_lines.rs) is red on a file past its line, on one of them with no line
-# and on a line for none of them (docs/CHECKS.md "Size budgets").
-#
-# A line's key is its file's path with its `.md` dropped and each character a bare key cannot hold
-# (`/`, `.`) made `-`, a leading one dropped (`.agents/skills/work/project.md` is
-# `agents-skills-work-project`): a raise can name a bare key where it refuses a path. A line is the file's size in the commit that sets it plus
-# a tenth, rounded up to a multiple of 100 bytes: an added rule fits, a retold mechanism does not.
-# A file past its line is cut first, or the mechanism it retells moved to its document or module
-# comment. A line is raised only by the task's orchestrator's decision (`just tasks gate SLUG
-# crates/symphony/tests/hooks/size_lines.toml:KEY --raise NEW`, docs/TASKS.md "Gate decisions"),
-# to the size plus a tenth and never higher. A new file takes a line by the same rule.
+# The most bytes each file every agent reads at the start of a session may weigh, each under its
+# path's key: docs/CHECKS.md "Size budgets" says which files, the key, the line and its raise.
 
 # The rules and the guides.
 RULES = 22_800

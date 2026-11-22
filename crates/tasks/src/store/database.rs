@@ -62,14 +62,14 @@ impl Database {
         }
     }
 
-    /// A client of its own of the same board, which has made no request yet.
+    /// A client of its own of the same board, which has made no request yet and waits for each
+    /// answer as this one does.
     pub fn another(&self) -> Database {
         match self {
-            Database::SurrealDb(client) => Database::SurrealDb(rpc::Client::new(
-                client.addr(),
-                client.namespace(),
-                client.database(),
-            )),
+            Database::SurrealDb(client) => Database::SurrealDb(
+                rpc::Client::new(client.addr(), client.namespace(), client.database())
+                    .waiting(client.wait_limit()),
+            ),
             Database::PostgreSql(client) => Database::PostgreSql(client.another()),
         }
     }
@@ -272,3 +272,7 @@ impl Board {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "database_tests.rs"]
+mod tests;

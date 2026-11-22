@@ -35,8 +35,8 @@ pub struct Place {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Project {
     pub place: Place,
-    /// What it is named by: its file's `[project] id`, else the registry's id for its main checkout,
-    /// else the main checkout's folder name.
+    /// What it is named by: its file's `[project] id` as [`id`] takes it, else the registry's id for
+    /// its main checkout, else the main checkout's folder name.
     pub id: String,
 }
 
@@ -158,15 +158,58 @@ pub fn is_repository(common: &Path) -> bool {
     common.join("HEAD").is_file()
 }
 
-/// The `[project] id` the file at `path` names, if it names one.
+/// The `[project] id` the file at `path` names, as [`id`] reads it: none when it names none, does
+/// not read, or names one the Symphony refuses (no slug), which the board reads as unwritten.
 fn file_id(path: &Path) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
     let file = text.parse::<toml::Table>().ok()?;
-    file.get("project")?
-        .get("id")?
-        .as_str()
-        .filter(|id| !id.is_empty())
-        .map(str::to_string)
+    let written = file.get("project")?.get("id")?.as_str()?;
+    id(written).ok().map(str::to_string)
+}
+
+/// A name as an id: lowercase letters and digits, each other run a single dash.
+pub fn slug(name: &str) -> String {
+    let mut out = String::new();
+    for ch in name.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    out.trim_end_matches('-').to_string()
+}
+
+/// `id` as a project's id, the one rule for `[project] id`: a slug of itself ([`slug`]: lowercase
+/// letters and digits, single dashes between them), never empty. The Symphony's load judges the id
+/// the file writes, and the one it makes of the name or the folder, by it; the board's own read of
+/// the file ([`find`]) takes what it takes, and reads one it refuses as unwritten.
+///
+/// # Errors
+///
+/// For one that is no slug, naming the key.
+pub fn id(id: &str) -> Result<&str, String> {
+    if id.is_empty() || slug(id) != id {
+        return Err(format!(
+            "[project] id {id:?} is not a slug (lowercase letters, digits and dashes)"
+        ));
+    }
+    Ok(id)
+}
+
+/// `written`, the `[project] default_branch` the project file writes (none: it writes none), as
+/// every reader of the key takes it: as written, never trimmed, and none when unwritten, which is
+/// [`crate::live::MAIN`]. The Symphony's load, the land ([`crate::land::Settings`]) and the live
+/// board's guard ([`crate::live::default_branch`]) each read it by this.
+///
+/// # Errors
+///
+/// For one that is empty or blank, naming the key.
+pub fn default_branch(written: Option<&str>) -> Result<Option<&str>, String> {
+    match written {
+        Some(branch) if branch.trim().is_empty() => Err("[project] default_branch is empty".into()),
+        written => Ok(written),
+    }
 }
 
 /// `path`, which the project file writes for `key`, as a path inside the project: relative, its
@@ -468,6 +511,83 @@ mod tests {
         for path in ["", "../x", "/abs"] {
             assert!(path_in("[k] key", path, true).is_err(), "{path}");
         }
+    }
+
+    #[test]
+    fn a_name_made_a_slug_keeps_lowercase_letters_and_digits_and_one_dash_for_each_other_run() {
+        for (name, made) in [
+            ("Lamp Shop", "lamp-shop"),
+            ("  lamp__shop!! ", "lamp-shop"),
+            ("-x-", "x"),
+            ("ÁB c9", "b-c9"),
+            ("v2.1", "v2-1"),
+            ("", ""),
+            ("!!", ""),
+        ] {
+            assert_eq!(slug(name), made, "{name:?}");
+        }
+    }
+
+    #[test]
+    fn a_project_id_is_a_slug_of_itself_and_any_other_is_refused_naming_the_key() {
+        for id in ["lamp-shop", "x", "v2-1", "9"] {
+            assert_eq!(super::id(id), Ok(id), "{id}");
+        }
+        for id in [
+            "",
+            " ",
+            "Lamp",
+            "lamp shop",
+            "lamp_shop",
+            "-lamp",
+            "lamp-",
+            "lamp--shop",
+            " lamp",
+        ] {
+            assert_eq!(
+                super::id(id),
+                Err(format!(
+                    "[project] id {id:?} is not a slug (lowercase letters, digits and dashes)"
+                )),
+                "{id:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_default_branch_is_as_written_none_unwritten_and_a_blank_one_refused() {
+        assert_eq!(default_branch(None), Ok(None));
+        for branch in ["main", "trunk", "release/2", " dev "] {
+            assert_eq!(default_branch(Some(branch)), Ok(Some(branch)), "{branch:?}");
+        }
+        for branch in ["", " ", "\t", "\n "] {
+            assert_eq!(
+                default_branch(Some(branch)),
+                Err("[project] default_branch is empty".into()),
+                "{branch:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_files_id_is_a_slug_it_writes_and_none_for_any_other() {
+        let (root, _) = checkout("file-id", None);
+        let file = root.join(FILE);
+        assert_eq!(file_id(&file), None, "no file");
+        for (text, id) in [
+            ("[project]\nid = \"lamp-shop\"\n", Some("lamp-shop")),
+            ("[project]\nname = \"Lamp Shop\"\n", None),
+            ("[project]\nid = \"\"\n", None),
+            ("[project]\nid = \"  \"\n", None),
+            ("[project]\nid = \"Lamp Shop\"\n", None),
+            ("[project]\nid = \"lamp_shop\"\n", None),
+            ("[project]\nid = 7\n", None),
+            ("[project\n", None),
+        ] {
+            std::fs::write(&file, text).unwrap();
+            assert_eq!(file_id(&file).as_deref(), id, "{text}");
+        }
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     /// A scratch main checkout whose common dir is its `.git` folder, its project file `text`.

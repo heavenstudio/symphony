@@ -6,6 +6,7 @@
 
 use super::Hub;
 use crate::front::{Shared, router};
+use crate::lock::Held as _;
 use crate::testing::{Tree, board::surreal, git, repository_at};
 use axum::body::{Body, to_bytes};
 use axum::extract::ConnectInfo;
@@ -13,7 +14,7 @@ use axum::http::Request;
 use serde_json::{Value, json};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use symphony_board::cli::Env;
 use symphony_board::rpc::Client;
@@ -85,7 +86,7 @@ impl Project {
             crate::backstop::PERIOD,
             move |root| {
                 // Held through the reach, so a case that closes the gate waits out one under way.
-                let open = gate.lock().unwrap_or_else(PoisonError::into_inner);
+                let open = gate.lock().held();
                 if !*open {
                     return Err(UNREACHED.to_string());
                 }

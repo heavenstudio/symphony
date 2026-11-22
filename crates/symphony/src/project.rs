@@ -36,6 +36,8 @@ pub use board::{Board, WipGuidance};
 use file::{File, FileEntrypoint};
 pub(crate) use model_warnings::warn as warn_models;
 use symphony_board::project::{inside, path_in};
+// A name as an id: the board's, which judges `[project] id` by it too.
+pub use symphony_board::project::slug;
 pub use theme::Theme;
 
 /// The project file at a project's root.
@@ -154,26 +156,24 @@ impl PluginProcess {
     }
 }
 
-/// How a project's plugin calls are measured, both off unless its file turns them on
-/// (docs/PLUGIN_CALLS.md): `[plugins] timing` records each call's time, `[plugins] loopback` sends
-/// each call through a JSON round trip inside the process and records both times
+/// How a project's plugin calls are measured, off unless its file turns it on
+/// (docs/PLUGIN_CALLS.md): `[plugins] timing` records each call's time
 /// ([`crate::plugins::Plugins::at`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PluginCalls {
     pub timing: bool,
-    pub loopback: bool,
 }
 
 impl PluginCalls {
-    /// Whether a call is recorded: under either setting.
+    /// Whether a call is recorded: under `timing`.
     pub fn recorded(self) -> bool {
-        self.timing || self.loopback
+        self.timing
     }
 
-    /// The two settings of the `symphony.toml` at `root`, read alone and quietly: nothing else in
-    /// the file is read or checked and nothing is said of it, and a file that does not parse, a
-    /// setting that is not `true` or `false`, or no file, turns neither on. What a plugin command
-    /// reads before it runs ([`crate::plugins::command`]), so with both off it loads no project.
+    /// The `[plugins] timing` of the `symphony.toml` at `root`, read alone and quietly: nothing else
+    /// in the file is read or checked and nothing is said of it, and a file that does not parse, a
+    /// value that is not `true` or `false`, or no file, leaves it off. What a plugin command reads
+    /// before it runs ([`crate::plugins::command`]), so with it off it loads no project.
     pub fn read(root: &Path) -> PluginCalls {
         #[derive(Default, serde::Deserialize)]
         #[serde(default)]
@@ -184,14 +184,12 @@ impl PluginCalls {
         #[serde(default)]
         struct PluginSettings {
             timing: bool,
-            loopback: bool,
         }
         std::fs::read_to_string(root.join(FILE))
             .ok()
             .and_then(|text| toml::from_str::<Settings>(&text).ok())
             .map(|settings| PluginCalls {
                 timing: settings.plugins.timing,
-                loopback: settings.plugins.loopback,
             })
             .unwrap_or_default()
     }
@@ -209,6 +207,8 @@ pub struct Agents {
 /// The defaults a launch takes when it names none; `None` leaves the board's own.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Launch {
+    /// The agent, one a launch starts as the board reads it (`symphony_board::launch::defaults::agent`):
+    /// none for one unwritten or blank.
     pub default: Option<String>,
     pub model: Option<String>,
     pub effort: Option<String>,
@@ -352,7 +352,7 @@ impl Default for Releases {
 }
 
 /// `generators` of the table `table` checked: each writes inside the project, a folder's outputs
-/// keeping their slash, and has a command.
+/// keeping their slash, and has a command as the land reads one (`symphony_board::land::commanded`).
 fn checked_generators(table: &str, generators: &mut [Generator]) -> Result<(), String> {
     for generator in generators {
         // Outputs are prefixes of changed names: a folder keeps its slash, so `content/`
@@ -364,12 +364,7 @@ fn checked_generators(table: &str, generators: &mut [Generator]) -> Result<(), S
         };
         generator.outputs =
             inside(&format!("{table} generators outputs"), &generator.outputs)? + slash;
-        if generator.command.is_empty() {
-            return Err(format!(
-                "{table} generator {} has no command",
-                generator.name
-            ));
-        }
+        symphony_board::land::commanded(table, generator)?;
     }
     Ok(())
 }
@@ -475,8 +470,8 @@ impl Project {
     }
 
     /// `text` as the `symphony.toml` of the project at `root`, a table or key the Symphony does not
-    /// know refused by name and line, a `[limits]` value the board cannot read refused as the
-    /// board says it, with its line, and a `[stamps]` catalogue the board would refuse (an empty
+    /// know refused by name and line, a limit the board cannot read (`[limits]`'s, or `[board]
+    /// orchestrator_slots`) refused as the board says it, with its line, and a `[stamps]` catalogue the board would refuse (an empty
     /// one, a key no stamp has) refused as it says it. The files its entrypoints hold are
     /// [`Project::load`]'s to look at.
     pub fn parse(root: &Path, text: &str) -> Result<Project, String> {
@@ -486,8 +481,9 @@ impl Project {
             return Err(refusal);
         }
         let project = Self::resolve(root, file).map_err(|e| format!("{FILE}: {e}"))?;
-        // The board reads `[limits]` itself and takes a default for a value it cannot read, so the
-        // board runs on whatever the file says; the lint and a load refuse that value here.
+        // The board reads `[limits]` and `[board] orchestrator_slots` itself and takes a default for
+        // a value it cannot read, so the board runs on whatever the file says; the lint and a load
+        // refuse that value here.
         if let Some(problem) = symphony_board::limits::parse(FILE, text).problems.first() {
             return Err(problem.clone());
         }
@@ -718,11 +714,7 @@ impl Project {
             (None, found) => found,
         });
         let name = p.name.unwrap_or_else(|| folder.clone());
-        if id.is_empty() || slug(&id) != id {
-            return Err(format!(
-                "[project] id {id:?} is not a slug (lowercase letters, digits and dashes)"
-            ));
-        }
+        symphony_board::project::id(&id)?;
         let artifacts = inside(
             "[project] artifacts",
             &p.artifacts.unwrap_or_else(|| "artifacts".into()),
@@ -735,10 +727,9 @@ impl Project {
             &p.register
                 .unwrap_or_else(|| join(&entrypoints[0].folder, "DECISIONS.md")),
         )?;
-        let default_branch = p.default_branch.unwrap_or_else(|| "main".into());
-        if default_branch.trim().is_empty() {
-            return Err("[project] default_branch is empty".into());
-        }
+        let default_branch = symphony_board::project::default_branch(p.default_branch.as_deref())?
+            .unwrap_or(symphony_board::live::MAIN)
+            .to_string();
         let cargo = p.cargo;
         if cargo
             .first()
@@ -759,7 +750,11 @@ impl Project {
             panes,
             worktrees: a.worktrees,
             launch: Launch {
-                default: a.launch.default,
+                default: symphony_board::launch::defaults::agent(
+                    symphony_board::launch::defaults::AGENT_KEY,
+                    a.launch.default.as_deref(),
+                )?
+                .map(String::from),
                 model: a.launch.model,
                 effort: a.launch.effort,
             },
@@ -842,7 +837,6 @@ impl Project {
             plugins: file.plugins.crates,
             plugin_calls: PluginCalls {
                 timing: file.plugins.timing,
-                loopback: file.plugins.loopback,
             },
             theme,
             agents,
@@ -1593,19 +1587,6 @@ impl Bounds {
                 .is_ok_and(|resolved| resolved.starts_with(uploads))
         })
     }
-}
-
-/// A name as an id: lowercase letters and digits, each other run a single dash.
-pub fn slug(name: &str) -> String {
-    let mut out = String::new();
-    for ch in name.chars().flat_map(char::to_lowercase) {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch);
-        } else if !out.is_empty() && !out.ends_with('-') {
-            out.push('-');
-        }
-    }
-    out.trim_end_matches('-').to_string()
 }
 
 /// A path's length and modification time, its own and then what it leads to (which differ for a

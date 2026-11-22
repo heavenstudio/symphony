@@ -7,6 +7,7 @@
 //! `shelf-ledger` draws a `.csv` file as a line of text. Its gates answerer, [`GATES_ANSWERER`],
 //! answers a task's gates as the checkout's [`GATES`] file says.
 
+use crate::lock::Held as _;
 use std::collections::HashMap;
 use std::path::{Component as Part, Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
@@ -299,10 +300,7 @@ static GALLERIES: LazyLock<Mutex<HashMap<PathBuf, Vec<GalleryItem>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn invalidate(root: &Path) {
-    GALLERIES
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(root);
+    GALLERIES.lock().held().remove(root);
 }
 
 /// The shelf of `root` built into the cache when it is not there: how many items it holds.
@@ -313,7 +311,7 @@ pub fn warm(root: &Path) -> usize {
 fn gallery(root: &Path) -> Vec<GalleryItem> {
     GALLERIES
         .lock()
-        .unwrap_or_else(|e| e.into_inner())
+        .held()
         .entry(root.to_path_buf())
         .or_insert_with(|| build(root))
         .clone()

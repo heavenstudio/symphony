@@ -23,7 +23,7 @@
 //! refused in the file is refused in the store by the same line. The store holds one preference
 //! more, `[agents] panes` ([`PANES`]), which the local file has no place for.
 
-use crate::launch::defaults::{AGENTS, ROLES};
+use crate::launch::defaults::{ROLES, agent};
 use crate::limits;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -300,16 +300,11 @@ pub fn judge(
                             continue;
                         };
                         match value {
-                            Value::String(text)
-                                if tables[1] == "launch"
-                                    && at == 0
-                                    && !text.trim().is_empty()
-                                    && !AGENTS.contains(&text.as_str()) =>
-                            {
-                                problems.push(format!(
-                                    "{said}: {name} {text:?} is not one of {}",
-                                    AGENTS.join(", ")
-                                ));
+                            Value::String(text) if tables[1] == "launch" && at == 0 => {
+                                match agent(&name, Some(text)) {
+                                    Ok(_) => into[at] = Some(text.clone()),
+                                    Err(why) => problems.push(format!("{said}: {why}")),
+                                }
                             }
                             Value::String(text) => into[at] = Some(text.clone()),
                             other => problems.push(wrong(name, other, "not text")),
@@ -320,7 +315,7 @@ pub fn judge(
             (limits::TABLE, _) => {
                 for (key, value) in keys {
                     let name = named(&[limits::TABLE], Some(key));
-                    let Some((known, least, below)) = limits::LEAST
+                    let Some((known, _, _)) = limits::LEAST
                         .iter()
                         .find(|(known, _, _)| known == key)
                         .copied()
@@ -328,11 +323,11 @@ pub fn judge(
                         problems.push(unknown(said, &name));
                         continue;
                     };
-                    match limits::whole(value, least) {
+                    match limits::judged(known, value) {
                         Ok(n) => {
                             local.limits.insert(known, n);
                         }
-                        Err(why) => problems.push(wrong(name, value, why.unwrap_or(below))),
+                        Err(why) => problems.push(wrong(name, value, why)),
                     }
                 }
             }

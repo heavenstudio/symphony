@@ -470,16 +470,20 @@ fn a_feed_stream_follows_the_sections_its_request_named_while_it_is_open() {
     drop(streams);
 }
 
-/// What `stream` said until it said `said`: every byte, the head's too. The read's own timeout
-/// bounds a stream that never says it.
-fn heard_until(stream: &mut TcpStream, said: &[u8]) -> Vec<u8> {
-    stream
-        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
-        .unwrap();
+/// What `stream` said until it said `said`: every byte, the head's too. A stream that never says
+/// it is a stall once `backstop` has passed over all its reads ([`test_time::backstop`]).
+fn heard_until(stream: &mut TcpStream, said: &[u8], backstop: std::time::Duration) -> Vec<u8> {
+    let until = std::time::Instant::now() + backstop;
     let mut heard = Vec::new();
     let mut chunk = [0; 512];
     while !heard.windows(said.len()).any(|window| window == said) {
-        let read = stream.read(&mut chunk).unwrap_or_else(|error| {
+        let left = until.saturating_duration_since(std::time::Instant::now());
+        let read = if left.is_zero() {
+            Err(std::io::ErrorKind::TimedOut.into())
+        } else {
+            (stream.set_read_timeout(Some(left))).and_then(|()| stream.read(&mut chunk))
+        };
+        let read = read.unwrap_or_else(|error: std::io::Error| {
             panic!(
                 "never said {:?} ({error}), only {:?}",
                 String::from_utf8_lossy(said),
@@ -533,7 +537,7 @@ fn the_servers_notice_is_said_on_each_open_stream_and_first_on_each_opened_after
     };
     let (event_head, socket_head) = (&b": open\n\n"[..], &b"\r\n\r\n"[..]);
     let mut before = open(false, 1);
-    let opened = heard_until(&mut before, event_head);
+    let opened = heard_until(&mut before, event_head, backstop);
     assert!(
         !String::from_utf8_lossy(&opened).contains(symphony_api::SERVER_EVENT),
         "no notice before one is said: {:?}",
@@ -542,16 +546,16 @@ fn the_servers_notice_is_said_on_each_open_stream_and_first_on_each_opened_after
 
     let held = Said::notice("held");
     site.server_notice("held");
-    heard_until(&mut before, held.sse().as_bytes());
+    heard_until(&mut before, held.sse().as_bytes(), backstop);
     let mut events = open(false, 2);
     let mut socket = open(true, 3);
     assert!(first_after(
-        &heard_until(&mut events, held.sse().as_bytes()),
+        &heard_until(&mut events, held.sse().as_bytes(), backstop),
         event_head,
         held.sse().as_bytes()
     ));
     assert!(first_after(
-        &heard_until(&mut socket, &held.frame()),
+        &heard_until(&mut socket, &held.frame(), backstop),
         socket_head,
         &held.frame()
     ));
@@ -559,13 +563,13 @@ fn the_servers_notice_is_said_on_each_open_stream_and_first_on_each_opened_after
     let cleared = Said::notice("");
     site.server_notice("");
     for stream in [&mut before, &mut events] {
-        heard_until(stream, cleared.sse().as_bytes());
+        heard_until(stream, cleared.sse().as_bytes(), backstop);
     }
-    heard_until(&mut socket, &cleared.frame());
+    heard_until(&mut socket, &cleared.frame(), backstop);
     let mut after = open(false, 4);
     assert!(
         first_after(
-            &heard_until(&mut after, cleared.sse().as_bytes()),
+            &heard_until(&mut after, cleared.sse().as_bytes(), backstop),
             event_head,
             cleared.sse().as_bytes()
         ),

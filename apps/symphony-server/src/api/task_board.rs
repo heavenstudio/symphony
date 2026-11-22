@@ -1,6 +1,7 @@
 //! Board display-stage counts and pagination share one filtered snapshot.
 
 use super::{Hub, Json, Request, Response, StatusCode, error, no_store, query};
+use crate::lock::Held as _;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
@@ -128,10 +129,7 @@ pub(super) fn listing(
         } else {
             hub.machine_snapshot()
         },
-        hub.task_signoff
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone(),
+        hub.task_signoff.lock().held().clone(),
         hub.workflow_generation(),
     )
 }

@@ -26,6 +26,7 @@
 //! the clock's interval has passed.
 
 use std::fs;
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -181,8 +182,9 @@ impl Hosting<'_> {
     }
 
     /// Why the run that ran the workflow file of `commit` is not believed; none when that file is
-    /// the one main commits at the tip fetched. A commit not held here is fetched for once.
-    fn committed(&self, commit: &str, within: Within<'_>) -> Option<String> {
+    /// the one main commits at the tip fetched. A commit not held here is fetched for once, and a
+    /// fetch that fails is said on `err`.
+    fn committed(&self, commit: &str, within: Within<'_>, err: &mut dyn Write) -> Option<String> {
         let plain = commit.len() == 40 && commit.chars().all(|c| c.is_ascii_hexdigit());
         if !plain {
             return Some(format!(
@@ -197,7 +199,16 @@ impl Hosting<'_> {
             ));
         };
         let theirs = self.file_at(commit).or_else(|| {
-            let _ = super::git::fetch_line(self.root, self.remote, self.branch, within.bound);
+            let fetched = super::git::fetch_line(self.root, self.remote, self.branch, within.bound);
+            if let Err(why) = fetched {
+                let unfetched = format!(
+                    "{}/{} could not be fetched for the commit {}",
+                    self.remote,
+                    self.branch,
+                    short(commit)
+                );
+                super::unsaid(err, &unfetched, Err(why));
+            }
             self.file_at(commit)
         });
         match theirs {
@@ -333,7 +344,6 @@ impl Hosting<'_> {
                 ran.seconds = started.took().seconds;
                 ran.timed_out = true;
                 if let Ok(mut file) = fs::OpenOptions::new().append(true).open(log) {
-                    use std::io::Write as _;
                     let _ = writeln!(
                         file,
                         "(stopped after {:.0} s: {why}; a run it started on GitHub is left to \
@@ -362,7 +372,7 @@ impl Hosting<'_> {
         }
         let run = &answer["run"];
         let workflow_commit = text(&run["workflow_commit"]);
-        if let Some(why) = self.committed(&workflow_commit, within) {
+        if let Some(why) = self.committed(&workflow_commit, within, &mut std::io::stderr()) {
             return Judged::Here(format!(
                 "the run {} is not believed: {why}",
                 text(&run["url"])

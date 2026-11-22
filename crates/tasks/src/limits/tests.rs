@@ -121,6 +121,116 @@ fn a_cap_written_in_both_tables_is_the_limits_one_and_two_values_are_said() {
 }
 
 #[test]
+fn a_boards_cap_the_rule_refuses_beside_the_limits_one_is_said_with_what_holds() {
+    for (value, why) in [
+        ("0", "an orchestrator needs at least one slot"),
+        ("-1", "an orchestrator needs at least one slot"),
+        ("\"8\"", "not a whole number"),
+        ("4294967296", "past what it can be"),
+    ] {
+        let both =
+            format!("[board]\norchestrator_slots = {value}\n[limits]\norchestrator_slots = 5\n");
+        let read = parsed(&both);
+        assert_eq!(read.limits.orchestrator_slots, Some(5), "{value}");
+        assert_eq!(
+            read.written[SLOTS],
+            written("[limits] orchestrator_slots", 4)
+        );
+        assert_eq!(
+            read.problems,
+            [format!(
+                "{PATH}: [board] orchestrator_slots (line 2) is {value}; {why}; left out: \
+                 [limits] orchestrator_slots (line 4) is 5, which holds"
+            )],
+            "{value}"
+        );
+    }
+    // Both refused: each is said, `[limits]`' first, and no cap applies.
+    let read = parsed("[board]\norchestrator_slots = 0\n[limits]\norchestrator_slots = -3\n");
+    assert_eq!(read.limits.orchestrator_slots, None);
+    assert_eq!(
+        read.problems,
+        [
+            format!(
+                "{PATH}: [limits] orchestrator_slots (line 4) is -3; an orchestrator needs at \
+                 least one slot; no cap on an orchestrator's open tasks applies"
+            ),
+            format!(
+                "{PATH}: [board] orchestrator_slots (line 2) is 0; an orchestrator needs at least \
+                 one slot; no cap on an orchestrator's open tasks applies"
+            ),
+        ]
+    );
+    // A `[limits]` cap refused beside a `[board]` one the rule takes leaves no cap, as before.
+    let read = parsed("[board]\norchestrator_slots = 8\n[limits]\norchestrator_slots = 0\n");
+    assert_eq!(read.limits.orchestrator_slots, None);
+    assert_eq!(read.problems.len(), 1, "{:?}", read.problems);
+    assert!(
+        read.problems[0].starts_with(&format!(
+            "{PATH}: [limits] orchestrator_slots (line 4) is 0"
+        )),
+        "{:?}",
+        read.problems
+    );
+}
+
+#[test]
+fn every_limit_is_a_whole_number_from_its_least_and_the_cap_at_most_u32() {
+    let most = i64::from(u32::MAX);
+    let size = |n: i64| usize::try_from(n).unwrap();
+    for (key, least, below) in LEAST {
+        assert_eq!(
+            judged(key, &Value::Integer(least)),
+            Ok(size(least)),
+            "{key}"
+        );
+        assert_eq!(judged(key, &Value::Integer(least - 1)), Err(below), "{key}");
+        assert_eq!(judged(key, &Value::Integer(most)), Ok(size(most)), "{key}");
+        for value in [
+            Value::Float(2.0),
+            Value::String("8".into()),
+            Value::Boolean(true),
+        ] {
+            assert_eq!(judged(key, &value), Err("not a whole number"), "{key}");
+        }
+    }
+    // The cap alone is held to what the Symphony's project holds it in; the others are as before.
+    assert_eq!(
+        judged(SLOTS, &Value::Integer(most + 1)),
+        Err("past what it can be")
+    );
+    for key in [TASKS, LOW, MACHINE_AGENTS] {
+        assert_eq!(
+            judged(key, &Value::Integer(most + 1)),
+            Ok(size(most + 1)),
+            "{key}"
+        );
+    }
+}
+
+#[test]
+fn a_cap_past_u32_is_said_in_either_table_and_caps_nothing() {
+    for (table, line) in [("limits", 2), ("board", 2)] {
+        let read = parsed(&format!("[{table}]\norchestrator_slots = 4294967296\n"));
+        assert_eq!(read.limits.orchestrator_slots, None, "{table}");
+        assert_eq!(
+            read.problems,
+            [format!(
+                "{PATH}: [{table}] orchestrator_slots (line {line}) is 4294967296; past what it \
+                 can be; no cap on an orchestrator's open tasks applies"
+            )]
+        );
+        let read = parsed(&format!("[{table}]\norchestrator_slots = 4294967295\n"));
+        assert_eq!(
+            read.limits.orchestrator_slots,
+            Some(4_294_967_295),
+            "{table}"
+        );
+        assert_eq!(read.problems, Vec::<String>::new(), "{table}");
+    }
+}
+
+#[test]
 fn a_bad_value_is_said_with_its_line_and_takes_its_default_alone() {
     for (text, problem, kept) in [
         (

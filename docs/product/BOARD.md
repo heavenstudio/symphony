@@ -58,10 +58,10 @@ The columns, left to right, are the stages a task goes through: **concept**, **d
 | Marks before the title | **blocked** on a blocked task, a parked one among them; **1 review**, **2 reviews** once it has been to review that many times |
 | Title | the task's title, two lines at most; it opens the task's page |
 | Slug | the task's name on the board, which its branch carries too |
-| Cost | what the task and its subtasks spent in tokens, as an estimate in dollars: **$1.23**, **$1.23+** when some of it had no price, **unpriced** when none had; absent when nothing was spent |
 | Priority | **p0**, the most urgent, to **p4** |
 | **▾** | opens the card in place to the whole of its title, slug, wait and reason |
-| Wait line | what it waits on, for how long, and why |
+| Wait line | what it waits on, its cost, for how long, and why |
+| Cost | on the wait line, before the time: what the task and its subtasks spent in tokens, as an estimate in dollars, **$1.23**, **$1.23+** when some of it had no price, **unpriced** when none had; absent when nothing was spent |
 
 The age on the wait line counts from when the task came to the status it holds, not from when
 what it waits on last changed: a task in review for six hours says six hours, whenever its

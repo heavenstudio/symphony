@@ -141,6 +141,29 @@ fn nothing_is_asked_of_github_while_verification_is_not_turned_on() {
 }
 
 #[test]
+fn a_verification_turned_off_names_its_own_setting_and_unread_settings_say_why() {
+    let rig = rig("verify-off-said");
+    rig.enable("releases = \"publish\"");
+    assert_eq!(
+        ask(&rig, &request(&rig)),
+        json!({
+            "state": "refused",
+            "why": "turned off: the committed settings do not say enabled = true and \
+                    verification = \"hosted\"",
+        })
+    );
+    rig.settings
+        .set(Some("verification = \"sometimes\"\n".into()));
+    let answer = ask(&rig, &request(&rig));
+    let why = answer["why"].as_str().unwrap();
+    assert!(
+        why.starts_with("turned off: its settings do not read: ") && why.contains("sometimes"),
+        "{answer}"
+    );
+    assert_eq!(rig.github.asked().len(), 0, "{:?}", rig.github.asked());
+}
+
+#[test]
 fn a_request_that_names_no_whole_commit_or_no_folder_starts_nothing() {
     let rig = rig("verify-request");
     for commit in ["main", "cccccccc", "", &"g".repeat(40)] {
