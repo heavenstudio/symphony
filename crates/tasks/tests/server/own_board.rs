@@ -174,10 +174,12 @@ pub fn gone(pid: i64) -> bool {
 }
 
 /// A repository of its own, its board the one in its git dir in the live board's shape: reached
-/// from the repository with no `TASKS_*` variable naming it, its server started on disk there by
-/// the first command that needs one. That server is stopped when the repository goes, by the pid
-/// its address file records, if that process serves it; its pipe watchdog also stops it when the
-/// test process ends without running Drop.
+/// from the repository with no `TASKS_*` variable naming it, made by the first command that needs
+/// one, on PostgreSQL as a project's is, unless the case names SurrealDB or starts it. Its server
+/// is stopped when the repository goes, on either engine
+/// ([`symphony_board::server::Home::stop_board`]), and a SurrealDB server also by the pid its
+/// address file records, if that process serves it; its pipe watchdog also stops it when the test
+/// process ends without running Drop.
 pub struct Repository {
     pub dir: PathBuf,
     surreal: GuardedSurreal,

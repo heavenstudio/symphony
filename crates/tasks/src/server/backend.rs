@@ -556,6 +556,37 @@ mod tests {
         assert!(!board.home.dir().join(FILE).exists());
     }
 
+    /// A PostgreSQL board's programs are its project's, read from the main checkout whose `.git`
+    /// holds its home: a home kept anywhere else is refused its stop, naming where it is, and
+    /// nothing is started or signalled.
+    #[test]
+    fn a_postgresql_boards_stop_reads_its_programs_from_the_main_checkout_whose_git_holds_it() {
+        let board = Board::new("project-root");
+        let root = board.home.dir().join("lamp");
+        let common = root.join(".git");
+        let home = Home::in_common(&common, None);
+        assert_eq!(home.project_root().unwrap(), root.as_path());
+        // Not a main checkout's git folder: a bare repository, or a common dir kept elsewhere.
+        board.home.initialize_backend(Engine::PostgreSql).unwrap();
+        fs::create_dir_all(board.home.dir().join(postgres::DATA)).unwrap();
+        fs::write(
+            board.home.dir().join(postgres::DATA).join("PG_VERSION"),
+            "18\n",
+        )
+        .unwrap();
+        let refused = board.home.stop_board().unwrap_err().to_string();
+        assert_eq!(
+            refused,
+            format!(
+                "the board in {} is on PostgreSQL, and {} is no main checkout's git folder to \
+                 read its project's PostgreSQL programs from",
+                board.home.dir().display(),
+                board.home.dir().parent().unwrap().display()
+            )
+        );
+        assert!(!board.home.unmade().unwrap());
+    }
+
     #[test]
     fn engine_names_accept_json_escapes_and_either_field_order() {
         let board = Board::new("escaped");
