@@ -414,3 +414,274 @@ fn a_recipients_messages_are_its_inbox_where_read_and_the_chat_while_it_holds_th
     assert_eq!(events(&callback, None), std::slice::from_ref(&chat));
     assert_eq!(events(&callback, after(0, false)), [message, chat]);
 }
+
+/// An empty look, as `attach::seen` gives one of a board with nothing on it.
+fn nothing_seen() -> attach::Seen {
+    serde_json::from_value(json!({"roles":[], "statuses":{}, "ready":{}, "children":{}})).unwrap()
+}
+
+/// A worker's look at an empty board, with no PULL due, over the recorded `state`.
+fn look_over(state: State) -> Look {
+    let seen = nothing_seen();
+    Look {
+        narrowing: attach::Narrowing::between(&seen, &seen),
+        state,
+        queued: Vec::new(),
+        seen: seen.clone(),
+        heard: seen.clone(),
+        legacy: seen,
+        before: None,
+        initializing: false,
+        legacy_upgrade: false,
+        first_observation: false,
+        message_floor: 0,
+        statuses: BTreeMap::new(),
+        rescoped: Rescoped::default(),
+        agents: Agents {
+            view: None,
+            idle: Vec::new(),
+            busy: Vec::new(),
+        },
+        due: false,
+        pull_at: f64::INFINITY,
+    }
+}
+
+/// The state that recorded exactly `look_over`'s look, its inbox read to message 7.
+fn recorded() -> State {
+    let seen = nothing_seen();
+    State {
+        narrowing: Some(attach::Narrowing::between(&seen, &seen)),
+        seen: Some(seen),
+        delivery_version: Some(1),
+        inbox_cursor: Some(7),
+        ..State::default()
+    }
+}
+
+/// A look is current only while its state records it, narrowed as it is, and its inbox was read
+/// to the board's newest message.
+#[test]
+fn a_look_is_current_while_its_state_records_it_and_its_inbox_is_read_to_the_newest_message() {
+    let board = |latest_message| crate::Board {
+        tasks: Vec::new(),
+        sessions: Vec::new(),
+        latest_message,
+    };
+    let look = look_over(recorded());
+    assert!(look.unchanged());
+    assert!(look.current(&board(7)));
+    assert!(
+        !look.current(&board(8)),
+        "a message came since its inbox was read"
+    );
+    let never_read = look_over(State {
+        inbox_cursor: None,
+        ..recorded()
+    });
+    assert!(never_read.unchanged() && !never_read.current(&board(7)));
+    let unnarrowed = look_over(State {
+        narrowing: None,
+        ..recorded()
+    });
+    assert!(!unnarrowed.unchanged() && !unnarrowed.current(&board(7)));
+    let unseen = look_over(State {
+        seen: None,
+        ..recorded()
+    });
+    assert!(!unseen.unchanged() && !unseen.current(&board(7)));
+    let mut moved = look_over(recorded());
+    moved.legacy.latest_message = Some(9);
+    assert!(!moved.unchanged(), "its look moved on since");
+}
+
+/// A look settles, changing nothing its record holds, only with no event to queue, once a newer
+/// dispatcher has written for it, with its registration observed and its statuses, its children
+/// of unknown liveness, any PULL planned and the lines queued for it as recorded.
+#[test]
+fn a_look_settles_only_when_recording_it_changes_nothing() {
+    let none = BTreeSet::new();
+    let settled = |look: &Look| look.settled(&[], &none, None);
+    assert!(settled(&look_over(recorded())));
+    let event = Event::line("event-1-0".into(), "amber-wren", "x".into(), None, None);
+    assert!(!look_over(recorded()).settled(&[event], &none, None));
+    let unknown = BTreeSet::from(["zinc-otter".to_string()]);
+    assert!(!look_over(recorded()).settled(&[], &unknown, None));
+    let mut initializing = look_over(recorded());
+    initializing.initializing = true;
+    assert!(!settled(&initializing));
+    let registered = State {
+        registration_revision: 2,
+        ..recorded()
+    };
+    assert!(!settled(&look_over(registered)));
+    let mut statuses = look_over(recorded());
+    statuses.statuses = BTreeMap::from([("p/a".into(), "ready".into())]);
+    assert!(!settled(&statuses));
+    let mut rescoped = look_over(recorded());
+    rescoped.rescoped.dropped.push("event-1-0".into());
+    assert!(!settled(&rescoped));
+    let pulled = |plan| Pulled {
+        text: String::new(),
+        said: pull::Said::default(),
+        account: Account {
+            plan,
+            queued: None,
+            recorded: None,
+            unheard: BTreeSet::new(),
+            untold: BTreeSet::new(),
+            withheld: BTreeSet::new(),
+            awaiting: None,
+        },
+        entries: BTreeSet::new(),
+    };
+    let look = look_over(recorded());
+    assert!(look.settled(&[], &none, Some(&pulled(PullPlan::Unchanged))));
+    assert!(!look.settled(&[], &none, Some(&pulled(PullPlan::Dropped))));
+}
+
+/// The lines of a look's change are keyed in order under the lease's revision, each about the
+/// task the recipient holds a role on, or none.
+#[test]
+fn a_looks_lines_are_keyed_in_order_under_the_lease_and_name_the_recipients_task() {
+    use crate::store_fixture::{Fixture, Seed};
+    let fixture = Fixture::new(
+        Seed::default()
+            .session("amber-wren")
+            .task("p/a", "in_progress")
+            .role("p/a", "amber-wren", "executor"),
+    );
+    let (board, _) = fixture.store.callback_board().unwrap();
+    let lines = vec!["CLAIMED p/a".to_string(), "MOVED p/a".to_string()];
+    let events = line_events("amber-wren", &board, lines.clone(), 4);
+    let shown: Vec<_> = (events.iter())
+        .map(|e| {
+            (
+                e.key.as_str(),
+                e.text.as_str(),
+                e.slug.as_deref(),
+                e.message,
+            )
+        })
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            ("event-4-0", "CLAIMED p/a", Some("p/a"), None),
+            ("event-4-1", "MOVED p/a", Some("p/a"), None)
+        ]
+    );
+    let elsewhere = line_events("zinc-otter", &board, lines, 4);
+    assert!(elsewhere.iter().all(|event| event.slug.is_none()));
+    assert!(line_events("amber-wren", &board, Vec::new(), 4).is_empty());
+}
+
+/// A planned PULL is an event only when its account queues a new one, keyed by the lease's
+/// revision and carrying what it records and says.
+#[test]
+fn a_planned_pull_is_an_event_only_when_its_account_queues_one() {
+    let board = crate::Board {
+        tasks: Vec::new(),
+        sessions: Vec::new(),
+        latest_message: 0,
+    };
+    let entry = ("ready_unstaffed".to_string(), "p/a".to_string());
+    let withheld = ("ready_unstaffed".to_string(), "p/b".to_string());
+    let awaiting = super::super::callback_state::Awaiting {
+        entries: BTreeSet::from([entry.clone(), withheld.clone()]),
+        withheld: BTreeSet::from([withheld]),
+    };
+    let pulled = |plan, awaiting| Pulled {
+        text: "PULL ready_unstaffed=1".into(),
+        said: pull::Said {
+            entries: BTreeSet::from([entry.clone()]),
+            ..pull::Said::default()
+        },
+        account: Account {
+            plan,
+            queued: None,
+            recorded: None,
+            unheard: BTreeSet::new(),
+            untold: BTreeSet::new(),
+            withheld: BTreeSet::new(),
+            awaiting,
+        },
+        entries: BTreeSet::new(),
+    };
+    let queued = pulled(PullPlan::Queued, Some(awaiting.clone()));
+    let event = queued.event("amber-wren", &board, 6).unwrap();
+    assert_eq!(
+        (event.key.as_str(), event.text.as_str()),
+        ("pull-6", "PULL ready_unstaffed=1")
+    );
+    assert_eq!((event.slug, event.message, event.attempts), (None, None, 0));
+    assert_eq!(event.pull_entries, Some(awaiting.entries.clone()));
+    assert_eq!(event.pull_withheld, Some(awaiting.withheld.clone()));
+    assert_eq!(event.pull_said, Some(queued.said.clone()));
+    assert!(
+        pulled(PullPlan::Queued, None)
+            .event("amber-wren", &board, 6)
+            .is_none()
+    );
+    let kept = pulled(PullPlan::Kept("pull-2".into()), Some(awaiting));
+    assert!(kept.event("amber-wren", &board, 6).is_none());
+    assert!(
+        pulled(PullPlan::Unchanged, None)
+            .event("amber-wren", &board, 6)
+            .is_none()
+    );
+}
+
+/// A recipient's stored state is there to observe once it has one; a write's observation leaves
+/// one recorded at or past the board it holds, and a state recorded past that board, or before
+/// observations were sequenced, has the board read again.
+#[test]
+fn a_stored_state_is_observed_against_a_board_at_least_as_new_as_it() {
+    let fixture = crate::store_fixture::Fixture::empty();
+    let store = &fixture.store;
+    let handle = fixture.session("worker");
+    let callback: Callback = serde_json::from_value(json!({
+        "handle":handle, "address":"", "host":crate::store_fixture::HOST,
+        "session":crate::rows::SessionRow::default()
+    }))
+    .unwrap();
+    let env = crate::cli::Env::of_process();
+    let (mut board, marker) = store.callback_board().unwrap();
+    let mut read = |pass, sequence: u64| {
+        let visit = Visit::new(pass, &env, store, None);
+        let mut sequence = sequence;
+        let state = store.stored_state(&handle, &callback, &mut board, &mut sequence, &visit);
+        (
+            state.unwrap().map(|(state, _, _)| state.snapshot_sequence),
+            sequence,
+        )
+    };
+    assert_eq!(read(Pass::Deliver, marker), (None, marker), "no state yet");
+    let state = store.raw().row("callback_state", handle.as_str());
+    state.put(json!({"snapshot_sequence":marker})).unwrap();
+    assert_eq!(
+        read(Pass::Observe, marker),
+        (None, marker),
+        "observed at this board"
+    );
+    assert_eq!(read(Pass::Deliver, marker), (Some(marker), marker));
+    let behind = marker - 1;
+    assert_eq!(
+        read(Pass::Observe, behind),
+        (None, behind),
+        "observed past it"
+    );
+    assert_eq!(
+        read(Pass::Deliver, behind),
+        (Some(marker), marker),
+        "read again"
+    );
+    let unsequenced = json!({"snapshot_sequence":0, "seen":nothing_seen()});
+    state.put(unsequenced).unwrap();
+    let now = store.board_marker().unwrap();
+    assert_eq!(
+        read(Pass::Observe, 0),
+        (Some(0), now),
+        "unsequenced, read again"
+    );
+}

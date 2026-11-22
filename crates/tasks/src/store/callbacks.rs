@@ -148,6 +148,93 @@ struct Pulled {
     entries: BTreeSet<(String, String)>,
 }
 
+impl Pulled {
+    /// The event of this PULL for `handle`, keyed by the lease `revision` it is queued under, when
+    /// its account queues a new one ([`PullPlan::Queued`]).
+    fn event(&self, handle: &str, board: &super::Board, revision: u64) -> Option<Event> {
+        let Account {
+            plan: PullPlan::Queued,
+            awaiting: Some(awaiting),
+            ..
+        } = &self.account
+        else {
+            return None;
+        };
+        let (key, slug) = (format!("pull-{revision}"), session_task(board, handle));
+        Some(Event {
+            pull_entries: Some(awaiting.entries.clone()),
+            pull_withheld: Some(awaiting.withheld.clone()),
+            pull_said: Some(self.said.clone()),
+            ..Event::line(key, handle, self.text.clone(), slug, None)
+        })
+    }
+}
+
+/// A recipient as one visit reads it against the board the visit holds ([`Store::look`]): its
+/// stored state and the lines still queued for it, what it hears now, and whether its PULL is due.
+struct Look {
+    state: State,
+    queued: Vec<Queued>,
+    /// What it hears now, and the same compacted to the open tasks, as its record keeps it.
+    seen: attach::Seen,
+    heard: attach::Seen,
+    /// The whole board's look older dispatchers keep, compacted to the open tasks.
+    legacy: attach::Seen,
+    /// What it was told, as it hears it ([`State::heard`]).
+    before: Option<attach::Seen>,
+    /// How what it hears narrows the whole board's look ([`attach::Narrowing`]).
+    narrowing: attach::Narrowing,
+    /// Whether no newer dispatcher has written for it yet; of those, whether an older one has
+    /// ([`upgrades_legacy`]) or nobody has.
+    initializing: bool,
+    legacy_upgrade: bool,
+    first_observation: bool,
+    /// The message its inbox is read after.
+    message_floor: i64,
+    /// The open tasks' statuses an orchestrator's PULL is scheduled by; none for anyone else.
+    statuses: BTreeMap<String, String>,
+    rescoped: Rescoped,
+    agents: Agents,
+    /// Whether its PULL is due now, and when it is next due.
+    due: bool,
+    pull_at: f64,
+}
+
+impl Look {
+    /// Whether the look its state records is this one.
+    fn unchanged(&self) -> bool {
+        self.state.seen.as_ref() == Some(&self.legacy)
+            && self.state.narrowing.as_ref() == Some(&self.narrowing)
+    }
+
+    /// Whether its record is current on `board`: its look unchanged, and its inbox read to the
+    /// board's newest message.
+    fn current(&self, board: &super::Board) -> bool {
+        self.unchanged() && self.state.inbox_cursor == Some(board.latest_message)
+    }
+
+    /// Whether recording this look, with `events`, the children `unknown` whose liveness is not
+    /// known and the PULL `pulled` planned, if one is due, changes nothing its state records.
+    fn settled(
+        &self,
+        events: &[Event],
+        unknown: &BTreeSet<String>,
+        pulled: Option<&Pulled>,
+    ) -> bool {
+        let state = &self.state;
+        events.is_empty()
+            && !self.initializing
+            && state.registration_revision == state.observed_registration
+            && state.statuses == self.statuses
+            && state.unknown_children == *unknown
+            && pulled.is_none_or(|pulled| {
+                let Pulled { text, said, .. } = pulled;
+                (pulled.account).changes_nothing(state, &self.queued, text, Some(said))
+            })
+            && self.rescoped.is_empty()
+    }
+}
+
 /// Where a leased pass reads its recipient's inbox from ([`Store::message_events`]): after `floor`,
 /// where its cursor stands, or, on its `first` observation, whole, keeping what came after `floor`
 /// and, of the rest, each message (`msg`) and each line addressed to it.
@@ -741,7 +828,7 @@ impl Store {
         let sample = std::cell::OnceCell::new();
         let panes = || (sample.get_or_init(|| crate::cli::probes::hc_terminals(env))).clone();
         self.watch_pane(&board, &callback, &open, &panes, &visit)?;
-        self.dispatch_one(handle, &callback, &mut board, &mut sequence, &visit, None)?;
+        self.dispatch_one(handle, &callback, &mut board, &mut sequence, &visit)?;
         Ok((visit.printed(), sequence))
     }
 
@@ -945,7 +1032,7 @@ impl Store {
             let env = crate::cli::Env::of_process();
             let visit = Visit::new(pass, &env, self, holdings.as_ref());
             let (handled, due) =
-                self.dispatch_one(handle, callback, &mut board, &mut sequence, &visit, None)?;
+                self.dispatch_one(handle, callback, &mut board, &mut sequence, &visit)?;
             observed &= handled;
             pull_at = pull_at.min(due);
         }
@@ -1017,8 +1104,9 @@ impl Store {
         Ok(held)
     }
 
-    /// One recipient's visit: whether it was reached, and when its PULL is next due. `lease` is the
-    /// revision of the recipient's lease this dispatcher holds, once it holds it.
+    /// One recipient's visit, planned without its lease: whether it was reached, and when its PULL
+    /// is next due. One whose PULL is due is made again under the lease at once ([`Store::leased`]),
+    /// and one the plan finds anything to record, queue or deliver for, once it has planned.
     fn dispatch_one(
         &self,
         handle: &str,
@@ -1026,54 +1114,182 @@ impl Store {
         board: &mut super::Board,
         sequence: &mut u64,
         visit: &Visit<'_>,
-        lease: Option<u64>,
+    ) -> Result<(bool, f64), Error> {
+        let Some(look) = self.look(handle, callback, board, sequence, visit)? else {
+            return Ok((true, f64::INFINITY));
+        };
+        if look.due {
+            return self.leased(handle, callback, board, sequence, visit, look.pull_at);
+        }
+        let lines = self.changed_lines(handle, board, &look)?;
+        let mut events = line_events(handle, board, lines, look.state.revision);
+        // Message, role and task-tree writes append a board message. A plan that would read the
+        // inbox goes on to the lease below whatever it finds (the cursor or the observation has
+        // moved), and the leased pass reads it again: the plan leaves it to that one.
+        events.extend(self.message_events(handle, callback, board, None)?);
+        let (_, unknown_children) = self.stored_look(board, &look.legacy);
+        let settled = look.settled(&events, &unknown_children, None);
+        let current = look.current(board);
+        // A write's observation leaves a recipient whose look moved by the newest message alone, and
+        // whose inbox no message since could reach (the pass's pool says so, with no read of its
+        // own), to the delivering pass: the write gave it nothing to hear. Its recorded look and
+        // cursors stay where they were, as when another dispatcher held its lease, and the delivering
+        // pass moves them. Taking every recipient's lease to read an empty inbox and move its cursor
+        // was most of what one write cost.
+        let unreached = !current
+            && settled
+            && visit.pass == Pass::Observe
+            && look.state.narrowing.as_ref() == Some(&look.narrowing)
+            && look.state.seen.as_ref().is_some_and(|recorded| {
+                let mut recorded = recorded.clone();
+                recorded.latest_message = look.legacy.latest_message;
+                recorded == look.legacy
+            })
+            && !self.could_hear(handle, look.message_floor, board.latest_message)?;
+        if settled
+            && (current || unreached)
+            && (visit.pass == Pass::Observe || !self.callback_pending(handle, callback.chat)?)
+        {
+            return Ok((true, look.pull_at));
+        }
+        self.leased(handle, callback, board, sequence, visit, look.pull_at)
+    }
+
+    /// One recipient's visit under its lease, `lease` the revision of it this dispatcher holds:
+    /// whether it was reached, and when its PULL is next due. It records the recipient's look with
+    /// the events it queued, and a delivering pass delivers them.
+    fn dispatch_leased(
+        &self,
+        handle: &str,
+        callback: &Callback,
+        board: &mut super::Board,
+        sequence: &mut u64,
+        visit: &Visit<'_>,
+        lease: u64,
     ) -> Result<(bool, f64), Error> {
         // A write's observation keeps the board it read once its write committed: what the write
         // caused is read against the board as the write left it. A delivering pass reads the board
         // again under the lease, so a delayed plan cannot publish a transient from an older board.
-        if lease.is_some() && visit.pass != Pass::Observe {
+        let delivering = visit.pass != Pass::Observe;
+        if delivering {
             (*board, *sequence) = self.callback_board()?;
         }
-        let Stored {
-            state,
-            checked_pull,
-            queued,
-        } =
-            self.retrying(|| self.read(both(sql::STORED, pg::stored()), json!({"handle":handle})))?;
-        let Some(mut state) = state else {
+        let Some(mut look) = self.look(handle, callback, board, sequence, visit)? else {
             return Ok((true, f64::INFINITY));
         };
-        state.restore_unknown();
-        let unsequenced = state.seen.is_some() && state.snapshot_sequence == 0;
-        // An observation recorded at a marker at or past this board's read a board holding this
-        // write's commit (each write a board read sees moves the marker, and this board was read
-        // after it), so what the write caused was heard there: a write's observation leaves that
-        // recipient. Reading the board again instead would cost each of many writers at once the
-        // whole board for each recipient another had observed meanwhile.
-        let count_changed = callback.session.kind == "orchestrator"
-            && visit.holdings.is_some_and(|holdings| {
-                state.heard().and_then(|before| before.open_slots())
-                    != Some(holdings.get(handle).map_or(0, BTreeSet::len))
-            });
-        if visit.pass == Pass::Observe
-            && !unsequenced
-            && state.snapshot_sequence >= *sequence
-            && !count_changed
-        {
-            return Ok((true, f64::INFINITY));
+        let lines = self.changed_lines(handle, board, &look)?;
+        // The recorded entries are the whole digest's, as older dispatchers record them; what
+        // the recipient was told of them is in the PULLs it acknowledged ([`Account`]).
+        let pulled = match look.due {
+            true => Some(self.plan_pull(
+                handle,
+                board,
+                visit,
+                &mut look.state,
+                &look.queued,
+                &look.agents,
+            )?),
+            false => None,
+        };
+        let mut events = line_events(handle, board, lines, lease);
+        events.extend((pulled.as_ref()).and_then(|pulled| pulled.event(handle, board, lease)));
+        // Message, role and task-tree writes append a board message. Once the inbox is durably
+        // copied, an unchanged observation needs only outbox retries, not another history scan.
+        let inbox = (!look.current(board)).then_some(Inbox {
+            floor: look.message_floor,
+            first: look.first_observation,
+        });
+        events.extend(self.message_events(handle, callback, board, inbox)?);
+        let (stored_seen, unknown_children) = self.stored_look(board, &look.legacy);
+        if look.settled(&events, &unknown_children, pulled.as_ref()) && look.current(board) {
+            if look.due {
+                // Fresh command Stores share this deadline even when the digest has no new
+                // entry. Its scheduling checkpoint belongs to the small lease, not Seen.
+                self.retrying(|| {
+                    self.transact::<Value>(
+                        both(sql::PULL_CHECKED, pg::pull_checked()),
+                        json!({"handle":handle, "revision":lease, "now":self.now()}),
+                    )
+                })?;
+            }
+            if !delivering || !self.callback_pending(handle, callback.chat)? {
+                return Ok((true, look.pull_at));
+            }
+            return self
+                .deliver_pending(handle, callback, lease, &|text| visit.send(callback, text))
+                .map(|held| (held, look.pull_at));
         }
-        // Planning can meet an observation newer than its shared snapshot. Recheck the marker
-        // before diffing it, including unsequenced legacy observations. A lease also rechecks the
-        // marker above, so a delayed plan cannot publish a transient from an older board.
-        if state.snapshot_sequence > *sequence || unsequenced {
-            (*board, *sequence) = self.callback_board()?;
+        let account = pulled.as_ref().map(|pulled| &pulled.account);
+        let plan = account.map(|account| &account.plan);
+        let pull_kept = match plan {
+            Some(PullPlan::Kept(key)) => Some(key),
+            _ => None,
+        };
+        let pull_replaced = matches!(plan, Some(PullPlan::Dropped | PullPlan::Queued));
+        let no_entries = BTreeSet::new();
+        let pull_current = (pulled.as_ref()).map_or(&no_entries, |pulled| &pulled.entries);
+        let pull_text = (pulled.as_ref()).map_or("", |pulled| pulled.text.as_str());
+        let pull_said = pulled.as_ref().map(|pulled| &pulled.said);
+        let Look { state, queued, .. } = &look;
+        // An inbox acknowledgement takes no lease: one of a PULL read as waiting may have come in
+        // since, and what the recipient was told with it. A PULL still waits only while its event
+        // is there undelivered: a presence sweep, which takes no lease either, prunes delivered
+        // ones, and no key is used twice. Otherwise nothing is written, and the dispatch reads and
+        // decides again. Nor is anything written once the lease lapsed and another dispatcher took
+        // it (its revision moved) while this one built: the recipient is that one's.
+        let waiting: Vec<&str> = (queued.iter().filter(|line| line.is_pull()))
+            .map(|line| line.key.as_str())
+            .collect();
+        let accounted = self.retrying(|| self.transact::<Accounted>(
+            both(sql::account(), pg::account()),
+            json!({"handle":handle, "waiting":waiting, "events":events, "seen":stored_seen, "narrowing":look.narrowing, "unknown_children":unknown_children, "snapshot_sequence":sequence, "statuses":look.statuses, "revision":lease,
+                "pull":if look.due {self.now()} else {state.pull}, "legacy_upgrade":look.legacy_upgrade,
+                "pull_queued":account.map_or(&state.pull_queued, |a| &a.queued),
+                "pull_awaiting":account.and_then(|a| a.awaiting.as_ref()),
+                "pull_account":account.map(|a| json!({"recorded":a.recorded, "unheard":a.unheard, "untold":a.untold, "withheld":a.withheld})),
+                "message_cursor":board.latest_message, "inbox_cursor":board.latest_message,
+                "computed":look.due, "pull_current":pull_current, "rescoped":look.rescoped,
+                "pull_kept":pull_kept, "pull_text":pull_text, "pull_said":pull_said, "replace_pull":pull_replaced}),
+        ))?;
+        if *sequence == accounted.marker.before {
+            *sequence = accounted.marker.after;
         }
+        self.adopt(&accounted.marker);
+        if !accounted.held {
+            return Ok((false, look.pull_at));
+        }
+        if !accounted.current {
+            return self.dispatch_leased(handle, callback, board, sequence, visit, lease);
+        }
+        if delivering {
+            let held =
+                self.deliver_pending(handle, callback, lease, &|text| visit.send(callback, text))?;
+            return Ok((held, look.pull_at));
+        }
+        Ok((true, look.pull_at))
+    }
+
+    /// `handle` as a visit reads it against `board` ([`Look`]): none when there is nothing to
+    /// observe of it ([`Store::stored_state`]), or it is no session here.
+    fn look(
+        &self,
+        handle: &str,
+        callback: &Callback,
+        board: &mut super::Board,
+        sequence: &mut u64,
+        visit: &Visit<'_>,
+    ) -> Result<Option<Look>, Error> {
+        let Some((mut state, checked_pull, queued)) =
+            self.stored_state(handle, callback, board, sequence, visit)?
+        else {
+            return Ok(None);
+        };
         let Some(session) = board
             .sessions
             .iter()
             .find(|s| s.row.handle == handle && s.row.left_at.is_none())
         else {
-            return Ok((true, f64::INFINITY));
+            return Ok(None);
         };
         let orchestrator = session.row.kind == "orchestrator";
         // What the recipient hears, and the whole board's look older dispatchers keep.
@@ -1168,8 +1384,8 @@ impl Store {
             }
         }
         // Compare the same effective child health that observation checkpoints persist.
-        let due =
-            scheduled || (orchestrator && attach::pull_changed(before.as_ref(), &compact(&seen)));
+        let heard = compact(&seen);
+        let due = scheduled || (orchestrator && attach::pull_changed(before.as_ref(), &heard));
         let pull_at = if !orchestrator {
             f64::INFINITY
         } else if due {
@@ -1177,76 +1393,105 @@ impl Store {
         } else {
             last_pull + 600.0
         };
-        if due && lease.is_none() {
-            return self.leased(handle, callback, board, sequence, visit, pull_at);
-        }
-        let mut lines = Vec::new();
-        if let Some(before) = &before
-            && !legacy_upgrade
-            && before != &compact(&seen)
+        let legacy = compact(&legacy);
+        let narrowing = attach::Narrowing::between(&legacy, &heard);
+        Ok(Some(Look {
+            state,
+            queued,
+            seen,
+            heard,
+            legacy,
+            before,
+            narrowing,
+            initializing,
+            legacy_upgrade,
+            first_observation,
+            message_floor,
+            statuses,
+            rescoped,
+            agents,
+            due,
+            pull_at,
+        }))
+    }
+
+    /// `handle`'s stored state, as a visit reads it against `board`: its callback state, when its
+    /// PULL was last checked, and the lines still queued for it. None when there is nothing to
+    /// observe: no state, or, for a write's observation, one recorded at or past this board. A
+    /// state recorded past the board, or before observations were sequenced, reads the board again.
+    fn stored_state(
+        &self,
+        handle: &str,
+        callback: &Callback,
+        board: &mut super::Board,
+        sequence: &mut u64,
+        visit: &Visit<'_>,
+    ) -> Result<Option<(State, f64, Vec<Queued>)>, Error> {
+        let Stored {
+            state,
+            checked_pull,
+            queued,
+        } =
+            self.retrying(|| self.read(both(sql::STORED, pg::stored()), json!({"handle":handle})))?;
+        let Some(mut state) = state else {
+            return Ok(None);
+        };
+        state.restore_unknown();
+        let unsequenced = state.seen.is_some() && state.snapshot_sequence == 0;
+        // An observation recorded at a marker at or past this board's read a board holding this
+        // write's commit (each write a board read sees moves the marker, and this board was read
+        // after it), so what the write caused was heard there: a write's observation leaves that
+        // recipient. Reading the board again instead would cost each of many writers at once the
+        // whole board for each recipient another had observed meanwhile.
+        let count_changed = callback.session.kind == "orchestrator"
+            && visit.holdings.is_some_and(|holdings| {
+                state.heard().and_then(|before| before.open_slots())
+                    != Some(holdings.get(handle).map_or(0, BTreeSet::len))
+            });
+        if visit.pass == Pass::Observe
+            && !unsequenced
+            && state.snapshot_sequence >= *sequence
+            && !count_changed
         {
-            attach::diff_on(self, board, before, &seen, handle, &mut |line| {
+            return Ok(None);
+        }
+        // Planning can meet an observation newer than its shared snapshot. Recheck the marker
+        // before diffing it, including unsequenced legacy observations. A lease also rechecks the
+        // marker above, so a delayed plan cannot publish a transient from an older board.
+        if state.snapshot_sequence > *sequence || unsequenced {
+            (*board, *sequence) = self.callback_board()?;
+        }
+        Ok(Some((state, checked_pull, queued)))
+    }
+
+    /// The lines `handle` hears of what changed since it was last told, as `look` reads it: none
+    /// before its first look, nor for an observer upgraded from a legacy one, which is baselined.
+    fn changed_lines(
+        &self,
+        handle: &str,
+        board: &super::Board,
+        look: &Look,
+    ) -> Result<Vec<String>, Error> {
+        let mut lines = Vec::new();
+        if let Some(before) = &look.before
+            && !look.legacy_upgrade
+            && before != &look.heard
+        {
+            attach::diff_on(self, board, before, &look.seen, handle, &mut |line| {
                 lines.push(event_line(line))
             })?;
         }
-        // The recorded entries are the whole digest's, as older dispatchers record them; what
-        // the recipient was told of them is in the PULLs it acknowledged ([`Account`]).
-        let pulled = match due {
-            true => Some(self.plan_pull(handle, board, visit, &mut state, &queued, &agents)?),
-            false => None,
-        };
-        let account = pulled.as_ref().map(|pulled| &pulled.account);
-        let pull_said = pulled.as_ref().map(|pulled| &pulled.said);
-        let pull_text = pulled.as_ref().map_or("", |pulled| pulled.text.as_str());
-        let no_entries = BTreeSet::new();
-        let pull_current = pulled
-            .as_ref()
-            .map_or(&no_entries, |pulled| &pulled.entries);
-        let plan = account.map(|account| &account.plan);
-        let pull_kept = match plan {
-            Some(PullPlan::Kept(key)) => Some(key),
-            _ => None,
-        };
-        let pull_replaced = matches!(plan, Some(PullPlan::Dropped | PullPlan::Queued));
-        let revision = lease.unwrap_or(state.revision);
-        let mut events: Vec<Event> = lines
-            .into_iter()
-            .enumerate()
-            .map(|(i, text)| {
-                let key = format!("event-{revision}-{i}");
-                Event::line(key, handle, text, session_task(board, handle), None)
-            })
-            .collect();
-        if let Some(Account {
-            plan: PullPlan::Queued,
-            awaiting: Some(awaiting),
-            ..
-        }) = account
-        {
-            let (key, slug) = (format!("pull-{revision}"), session_task(board, handle));
-            events.push(Event {
-                pull_entries: Some(awaiting.entries.clone()),
-                pull_withheld: Some(awaiting.withheld.clone()),
-                pull_said: pull_said.cloned(),
-                ..Event::line(key, handle, pull_text.to_string(), slug, None)
-            });
-        }
-        let legacy = compact(&legacy);
-        let narrowing = attach::Narrowing::between(&legacy, &compact(&seen));
-        let unchanged =
-            state.seen.as_ref() == Some(&legacy) && state.narrowing.as_ref() == Some(&narrowing);
-        // Message, role and task-tree writes append a board message. Once the inbox is durably
-        // copied, an unchanged observation needs only outbox retries, not another history scan.
-        // A plan that would read it goes on to the lease below whatever it finds (the cursor or the
-        // observation has moved), and the leased pass reads it again: the plan leaves it to that one.
-        let inbox = (lease.is_some()
-            && !(state.inbox_cursor == Some(board.latest_message) && unchanged))
-            .then_some(Inbox {
-                floor: message_floor,
-                first: first_observation,
-            });
-        events.extend(self.message_events(handle, callback, board, inbox)?);
-        let (stored_seen, unknown_children) = stored_seen(&legacy, |handle| {
+        Ok(lines)
+    }
+
+    /// `legacy`, the whole board's look, as it is stored for older dispatchers, each child's health
+    /// as the board says it, with the children whose liveness is unknown ([`stored_seen`]).
+    fn stored_look(
+        &self,
+        board: &super::Board,
+        legacy: &attach::Seen,
+    ) -> (attach::Seen, BTreeSet<String>) {
+        stored_seen(legacy, |handle| {
             let Some(child) = board.sessions.iter().find(|s| s.row.handle == handle) else {
                 return crate::Health::Left;
             };
@@ -1256,96 +1501,7 @@ impl Store {
                 })
             });
             crate::health::health(&child.row, self.now(), &self.host, &*self.pid_alive, held)
-        });
-        let settled = events.is_empty()
-            && !initializing
-            && state.registration_revision == state.observed_registration
-            && state.statuses == statuses
-            && state.unknown_children == unknown_children
-            && account.is_none_or(|a| a.changes_nothing(&state, &queued, pull_text, pull_said))
-            && rescoped.is_empty();
-        let current = unchanged && state.inbox_cursor == Some(board.latest_message);
-        // A write's observation leaves a recipient whose look moved by the newest message alone, and
-        // whose inbox no message since could reach (the pass's pool says so, with no read of its
-        // own), to the delivering pass: the write gave it nothing to hear. Its recorded look and
-        // cursors stay where they were, as when another dispatcher held its lease, and the delivering
-        // pass moves them. Taking every recipient's lease to read an empty inbox and move its cursor
-        // was most of what one write cost.
-        let unreached = !current
-            && settled
-            && visit.pass == Pass::Observe
-            && lease.is_none()
-            && state.narrowing.as_ref() == Some(&narrowing)
-            && state.seen.as_ref().is_some_and(|recorded| {
-                let mut recorded = recorded.clone();
-                recorded.latest_message = legacy.latest_message;
-                recorded == legacy
-            })
-            && !self.could_hear(handle, message_floor, board.latest_message)?;
-        if settled && (current || unreached) {
-            if due {
-                // Fresh command Stores share this deadline even when the digest has no new
-                // entry. Its scheduling checkpoint belongs to the small lease, not Seen.
-                let revision = lease.expect("a timed checkpoint holds a lease");
-                self.retrying(|| {
-                    self.transact::<Value>(
-                        both(sql::PULL_CHECKED, pg::pull_checked()),
-                        json!({"handle":handle, "revision":revision, "now":self.now()}),
-                    )
-                })?;
-            }
-            if visit.pass == Pass::Observe || !self.callback_pending(handle, callback.chat)? {
-                return Ok((true, pull_at));
-            }
-            if let Some(revision) = lease {
-                return self
-                    .deliver_pending(handle, callback, revision, &|text| {
-                        visit.send(callback, text)
-                    })
-                    .map(|held| (held, pull_at));
-            }
-        }
-        if lease.is_none() {
-            return self.leased(handle, callback, board, sequence, visit, pull_at);
-        }
-        // An inbox acknowledgement takes no lease: one of a PULL read as waiting may have come in
-        // since, and what the recipient was told with it. A PULL still waits only while its event
-        // is there undelivered: a presence sweep, which takes no lease either, prunes delivered
-        // ones, and no key is used twice. Otherwise nothing is written, and the dispatch reads and
-        // decides again. Nor is anything written once the lease lapsed and another dispatcher took
-        // it (its revision moved) while this one built: the recipient is that one's.
-        let waiting: Vec<&str> = (queued.iter().filter(|line| line.is_pull()))
-            .map(|line| line.key.as_str())
-            .collect();
-        let accounted = self.retrying(|| self.transact::<Accounted>(
-            both(sql::account(), pg::account()),
-            json!({"handle":handle, "waiting":waiting, "events":events, "seen":stored_seen, "narrowing":narrowing, "unknown_children":unknown_children, "snapshot_sequence":sequence, "statuses":statuses, "revision":revision,
-                "pull":if due {self.now()} else {state.pull}, "legacy_upgrade":legacy_upgrade,
-                "pull_queued":account.map_or(&state.pull_queued, |a| &a.queued),
-                "pull_awaiting":account.and_then(|a| a.awaiting.as_ref()),
-                "pull_account":account.map(|a| json!({"recorded":a.recorded, "unheard":a.unheard, "untold":a.untold, "withheld":a.withheld})),
-                "message_cursor":board.latest_message, "inbox_cursor":board.latest_message,
-                "computed":due, "pull_current":pull_current, "rescoped":rescoped,
-                "pull_kept":pull_kept, "pull_text":pull_text, "pull_said":pull_said, "replace_pull":pull_replaced}),
-        ))?;
-        if *sequence == accounted.marker.before {
-            *sequence = accounted.marker.after;
-        }
-        self.adopt(&accounted.marker);
-        if !accounted.held {
-            return Ok((false, pull_at));
-        }
-        if !accounted.current {
-            return self.dispatch_one(handle, callback, board, sequence, visit, lease);
-        }
-        if delivering {
-            let revision = lease.expect("writes hold a lease");
-            let held = self.deliver_pending(handle, callback, revision, &|text| {
-                visit.send(callback, text)
-            })?;
-            return Ok((held, pull_at));
-        }
-        Ok((true, pull_at))
+        })
     }
 
     /// What `handle` was sent, as events: each message of its inbox after where `inbox` says it is
@@ -1489,7 +1645,7 @@ impl Store {
     ) -> Result<(bool, f64), Error> {
         let collect = visit.pass == Pass::Collect;
         self.with_callback_lease(handle, collect, |revision| {
-            (self.dispatch_one(handle, callback, board, sequence, visit, Some(revision)))
+            (self.dispatch_leased(handle, callback, board, sequence, visit, revision))
                 .map(|(handled, _)| handled)
         })
         .map(|handled| (handled, pull_at))
@@ -1688,6 +1844,22 @@ fn holdings<'v>(visit: &Visit<'v>) -> Result<&'v pull::Holdings, Error> {
 /// recorded a look for and no newer one has written for since, which it baselines once.
 fn upgrades_legacy(state: &State) -> bool {
     state.delivery_version.is_none() && state.seen.is_some()
+}
+
+/// The events of `lines`, what `handle` hears changed, keyed by the lease `revision` they are
+/// queued under.
+fn line_events(
+    handle: &str,
+    board: &super::Board,
+    lines: Vec<String>,
+    revision: u64,
+) -> Vec<Event> {
+    (lines.into_iter().enumerate())
+        .map(|(i, text)| {
+            let key = format!("event-{revision}-{i}");
+            Event::line(key, handle, text, session_task(board, handle), None)
+        })
+        .collect()
 }
 
 fn event_line(text: &str) -> String {
