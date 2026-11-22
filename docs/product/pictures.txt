@@ -8,7 +8,9 @@
 
 home both /
 frame-activity wide / --click #bell --wait-for #activity-panel>ul>li
-frame-sheet both /docs/design/LOOK.md --click #quick-open --wait-for #quick-sheet:not([hidden])>[data-orientation]
+# The chat's sheet focuses its Message as it opens, whose caret blinks: it is drawn clear, so the
+# picture is the same at either phase.
+frame-sheet both /docs/design/LOOK.md --click #quick-open --wait-for #quick-sheet:not([hidden])>[data-orientation] --eval document.documentElement.style.caretColor="transparent"
 agents both /agents
 agents-connection wide /agents --hover #agent-pale-robin --click #agent-pale-robin>.agent>.agent-connection>summary
 agents-lost wide /agents --click .task-page>details:not(.machine-work)>summary --wait-for #agent-dusky-swift
