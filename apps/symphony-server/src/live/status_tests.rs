@@ -125,12 +125,12 @@ impl Worker {
                 .map_err(|_| "the test gives no more connections".to_string())?
         };
         // A private hub leaves the chat journal to the shared server.
-        let drain_chat = false;
+        let one_server = false;
         let hub = Hub::start_watching::<notify::NullWatcher>(
             &root,
             &root.join("build/client"),
             false,
-            drain_chat,
+            one_server,
             crate::backstop::PERIOD,
             connect,
         )

@@ -7,6 +7,7 @@
 //! waits for (the server's stop, a starter's hand-off request, the hub's drain), each by a message
 //! through a [`Waker`]. Nothing else ends its wait but the period.
 
+use crate::lock::Held as _;
 use notify::RecursiveMode;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -77,27 +78,18 @@ pub(crate) struct Wakers(Mutex<Vec<Waker>>);
 
 impl Wakers {
     pub(crate) fn add(&self, waker: Waker) {
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(waker);
+        self.0.lock().held().push(waker);
     }
 
     /// Wake every loop waiting on these.
     pub(crate) fn wake(&self) {
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .retain(Waker::wake);
+        self.0.lock().held().retain(Waker::wake);
     }
 
     /// How many loops these would wake.
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .len()
+        self.0.lock().held().len()
     }
 }
 

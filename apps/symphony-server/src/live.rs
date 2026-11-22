@@ -2,6 +2,7 @@
 //! board GET and its following feed subscribe cannot lose an edit between them. Slow clients heal
 //! through a new snapshot instead of silently dropping events.
 
+use crate::lock::Held as _;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
@@ -473,17 +474,13 @@ impl Hub {
     /// The cards waiting on the owner as the main checkout's page last read them; none before its
     /// first read.
     pub(crate) fn pending(&self) -> Pending {
-        self.pages
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .get("")
-            .map_or_else(
-                || Pending {
-                    items: Vec::new(),
-                    docs: Vec::new(),
-                },
-                |page| page.pending.clone(),
-            )
+        self.pages.read().held().get("").map_or_else(
+            || Pending {
+                items: Vec::new(),
+                docs: Vec::new(),
+            },
+            |page| page.pending.clone(),
+        )
     }
 
     /// Queue one watcher notification, retaining a watched input's change until its tree is refreshed.
@@ -506,20 +503,11 @@ impl Hub {
         if paths.is_empty() {
             return false;
         }
-        self.dirty
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .extend(paths.iter().cloned());
+        self.dirty.lock().held().extend(paths.iter().cloned());
         let roots: Vec<PathBuf> = std::iter::once(self.root.clone())
-            .chain(
-                self.trees
-                    .read()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .values()
-                    .cloned(),
-            )
+            .chain(self.trees.read().held().values().cloned())
             .collect();
-        let mut dirty = self.watch_changes.lock().unwrap_or_else(|e| e.into_inner());
+        let mut dirty = self.watch_changes.lock().held();
         for path in paths {
             if let Some(root) = watched_root(&roots, &path) {
                 dirty.insert(root.to_path_buf());
@@ -527,13 +515,7 @@ impl Hub {
         }
         if failed {
             dirty.insert(self.root.clone());
-            dirty.extend(
-                self.trees
-                    .read()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .values()
-                    .cloned(),
-            );
+            dirty.extend(self.trees.read().held().values().cloned());
         }
         true
     }
@@ -547,10 +529,7 @@ impl Hub {
     /// It never waits on a board read under way (the hub's `listing`).
     pub(crate) fn tasks_read(&self) -> Result<Arc<Tasks>, String> {
         // A panic under this lock leaves at worst the read before, a whole value.
-        self.listing
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
+        self.listing.read().held().clone()
     }
 
     /// The board's last read, or why there is none, set as [`Hub::tasks_read`] answers it: called
@@ -563,7 +542,7 @@ impl Hub {
                 .err()
                 .is_some_and(|why| symphony_board::board_health::absent(why))
         };
-        let mut listing = self.listing.write().unwrap_or_else(|e| e.into_inner());
+        let mut listing = self.listing.write().held();
         let moved = absent(&listing) != absent(&read);
         *listing = read;
         drop(listing);
@@ -611,7 +590,7 @@ impl Hub {
     /// waits on none of it.
     #[cfg(test)]
     pub(crate) fn hold_board_read(&self) -> impl Sized + '_ {
-        self.tasks.lock().unwrap_or_else(|e| e.into_inner())
+        self.tasks.lock().held()
     }
 
     /// The store the page reads of the board share, opened by the first and kept, so the reads of a
@@ -621,7 +600,7 @@ impl Hub {
     /// keeps its error until its retry deadline ([`retry`]); requests never reset that deadline. One
     /// refused while the board is held is tried again by the first request after its release.
     pub(crate) fn reader(&self) -> Result<Arc<symphony_board::Store>, String> {
-        let mut kept = self.reader.lock().unwrap_or_else(|e| e.into_inner());
+        let mut kept = self.reader.lock().held();
         if let Some(store) = &kept.store {
             return Ok(Arc::clone(store));
         }
@@ -650,7 +629,7 @@ impl Hub {
     /// Forget `store` after the board failed a read on it, unless it is already forgotten: the next
     /// read opens the board anew, where its server is then.
     pub(crate) fn reader_failed(&self, store: &Arc<symphony_board::Store>) {
-        let mut kept = self.reader.lock().unwrap_or_else(|e| e.into_inner());
+        let mut kept = self.reader.lock().held();
         if kept
             .store
             .as_ref()
@@ -696,7 +675,7 @@ impl Hub {
             let marks = self
                 .marks
                 .read()
-                .unwrap_or_else(|e| e.into_inner())
+                .held()
                 .get(&page)
                 .cloned()
                 .unwrap_or_default();
@@ -725,7 +704,7 @@ impl Hub {
     fn one_cards(&self, page: &str) -> Vec<symphony::Decision> {
         self.one_cards
             .read()
-            .unwrap_or_else(|e| e.into_inner())
+            .held()
             .get(page)
             .cloned()
             .unwrap_or_default()
@@ -735,11 +714,11 @@ impl Hub {
     /// asks the loop to scan the branches again, since no file moves when a task is done.
     fn note_finished(&self, board: &symphony_board::Board) {
         let finished = branches::finished(board);
-        let mut held = self.finished.lock().unwrap_or_else(|e| e.into_inner());
+        let mut held = self.finished.lock().held();
         if *held == finished {
             return;
         }
-        let trees = self.trees.read().unwrap_or_else(|e| e.into_inner());
+        let trees = self.trees.read().held();
         let touched = held
             .symmetric_difference(&finished)
             .any(|branch| trees.contains_key(&branch.replace('/', "~")));
@@ -753,11 +732,7 @@ impl Hub {
     /// Whether a picture a held card waits on is on disk now: its card is posted at the next scan.
     /// No watcher follows those files, so each of the board's ticks looks ([`ticks`]).
     fn pictures_arrived(&self) -> bool {
-        self.awaited
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .iter()
-            .any(|file| file.exists())
+        self.awaited.lock().held().iter().any(|file| file.exists())
     }
 
     /// The checkout the worktree `scope` names: the project's own for none, a linked worktree's by
@@ -771,20 +746,11 @@ impl Hub {
     }
 
     pub fn tree(&self, id: &str) -> Option<PathBuf> {
-        self.trees
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(id)
-            .cloned()
+        self.trees.read().held().get(id).cloned()
     }
 
     pub fn ensure_page(&self, scope: &str) -> Result<(), String> {
-        if self
-            .pages
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .contains_key(scope)
-        {
+        if self.pages.read().held().contains_key(scope) {
             return Ok(());
         }
         let root = self.tree(scope).ok_or_else(|| {
@@ -796,26 +762,19 @@ impl Hub {
             .into_iter()
             .map(|(below, mode)| (root.clone(), below, mode))
             .collect();
-        self.swept
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .adopt(&roots);
+        self.swept.lock().held().adopt(&roots);
         self.refresh_page(scope, &root)
     }
 
     /// The feed's cursor of the checkout `scope` names: the version of the last event published
     /// for its pages; none for a checkout with no page.
     pub fn cursor(&self, scope: &str) -> Option<u64> {
-        let pages = self.pages.read().unwrap_or_else(|e| e.into_inner());
+        let pages = self.pages.read().held();
         pages.get(scope).map(|page| page.board.version)
     }
 
     pub fn problem(&self, scope: &str) -> Option<String> {
-        self.invalid
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(scope)
-            .cloned()
+        self.invalid.read().held().get(scope).cloned()
     }
 
     pub fn document(&self, scope: &str, rel: &str) -> Result<symphony_api::Document, String> {
@@ -854,14 +813,14 @@ impl Hub {
             page.copied.get(rel).copied()
         };
         let made = |page: &Page, read: u64| -> Option<Option<String>> {
-            let outlines = page.outlines.lock().unwrap_or_else(|e| e.into_inner());
+            let outlines = page.outlines.lock().held();
             outlines
                 .get(rel)
                 .filter(|(of, _)| *of == read)
                 .map(|(_, tag)| tag.clone())
         };
         let (read, document) = {
-            let pages = self.pages.read().unwrap_or_else(|e| e.into_inner());
+            let pages = self.pages.read().held();
             let page = pages.get(scope)?;
             let read = held(page)?;
             if let Some(tag) = made(page, read) {
@@ -873,7 +832,7 @@ impl Hub {
         let project = symphony::project::Project::of(&root);
         let tag = (!symphony::docview::names_files_outside(&document, &project, scope))
             .then(|| tag_of(document));
-        let pages = self.pages.read().unwrap_or_else(|e| e.into_inner());
+        let pages = self.pages.read().held();
         let page = pages.get(scope)?;
         // A copy placed meanwhile is another document: its own check makes its tag.
         if held(page) != Some(read) {
@@ -881,7 +840,7 @@ impl Hub {
         }
         page.outlines
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .held()
             .insert(rel.into(), (read, tag.clone()));
         tag.map(|tag| (tag, page.board.version))
     }
@@ -903,12 +862,7 @@ impl Hub {
     ) -> Result<symphony_api::Document, String> {
         let root = self.checkout(scope).ok_or("this worktree was removed")?;
         let removed = || "this worktree was removed".to_string();
-        if !self
-            .pages
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .contains_key(scope)
-        {
+        if !self.pages.read().held().contains_key(scope) {
             return Err(removed());
         }
         let mut read_again = true;
@@ -916,11 +870,11 @@ impl Hub {
             let read = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let mut doc = self.render_document(&root, rel, scope)?;
             if !follow {
-                let pages = self.pages.read().unwrap_or_else(|e| e.into_inner());
+                let pages = self.pages.read().held();
                 doc.version = pages.get(scope).ok_or_else(removed)?.board.version;
                 return Ok(doc);
             }
-            let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
+            let mut pages = self.pages.write().held();
             let page = pages.get_mut(scope).ok_or_else(removed)?;
             // A refresh that renders anew, or a board read whose tasks moved, begun since this read
             // did, which listed the documents to render without this one, as none followed it:
@@ -963,7 +917,7 @@ impl Hub {
             scope,
             board.as_ref().map_or(&[], |board| &board.tasks),
         )?;
-        let pages = self.pages.read().unwrap_or_else(|e| e.into_inner());
+        let pages = self.pages.read().held();
         if let Some(main) = pages.get("") {
             symphony::docview::count_waiting(&mut folder, &main.queue.waiting);
         }
@@ -979,7 +933,7 @@ impl Hub {
         keys: &[String],
     ) -> Result<symphony_api::DocumentSections, String> {
         {
-            let pages = self.pages.read().unwrap_or_else(|e| e.into_inner());
+            let pages = self.pages.read().held();
             if let Some(page) = pages.get(scope)
                 && let Some(document) = page.documents.get(rel)
             {
@@ -1010,16 +964,9 @@ impl Hub {
         for tree in &listing {
             trees.insert(tree.id(), tree.path.clone());
         }
-        let previous = std::mem::replace(
-            &mut *self.trees.write().unwrap_or_else(|e| e.into_inner()),
-            trees,
-        );
+        let previous = std::mem::replace(&mut *self.trees.write().held(), trees);
         let read_at = symphony::owner_asks::now();
-        let finished = self
-            .finished
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
+        let finished = self.finished.lock().held().clone();
         let scan = measured("branch cards", || {
             branches::scan_listed(&self.root, listing, &finished)
         });
@@ -1030,16 +977,15 @@ impl Hub {
                 failed.join(", ")
             );
         }
-        *self.branches.lock().unwrap_or_else(|e| e.into_inner()) =
-            (Arc::new(scan.cards), read_at, Arc::new(scan.failed));
-        *self.awaited.lock().unwrap_or_else(|e| e.into_inner()) = scan.awaited;
-        *self.marks.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(scan.pages);
-        let shown_before = Arc::clone(&self.one_cards.read().unwrap_or_else(|e| e.into_inner()));
+        *self.branches.lock().held() = (Arc::new(scan.cards), read_at, Arc::new(scan.failed));
+        *self.awaited.lock().held() = scan.awaited;
+        *self.marks.write().held() = Arc::new(scan.pages);
+        let shown_before = Arc::clone(&self.one_cards.read().held());
         // Main's documents are read from main's own files: a ref, a worktree's record or a branch's
         // edit changes none of them. A lost event names main's root.
         let main_files_changed = dirty.is_none_or(|paths| {
             let inputs = tree_inputs(&self.root);
-            let trees = self.trees.read().unwrap_or_else(|e| e.into_inner());
+            let trees = self.trees.read().held();
             paths.iter().any(|path| {
                 *path == self.root
                     || (inputs
@@ -1050,11 +996,11 @@ impl Hub {
         });
         // Main also displays branch-only cards; branch document edits can change that queue.
         let main = self.refresh_page_read("", &self.root, main_files_changed);
-        let shown_after = Arc::clone(&self.one_cards.read().unwrap_or_else(|e| e.into_inner()));
+        let shown_after = Arc::clone(&self.one_cards.read().held());
         let scopes = self
             .pages
             .read()
-            .unwrap_or_else(|e| e.into_inner())
+            .held()
             .keys()
             .filter(|s| !s.is_empty())
             .cloned()
@@ -1117,10 +1063,7 @@ impl Hub {
                     eprintln!("· Symphony data for {scope}: {e}");
                 }
             } else {
-                self.pages
-                    .write()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .remove(&scope);
+                self.pages.write().held().remove(&scope);
                 self.changed.send_modify(|version| *version += 1);
             }
         }
@@ -1128,7 +1071,7 @@ impl Hub {
         let moved = moved_branches(self.common.as_deref(), dirty);
         if !moved.is_empty() {
             let change = region_event("branches", json!(moved));
-            let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
+            let mut pages = self.pages.write().held();
             for page in pages.values_mut() {
                 self.publish(page, vec![change.clone()]);
             }
@@ -1138,14 +1081,8 @@ impl Hub {
 
     /// Drop what the plugins' watches keep for `root`, so its next read builds it afresh.
     fn forget_watched(&self, root: &Path) {
-        self.warmed_watches
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(root);
-        self.watch_changes
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(root);
+        self.warmed_watches.lock().held().remove(root);
+        self.watch_changes.lock().held().remove(root);
         for watch in symphony::plugins::Plugins::of(root).watches() {
             watch.forget(root);
         }
@@ -1154,7 +1091,7 @@ impl Hub {
     pub fn queue_order(&self) -> Result<Arc<symphony::postpone::View>, String> {
         self.pages
             .read()
-            .unwrap_or_else(|e| e.into_inner())
+            .held()
             .get("")
             .map(|page| page.order.clone())
             .ok_or_else(|| "main's Symphony data is not ready".into())
@@ -1164,7 +1101,7 @@ impl Hub {
         if !scope.is_empty() && self.tree(scope).is_none() {
             return Err("no such worktree".into());
         }
-        let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
+        let mut pages = self.pages.write().held();
         let waiting = pages
             .get("")
             .ok_or("main's Symphony data is not ready")?
@@ -1208,15 +1145,8 @@ impl Hub {
         root: &Path,
         documents_changed: bool,
     ) -> Result<(), String> {
-        let watched_changed = self
-            .watch_changes
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(root);
-        let mut warmed = self
-            .warmed_watches
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let watched_changed = self.watch_changes.lock().held().remove(root);
+        let mut warmed = self.warmed_watches.lock().held();
         let inputs: Vec<_> = watched(root)
             .into_iter()
             .map(|below| (root.to_path_buf(), below, RecursiveMode::Recursive))
@@ -1249,7 +1179,7 @@ impl Hub {
         let mut unscanned = Arc::default();
         let snapshot = measured("dashboard", || {
             if scope.is_empty() {
-                let cards = self.branches.lock().unwrap_or_else(|e| e.into_inner());
+                let cards = self.branches.lock().held();
                 read_at = read_at.min(cards.1);
                 unscanned = Arc::clone(&cards.2);
                 dashboard::snapshot(
@@ -1258,7 +1188,7 @@ impl Hub {
                     &crate::client::build(&self.ui_dist, self.embedded_ui),
                 )
             } else {
-                let pages = self.pages.read().unwrap_or_else(|e| e.into_inner());
+                let pages = self.pages.read().held();
                 let main = pages.get("").ok_or_else(|| {
                     symphony::ReviewError("main's Symphony data is not ready".into())
                 })?;
@@ -1268,7 +1198,7 @@ impl Hub {
                     pending: main.pending.clone(),
                     activity: main.activity.items.clone(),
                     order: main.order.clone(),
-                    pages: Arc::clone(&self.one_cards.read().unwrap_or_else(|e| e.into_inner())),
+                    pages: Arc::clone(&self.one_cards.read().held()),
                     held: Arc::clone(&main.held),
                     said: Arc::clone(&main.said),
                 })
@@ -1278,14 +1208,11 @@ impl Hub {
         let mut cards_before = None;
         let mut snapshot = match snapshot {
             Ok(snapshot) => {
-                self.invalid
-                    .write()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .remove(scope);
+                self.invalid.write().held().remove(scope);
                 if scope.is_empty() {
                     // Read by the documents rendered below, and by every page's after them.
                     cards_before = Some(std::mem::replace(
-                        &mut *self.one_cards.write().unwrap_or_else(|e| e.into_inner()),
+                        &mut *self.one_cards.write().held(),
                         Arc::clone(&snapshot.pages),
                     ));
                 }
@@ -1295,7 +1222,7 @@ impl Hub {
                 let error = e.to_string();
                 self.invalid
                     .write()
-                    .unwrap_or_else(|e| e.into_inner())
+                    .held()
                     .insert(scope.into(), error.clone());
                 self.changed.send_modify(|version| *version += 1);
                 return Err(error);
@@ -1316,7 +1243,7 @@ impl Hub {
         let listed: Vec<(String, bool, Vec<symphony_api::DocumentTask>)> = self
             .pages
             .write()
-            .unwrap_or_else(|e| e.into_inner())
+            .held()
             .get_mut(scope)
             .map(|page| {
                 // A board read's listing, which the ticks make beside this refresh, may have
@@ -1356,7 +1283,7 @@ impl Hub {
             .map(|(rel, _, _)| rel)
             .collect();
         let rendered = self.render_again(root, scope, followed);
-        let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
+        let mut pages = self.pages.write().held();
         // Preferences can change while a watched source snapshot is being prepared.
         if scope.is_empty() {
             if let Ok(waiting) = snapshot.order.waiting(
@@ -1389,7 +1316,7 @@ impl Hub {
             items: snapshot.activity,
         };
         // Each card waiting on an agent says the ask the board last gave for it.
-        let asks = Arc::clone(&self.queue_asks.lock().unwrap_or_else(|e| e.into_inner()));
+        let asks = Arc::clone(&self.queue_asks.lock().held());
         symphony::owner_asks::note(&mut snapshot.queue.agent, &asks, &snapshot.held);
         if let Some(page) = pages.get_mut(scope) {
             // Keep board activity until the next board read combines it with document activity.
@@ -1507,7 +1434,7 @@ impl Hub {
         let listed: Vec<(String, Followed)> = self
             .pages
             .write()
-            .unwrap_or_else(|e| e.into_inner())
+            .held()
             .iter_mut()
             .map(|(scope, page)| {
                 // A refresh beside the ticks may have marked a later read: it only moves forward.
@@ -1561,7 +1488,7 @@ impl Hub {
     /// The active custom workflow's activation generation as the hub last read its board: none
     /// before its first read and on a board with none.
     pub(crate) fn workflow_generation(&self) -> Option<u64> {
-        let held = (self.workflow_generation.lock()).unwrap_or_else(|e| e.into_inner());
+        let held = (self.workflow_generation.lock()).held();
         held.flatten()
     }
 
@@ -1569,7 +1496,7 @@ impl Hub {
     /// never activated one); once it changes after the first read, the change every page hears,
     /// so a page that draws by the definition reads it again.
     fn workflow_read(&self, generation: Option<u64>) -> Option<Value> {
-        let mut held = (self.workflow_generation.lock()).unwrap_or_else(|e| e.into_inner());
+        let mut held = (self.workflow_generation.lock()).held();
         if *held == Some(generation) {
             return None;
         }
@@ -1593,7 +1520,7 @@ impl Hub {
             .collect();
         busy.sort_unstable();
         let unchanged = {
-            let state = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+            let state = self.tasks.lock().held();
             (state.raw.as_ref() == Some(&snapshot) && state.busy == busy)
                 .then(|| state.last.clone())
                 .flatten()
@@ -1603,7 +1530,7 @@ impl Hub {
             None => {
                 // Only a board that changed can finish a task.
                 self.note_finished(&snapshot);
-                let mut waiting = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
+                let mut waiting = self.waiting.lock().held();
                 // A beat moves the board, not a task's status: this reads no thread then.
                 measured("task stages", || waiting.stood.read(store, &snapshot))
                     .map_err(|e| e.to_string())?;
@@ -1618,13 +1545,9 @@ impl Hub {
                 (Arc::new(next), latest)
             }
         };
-        let message_changed = *self
-            .latest_message
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            != Some(latest);
+        let message_changed = *self.latest_message.lock().held() != Some(latest);
         let activity = {
-            let mut cached = self.task_activity.lock().unwrap_or_else(|e| e.into_inner());
+            let mut cached = self.task_activity.lock().held();
             if cached.as_ref().is_none_or(|(cursor, _)| *cursor != latest) {
                 let activity = measured("task activity", || taskview::activity(store))
                     .map_err(|e| e.to_string())?;
@@ -1634,19 +1557,11 @@ impl Hub {
         };
         // Read before anything moves, so a failed read leaves the cursor where it was.
         let asks = measured("task asks", || self.read_asks(store, latest, &next.tasks))?;
-        let mut held = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        let mut held = self.tasks.lock().held();
         let mut changed = Vec::new();
-        let pending = self
-            .pages
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .get("")
-            .map(|p| p.pending.clone());
+        let pending = self.pages.read().held().get("").map(|p| p.pending.clone());
         if let Some(pending) = pending {
-            let mut previous = self
-                .signoff_pending
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let mut previous = self.signoff_pending.lock().held();
             // Counted before the read, so an answer that comes back during it reads it again.
             let answered = self.gates.answered();
             if message_changed
@@ -1662,7 +1577,7 @@ impl Hub {
                     taskview::signoff(store, &next.tasks, &pending, &self.root, &self.gates)
                 })?;
                 let signoff: Vec<String> = lane.iter().map(|(slug, _)| slug.clone()).collect();
-                let mut old = self.task_signoff.lock().unwrap_or_else(|e| e.into_inner());
+                let mut old = self.task_signoff.lock().held();
                 if *old != signoff {
                     changed.push(region_event("task-signoff", json!(signoff)));
                     *old = signoff;
@@ -1676,7 +1591,7 @@ impl Hub {
                     }
                     mapped
                 };
-                let mut waiting = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
+                let mut waiting = self.waiting.lock().held();
                 if waiting.lane != lane {
                     waiting.lane = lane;
                     let (again, _) = measured("board snapshot", || {
@@ -1693,10 +1608,7 @@ impl Hub {
                 *previous = Some((pending, answered));
             }
         }
-        let mut cursor = self
-            .latest_message
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut cursor = self.latest_message.lock().held();
         let mut lines = Vec::new();
         if let Some(since) = *cursor
             && since < latest
@@ -1802,7 +1714,7 @@ impl Hub {
         held.error = None;
         self.publish_listing(Ok(Arc::clone(&next)));
         drop(held);
-        let mut old_agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
+        let mut old_agents = self.agents.lock().held();
         if let Some(old) = &*old_agents {
             // No page shows when an agent last called a tool: a tool call alone sends nothing.
             diff_shown(
@@ -1827,7 +1739,7 @@ impl Hub {
         } else {
             BTreeMap::new()
         };
-        let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
+        let mut pages = self.pages.write().held();
         for (scope, page) in pages.iter_mut() {
             let mut changes = changed.clone();
             if let Some(rendered) = rendered.remove(scope) {
@@ -1865,13 +1777,7 @@ impl Hub {
     /// What the watcher follows: main's inputs, every tree's documents, models and concepts, and
     /// the refs and worktree records in the common folder.
     fn watch_paths(&self) -> Vec<(PathBuf, RecursiveMode)> {
-        let trees: Vec<_> = self
-            .trees
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .values()
-            .cloned()
-            .collect();
+        let trees: Vec<_> = self.trees.read().held().values().cloned().collect();
         self.inputs(&trees)
             .into_iter()
             .map(|(base, below, mode)| (crate::backstop::joined(&base, &below), mode))
@@ -1884,7 +1790,7 @@ impl Hub {
         let served: Vec<_> = self
             .pages
             .read()
-            .unwrap_or_else(|e| e.into_inner())
+            .held()
             .keys()
             .filter(|scope| !scope.is_empty())
             .filter_map(|scope| self.tree(scope))
@@ -1896,11 +1802,7 @@ impl Hub {
     /// lost event would have. True when one of them is a review input, so a refresh is due.
     fn sweep(&self) -> bool {
         let roots = self.swept_paths();
-        let missed = self
-            .swept
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .next(&roots);
+        let missed = self.swept.lock().held().next(&roots);
         if missed.is_empty() {
             return false;
         }
@@ -2226,7 +2128,7 @@ fn run(
     {
         let Some(hub) = weak.upgrade() else { return };
         let _ = hub.documents_waker.set(backstop.waker());
-        let mut held = hub.ticks.lock().unwrap_or_else(|e| e.into_inner());
+        let mut held = hub.ticks.lock().held();
         // A stop sets `draining` before it takes what this holds, so one already past its take is
         // seen here, and neither loop starts.
         if *hub.draining.borrow() {
@@ -2324,11 +2226,8 @@ fn documents(
             || (wake == Wake::Period && measured("document sweep", || hub.sweep()))
             || rescan;
         if refresh {
-            let dirty = std::mem::take(&mut *hub.dirty.lock().unwrap_or_else(|e| e.into_inner()));
-            hub.swept
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .restamp(&dirty);
+            let dirty = std::mem::take(&mut *hub.dirty.lock().held());
+            hub.swept.lock().held().restamp(&dirty);
             if let Err(e) = measured("document event", || hub.refresh_docs(Some(&dirty))) {
                 eprintln!("· Symphony data refresh failed: {e}");
             }

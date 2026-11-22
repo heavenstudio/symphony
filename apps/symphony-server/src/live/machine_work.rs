@@ -319,18 +319,10 @@ impl Hub {
     pub(crate) fn board_read(&self, store: &symphony_board::Store) -> Result<(), String> {
         let ahead = self.read_only_ahead(store).is_some();
         if !ahead
-            && let Some(callbacks) = self
-                .callbacks
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .as_mut()
-            && let Some(Err(error)) = self
-                .chat_retry
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .run(&self.retry_clock, || {
-                    measured("chat journal", || callbacks.flush(&self.root))
-                })
+            && let Some(callbacks) = self.callbacks.lock().held().as_mut()
+            && let Some(Err(error)) = self.chat_retry.lock().held().run(&self.retry_clock, || {
+                measured("chat journal", || callbacks.flush(&self.root))
+            })
         {
             eprintln!("CHAT deferred: {error}");
         }
@@ -349,7 +341,7 @@ impl Hub {
             match self
                 .dispatch_retry
                 .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .held()
                 .run(&self.retry_clock, || {
                     measured("callbacks", || store.dispatch_callbacks_snapshot())
                 }) {
@@ -389,11 +381,11 @@ impl Hub {
         // The one server's agents' day files, from this snapshot: no board read or write of its own.
         self.record_agents(&snapshot);
         let records = store.all_task_sessions().unwrap_or_default();
-        let evidence = self
-            .machine_work
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .scan(&self.root, self.common.as_deref(), &records);
+        let evidence =
+            self.machine_work
+                .lock()
+                .held()
+                .scan(&self.root, self.common.as_deref(), &records);
         let mut agents = measured("agents", || {
             taskview::agents_in_observed(
                 store,
@@ -423,25 +415,19 @@ impl Hub {
     /// A round of the idle sweep began, on the hub's clocks ([`super::presence`]).
     pub(crate) fn sweep_began(&self) {
         let (wall, mono) = ((self.clock)(), (self.retry_clock)());
-        (self.presence.lock())
-            .unwrap_or_else(|e| e.into_inner())
-            .began(wall, mono);
+        (self.presence.lock()).held().began(wall, mono);
     }
 
     /// The round of the idle sweep under way ended, answered or failed.
     pub(crate) fn sweep_ended(&self) {
-        (self.presence.lock())
-            .unwrap_or_else(|e| e.into_inner())
-            .ended();
+        (self.presence.lock()).held().ended();
     }
 
     /// Whether this tick judges the sessions ([`super::presence::Presence::judges`]); the log says
     /// when a wait for the sweep begins, and when one ends with no round.
     pub(crate) fn judges(&self) -> bool {
         let (wall, mono) = ((self.clock)(), (self.retry_clock)());
-        let judging = (self.presence.lock())
-            .unwrap_or_else(|e| e.into_inner())
-            .judges(wall, mono);
+        let judging = (self.presence.lock()).held().judges(wall, mono);
         match judging {
             super::presence::Judging::Now => true,
             super::presence::Judging::Waits { began } => {
@@ -484,12 +470,7 @@ impl Hub {
             };
             Ok::<bool, symphony_board::Error>(given || settled)
         };
-        match self
-            .give_retry
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .run(&self.retry_clock, pass)
-        {
+        match self.give_retry.lock().held().run(&self.retry_clock, pass) {
             Some(Ok(given)) => given,
             Some(Err(error)) => {
                 eprintln!(
@@ -505,7 +486,7 @@ impl Hub {
     pub(crate) fn agent_snapshot(&self) -> Result<symphony_api::Agents, String> {
         self.agents
             .lock()
-            .unwrap_or_else(|error| error.into_inner())
+            .held()
             .clone()
             .ok_or_else(|| "the agents observation is starting".into())
     }
@@ -513,7 +494,7 @@ impl Hub {
     pub(crate) fn machine_snapshot(&self) -> symphony_api::MachineWork {
         self.agents
             .lock()
-            .unwrap_or_else(|error| error.into_inner())
+            .held()
             .as_ref()
             .map(|agents| agents.machine_work.clone())
             .unwrap_or_default()
@@ -531,10 +512,7 @@ impl Hub {
         &self,
         handles: impl IntoIterator<Item = &'a str>,
     ) -> std::collections::BTreeMap<String, symphony_api::SessionGo> {
-        let agents = self
-            .agents
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
+        let agents = self.agents.lock().held();
         let Some(agents) = agents.as_ref() else {
             return std::collections::BTreeMap::new();
         };
@@ -551,10 +529,7 @@ impl Hub {
     /// Where `handle`'s Go to session control goes now, or why there is nowhere: the agents
     /// observation is starting, it lists no such agent, or nothing is known of its session.
     pub(crate) fn session_of(&self, handle: &str) -> Result<symphony_api::SessionGo, String> {
-        let agents = self
-            .agents
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
+        let agents = self.agents.lock().held();
         let agents = agents
             .as_ref()
             .ok_or_else(|| "the agents observation is starting".to_string())?;
