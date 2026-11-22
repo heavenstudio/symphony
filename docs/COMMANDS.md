@@ -100,7 +100,7 @@ every command.
 | read your messages | `inbox`, `pull` (an orchestrator's digest), `asks` (what you wait on an agent for) |
 | run agents in terminals | `launch SLUG`, `restore SLUG`, `close`, `cleanup`, `finish SLUG` (these need Herdr) |
 | tidy up | `sweep` removes the worktrees of landed branches |
-| look after the board | `migrate`, `snapshot`, `export`, `database`, `recovery`, `schema` ([where it lives](TASKS.md#where-it-lives)) |
+| look after the board | `migrate`, `snapshot`, `export`, `database`, `recovery`, `schema` ([operating the board](BOARD_OPERATIONS.md)) |
 
 [TASKS](TASKS.md) explains each: [tasks and roles](TASKS.md#tasks-and-roles),
 [what a task waits on](TASKS.md#what-a-task-waits-on), [the default landing](TASKS.md#the-default-landing),

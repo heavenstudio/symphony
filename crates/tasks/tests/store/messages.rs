@@ -5,31 +5,13 @@ mod inbox;
 mod last_words;
 mod questions;
 
-use crate::common::{Backend, Fixture, HOST, NOW, Seed, refused};
+use crate::common::{Backend, Fixture, HOST, NOW, Seed, chain, in_review, refused, under};
 use std::collections::BTreeSet;
 use symphony_board::health::LIVE_SECONDS;
 use symphony_board::{Health, LANDS_FROM, Message, NewLaunch, NewTask, Store};
 
 fn texts(messages: Vec<Message>) -> Vec<String> {
     messages.into_iter().map(|m| m.text).collect()
-}
-
-fn under(slug: &str, parent: &str) -> NewTask {
-    NewTask {
-        parent: Some(parent.into()),
-        ..NewTask::new(slug, "Jump departure", "owner")
-    }
-}
-
-/// An orchestrator on `a`; `a/b` under it, `a/b/c` under that.
-fn chain(backend: Backend) -> (Fixture, String) {
-    let f = Fixture::on(backend, Seed::default());
-    let orch = f.session("orchestrator");
-    f.task("a");
-    f.store.take_role("a", &orch, "orchestrator").unwrap();
-    f.task_with(under("a/b", "a"));
-    f.task_with(under("a/b/c", "a/b"));
-    (f, orch)
 }
 
 /// `slug` in review, its executor and reviewer each joined, and a landing posted on its thread.
@@ -668,22 +650,6 @@ fn a_remark_after_the_landing_does_not_void_it(backend: Backend) {
 }
 
 // -- a post its executor cannot read ------------------------------------------------------
-
-/// `sim/jump` in review, everyone seen at `NOW`: `ochre-owl` orchestrates, `amber-heron` executed
-/// it, `brisk-finch` reviews it.
-fn in_review(backend: Backend) -> Fixture {
-    Fixture::on(
-        backend,
-        Seed::default()
-            .session("ochre-owl")
-            .session("amber-heron")
-            .session("brisk-finch")
-            .task("sim/jump", "review")
-            .role("sim/jump", "ochre-owl", "orchestrator")
-            .role("sim/jump", "amber-heron", "executor")
-            .role("sim/jump", "brisk-finch", "reviewer"),
-    )
-}
 
 /// What the board told `sim/jump`'s orchestrator.
 fn told(f: &Fixture) -> Vec<String> {

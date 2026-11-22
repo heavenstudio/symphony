@@ -117,7 +117,7 @@ exec "$SYMPHONY_REAL_SQLITE" "$@" <<< "$script"
         1,
         &root,
         Some(&home),
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+        crate::testing::open_gate(),
     );
     let (first, second) = tokio::join!(crate::api::warm(&shared), crate::api::warm(&shared));
     let hub = first.unwrap();
@@ -223,13 +223,7 @@ exec "$SYMPHONY_REAL_SQLITE" "$@" <<< "$script"
 #[tokio::test]
 async fn stopping_a_cold_server_prevents_its_first_hub_start() {
     let tree = Tree::new();
-    let shared = Shared::new(
-        1,
-        1,
-        &tree.root,
-        None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
+    let shared = Shared::new(1, 1, &tree.root, None, crate::testing::open_gate());
     shared.stop();
     assert_eq!(
         crate::api::warm(&shared).await.err().as_deref(),
@@ -240,13 +234,7 @@ async fn stopping_a_cold_server_prevents_its_first_hub_start() {
 
 /// A server whose stop the test calls itself.
 fn idle_shared(tree: &Tree) -> Arc<Shared> {
-    Shared::new(
-        1,
-        1,
-        &tree.root,
-        None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    )
+    Shared::new(1, 1, &tree.root, None, crate::testing::open_gate())
 }
 
 /// The stop wakes a loop that gave its waker before it, by message alone (the wait has no length),
@@ -398,13 +386,7 @@ fn a_server_ends_with_the_process_it_follows_and_its_own_stop_ends_the_follow() 
 #[test]
 fn a_signalled_stop_leaves_the_runtime_worker_free_while_it_waits() {
     let tree = Tree::new();
-    let shared = Shared::new(
-        1,
-        1,
-        &tree.root,
-        None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
+    let shared = Shared::new(1, 1, &tree.root, None, crate::testing::open_gate());
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
@@ -636,7 +618,7 @@ async fn a_replaced_generation_ends_once_a_request_that_never_finishes_outlasts_
         1,
         Path::new("/replaced-drain-fixture"),
         None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+        crate::testing::open_gate(),
     );
     shared.replaced.store(true, Ordering::SeqCst);
     let (stages, said) = told();
@@ -699,7 +681,7 @@ async fn overlapping_drains_each_name_their_own_generation_in_the_shared_log() {
         1,
         Path::new("/overlapping-drain-fixture-101"),
         None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+        crate::testing::open_gate(),
     );
     // Generation 101 was replaced, and drains a request that ends when the test releases it.
     held.replaced.store(true, Ordering::SeqCst);
@@ -719,7 +701,7 @@ async fn overlapping_drains_each_name_their_own_generation_in_the_shared_log() {
         1,
         Path::new("/overlapping-drain-fixture-202"),
         None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+        crate::testing::open_gate(),
     );
     let status = generation(&next, stages_of(202, into_log(send)))
         .serve_until_stopped(std::future::ready(()))

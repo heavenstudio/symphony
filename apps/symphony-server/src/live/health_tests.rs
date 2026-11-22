@@ -8,7 +8,6 @@
 
 use super::Hub;
 use crate::front::Shared;
-use crate::gate::Gate;
 use crate::testing::{
     Tree,
     board::{Fixture, HOST, NOW, Seed},
@@ -1132,7 +1131,7 @@ fn a_board_that_went_back_is_said_unwell_with_its_line_on_every_page_until_a_sto
     .refusal();
     let went_back = "The task board is unwell: it went back from schema 16 to 13, so what was \
                      written since is lost: nothing was written; do not run `just tasks migrate`; \
-                     the Symphony's docs/TASKS.md#a-board-that-went-back says how to recover it.";
+                     the Symphony's docs/BOARD_OPERATIONS.md#a-board-that-went-back says how to recover it.";
 
     assert!(
         hub.reconnect(&mut |_: &Path| Err(refusal.clone()))
@@ -1336,13 +1335,7 @@ fn a_board_whose_store_cannot_be_served_is_a_failed_pass_and_unwell_not_boardles
 async fn the_health_route_answers_from_the_hubs_memory() {
     let tree = Tree::new();
     let root = repository(&tree);
-    let shared = Shared::new(
-        1,
-        1234,
-        &root,
-        None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
+    let shared = Shared::new(1, 1234, &root, None, crate::testing::open_gate());
     let ask = |shared: Arc<Shared>| async move {
         let request = Request::builder()
             .uri("/api/health")
@@ -1542,4 +1535,16 @@ fn low_disk_environment_map_keeps_filter_empty_and_last_duplicate_values() {
             symphony_board::board_health::disk::threshold(&expected)
         );
     }
+}
+
+#[test]
+fn a_held_clock_is_a_finite_number_of_seconds_and_nothing_else() {
+    use super::health::held;
+    assert_eq!(held(Some("1772443800")), Some(1_772_443_800.0));
+    assert_eq!(held(Some("1772443800.5")), Some(1_772_443_800.5));
+    assert_eq!(held(None), None);
+    assert_eq!(held(Some("")), None);
+    assert_eq!(held(Some("soon")), None);
+    assert_eq!(held(Some("inf")), None);
+    assert_eq!(held(Some("NaN")), None);
 }

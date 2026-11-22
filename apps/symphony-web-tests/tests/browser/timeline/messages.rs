@@ -36,7 +36,7 @@ fn a_failed_newest_message_attempt_waits_for_explicit_retry_without_a_request_lo
         &format!("window.selectionReads >= 3 || ({retry}) && window.selectionReads === 2"),
         SHOWN
     ));
-    frames(&mut page);
+    page.frames();
     assert_eq!(page.eval("window.selectionReads"), json!(2));
     assert_eq!(page.eval(retry), json!(true));
     // A recovered server answers the next explicit retry through the same thread store.
@@ -141,7 +141,7 @@ fn message_site(t: &Value) -> Site {
 fn pick(chrome: &mut crate::chrome::Chrome, id: i64) {
     chrome.eval(&format!("(() => {{ const choice = document.getElementById('tl-message-choice'); choice.value='{id}'; choice.dispatchEvent(new Event('change',{{bubbles:true}})); }})()"));
     assert!(chrome.wait_for(&format!("document.querySelector('.tl-message-details h3')?.textContent.startsWith('Message #{id} ')"), SHOWN));
-    frames(chrome);
+    chrome.frames();
 }
 
 fn picture(chrome: &mut crate::chrome::Chrome, name: &str) {
@@ -340,10 +340,7 @@ fn timeline_history_pictures_compare_the_committed_client_with_the_new_client() 
     for width in [1280, 390] {
         for scheme in ["light", "dark"] {
             view(&mut page, width, width < 900);
-            page.call(
-                "Emulation.setEmulatedMedia",
-                json!({"features":[{"name":"prefers-color-scheme","value":scheme}]}),
-            );
+            page.scheme(scheme);
             for (version, site) in [("before", &before), ("after", &after)] {
                 page.open(&site.url(TASK));
                 assert!(page.wait_for("document.querySelector('.tl-drawn') !== null", SHOWN));
@@ -483,7 +480,7 @@ fn settled_mark(chrome: &mut crate::chrome::Chrome, id: i64) -> Value {
         &format!("document.querySelector('.tl-message-mark[data-message=\"{id}\"]').getAnimations().length === 0"),
         SHOWN
     ));
-    frames(chrome);
+    chrome.frames();
     mark_geometry(chrome, id)
 }
 
@@ -599,7 +596,7 @@ fn a_held_or_keyed_message_mark_stays_at_its_time_and_the_selected_arrow_meets_i
         )
     };
     page.eval("document.querySelector('.tl-message-row[data-message=\"4\"]').scrollIntoView({block: 'center'})");
-    frames(&mut page);
+    page.frames();
     let rest = page.eval(&row(4));
     page.call(
         "Input.dispatchMouseEvent",

@@ -11,6 +11,7 @@ use symphony_board::cli::Env;
 use symphony_board::cli::agents::{Began, Pane};
 use symphony_board::cli::probes::{branch_of, hc_terminals, landed, machine, slot_runs, split};
 use symphony_board::git::{checkout, linked};
+use symphony_board::sweep::trigger::now as wall_clock;
 use symphony_board::sys::{Command, boot_clock};
 
 mod completeness;
@@ -559,14 +560,6 @@ fn a_folders_checkout_is_its_top_folder_and_branch_read_from_the_git_files() {
     assert_eq!(checkout(&nowhere.join("not-there")), None);
     fs::remove_dir_all(nowhere).unwrap();
     fs::remove_dir_all(tree).unwrap();
-}
-
-/// The time on this machine's clock, which a process's start is read against.
-fn wall_clock() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs_f64()
 }
 
 /// A process start and the readings bounding its spawn, all in the kernel's clock domain.

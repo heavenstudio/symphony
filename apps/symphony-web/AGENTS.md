@@ -493,7 +493,9 @@ the page and the thread are kept on this device (`taskItem`) and drawn at once o
 marked stale, then checked with their copy's tag. The store reads a key once however many
 components name it (an ask while its read is out joins it), tries a failed read again on the
 feed's waits (`tryAgain`) while the other parts draw, and ends a part's reads when the route
-leaves its task (`drop`) or the page goes.
+leaves its task (`drop`) or the page goes. A part whose read failed with nothing drawn looks on
+this device again, so a database that opened after the store's deadline still gives the copy
+when the server does not answer.
 
 Every JSON read's answer names the feed's cursor it was read at (`VERSION_HEADER`, read with
 `request.ts`'s `getAt`): every event at or before it is in the answer. So the reads and the feed
@@ -658,7 +660,10 @@ What holds on every page, and each page's contract where its section above names
   the page cannot read is forgotten (`readKept`). Without IndexedDB, or in the development
   runtime, which has no shell, every read misses and nothing is kept. A database that does not
   open within 500 ms leaves the calls until it opens without the cache; the pages after it,
-  which the shell changes without a reload, use it once it opens. A page that goes away
+  which the shell changes without a reload, use it once it opens, and so does a part whose read
+  failed with nothing drawn (`src/parts.ts`). A page's `symphonyCacheOpenMs` names another
+  wait, for a browser test of a page with its cache, which a loaded machine's slow open would
+  otherwise run without it. A page that goes away
   (`pagehide`, `freeze`) aborts the store's open transactions and starts none until it is back
   (`pageshow`, `resume`), as it closes its feed's stream: a page kept for back and forward runs
   none of its callbacks, so a transaction left between two of them would hold its locks, and

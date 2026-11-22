@@ -104,13 +104,13 @@ fn a_green_release_is_built_once_in_the_runs_checkout_and_installed_on_the_machi
         "app()\n"
     );
     let artifacts = manifest["artifacts"].as_array().unwrap();
-    assert_eq!(artifacts.len(), 5);
+    assert_eq!(artifacts.len(), 6);
     for artifact in artifacts {
         let path = place.join(artifact["path"].as_str().unwrap());
         assert!(path.exists(), "{}", path.display());
         assert!(artifact["size"].as_u64().unwrap() > 0, "{artifact}");
     }
-    assert_eq!(artifacts[4]["files"], 2);
+    assert_eq!(artifacts[5]["files"], 2);
     assert_eq!(
         fs::read_link(machine(&fixture).join("current")).unwrap(),
         PathBuf::from("releases").join(RELEASE)

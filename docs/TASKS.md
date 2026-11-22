@@ -40,383 +40,11 @@ common dir, under the same namespace and database. The Symphony serves each
 registered project's board, and reconnects to one whose server restarted. A
 project's heartbeat keys, sweep state and staffing lock stay in its common dir.
 
-Each build of the board writes one contract, its schema version, which the board records with the
-additive steps on it the board has ([CHECKS](CHECKS.md#the-board-is-a-contract)). The version
-counts breaking steps alone: a step that only adds (a table of its own, an index that is not
-unique, an optional field on a table every build reads and writes past what it does not know)
-leaves it as it is. A build opens a board of its own contract with one read and no write, whatever
-additive steps either has. One with fewer steps than the board reads and writes it, keeping on each
-row the fields it does not know. One with more adds them where it may move the board (below), in
-one transaction, as any move, holding no writer; where it may not, it uses the board as it is: a
-write naming a table of a step the board lacks is refused before anything is written, and the
-board refuses a field or a table it does not define. A whole-board copy, export or move to another
-engine runs only on a board with the build's own steps. A newer contract migrates an older board
-forward once, its steps and the new version in one transaction before any other write. An older
-build is refused
-before it writes, naming the project, the program to rebuild (its file name and
-where it is) and `just symphony`. A Symphony one version
-behind still reads the board, and every write it would send is refused the same
-way. A store opened before a newer build migrated is refused at its next write.
-The Symphony never moves a board forward or makes one, so a branch's command line
-or preview server with a newer schema leaves the live board as it is: a board
-behind its build, or not made yet, it refuses before it reads, naming `just tasks
-migrate` in the project's main checkout. A branch tries a newer schema on a
-scratch board (`TASKS_DATABASE=NAME`), which its own `just tasks --database NAME`
-moves.
-
-A project's live board, the `tasks` database on the server of the data in its
-common dir, however a run reaches it (by an address, it is known by the server
-listening there, from any folder), moves forward only by a build its default
-branch says is its own, by what that branch commits: never what a checkout
-holds, nor the branch the main checkout has out. The default branch is
-`[project] default_branch` in the main checkout's `symphony.toml`, else `main`.
-For a scratch PostgreSQL home's durable engine selection, holds, snapshots and recovery, see
-[PostgreSQL board lifecycle](POSTGRESQL.md). PostgreSQL activation on a live board is not enabled.
-
-Where it commits the board's schema source (`crates/tasks/src/schema.rs`, as this
-repository does), that is any command of a build of that very file, byte for
-byte, wherever it was built: main's build moves the board at its first command
-once a schema lands, and only such a build makes the board when it is not made
-yet. A PostgreSQL board also checks `crates/tasks/src/store/postgres/schema.rs` from the same
-default-branch commit. Where it commits none (a consuming project, which pins a build), it is only
-`just tasks migrate` run in the main checkout, which says whether it made the
-board, moved it from one version to the next, added the additive steps it lacked, or found
-nothing to move; there
-any writer makes a board not made yet. A repository with no main checkout (a
-bare repository's worktrees, a submodule's working tree) moves its board, where
-its default branch commits no source, only by `just tasks migrate`, run in any
-checkout of it. A project whose default branch is not `main` names it in
-`default_branch`; one that does not is judged by `main`, and with no branch of
-that name its board moves only by `just tasks migrate`, as a consuming project's.
-A default branch that cannot be read (one `default_branch` names that does not
-exist, a ref that names no commit) moves the board by no writer, `just tasks
-migrate` included, and the refusal says why.
-Every other writer, a branch's build by its path, through the launcher, its
-`tasks api`, sweep, `agent-send` or `tasks-copy`, is refused before it writes,
-naming `just tasks migrate` in the main checkout and a scratch board as that
-program takes one: `tasks` and `agent-send` by `--database NAME`, and `tasks-copy`
-by `TASKS_DATABASE=NAME` with `--board` or its own `tasks-copy ADDR NAME`, each of
-which its `--help` names. Any
-writer moves a scratch board. A test, an example or `cargo run` (a process Cargo runs),
-is refused the live board of the repository it runs from before anything is read
-or its server started, and so is every process under a test whatever environment
-it was handed, under `cargo test` or `cargo nextest run`. A child of `cargo run` or
-of an example, of a test binary run by its path, or a process that outlived its
-parent, started with a cleared environment, is not: nothing then says Cargo runs
-it. Builds of commits from before this rule move a live
-board as they always did.
-
-A live board's highest schema is also kept outside its database, in `symphony/tasks/schema-seen.log`
-beside its data (`crates/tasks/src/live/seen.rs`), so a store that loses its newest writes cannot
-take the record with it: a line `VERSION SECONDS seen DATE` for each version the board is first
-seen at, and the record is the highest line since the last `accepted` one. A line that does not
-read as one (cut short, edited by hand) is passed over: it neither raises nor lowers the record,
-and the next line is appended after the newline it lacks, never glued onto it. A board that reads
-below the record, or a store that holds no board where one was seen, went back. Every program that
-opens the live board refuses it before it reads or writes, in its words: the board went back from
-schema N to M (or to no board at all), when it was seen at N, that nothing was read or written,
-that `just tasks migrate` must not be run, and where the recovery is described
-([A board that went back](#a-board-that-went-back)). They are:
-
-- every store that opens it as its project's, which reads the record before it decides anything by
-  the board's schema: the `tasks` commands and `tasks api`, `agent-send`, the Symphony's readers,
-  `tasks-copy --board` into the board and `--board --out` out of it, and `tasks-copy ADDR` when
-  the server at ADDR is a project's board server;
-- `tasks migrate`, before it asks where it runs, so a worktree's refusal never sends anyone to
-  migrate in the main checkout;
-- the recorder (`tasks run`) and the detached dispatcher (`tasks dispatch`), which take the
-  board's tables as they are: once there is a record they read the board's schema first, and the
-  recorder then runs its command all the same, asking the board nothing;
-- a consuming project's own code that reaches the board through the library
-  (`symphony_board::cli::board_client`) and opens its store on the client it is handed: once there
-  is a record the board's schema is read first, and no client is handed over for a board below it;
-- the heartbeat (`tasks beat`, the hook's), quietly, since it never refuses a tool call: it binds
-  nothing and writes no key. It reads the board's schema only when the record is above its build's:
-  below that, a board that went back is at another schema than its build's, and the schema guard
-  refuses its one write;
-- `tasks-reclaim`, while the board's server runs, before it stops it, and with none running, on
-  the reclaim's own start on the store.
-
-Nothing else reads the record: `just tasks schema` reports what it says (exit 1 while the board
-went back), `just tasks snapshot` opens no board, nor do `just tasks database`, its hold and its
-release (the hold is step 2 of [the recovery](#a-board-that-went-back), so it stops a board that
-went back as any other). Otherwise the store adds the version it found to the record when it is
-higher, and the one it migrated to. A scratch board keeps no record, nor does a server an address
-names that is no project's board server.
-Builds from before the record neither read nor write it: the protection holds for a project only
-once each of its readers and writers runs a build that carries it, the main checkout's
-`.target/bin/tasks`, the shared Symphony server and a consuming project's host.
-
-### Who writes a board
-
-A board keeps a line for each program that opens it to write (`crates/tasks/src/store/writers.rs`,
-the `writer` table): the program's file name, where it is, its host, the schema it was built at
-and when it was last seen, by the machine's clock, which `TASKS_NOW` does not set. The board's own
-programs (`tasks`, `agent-send`, `tasks-copy`) keep one, and so does a project's own program that
-opens the board to write through the board's crate. The heartbeat and the recorder, which take the
-board's tables as they are, keep none: the `tasks` build they run keeps its line by its other
-commands. The line is read in the opening's one read of the board's schema and written only when
-it is missing, names another schema, or is an hour old, so a board command sends no request for it
-most of the time and "last seen" is good to the hour. A reader keeps none, and the Symphony opens
-its board to read. A writer refused a board behind its build (a project's live board,
-which only `just tasks migrate` moves) still writes its line, so a writer rebuilt for the next
-schema counts as rebuilt once it has run; one refused a board ahead of its build writes nothing,
-refused before any write. The table holds no event, so a line written moves no board marker, and
-builds of any schema write it.
-
-`just tasks migrate` reads the lines before it moves anything. A writer seen in the last week
-that is behind the schema the move would bring the board to, other than the migrate's own build,
-would be refused the board from then on: the migrate names each (its program, schema, path, host
-and when it was last seen), moves nothing, and exits 2. Rebuild each at the new schema and run it
-once, which records it, then migrate again; `just tasks migrate --leave-behind` moves the board
-all the same, and each writer left behind is refused, naming itself as the program to rebuild,
-until it is. A writer not seen for a week is not counted. Only the migrate asks: where a project's
-default branch commits the board's source, as this repository's does, main's build moves the board
-at its first command once a schema lands, and names no writer. A move of additive steps alone, to
-a board of the build's contract, names none either: every build of the contract writes the board
-after it ([CHECKS](CHECKS.md#the-board-is-a-contract)).
-
-The shared server is not counted. The Symphony opens a board to read
-(`crates/symphony/src/taskview/connect.rs`), though it writes through that store (the owner's
-saves and chat, asks, a task's priority, fields and cancels), and only an opening to write keeps a
-line. Counting it would stop every move: the server takes a build of the new schema only by its
-reload after the move ([RELEASES](RELEASES.md#the-refresh)), so its line would always be behind
-when the migrate reads it, and every refresh's migrate would refuse. Meanwhile a server one schema
-behind its board reads on, and every write it sends is refused: the owner's saves and chat, with
-the asks they open, wait in its journal, which it tries again each tick until a server that can
-write hands them over, while its other writes (the owner's message on a task, a priority, a field,
-a cancel, an ask it would close) are refused until it has reloaded. Every page of the project
-says so in the server's notice, and that a verdict or a message saved meanwhile is kept and
-reaches no agent until then. A server two schemas behind
-reads nothing of its board.
-
-The exception is a step declared to keep the Symphony writing
-([CHECKS](CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). Its migration records beside
-the version that the Symphony one schema behind may write the board (`meta:schema`'s
-`writable_from`), and a store the Symphony opened to read then writes the board as at its own
-schema. That covers its tick's chat journal, owner's asks, callbacks and gives, and the owner's
-saves. Its pages say nothing of the schema. The guard reads the record in each write, so a later
-step that is not declared stops those writes at once, even for a store opened before it. That role
-is only the Symphony's reader's, the one `symphony::taskview::connect` opens. Every other program
-is refused a board one schema ahead as before: `tasks`, `agent-send`, `tasks-copy`, a project's
-own program, a copy's staging, a recovery's rebind, and a store opened unchecked. A record that is
-missing, or not an integer, grants nothing, and neither does a board two schemas ahead. The
-record arrives with schema 25. A Symphony older than that does not read it and refuses every write
-one schema ahead.
-
-The record arrives with schema 18, a raise of its own, and a build below it keeps no line, so the
-move to 18 names no one: a board at 17 has no table of writers to read. In this repository main's
-build moves the board at its first board command once the raise lands, as for any schema here,
-with no migrate and no writer check. A consuming project's board below 18 is brought up by its own
-`just tasks migrate` in its main checkout, never by a release's refresh, which finds no record
-there to judge ([RELEASES](RELEASES.md#the-refresh)): that move names no one. From then on every
-program of the project's still built below 18 (a linked `tasks` or `agent-send` not rebuilt, a
-program of its own that opens the board through the board's crate) is refused the board, naming
-itself as the program to rebuild; the project rebuilds each, and each keeps its line once it has
-run. From 18 on, every build that can write a board keeps its line, so each later move names the
-writers it would leave behind.
-
-From 18 on, a release's refresh moves a consuming project's board to the release's schema, by the
-release's own `tasks migrate` run in the project's main checkout, its store snapshotted first:
-where a project's default branch commits no board source, its live board is moved only from its
-main checkout, by whichever build runs there (`crates/tasks/src/live.rs`). The refresh reads the
-lines first and moves the board only when every writer seen there in the last week is a release's
-own (a binary of a release installed in the machine folder, `releases/NAME/bin/`, on this host,
-which the `current` the refresh then points takes on) or was built at the release's schema; when
-the only writers behind are a release's own, its migrate runs with `--leave-behind`, naming them.
-A line on this host whose program is gone from its path, nothing there or a file written since
-the line's last possible write, is not counted, and is left behind the same way
-([a writer gone from its path](RELEASES.md#the-refresh)); so is one whose program is no build the
-project runs now (none its main checkout's `.target/bin` links name) and that has not run for
-longer than the project's `[board] stale_writer_hours`, a day by default.
-Any other writer behind holds that board alone: the refresh names each to rebuild and leaves that
-board where it was, until each is rebuilt and run once and a later refresh, or the machine's
-server's next round, moves it. No board holds another or `current`: each board is snapshotted
-just before its own move, and a migrate that fails is that board's red alone
-([RELEASES](RELEASES.md#the-refresh)). A release that keeps the schema `current` names moves only
-a board left behind it.
-
-The store takes about what it holds. Every server the board starts keeps each
-value beside its key, where compaction drops the versions a rewrite leaves, and
-logs at most 256 MiB of writes before it moves them to an sstable. SurrealKV's
-default had sent every value over 4 KiB to a value log that only grows: 102 GiB
-held a board of 0.5 GiB. The `tasks-reclaim` binary, the owner's to run from the main checkout,
-rebuilds a store that grew that way. It stops the server and keeps the store as a
-[snapshot](#where-it-lives) before any server of its own starts on it: a clone, a plain copy where
-the volume cannot clone, and no reclaim where it can be neither (nothing exported or removed, the
-server started again on the store). On a volume that cannot clone, that copy needs free room equal
-to the whole store, beside what the exports and the new store take: make that room first, as the
-refusal says, with the store's size. It then exports every database, imports them into a new store,
-and checks that store's exports byte for byte against the old ones. Only then does it swap the
-stores and remove the old one, which that snapshot keeps; `tasks-reclaim` says where, and until
-when. It is kept as any snapshot is: until the owner removes it while its write-ahead log holds
-writes (a store no server ran on that ended uncleanly or went back, whose log the reclaim's own
-server would replay and its clean stop remove), else among the newest three whose log is empty;
-the room the old store takes comes back only once it is removed. The exports stay in
-`symphony/tasks/reclaim/exports/`. `--dir FOLDER` rehearses on a copy of `symphony/tasks/` (`cp -c`, a clone).
-
-The `tasks-move` binary, the owner's to run the same way, moves the board's store to the other
-engine (`tasks-move postgresql --as HANDLE`, `tasks-move surrealdb --as HANDLE`) and puts a
-snapshot of a PostgreSQL board back over it (`tasks-move --restore SNAPSHOT --as HANDLE`): held,
-exported, copied, every row compared, then switched under a journal with a commit point. It
-moves the board's own database alone: a scratch board (`--database NAME`) in the same store
-stays in the old store, which is kept whole in `symphony/tasks/moved/`, and the move names each,
-so a scratch board on the new engine starts empty. A failure before the commit point leaves the
-board on the engine it was on, nothing is deleted, and a move cut short is settled by its
-holder's next `tasks-move`
-([one board's move](analysis/board-pg-cutover.md#one-boards-move),
-[POSTGRESQL](POSTGRESQL.md#holds-snapshots-and-recovery)).
-
-**Snapshots.** `just tasks snapshot` clones the board's store, `symphony/tasks/data`, into
-`symphony/tasks/snapshots/YYYY-MM-DDTHH-MM-SSZ` (the time it was taken, in UTC; `.N` after another taken
-in the same second); `--list` names those kept, the newest first
-(`crates/tasks/src/server/snapshot.rs`). It takes the lock every start of the board's server
-takes, so no start begins while it clones, and it holds the store's own lock, `symphony/tasks/data/LOCK`,
-the one SurrealKV holds while a server has the store open, whatever path that server was given (a
-trailing slash, a link, a relative path): it is refused while the recorded server or any other
-process has the store open, and no server opens it while the clone is made. A snapshot is never a
-copy of files a server is writing, so a running board's store is snapshotted only once it is
-stopped (under the hold, below). The clone is copy-on-write, one `clonefile` on macOS and
-`cp -R --reflink=always` on Linux, and a plain copy only before a replay (below) or a reclaim:
-elsewhere a volume that cannot clone takes none. It is made under `snapshots/.taking` and renamed
-once whole, so a snapshot listed is whole; one cut short is removed by the next. The launcher takes
-one before each start of a board's server, under the same lock, once it has found the board not
-held: outside a scratch place before every start (`Home::snapshot_before_start`), and on every board
-before a replay (`Home::keep`). `tasks-reclaim` keeps one of the old store the same way, on every
-board, once it has stopped the board's server and before its own servers start on the store.
-Each is the store as the last server left it, its write-ahead log not yet replayed, which a start
-that loses its log, and a later clean stop on the older state, take with them. A start that finds
-the store as a snapshot already holds it, its log and manifest file for file (an earlier start that
-failed left it so), takes none more. The server's log, `symphony/tasks/server.log`, says the snapshot
-each start took, or why it took none; a snapshot that cannot be taken keeps no start from going on
-but a replay's. A board `TASKS_SERVER` names has no store here to snapshot, and the command opens
-no board.
-
-Which are kept: a server that stops cleanly leaves its store's `wal/` empty, so a snapshot whose
-write-ahead log holds anything was taken after a server ended uncleanly (killed, crashed, cut off),
-before a replay, or of a store that went back, and it may be the only copy of what that log holds.
-Each such snapshot is kept until the owner removes it, and the taking, `--list`, the server's log
-and `just tasks database` say so (`kept until the owner removes it`). Of the others, the newest
-three are kept, and each taking removes the older ones by name. A snapshot shares every block with
-the store when it is taken and keeps the old blocks as the store's server rewrites its tables and
-value log, so each grows towards the size of the whole store as it was then: `df` shows what they
-cost, while `du` counts a clone's shared blocks as its own. A `tasks-reclaim` frees nothing while
-snapshots of the old store are kept: the room comes back once they are removed. The owner removes
-one with `rm -rf symphony/tasks/snapshots/NAME`; nothing runs on a snapshot, so that is safe at any time.
-
-The server is never killed. Whatever stops it asks it once to end and waits
-while it writes what it holds to disk and closes its store. It is never asked
-twice, by any command: SurrealDB takes a second signal for an immediate
-shutdown, before its store is closed, so the board writes each ask down first
-(`symphony/tasks/ending/PID`) and a later command only waits for it. One that has not
-answered yet is still starting, replaying its log, and is never signalled, ended
-or joined by a second: a command that waited a minute for it says so, and the
-next one waits again. A write the board answered for is on disk, and survives a
-kill or a power cut. A start whose log may not fit the board's memory (one a
-server started without the board's settings left) replays it first in a private
-server and stops that one cleanly, so none of it is lost to a later kill.
-
-A replay is the one start that can remove what no server applied. A store that
-went back (a start that replayed its log in pieces and ended before its next
-flush, as an older build's kill of a starting server does, or a crash in a
-private replay of a log over 2 GiB, which its largest memtable splits too) holds a log segment
-its manifest counts as written: every server on it skips that segment, and its
-clean stop removes it. So a replay never runs without a snapshot of the store as
-it is, taken before the private replay's server starts, on every board, scratch
-or not: a clone in `symphony/tasks/snapshots/`; a plain copy, said as one, on a volume
-that cannot clone; neither, and the start is refused and nothing replayed. Its
-write-ahead log holds the log the replay applies, so it is kept until the owner
-removes it once the board reads as it should. The start says where on its stderr
-and in the server's log, and `just tasks database` lists it. In the server's log
-the replay says itself after that snapshot's line: `· a private replay of the
-store's log begins`, then its server's own lines and its clean stop's `Goodbye!`,
-then `· the private replay is through`, then the board's server's lines. A replay
-runs only on a log a server left without its clean close, so they are few. A
-board that reads older than it was after a replay went back: hold it, and
-recover from a clone of that snapshot, never from the snapshot itself nor the
-board's own data ([A board that went back](#a-board-that-went-back)).
-
-A replay's server is never the board's server. The start records the replay in
-`symphony/tasks/replay.json`, with its server's pid and address as soon as it has
-them, until that server has closed the store cleanly. A starter that ends in the
-middle of a replay (a Symphony stopped while its start replays, a command
-killed) leaves the replay's server running, detached, to finish alone under the
-replay's memtable. While the record stands, every server on the data is taken
-for the replay's, whichever pid the record names and whether or not
-`server.json` names it, so none is adopted as the board's and none started
-beside it. Until it answers it is never signalled: a command waits for it as
-for any server still starting, and the Symphony's reads are refused naming the
-replay, so its pages say the board is starting. Once it answers, the next start
-stops it cleanly, which writes what it replayed to the store's tables and
-empties the log, and starts the board's own server under the board's memtable,
-with nothing left to replay. In the server's log `· the private replay's record
-stands, and …` names which server it was (the one the record names, or another
-on the data, and whether `server.json` names it), then come its `Goodbye!` and
-`· the private replay is through`, before the board's server's lines. The hold
-and a reclaim stop it the same way. The record is removed only once nothing it
-may name runs: the pid it names has ended, or it names none, and every listing
-of every process (`ps`) for a second shows no server on the data (`· the private
-replay begun above has no server running and was not said through`); the next
-start then replays what log is left. The record writes down when its server's
-process started, as each ask to end does: a pid that a process started at
-another time has now, after a reboot in the middle of a replay say, is not taken for
-that server, so a record or an ask left behind holds nothing up and needs no
-hand. Where whether its server runs cannot be told for two seconds, a `ps` that
-fails or the named server running off the data, the command is refused saying
-so, nothing is adopted or removed, and the next command asks again; `just tasks
-database` says the same, and what the owner does should it last ([Stuck
-servers](#stuck-servers)). A build from before the record takes such a server
-for the board's.
-
-A command that waits on another's start, stop, hold or snapshot (the starters'
-lock, `symphony/tasks/lock`) says on stderr, after a second and then every 30 s, what
-it waits on: the holder's pid, since when, and what it does, a private replay
-with its log's size among them (`symphony/tasks/lock.json`, while it holds the lock).
-The Symphony's reads wait at most 5 s, then fail naming the same, and wait no
-longer for a server on the data that runs and does not answer (a replay whose
-starter has gone, as a Symphony restarted in the middle of one leaves, which the
-refusal names as that replay). When the
-Symphony is itself the one to start the board, and the start is to replay the
-log, it runs that start on a thread of its own: the read that found it to make
-is refused at once, naming it, as is each read after it until the start is
-through; a start that fails is said to the next read, once, and the read after
-that starts it again. Either way its pages answer 503 while a replay runs, rather
-than waiting minutes, and say the board is starting, with the log's size ([Board
-health](#board-health)).
-
-A server that does not answer is replaying its log or hangs, and the refusal
-says which to look for: how long it has run and on how much CPU, and the size of
-the log. A replay works the CPU all along (a log of gigabytes takes minutes) and
-answers once it is through; a server whose CPU time (`ps -o time= -p PID`) stands
-still across a minute hangs. The board never ends one, as it cannot tell the
-two apart, and a replay cut off can lose what it had not yet written: the owner
-holds the board (below), which leaves that server running, says it, and keeps
-anything from starting another, ends it (`kill PID`), and releases the hold.
-Nobody else signals, starts or restarts the board's server by hand.
-
-Work on the data itself, a snapshot, a replay on a clone or a swap, holds the
-database stopped: `just tasks database hold "WHY" --as HANDLE` stops the server
-cleanly and writes `symphony/tasks/hold`, and until its release every board command
-and the Symphony are refused, naming who holds it, since when and why. Only its
-holder releases it (`just tasks database release --as HANDLE`), or another
-handle naming the holder (`--of HOLDER`), which it says: a release by mistake in
-the middle of a swap is what the hold is there to stop. No role decides it, as
-the board, which holds the roles, is not read while it is held. Each hold and
-release is a line of `symphony/tasks/hold.log`. The hold reads no record of the
-schema the board was seen at, so it stops a board that went back as any other:
-it is step 2 of that recovery. A clean stop removes the log segments the store's
-manifest counts as written, the hold's included: on a store that went back, keep
-the log first (step 1 there), the snapshot taken before the start on the older
-state, else a clone of `data/` (`cp -c -R`) while its server still runs.
-
-Only builds that carry these rules keep them: an older build starts a server
-under a hold, and ends one that has not answered within a minute, in the middle
-of its replay, which is how a store goes back. They hold once each build that
-reaches the board carries them: this repository's main checkout's
-`.target/bin/tasks`, relinked by its next `just tasks` after the landing; the
-shared Symphony server, which reads every project's board, at its restart (the
-owner's word); and each consuming project's host, once its pin moves past the
-landing and the host is rebuilt and restarted.
+How the board is run is a document of its own, [BOARD_OPERATIONS](BOARD_OPERATIONS.md): the
+schema contract between the builds that read and write a board and
+[which build moves a live one](BOARD_OPERATIONS.md#which-build-moves-a-live-board), who writes it, its store,
+server, snapshots and holds, what the command may write, and the recovery of a board that went
+back or was copied. A program reads and writes the board through [its JSON APIs](BOARD_API.md).
 
 The command is the `tasks` binary (`crates/tasks`). In a project `symphony init`
 set up, `just tasks` is the recipe it installs in `symphony.just`: the project's
@@ -432,56 +60,7 @@ whichever worktree it runs; a branch's own build runs only on a scratch board
 (`--database NAME`). The heartbeat hook finds the build as the recipe does, and
 builds nothing. The sweeps work finishing starts, and the Symphony's reap and
 finish, run the main checkout's build found that way, never a linked worktree's.
-There is no Python board adapter.
-`symphony init` allows the recipe unasked, so it refuses the recorder
-([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)) and, like this
-repository's own, marks what it runs (`SYMPHONY_UNASKED`): under the mark
-`just tasks export --out PATH` writes only into the checkout it runs in or, from a
-linked worktree its repository lists, the main checkout's artifacts folder, never
-into a git folder, with the path's links and `..` resolved, and replaces only an
-earlier snapshot; it refuses any other place, or a file of the project's own,
-with one line naming it, writing nothing (`crates/tasks/src/confine.rs`). An
-agent the board starts under the mark stays in the project the same way
-(`crates/tasks/src/launch/bounds.rs`): `launch --worktree DIR`, the worktree a
-launch makes and the one a restore makes again and starts in, an older record's
-too, lead only into those places or under the project's worktree base (`<repo>-wt/`
-beside a main checkout that lists the command's checkout as its own, so a worktree's
-`.git` file rewritten to name another repository has none, or `SYMPHONY_WT_DIR`), never
-into a git folder, or the command refuses with one line naming the folder and starts
-nothing. A submodule, a `--separate-git-dir` checkout or a bare repository's worktree
-has no main checkout (its common dir is no `.git` folder), so under the mark a launch
-there makes its worktree only under `SYMPHONY_WT_DIR`, or takes `--worktree DIR` in the
-checkout. The launcher's git commands run in that checkout itself (`root_of` in
-`crates/tasks/src/launch/mod.rs`; with no mark and no `SYMPHONY_WT_DIR` its worktrees go
-beside it), so what a launch makes there is of its own repository, never of the one
-holding its common dir, a submodule's superproject. A launch under the mark takes no
-`--prompt`: an
-agent's first message reads as its person's own word, so it is `/work SLUG HANDLE`
-alone (a reviewer's `/review-task SLUG HANDLE`, each with `$` for Codex), and the
-rest goes on the task's thread, which the skill reads. A restore
-resumes the conversation its record names. Under the mark `tasks api`'s
-`record_launch` records neither a worktree outside those places nor a conversation
-id; no agent id is bound to a handle (`tasks api`'s `bind_agent` is refused, and
-`just tasks beat` binds nothing: a heartbeat binding is the hook's, which runs
-`tasks beat` itself on the session's own tool calls); and `just tasks callback`
-registers a Codex thread only as the caller's own (`CODEX_THREAD_ID`, which it
-detects with no address), which the board writes into the handle's open Codex
-record. So a record's conversation is one the board's launcher recorded (the id it
-chose at a launch, or one it read from the agent's terminal, the hook's binding or
-a callback) or the Codex thread an agent registered from its own process. Three
-limits stay: `--as` names any handle, so an agent may give another handle its own
-conversation (the hook binds the session to the handle its board command names,
-and a callback registers its thread for it), whose restore then resumes that
-agent's conversation; a record an older build wrote is not told apart; and a
-folder is checked before the agent starts in it, so a folder on its path replaced
-by a link in between still leads out. The
-reply recipes keep their writes to the same places
-(AGENTS.md, "Agent integration"). The binary run by itself, which no rule allows,
-writes and starts agents wherever it is told. The mark is the one command's: no child the board starts keeps it
-(`sys::MARKS`), so the review command, a land's `on_land` and the regenerator write
-where the project says.
-`launch`, `restore`, `cleanup`, `close` and `reap` are its own, hc's terminals and all
-(`crates/tasks/src/launch/`); the board calls no `herdr`. The server is the pinned
+There is no Python board adapter. The server is the pinned
 SurrealDB at `symphony/surreal/VERSION/surreal` in the git common dir, or the binary
 `SYMPHONY_SURREAL` names. In this repository `bash tools/surreal.sh` fetches it there,
 checked against its pinned SHA-256 (the Rust tests fetch it the same way). A
@@ -499,1290 +78,19 @@ refusal's words, in place of the board until a read answers.
 | `just tasks list [--all] [--mine] [--status S]` | the open tasks as a tree; `--all` adds the done and cancelled ones |
 | `just tasks search QUERY [--status S] [--limit N] [--json]` | ranked full-text matches in task titles, briefs, slugs and threads; task rows with matching excerpts (default: 20); query capped at 1024 UTF-8 bytes and 32 terms (word/number runs and punctuation/symbols, after lowercasing) |
 | `just tasks stats [--days N] [--json]` | where the pipeline's time goes: lead time, time in each status, bounces, tasks done per day and what sits longest ([Where the time goes](#where-the-time-goes)) |
-| `just tasks status [--json]` | the board's health over the last hour, as its Symphony server recorded it: failed dispatches and sweeps, the slowest request, write latency ([Board health](#board-health)) |
+| `just tasks status [--json]` | the board's health over the last hour, as its Symphony server recorded it: failed dispatches and sweeps, the slowest request, write latency ([Board health](BOARD_OPERATIONS.md#board-health)) |
 | `just tasks asks [--all] [--json]` | what the owner waits on an agent for: the open asks, oldest first, each with its age and who holds it; `--all` adds those answered in the last day ([Asks](#asks)) |
 | `just tasks asks close ID "WHY" --as HANDLE` | close an ask that needs no answer, saying why |
-| `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout (any checkout of a repository with none), and in a project whose main checkout holds no board source, or that has none, only by it; it moves nothing while a writer seen in the last week is behind the schema it would move to, naming each, unless `--leave-behind` ([Who writes a board](#who-writes-a-board)) |
+| `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout (any checkout of a repository with none), and in a project whose main checkout holds no board source, or that has none, only by it; it moves nothing while a writer seen in the last week is behind the schema it would move to, naming each, unless `--leave-behind` ([Who writes a board](BOARD_OPERATIONS.md#who-writes-a-board)) |
 | `just tasks database [hold WHY \| release [--of HOLDER]] [--as HANDLE]` | the board's database: whether it is held, what runs on its data, what a start or replay under way does, and the snapshots kept until the owner removes them; `hold` stops its server cleanly and keeps every board command and the Symphony from starting it, naming the hold, until `release` by its holder (or by another naming it with `--of`), which starts nothing |
-| `just tasks schema [--accept VERSION]` | the board's schema and the highest its live board was seen at; exit 1, in the rollback's words, while it went back below it; `--accept VERSION` (`none` for a store with no board), the owner's, accepts an older board they meant ([A board that went back](#a-board-that-went-back)) |
-| `just tasks snapshot [--list]` | a copy-on-write clone of the board's store, taken only while no server has it open; one whose write-ahead log holds writes is kept until the owner removes it, and the newest three of the others; `--list` names them ([Snapshots](#where-it-lives)) |
+| `just tasks schema [--accept VERSION]` | the board's schema and the highest its live board was seen at; exit 1, in the rollback's words, while it went back below it; `--accept VERSION` (`none` for a store with no board), the owner's, accepts an older board they meant ([A board that went back](BOARD_OPERATIONS.md#a-board-that-went-back)) |
+| `just tasks snapshot [--list]` | a copy-on-write clone of the board's store, taken only while no server has it open; one whose write-ahead log holds writes is kept until the owner removes it, and the newest three of the others; `--list` names them ([Snapshots](BOARD_OPERATIONS.md#the-store-and-its-server)) |
 | `just tasks callback [ADDRESS] [--chat] [--if-free] [--off] --as HANDLE` | register a native channel; addressed events start a turn directly (`just tasks help callback`) |
 | `just tasks callback --session-url URL --as HANDLE` | give the session the web address its Go to session control links to; empty clears it ([Going to a session](#going-to-a-session)) |
 | `just tasks pull --as HANDLE` | the whole PULL digest as HANDLE hears it now; a callback carries only what changed since the last PULL it received |
 | `just tasks wait --as HANDLE [--timeout S]` | for a session with no channel: exits printing what a callback would have pushed it since its last read, once there is any; run it as a background command and again when it exits |
 | `just agent-send HANDLE "text" [--as SENDER]` | message an agent directly through its registered channel |
 | `just symphony` → **Board**, **Agents** | the board, each task's page and thread, and who is connected |
-
-### Stuck servers
-
-The board asks a server once to end and kills none, so two things can outlast
-its commands, and both are the owner's.
-
-A server still running ten minutes after its one ask (`symphony/tasks/ending/PID`
-names it, with when it was asked and when its process started) is left to
-finish, and the stop says so, naming its pid, that file and its log; every later
-stop only waits on it again. A server writing a large memtable takes minutes. One
-whose CPU time (`ps -o time= -p PID`) stands still across a minute has hung: the
-owner holds the board (`just tasks database hold "WHY" --as HANDLE`, which holds
-from the moment it begins, while its stop still waits on the server, and after
-it says the server still closes, so nothing starts another), ends it by hand
-(`kill -9 PID`: the writes it held are in its log, which the next start replays)
-and releases the hold. The ask is forgotten by the next stop or start once its
-process has ended, or once another process, which started at another time, has
-its pid.
-
-A private replay's record (`symphony/tasks/replay.json`) whose server cannot be told
-to run or not (a `ps` that keeps failing, a kernel that does not say when the
-process with its pid started, or the server it names running while neither it
-nor any other process is a server on the data) refuses every command
-that would start or stop the board's server, and `just tasks database` says why.
-Once `ps` can tell, the next command settles it alone. Should it never, the owner
-removes the record by hand once `ps -ww -axo pid,command` lists no `surreal
-start` on the board's `data`.
-
-### A board that went back
-
-A board refused as one that went back holds an older store than the one it was seen at: what was
-written since is not in it, and may still be in the files the store left. Run nothing that writes,
-`just tasks migrate` above all, which would write on top of the older state. `just tasks schema`
-says what the store holds and what the record says, and exits 1 while the board went back; every
-page of the project says it on the server's notice, the project picker under its name, and
-`just tasks status` first among its warnings ([Board health](#board-health)).
-
-When the older board is meant, a fresh store or a restore the owner chose, the owner accepts it:
-`just tasks schema --accept VERSION`, `none` for a store with no board, is refused unless the
-board holds exactly that version, and adds an `accepted` line to the record, which counts from
-there. The board is then read, and moved forward, as any board behind its build is. A restore
-from a snapshot puts a clone of it in place with the database held (below), `symphony/tasks/data`
-renamed aside first: `cp -c -R symphony/tasks/snapshots/NAME symphony/tasks/data`, never the snapshot itself.
-
-**Recovering what was lost** is the owner's, or done on the owner's word, by hand, in the board's
-folder (`symphony/tasks/` in the git common dir). `CLONE` below is a clone of the copy step 1 keeps, and
-every server started is one of your own, on a clone, on a port of your own.
-
-1. **Keep the log before anything stops the server.** A server on the older state that stops
-   cleanly removes every write-ahead log segment below the manifest's log number as obsolete
-   (`Cleaned up … obsolete WAL files during shutdown`), the unapplied ones among them, and the hold
-   stops it cleanly. The copy to recover from is the oldest snapshot whose write-ahead log holds
-   writes among those taken since the board's server last stopped cleanly: the launcher took it
-   before the first start after the unclean end, with the log the server before it left, not yet
-   replayed. `just tasks snapshot --list` marks those snapshots (`kept until the owner removes
-   it`), and `symphony/tasks/server.log` names the snapshot taken before each start, in order, with a
-   clean stop's `Goodbye!` between two starts. A snapshot taken before a private replay is such a
-   copy, whether the store had gone back before it or the replay itself was cut off: in
-   `server.log` its line is followed by `· a private replay of the store's log begins`, the replay
-   server's own lines and its clean stop's `Goodbye!`, then `· the private replay is through`; a
-   replay whose starter ended before it was through has its end said by the next start instead,
-   `· the private replay's record stands, and …` just before that `Goodbye!`, naming the server it
-   stopped. That `Goodbye!` is the replay's and never counts as the board's server
-   stopping cleanly: it is the stop that removes a segment no server applied, so the snapshot
-   before it holds what the board lost. Nor do a reclaim's: after its keep's line (`· a snapshot
-   of the store before this reclaim`), the `Goodbye!` lines up to the next start's snapshot line
-   are its own servers', on the old store and on the new one. Where a build wrote none of these
-   lines, the times tell. SurrealDB dates each of its lines in UTC but its `Goodbye!`, which
-   follows its stop's last dated line, and each server's first line is its warning that
-   authentication is disabled; a snapshot is named by the UTC second it was taken, just before the
-   start whose lines follow it, and a start by a build that takes snapshots, outside a scratch
-   place, always writes its snapshot line first. A build from before the replay's two lines shows
-   a replay as two servers' lines after one snapshot line, the second server's first line dated
-   within a second of the first's last, with no snapshot line between. A clean stop and then a
-   start by a build that writes no snapshot line show the same lines, the start's first line
-   dated when that start came; one that came within a second of the stop reads as a replay, and
-   `symphony/tasks/hold.log` dates each hold and release, whose stop a start may follow at once. Clone
-   it out of `snapshots/` at once
-   (`cp -c -R symphony/tasks/snapshots/NAME symphony/tasks/data.evidence-DATE`; `cp -R --reflink=always` on
-   Linux, `cp -R -p` where the volume cannot clone, as the board's own plain copy is made). With
-   none (no build that takes snapshots made that start), clone the data folder the same way at
-   once, while the server on the older state still runs: it keeps the segments below
-   its log number until it stops, and no build that reads the record writes to the board meanwhile
-   ([the record](#where-it-lives) says which do). Never start anything on that copy: each step
-   below works on a clone of it (`cp -c -R`), so each try starts again from it.
-2. **Hold the database.** `just tasks database hold "WHY" --as HANDLE` stops the recorded server
-   cleanly and writes `symphony/tasks/hold`, and no start of the database happens until `just tasks
-   database release --as HANDLE`, so no board command starts it on the old path between the
-   swap's two renames (step 8).
-3. **Read the log number.** `CLONE/manifest/00000000000000000000.manifest` records it: the first
-   segment a start replays, every segment below it taken to be in sstables already and skipped.
-   It is the big-endian 8-byte number at bytes 10 to 17 of the file, after its format version (2
-   bytes) and next table id (8): `printf '%d\n' 0x$(xxd -s 10 -l 8 -p
-   CLONE/manifest/00000000000000000000.manifest)`. `ls -l CLONE/wal` lists the segments, each named
-   by its number in 20 digits (`00000000000000000017.wal`). In a store that went back the log
-   number reads N+1 while segment N is still in `wal/`: the engine moved past a segment it never
-   applied. What servers wrote on the older state is in the segments from N+1 up, and may be at
-   the end of segment N as well: the server whose replay split N goes on writing to N, the segment
-   it has open (in one reproduction it appended 923 bytes there and wrote no N+1), while a server
-   started later on the older state writes from a segment of its own. Writes at the end of N are
-   replayed with it in step 5, after the ones the board lost, in the order they were made, and
-   step 4 cannot remove them; step 6's counts show them. To leave them out, recover from a copy
-   taken before that server started, whose segment N ends before them, where there is one (the
-   snapshot a build that takes them took before that start). When
-   several segments lie below the log number, N is the lowest of them; when none does, nothing is
-   skipped, and step 4 has nothing to do: a snapshot taken before a replay of a store that had not
-   gone back reads so, its whole log still to replay, and step 5 replays it all.
-4. **Point the clone at segment N, and remove the segments from N+1 up**, which must not be
-   replayed on top of it: `printf '%016x' N | xxd -r -p | dd
-   of=CLONE/manifest/00000000000000000000.manifest bs=1 seek=10 count=8 conv=notrunc` writes N
-   there, and step 3's read then says N; then `rm -f CLONE/wal/NNNNNNNNNNNNNNNNNNNN.wal` for
-   segment N+1 and each one after it.
-5. **Replay it in a server of your own.** On a port of your own, never the board's, with the
-   value-log threshold the board's own servers use, and a memtable that holds the largest segment,
-   so its replay never splits it (a replay that splits a segment records the next one's number at
-   its first flush, and an end before it flushes the rest loses that rest):
-   `SURREAL_SURREALKV_VLOG_THRESHOLD=67108864 SURREAL_SURREALKV_MAX_MEMTABLE_SIZE=BYTES
-   "$SYMPHONY_SURREAL" start --unauthenticated --log info --bind 127.0.0.1:PORT surrealkv://CLONE`,
-   `BYTES` twice the largest segment's size in `ls -l CLONE/wal`, at most 4294967295 (SurrealKV's
-   largest memtable): a memtable takes more of each write than the log holds of it, which is why
-   the board's own replay takes twice its log, so one just above a segment's size can still split
-   it. Record its pid, and wait until it answers (`curl -s http://127.0.0.1:PORT/health`); never
-   end it while it replays.
-6. **Verify by schema, counts and newest change.** `TASKS_SERVER=127.0.0.1:PORT just tasks
-   schema` reads the clone's schema and writes nothing; the counts and the newest message by
-   `"$SYMPHONY_SURREAL" sql --endpoint http://127.0.0.1:PORT --namespace sf --database tasks` with
-   `RETURN [array::len(SELECT VALUE id FROM task), array::len(SELECT VALUE id FROM message),
-   math::max(SELECT VALUE ts FROM message)];`. The schema is the one the record says, and the
-   counts and the newest message are above what the store that went back holds, read the same way
-   on a clone of it. Nothing else is run against it: a writer at its build's schema would move it.
-7. **Stop it cleanly.** One SIGTERM to the pid you recorded, then wait for the process to end,
-   never a second signal or a kill while it closes its store. At `--log info` it says `All
-   memtables flushed successfully on shutdown` (the warning `No runtime available for closing the
-   store correctly` is printed by every shutdown, clean ones too); its log is then in sstables, and
-   the next start replays nothing.
-8. **Swap, under the hold.** With the database still held, rename `symphony/tasks/data` aside
-   (`data.rolled-back-DATE`) and the recovered clone to `symphony/tasks/data`, then `just tasks
-   database release --as HANDLE`: the next board command starts the database on it.
-   `just tasks schema` then says the board is at the schema it was seen at, and the record needs
-   no acceptance. The copies kept in steps 1 and 8 and the snapshots that hold a log are the
-   owner's to remove once the board is whole again ([Snapshots](#where-it-lives)).
-
-The first recovery done this way, with that day's numbers, is in
-[history](history/board-went-back-2026-11-12.md).
-
-### A board that was copied or restored
-
-A task's number and version name it along one history of the board only. A copy of the whole
-board from an older dump keeps the numbers the dump held, gives the ones made since to other
-tasks, and starts every version again; so does putting a database's files back. What a program
-outside the board keeps of a task to write it again later, a mapping to an issue elsewhere or the
-base of an edit, is therefore bound to the board's **recovery generation**
-(`crates/tasks/src/store/recovery.rs`): a text the database makes, in the record
-`recovery:board`, replaced in the transaction of every copy of the whole board and never by an
-ordinary write, and in no dump.
-
-- **The token.** `Store::bound` reads a task's title and brief with its token, in one statement:
-  `{"compat": 1, "generation": "…", "id": N, "version": N}`, the format's version, the board's
-  generation, and the task's number and version.
-- **The bound write.** `Store::amend_bound` retitles and links a task as `Store::amend` does, but
-  only the task its token names: in the write's own transaction, before anything is written, it
-  is refused unless the board holds the token's generation and the task is the one of that
-  number at that version. A refusal writes nothing, no title, link, line on the thread or act of
-  its session, and is never read again and tried on what the board holds now: the caller reads
-  the task again. The task as the write left it, with its next token, is that transaction's
-  answer. Every other write, `amend` among them, is as it was. `Store::edit_bound` is the same
-  write for an edit that may rewrite the brief as well
-  ([the api's calls](#what-a-program-outside-the-board-keeps)).
-- **A copy.** `tasks-copy` and every `Store::copy` replace the generation in the transaction that
-  replaces the rows, so a token read before a copy is refused after it, and one read before a
-  copy that failed still holds. A build of a schema before 22 copies without replacing it, which
-  is why the generation came with a schema step: such a build is refused the board.
-  A copy that cannot finish leaves the board as it was and says why in one line. On PostgreSQL
-  the copy is one request, which the server itself ends thirty seconds short of the wait of the
-  program that sent it (270 s of the client's 300), saying the rows of each table it had copied
-  and the table it was at: left to run past its caller's wait it would replace the board after
-  the caller was told it failed, which only a copy whose commit and answer take those thirty
-  seconds still can. On SurrealDB the copy stages its rows and swaps them in in one
-  transaction, which must fit the memtable of the server it runs on: one the server does not
-  commit is said with the rows and bytes it staged and the setting
-  (`SURREAL_SURREALKV_MAX_MEMTABLE_SIZE`, 256 MiB on a server the board starts), and what it
-  staged is removed a table at a time, or by the next copy before it stages. So a copy made
-  while another stages takes the other's staging, and the other is refused at its swap, which
-  first counts each staging table against the rows it sent: the later copy is the one kept. How large a board each takes is measured in
-  [the store's baseline](analysis/board-store-baseline.md#a-board-ten-times-the-size-measured-2026-11-18).
-
-The generation is a row of the database, so putting the database's files back puts it back too.
-What tells that apart is the board's **recovery binding**, outside the database's data: the
-generation the board is bound to, in `symphony/tasks/recovery/DATABASE.json` in the git common
-dir, a file for each database of the board's server, published whole and removed to revoke. A
-bound read or write is refused unless the binding names the generation the database holds, so a
-board never bound, one revoked and one whose binding and database disagree all refuse. `just tasks
-recovery` says which it is, `just tasks recovery revoke` binds the board to none, and `just tasks
-recovery rebind` revokes, replaces the generation in one transaction and only then binds the
-board to the new one. A rebind never adopts the generation it found, so one cut short anywhere
-leaves the board refusing, and is run again. `revoke` and `rebind` change the project's own board
-only from its main checkout; a scratch database (`--database NAME`) has a file of its own.
-
-**Putting a database's files back**, from a snapshot or a recovered clone
-([above](#a-board-that-went-back)), is in this order: `just tasks recovery revoke` first, before
-the restored data is in place and served; the swap, under the hold; then, once the board is the
-one to keep, `just tasks recovery rebind`. A copy made by a store that holds no binding (a
-scratch program's, `tasks-copy`) leaves the binding naming the generation before it, which
-refuses until a rebind. A PostgreSQL restore into a new board
-([POSTGRESQL](POSTGRESQL.md#holds-snapshots-and-recovery)) revokes that board's bindings itself
-before its data is in place.
-
-The binding is this machine's file. A store is handed its authority and finds none by itself
-(`Store::recovering`, the `recovery::Authority` trait): a board reached by `TASKS_SERVER` alone
-has no folder here and so none, and a board several machines write needs an authority they all
-read, which its deployer supplies. With none, every bound read and write is refused in words
-that say so.
-
-Two things are not told apart, and nothing here claims to: files put back without the revoke
-where no copy came between, which hold the generation the binding still names; and a database
-and its binding both put back to an older pair that agree.
-
-## Sessions
-
-Every agent that works from the board has a **handle** (`amber-heron`), a
-kind (`orchestrator`, `worker`, `reviewer`) and, for a subagent, a parent. The
-handle is printed by `just tasks register`; later commands take it from
-`--as`, else `TASKS_SESSION`. An agent writes it as `just tasks … --as HANDLE`:
-no allow rule passes a command with an env prefix, so
-`TASKS_SESSION=HANDLE just tasks …` stops at a prompt, while a session launched
-with the variable already set needs neither. Then run `just tasks callback --as HANDLE`: it detects
-the Claude inbox socket or Codex thread. An explicit `uds:/absolute/socket` or
-`codex:THREAD-UUID` works too; through `just tasks` a `codex:` one only as the
-session's own thread ([Where it lives](#where-it-lives)). A session with no channel is listed as such and
-keeps the inbox fallback. hc terminals are for inspection, never delivery.
-
-`just agent-send HANDLE "text"` addresses an agent without a task. The sender
-comes from `TASKS_SESSION` or `--as`; delivery is one plain
-`AGENT from SENDER to HANDLE — text` event line. Reply with
-`just agent-send SENDER "text" --as HANDLE`. Whitespace is flattened as in board callbacks.
-It uses the callback outbox, identity checks, retries and inbox fallback. Output
-distinguishes sent from queued; sent confirms native transport only. An agent
-without a channel is refused with the command to register one and the option
-to send on a task with `just tasks say SLUG TEXT --to HANDLE` for its inbox.
-The Agents page shows each native address and the command to reach it. Scratch
-boards use `just agent-send --database NAME HANDLE "text" --as SENDER`.
-
-`just tasks callback --chat` registers the app's chat recipient. Chat selects
-the explicit seat, then an `--if-free` fallback, then a live orchestrator with
-a native callback, choosing the lexicographically smallest handle among plain
-orchestrators. A normal `just tasks callback --as HANDLE` is enough for that
-last fallback; `--chat --if-free` opts into the higher-priority fallback without
-displacing the seat. Sweep-confirmed native presence counts as live. A recipient
-suspended after delivery failures waits for the sweep to restore it. While no
-channel holds the seat, an orchestrator reading by `just tasks wait` holds it:
-a session is waiting from its first `wait` until it registers a channel (or
-turns one off) or leaves, and of the live waiting orchestrators the smallest
-handle receives chat at its next read; one that stops waiting holds it while it
-stays live, so what the owner says waits for that read. While nobody holds the
-seat, every orchestrator's `just tasks pull` ends with what the owner said that
-nobody received, and its `just tasks inbox` takes it, after which nobody reads
-it again: an owner's word never goes to no one unseen.
-The app names the recipient, and says when nobody receives chat. Saves queue
-asks, follow-ups, card messages, verdict notes and callouts directly; an outbox
-beside the asks preserves them across a board outage. No file watcher discovers
-chat. `--off` or leaving the board unregisters delivery.
-
-Board writes dispatch addressed messages and role/status/new-work changes. A
-command line's write queues what each recipient hears, as the write left the
-board, and answers without delivering it: a detached `tasks dispatch` delivers,
-one a host at a time, which makes one more pass for each write that commits
-while it runs. One that finds another running waits until that pass has ended,
-and takes over if the other's lease lapses first.
-The shared Symphony server schedules PULL digests and STALE/LOST transitions and
-retries failed deliveries. After the machine sleeps, its clock judges no session until a round of
-the idle sweep begun after the wake has ended, answered or failed, or a round's timeout and the
-slack it may start late within (240 + 30 s) of awake time have passed: the sleep's gap is nobody's silence, and the sweep first confirms each listener
-that still answers, so a quiet child whose listener answers is not said lost again at every wake,
-while one the round finds gone is said lost once (`apps/symphony-server/src/live/presence.rs`).
-Per-recipient leases prevent concurrent writers
-from sending the same queued event. A successful native send acknowledges the
-inbox; failure retries three times, is recorded on the task thread, and retains
-the event in the inbox. As with any external queue, a process crash after the
-native send but before acknowledgement can repeat delivery; messages carry
-stable board ids. No normal agent event remains a stream; the browser's live
-feed remains a stream because it updates the owner's page.
-
-### Board health
-
-A board too slow to answer delivers no callback, and says nothing on the board itself, so the
-Symphony server counts what it sees in memory, for each project it serves, over the last hour
-(`crates/tasks/src/board_health.rs`): its clock's callback dispatch passes, ok and failed, with
-the newest failure's error, kept on one line and cut to its first and last characters when it
-is long (a tick that cannot reach the board at all is a failed pass); the idle
-sweeps, the same way; every request any client in the process sent the board, the slowest with
-the line of code that sent it (its tracked caller), the slow ones (a second or more) and the
-unanswered ones; and the p50 and p90 latency of the requests that may write. Counting adds no
-request. `/api/health` (`/<id>/api/health` on the one server) answers it from that memory,
-without a board read. The machine's one server also writes it to `symphony/tasks/health.json` in the
-git common dir (`health.<database>.json` for a scratch database; `TASKS_HEALTH` names another
-file) every ten seconds, and at once when the dispatch or the sweep starts or stops failing; a
-private server keeps it in memory alone. Its clock's thread and its sweep's write it one at a
-time, each from its record to the rename of a file of that write's own, so a reader never meets
-half a record and the last to land holds every pass. `just tasks status` prints that record
-without asking the board, and `--json` prints it as `/api/health` answers it, beside the file
-and the warnings. A warning stands from a failed dispatch pass, or a failed sweep, until its
-passes have been good for a minute, so a board failing every other tick is warned of throughout,
-not on and off; one good pass does not clear it, and the hour still counts the failure. A newest
-pass that failed more than ten minutes ago, with none since, is warned of no more. While one stands,
-every page of the project says so on the server's notice (beside a failed server update, when
-there is one), told when it starts and when it ends, and the project picker says so under the
-project's name; both read the server's memory, not the board (`apps/symphony-server/src/live/health.rs`).
-A project with no board, its server answering that none is made yet or no store (`symphony/tasks/data`)
-and no SurrealDB here to run one on (`symphony_board::board_health::absent`), is not unwell: no
-pass of it is counted, and the picker says plainly that it has no task board. So is a project whose
-folder is gone, or no longer holds the repository its server found there: the server says so once
-in its log, then reads, maintains and records nothing more of it, answers its pages' reads and saves
-with that refusal before any route runs, and never looks for its board in the folders above it,
-another repository's (`Hub::holds_its_project`, `symphony_board::project::at`). Every connect to
-its board the server's own process makes from the folder, through `symphony::taskview` (the hub's
-tick, its refreshes and branch scan, its chat journal's flush, a route's read or save, the report
-of a verdict's trouble and the app's session it names), is held to the repository it found when it
-began to serve the folder (`symphony::taskview::serve`, `symphony_board::project::held`), and
-every journal of the project's chat and asks it finds from the folder (the flush's, the asks read's,
-a question's or a chat save's) is the one it found then (`symphony::asks::default_path`), so a
-`.git` removed after a check leads none of them to another board or another checkout's journal.
-That journal is found once, so a change of `[project] artifacts` while the server runs leaves its
-routes on the old journal until it restarts, while an agent's `symphony reply` writes to the new
-one. Not held, each finding its repository from the folder again, and so the checkout above a
-folder left without its `.git`, starting and acting on that checkout's board:
-
-- The cleanup a cancel starts: `tasks finish`, run in the folder, then the sweep, whose
-  repository the server's own process finds from the folder by git
-  (`symphony_board::sweep::trigger::trigger`), making its folder and log in that repository's
-  common dir and starting the sweep from its main checkout. `tasks finish` starts milliseconds
-  after the cancel's save, which is held; the sweep only once `tasks finish` has returned, so its
-  window is that command's whole run.
-- The idle-session reap, a `tasks reap` run in the folder milliseconds after its round's check
-  that the folder holds its project.
-- A verdict's commit, after its worktree's commit: the record of that commit (`common_dir` by git
-  from the folder, a file written in that repository's record folder) and its `tasks` run in the
-  folder for the app's session (`sessions`, then `register --kind app`), kept a run of the
-  project's own build of `tasks` so that a board one schema ahead of the server still takes the
-  app's registration. The commit's git in the folder walks up before either, so a held store
-  would not hold the flow; once its worktree is made, their window is the gap from the worktree's
-  `rev-parse HEAD`, as the worktree's git fails once the project's `.git`, which holds its git
-  dir, is gone.
-
-Only the machine's shared installation runs the cancel's cleanup and the reap. Each matters only
-for a project the server serves whose folder sits inside another git checkout; one in no checkout
-finds no repository above it, and no board. A board's
-start, stop or hold makes no folder at or above the repository's common dir again; a start whose board folder goes while its server starts (SurrealDB makes every missing
-folder of its store's path) ends that server and records none. A board whose store is there is never no board: when the SurrealDB
-that serves it is missing (a version bump before the new binary is fetched, `SYMPHONY_SURREAL` naming a file that is not there), or its server answers with an
-older schema or not at all, its passes fail and it is unwell and says so.
-`tasks status` also warns when the record is more than a minute old, naming the server's pid and
-whether it still runs: no dispatch pass has been recorded since.
-
-**Open tasks nobody orchestrates.** A task with no orchestrator waits for one under its limit
-that stays ([Tasks and roles](#tasks-and-roles)), a well state and no defect: the record counts the
-unfinished tasks with no holding orchestrator on them or above them in the board the server's clock
-read last (`unowned` in the record, `Recorder::unowned`), and `tasks status` says `open tasks no
-orchestrator holds: N, as of the newest board read`, and warns of none of them. The tick gives what
-it finds first ([Tasks and roles](#tasks-and-roles)), so the count it records is of tasks that wait
-for an orchestrator that stays and holds fewer open tasks than the limit ([The limit on the tasks
-an orchestrator holds](#the-limit-on-the-tasks-an-orchestrator-holds)). Counting reads the board
-the tick already read and adds no request; a
-record written before any board read, or by a build older than the count, has none and says none. The owner's word on each of those tasks reaches
-every orchestrator ([Talking on a task](#talking-on-a-task)) until the board gives it one. The
-server's own notice and the project picker do not warn of it; the picker says only that work
-waiting to start has no live orchestrator (below).
-
-**On the project picker.** The machine's project picker (`/`) draws a dot before each project's
-name, its board's worst signal, and, only while the dot is not green, one line under its counts in
-the dot's colour saying why; `/api/projects` sends that line as the project's `unwell`. One
-function judges both (`Hub::standing`, `apps/symphony-server/src/live/health.rs`), from the
-server's memory alone: drawing it reads no board. Red is every page's notice above, in its words
-and alone: a dispatch or sweep failing, a board that went back, one replaying its log. Amber is a
-board slow over the last hour, its writes at a p90 of a second or more (`SLOW_MS`, the record's
-slow request) or any request unanswered in it, said with the figures that say so, `Board slow
-(writes 3 s, 48 unanswered this hour)`, the p90 to the nearest whole second; or work waiting to
-start (the listing's `unstarted`: ready tasks no executor that is there holds, nothing open before
-them) while no orchestrator of an open task is live, by the board's one rule for a session that is
-there: `orchestrator stale` while one is stale or its presence not yet swept, `no orchestrator`
-when none is. Both are one line, joined by ` · `. Every other board is green, one with no task
-board among them; a project refused, or whose server state is not up yet, has no dot. Its counts
-say what they count: `N decision cards waiting on you`, the owner's cards, then in bold `N blocked,
-M of them waiting on your decision`: the tasks, not their subtasks, blocked on the wire, a block
-that names nothing never among them, and those of them that wait on a decision of the owner's
-([What a task waits on](#what-a-task-waits-on)).
-
-**Its hours.** The machine's one server also appends each hour of it, as the hour ends, as one
-line (a `symphony_api::HealthHour`) to the day file of the hour's UTC day in `symphony/health/` in
-the git common dir (`YYYY-MM-DD.jsonl`; `symphony/health.<database>/` for a scratch database,
-`SYMPHONY_HEALTH` names another folder, and a board `TASKS_SERVER` names keeps none without it;
-`crates/tasks/src/board_health/hours.rs`): the hour's dispatch passes and sweeps, ok and failed;
-its requests, the slow and the unanswered ones, and the slowest with its caller; and its writes
-with their p50 and p90. Its `start` is the hour's first second, as the agents' hour lines'
-([AGENT_ACTIVITY](AGENT_ACTIVITY.md#the-day-files)) and the hourly roll-up's hours are keyed, so
-the three join on it. The line is read from the minutes the server holds, the newest 120 that had a
-pass or a request however long ago, so the append asks the board nothing. A line counts whole
-minutes: a server that starts or stops mid-hour writes the part it recorded, from the first whole
-minute after its start to its stop, marked `partial`; an hour no server ran in has no line, never
-one of zeros, and nor has a project with no board. A machine asleep is told by its wall clock
-running more than a minute ahead of the one that stops while it sleeps, not by how long a tick took
-(a board slow to answer holds one for minutes, each request up to 300 s): its line ends with the
-minute it fell asleep in, written once it wakes however long it slept, and goes on from the minute
-it woke in. A span whose minutes the server let go before writing it (uncalled for two hours of
-requests) has no line rather than one that counts short. Each line names its writer, its `pid` and
-its `generation` (when it began recording), and no two lines of a project count the same minute:
-the server generation's one gate, shared with the agents' recorder
-([AGENT_ACTIVITY](AGENT_ACTIVITY.md#a-reloads-hand-off)), closes just before a reload's hand-off
-commits, so the old generation's lines end where the minute it closed in begins, and the
-replacement's begin at the first whole minute after the commit, its own warm-up counted in none.
-Day files more than 90 days old go, once a day. A private server keeps none.
-
-**A board that went back** below the schema it was seen at ([A board that went
-back](#a-board-that-went-back)) is said in the same places, in its own words and in place of the
-dispatch's. When the server's store for the board is refused as one that went back, every page's
-notice and the picker say the board is unwell: that it went back from schema N to M, so what was
-written since is lost, that nothing was written, not to run `just tasks migrate`, and that that
-section says how to recover it (`crates/tasks/src/live/seen.rs`, `Rollback::line_in`). The record
-holds that line as `rollback`, written at once when it starts and when it ends, and `tasks status`
-warns of it first. The next store that opens the board, accepted or recovered, clears it.
-
-**A board replaying its log** cannot be reached until the start replaying it is through, the
-server's own, run apart from its reads, or another's it waited on ([Where it
-lives](#where-it-lives)). While the server's reach of the board is refused for one, every page's
-notice and the picker say, in place of the dispatch's words, that the board is starting: its
-store's log, of the size the start measured, is replayed in a private server before the board's
-server starts (a log of gigabytes takes minutes), and the board answers once that is through
-(`symphony_board::server::replaying_in`). Each such tick is a failed dispatch pass all the same,
-which `tasks status` says with the refusal; a reach that finds no replay, the board's server up or
-any other refusal, ends it.
-
-**A disk running full** is warned of in the same two places: `tasks status` when the disk holding
-the record has less free than `SYMPHONY_LOW_DISK_GB` gigabytes (20 when unset; `0` turns it off, and a
-value that is no number is said and 20 taken), and every page of a project while the disk
-holding its checkout has, read by the server each time it tells the pages of its health; the page
-says under how many gigabytes, not how many, so it is told when the disk goes low and when it is
-freed, not at every build's write. A full disk fails every build on the machine and can corrupt
-the board's database; the warning names `just tasks sweep`, which
-clears the build output of finished worktrees (below). `--json` adds `disk`: the folder read, its
-free bytes and the threshold (`crates/tasks/src/board_health/disk.rs`).
-
-The Claude wire envelope is newline-delimited
-`{"type":"user","message":{"role":"user","content":"…"}}`, observed in the
-installed Claude Code 2.1.308 socket example. Its body format is undocumented;
-this is the compatibility assumption. On macOS the board sends it without
-authentication and never reads the session's messaging token. Claude's inbound
-controls can hold or refuse it; a successful socket write confirms transport,
-not that Claude accepted the message. No project inbound setting is changed.
-Codex delivery uses the installed `codex queue --thread UUID --message TEXT`.
-For isolated runs use `tasks --database NAME ...` and
-`symphony-server --scratch NAME --port N --root ROOT`; the latter keeps
-its asks in `artifacts/callbacks-NAME/asks.db`.
-
-**Agent sessions behind a task** (`task_sessions`): `just tasks launch SLUG` starts the
-agent the project's `[agents] launch` in its main checkout's `symphony.toml` names (`default`,
-`codex` or `claude`, with its `model` and `effort`), on the model `[agents.models]` names for
-its role (`executor`, or `reviewer` under `--role reviewer`) when there is one
-([Limits and models](#limits-and-models)), else a Codex agent (`--no-daemon`; model
-`gpt-6.1-sol`, effort `xhigh`, workspace-write with network access), in an hc terminal of its
-own, `hc run --bg --no-parent --outlive-parent --keep`: no child of the caller's terminal,
-which the app would show under it rather than in a tab. `--kind` and `--model` win over the
-project's; its models and effort go with its agent, so `--kind` naming the other agent takes the
-board's model for that one (Codex `gpt-6.1-sol` at `xhigh`, Claude `sonnet` at its own effort).
-A table that does not parse, or names another agent, refuses the launch, and so does a machine
-running as many agents as `[limits] machine_agents` allows. The `launched` line
-names the agent, model and effort it started, and `launch --help` ends with what a bare launch
-starts where it runs (`crates/tasks/src/launch/defaults.rs`). The
-terminal shows in its stream tab (`code` for an executor, `review` for a reviewer, or
-`--tab` such as `3d` or `infra`) of the project's space in the Herdr app, found by name and
-made when missing (the labels `herdr.space` and `herdr.tab`); the owner's tabs and other
-projects' terminals are never a destination. Once hc calls the agent ready (`idle` or
-`done`), its first message goes in by `hc send`, never forced, and the launch is confirmed
-only by that send's receipt (`started`): an agent waiting on a person (a folder-trust
-dialog), never ready, or not starting on the message fails the launch naming the terminal,
-which is killed and removed. It writes its handle, role, agent session
-id, worktree, branch, terminal and start time; `just tasks show` lists them under
-`Sessions:`. No terminal the owner may be looking at is closed: one in the tab the Herdr
-app shows, the agent it shows, or held over them (`herdr-app status`, read last, right
-before the kill, after a last `hc get` that must still find it finished, running the program
-cleanup judged: the same pid and foreground); when the window cannot say or the terminal
-works again, it stays and cleanup names why. A shell closes only with the shell itself in
-its foreground: a job it runs in front, or one it became by `exec`, is work. When a terminal is closed (`just
-tasks cleanup`, or the task becoming done or cancelled: `hc kill`, then `hc rm`) the
-record stays and says why and how to bring it back,
-`just tasks restore SLUG [HANDLE]`, which resumes the conversation in the same
-worktree, in a new terminal; through `just tasks`, only a worktree in the project
-([Where it lives](#where-it-lives)). A reviewer launch (`--role reviewer`) goes back to the
-task's recorded reviewer the same way: the newest that never said `just tasks leave` with a
-conversation recorded is resumed in its own worktree, agent and model, told `/review-task SLUG
-HANDLE` (the `resumed` line names it), and the launch is refused while a recorded reviewer still
-runs in a terminal; a new reviewer starts only where none can be resumed (no conversation
-recorded, a Codex thread that never arrived, a reviewer that left), or with `--beside WHY`, which
-resumes none and starts a second reviewer beside the one still there. One quiet since its task went
-back to `in_progress` reads `left` by its health and is resumed all the same. A reviewer launch on
-an instruction subtask is refused, naming the task it judges. A record from before hc names a
-herdr pane (`w1:p…`): that terminal is gone, so cleanup records it closed with its restore line, and restore brings
-the agent back in an hc terminal. `just tasks close SLUG HANDLE` closes one agent's terminal
-whatever role it holds (a reviewer waiting for a new tip), records it the same way once the
-terminal is killed, bound to that terminal, and retires the callback registered from it; it is
-refused for the caller's own session or terminal, one the owner may be looking at, and one whose
-program is not at rest (work under it as the idle sweep reads it, any test run included, or
-another program in its foreground). A close and a restore of one session each hold it while they
-run, so neither starts while the other runs; one whose hold lapsed and was taken over writes
-nothing more, and a restore that lost it kills the terminal it started. A Codex record
-takes the thread its callback registered whichever is written first; one closed with no thread
-says on its thread that restore cannot resume it. See the [tasks skill](../crates/symphony/shipped/skills/tasks/SKILL.md#launch-restore-clean-up-hc).
-
-An initialized JavaScript REPL can retain `kernel.js` and `trusted-worker.js` under the
-ChatGPT app's bundled `node`. Their command lines do not distinguish waiting for a cell
-from executing JavaScript or a browser operation, so an agent's `idle` status alone does
-not make them safe to close. Coordinate recovery with the session's owner: finish or
-cancel its active work, then have that original session call its native
-`node_repl.js_reset` or `cua_repl.js_reset`, for the REPL it used. Reset discards its
-JavaScript bindings. Wait for the reset's result and read its process tree again before
-retrying `just tasks close SLUG HANDLE` and then `just tasks restore SLUG HANDLE` on
-that project's board; the close still checks the foreground, remaining children and
-the owner's window. If the original session cannot execute the reset, coordinate a
-normal exit from that session before retrying. An accepted message queue is no proof
-that a reset ran, and retained kernels are no reason to bypass a close refusal.
-
-A consuming project chooses its agent models (`[agents.models]`), staffing policy and terminal
-lifecycle. The board records those sessions and roles; it imposes no model preference.
-
-**Optional automatic staffing:** `just tasks staff [--dry-run]` makes one pass, highest
-priority first. Enable it in `tools/task_staff.json` in the consuming checkout: `enabled`
-defaults to false, `max_sessions` to 8 and `min_free_memory_gib` to 4. `only` is an
-optional list of task slugs whose subtrees may be staffed; an empty list allows all
-orchestrated work. The config belongs to the checkout running the command (main for
-the Symphony). `reap` runs staffing before its five-minute idle sweep. A shared
-`symphony/tasks/staff.lock` keeps concurrent staffing passes from dispatching twice. A review
-is given on the task itself, never as a subtask: its reviewer takes the reviewer's role there,
-its launch is recorded there, and the pass's line on the thread names the tip. A review whose
-task has a recorded reviewer to resume goes to it, by the launch's resume (`would resume HANDLE`
-in a dry run), never to another idle reviewer, and fails as that launch would while the reviewer
-still runs, in a dry run too. Otherwise it goes to an idle reviewer only when
-the board would take its verdict, by the rule the verdict holds
-(`Held::unfresh`, [the default landing](#the-default-landing)); a reused reviewer whose launch
-was not recorded lets the role go, so the task waits on no reviewer that has no job, and a
-launch that fails takes back what it took, as every launch does. Through `just tasks` a pass
-launches only where a launch there may ([Where it lives](#where-it-lives)): from a linked
-worktree, one continuing a branch checked out in the main checkout (its
-`.claude/worktrees/…` among them) or anywhere else outside that worktree and the worktree base
-is refused.
-
-`reap` also recovers missing agents with addressed work left unanswered for thirty
-minutes, even when staffing is disabled. It resumes a recorded conversation once
-per handle/post, after the hc terminal inventory confirms its absence, and posts the
-restore on the task thread. With no recorded conversation it only flags the work;
-it never starts a fresh conversation on its own. A failed automatic attempt stays
-flagged for manual action. `reap --dry-run` starts no recovery.
-
-Only ready tasks with dependencies done and no executor or reservation qualify;
-review tasks with no reviewer get one, on the task itself. A land-request task's opening
-`Review` line records the branch under review;
-an explicit `Branch:` or `Worktree ..., branch ...` line does too. Otherwise reviews
-use the executor's recorded branch, falling back to the task slug.
-Dry runs resolve that branch and show its tip too. A task whose target or dispatch
-fails prints its failure and leaves later tasks eligible; staffing errors never
-prevent the idle sweep. Work already staffed through a child is left alone. A live orchestrator on
-the task or an ancestor is required. Owner-only work is excluded by `owner-only`,
-`owner only`, `owner tier`, `sign-off`, `signoff` or `bless` in its slug/title, or a body
-line beginning `Owner-only:`, `Owner only:`, `Tier: owner` or `Review tier: owner`.
-Use these explicit markers for owner decisions.
-
-Before launching, the pass prompts an idle worker/reviewer holding no unfinished
-work in a suitable open terminal: an executor already on the task's own branch, or a
-reviewer or an instruction's worker in a detached checkout. A checkout with a live or stale
-executor is never reused. Otherwise it launches what a bare `just tasks launch` of the role
-would (the project's `[agents] launch` on the role's `[agents.models]` model, else Codex) in a
-separate worktree: the task's own branch, or detached main for an instruction or review. Live
-agent terminals and live board agent sessions without a terminal count toward the cap, the
-lower of `max_sessions` and `[limits] machine_agents`; reuse adds no session. Memory below the
-floor defers work. Every proposal, dispatch, deferral and failure prints one line. Only a successful ping or launch is posted on
-the task; deferrals and dry runs post nothing. A dry run previews even while
-disabled and creates no task, session or terminal.
-
-**Idle agents are closed by the board, not by a reminder.** A task
-that becomes done or cancelled closes its sessions at once; the rest is a sweep the
-Symphony's process (`just symphony`) runs every five minutes for each project it serves that
-has a board, each on a schedule of its own in its own checkout, started as the project is
-registered and stopped as it is removed, so one project's failing or hung sweep holds up no
-other's; each writes its own `reap.json` and its own board's health, which `just tasks status`
-reads. A lock in `symphony/tasks/`, beside the board's server, keeps two sweeps (a second
-app's, or `just tasks reap` by hand) from running at once, and nothing goes into any monitor.
-It closes (`hc kill`,
-then `hc rm`) one of this board's terminals (label `symphony.board`) whose named agent was
-idle (or stuck on the folder-trust prompt) at two sweeps at least five minutes apart,
-however many apps sweep, when neither its handle nor a subagent session under it holds
-an executor role on an in-progress, blocked or review task, a reviewer role on a task in
-review, an unanswered addressed post, or a reviewer awaiting re-review after changes
-returned its task to in-progress. That last keep includes landing changes messages,
-on the branch task or any numbered review task. A pending post keeps the terminal
-immediately, before the thirty-minute recovery threshold. A post, status move or verdict
-by its addressed handle answers earlier work; reading its inbox does not.
-Nothing runs under it but MCP helpers (Codex's configured `node_repl` and the ChatGPT
-app's `cua-repl.mjs` under its own `node` among them, each by its exact path, and
-Codex's `codex-code-mode-host` in a standalone release's `bin` folder), caffeinate and
-board commands: anything else is work, a `codex exec` job included. The roles above
-keep it for an hour at most, since only a session doing work, or about to within the hour, stays
-open: idle at its
-prompt that long, from its last tool call or the last change of its role or task
-status, it closes saying what brings it back; only an unanswered addressed post keeps
-it longer. A terminal whose program ended is removed at the first sweep, the open
-records naming it closed first with their restore line.
-Status, roles and the window are read again right before the close, and the terminal and the window once
-more after the close is recorded, right before the kill: work resumed by then (its agent
-working, or work under it) or the window showing it reopens the record. Never an unnamed terminal or another board's (it may be the owner's), an
-orchestrator or a chat, the caller's (`HC_TERMINAL_ID` or its session), or one on screen in the Herdr app, which
-starts its idle wait again (as does a window that cannot say what it shows).
-Each close is one line on the handle's task thread, with its restore line, written
-before the terminal is closed. `just tasks reap --dry-run` names what the next sweep would close
-and why each terminal stays; a sweep tells its log why it keeps an idle one, once per
-reason. `just tasks clean` runs cleanup and one sweep at once, never closing the caller's.
-Code: `crates/tasks/src/launch/reap.rs`.
-
-**Finished worktrees go by themselves**, without asking, so they hold no disk once their tasks
-are complete. The worktree sweep (`just tasks sweep`, the rules in
-the consuming project's worktree policy) starts, detached, whenever work
-finishes: a task going to done or cancelled (its closed sessions' worktrees then go without
-the 2 h wait), `just tasks leave`, `just tasks reap`, and at most once an hour `just tasks
-inbox`, by a stamp. The command that finished the work never waits on it and says nothing of
-it; each sweep runs from the main checkout, by the main checkout's build of `tasks` (never
-the caller's, whose sweep may not have landed; with none built it says so and sweeps nothing),
-and appends what it did to `symphony/tasks/sweep.log` in the git common dir. Status writes through
-`tasks api` (for example, a release run or reap caller writing status) do not start this CLI
-trigger; the next hourly sweep covers them. The Symphony's explicit finish action starts its own
-sweep.
-A worktree goes, locked or not, when its HEAD is in main (detached or on a branch), nothing in
-it did not land, no live work holds it and its lock holds nobody; the branch it had checked out
-goes with it once merged, if no other worktree holds it and it still points where it did. Three
-things keep that branch, each said as `kept branch NAME: WHY`: a land's record of its merge
-naming it, as `just land SLUG` run again finishes an interrupted land from that record and the
-branch, in a worktree of its own; a delivery of it by pull request not yet asked to merge, whose
-land run again reads the branch's tip (from the merge's request on, a land run again goes on from
-its journal alone, and the branch goes); and its task done by an approve no landing has closed, as
-what keeps such a task from going back to review once it is on main is its branch's tip.
-A head [a pull request squashed](#a-land-delivered-by-a-pull-request) is in no history of main,
-and is in main by its receipt alone: the HEAD, or the branch's tip, is exactly the head a receipt
-kept under its own task's name records; `refs/symphony/delivered/SLUG` still names that head, so
-no commit is lost with the branch; the squash the receipt names is the commit it recorded, of
-that one parent and that tree, the tree git makes of merging the head into that parent; and that
-squash is on `origin/main` as last fetched and in main here. The sweep reads all of it from git
-and the kept file, fetches nothing and asks no host. Anything less is a head not in main, kept as
-one: a branch that moved on after its delivery, a receipt that does not read, is another task's
-or names another commit, a retained head gone or moved, a squash the remote was never seen to
-hold or the main checkout has not followed. Such a worktree and branch are said as `squashed
-into main as COMMIT by pull request #N` where a merged one says `merged into main`, and every
-rule below holds for them as for any other. The sweep deletes no retained head, no receipt and
-no branch of the remote.
-Nothing did not land when it has no tracked edit, no untracked file and no ignored file but
-build output and caches, and holds no owner verdict no commit has (an owner's dated line under a
-card, in a document of the project's entrypoint folders, that its HEAD does not hold; a worktree
-whose documents git cannot read for one is kept, saying so). No live work holds it when no
-live or stale session is bound to it (a subagent's session is bound to its own `agent-ID`
-worktree as well), no live task is tied to it (its branch names the task's slug, or the slug
-with its last `/` as `-`), no process works inside it and nothing touched it within the 2 h
-window. Its lock holds nobody when it has none, or names a process that is gone: Claude Code's
-(`claude agent agent-X (pid N start …)`) once N is not running or runs with another start, a
-land's (`symphony land: SLUG (pid N, started S)`) once N is not the process that started at S
-(or, with no start, once N is not running). Claude Code's lock names the
-session that started the agent, its orchestrator, which outlives every agent it started, so a
-lock whose process runs says nothing of the agent; the board says the agent finished when a
-session is bound to the worktree (by its worktree, or as the agent the worktree's name and the
-lock give), none of those sessions is live or stale, and every task tied to the worktree, at
-least one, is done or cancelled. A live agent's worktree is never touched: its session, live or
-stale, keeps it, and so does a lock the board cannot answer for (an agent it knows nothing of, a
-land that runs, the release run's checkout, any other reason, a start it cannot read). Every
-worktree git lists is the sweep's, the `../symphony-wt/*` trees the land and the release run make
-included: a land's goes by the same rule once its process is gone; the release run's checkout,
-which it resets and builds on each day, stays. A worktree with tracked edits or commits not
-in main is never removed, whatever its task's stage: an orchestrator decides. What git ignores
-in a finished worktree's artifacts folder (the project's `[project] artifacts`, `artifacts/`
-when it names none: the pictures its thread names, a test's leftovers), less its build output, is
-moved into the main checkout's `FOLDER/swept/NAME/` right before the worktree goes, whatever came
-there up to then, and back if git refuses the removal; while a task tied to it is open, it keeps
-the worktree. A move the sweep cannot make (the folder on another disk, a name there taken, even a
-moment before: the rename itself refuses it) keeps the worktree and says why, and so does an entry
-there the sweep cannot read, which would otherwise go with the worktree: evidence is moved, never
-copied, replaced or removed. Nothing empties
-`FOLDER/swept/` (below). The pass a land
-runs for its task visits, without the window, the worktrees the task's closed launches ran in,
-those its executors' and reviewers' sessions are bound to once none of those is live or stale (an
-in-process agent has no launch record), and those on the task's branch (an agent that left has
-released its roles). Before each removal the sweep refreshes
-sessions, launches, locks and activity and searches that tree for process working directories;
-a lock it lifts goes back if the removal is refused. A detached agent's merged or squashed
-`worktree-agent-ID` branch stays while its live or stale session still binds its worktree.
-In-process agents work only in their own `agent-ID` worktree; a different directory they create
-is not bound by their agent id. Full sessions register from the worktree they use. Each removal
-says what the worktree held on disk, and the summary what the sweep freed; a sweep started
-detached (a land's, work finishing's) writes them to `symphony/tasks/sweep.log` under a line saying when
-and why.
-A board `TASKS_SERVER` names (a test's) starts no sweep unless
-`TASKS_SWEEP=on`; `TASKS_SWEEP=off` starts none anywhere. Code: `crates/tasks/src/sweep.rs`.
-
-**What the sweep sets aside stays, its build output never, and past a cap the sweep asks for a
-check by hand.** A finished worktree's pictures and other artifacts are kept in the main checkout
-and its build output is not; past a size cap, agents are asked to check by hand and remove what
-nothing uses any more ([its card](DECISIONS.md#sweep-artifacts-set-aside)). What is set aside
-stays in the main checkout's artifacts folder, which
-git ignores, and nothing commits it; attaching it to the repository without a commit on main is a
-design of its own. Build output in a worktree's artifacts folder (a folder tagged as a cache by a
-`CACHEDIR.TAG` that begins with the convention's signature, `Signature:
-8a477f597d28d172789f06886806bc55`, as Cargo writes it, a file of that name without it tagging
-nothing; or a file of compiled code, known by its first bytes: ELF, Mach-O, wasm, an archive) is
-never set aside and goes with the worktree. Nothing removes what
-was set aside, ever: past its cap, `[board] swept_cap_gb` in `symphony.toml`, in gigabytes (5 when
-unwritten; a value that is no number over 0 is said and 5 taken), the
-sweep still sets aside and refuses nothing. Each sweep that may set aside measures `FOLDER/swept/`
-and keeps the measure in `symphony/tasks/swept.json` in the git common dir, beside the tasks tied to each
-folder's worktree when it was set aside. Past the cap, the sweep's output (the log's, for the
-sweep a land starts) and a dry run's say so in one line, `set aside in PATH: SIZE, over its CAP GB
-cap ([board] swept_cap_gb): …`,
-and `tasks status` warns of it, once, from that record, standing while the last measure is past
-the cap: `the artifacts set aside in PATH hold SIZE, over their CAP GB cap ([board] swept_cap_gb),
-as the sweep measured them AGO ago, said until a sweep measures them again (…): …`, so a check by
-hand clears it once a sweep measures again, a dry run recording nothing. Both ask for the check by
-hand and name the five largest
-folders there, each with the tasks tied to it and their stage and what still references it:
-`in use: WHERE` for a task tied to it that is not done or cancelled (`task SLUG is open`), a post
-on an open task's thread naming a path under it (`the thread of SLUG`) and a document of `docs/` on
-main naming one (`docs/PATH`, cards included); `no reference found` for the rest, which alone are
-suggested, and which the sweep does not remove either. A path is named under a folder there as
-`FOLDER/swept/NAME/…`, or as the worktree's own artifacts folder held it, `FOLDER/…`, when the
-folder holds that path now. A source that cannot be read is said, and then none is suggested. The
-references are looked up once for each measure past the cap: one read of the open tasks' threads
-and one `git grep` of `docs/` on main. Under the cap nothing is looked up, the sweep says nothing of
-the folder and a dry run says `set aside in PATH: SIZE, under its CAP GB cap ([board]
-swept_cap_gb), …`. Code: `crates/tasks/src/sweep/kept.rs`.
-
-**Build output goes once the work is past its executor, the worktree staying.** A worktree the
-sweep keeps (in review, its work not landed, holding files that did not land) loses its build
-folders (`.target/`, `symphony/.target/`, each gigabytes, and what git ignores in `build/` and
-`symphony/build/`) once every task tied to it is in review, done or cancelled, merged or not (an
-in-process agent's worktree is tied to its task by its session), and nothing ran there for an
-hour: no agent bound to it beat or made a tool call, the board's recorder recorded no build or
-test there (a reviewer may build in its executor's worktree), nothing touched its git files or
-its top folder, and no process works inside it. The worktree a land left when its process
-ended loses it after the same hour, and the release run's checkout once nothing touched it for 7
-days, as long as the release run itself keeps one. Any other worktree tied to no task keeps its
-build: the owner's, or one made by hand. A task in concept, design, ready, in progress or
-blocked keeps it, as do a land that runs and a lock the sweep does not know. Right before it
-removes, the sweep reads the worktree listing, the board and the recorder's records again and
-decides again, and asks again whether a process works inside; then it takes each Cargo build
-lock in the folder without waiting (a build holding one keeps the folder), renames the folder
-aside under them and removes it; of `build/`, what git tracks or holds untracked stays. A folder
-reached through a link (`symphony` or `.target` linking elsewhere) is never touched. Each clear
-says `cleared build output PATH (why; SIZE)`. Code: `crates/tasks/src/sweep/build_output.rs`.
-
-**`just tasks sweep --dry-run` says what a sweep would do, and does none of it.** One line per
-worktree git lists, `worktree PATH: SIZE; TASKS; MERGED; VERDICT`: what it holds on disk (the main
-checkout's line has no size), the tasks tied to it with their status (`task SLUG (STATUS)`, or `no
-task`), `merged into main`, `squashed into main as COMMIT by pull request #N` or how many commits
-it has that main has not, and what the sweep would
-do with it and why (`would remove: …`, `kept: …`, or `kept for an orchestrator to decide: …` for
-tracked edits, files that did not land and commits not in main). Then `set aside in PATH: SIZE`
-says what the main checkout's `FOLDER/swept/` holds against its cap (above), and its summary ends
-with what a sweep would free of what the worktrees it measured hold, which a sweep on the same
-state frees.
-
-**A linked worktree's first build starts from the main checkout's.** `tools/cargo.sh`, which
-every build here goes through, makes a worktree's missing build folder as a copy-on-write clone
-of the main checkout's `.target/debug` (`tools/seed-target.sh`: clonefile on APFS, a reflink on
-Linux; nothing on a volume that cannot clone), taken under Cargo's own lock on that folder and
-without the workspace's own packages, so the worktree compiles those from its own sources and
-reuses every dependency. While the clone holds that lock, a build in the main checkout and every
-board command (each builds the main checkout's launcher) waits: on macOS for one clonefile call
-of the whole folder (`tools/seed-clone.rs`, compiled by rustc on the spot), else for `cp -c`
-cloning each file. A clone takes disk only as a build replaces what it holds; `du` counts each
-clone in full, `df` says what the disk holds. It is staged as `.target.seed.PID`, which a signal
-removes with the clone and a later seed or sweep removes once its process is gone.
-`SYMPHONY_SEED_TARGET=off` turns it off. Worktrees never share one build folder: Cargo names the same
-package of two worktrees the same, so each would run the other's build of it. What it costs and
-saves, measured: [the analysis](analysis/worktree-build-folders.md).
-
-**Health** is derived from when the session was last seen. Every command
-counts as a sign of life, and so does every tool call of a subagent (below):
-
-| health | meaning |
-|---|---|
-| live | seen in the last 90 s, or inside one long tool call that could still be running |
-| stale | quiet, or its monitor has stopped: its work is still held, nobody may take it |
-| lost | gone for 10 minutes holding claimable work: that work can be claimed, on the record |
-| left | it said `just tasks leave` (its roles were released, the open work it orchestrated given to another orchestrator, or waiting for one while none stays), or it has been gone 10 minutes holding nothing anyone could claim |
-
-**Claimable work** is what a session executes in `concept`, `design`, `ready`
-or `in_progress`, and what it reviews that is still in `review`. A session
-whose part is finished (its task done, or waiting in review for someone else)
-ends quietly as `left`; if its task comes back with `changes`, it is `lost`
-again, and that task can be claimed. `just tasks who`, the Symphony's
-**Agents** and the attach monitor read the same health.
-
-Callback registration does not expire. The legacy attach stream remains only
-for sessions with no native channel. Tool calls are still the heartbeat.
-
-A **subagent** has no monitor; its own tool calls are its heartbeat. The
-project's `PreToolUse` (Bash) and `PostToolUse` hooks
-(`.target/bin/symphony hook tasks-beat`, which runs the board binary's `tasks beat`
-directly, not through `just`, so unmarked) see the Claude Code agent id
-on each of its tool calls. A `just tasks …` command the subagent runs binds it
-to the handle that command acts as, and so does one naming a justfile or a
-folder before `tasks` (`--justfile PATH`, `-f PATH`, `--working-directory DIR`
-or `-d DIR`, as a worktree's `just --justfile MAIN/justfile tasks …`): its own
-`--as <handle>` flag, else a leading `TASKS_SESSION=<handle>` on that same
-command. The flag is the form to write: the allow rules pass no env prefix, and
-the prefix binds nothing the flag does not. A handle anywhere else
-in a command (a grep pattern, text inside a quoted argument, another recipe
-such as `just land` run under someone's `TASKS_SESSION`) binds nothing. From
-then on each of its tool calls beats for that handle, until a later board
-command names another. A full session with no agent id (one started in an hc terminal, or a
-`claude -p` run) is bound and beats the same way, keyed by its session id, but keeps the first handle
-it names: naming another (registering or relaying for a child) moves nothing. A handle
-with a monitor of its own (an orchestrator) is never bound: its monitor beats for it,
-and a session that names such a handle is barred from binding at all, so the calls of
-an orchestrator never keep a child it registered alive. The hook looks at the board
-only for a board command or a key already bound. A foreground Bash call
-reads live for as long as its timeout allows (at most 10 minutes), so a long
-`verify-full` does not look like silence; of calls running side by side, the
-one that may run longest keeps the mark, and only its own end clears it. Each
-tool call of a bound subagent also records, on its binding (never its session
-row, which keeps where its orchestrator ran `register`), the checkout that call
-ran in: the top folder above the hook's `cwd` and the branch checked out there,
-read from the `.git` files, and, when that checkout changed, the time it came
-there; a call with no `cwd`, or one outside any checkout, moves neither (the
-last checkout stands: such a call says nothing of where it works). A call there
-that reads a time before any other there did (the clock went back) keeps that
-earliest time too, never moving when it came. On Linux, whose kernel dates a
-process's start on the clock since boot, the hook also reads that clock (its
-boot's id and `/proc/uptime`): the binding keeps the reading of the call that
-came to the checkout and of its latest call anywhere, a later boot's replacing
-an earlier one's, and none when a call read none. Setting the wall clock moves
-neither those readings nor a start dated on that clock. A
-subagent waiting on a background command of its own (a `cargo test`, a build)
-makes no calls; while a live process it started works in that recorded linked
-worktree it reads `running_test` in the agents API, and is neither stale, lost
-nor orphaning its task ([The agents API](#the-agents-api)).
-A subagent that stops makes no more calls, leaves nothing working there, and
-ages to stale and lost as before. Each beat also hands the board the tokens the
-session's own transcript gained since its last beat, in the beat's one write
-([Where the tokens go](#where-the-tokens-go)).
-
-Orchestrators can share the board, each holding its own slug prefixes. A decision
-one side makes that the other must act on becomes a short board task for that side,
-and a side that approves documents commits them regularly, because worktree agents
-see only what is committed.
-
-## The tasks API
-
-`tasks api` is the board's methods as JSON, for a program rather than a person: one call
-`{"method": NAME, "args": {…}}`, or a list of them, on stdin, each answered `{"ok": RESULT}`,
-`{"refused": WHY}` (the board's refusal, which wrote nothing) or `{"error": WHY}`; `tasks api
---lines` answers a call per line over one connection (`crates/tasks/src/cli/api.rs`). It is how a
-project's own program reaches its board without linking the board's library.
-
-It is a contract, versioned `MAJOR.MINOR`. `{"method": "version"}` answers
-`{"api": {"major": M, "minor": N}, "schema": S}`, S the board schema the build writes, without
-reaching the board: a program that must know what a build serves, such as a project's launcher
-choosing between builds, asks it, never reading Symphony's source. Within a major a method, an
-argument or a field of an answer is added, never removed, renamed or changed in meaning, and an
-argument added has a default, its absence read as before; each addition raises the minor, and the
-api version this guide gives a method (`hold`, api version 4) is its minor of major 1. A new major
-is a task of its own. The calls a registered project's programs make today are held by
-`crates/tasks/tests/cli/api/contract.rs`: each request, and the fields of its answer the caller
-reads with their JSON types, so a change that would break one fails its own task's gate. What the
-api promises is its calls, not the board's rules behind them, such as who may move or judge a
-task. Major 2 began at 2.0: `create` refuses `fast_fix`, including a null value. Tasks needing no
-review name their stamps through an assessment. The fields and calls held by the consumer contract
-keep their shapes. The current API is 2.6: minor 5 added `attempts`, `{"slug": S}`, a task's
-execution attempts as `symphony_api::TaskAttempts`, read as the board's own service under the
-project the call runs in, refused from outside a project's checkout
-([EXECUTION_ATTEMPTS](EXECUTION_ATTEMPTS.md#on-a-tasks-page)); minor 6 added what a guarded edge is
-taken with ([below](#a-task-a-custom-workflow-holds)).
-
-### What a program outside the board keeps
-
-Minor 1 of major 2 adds what a program needs to exchange tasks with another system, an issue
-tracker for one, without reading the database. It names no such system: the program is the
-project's own, and nothing here makes a request, keeps a credential or a mapping, or turns one on.
-
-- **`id`**, a field of every task the api answers (`get`, `tasks`, `create` and the rest): the
-  task's number, the order it was made in (`crates/tasks/src/rows.rs`). A retitle keeps it, and a
-  task has no other name to change: no call renames a slug. It names the task only along one
-  history of the board, never by itself across a copy or a restore, which give numbers again
-  ([above](#a-board-that-was-copied-or-restored)): a program keeps it with the generation it was
-  read under, which is the token. `just tasks show`, `list` and `search` print that same record
-  under `--json` (`crates/tasks/src/cli/shape.rs`), so each task there carries its `id` too.
-- **`bound`**, `{"slug": S}`: the task's title and brief and its token, `Store::bound`'s answer,
-  `{"bound": {"compat": 1, "generation": "…", "id": N, "version": N}, "title": "…", "body": "…"}`.
-- **`edit_bound`**, `{"slug": S, "bound": TOKEN, "by": HANDLE}` with any of `"title"`, `"body"`
-  (the brief, whole) and `"links"`, what is left out staying as it is (`Store::edit_bound`): the
-  one call that rewrites a brief. It is `Store::amend_bound`'s write, the fence first in the
-  write's own transaction: refused unless the board holds the token's generation and the task is
-  the one of that number at that version, and a refusal writes nothing, no title, brief, link,
-  line on the thread or act of its session. A changed title and a changed brief are each a line
-  on the thread naming who wrote it; the brief's earlier words are not kept, so a program that
-  must keep them reads them first, with the token. Its answer is `bound`'s, the task as the write
-  left it with the token to write it next. A call that gives none of the three is refused.
-- **`integration_state`**, `{"name": NAME}`: `{"path": "…"}`, the folder the integration NAME
-  keeps its state in, `symphony/integrations/NAME` in the git common dir
-  (`crates/tasks/src/folders.rs`). It is the same from the main checkout and every linked
-  worktree, is in no worktree and so outlives each, and is in no commit. The call reaches no
-  board and makes nothing: the program makes the folder, keeps what it needs there and takes its
-  own lock, and the board never reads, sweeps or copies it, so it is in no dump or snapshot of
-  the board and is backed up with the repository's common dir or not at all. NAME is one to
-  sixty-four lowercase letters, digits and hyphens, a letter or a digit first, never a path.
-
-`bound` and `edit_bound` answer only where the board has a recovery binding: `tasks api` hands
-its store the board home's ([above](#a-board-that-was-copied-or-restored)), so on a board
-`TASKS_SERVER` names, and on one never bound or revoked, both are refused in words that say which,
-and every other call is as it was. What the token does not tell apart is said there too, and the
-api claims no more: a program that finds its token refused reads the task again and reconciles
-what it kept, never writing on the number alone.
-
-### The evidence of a task at its head
-
-Minor 2 adds one read, for the program that makes a task's evidence public
-([a land delivered by a pull request](#a-land-delivered-by-a-pull-request)).
-
-- **`evidence`**, `{"slug": S}` with an optional `"head"`: the task's evidence at the tip of the
-  branch named as it in the main checkout, refused when `head` is given and is not that tip. It
-  writes nothing and names no host. Its answer is one snapshot
-  (`crates/tasks/src/land/evidence.rs`): `version` (1), `slug`, `task` (the task's `id`),
-  `status`, `head`, `branch` (the default branch), `policy` and `catalogue` (digests of the
-  committed project file and of the stamps' catalogue), `assessment` (who assessed, the commit
-  read, why, the stamps named, and from minor 3 `import`, the whole upstream commit it names the
-  head an import of, only where it names one) and `assessed` (whether it read the head), `stamps` (every stamp of
-  the catalogue, each `met`, `waived` or `missing` with its reader's line and the runs or thread
-  lines it stands on), `blocking` (each reason it is not eligible), `eligible`, and `revision`, a
-  digest of all of it: two snapshots of one revision say the same.
-
-It is the reading the land itself goes by, one function, and stricter than the default land in
-what ties evidence to the head: the assessment is of the head, so one of another commit or of the
-brief waives nothing and none is no waiver; the approve names the head, never covering it by
-time; and every stamp is said, a waived one with who waived it and why, the assessment or a
-[gate decision](#gate-decisions) for the head. A raise a gate decision gave that the head does
-not carry is among `blocking`, as it refuses the default land.
-
-### A task a custom workflow holds
-
-Minor 4 adds the three calls by which an agent reads and moves a task a custom workflow holds,
-through the board's one admission ([WORKFLOW](WORKFLOW.md#admission)). On a board with no custom
-workflow active, `workflow_read` answers null and the other two are refused, saying none is
-active. Each answer is a type of `symphony_api::workflow`.
-
-- **`workflow_read`**, `{}`: the active definition, its revision and its activation generation
-  (`WorkflowRead`).
-- **`workflow_actions`**, `{"slug": S, "handle": H}`: each edge leaving the task's pair, with what
-  stops session `H` taking it now and its authority named without who holds it (`NextActions`):
-  a preview, never a permit.
-- **`workflow_apply`**, `{"handle": H, "request": OperationRequest}`: one typed operation admitted
-  for session `H`, which must be on the board and not have left, never for a principal the request
-  names; its answer is the `OperationResult`, and its refusal names its code.
-
-Minor 6 adds what a guarded edge is taken with ([WORKFLOW](WORKFLOW.md#guards)):
-
-- **`workflow_apply`** takes `"attestations": [Signed]` beside its request, the project
-  authority's signed word for each guard of the edge; without it a guarded edge is refused
-  `guard_unavailable`.
-- **`workflow_observe`**, `{"signed": Signed}`: an authority's signed observation of its state,
-  which the board accepts only from the state it accepted before; its answer is `{"observed":
-  "accepted" | "unchanged" | "conflicted", "authority": …}`.
-
-## The agents API
-
-The app is the source of truth for who is doing what: `GET /api/agents` of the Symphony and `just tasks agents
-[--json] [--all]` return the same document (`crates/tasks/src/cli/agents.rs`; these keys are a contract, pinned by
-`crates/tasks/tests/cli/agents.rs`). The board (sessions, roles, `task_sessions`) is the record; hc's
-live terminals (`hc ls`) and the test-slot locks in the folder the project's `[board] slot_locks` names
-(none when unset) are probes that say what each agent is doing now, and `probes` names
-either as `unavailable` when it cannot be asked, the rest being built from the board alone. The hc probe keeps the
-key `herdr` and an agent's terminal the key `pane`: names the wire keeps. The Symphony's `/api/agents` also names
-that probe `panes`, with the same answer under both keys, and its client reads `panes`, else `herdr`
-(`crates/symphony-api/src/agent_probes.rs`), so a client and a server one build apart still agree; the
-rest of its document is the board's.
-
-```
-{"generated": 1790000000.0,
- "probes": {"herdr": "ok", "slots": "ok"},
- "agents": [{
-   "handle": "amber-heron", "kind": "worker", "model": "sonnet", "parent": "cobalt-otter",
-   "task": "sim/jump", "role": "executor",           # the task it works now (an open one first)
-   "tasks": [{"slug": "sim/jump", "role": "executor", "status": "in_progress"}],
-   "following": 0,                                   # the open tasks it orchestrates
-   "worktree": "/…/lamp-works-wt/sim-jump", "branch": "sim/jump",   # where it really works
-   "agent": "claude", "session_id": "9aa0…", "pane": "t5",
-   "callback": "uds:/tmp/cc-socks/1234.sock", "chat": false,
-   "state": "running_test",
-   "state_detail": {"recipe": "verify-full", "phase": "waiting", "since": 1789999000.0},
-   "health": "live",
-   "last_tool_call": 1789999900.0,
-   "last_message": {"slug": "sim/jump", "ts": 1789999800.0, "text": "the ring is at 900"},
-   "slots": null,                                     # an orchestrator's: {"open": 3, "cap": 8}
-   "session_url": "https://claude.ai/code/session_01…",  # the web address its session gave, else null
-   "in_process": false,                               # a subagent running inside its parent's session
-   "tokens": {"input": 12, "cache_write_5m": 3400, "cache_write_1h": 560,
-              "cache_read": 78900, "output": 1200, "calls": 7},  # what its calls took, else null
-   "cost": {"dollars": 0.061308, "input": 4.8e-05, "cache_write_5m": 0.017,
-            "cache_write_1h": 0.00448, "cache_read": 0.01578, "output": 0.024,
-            "unpriced": [], "prices": "2026-11-16"}}]}  # their estimated cost, else null
-```
-
-`state` is `working`, `running_test` (a run of its own holds a test slot, `phase: holding`, or is queued for one,
-`phase: waiting`, `state_detail` naming the recipe and since when; or a quiet subagent's own worktree holds a live
-process, `{"recipe": "process", "phase": "running", "since": null}`, or the machine's processes cannot be listed to
-tell, `"phase": "unknown"`), `waiting_on_input` (hc sees an approval or a
-question), `idle`, or `gone` (no terminal and no sign of life). An agent running or queued for its own verify reads
-`running_test` and `health: live`, never `lost`; so does a subagent whose worktree holds a live process, and one whose
-processes cannot be listed reads `health: unknown`. `last_tool_call` is the time of the last tool call of the agent
-(`null` before the first): the monitor's 20 s beat and board commands do not move it.
-`tasks` lists every task the agent holds a role on but those it orchestrates, and `following` counts
-the open ones it orchestrates (neither done nor cancelled), the count of its Following list on the
-agents page, which reads those tasks a page at a time.
-`callback` is the native address (`uds:` or `codex:`), or `null` for an inbox-only
-session; `chat` says whether this session is the current chat recipient, including
-an orchestrator fallback. `slots` is, under a project cap ([Slots](#slots)), the
-tasks an orchestrator (or any session holding open work's slot) holds against the
-cap, and `null` otherwise. `session_url` is the web address the session gave
-([Going to a session](#going-to-a-session)), else `null`; `in_process` says the agent runs inside
-another session, a subagent bound to its parent's, with no pane of its own. `tokens` is what the
-handle's model calls took, all told, by kind, as its beats recorded them, else `null` (none recorded;
-[Where the tokens go](#where-the-tokens-go)), and `cost` what they cost, estimated at API list
-prices, else `null` ([What the tokens cost](#what-the-tokens-cost)). No credentials appear in this
-API.
-
-The rules a port must copy, in this order:
-
-- **Who is listed.** A session that ran `leave` (it has `left_at`) is omitted unless `--all`. So is one the board calls
-  `left` (quiet, holding nothing another could claim; every session that never ran anything ends so) that has neither a
-  terminal nor a run of its own nor a native registration: it is gone. A native
-  registration stays visible while idle; its activity health is not fabricated.
-  A quiet one with a terminal or a run stays (an executor whose task waits in review,
-  its terminal idle). `--all` lists everything and changes nothing else.
-- **worktree and branch.** From the agent's task session (`just tasks launch` recorded it; the one for its primary task,
-  else its latest), else from its terminal's working directory (and the branch checked out there), else, for a
-  subagent, the checkout its binding recorded at its last tool call, else, only with none of these, the directory
-  `register` ran in: an agent that was never launched and has no terminal.
-- **Which terminal.** The task session's terminal if hc still lists it live, else the terminal whose program runs the
-  task session's conversation or the one bound by the heartbeat hook (when hc gives its argv), else the terminal titled
-  or named with the handle. A terminal without an address is ignored.
-- **Which run is the agent's.** First a run tagged with its handle (a slot records the `TASKS_SESSION` it ran for), wherever
-  it runs: a verify in a trial merge, or by an agent that was never launched. Else, for an agent that is alone in its
-  worktree, the run whose worktree is exactly its own (realpath; a slot records its git top level) and that carries no
-  handle of any session on the board (left ones included, listed or not). Never a run in a directory beneath a worktree (the main checkout holds `.worktrees/` and
-  exports), never to agents that share a worktree (all those registered in the main checkout); the count of agents sharing a
-  worktree takes every session, left ones included, so `--all` never changes who a run belongs to. Several runs: holding
-  before waiting, then the oldest.
-- **What a quiet subagent waits on.** A subagent (an in-process binding) that is stale, lost or unknown, has no matched
-  run and no terminal, and whose recorded checkout is a linked worktree (its `.git` a file; never the main checkout,
-  which every agent registered there shares) waits on a process when one the machine lists is its own: it works in
-  that worktree, its working directory the worktree's top folder or below it, with no other `.git` between (a scratch
-  repository or a nested worktree is not its), compared component by component, never by a string prefix; and it
-  started while the agent was there, from a second before its binding recorded that checkout to a second after its
-  last tool call, on the clock its start is dated by: the board's for macOS, whose stamp is fixed when it started;
-  the clock since boot for Linux, against the readings of that clock its calls took, never a wall time worked out
-  from today's boot time, which setting the wall clock moves (a start in another boot than its last call's began
-  after that call). A server or shell started there before the agent came, or after it went quiet, is not its, so a
-  stray process never hides abandoned work. With none of its own there, the board cannot tell, and so never calls it
-  lost, while one working there may be its: its start cannot be read (no permission, an unexpected record; one that
-  ended since the listing is left out), or it began after the earliest time a call of the agent's there read and
-  before it came, which only a clock that went back while it was there leaves, or it is dated since boot and the
-  call that came, or its last call, read no clock since boot (a start after a last reading is still not its). The processes
-  are listed with their starts (`lsof`, as the worktree sweep lists them, and the kernel's process table) only when
-  such an agent is in the view, once a view, and a long-lived reader (the server's clock and dispatcher, the
-  monitor) keeps the listing for 20 s by its store's clock, from when the listing ended.
-- **state.** A matched run is `running_test`. Else a quiet subagent waiting on a process is `running_test` (`phase:
-  running`), or, when the processes cannot be listed or the board cannot tell whether one there is its,
-  `running_test` with `phase: unknown`. Else the terminal's status
-  (`working`, `blocked` is `waiting_on_input`, `idle` and `done` are `idle`). Else, for a session that is neither an
-  orchestrator nor the chat and whose listener the idle sweep's last round confirmed, `idle` once it is at rest:
-  outside any tool call (its `busy_until` passed) and its last tool call more than 90 s ago (`LIVE_SECONDS`, the
-  window its health reads live for), when it connected standing for that call before its first. The confirmation
-  keeps such a session seen, so its health reads live after each round and stale between two, and says nothing of
-  whether it works. Else the board's health: live is `working`,
-  stale `idle`, lost or left `gone`. A matched run, and a process its subagent waits on, also lift `stale` and `lost` to
-  `live`; processes that cannot be listed, or one whose ownership cannot be told, make them `unknown`.
-- **A probe that fails** is `unavailable` in `probes`, and the answer is built from the board; a failing branch lookup is an
-  empty branch.
-
-Slot holders and waiters come from `test_slots.runs` (a held slot file whose writer is alive and whose lock is held; a
-place in the pool's FIFO line, `<prefix>-<12-digit sequence>.place`, in the pool's own prefix: `slot-` and `render-`, that its waiter still holds); a slot file whose writer is dead is free and is not locked to find out.
-
-An orchestrator's callback uses it: it does not call an agent stale or lost while `running_test`, and it receives a PULL
-digest (`crates/tasks/src/cli/pull.rs`) once at its first dispatch, even when empty, then only when an actionable list gains an entry absent from the last delivered PULL after forgetting entries absent from any computed digest: red tasks ([Slots](#slots)) with no live executor 10 minutes after they were filed, in any status short of review, listed first as `red_unstaffed`, counted in the header only when there is one, and in no other list, `dependency_blocked` included, a cancelled dependency of its named in its note; ready tasks with no live executor
-(one on a subtask still to be executed counts), in-progress with none, review with no reviewer, tasks that landed
-(the branch is on main, or `landed <slug> on main` is on the task's thread) and are still open (a status change on the task after that line voids it, whether a move, a verdict such as `changes`, or a re-claim: the task is new work, not a landing left open), tasks a reviewer approved that no landing has closed 10 minutes after the approve, done on the board and still to land, listed as `approved_unlanded`, counted in the header only when there is one, each with when it was approved and what its landing's record says it waits on (`approved 11-17 09:12, not landed; its landing waits on tests`), and idle agents, each scoped to the orchestrator's own tasks and those with no orchestrator yet ([Tasks and roles](#tasks-and-roles)) (an idle agent another orchestrator launched is left out). An executor
-or reviewer that is `running_test` counts as present however quiet the board says it is.
-A task in review whose tip a reviewer asked changes of is rework, counted in progress
-([The pipeline alarm](#the-pipeline-alarm)). While the pipeline alarm stands, the whole board's
-follows the header, whoever the digest is for, and its raising is an entry.
-Counts and the clock do not trigger delivery. A departure alone pushes nothing;
-an entry that stays present is never re-sent, and an ordinary entry that leaves and returns pushes once.
-The first PULL a recipient receives is the whole digest: `PULL HH:MM` with every count, then each list's
-first six rows and how many more it holds, but `unanswered`, whose every post is listed with its
-actionable advice, delivered once per target and action. Each later one says only what changed since the last PULL it
-acknowledged: the counts that moved (`PULL ready_unstaffed=34 (was 33)`, or `PULL counts unchanged`), the
-liveness and low-volume lines it was not told, each row a list gained, and `resolved LIST a, b` for the rows
-that left it. A backlog of 33 that gains one row is that header and one row. What the last acknowledged PULL said
-is kept in the recipient's callback state (`pull_said`, which older dispatchers ignore); after an older
-dispatcher's acknowledgement, which does not record it, the next PULL is the whole digest again. A dispatcher
-built before PULLs said only what changed (the shared server's, until it is rebuilt) records the entries of the
-PULL it acknowledges and not what it said: a row it told that the recipient still hears shows it, and the next PULL
-is the whole digest. Only when every row it told has left the recipient's digest by then is the next PULL measured
-against the baseline before it: its header can repeat a count that moved before, with the older `(was N)`, its
-liveness line can repeat or miss a change, and those rows are not said `resolved`. Rows added are exact either way,
-never lost or said twice, and the next PULL this generation records is exact again.
-A channel registered anew starts again from the whole digest: `--off`, a registration where none was (after
-`--off` or a `tasks wait`) or one another process listens on (`Store::callback_in`) forgets which PULL the
-session acknowledged, and a PULL waiting for it gives way to the whole digest; the posts it was told stay told.
-Only the same listener moving to a new socket keeps its account, so what waited out an outage is said there as it
-stands. An orchestrator reads the whole digest at its decision points with `just tasks pull` whatever it heard.
-The scan reads only the open tasks' threads, and each of its reads waits at most ten seconds and is sent once, so a
-board command never waits minutes on it. A pass whose unanswered-post scan fails says why on stderr and delivers the rest, and its PULL says nothing of
-those posts, neither their count nor any of them resolved; their count is then unknown to the recipient, so the
-next PULL whose scan answers says it (`unanswered=1 (was unknown)`) and resolves the posts answered meanwhile.
-Unanswered work retains its task/post identity across departures and returns; executor handoffs
-also distinguish the current target and whether it needs follow-up or recovery.
-`unanswered` lists an executor on an in-progress, blocked or review task, or a reviewer
-on a task in review, when it is lost or left (or its recorded terminal is closed) and an
-addressed post has waited thirty minutes without a later message, status move or
-verdict from that handle. A deliberate role release also answers earlier requests;
-an automatic departure does not. Posts belong to their recipients at post time,
-so a replacement never inherits its predecessor's role-addressed work. Each line
-names the post and the recorded conversation's `just tasks restore SLUG HANDLE`
-command, or the explicit launch command when no conversation was recorded. When a different
-executor now holds the task, the original request stays visible: its advice names both handles
-and follows up with the current executor using `just tasks say`. A live, stale or liveness-unknown
-replacement, or one running a test, prevents duplicate launch advice. If that replacement is lost or leaves, the advice
-offers an executor launch again, without reviving the predecessor's conversation. Each target
-and action is delivered once, so replacement loss can push recovery after an earlier follow-up;
-an unchanged request and action are never repeated. Its count appears only when
-nonzero. `reap` uses the same successor eligibility before automatic recovery, checking current
-task, session and native-presence inputs again in its reservation transaction, with fresh
-running-test evidence. A changed observation or an active successor consumes no recovery attempt;
-once that successor no longer qualifies, the unanswered conversation can recover. `reap` makes
-the sole automatic recovery attempt described above.
-
-What is pushed is what the recipient cannot predict and must act on, said once: posts and verdicts, the
-owner's moves (a `MOVE` line, [Talking on a task](#talking-on-a-task)), NEW, STATUS, ROLE, GIVEN (one line for every task the board gave the recipient since its last read, [Tasks and roles](#tasks-and-roles)), BLOCKED, WATCH, the PULL above, and STALE, LOST or LIVENESS UNKNOWN once for each transition of a quiet
-child, never once a pass (a child it already hears as stale is not also listed idle, in a pushed PULL, a wait
-or `tasks pull` alike). No such line is said of a child whose listener answers the idle sweep, so one at rest is
-listed idle whatever its health, and its entry stays through each round: said once. A session with no terminal
-is listed by its last tool call ([the agents API](#the-agents-api)), and the recipient's callback state keeps the
-beat each one was told idle at (`pull_idle`, from the PULL it acknowledged, which older dispatchers leave as it
-is): a dispatcher that does not list such a session forgets its entry, and this one still reads it as told while
-the session rests on that beat, so two builds on one board say it once. A new tool call is a new beat, and the
-rest after it is said again. WATCH says the pane watch could not ask hc, while it looks for no BLOCKED: once hc has
-failed at every sample for 30 s, never for one slow answer that the next sample answers, and again only after
-hc has answered. A gap of more than 30 s between two samples is time nobody sampled, the machine asleep or no
-server, and the stretch starts again at the sample after it
-(`OUTAGE_SECONDS`, `crates/tasks/src/cli/attach/panes.rs`). A recipient is never told its own writes: not its own moves, not a role move it made (a hand-over, a take-over), and not what its own
-children (the sessions it registered, `--parent`) take on or let go, their reservations, claims and releases
-and the moves and readiness those make; a child's own move, to review say, is still said, and so is one it made
-before a claim or release between two looks (a block, then a release, says the block). What is read is the
-rest: `just tasks pull --as HANDLE` prints the whole digest as HANDLE hears it now, whatever was pushed, and
-changes nothing; `just tasks show`, `list` and `agents` read the board as it is.
-
-A push through a channel arrives wrapped in the receiving client's notice and costs a turn. A session that can
-hold a background command reads the same lines instead: `just tasks wait --as HANDLE [--timeout S]` exits
-printing what a channel would have carried since its last read, once there is any, and the session runs it
-again. It is the dispatch's own pass for HANDLE (`crates/tasks/src/cli/commands/wait.rs`,
-`Store::collect_callbacks`), its lines printed rather than delivered, each text flushed before it is recorded
-as delivered (one that does not print is retried five seconds on, so a failure repeats a line and never loses
-one), so it says the same lines by the same diff and account, from the same callback state: the first read is the whole digest
-and any posts waiting, each later one only what changed. It looks when the board's marker moved, every two
-seconds at most, and at least every fifteen, since a child going quiet or a PULL falling due changes with time
-alone; with `--timeout` it gives up after S seconds with `WAIT nothing changed in S s` (`0` looks once). It
-is refused while HANDLE has a channel, which takes those lines (`just tasks callback --off --as HANDLE` gives
-them to `wait`), and nothing else dispatches to a session without one, so between reads nothing is said and
-nothing lost. Waiting is the session's sign of life, as a monitor's is: it beats for HANDLE every twenty seconds
-or so, at a look, so an orchestrator waiting on its board is not called stale for it. Each look also watches
-the panes HANDLE oversees, one hc sample a look, as the server's clock does for a channel, so a pane waiting on
-a prompt is said as `BLOCKED` by the second look that sees it, and hc failing at every look for 30 s as one
-`WATCH`; and while HANDLE holds the chat seat (see the
-callback section above) the owner's chat events come with the rest.
-What waiting costs, measured on 2026-11-11: once HANDLE has its callback state and is on the chat seat's waiting
-list (its first look puts it there), a look at a board that stood still is nine reads and no write; a poll between
-looks is one read of the board's marker; a beat is one write. While the board stands still that is about 30
-marker reads, four looks and two beats a minute: some 66 reads and 2 writes. Every write to the board moves the
-marker, a session's heartbeat too, so on a board where other sessions beat a look comes at nearly every poll, up to
-30 a minute (about 300 reads). A look took 7 ms on a small board and 0.8 to 0.9 s as a command of its own on
-the 2.2k-task board of the perf suite (its process's start and connection included, a debug build at load 35 to
-80), and the first look there, which says the whole digest, 18 s.
-
-A legacy native observer starts from the current board on upgrade rather than replaying its history.
-Its upgrade marker and message cursor are separate callback-state fields that older writers leave intact.
-The fields writers older than that scoping read (the observation, the open-status map and the delivered PULL entries)
-keep their whole-board meaning; the scoped observation and the entries it withheld are kept beside them, in fields
-those writers ignore, and read over them: a line either writer said is not said again by the other.
-A line still waiting for delivery to an orchestrator (a NEW, STATUS, ROLE, BLOCKED, STALE, LIVENESS UNKNOWN or LOST)
-is said only if a dispatch would tell it that line now, by the same test, so one a hand-over or a released claim took
-from it meanwhile is dropped, or a LOST said again of the work it still hears; the hand-over's own ROLE line is kept,
-and a quiet child holding no work is still its parent's to hear of. A PULL still waiting is never delivered as it was
-written: the digest is built again for its recipient, counts included, and said in its place, by one rule over what
-the recipient hears now, what the PULLs it acknowledged told it and what the waiting PULL tells. With nothing heard
-beyond what it acknowledged, the waiting PULL is taken back; an entry beyond both, shown or only counted, makes a new
-PULL with a retry budget of its own; otherwise the waiting PULL keeps its key and attempts and says the digest as it
-is now. What it was told changes only when it acknowledges a PULL, whichever writer records that, so work it gains
-while one waits is said and work that only departs renews no budget. Work it hears is told once a PULL naming it is
-acknowledged, whatever older dispatchers write, queue or acknowledge after. Only what was withheld from it is
-ambiguous, since an older dispatcher's own PULL told it the whole board and reads the same as the waiting one:
-withheld work counts as untold, so when a hand-over makes it the recipient's, one PULL counts it, once more at most
-for that hand-over and never left out, and nothing repeats on its own. Posts, verdicts and the owner's `MOVE`
-lines are kept: they were said to whoever held the role then.
-Codex callbacks use the queue by default; `git config symphony.codexSteer true` opts in to
-active-turn steering. The owner decides its first live use.
-
-### Going to a session
-
-Every agent on the agents page, and every role chip on a task's page, carries a **Go to session**
-control when the board knows a way into that agent's session. The server works out each agent's
-way in at each tick of its clock (`symphony_api::resolve_sessions`; the Symphony's wire carries it
-as the agent's `go`, `{"handle", "url", "pane"}`, and a task page's `sessions` for its role
-holders), and what the control does depends on the session and on where the page was asked:
-
-- **A web session.** A session that gave a web address (a cloud agent, a Claude Code session with a
-  remote link) is an ordinary link to it, opened in a new tab, from any device. The session gives
-  it with `just tasks register --session-url URL`, or later `just tasks callback --session-url URL`
-  (alone, or beside a channel; an empty one clears it). It is `https://` or `http://` with a host,
-  with no space or control character, at most 2048 bytes (`crates/tasks/src/session_url.rs`),
-  checked when it is set and again when the board reads it, so a row written past the check (a
-  copied dump, a hand write) is left out; a page links only what `symphony_api::web_address`
-  passes, so no other scheme ever becomes a link. `callback --session-url` keeps the address only
-  once its registration is accepted. The board keeps it in `callback_state` beside the session's
-  row, never on it, moving no board marker, and `leave` deletes it. It is the agents API's
-  `session_url`.
-- **A pane, from the server's machine.** Where the project addresses its panes (`[agents] panes =
-  "hc"`) and the agent has one (`pane`), a page asked from this machine (loopback, or one of its
-  own tailnet addresses as `tailscale status` gives them) shows a button. The server has the Herdr
-  app show that terminal, `herdr-app do agent.focus --terminal T` (`pane.focus --terminal T` for
-  one that runs no agent), and brings the app's window forward with `open -a` on the app bundle
-  its program lies in (`crates/tasks/src/launch/go.rs`, `POST /api/agent-focus`); the page says
-  what was done, or why not. Herdr has no URL scheme a page could link to (neither `herdr-app`'s
-  help nor its commands name one), so the server asking the app on its own machine is the only
-  way, and the button is offered only to a page there; the route refuses any other.
-- **A pane, from another machine.** A phone or another computer on the tailnet cannot focus
-  anything on the Mac: its button shows the pane's visible screen, read only (`hc read T --lines
-  0`, `GET /api/agent-screen?handle=H`), and reads it again on the next click. With both a web
-  address and a pane, this machine focuses the pane and any other follows the web address.
-- **A subagent.** An in-process agent (`in_process`: its binding says it runs inside another
-  session) has no pane of its own, so its control goes to its parent's session (the first parent
-  in turn that has a way in, at most eight up) and says "in PARENT's session". A launched agent
-  with a parent is no subagent: its parent's pane is not its session.
-- **Nothing known.** No web address, no pane the project addresses, no parent with either: no
-  control.
-
-Decided with it:
-
-- **One call shows a pane.** The terminal's address alone is enough: the app finds the space, tab
-  and pane that hold it, so no workspace or tab is named in turn.
-- **What names a pane across a Herdr restart.** The control names the agent by its handle, never a
-  terminal. Each tick finds the agent's pane anew, by its task session's terminal, the
-  conversation its program runs or its handle as the terminal's name or label ("Which terminal",
-  above), so once Herdr restarts and its terminals take new addresses, the next tick finds the
-  pane again; a terminal's address is never kept as the pane's name.
-- **What the screen may show.** A pane's screen shows whatever its agent printed, a secret among
-  it, and so does a session's web address to whoever can open it. Both reach only a request the
-  gate admits, this machine or a tailnet peer `tailscale whois` confirms (the gate refuses every
-  other address before any route), and the screen is read when asked, never kept, and answered
-  `no-store`.
-- **Nothing is typed.** Neither a focus nor a screen sends a key, a message or a paste to a pane:
-  the only calls are `herdr-app do agent.focus` or `pane.focus`, `open -a` and `hc read`.
-- **One deadline, one at a time.** A focus (up to three calls: `agent.focus`, `pane.focus` and
-  `open -a`) and a screen read each have 10 s for all their calls together
-  (`symphony_board::launch::go::DEADLINE`), under the 15 s a page waits for its answer: a call
-  still running when that is spent is killed and reaped, and one not yet started is not run. The
-  kill reaches that call's own process, which stays in its caller's process group, so a signal to
-  the caller's group (the server ending a `tasks reap`, Ctrl-C in a terminal) ends it too. hc and
-  `herdr-app` are single binaries. A process one started that still held its output would keep
-  the call's reader, and the killed process unreaped, until it ended, though the answer has
-  already been given. While
-  a focus, or a screen read, of a session is under way, another of the same kind for that session
-  is refused (409), so pressing the button again starts no second chain of calls.
 
 ## Tasks and roles
 
@@ -2113,7 +421,55 @@ line, `cancelled: why`, in the move's one write; any move takes one (`blocked: w
 reason with no words is refused. A move to blocked names what it waits on as well (`--on THING`,
 [what a task waits on](#what-a-task-waits-on)).
 
-### The default landing
+## Talking on a task
+
+Every task has a thread, and the thread is the way to reach whoever is on the
+task, whatever worktree or machine it runs in:
+
+```
+just tasks say sim/jump-departure "the dock ring is at 900" --to @reviewer
+```
+
+`--to` takes a handle, a role (`@executor`, `@reviewer`, `@orchestrator`,
+`@reserved`), or `owner`. Addressed messages reach the matching native callback
+as plain `MSG` event lines. Without an address, an agent's post stays on the
+thread; the orchestrator reads it in the app or with `just tasks show SLUG`.
+Verdicts reach the executor and orchestrator. The owner's word, its posts, its
+verdicts and its moves (the thread's `owner moved it FROM → TO`, which a channel,
+`just tasks wait` and the inbox carry as a `MOVE` line, never again as a
+`STATUS`), reaches everyone on the task and the task's orchestrator, with no
+orchestrator relaying it. On a task no live orchestrator holds it reaches every
+orchestrator too: one nobody holds (none on it or above it, or only a lost or left
+one, in the interval before the board gives it one, [Tasks and roles](#tasks-and-roles)), its copy marked `[unowned: no orchestrator holds it]`, and one whose nearest
+holder is stale or of unknown liveness, marked with that holder,
+`[unowned: no live orchestrator holds it: HANDLE (stale)]`; that holder hears it too,
+unmarked (`Store::inbox`, `crates/tasks/src/store/messages.rs`). Only a live holder
+keeps it to itself. The owner's cancel adds `; it moves no further: stop work on it`
+to its `MOVE` line, so the executor and reviewer stop at once (the owner's `done` is
+an approve verdict, which says no more). The thread keeps every line as written. Post milestones only, address what someone must act on, never
+acknowledge a message, and never repeat a post on a subtask and its parent.
+A session without a channel keeps `just tasks inbox`.
+
+In the Symphony an agent's post or verdict, a task's brief and an ask's answer are drawn as a
+document's body is: bold, italics, inline code, links, lists, tables, fenced code, pictures,
+`[[wiki links]]`, a card named in bold and `[[name:argument]]` components all show. Raw HTML
+does not: `Vec<String>`, `<TokensPart key=x>` or a `<details>` named in a post is the words
+typed, drawn once, never an element or a notice of unsupported content, as in a card's note
+(`convert_post`, `crates/symphony/src/render/markdown.rs`). The owner's words are the text typed,
+but for a line naming a file they attached, which shows the file.
+
+The owner reads the board and every thread in the Symphony, sends messages
+to anyone on a task, changes its priority from p0 to p4 and cancels open tasks.
+Cancellation asks for confirmation; done and cancelled tasks cannot be cancelled
+again. The board records these writes as `owner`. In the shared app, cancellation
+also closes the task's sessions and starts the worktree sweep, as the CLI does.
+An agent message addressed to `owner` rings the app's 🔔. Creating, claiming,
+other moves and verdicts go through agents. The app's **+** files a task from a
+line the owner writes, in `concept` under `inbox/`, for an orchestrator to brief
+([REVIEW](REVIEW.md#asking)); anything else the owner says that waits on an agent
+is an [ask](#asks).
+
+## The default landing
 
 `just land SLUG --as HANDLE` (`tasks land`, `crates/tasks/src/land.rs`) lands the
 task's branch, named as its slug, on the default branch. `just tasks claim` says so of a top-level
@@ -2140,7 +496,7 @@ whose justfile runs a `land` of its own (`just --show land` is not the Symphony'
 its push and its close: it runs no generator and no sweep, and nothing slow is on its
 path or behind its lock, since every merge could make a slow run start again, and a lock
 or queue around one would hold the whole pipeline back
-([its card](DECISIONS.md#land-tests-changed-packages)). One land of a
+([its card](CHECKS.md#land-tests-changed-packages)). One land of a
 repository runs at a time (`land.lock` in `symphony/tasks/`), the lock held for those
 seconds and its check; a second waits its turn and says whose, with no timeout,
 since the lock is freed when its holder's process ends however it ends, and a signal
@@ -2556,7 +912,7 @@ line, never a `ROLE` line per task, and a given orchestrator has orchestrated th
 fresh reviewer rule. So a task with no orchestrator is the moment before the board gives it one,
 or the wait while none under its limit stays: a well state, which every orchestrator hears and any
 under its limit takes with `just tasks role SLUG orchestrator`, counted on the board's health and
-warned of nowhere ([Board health](#board-health)). The cap ([Slots](#slots)) refuses no give but a move's: a given task in
+warned of nowhere ([Board health](BOARD_OPERATIONS.md#board-health)). The cap ([Slots](#slots)) refuses no give but a move's: a given task in
 progress counts for its new orchestrator as it did for the one it had, and a ready one counts for
 none.
 
@@ -2628,7 +984,7 @@ says what it came to; [`symphony-github deliver`](GITHUB.md#delivering-a-land) i
 are `publish`, `arm`, `merge`, `disarm`, `close`, `result` and `landed`
 (`crates/tasks/src/land/delivery.rs`, `crates/tasks/src/land/dispatch.rs`), and it decides
 nothing: what a task needs and whether it stands is
-[the evidence](#the-evidence-of-a-task-at-its-head) the land reads and hands it.
+[the evidence](BOARD_API.md#the-evidence-of-a-task-at-its-head) the land reads and hands it.
 
 It delivers nothing past a check the project asks for. The default land runs `[verdicts] check`
 on its merge before main moves (`[land] check`, on unless the project turns it off); a commit the
@@ -2809,7 +1165,7 @@ the regenerator, which makes nothing twice, and no release run a second time, so
 its landing made due is asked for by the next landing or the release run's `--due`, run by hand
 ([RELEASES](RELEASES.md#the-cadence)). The sweep takes the worktree and branch of a squashed
 head by that receipt, once git bears it out and the main checkout holds the squash
-(the worktree sweep, under "Finished worktrees go by themselves" above); the retained head stays.
+(the worktree sweep, under "Finished worktrees go by themselves" in [Sessions](#sessions)); the retained head stays.
 
 ### An import delivered by a pull request
 
@@ -3075,7 +1431,7 @@ sources, and a server built from main then embeds the older client. The release 
 within its time, while the regenerator makes main's outputs, and releases nothing of a
 main still behind, filing nothing for it: the regenerator's red is the task then
 ([RELEASES](RELEASES.md)). A consuming project's pin moved to a commit of main waits the
-same way ([its card](DECISIONS.md#pin-waits-for-current-client)): it moves only once `just tasks
+same way ([its card](#pin-waits-for-current-client)): it moves only once `just tasks
 regenerate --status --wait`, run in the Symphony checkout, exits 0, and then to the
 commit it names. The pin is the project's own tooling, which runs it first; a pin to a
 release needs no wait, as no release is cut on a main whose client is behind. A branch
@@ -3084,6 +1440,16 @@ candidate's fix that changes what the client is built from, since no regenerator
 candidate: it commits the distribution its own sources make (`just client-update`), which the
 candidate's rerun checks, and the land keeps main's side of it all the same
 ([RELEASES](RELEASES.md#the-release-candidate)).
+
+- [r] **pin-waits-for-current-client** — A land now merges and pushes in seconds. The client the server embeds is rebuilt after it by one background run, which commits it to main a few minutes later: about 14 minutes when the land changed the client, none when it did not. In between, main's committed client is older than its sources. A release already waits for it: the nightly releases nothing while main's client is behind. May a project's pin be moved to a commit of main whose committed client is behind? A: no; the pin waits until `just tasks regenerate --status` says the client is current, as a release does. B: yes; the pin moves, and the project's server serves the older client until its next move. Recommended: A. Approve and say A or B in the note, or comment. [[TASKS#The regenerator]]
+  [2026-11-12 14:20] agent — Posted for the board task `perf/land-batches-approved-tips`.
+
+    **Why it matters.** A change to the wire types, the server and the client lands its server at once and its client one round later. A server built from main in that window embeds the older client against the newer server, so a page can fail to read what the server sends.
+
+    **Where it applies.** Your verdict on how projects take a newer Symphony (they follow release tags, never main) already keeps a behind client out of every pin to a release, since no release is cut on one. This is for a pin moved by hand to a commit of main, which is every pin move until the first release is tagged. The check belongs to the project's own pin tooling. Symphony gives it the signal: the status command exits nonzero unless main's client is current.
+  [2026-11-12 14:31] owner · approved — A
+  [2026-11-12 14:33] agent — Building A now. A new form of the status command, `just tasks regenerate --status --wait` run in the Symphony checkout, waits while main's client is being rebuilt and succeeds only once it is current, the way the nightly waits before a release. A pin moved to a commit of main moves only after it succeeds, and the guides now say so. The pin itself is moved by the project's own tooling, which runs this command first. A pin to a release needs no wait, since no release is cut while main's client is behind.
+  [2026-11-12 16:36] agent · resolved
 
 ## Gates
 
@@ -3286,8 +1652,8 @@ landing](#the-default-landing)).
   cards' part `crates/tasks/src/stamps/posted.rs`): the owner's `approve SHA` naming T on the
   task's thread, or the owner's approve of the cards the task posted for the owner's look, read
   from git in the main checkout, never from a worktree's files. The cards' approve stands when
-  the branch posted a card (one of a register in a project document at T that the merge base of
-  T with the default branch holds no copy of, the owner's lines and its mark aside, as the pages
+  the branch posted a card (one in a project document at T, inline where it decides or in a
+  register, that the merge base of T with the default branch holds no copy of in any document, the owner's lines and its mark aside, as the pages
   read a branch's posted cards), each card it posted has `approved` as its newest owner verdict
   at T, committed (a reject, a question, pending, dismissed or none, on any of them, and it does
   not), and nothing came after the newest of those approves but the owner's lines: every commit
@@ -3370,7 +1736,7 @@ its assessor, its reviewer and its land read it, never by a word in a terminal o
   below that (a limit lowered needs no decision), the raise raised nothing, and it lands saying
   so. The land of a task a custom workflow holds reads them before its prepare edge, and a
   decision is part of the evidence its intent binds; a land delivered by a pull request reads
-  them the same way ([its evidence](#the-evidence-of-a-task-at-its-head)). The task page draws a stamp a decision waived
+  them the same way ([its evidence](BOARD_API.md#the-evidence-of-a-task-at-its-head)). The task page draws a stamp a decision waived
   at the tip as waived, with the decision's author, reason and tip.
 - **The assessor and the reviewer.** The assessor names no `owner` stamp for a limit a raise
   names, and keeps `review` for it; the reviewer still judges that the cut came first and the
@@ -3658,7 +2024,7 @@ record ids and their tasks by id, the tasks above them and the tasks they
 review by id, a level a round trip, and their roles through `role_slug`; it
 reads no table whole (`tests/store/slots/cost.rs`). Each
 orchestrator's PULL header shows `slots=OPEN/CAP`, and the agents API its
-`slots` ([The agents API](#the-agents-api)), the slots the cap counts: no
+`slots` ([The agents API](BOARD_API.md#the-agents-api)), the slots the cap counts: no
 work in review and no red work.
 
 ## The limit on the tasks an orchestrator holds
@@ -3689,7 +2055,7 @@ orchestrator_tasks (line 2) is "sixteen"; not a whole number`).
 - **A task with no orchestrator is well.** It waits for one under its limit that stays: `just
   tasks show` says so and names the `role` command any orchestrator under its limit takes it with,
   every orchestrator hears it, and the board's health counts it and warns of none ([Board
-  health](#board-health)).
+  health](BOARD_OPERATIONS.md#board-health)).
 - **Past the limit.** The limit takes nothing: an orchestrator holding more (one from before the
   limit, or the limit lowered) keeps every task and works it, gains none but a red until it is
   under, and is told in its PULL header (`orchestrates=66/16`, shown at the limit and past it) and
@@ -3705,6 +2071,677 @@ the taker's open tasks with its slot counter, `counter:['slots', HANDLE]`, in a 
 between the rule's read and its write, which holds that counter as read, and the board's give
 holds each receiver's counter as it read it before the board, so the write that loses is decided
 again on the new board.
+
+## Asks
+
+An **ask** is one thing the owner waits on an agent for: a verdict with a note or
+a rejection, a message on a card, a comment in a document, a chat, a message on a
+task's thread. It is a record of its own (`ask:N`, schema 17), never a task: it has
+no stage, no claim and no review, and no task count includes it. Each one says
+what it is about (the card on its document, the commented block, the chat's
+thread or the task, and the worktree's branch when the owner said it on one), the
+owner's first words (cut at 200 characters), when they were said, how many lines
+followed, who holds it now and since when, and each earlier holder with when it
+had it and why it moved on.
+
+While an ask is open, another line from the owner about the same thing joins it:
+the line is counted, and the ask keeps its first words and its age. A verdict and
+a message on one card are one thing. A line after the ask was answered opens a new
+one. The first answer closes an ask, whoever holds it, and a later answer changes
+nothing. An agent closes an ask that needs no answer, such as a thank-you, with
+`just tasks asks close ID "WHY"`. An open ask shows as late from ten minutes
+(`LATE_SECONDS`, the same for every kind), and an answered one never does: its
+age is how long it waited for its answer. The
+owner's words and the answers stay where they were written: the ask records only
+what it is about, who has it and whether it is answered.
+
+`just tasks asks` lists the open asks, the oldest first:
+
+```
+ask 3  verdict  card on docs/DECISIONS.md @tools/x  14 min, late  held by umber-stoat for 12 min
+  "why not B?"
+```
+
+`tasks api` opens, holds and answers them: `open_ask` (the kind, what it is about,
+the words and, if not now, `at`), `ask`, `asks` (`since`: answered ones too),
+`hold_ask` (`holder`, none for nobody, and `why`), `answer_ask` and `answer_about`
+(`by`, an agent's handle, and `answer`, where the answer is), and `close_ask`.
+The [design](analysis/owner-asks.md) has who holds an ask and when it moves.
+
+Who opens and closes them:
+
+- **A save in the Symphony.** A verdict that leaves its card waiting on an agent
+  (a rejection, a note, an approval its card kind says an agent applies), a
+  message on a card, a comment and a chat question or follow-up each open their
+  ask, or join the open one, in the same board write that queues the save's chat
+  event: the save's journal record carries both, and the shared server hands
+  them over once (`Store::owner_save`). A rejection with no note queues no chat
+  and opens its ask alone.
+- **A message on a task's thread.** The owner's message from the app opens the
+  task's ask in the message's own write. A line on the thread by a session
+  holding a role on the task, or by the one the owner's last line there was
+  sent to, answers it. A line the app posts as the owner for a board action with
+  no note opens none.
+- **The shared server's clock.** It closes an ask once its answer can be read:
+  one on a card once main's page holds the card, on the branch's page the owner
+  saw it on or as main's, waiting on no agent; one on a comment once the comment
+  is resolved, in its document (the worktree's for a branch's) or in the review
+  ledger the tidy archived it to; a chat once its thread in the ask store is
+  answered. Main's copy of a card answers, or keeps waiting, an ask said on a
+  branch only when that copy carries the owner's line, one of the owner's lines
+  dated from the minute before the ask on: the branch merged, or its line laid
+  on main's copy for a finished branch or a card the branch did not post.
+  Without it, main's copy says nothing of the branch's agent. It names who
+  answered: a chat's answering session, and on a card or a comment the session
+  that wrote the answer with `just symphony-reply PATH
+  SLUG TEXT --as HANDLE` (a comment's slug is `L` and its callout's line). The
+  register's lines name only `agent`, so an answer written into the file by hand
+  is credited to no one. It looks when the documents were read again or the ask
+  store changed, and a minute after it last looked
+  (`owner_asks::RESCAN_SECONDS`). An ask the owner said more to after the
+  documents were read waits for the next read. A private server opens and
+  closes none.
+- **Gone is no answer.** An ask whose card, comment, document, worktree or chat
+  thread is gone (the task cancelled, its worktree removed, the document
+  deleted) stays open, and `just tasks asks` says what is gone and for how long
+  (`gone` and `gone_since` in `--json`). A branch's card whose worktree was
+  removed unmerged is gone even where main holds the card: main's copy, without
+  the owner's line, marks it `the worktree of BRANCH is gone, and main's copy of
+  card SLUG does not carry the owner's line`. The mark comes off when the card or
+  comment is found again; the ask closes when its answer can be read, or by
+  hand with `just tasks asks close`. A gone ask is open, so it counts with the
+  open ones and never in the answered figures. A read that says nothing changes
+  nothing: a `git worktree list` that failed leaves every ask on a branch as it
+  was; a listed worktree git could not read (`Scan::failed`) leaves every ask on
+  a card of its branch as it was; and so does a document that could not be read.
+
+The `verdicts/…` tasks the app filed before asks are history: no save files one
+any more, and no server start touches them. `just symphony-cli verdict-asks`,
+run once in a project's main checkout, turns each one still open into asks:
+every card it lists that still waits on an agent becomes an ask keeping the
+owner's time, and the task is cancelled, as the app's own `app` session, then
+gets a line naming the asks and saying so. One an executor holds is not
+cancelled: it stays with its holder, and its line says that and why. Run again,
+it turns nothing more, as each turned task's line says so. On
+a project's live board it is refused outside the main checkout before it reads,
+as `just tasks migrate` is; a scratch board it turns from anywhere. Until it
+runs, an open verdict task stays the task it was, and an agent can still finish
+it. Comments left open before asks are asks only once the owner says more on
+them, unless `owner_asks::COMMENTS_OPEN_BEFORE` is set: then the same command
+opens one for each, aged from the commit that wrote it (the design's second open
+question, left to the owner).
+
+**In this repository the landing is step 1.** Main's first build that writes
+the board moves the live board to schema 17, and from then until the shared
+server restarts on main's build, the server's board writes are refused, the
+owner's messages on tasks among them; that restart needs the owner's own word.
+
+A consuming project whose pin moves to a build with asks takes three steps in
+its main checkout, in this order:
+
+1. Relink the project's builds at `.target/bin/` (`tasks` and `symphony`) to
+   the new pin, then run `just tasks migrate`, which moves its board to schema 17
+   (its checkout holds no board source, so no other command does). Before the
+   migration the new build is refused the board, naming `just tasks migrate`, and
+   the old one still runs. From the migration the old `tasks` build is refused
+   the board, as it writes only a board at its own schema, 16: a link, a session
+   or a tool still on it fails until it is relinked to the new pin.
+2. Restart the shared server on the new host build, a separate act that needs its
+   own word.
+3. Run `just symphony-cli verdict-asks` once.
+
+Between step 1 and the restart (in this repository, from the landing), the old
+server reads the board and its writes are refused:
+
+- **The owner's messages on tasks are refused**, as every other write of the
+  server is; the owner sends them again after the restart.
+- **The owner's saves open no ask.** They are written into the documents and
+  wait in the server's journal, and the new server delivers them on its start
+  to the chat recipient as chat only: the old build's journal records carry no
+  ask, and the new server opens none for them. Their asks are lost, not the
+  saves: a card or comment saved then waits on an agent in the app's agent queue
+  and in `just symphony-status --open`, and a chat question in `just symphony-ask
+  list --open`. Each gets an ask once the owner says more on it.
+
+From the restart, saves open asks, and the open verdict tasks wait as they were
+until the last step turns them.
+
+## Sessions
+
+Every agent that works from the board has a **handle** (`amber-heron`), a
+kind (`orchestrator`, `worker`, `reviewer`) and, for a subagent, a parent. The
+handle is printed by `just tasks register`; later commands take it from
+`--as`, else `TASKS_SESSION`. An agent writes it as `just tasks … --as HANDLE`:
+no allow rule passes a command with an env prefix, so
+`TASKS_SESSION=HANDLE just tasks …` stops at a prompt, while a session launched
+with the variable already set needs neither. Then run `just tasks callback --as HANDLE`: it detects
+the Claude inbox socket or Codex thread. An explicit `uds:/absolute/socket` or
+`codex:THREAD-UUID` works too; through `just tasks` a `codex:` one only as the
+session's own thread ([what the command may write](BOARD_OPERATIONS.md#what-the-command-may-write)). A session with no channel is listed as such and
+keeps the inbox fallback. hc terminals are for inspection, never delivery.
+
+`just agent-send HANDLE "text"` addresses an agent without a task. The sender
+comes from `TASKS_SESSION` or `--as`; delivery is one plain
+`AGENT from SENDER to HANDLE — text` event line. Reply with
+`just agent-send SENDER "text" --as HANDLE`. Whitespace is flattened as in board callbacks.
+It uses the callback outbox, identity checks, retries and inbox fallback. Output
+distinguishes sent from queued; sent confirms native transport only. An agent
+without a channel is refused with the command to register one and the option
+to send on a task with `just tasks say SLUG TEXT --to HANDLE` for its inbox.
+The Agents page shows each native address and the command to reach it. Scratch
+boards use `just agent-send --database NAME HANDLE "text" --as SENDER`.
+
+`just tasks callback --chat` registers the app's chat recipient. Chat selects
+the explicit seat, then an `--if-free` fallback, then a live orchestrator with
+a native callback, choosing the lexicographically smallest handle among plain
+orchestrators. A normal `just tasks callback --as HANDLE` is enough for that
+last fallback; `--chat --if-free` opts into the higher-priority fallback without
+displacing the seat. Sweep-confirmed native presence counts as live. A recipient
+suspended after delivery failures waits for the sweep to restore it. While no
+channel holds the seat, an orchestrator reading by `just tasks wait` holds it:
+a session is waiting from its first `wait` until it registers a channel (or
+turns one off) or leaves, and of the live waiting orchestrators the smallest
+handle receives chat at its next read; one that stops waiting holds it while it
+stays live, so what the owner says waits for that read. While nobody holds the
+seat, every orchestrator's `just tasks pull` ends with what the owner said that
+nobody received, and its `just tasks inbox` takes it, after which nobody reads
+it again: an owner's word never goes to no one unseen.
+The app names the recipient, and says when nobody receives chat. Saves queue
+asks, follow-ups, card messages, verdict notes and callouts directly; an outbox
+beside the asks preserves them across a board outage. No file watcher discovers
+chat. `--off` or leaving the board unregisters delivery.
+
+Board writes dispatch addressed messages and role/status/new-work changes. A
+command line's write queues what each recipient hears, as the write left the
+board, and answers without delivering it: a detached `tasks dispatch` delivers,
+one a host at a time, which makes one more pass for each write that commits
+while it runs. One that finds another running waits until that pass has ended,
+and takes over if the other's lease lapses first.
+The shared Symphony server schedules PULL digests and STALE/LOST transitions and
+retries failed deliveries. After the machine sleeps, its clock judges no session until a round of
+the idle sweep begun after the wake has ended, answered or failed, or a round's timeout and the
+slack it may start late within (240 + 30 s) of awake time have passed: the sleep's gap is nobody's silence, and the sweep first confirms each listener
+that still answers, so a quiet child whose listener answers is not said lost again at every wake,
+while one the round finds gone is said lost once (`apps/symphony-server/src/live/presence.rs`).
+Per-recipient leases prevent concurrent writers
+from sending the same queued event. A successful native send acknowledges the
+inbox; failure retries three times, is recorded on the task thread, and retains
+the event in the inbox. As with any external queue, a process crash after the
+native send but before acknowledgement can repeat delivery; messages carry
+stable board ids. No normal agent event remains a stream; the browser's live
+feed remains a stream because it updates the owner's page.
+
+The Claude wire envelope is newline-delimited
+`{"type":"user","message":{"role":"user","content":"…"}}`, observed in the
+installed Claude Code 2.1.308 socket example. Its body format is undocumented;
+this is the compatibility assumption. On macOS the board sends it without
+authentication and never reads the session's messaging token. Claude's inbound
+controls can hold or refuse it; a successful socket write confirms transport,
+not that Claude accepted the message. No project inbound setting is changed.
+Codex delivery uses the installed `codex queue --thread UUID --message TEXT`.
+For isolated runs use `tasks --database NAME ...` and
+`symphony-server --scratch NAME --port N --root ROOT`; the latter keeps
+its asks in `artifacts/callbacks-NAME/asks.db`.
+
+**Agent sessions behind a task** (`task_sessions`): `just tasks launch SLUG` starts the
+agent the project's `[agents] launch` in its main checkout's `symphony.toml` names (`default`,
+`codex` or `claude`, with its `model` and `effort`), on the model `[agents.models]` names for
+its role (`executor`, or `reviewer` under `--role reviewer`) when there is one
+([Limits and models](#limits-and-models)), else a Codex agent (`--no-daemon`; model
+`gpt-6.1-sol`, effort `xhigh`, workspace-write with network access), in an hc terminal of its
+own, `hc run --bg --no-parent --outlive-parent --keep`: no child of the caller's terminal,
+which the app would show under it rather than in a tab. `--kind` and `--model` win over the
+project's; its models and effort go with its agent, so `--kind` naming the other agent takes the
+board's model for that one (Codex `gpt-6.1-sol` at `xhigh`, Claude `sonnet` at its own effort).
+A table that does not parse, or names another agent, refuses the launch, and so does a machine
+running as many agents as `[limits] machine_agents` allows. The `launched` line
+names the agent, model and effort it started, and `launch --help` ends with what a bare launch
+starts where it runs (`crates/tasks/src/launch/defaults.rs`). The
+terminal shows in its stream tab (`code` for an executor, `review` for a reviewer, or
+`--tab` such as `3d` or `infra`) of the project's space in the Herdr app, found by name and
+made when missing (the labels `herdr.space` and `herdr.tab`); the owner's tabs and other
+projects' terminals are never a destination. Once hc calls the agent ready (`idle` or
+`done`), its first message goes in by `hc send`, never forced, and the launch is confirmed
+only by that send's receipt (`started`): an agent waiting on a person (a folder-trust
+dialog), never ready, or not starting on the message fails the launch naming the terminal,
+which is killed and removed. It writes its handle, role, agent session
+id, worktree, branch, terminal and start time; `just tasks show` lists them under
+`Sessions:`. No terminal the owner may be looking at is closed: one in the tab the Herdr
+app shows, the agent it shows, or held over them (`herdr-app status`, read last, right
+before the kill, after a last `hc get` that must still find it finished, running the program
+cleanup judged: the same pid and foreground); when the window cannot say or the terminal
+works again, it stays and cleanup names why. A shell closes only with the shell itself in
+its foreground: a job it runs in front, or one it became by `exec`, is work. When a terminal is closed (`just
+tasks cleanup`, or the task becoming done or cancelled: `hc kill`, then `hc rm`) the
+record stays and says why and how to bring it back,
+`just tasks restore SLUG [HANDLE]`, which resumes the conversation in the same
+worktree, in a new terminal; through `just tasks`, only a worktree in the project
+([what the command may write](BOARD_OPERATIONS.md#what-the-command-may-write)). A reviewer launch (`--role reviewer`) goes back to the
+task's recorded reviewer the same way: the newest that never said `just tasks leave` with a
+conversation recorded is resumed in its own worktree, agent and model, told `/review-task SLUG
+HANDLE` (the `resumed` line names it), and the launch is refused while a recorded reviewer still
+runs in a terminal; a new reviewer starts only where none can be resumed (no conversation
+recorded, a Codex thread that never arrived, a reviewer that left), or with `--beside WHY`, which
+resumes none and starts a second reviewer beside the one still there. One quiet since its task went
+back to `in_progress` reads `left` by its health and is resumed all the same. A reviewer launch on
+an instruction subtask is refused, naming the task it judges. A record from before hc names a
+herdr pane (`w1:p…`): that terminal is gone, so cleanup records it closed with its restore line, and restore brings
+the agent back in an hc terminal. `just tasks close SLUG HANDLE` closes one agent's terminal
+whatever role it holds (a reviewer waiting for a new tip), records it the same way once the
+terminal is killed, bound to that terminal, and retires the callback registered from it; it is
+refused for the caller's own session or terminal, one the owner may be looking at, and one whose
+program is not at rest (work under it as the idle sweep reads it, any test run included, or
+another program in its foreground). A close and a restore of one session each hold it while they
+run, so neither starts while the other runs; one whose hold lapsed and was taken over writes
+nothing more, and a restore that lost it kills the terminal it started. A Codex record
+takes the thread its callback registered whichever is written first; one closed with no thread
+says on its thread that restore cannot resume it. See the [tasks skill](../crates/symphony/shipped/skills/tasks/SKILL.md#launch-restore-clean-up-hc).
+
+An initialized JavaScript REPL can retain `kernel.js` and `trusted-worker.js` under the
+ChatGPT app's bundled `node`. Their command lines do not distinguish waiting for a cell
+from executing JavaScript or a browser operation, so an agent's `idle` status alone does
+not make them safe to close. Coordinate recovery with the session's owner: finish or
+cancel its active work, then have that original session call its native
+`node_repl.js_reset` or `cua_repl.js_reset`, for the REPL it used. Reset discards its
+JavaScript bindings. Wait for the reset's result and read its process tree again before
+retrying `just tasks close SLUG HANDLE` and then `just tasks restore SLUG HANDLE` on
+that project's board; the close still checks the foreground, remaining children and
+the owner's window. If the original session cannot execute the reset, coordinate a
+normal exit from that session before retrying. An accepted message queue is no proof
+that a reset ran, and retained kernels are no reason to bypass a close refusal.
+
+A consuming project chooses its agent models (`[agents.models]`), staffing policy and terminal
+lifecycle. The board records those sessions and roles; it imposes no model preference.
+
+**Optional automatic staffing:** `just tasks staff [--dry-run]` makes one pass, highest
+priority first. Enable it in `tools/task_staff.json` in the consuming checkout: `enabled`
+defaults to false, `max_sessions` to 8 and `min_free_memory_gib` to 4. `only` is an
+optional list of task slugs whose subtrees may be staffed; an empty list allows all
+orchestrated work. The config belongs to the checkout running the command (main for
+the Symphony). `reap` runs staffing before its five-minute idle sweep. A shared
+`symphony/tasks/staff.lock` keeps concurrent staffing passes from dispatching twice. A review
+is given on the task itself, never as a subtask: its reviewer takes the reviewer's role there,
+its launch is recorded there, and the pass's line on the thread names the tip. A review whose
+task has a recorded reviewer to resume goes to it, by the launch's resume (`would resume HANDLE`
+in a dry run), never to another idle reviewer, and fails as that launch would while the reviewer
+still runs, in a dry run too. Otherwise it goes to an idle reviewer only when
+the board would take its verdict, by the rule the verdict holds
+(`Held::unfresh`, [the default landing](#the-default-landing)); a reused reviewer whose launch
+was not recorded lets the role go, so the task waits on no reviewer that has no job, and a
+launch that fails takes back what it took, as every launch does. Through `just tasks` a pass
+launches only where a launch there may ([what the command may write](BOARD_OPERATIONS.md#what-the-command-may-write)): from a linked
+worktree, one continuing a branch checked out in the main checkout (its
+`.claude/worktrees/…` among them) or anywhere else outside that worktree and the worktree base
+is refused.
+
+`reap` also recovers missing agents with addressed work left unanswered for thirty
+minutes, even when staffing is disabled. It resumes a recorded conversation once
+per handle/post, after the hc terminal inventory confirms its absence, and posts the
+restore on the task thread. With no recorded conversation it only flags the work;
+it never starts a fresh conversation on its own. A failed automatic attempt stays
+flagged for manual action. `reap --dry-run` starts no recovery.
+
+Only ready tasks with dependencies done and no executor or reservation qualify;
+review tasks with no reviewer get one, on the task itself. A land-request task's opening
+`Review` line records the branch under review;
+an explicit `Branch:` or `Worktree ..., branch ...` line does too. Otherwise reviews
+use the executor's recorded branch, falling back to the task slug.
+Dry runs resolve that branch and show its tip too. A task whose target or dispatch
+fails prints its failure and leaves later tasks eligible; staffing errors never
+prevent the idle sweep. Work already staffed through a child is left alone. A live orchestrator on
+the task or an ancestor is required. Owner-only work is excluded by `owner-only`,
+`owner only`, `owner tier`, `sign-off`, `signoff` or `bless` in its slug/title, or a body
+line beginning `Owner-only:`, `Owner only:`, `Tier: owner` or `Review tier: owner`.
+Use these explicit markers for owner decisions.
+
+Before launching, the pass prompts an idle worker/reviewer holding no unfinished
+work in a suitable open terminal: an executor already on the task's own branch, or a
+reviewer or an instruction's worker in a detached checkout. A checkout with a live or stale
+executor is never reused. Otherwise it launches what a bare `just tasks launch` of the role
+would (the project's `[agents] launch` on the role's `[agents.models]` model, else Codex) in a
+separate worktree: the task's own branch, or detached main for an instruction or review. Live
+agent terminals and live board agent sessions without a terminal count toward the cap, the
+lower of `max_sessions` and `[limits] machine_agents`; reuse adds no session. Memory below the
+floor defers work. Every proposal, dispatch, deferral and failure prints one line. Only a successful ping or launch is posted on
+the task; deferrals and dry runs post nothing. A dry run previews even while
+disabled and creates no task, session or terminal.
+
+**Idle agents are closed by the board, not by a reminder.** A task
+that becomes done or cancelled closes its sessions at once; the rest is a sweep the
+Symphony's process (`just symphony`) runs every five minutes for each project it serves that
+has a board, each on a schedule of its own in its own checkout, started as the project is
+registered and stopped as it is removed, so one project's failing or hung sweep holds up no
+other's; each writes its own `reap.json` and its own board's health, which `just tasks status`
+reads. A lock in `symphony/tasks/`, beside the board's server, keeps two sweeps (a second
+app's, or `just tasks reap` by hand) from running at once, and nothing goes into any monitor.
+It closes (`hc kill`,
+then `hc rm`) one of this board's terminals (label `symphony.board`) whose named agent was
+idle (or stuck on the folder-trust prompt) at two sweeps at least five minutes apart,
+however many apps sweep, when neither its handle nor a subagent session under it holds
+an executor role on an in-progress, blocked or review task, a reviewer role on a task in
+review, an unanswered addressed post, or a reviewer awaiting re-review after changes
+returned its task to in-progress. That last keep includes landing changes messages,
+on the branch task or any numbered review task. A pending post keeps the terminal
+immediately, before the thirty-minute recovery threshold. A post, status move or verdict
+by its addressed handle answers earlier work; reading its inbox does not.
+Nothing runs under it but MCP helpers (Codex's configured `node_repl` and the ChatGPT
+app's `cua-repl.mjs` under its own `node` among them, each by its exact path, and
+Codex's `codex-code-mode-host` in a standalone release's `bin` folder), caffeinate and
+board commands: anything else is work, a `codex exec` job included. The roles above
+keep it for an hour at most, since only a session doing work, or about to within the hour, stays
+open: idle at its
+prompt that long, from its last tool call or the last change of its role or task
+status, it closes saying what brings it back; only an unanswered addressed post keeps
+it longer. A terminal whose program ended is removed at the first sweep, the open
+records naming it closed first with their restore line.
+Status, roles and the window are read again right before the close, and the terminal and the window once
+more after the close is recorded, right before the kill: work resumed by then (its agent
+working, or work under it) or the window showing it reopens the record. Never an unnamed terminal or another board's (it may be the owner's), an
+orchestrator or a chat, the caller's (`HC_TERMINAL_ID` or its session), or one on screen in the Herdr app, which
+starts its idle wait again (as does a window that cannot say what it shows).
+Each close is one line on the handle's task thread, with its restore line, written
+before the terminal is closed. `just tasks reap --dry-run` names what the next sweep would close
+and why each terminal stays; a sweep tells its log why it keeps an idle one, once per
+reason. `just tasks clean` runs cleanup and one sweep at once, never closing the caller's.
+Code: `crates/tasks/src/launch/reap.rs`.
+
+**Finished worktrees go by themselves**, without asking, so they hold no disk once their tasks
+are complete. The worktree sweep (`just tasks sweep`, the rules in
+the consuming project's worktree policy) starts, detached, whenever work
+finishes: a task going to done or cancelled (its closed sessions' worktrees then go without
+the 2 h wait), `just tasks leave`, `just tasks reap`, and at most once an hour `just tasks
+inbox`, by a stamp. The command that finished the work never waits on it and says nothing of
+it; each sweep runs from the main checkout, by the main checkout's build of `tasks` (never
+the caller's, whose sweep may not have landed; with none built it says so and sweeps nothing),
+and appends what it did to `symphony/tasks/sweep.log` in the git common dir. Status writes through
+`tasks api` (for example, a release run or reap caller writing status) do not start this CLI
+trigger; the next hourly sweep covers them. The Symphony's explicit finish action starts its own
+sweep.
+A worktree goes, locked or not, when its HEAD is in main (detached or on a branch), nothing in
+it did not land, no live work holds it and its lock holds nobody; the branch it had checked out
+goes with it once merged, if no other worktree holds it and it still points where it did. Three
+things keep that branch, each said as `kept branch NAME: WHY`: a land's record of its merge
+naming it, as `just land SLUG` run again finishes an interrupted land from that record and the
+branch, in a worktree of its own; a delivery of it by pull request not yet asked to merge, whose
+land run again reads the branch's tip (from the merge's request on, a land run again goes on from
+its journal alone, and the branch goes); and its task done by an approve no landing has closed, as
+what keeps such a task from going back to review once it is on main is its branch's tip.
+A head [a pull request squashed](#a-land-delivered-by-a-pull-request) is in no history of main,
+and is in main by its receipt alone: the HEAD, or the branch's tip, is exactly the head a receipt
+kept under its own task's name records; `refs/symphony/delivered/SLUG` still names that head, so
+no commit is lost with the branch; the squash the receipt names is the commit it recorded, of
+that one parent and that tree, the tree git makes of merging the head into that parent; and that
+squash is on `origin/main` as last fetched and in main here. The sweep reads all of it from git
+and the kept file, fetches nothing and asks no host. Anything less is a head not in main, kept as
+one: a branch that moved on after its delivery, a receipt that does not read, is another task's
+or names another commit, a retained head gone or moved, a squash the remote was never seen to
+hold or the main checkout has not followed. Such a worktree and branch are said as `squashed
+into main as COMMIT by pull request #N` where a merged one says `merged into main`, and every
+rule below holds for them as for any other. The sweep deletes no retained head, no receipt and
+no branch of the remote.
+Nothing did not land when it has no tracked edit, no untracked file and no ignored file but
+build output and caches, and holds no owner verdict no commit has (an owner's dated line under a
+card, in a document of the project's entrypoint folders, that its HEAD does not hold; a worktree
+whose documents git cannot read for one is kept, saying so). No live work holds it when no
+live or stale session is bound to it (a subagent's session is bound to its own `agent-ID`
+worktree as well), no live task is tied to it (its branch names the task's slug, or the slug
+with its last `/` as `-`), no process works inside it and nothing touched it within the 2 h
+window. Its lock holds nobody when it has none, or names a process that is gone: Claude Code's
+(`claude agent agent-X (pid N start …)`) once N is not running or runs with another start, a
+land's (`symphony land: SLUG (pid N, started S)`) once N is not the process that started at S
+(or, with no start, once N is not running). Claude Code's lock names the
+session that started the agent, its orchestrator, which outlives every agent it started, so a
+lock whose process runs says nothing of the agent; the board says the agent finished when a
+session is bound to the worktree (by its worktree, or as the agent the worktree's name and the
+lock give), none of those sessions is live or stale, and every task tied to the worktree, at
+least one, is done or cancelled. A live agent's worktree is never touched: its session, live or
+stale, keeps it, and so does a lock the board cannot answer for (an agent it knows nothing of, a
+land that runs, the release run's checkout, any other reason, a start it cannot read). Every
+worktree git lists is the sweep's, the `../symphony-wt/*` trees the land and the release run make
+included: a land's goes by the same rule once its process is gone; the release run's checkout,
+which it resets and builds on each day, stays. A worktree with tracked edits or commits not
+in main is never removed, whatever its task's stage: an orchestrator decides. What git ignores
+in a finished worktree's artifacts folder (the project's `[project] artifacts`, `artifacts/`
+when it names none: the pictures its thread names, a test's leftovers), less its build output, is
+moved into the main checkout's `FOLDER/swept/NAME/` right before the worktree goes, whatever came
+there up to then, and back if git refuses the removal; while a task tied to it is open, it keeps
+the worktree. A move the sweep cannot make (the folder on another disk, a name there taken, even a
+moment before: the rename itself refuses it) keeps the worktree and says why, and so does an entry
+there the sweep cannot read, which would otherwise go with the worktree: evidence is moved, never
+copied, replaced or removed. Nothing empties
+`FOLDER/swept/` (below). The pass a land
+runs for its task visits, without the window, the worktrees the task's closed launches ran in,
+those its executors' and reviewers' sessions are bound to once none of those is live or stale (an
+in-process agent has no launch record), and those on the task's branch (an agent that left has
+released its roles). Before each removal the sweep refreshes
+sessions, launches, locks and activity and searches that tree for process working directories;
+a lock it lifts goes back if the removal is refused. A detached agent's merged or squashed
+`worktree-agent-ID` branch stays while its live or stale session still binds its worktree.
+In-process agents work only in their own `agent-ID` worktree; a different directory they create
+is not bound by their agent id. Full sessions register from the worktree they use. Each removal
+says what the worktree held on disk, and the summary what the sweep freed; a sweep started
+detached (a land's, work finishing's) writes them to `symphony/tasks/sweep.log` under a line saying when
+and why.
+A board `TASKS_SERVER` names (a test's) starts no sweep unless
+`TASKS_SWEEP=on`; `TASKS_SWEEP=off` starts none anywhere. Code: `crates/tasks/src/sweep.rs`.
+
+**What the sweep sets aside stays, its build output never, and past a cap the sweep asks for a
+check by hand.** A finished worktree's pictures and other artifacts are kept in the main checkout
+and its build output is not; past a size cap, agents are asked to check by hand and remove what
+nothing uses any more ([its card](#sweep-artifacts-set-aside)). What is set aside
+stays in the main checkout's artifacts folder, which
+git ignores, and nothing commits it; attaching it to the repository without a commit on main is a
+design of its own. Build output in a worktree's artifacts folder (a folder tagged as a cache by a
+`CACHEDIR.TAG` that begins with the convention's signature, `Signature:
+8a477f597d28d172789f06886806bc55`, as Cargo writes it, a file of that name without it tagging
+nothing; or a file of compiled code, known by its first bytes: ELF, Mach-O, wasm, an archive) is
+never set aside and goes with the worktree. Nothing removes what
+was set aside, ever: past its cap, `[board] swept_cap_gb` in `symphony.toml`, in gigabytes (5 when
+unwritten; a value that is no number over 0 is said and 5 taken), the
+sweep still sets aside and refuses nothing. Each sweep that may set aside measures `FOLDER/swept/`
+and keeps the measure in `symphony/tasks/swept.json` in the git common dir, beside the tasks tied to each
+folder's worktree when it was set aside. Past the cap, the sweep's output (the log's, for the
+sweep a land starts) and a dry run's say so in one line, `set aside in PATH: SIZE, over its CAP GB
+cap ([board] swept_cap_gb): …`,
+and `tasks status` warns of it, once, from that record, standing while the last measure is past
+the cap: `the artifacts set aside in PATH hold SIZE, over their CAP GB cap ([board] swept_cap_gb),
+as the sweep measured them AGO ago, said until a sweep measures them again (…): …`, so a check by
+hand clears it once a sweep measures again, a dry run recording nothing. Both ask for the check by
+hand and name the five largest
+folders there, each with the tasks tied to it and their stage and what still references it:
+`in use: WHERE` for a task tied to it that is not done or cancelled (`task SLUG is open`), a post
+on an open task's thread naming a path under it (`the thread of SLUG`) and a document of `docs/` on
+main naming one (`docs/PATH`, cards included); `no reference found` for the rest, which alone are
+suggested, and which the sweep does not remove either. A path is named under a folder there as
+`FOLDER/swept/NAME/…`, or as the worktree's own artifacts folder held it, `FOLDER/…`, when the
+folder holds that path now. A source that cannot be read is said, and then none is suggested. The
+references are looked up once for each measure past the cap: one read of the open tasks' threads
+and one `git grep` of `docs/` on main. Under the cap nothing is looked up, the sweep says nothing of
+the folder and a dry run says `set aside in PATH: SIZE, under its CAP GB cap ([board]
+swept_cap_gb), …`. Code: `crates/tasks/src/sweep/kept.rs`.
+
+**Build output goes once the work is past its executor, the worktree staying.** A worktree the
+sweep keeps (in review, its work not landed, holding files that did not land) loses its build
+folders (`.target/`, `symphony/.target/`, each gigabytes, and what git ignores in `build/` and
+`symphony/build/`) once every task tied to it is in review, done or cancelled, merged or not (an
+in-process agent's worktree is tied to its task by its session), and nothing ran there for an
+hour: no agent bound to it beat or made a tool call, the board's recorder recorded no build or
+test there (a reviewer may build in its executor's worktree), nothing touched its git files or
+its top folder, and no process works inside it. The worktree a land left when its process
+ended loses it after the same hour, and the release run's checkout once nothing touched it for 7
+days, as long as the release run itself keeps one. Any other worktree tied to no task keeps its
+build: the owner's, or one made by hand. A task in concept, design, ready, in progress or
+blocked keeps it, as do a land that runs and a lock the sweep does not know. Right before it
+removes, the sweep reads the worktree listing, the board and the recorder's records again and
+decides again, and asks again whether a process works inside; then it takes each Cargo build
+lock in the folder without waiting (a build holding one keeps the folder), renames the folder
+aside under them and removes it; of `build/`, what git tracks or holds untracked stays. A folder
+reached through a link (`symphony` or `.target` linking elsewhere) is never touched. Each clear
+says `cleared build output PATH (why; SIZE)`. Code: `crates/tasks/src/sweep/build_output.rs`.
+
+**`just tasks sweep --dry-run` says what a sweep would do, and does none of it.** One line per
+worktree git lists, `worktree PATH: SIZE; TASKS; MERGED; VERDICT`: what it holds on disk (the main
+checkout's line has no size), the tasks tied to it with their status (`task SLUG (STATUS)`, or `no
+task`), `merged into main`, `squashed into main as COMMIT by pull request #N` or how many commits
+it has that main has not, and what the sweep would
+do with it and why (`would remove: …`, `kept: …`, or `kept for an orchestrator to decide: …` for
+tracked edits, files that did not land and commits not in main). Then `set aside in PATH: SIZE`
+says what the main checkout's `FOLDER/swept/` holds against its cap (above), and its summary ends
+with what a sweep would free of what the worktrees it measured hold, which a sweep on the same
+state frees.
+
+**A linked worktree's first build starts from the main checkout's.** `tools/cargo.sh`, which
+every build here goes through, makes a worktree's missing build folder as a copy-on-write clone
+of the main checkout's `.target/debug` (`tools/seed-target.sh`: clonefile on APFS, a reflink on
+Linux; nothing on a volume that cannot clone), taken under Cargo's own lock on that folder and
+without the workspace's own packages, so the worktree compiles those from its own sources and
+reuses every dependency. While the clone holds that lock, a build in the main checkout and every
+board command (each builds the main checkout's launcher) waits: on macOS for one clonefile call
+of the whole folder (`tools/seed-clone.rs`, compiled by rustc on the spot), else for `cp -c`
+cloning each file. A clone takes disk only as a build replaces what it holds; `du` counts each
+clone in full, `df` says what the disk holds. It is staged as `.target.seed.PID`, which a signal
+removes with the clone and a later seed or sweep removes once its process is gone.
+`SYMPHONY_SEED_TARGET=off` turns it off. Worktrees never share one build folder: Cargo names the same
+package of two worktrees the same, so each would run the other's build of it. What it costs and
+saves, measured: [the analysis](analysis/worktree-build-folders.md).
+
+**Health** is derived from when the session was last seen. Every command
+counts as a sign of life, and so does every tool call of a subagent (below):
+
+| health | meaning |
+|---|---|
+| live | seen in the last 90 s, or inside one long tool call that could still be running |
+| stale | quiet, or its monitor has stopped: its work is still held, nobody may take it |
+| lost | gone for 10 minutes holding claimable work: that work can be claimed, on the record |
+| left | it said `just tasks leave` (its roles were released, the open work it orchestrated given to another orchestrator, or waiting for one while none stays), or it has been gone 10 minutes holding nothing anyone could claim |
+
+**Claimable work** is what a session executes in `concept`, `design`, `ready`
+or `in_progress`, and what it reviews that is still in `review`. A session
+whose part is finished (its task done, or waiting in review for someone else)
+ends quietly as `left`; if its task comes back with `changes`, it is `lost`
+again, and that task can be claimed. `just tasks who`, the Symphony's
+**Agents** and the attach monitor read the same health.
+
+Callback registration does not expire. The legacy attach stream remains only
+for sessions with no native channel. Tool calls are still the heartbeat.
+
+A **subagent** has no monitor; its own tool calls are its heartbeat. The
+project's `PreToolUse` (Bash) and `PostToolUse` hooks
+(`.target/bin/symphony hook tasks-beat`, which runs the board binary's `tasks beat`
+directly, not through `just`, so unmarked) see the Claude Code agent id
+on each of its tool calls. A `just tasks …` command the subagent runs binds it
+to the handle that command acts as, and so does one naming a justfile or a
+folder before `tasks` (`--justfile PATH`, `-f PATH`, `--working-directory DIR`
+or `-d DIR`, as a worktree's `just --justfile MAIN/justfile tasks …`): its own
+`--as <handle>` flag, else a leading `TASKS_SESSION=<handle>` on that same
+command. The flag is the form to write: the allow rules pass no env prefix, and
+the prefix binds nothing the flag does not. A handle anywhere else
+in a command (a grep pattern, text inside a quoted argument, another recipe
+such as `just land` run under someone's `TASKS_SESSION`) binds nothing. From
+then on each of its tool calls beats for that handle, until a later board
+command names another. A full session with no agent id (one started in an hc terminal, or a
+`claude -p` run) is bound and beats the same way, keyed by its session id, but keeps the first handle
+it names: naming another (registering or relaying for a child) moves nothing. A handle
+with a monitor of its own (an orchestrator) is never bound: its monitor beats for it,
+and a session that names such a handle is barred from binding at all, so the calls of
+an orchestrator never keep a child it registered alive. The hook looks at the board
+only for a board command or a key already bound. A foreground Bash call
+reads live for as long as its timeout allows (at most 10 minutes), so a long
+`verify-full` does not look like silence; of calls running side by side, the
+one that may run longest keeps the mark, and only its own end clears it. Each
+tool call of a bound subagent also records, on its binding (never its session
+row, which keeps where its orchestrator ran `register`), the checkout that call
+ran in: the top folder above the hook's `cwd` and the branch checked out there,
+read from the `.git` files, and, when that checkout changed, the time it came
+there; a call with no `cwd`, or one outside any checkout, moves neither (the
+last checkout stands: such a call says nothing of where it works). A call there
+that reads a time before any other there did (the clock went back) keeps that
+earliest time too, never moving when it came. On Linux, whose kernel dates a
+process's start on the clock since boot, the hook also reads that clock (its
+boot's id and `/proc/uptime`): the binding keeps the reading of the call that
+came to the checkout and of its latest call anywhere, a later boot's replacing
+an earlier one's, and none when a call read none. Setting the wall clock moves
+neither those readings nor a start dated on that clock. A
+subagent waiting on a background command of its own (a `cargo test`, a build)
+makes no calls; while a live process it started works in that recorded linked
+worktree it reads `running_test` in the agents API, and is neither stale, lost
+nor orphaning its task ([The agents API](BOARD_API.md#the-agents-api)).
+A subagent that stops makes no more calls, leaves nothing working there, and
+ages to stale and lost as before. Each beat also hands the board the tokens the
+session's own transcript gained since its last beat, in the beat's one write
+([Where the tokens go](#where-the-tokens-go)).
+
+Orchestrators can share the board, each holding its own slug prefixes. A decision
+one side makes that the other must act on becomes a short board task for that side,
+and a side that approves documents commits them regularly, because worktree agents
+see only what is committed.
+
+### Going to a session
+
+Every agent on the agents page, and every role chip on a task's page, carries a **Go to session**
+control when the board knows a way into that agent's session. The server works out each agent's
+way in at each tick of its clock (`symphony_api::resolve_sessions`; the Symphony's wire carries it
+as the agent's `go`, `{"handle", "url", "pane"}`, and a task page's `sessions` for its role
+holders), and what the control does depends on the session and on where the page was asked:
+
+- **A web session.** A session that gave a web address (a cloud agent, a Claude Code session with a
+  remote link) is an ordinary link to it, opened in a new tab, from any device. The session gives
+  it with `just tasks register --session-url URL`, or later `just tasks callback --session-url URL`
+  (alone, or beside a channel; an empty one clears it). It is `https://` or `http://` with a host,
+  with no space or control character, at most 2048 bytes (`crates/tasks/src/session_url.rs`),
+  checked when it is set and again when the board reads it, so a row written past the check (a
+  copied dump, a hand write) is left out; a page links only what `symphony_api::web_address`
+  passes, so no other scheme ever becomes a link. `callback --session-url` keeps the address only
+  once its registration is accepted. The board keeps it in `callback_state` beside the session's
+  row, never on it, moving no board marker, and `leave` deletes it. It is the agents API's
+  `session_url`.
+- **A pane, from the server's machine.** Where the project addresses its panes (`[agents] panes =
+  "hc"`) and the agent has one (`pane`), a page asked from this machine (loopback, or one of its
+  own tailnet addresses as `tailscale status` gives them) shows a button. The server has the Herdr
+  app show that terminal, `herdr-app do agent.focus --terminal T` (`pane.focus --terminal T` for
+  one that runs no agent), and brings the app's window forward with `open -a` on the app bundle
+  its program lies in (`crates/tasks/src/launch/go.rs`, `POST /api/agent-focus`); the page says
+  what was done, or why not. Herdr has no URL scheme a page could link to (neither `herdr-app`'s
+  help nor its commands name one), so the server asking the app on its own machine is the only
+  way, and the button is offered only to a page there; the route refuses any other.
+- **A pane, from another machine.** A phone or another computer on the tailnet cannot focus
+  anything on the Mac: its button shows the pane's visible screen, read only (`hc read T --lines
+  0`, `GET /api/agent-screen?handle=H`), and reads it again on the next click. With both a web
+  address and a pane, this machine focuses the pane and any other follows the web address.
+- **A subagent.** An in-process agent (`in_process`: its binding says it runs inside another
+  session) has no pane of its own, so its control goes to its parent's session (the first parent
+  in turn that has a way in, at most eight up) and says "in PARENT's session". A launched agent
+  with a parent is no subagent: its parent's pane is not its session.
+- **Nothing known.** No web address, no pane the project addresses, no parent with either: no
+  control.
+
+Decided with it:
+
+- **One call shows a pane.** The terminal's address alone is enough: the app finds the space, tab
+  and pane that hold it, so no workspace or tab is named in turn.
+- **What names a pane across a Herdr restart.** The control names the agent by its handle, never a
+  terminal. Each tick finds the agent's pane anew, by its task session's terminal, the
+  conversation its program runs or its handle as the terminal's name or label ("Which terminal" in
+  [the agents API](BOARD_API.md#the-agents-api)), so once Herdr restarts and its terminals take new addresses, the next tick finds the
+  pane again; a terminal's address is never kept as the pane's name.
+- **What the screen may show.** A pane's screen shows whatever its agent printed, a secret among
+  it, and so does a session's web address to whoever can open it. Both reach only a request the
+  gate admits, this machine or a tailnet peer `tailscale whois` confirms (the gate refuses every
+  other address before any route), and the screen is read when asked, never kept, and answered
+  `no-store`.
+- **Nothing is typed.** Neither a focus nor a screen sends a key, a message or a paste to a pane:
+  the only calls are `herdr-app do agent.focus` or `pane.focus`, `open -a` and `hc read`.
+- **One deadline, one at a time.** A focus (up to three calls: `agent.focus`, `pane.focus` and
+  `open -a`) and a screen read each have 10 s for all their calls together
+  (`symphony_board::launch::go::DEADLINE`), under the 15 s a page waits for its answer: a call
+  still running when that is spent is killed and reaped, and one not yet started is not run. The
+  kill reaches that call's own process, which stays in its caller's process group, so a signal to
+  the caller's group (the server ending a `tasks reap`, Ctrl-C in a terminal) ends it too. hc and
+  `herdr-app` are single binaries. A process one started that still held its output would keep
+  the call's reader, and the killed process unreaped, until it ended, though the answer has
+  already been given. While
+  a focus, or a screen read, of a session is under way, another of the same kind for that session
+  is refused (409), so pressing the button again starts no second chain of calls.
 
 ## The pipeline alarm
 
@@ -4049,7 +3086,7 @@ below them ([What the tokens cost](#what-the-tokens-cost)); a task with none pri
 `role`, `model`, `speed`, `round`, `tokens`, `cost`, `first`, `last`), with the `cost` of the
 total beside it; each `tokens` is `{"input", "cache_write_5m", "cache_write_1h", "cache_read",
 "output", "calls"}`. The agents API gives each agent's `tokens` and `cost`, all its rows summed
-([The agents API](#the-agents-api)). A landing's closing line names the task's after the commit
+([The agents API](BOARD_API.md#the-agents-api)). A landing's closing line names the task's after the commit
 (`landed SLUG on main at SHA; 71.6k tokens in 6 calls (executor 51.5k, reviewer 20.1k; round 1
 51.5k, round 2 20.1k), $0.08 estimated at API list prices read 2026-11-16`), each amount with
 its unit, so no number in it reads as a commit. A copy of the board carries the rows
@@ -4097,7 +3134,7 @@ The table moves the board to schema 19, which a build on schema 18 reads unharme
 Symphony, the shared server among them): it opens a board one schema ahead to read
 (`schema::decide`'s `Opened::Ahead`), and none of its reads or its dump names `usage`; what it
 would write waits or is refused until it reloads, as for any server one schema behind ([Who
-writes a board](#who-writes-a-board)). As a writer (every `tasks` command, `list`, `show` and
+writes a board](BOARD_OPERATIONS.md#who-writes-a-board)). As a writer (every `tasks` command, `list`, `show` and
 `agents` included) an 18 build is refused before any write, naming itself as the program to
 rebuild. Its beat writes nothing either, so an agent whose hook runs an 18 build reads quiet
 while it works until that link is renewed.
@@ -4239,187 +3276,26 @@ a box that clips, the rows under it where they were. The pictures it follows are
 `docs/analysis/reports-timeline-phone.svg` and
 `docs/analysis/reports-timeline-wide.svg`.
 
-## Talking on a task
+- [-] **timeline-burst-drawing** — A burst of runs, dozens of tests minutes apart in a task that lasted days, makes the task's wide timeline 12 px taller per run, with no limit: tools/board-token-usage's is 911 px tall, and its Tests lane is 37 thin rows that read as a dashed line, with no words. How should a lane draw a burst, every run kept its own and reachable? A: as it is, a thin row per run, the box growing. B: the same rows, the lane scrolling in a box of its own past 256 px, the height of six rows with words. C: each burst one mark that says how many runs and how many went red ("37 tests · 4 red"), opened in place to its runs by a click, a tap or Enter; on a phone, one row of the list the same way. Recommended: C. Approve and say A, B or C in the note, or comment. [[TASKS#The timeline]]
+  [2026-11-17 00:43] agent — Posted for the board task `app/timeline-burst-drawing-card`, from the review of `app/timeline-builds-and-tests-apart`. tools/board-token-usage at 1280 wide, on a private server of main's build (the shared server runs a release from before builds and tests had lanes of their own): A as it is, then B and C drawn on that page by hand, not built. ![The burst wide, option A](analysis/timeline-burst/a-wide.webp) ![The burst wide, option B](analysis/timeline-burst/b-wide.webp) ![The burst wide, option C](analysis/timeline-burst/c-wide.webp)
 
-Every task has a thread, and the thread is the way to reach whoever is on the
-task, whatever worktree or machine it runs in:
+    **A, as it is.** The box is 911 px; a typical whole timeline is 508. The Tests lane alone is 449 px: 12 tests on 11-15 and 37 on 11-16, each a sliver on five days of hours, each in a row of its own so that none is drawn over another. A run's words are only in its hover, its focus and its row on a phone.
 
-```
-just tasks say sim/jump-departure "the dock ring is at 900" --to @reviewer
-```
+    **B, the lane scrolls.** The box is 719 px. The lane stops at 256 px and scrolls the rest, its scroll bar in the margin past the hours. The rows are A's, no easier to read, and the runs below its edge are a scroll away inside a page that scrolls too.
 
-`--to` takes a handle, a role (`@executor`, `@reviewer`, `@orchestrator`,
-`@reserved`), or `owner`. Addressed messages reach the matching native callback
-as plain `MSG` event lines. Without an address, an agent's post stays on the
-thread; the orchestrator reads it in the app or with `just tasks show SLUG`.
-Verdicts reach the executor and orchestrator. The owner's word, its posts, its
-verdicts and its moves (the thread's `owner moved it FROM → TO`, which a channel,
-`just tasks wait` and the inbox carry as a `MOVE` line, never again as a
-`STATUS`), reaches everyone on the task and the task's orchestrator, with no
-orchestrator relaying it. On a task no live orchestrator holds it reaches every
-orchestrator too: one nobody holds (none on it or above it, or only a lost or left
-one, in the interval before the board gives it one, [Tasks and roles](#tasks-and-roles)), its copy marked `[unowned: no orchestrator holds it]`, and one whose nearest
-holder is stale or of unknown liveness, marked with that holder,
-`[unowned: no live orchestrator holds it: HANDLE (stale)]`; that holder hears it too,
-unmarked (`Store::inbox`, `crates/tasks/src/store/messages.rs`). Only a live holder
-keeps it to itself. The owner's cancel adds `; it moves no further: stop work on it`
-to its `MOVE` line, so the executor and reviewer stop at once (the owner's `done` is
-an approve verdict, which says no more). The thread keeps every line as written. Post milestones only, address what someone must act on, never
-acknowledge a message, and never repeat a post on a subtask and its parent.
-A session without a channel keeps `just tasks inbox`.
+    **C, one mark per burst.** The box is 509 px, about a typical timeline's. The lane is one row: a stacked mark with its count, its words under it. Opened, the burst draws its runs under the mark as A does, and closes the same way. The mark is no run's bar: its count says it holds several, so it never reads as one long run. A burst is runs each queued so soon after the one before it ended (half a percent of the hours drawn, as today) that they would need more than six rows; every other run is drawn as now.
 
-In the Symphony an agent's post or verdict, a task's brief and an ask's answer are drawn as a
-document's body is: bold, italics, inline code, links, lists, tables, fenced code, pictures,
-`[[wiki links]]`, a card named in bold and `[[name:argument]]` components all show. Raw HTML
-does not: `Vec<String>`, `<TokensPart key=x>` or a `<details>` named in a post is the words
-typed, drawn once, never an element or a notice of unsupported content, as in a card's note
-(`convert_post`, `crates/symphony/src/render/markdown.rs`). The owner's words are the text typed,
-but for a line naming a file they attached, which shows the file.
+    **What each costs.** A, nothing. B, a few lines of style, and a box that scrolls inside the page, which a trackpad catches as it passes over. C the most: the bursts found in the layout, a mark the keyboard and a tap open and close, its words, the phone's folded row, and their tests.
 
-The owner reads the board and every thread in the Symphony, sends messages
-to anyone on a task, changes its priority from p0 to p4 and cancels open tasks.
-Cancellation asks for confirmation; done and cancelled tasks cannot be cancelled
-again. The board records these writes as `owner`. In the shared app, cancellation
-also closes the task's sessions and starts the worktree sweep, as the CLI does.
-An agent message addressed to `owner` rings the app's 🔔. Creating, claiming,
-other moves and verdicts go through agents. The app's **+** files a task from a
-line the owner writes, in `concept` under `inbox/`, for an orchestrator to brief
-([REVIEW](REVIEW.md#asking)); anything else the owner says that waits on an agent
-is an [ask](#asks).
+    **Why C.** What a burst says is how many ran and whether any went red: C says it on one line, wide and on a phone, where the thin rows say neither. It gives back 402 px wide and 2,140 px on a phone's Show all, and every run is still one press away, each with its words in its hover, its focus and its row.
 
-## Asks
-
-An **ask** is one thing the owner waits on an agent for: a verdict with a note or
-a rejection, a message on a card, a comment in a document, a chat, a message on a
-task's thread. It is a record of its own (`ask:N`, schema 17), never a task: it has
-no stage, no claim and no review, and no task count includes it. Each one says
-what it is about (the card on its document, the commented block, the chat's
-thread or the task, and the worktree's branch when the owner said it on one), the
-owner's first words (cut at 200 characters), when they were said, how many lines
-followed, who holds it now and since when, and each earlier holder with when it
-had it and why it moved on.
-
-While an ask is open, another line from the owner about the same thing joins it:
-the line is counted, and the ask keeps its first words and its age. A verdict and
-a message on one card are one thing. A line after the ask was answered opens a new
-one. The first answer closes an ask, whoever holds it, and a later answer changes
-nothing. An agent closes an ask that needs no answer, such as a thank-you, with
-`just tasks asks close ID "WHY"`. An open ask shows as late from ten minutes
-(`LATE_SECONDS`, the same for every kind), and an answered one never does: its
-age is how long it waited for its answer. The
-owner's words and the answers stay where they were written: the ask records only
-what it is about, who has it and whether it is answered.
-
-`just tasks asks` lists the open asks, the oldest first:
-
-```
-ask 3  verdict  card on docs/DECISIONS.md @tools/x  14 min, late  held by umber-stoat for 12 min
-  "why not B?"
-```
-
-`tasks api` opens, holds and answers them: `open_ask` (the kind, what it is about,
-the words and, if not now, `at`), `ask`, `asks` (`since`: answered ones too),
-`hold_ask` (`holder`, none for nobody, and `why`), `answer_ask` and `answer_about`
-(`by`, an agent's handle, and `answer`, where the answer is), and `close_ask`.
-The [design](analysis/owner-asks.md) has who holds an ask and when it moves.
-
-Who opens and closes them:
-
-- **A save in the Symphony.** A verdict that leaves its card waiting on an agent
-  (a rejection, a note, an approval its card kind says an agent applies), a
-  message on a card, a comment and a chat question or follow-up each open their
-  ask, or join the open one, in the same board write that queues the save's chat
-  event: the save's journal record carries both, and the shared server hands
-  them over once (`Store::owner_save`). A rejection with no note queues no chat
-  and opens its ask alone.
-- **A message on a task's thread.** The owner's message from the app opens the
-  task's ask in the message's own write. A line on the thread by a session
-  holding a role on the task, or by the one the owner's last line there was
-  sent to, answers it. A line the app posts as the owner for a board action with
-  no note opens none.
-- **The shared server's clock.** It closes an ask once its answer can be read:
-  one on a card once main's page holds the card, on the branch's page the owner
-  saw it on or as main's, waiting on no agent; one on a comment once the comment
-  is resolved, in its document (the worktree's for a branch's) or in the review
-  ledger the tidy archived it to; a chat once its thread in the ask store is
-  answered. Main's copy of a card answers, or keeps waiting, an ask said on a
-  branch only when that copy carries the owner's line, one of the owner's lines
-  dated from the minute before the ask on: the branch merged, or its line laid
-  on main's copy for a finished branch or a card the branch did not post.
-  Without it, main's copy says nothing of the branch's agent. It names who
-  answered: a chat's answering session, and on a card or a comment the session
-  that wrote the answer with `just symphony-reply PATH
-  SLUG TEXT --as HANDLE` (a comment's slug is `L` and its callout's line). The
-  register's lines name only `agent`, so an answer written into the file by hand
-  is credited to no one. It looks when the documents were read again or the ask
-  store changed, and a minute after it last looked
-  (`owner_asks::RESCAN_SECONDS`). An ask the owner said more to after the
-  documents were read waits for the next read. A private server opens and
-  closes none.
-- **Gone is no answer.** An ask whose card, comment, document, worktree or chat
-  thread is gone (the task cancelled, its worktree removed, the document
-  deleted) stays open, and `just tasks asks` says what is gone and for how long
-  (`gone` and `gone_since` in `--json`). A branch's card whose worktree was
-  removed unmerged is gone even where main holds the card: main's copy, without
-  the owner's line, marks it `the worktree of BRANCH is gone, and main's copy of
-  card SLUG does not carry the owner's line`. The mark comes off when the card or
-  comment is found again; the ask closes when its answer can be read, or by
-  hand with `just tasks asks close`. A gone ask is open, so it counts with the
-  open ones and never in the answered figures. A read that says nothing changes
-  nothing: a `git worktree list` that failed leaves every ask on a branch as it
-  was; a listed worktree git could not read (`Scan::failed`) leaves every ask on
-  a card of its branch as it was; and so does a document that could not be read.
-
-The `verdicts/…` tasks the app filed before asks are history: no save files one
-any more, and no server start touches them. `just symphony-cli verdict-asks`,
-run once in a project's main checkout, turns each one still open into asks:
-every card it lists that still waits on an agent becomes an ask keeping the
-owner's time, and the task is cancelled, as the app's own `app` session, then
-gets a line naming the asks and saying so. One an executor holds is not
-cancelled: it stays with its holder, and its line says that and why. Run again,
-it turns nothing more, as each turned task's line says so. On
-a project's live board it is refused outside the main checkout before it reads,
-as `just tasks migrate` is; a scratch board it turns from anywhere. Until it
-runs, an open verdict task stays the task it was, and an agent can still finish
-it. Comments left open before asks are asks only once the owner says more on
-them, unless `owner_asks::COMMENTS_OPEN_BEFORE` is set: then the same command
-opens one for each, aged from the commit that wrote it (the design's second open
-question, left to the owner).
-
-**In this repository the landing is step 1.** Main's first build that writes
-the board moves the live board to schema 17, and from then until the shared
-server restarts on main's build, the server's board writes are refused, the
-owner's messages on tasks among them; that restart needs the owner's own word.
-
-A consuming project whose pin moves to a build with asks takes three steps in
-its main checkout, in this order:
-
-1. Relink the project's builds at `.target/bin/` (`tasks` and `symphony`) to
-   the new pin, then run `just tasks migrate`, which moves its board to schema 17
-   (its checkout holds no board source, so no other command does). Before the
-   migration the new build is refused the board, naming `just tasks migrate`, and
-   the old one still runs. From the migration the old `tasks` build is refused
-   the board, as it writes only a board at its own schema, 16: a link, a session
-   or a tool still on it fails until it is relinked to the new pin.
-2. Restart the shared server on the new host build, a separate act that needs its
-   own word.
-3. Run `just symphony-cli verdict-asks` once.
-
-Between step 1 and the restart (in this repository, from the landing), the old
-server reads the board and its writes are refused:
-
-- **The owner's messages on tasks are refused**, as every other write of the
-  server is; the owner sends them again after the restart.
-- **The owner's saves open no ask.** They are written into the documents and
-  wait in the server's journal, and the new server delivers them on its start
-  to the chat recipient as chat only: the old build's journal records carry no
-  ask, and the new server opens none for them. Their asks are lost, not the
-  saves: a card or comment saved then waits on an agent in the app's agent queue
-  and in `just symphony-status --open`, and a chat question in `just symphony-ask
-  list --open`. Each gets an ask once the owner says more on it.
-
-From the restart, saves open asks, and the open verdict tasks wait as they were
-until the last step turns them.
+    **Earlier verdicts checked.** **task-page-timeline-place** (C) keeps a phone's box at 240 px behind Show all; no option changes that. Your note on `inbox/timeline-should-not-be-collapsed-by-defa` had the wide timeline shown whole: "Desktop collapse save almost no space and hides really good information from view." It weighs against B and C, which hide runs until scrolled or opened, and does not decide this card: that collapse cut every task's lanes for little room, where a burst costs 402 px of rows that show no words. `app/timeline-builds-and-tests-apart`, from your question whether a 55 min build was several, never draws two runs as one bar, and no option does. None of them decides how a burst is drawn.
+  [2026-11-17 00:43] agent — On a phone the box opens at 240 px on the latest steps under every option (here round 3 and Done), so the burst shows only after Show all. There A and B list every run, 61 steps in 3,143 px, each row reading "Test, just test-rs -p sympho…"; C folds more than six runs in a row of the list into one row, 16 steps in 1,003 px. The list puts a run under the stage it began in, so 11-15's burst, which spans two stages, folds its first seven runs and leaves the last six as rows. ![A and B on a phone, after Show all](analysis/timeline-burst/phone-all.webp) ![C on a phone, after Show all](analysis/timeline-burst/c-phone-all.webp) C wide, in dark: ![C wide, dark](analysis/timeline-burst/c-wide-dark.webp)
+  [2026-11-17 00:43] agent — **Not asked here: the word under a bar.** It is the command's first word, so every `cargo install` reads "cargo 55 m" and every `just test-rs` "test-rs", and a phone's row is cut before what tells two runs apart. Better: the command's distinguishing words, the command without `just`, its flags and the test filter after `--`. So `just test-rs -p symphony-board --test cli -- beat` reads "test-rs symphony-board cli", `cargo install symphony-server (cold-full)` keeps all four words and `just lint-rs` stays "lint-rs"; under a bar with too little room for them, the first word as now, so no word goes where one shows today. It is not built here: it changes the drawing this card's answer changes, so it is built with that answer.
+  [2026-11-17 12:15] owner · question — why whould this be vertical instead of being horizontal reflecting actual ran times?
+  [2026-11-17 12:28] agent — Time already runs horizontally on the wide timeline: each bar is positioned by its recorded times. The vertical pile comes from a layout rule that gives runs separate rows not only when they overlap, but also when they are close together (within 0.5% of the whole time range). Across five days that is 36 minutes, so even sequential short tests get stacked. That avoids bars visually joining, but creates the height problem this proposal then tries to hide. Your suggestion addresses the cause: keep sequential runs on the same horizontal time axis, reserve extra rows for actual overlap, and let a closer time view reveal short runs at their real duration. The proposal should explore that before folding bursts; A/B/C overlooked it. The phone view is a separate chronological list because of its narrower width.
+  [2026-11-17 12:35] owner · rejected — yes. rework the proposal to be more horizontal based.
+  [2026-11-17 12:35] agent — Revised proposal: keep Builds and Tests on a shared horizontal time axis. Sequential runs reuse the same row; only genuinely overlapping queued/running intervals need another row. Each run keeps its actual start, end and duration, with waiting distinguished from execution. For a dense period, zoom into that time range and pan horizontally, with a clear return to the whole task; every lane uses the same scale so comparisons remain meaningful. Selecting a run shows its full command, exact times and result without adding a row per run. Very short runs stay individually reachable by keyboard and selection, without stretching their duration to fit a label. This replaces the vertical stacking, inner scrolling and folded-burst proposals above. The earlier pictures illustrate rejected options, not this revision; the revised layout still needs visual validation, including a narrow-screen treatment consistent with your existing phone-height decision.
 
 ## Links with the documents
 
@@ -4446,3 +3322,83 @@ task, with its live status beside it.
   nothing of whose a process is) goes stale after 90 s, and lost after 10 minutes if it holds
   claimable work. The board's own health (`just tasks show`, a claim) still ages
   by its beats alone.
+
+## Operation and APIs
+
+What follows is said in full in two documents of their own, each under the heading it has here.
+
+### Who writes a board
+
+The line a board keeps for each program that opens it to write, and what `just tasks migrate`
+reads of them before it moves a board: [BOARD_OPERATIONS](BOARD_OPERATIONS.md#who-writes-a-board).
+
+### Stuck servers
+
+A board server that outlasts its one ask to end, or a private replay nobody can tell is
+through, and what the owner does about each: [BOARD_OPERATIONS](BOARD_OPERATIONS.md#stuck-servers).
+
+### A board that went back
+
+A board refused because its store holds less than the schema it was seen at: what it means,
+accepting an older board that was meant, and recovering what was lost, step by step:
+[BOARD_OPERATIONS](BOARD_OPERATIONS.md#a-board-that-went-back). Do not run `just tasks migrate` on it.
+
+### A board that was copied or restored
+
+A copy of a whole board, or its files put back, starts another history: the generation, the
+recovery binding and `just tasks recovery`: [BOARD_OPERATIONS](BOARD_OPERATIONS.md#a-board-that-was-copied-or-restored).
+
+### Board health
+
+`just tasks status` prints the board's health over the last hour as its Symphony server
+recorded it, and every page and the project picker say when it is unwell. What is counted, the
+record and its hour files, and each warning: [BOARD_OPERATIONS](BOARD_OPERATIONS.md#board-health).
+
+- [r] **sweep-swept-retention** — Before the sweep removes a finished worktree, it moves what git ignores in its artifacts folder (the pictures its thread names, a test's leftovers) into the main checkout's `artifacts/swept/NAME/`, and nothing ever empties that folder. Any rule that empties it deletes evidence, so the rule is yours. How long is what was set aside kept? A: for good, every dry run saying how much it holds (built). B: 30 days after the worktree's task closed, then deleted, the dry run naming what goes next. C: only the files a task's thread names; the rest is deleted as the worktree goes. Recommended: A. Approve and say A, B (and the days, if not 30) or C in the note, or comment. [[TASKS#Board health]]
+  [2026-11-12 14:31] agent — Posted for the board task `tools/sweep-removes-nothing`. A dry run on a scratch repository after one sweep set a worktree's evidence aside; the highlighted line is the new one: ![A sweep's dry run, ending with what the main checkout holds set aside](analysis/sweep-dry-run-set-aside.svg)
+
+    **What it would hold.** On 2026-11-12, 16 of this repository's 40 worktrees had an artifacts folder, 4.6 GB in all: 3.5 GB of it one review's build, 0.9 GB one test's proof, the rest a few MB each. Each move is a rename on the same disk, so it takes no new space: it is what the worktrees held already.
+
+    **A, keep for good.** Nothing a thread names is ever lost. Cost: the folder grows with every task that leaves evidence, a review's build kept in its artifacts included; the dry run says how much, and the board warns on every page when free disk drops under 20 GB.
+
+    **B, keep 30 days.** The disk comes back by itself. Cost: a link on an older thread stops working, and a task reopened after that has lost its pictures.
+
+    **C, keep what a thread names.** Keeps the evidence and drops the leftovers, such as that 3.5 GB build. Cost: a picture named by another spelling, or only in a card, is deleted; the sweep reads the threads of every task tied to the worktree before each removal.
+
+    **Why A.** It deletes nothing until a size worth acting on shows, and B or C can follow as one rule over the same folder.
+  [2026-11-12 14:39] owner · question — images should be kept, build should not. Images and other artifacts can be pushed into a main tree. However there should be a cap to the size of the folder, after which it should ask/warn agents to manually check and remove stale images and artifacts not in use. Maybe 5 GB limit?
+  [2026-11-12 15:14] agent — Built as you said, for the board task `tools/sweep-removes-nothing`. Your words, 2026-11-12: "images should be kept, build should not. Images and other artifacts can be pushed into a main tree. However there should be a cap to the size of the folder, after which it should ask/warn agents to manually check and remove stale images and artifacts not in use. Maybe 5 GB limit?" and, the same day: "Instead of directly commiting, artifacts could be attached some with some different process. Either nodes, or git files? Forgot the name but I think there was something for this type of challenge in particular. But if there's something that still actively references the artifact, then it should be kept until space used becomes a problems requiring it to be remove."
+
+    **Kept, never committed.** The orchestrator's reading of "pushed into a main tree", labelled as theirs: kept in the main checkout's artifacts folder (ignored by git), not committed to the repository. Attaching artifacts without a commit on main (Git LFS, notes or a ref of its own) is a design task of its own, not built here.
+
+    **Build output is never kept.** A folder tagged with `CACHEDIR.TAG`, as Cargo's build folders are, or a file of compiled code, known by its first bytes (ELF, Mach-O, wasm, an archive), goes with the worktree. A correction to the figures above: the 3.5 GB I called one review's build is no build but a scratch repository's `.git` (`artifacts/hg-review/sf/.git` in that worktree), which these rules keep; the test's proof holds 280 MB server binaries, which are compiled code and now go.
+
+    **The cap, and nothing removed.** `[board] swept_cap_gb` in `symphony.toml`, 5 GB when unwritten, your suggested figure. The sweep never removes anything it set aside. Past the cap it still sets aside, and the sweep's output, the land's and a dry run's say so in one line, and `just tasks status` warns of it until it is under again, naming the size, the cap and the five largest folders with their tasks and stages. Each folder is marked `in use: WHERE` while a task tied to it is not done or cancelled, a post on an open task's thread names a path under it, or a file of `docs/` on main does (cards included), and `no reference found` otherwise; only those are suggested for the check by hand. The lookup is one read of the open tasks' threads and one search of `docs/`, made once each time the folder is measured past its cap. Rules: [[TASKS#Board health]].
+  [2026-11-12 17:43] owner · approved
+  [2026-11-12 17:59] agent · resolved
+
+- [r] **sweep-artifacts-set-aside** — A worktree whose task is done or cancelled used to stay whole for as long as anything sat in its `artifacts/` folder: the pictures its thread names, a test's leftovers, a review's build. That was the reason in 729 of the sweep log's 850 "kept" lines. What should the sweep do with that folder before it removes the worktree? A: move it into the main checkout's `artifacts/swept/NAME/`, and back if git refuses the removal. B: delete it with the worktree. C: keep the worktree, as before. Recommended: A, which is built. Approve and say A, B or C in the note, or comment. [[TASKS#Board health]]
+  [2026-11-12 12:15] agent — Posted for the board task `tools/sweep-removes-nothing`.
+
+    **What the folders hold today.** 16 of the 40 worktrees have one, 4.6 GB in all: 3.5 GB is one review's build (`hg-review`), 0.9 GB one test's proof, and the rest is a few MB each.
+
+    **A, move.** Nothing is lost, and every picture a thread names can still be found by its worktree's name. The move is a rename on the same disk, so it copies nothing. Cost: `artifacts/swept/` in the main checkout keeps growing until someone empties it, about 4.6 GB today.
+
+    **B, delete.** All the disk comes back at once. Cost: a task's evidence pictures are never committed, so a thread's link to one stops working once its worktree goes.
+
+    **C, keep.** Nothing changes. Cost: the 16 worktrees and their build output stay until someone empties each folder by hand. That is part of why the sweep removed 0 of 38.
+
+    **Why A.** It loses nothing, frees everything else in the worktree, and switching to B later is one line. The task's report has the other causes of "removed 0".
+  [2026-11-12 12:38] owner · approved — A
+  [2026-11-12 12:42] agent — Built as A says, nothing else changed. Before the sweep removes a worktree whose work is finished, it moves what git ignores in that worktree's artifacts/ into the main checkout's artifacts/swept/NAME/, NAME being the worktree's folder (NAME-2, NAME-3 when that name is taken). If git then refuses the removal, everything goes back. Nothing empties artifacts/swept/ by itself. It goes to review with the board task tools/sweep-removes-nothing now.
+  [2026-11-12 12:42] agent · resolved
+
+### The tasks API
+
+`tasks api`, the board's methods as JSON for a program rather than a person, a versioned
+contract: [BOARD_API](BOARD_API.md#the-tasks-api).
+
+### The agents API
+
+`GET /api/agents` and `just tasks agents --json`, who is doing what, with the rules a port
+copies, and what a callback and the PULL digest push: [BOARD_API](BOARD_API.md#the-agents-api).

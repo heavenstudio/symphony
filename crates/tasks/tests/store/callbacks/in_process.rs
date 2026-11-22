@@ -4,6 +4,7 @@ use crate::common::Backend;
 
 use super::*;
 use crate::children::Child as _;
+use symphony_board::sweep::trigger::now as wall_clock;
 
 /// A process working in a folder, as a subagent's background `cargo test` works in its worktree,
 /// until it is dropped however the test ends: a `cat` on a pipe only this test holds, so it ends
@@ -26,14 +27,6 @@ impl Drop for Working {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
-}
-
-/// The time on this machine's clock, which a real process's start is read against.
-fn wall_clock() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs_f64()
 }
 
 on_both! {

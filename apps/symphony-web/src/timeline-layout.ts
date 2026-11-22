@@ -240,7 +240,8 @@ export function dateOf(timeline: TaskTimeline, at: number): string {
 
 /**
  * The date `days` after 1970-01-01 in the proleptic Gregorian calendar (Howard Hinnant's
- * `civil_from_days`), the inverse of `words.ts`'s `moment`: year, month and day.
+ * `civil_from_days`), the inverse of `words.ts`'s `moment`: year, month and day. gates-model.ts
+ * holds the same, kept apart: shared, the build makes it one more file of the page's first visit.
  */
 export function civil(days: number): [number, number, number] {
   const z = days + 719_468;
@@ -1482,7 +1483,8 @@ export function legendStates(drawn: Lanes): GateState[] {
 // The reads.
 
 /** What a read that failed with nothing shown says of the next try, which the page's store makes
- * by itself (parts.ts), as the timeline's sentence says it. */
+ * by itself (parts.ts), as the timeline's sentence says it. trouble.tsx's `TRYING` is the same
+ * words, kept apart: naming it here would have the chunk every page loads export it. */
 export const AGAIN = "Trying again…";
 
 /** What a read that failed says, from the reason it failed for: its first line, the way the gates

@@ -169,7 +169,7 @@ tools: `crates/symphony/tests/hooks/own_names.rs` fails on an old state or tool 
 outside the fences it lists, each with its reason (a past incident's record in
 `docs/history/`), and on the first consuming project's name, in any spelling or identifier
 built from it, in a tracked file's text or path: say "the consuming project". It passes over
-the owner's own dated lines under a card of a register, saved as they said them, and judges
+the owner's own dated lines under a card, wherever it sits, saved as they said them, and judges
 every other line. The state folders are named once, in `crates/tasks/src/folders.rs`.
 
 **Memory lives in the repository.** Nothing goes in an agent's own memory folder
@@ -219,8 +219,8 @@ of main put there by hand (`tools/cargo.sh build -p symphony-github`, then copie
 rebuilds it, so a change to the program is built and put there again once it lands. An
 orchestrator starts the assessor when it files a task and each time it moves to review, before any
 reviewer: a task nobody assessed at its head waits in review with its checks pending, and nothing
-merges it. A decision the owner must make is a card in [DECISIONS](docs/DECISIONS.md), not a
-question in chat.
+merges it. A decision the owner must make is a card at the place in its document where the thing
+it decides is said ([REVIEW](docs/REVIEW.md#where-a-card-is-written)), not a question in chat.
 
 **Releases.** A land starts a release run (`just release`, below) once `[releases]
 every_landings` tasks (20) have landed since the last release or run ([the

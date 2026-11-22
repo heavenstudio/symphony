@@ -219,6 +219,21 @@ pub(crate) fn run_gh(
     }
 }
 
+/// `slug` published from a curated draft: `title`, and `body` from a file.
+pub(crate) fn draft(rig: &Rig, slug: &str, title: &str, body: &str) {
+    let file = rig.dir.0.join("public.md");
+    std::fs::write(&file, body).unwrap();
+    rig.run(&[
+        "publish",
+        slug,
+        "--title",
+        title,
+        "--body-file",
+        file.to_str().unwrap(),
+    ])
+    .ok();
+}
+
 /// The exchange on the board in memory.
 pub(crate) struct Rig {
     pub(crate) dir: Dir,

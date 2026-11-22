@@ -2,20 +2,18 @@
 //! This module is a child of the existing live read tests so no production fixture seam is needed.
 
 use super::super::Hub;
-use super::{agent, store_on};
+use super::agent;
 use crate::front::Shared;
-use crate::gate::Gate;
 use crate::hosted::tests::{assert_no_diagnostics, diagnostic_work, native_host, request};
 use crate::testing::{
     Tree,
     board::{Fixture, Seed},
-    repository,
+    repository, store_on,
 };
 use axum::body::{Body, to_bytes};
 use axum::extract::connect_info::MockConnectInfo;
 use axum::http::{Request, StatusCode, header};
 use std::sync::Arc;
-use std::time::Instant;
 use tower::ServiceExt;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -46,13 +44,7 @@ async fn native_hosted_project_models_withhold_machine_inventory_and_keep_projec
     };
     hub.update_board(&board.store, board.store.board().unwrap(), agents)
         .unwrap();
-    let shared = Shared::new(
-        1,
-        1,
-        &root,
-        None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
+    let shared = Shared::new(1, 1, &root, None, crate::testing::open_gate());
     assert!(shared.api.set(Arc::new(hub)).is_ok());
     let project = symphony::project::Project::of(&root).id.clone();
     let (config, host) = native_host(&project);

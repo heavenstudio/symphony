@@ -37,10 +37,7 @@ fn open(site: &Site, path: &str, width: u32, height: u32) -> Option<Chrome> {
 /// from its start.
 fn watching(width: u32, height: u32, scripts: &[&str]) -> Option<Chrome> {
     let mut browser = chrome()?;
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": width, "height": height, "deviceScaleFactor": 1, "mobile": false}),
-    );
+    browser.viewport(width, height, false);
     for source in scripts {
         browser.call(
             "Page.addScriptToEvaluateOnNewDocument",
@@ -1078,10 +1075,7 @@ fn the_chat_keeps_its_form_at_the_foot_of_its_sheet_with_new_conversation_just_a
     let Some(mut browser) = chrome() else {
         return;
     };
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": 390, "height": 844, "deviceScaleFactor": 1, "mobile": true}),
-    );
+    browser.viewport(390, 844, true);
     browser.call(
         "Page.addScriptToEvaluateOnNewDocument",
         json!({ "source": chat.held }),

@@ -1,6 +1,7 @@
 //! What activating a committed workflow does to a board, decided before any write: whether this
 //! host supports the definition at all, and where each task it holds goes (docs/WORKFLOW.md,
-//! docs/DECISIONS.md#configurable-workflow-activation B). The store writes the plan in one
+//! docs/analysis/configurable-delivery-workflow.md#configurable-workflow-activation B). The
+//! store writes the plan in one
 //! transaction fenced on what it read (`crate::store::workflow`); nothing here writes.
 //!
 //! A pair the new definition still declares keeps its task; any other needs a committed mapping,
