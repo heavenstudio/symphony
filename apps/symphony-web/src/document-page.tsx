@@ -39,7 +39,7 @@ import { PostponeControls } from "./postpone";
 import { documentsHref, entrypoints, fileAddress, href, project, scoped } from "./project";
 import { ComparisonNote, DocumentWithTasks, SectionDifference } from "./related";
 import { getJson, said } from "./request";
-import { anchor, scrollAnchor, useAnchor } from "./route";
+import { anchor, anchorIds, scrollAnchor, useAnchor } from "./route";
 import { failed as failedRead, ready as readyWord, Trouble } from "./trouble";
 import { AtOnce, NearViewport, Settle, Skeleton } from "./viewport";
 import type {
@@ -558,8 +558,7 @@ export const HydratedSection = memo(function HydratedSection({
   }, [fold, key, page]);
   const ready = section.blocks.length > 0;
   useEffect(() => {
-    const target = anchor();
-    if (ready && target !== "" && ids.includes(target)) scrollAnchor();
+    if (ready && anchorIds(anchor()).some((name) => ids.includes(name))) scrollAnchor();
   }, [ready, ids]);
   // The outer slot owns the comparison even while a settled card is closed. Its unfolded child
   // owns only the live content, so opening it never repeats the change's label or history.

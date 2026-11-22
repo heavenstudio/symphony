@@ -1,7 +1,7 @@
 //! The tasks a document lists: those of the board the caller holds that link it, by its route or
 //! by a route no file has that finds it by name ([`moved`]).
 
-use super::{document, folder, linked, moved};
+use super::{LinkNames, document, folder, linked, moved};
 use crate::render::Render;
 use crate::test_tree::Tree;
 use symphony_api::Task;
@@ -139,6 +139,26 @@ fn a_route_a_file_has_a_name_no_document_has_or_no_name_finds_nothing() {
     ] {
         assert!(moved(&tree.root, rel).is_empty(), "{rel:?}");
     }
+}
+
+#[test]
+fn the_documents_are_walked_only_for_a_link_only_its_name_can_settle() {
+    let tree = project();
+    let links = LinkNames::of(&tree.root);
+    assert!(
+        !links.names("docs/TOPIC.md#a-heading", "docs/guide/TOPIC.md"),
+        "a route a file has names its own document"
+    );
+    assert!(!links.names("docs/old/README.md", "docs/TOPIC.md"));
+    assert!(
+        links.paths.get().is_none(),
+        "neither a route a file has nor another name walks the documents"
+    );
+    assert!(links.names("docs/old/OTHER.md", "docs/OTHER.md"));
+    assert!(
+        links.paths.get().is_some(),
+        "a route no file has, of the document's name, walks them"
+    );
 }
 
 #[test]

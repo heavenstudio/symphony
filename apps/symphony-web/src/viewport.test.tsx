@@ -194,16 +194,33 @@ describe("content near the screen", () => {
   });
 
   it("is mounted at once when the address names it or an anchor it holds", () => {
-    vi.stubGlobal("location", { hash: "#part" });
-    for (const named of [{ id: "part" }, { anchors: ["part"] }]) {
+    // A heading named by its text (`#The%20part`) names the anchor the renderer gives it.
+    const cases: [string, { id?: string; anchors?: string[] }][] = [
+      ["#part", { id: "part" }],
+      ["#part", { anchors: ["part"] }],
+      ["#The%20part", { id: "the-part" }],
+      ["#The%20part", { anchors: ["the-part"] }],
+    ];
+    for (const [hash, named] of cases) {
+      vi.stubGlobal("location", { hash });
       const markup = renderToStaticMarkup(
         <NearViewport {...named}>
           <b>content</b>
         </NearViewport>,
       );
-      expect(markup).toContain("<b>content</b>");
-      expect(markup).toContain("min-height:0px");
+      expect(markup, hash).toContain("<b>content</b>");
+      expect(markup, hash).toContain("min-height:0px");
     }
+  });
+
+  it("waits as any part when the address names another", () => {
+    vi.stubGlobal("location", { hash: "#The%20other" });
+    const markup = renderToStaticMarkup(
+      <NearViewport anchors={["the-part"]} height={64}>
+        <b>content</b>
+      </NearViewport>,
+    );
+    expect(markup).not.toContain("content");
   });
 
   it("waits as any part when the address names it but it lands no more, its anchors held", () => {

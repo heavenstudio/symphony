@@ -3330,7 +3330,8 @@ title, slug and status, and finished work folded under its count. The `verdicts/
 the owner, not the document, and are left out. A link stays as it was filed: once its document
 moves folders, the task's page still opens it, and its page still lists the task, by its file
 name, as a wikilink to that name finds it; a name two documents share opens neither, and
-**Document not found** offers both. In the other direction, write
+**Document not found** offers both. A heading the link names by its text (`#The order`) opens
+the page at that heading, as its anchor (`#the-order`) does. In the other direction, write
 `[[task:sim/jump-departure]]` in any document: it renders as a link to the
 task, with its live status beside it.
 

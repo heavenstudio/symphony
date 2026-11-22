@@ -70,15 +70,16 @@ fn wire<T: Serialize, U: DeserializeOwned>(value: T) -> U {
 /// for a route a file has, one with no file name, or a name no document has.
 pub fn moved(root: &Path, rel: &str) -> Vec<String> {
     let project = crate::project::Project::of(root);
-    moved_among(root, &project, rel, &crate::render::doc_paths(root))
+    moved_among(root, &project, rel, || crate::render::doc_paths(root))
 }
 
-/// [`moved`] in `project`, among its document routes `paths` ([`crate::render::doc_paths`]).
-fn moved_among(
+/// [`moved`] in `project`, among its document routes, which `paths` walks
+/// ([`crate::render::doc_paths`]) only for a route with a file name that no file has.
+fn moved_among<P: AsRef<[String]>>(
     root: &Path,
     project: &crate::project::Project,
     rel: &str,
-    paths: &[String],
+    paths: impl FnOnce() -> P,
 ) -> Vec<String> {
     let Some(name) = Path::new(rel).file_name().and_then(|name| name.to_str()) else {
         return Vec::new();
@@ -86,7 +87,8 @@ fn moved_among(
     if root.join(project.file(rel)).is_file() {
         return Vec::new();
     }
-    crate::render::find_docs(name, rel, paths)
+    let paths = paths();
+    crate::render::find_docs(name, rel, paths.as_ref())
         .cloned()
         .collect()
 }
@@ -125,13 +127,10 @@ impl<'a> LinkNames<'a> {
             return false;
         };
         own == crate::render::doc_name(linked).as_str()
-            && moved_among(
-                self.root,
-                &self.project,
-                path,
+            && moved_among(self.root, &self.project, path, || {
                 self.paths
-                    .get_or_init(|| crate::render::doc_paths(self.root)),
-            ) == [rel]
+                    .get_or_init(|| crate::render::doc_paths(self.root))
+            }) == [rel]
     }
 }
 

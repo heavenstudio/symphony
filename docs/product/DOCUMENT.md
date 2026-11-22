@@ -9,7 +9,8 @@ another documents address.
 ## What the owner does here
 
 - **Reads and finds a section.** Follow **On this page**, a heading link or a link from another
-  document. **All docs** returns to the document list.
+  document, which may name the heading by its text, as a task's link does (`#The order`).
+  **All docs** returns to the document list.
 - **Comments on a block.** Press **+ comment** beside the paragraph, heading or table. Choose
   comment, question or decision, write the first line as its title, then **Save comment**.
 - **Asks a question.** The document's [ask conversation](../workflow/REVIEW.md#asking) is a chat;
