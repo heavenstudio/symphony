@@ -402,19 +402,50 @@ fn a_reservation_lapses_past_its_time_or_with_its_holder_gone_fenced_only_by_a_s
     let (live, time, past) = (Some(200.0), 100.0, 300.0);
     // Kept: in its time, or with no expiry, while its holder may still act.
     for health in [Health::Live, Health::Stale, Health::Unknown] {
-        assert_eq!(lapsed(live, Some(health), time), (false, false), "{health:?}");
-        assert_eq!(lapsed(None, Some(health), time), (false, false), "{health:?}");
+        assert_eq!(
+            lapsed(live, Some(health), time),
+            (false, false),
+            "{health:?}"
+        );
+        assert_eq!(
+            lapsed(None, Some(health), time),
+            (false, false),
+            "{health:?}"
+        );
         // Past its time it lapses on the clock alone: no beat fences that.
-        assert_eq!(lapsed(live, Some(health), past), (true, false), "{health:?}");
+        assert_eq!(
+            lapsed(live, Some(health), past),
+            (true, false),
+            "{health:?}"
+        );
     }
     // A holder lost or left lets it go before its time, fenced at the beat it was read at, and
     // after its time on the clock alone.
     for health in [Health::Lost, Health::Left] {
         assert_eq!(lapsed(live, Some(health), time), (true, true), "{health:?}");
         assert_eq!(lapsed(None, Some(health), time), (true, true), "{health:?}");
-        assert_eq!(lapsed(live, Some(health), past), (true, false), "{health:?}");
+        assert_eq!(
+            lapsed(live, Some(health), past),
+            (true, false),
+            "{health:?}"
+        );
     }
     // No session holds the handle: dropped, with no beat to fence.
     assert_eq!(lapsed(live, None, time), (true, false));
     assert_eq!(lapsed(None, None, time), (true, false));
+}
+
+#[test]
+fn a_start_counts_against_its_executors_and_only_with_none_against_its_mover() {
+    let handles = |names: &[&str]| names.iter().map(|n| (*n).to_string()).collect::<Vec<_>>();
+    assert_eq!(
+        executors_or(handles(&["amber-heron", "teal-owl"]), Some("mover")),
+        handles(&["amber-heron", "teal-owl"])
+    );
+    assert_eq!(
+        executors_or(handles(&["amber-heron"]), None),
+        handles(&["amber-heron"])
+    );
+    assert_eq!(executors_or(Vec::new(), Some("mover")), handles(&["mover"]));
+    assert_eq!(executors_or(Vec::new(), None), Vec::<String>::new());
 }

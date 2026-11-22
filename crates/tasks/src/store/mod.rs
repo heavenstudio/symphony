@@ -1185,12 +1185,20 @@ impl View {
         self.holders(role).any(|r| r.handle == handle)
     }
 
+    /// The handles of the task's executors, as read.
+    fn executors(&self) -> impl Iterator<Item = String> + '_ {
+        self.holders("executor").map(|r| r.handle.clone())
+    }
+
     /// The reservations that still count; those past their time or held by a session gone are dropped
     /// in `change`.
     fn lapse_reservations(&self, change: &mut Change) -> Vec<&RoleRow> {
         let mut kept = Vec::new();
         for held in self.holders("reserved") {
-            let health = self.sessions.get(held.handle.as_str()).map(|&(_, health)| health);
+            let health = self
+                .sessions
+                .get(held.handle.as_str())
+                .map(|&(_, health)| health);
             let (drop, fence) = lapsed(held.expires, health, self.now);
             if drop {
                 if fence {
@@ -1331,6 +1339,18 @@ struct Opens {
     /// For a task a custom workflow holds, whether the position it moves to holds a slot by its
     /// slot policy ([`crate::slots::Entry::slot`]).
     slot: Option<bool>,
+}
+
+/// Whose parents a start counts against the cap ([`Opens::by`]): `executors`, else `mover`, the
+/// session that makes the start, where one does.
+fn executors_or(executors: impl IntoIterator<Item = String>, mover: Option<&str>) -> Vec<String> {
+    let mut by: Vec<String> = executors.into_iter().collect();
+    if by.is_empty()
+        && let Some(mover) = mover
+    {
+        by.push(mover.into());
+    }
+    by
 }
 
 struct Say {
