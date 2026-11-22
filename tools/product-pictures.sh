@@ -9,8 +9,8 @@
 # is the project picker; from its `=theme` line on, the copy's own server's again, the copy with a
 # theme of its own. Every picture is taken at one moment (NOW below, on the board's clock and the
 # page's), in UTC, so a page that draws an age or a time is the same picture on any day. It touches
-# no shared server, no project's board and no terminal, and ends the servers it started, the copy's
-# board server with them.
+# no shared server, no project's board and no terminal, and ends the servers it started, the board
+# servers they started with them.
 #
 #   tools/product-pictures.sh          retake every picture
 #   tools/product-pictures.sh NAME...  retake those named (the list's first word)
@@ -35,17 +35,19 @@ finish() {
         kill "$pid" 2>/dev/null || true
         wait "$pid" 2>/dev/null || true
     done
-    # The copy's board server, which the Symphony's started, ends once its starters have: it is no
-    # child of this script's to wait for, so it is ended by the pid it recorded and looked at until
-    # it is gone (ten seconds at most), as it writes in the folder removed next.
-    board="$(jq -r '.pid // empty' "$work/project/.git/symphony/tasks/server.json" 2>/dev/null || true)"
-    if [ -n "$board" ]; then
+    # Each repository's board server, which the Symphony's started (the second project's too, by the
+    # one server's first read of it, though it holds no board), ends once its starters have: it is
+    # no child of this script's to wait for, so it is ended by the pid it recorded and looked at
+    # until it is gone (ten seconds at most), as it writes in the folder removed next.
+    for repository in "$work/project" "$work/pantry"; do
+        board="$(jq -r '.pid // empty' "$repository/.git/symphony/tasks/server.json" 2>/dev/null || true)"
+        [ -n "$board" ] || continue
         kill "$board" 2>/dev/null || true
         for _ in $(seq 100); do
             kill -0 "$board" 2>/dev/null || break
             sleep 0.1
         done
-    fi
+    done
     rm -rf "$work"
 }
 trap finish EXIT
