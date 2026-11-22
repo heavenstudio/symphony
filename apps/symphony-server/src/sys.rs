@@ -825,7 +825,7 @@ mod tests {
             ready,
             "the child must fork its descriptor-holding descendant first"
         );
-        assert_eq!(result.unwrap_err(), "command cancelled");
+        assert_eq!(result.unwrap_err(), CANCELLED);
         drop(writer);
         // A surviving descendant, which sleeps a day, would hold this pipe open.
         until("the group's end to close its pipe", || {

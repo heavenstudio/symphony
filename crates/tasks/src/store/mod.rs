@@ -375,7 +375,7 @@ impl Store {
     pub(crate) fn task_slugs(&self, status: Option<&str>) -> Result<Vec<String>, Error> {
         let by_status = status.is_some();
         let read = || both(surreal::task_slugs(by_status), pg::task_slugs(by_status));
-        self.retrying(|| self.transact(read(), json!({"status":status})))
+        self.retrying(|| self.read_together(read(), json!({"status":status})))
     }
 
     pub(crate) fn tasks_by_slug(&self, slugs: &[String]) -> Result<Vec<Task>, Error> {
@@ -393,7 +393,7 @@ impl Store {
 
     pub fn session(&self, handle: &str) -> Result<Session, Error> {
         let found: Found = self.retrying(|| {
-            self.transact(
+            self.read_together(
                 both(session_read(), Pg::read(pg::sessions::session_read())),
                 json!({"handle": handle, "executing": EXECUTING}),
             )
@@ -421,7 +421,7 @@ impl Store {
     pub fn claimable(&self, handle: &str) -> Result<Vec<String>, Error> {
         let read = || both(surreal::claimable(), pg::claimable());
         let mut slugs: Vec<String> = self.retrying(|| {
-            self.transact(read(), json!({"handle": handle, "executing": EXECUTING}))
+            self.read_together(read(), json!({"handle": handle, "executing": EXECUTING}))
         })?;
         slugs.sort_unstable();
         slugs.dedup();
@@ -435,7 +435,7 @@ impl Store {
             messages: Vec<MessageRow>,
         }
         let thread: Thread = self.retrying(|| {
-            self.transact(
+            self.read_together(
                 both(surreal::THREAD, pg::messages::thread()),
                 json!({"slug": slug}),
             )
@@ -455,7 +455,8 @@ impl Store {
             threads: Vec<Vec<MessageRow>>,
         }
         let read = || both(surreal::THREADS, pg::messages::threads());
-        let read: Threads = self.retrying(|| self.transact(read(), json!({"slugs": slugs})))?;
+        let read: Threads =
+            self.retrying(|| self.read_together(read(), json!({"slugs": slugs})))?;
         if let Some(slug) = read.unknown.first() {
             return Err(work::no_task(slug));
         }
@@ -773,7 +774,7 @@ impl Store {
             };
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
             let parts = change.parts(&ruled.slots, placing.as_ref());
-            let body = both(surreal::rule(parts), pg::rule(parts));
+            let body = both(surreal::rule(parts), pg::rule(parts)).posting();
             let mut vars = change.vars(slug, actor, version, view.now);
             vars["slots"] = Value::Array(ruled.slots);
             if let Some(placing) = placing {
@@ -834,7 +835,7 @@ impl Store {
     #[track_caller]
     fn view(&self, which: &Which) -> Result<View, Failure> {
         let (read, vars) = read_of(which, Sessions::Whole);
-        let snap: Snapshot = self.transact(read, vars)?;
+        let snap: Snapshot = self.read_together(read, vars)?;
         Ok(View::new(self, snap))
     }
 
@@ -843,7 +844,7 @@ impl Store {
     #[track_caller]
     fn shown(&self, which: &Which) -> Result<View, Failure> {
         let (read, vars) = read_of(which, Sessions::Shown);
-        let snap: Snapshot = self.transact(read, vars)?;
+        let snap: Snapshot = self.read_together(read, vars)?;
         Ok(View::new(self, snap))
     }
 
@@ -880,8 +881,10 @@ impl Store {
             _ => None,
         };
         let written = Statement {
-            surreal: surreal::written(&body.surreal, &read).into(),
+            surreal: (body.surreal.as_deref()).map(|body| surreal::written(body, &read).into()),
             postgres,
+            posts: body.posts,
+            names: body.names,
         };
         // Include recipient presence in the write's existing result instead of a separate read.
         let snap: Snapshot = self.transact_dispatch(written, vars, false)?;
@@ -1477,11 +1480,7 @@ fn message(row: MessageRow) -> Message {
 /// its variables.
 fn read_of(which: &Which, sessions: Sessions) -> (Statement<'static>, Value) {
     let (read, vars) = (reading(which, sessions), reading::vars(which));
-    let statement = Statement {
-        surreal: read.into(),
-        postgres: Some(pg::reading::reading(which, sessions)),
-    };
-    (statement, vars)
+    (both(read, pg::reading::reading(which, sessions)), vars)
 }
 
 /// Whether a reservation that `expires` at a time (none: never) is past it at `now`.

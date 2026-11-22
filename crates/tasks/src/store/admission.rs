@@ -334,7 +334,8 @@ impl Store {
             let body = both(
                 format!("{}{logged}{joins}{guard}", sql::APPLY),
                 pg::workflow::apply(&format!("{logged_pg}{joins_pg}"), guarded),
-            );
+            )
+            .posting();
             self.written(body, vars, slug)?;
             Ok(receipt)
         })?;
@@ -428,7 +429,8 @@ impl Store {
             "receipt": receipt.cloned().unwrap_or(json!(["receipt"])),
             "actor": agent(principal),
         });
-        let read: Read = self.transact(both(sql::ADMISSION, pg::workflow::admission()), vars)?;
+        let read: Read =
+            self.read_together(both(sql::ADMISSION, pg::workflow::admission()), vars)?;
         let active = read.active.ok_or_else(|| {
             refusal(Refusal::new(
                 RefusalCode::UnsupportedActivation,

@@ -113,7 +113,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
         {
             eprintln!("· the pages were not read again after a pending save: {error}");
         }
-        if result.is_ok() && route == "/api/task-cancel" && shared.installed_ui {
+        if result.is_ok() && route == "/api/task-cancel" && shared.one_server() {
             let root = shared.root.clone();
             let slug = payload["slug"].as_str().unwrap_or("").to_string();
             let worker_root = root.clone();

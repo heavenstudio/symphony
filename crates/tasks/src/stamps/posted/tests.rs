@@ -284,6 +284,18 @@ fn the_owners_approve_of_the_one_card_posted_stands_with_its_line_and_a_merge_of
 }
 
 #[test]
+fn a_default_branch_the_project_files_rule_refuses_names_no_branch_to_read_the_cards_on() {
+    let repo = Repo::new();
+    repo.posting(LAYOUT);
+    let line = repo.saved("Answered: approve again or comment", APPROVED);
+    let file = repo.0.join("symphony.toml");
+    fs::write(&file, "[project]\ndefault_branch = \"main\"\n").unwrap();
+    assert_eq!(repo.read(&line), approved(&["layout"]));
+    fs::write(&file, "[project]\ndefault_branch = \" \"\n").unwrap();
+    assert_eq!(repo.read(&line), Posted::Nothing);
+}
+
+#[test]
 fn any_other_commit_after_the_approve_keeps_it_from_standing_naming_the_commit() {
     for after in [
         ("src/lib.rs", "pub fn three() {}\n"),

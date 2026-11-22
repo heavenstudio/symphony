@@ -486,8 +486,9 @@ addEventListener("touchcancel", releaseTouch, { capture: true, passive: true });
 addEventListener(
   "scrollend",
   (event) => {
-    if (!touchScroll) return;
-    touchScroll.scrollers.delete(event.target as Node);
+    // Only the end of one of the touch's own scrollers ends it: another box's, the page's own
+    // after a script scrolled it, can come between a release and the touch's first scroll event.
+    if (!touchScroll?.scrollers.delete(event.target as Node)) return;
     if (!touchScroll.down && touchScroll.scrollers.size === 0) clearTouchScroll();
   },
   { capture: true, passive: true },

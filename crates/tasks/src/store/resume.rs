@@ -164,7 +164,7 @@ impl Store {
                 "watch": watch, "slots": slots, "said": said,
             });
             let _: serde_json::Value =
-                self.transact_dispatch(both(sql::resume(), pg::resume()), vars, false)?;
+                self.transact_dispatch(both(sql::resume(), pg::resume()).posting(), vars, false)?;
             Ok(Some(back.to_string()))
         })
     }

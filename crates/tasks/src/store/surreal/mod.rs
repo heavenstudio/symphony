@@ -196,7 +196,8 @@ pub(in crate::store) fn transaction(guard: &str, body: &str) -> String {
     format!("BEGIN TRANSACTION;\n{guard}\n{body}\nCOMMIT TRANSACTION;")
 }
 
-/// Whether `body`'s statements put a line on a thread ([`logged`]), which its callbacks then hear.
+/// Whether `body`'s statements put a line on a thread ([`logged`]): what a debug build holds a
+/// statement that says whether it posts to ([`super::statement::Statement::disagreement`]).
 pub(in crate::store) fn posts(body: &str) -> bool {
     body.contains("CREATE type::record('message',")
 }

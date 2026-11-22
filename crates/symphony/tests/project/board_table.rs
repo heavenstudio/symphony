@@ -30,15 +30,27 @@ fn the_board_table_names_the_open_tasks_an_orchestrator_may_hold_and_none_caps_n
         Some(8)
     );
     assert_eq!(parsed("").unwrap().board.orchestrator_slots, None);
-    assert!(
-        refused("[board]\norchestrator_slots = 0\n")
-            .contains("orchestrator_slots is 0; an orchestrator needs at least one slot")
+    assert_eq!(
+        parsed("[board]\norchestrator_slots = 4294967295\n")
+            .unwrap()
+            .board
+            .orchestrator_slots,
+        Some(u32::MAX)
     );
-    for text in [
-        "[board]\norchestrator_slots = -1\n",
-        "[board]\norchestrator_slots = \"8\"\n",
+    // Refused as the board says it, which reads it as no cap.
+    for (value, why) in [
+        ("0", "an orchestrator needs at least one slot"),
+        ("-1", "an orchestrator needs at least one slot"),
+        ("\"8\"", "not a whole number"),
+        ("4294967296", "past what it can be"),
     ] {
-        assert!(refused(text).contains("orchestrator_slots"), "{text}");
+        assert_eq!(
+            refused(&format!("[board]\norchestrator_slots = {value}\n")),
+            format!(
+                "symphony.toml: [board] orchestrator_slots (line 2) is {value}; {why}; no cap on \
+                 an orchestrator's open tasks applies"
+            )
+        );
     }
 }
 

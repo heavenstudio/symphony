@@ -25,6 +25,7 @@
 
 use super::{Folders, Grain, ReportMark, day_files, days_read, first, page, periods};
 use crate::api::validated::checksum;
+use crate::lock::Held as _;
 use axum::body::Bytes;
 use std::os::unix::fs::MetadataExt as _;
 use std::path::Path;
@@ -89,7 +90,7 @@ pub(crate) struct Kept {
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|e| e.into_inner())
+    mutex.lock().held()
 }
 
 fn stamp(path: &Path) -> Option<Stamp> {

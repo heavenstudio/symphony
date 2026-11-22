@@ -54,7 +54,7 @@ impl Store {
             return Ok(BTreeMap::new());
         }
         let answer: Value = self.retrying(|| {
-            self.transact(
+            self.read_together(
                 both(sql::SINCE_READ, pg::since_read()),
                 json!({"slugs": slugs}),
             )
@@ -100,8 +100,9 @@ impl Store {
             executing: HashSet<String>,
             lines: Vec<Vec<LineRow>>,
         }
-        let read: Read =
-            self.retrying(|| self.transact(both(sql::READ, pg::read()), json!({"since": since})))?;
+        let read: Read = self.retrying(|| {
+            self.read_together(both(sql::READ, pg::read()), json!({"since": since}))
+        })?;
         Ok(read
             .tasks
             .into_iter()

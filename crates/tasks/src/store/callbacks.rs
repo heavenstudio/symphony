@@ -207,7 +207,7 @@ impl Store {
         )))?;
         // Delivered rows may already have been pruned by another dispatcher or the sweep.
         self.retrying(|| {
-            self.transact(
+            self.read_together(
                 both(sql::AGENT_DELIVERED, pg::agent_delivered()),
                 json!({"handle":handle, "key":key}),
             )
@@ -564,7 +564,7 @@ impl Store {
     pub fn callback_inbox(&self, handle: &str) -> Result<Vec<(String, String)>, Error> {
         let chat = self.reads_chat(handle)?;
         let events: Vec<Event> = self.retrying(|| {
-            self.transact(
+            self.read_together(
                 both(sql::INBOX, pg::inbox()),
                 json!({"handle":handle, "chat":chat}),
             )
@@ -1548,7 +1548,7 @@ impl Store {
                     let body = sql::failure_logged();
                     // No reentrant dispatch from a delivery diagnostic.
                     self.retrying(|| {
-                        self.run_transaction::<Value>(both(&body, pg::failure_logged()), json!({
+                        self.run_transaction::<Value>(both(&body, pg::failure_logged()).posting(), json!({
                             "slug":slug, "now":self.now(), "text":format!("CALLBACK {handle} failed after 3 attempts: {why}; retained in inbox ({command} inbox --as {handle})"),
                         }), super::transaction::Run::Guarded { dispatch: false })?;
                         Ok(())

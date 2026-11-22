@@ -261,8 +261,15 @@ struct On<T: ?Sized + 'static> {
 }
 
 impl<T: ?Sized + 'static> On<T> {
-    /// What `call` returns of the plugin's own object, timed as the call `A`.
-    fn time<A: Ask, R>(&self, call: impl FnOnce(&'static T) -> R) -> R {
+    /// What `call` returns of the plugin's own object, timed as the call `A`, whose answer it is:
+    /// a call timed as another's, whose answer differs, does not compile.
+    fn time<A: Ask>(&self, call: impl FnOnce(&'static T) -> A::Answer) -> A::Answer {
+        self.time_as::<A, A::Answer>(call)
+    }
+
+    /// The same for a call whose method returns other than `A`'s answer: a doc check's problems,
+    /// which [`CheckDocs`] answers as `ProblemData`.
+    fn time_as<A: Ask, R>(&self, call: impl FnOnce(&'static T) -> R) -> R {
         self.meter.time::<A, R>(&self.name, || call(self.inner))
     }
 }
@@ -400,15 +407,15 @@ impl Component for On<dyn Component> {
         argument: &str,
         option: Option<&str>,
     ) -> Result<Vec<Block>, String> {
-        self.time::<Render, _>(|c| c.render(page, argument, option))
+        self.time::<Render>(|c| c.render(page, argument, option))
     }
 
     fn resolve(&self, page: &Page<'_>, argument: &str, option: Option<&str>) -> Result<(), String> {
-        self.time::<Resolve, _>(|c| c.resolve(page, argument, option))
+        self.time::<Resolve>(|c| c.resolve(page, argument, option))
     }
 
     fn cache_version(&self, page: &Page<'_>) -> Option<String> {
-        self.time::<CacheVersion, _>(|c| c.cache_version(page))
+        self.time::<CacheVersion>(|c| c.cache_version(page))
     }
 }
 
@@ -417,31 +424,31 @@ impl CardKind for On<dyn CardKind> {
         self.inner.name()
     }
     fn recognises(&self, card: &Card<'_>) -> bool {
-        self.time::<Recognises, _>(|k| k.recognises(card))
+        self.time::<Recognises>(|k| k.recognises(card))
     }
     fn pictures(&self, root: &Path, card: &Card<'_>) -> Vec<Picture> {
-        self.time::<Pictures, _>(|k| k.pictures(root, card))
+        self.time::<Pictures>(|k| k.pictures(root, card))
     }
     fn slot(&self, card: &Card<'_>) -> Option<String> {
-        self.time::<Slot, _>(|k| k.slot(card))
+        self.time::<Slot>(|k| k.slot(card))
     }
     fn markers(&self) -> &[&str] {
         self.inner.markers()
     }
     fn triage_category(&self, card: &Card<'_>) -> Option<String> {
-        self.time::<TriageCategory, _>(|k| k.triage_category(card))
+        self.time::<TriageCategory>(|k| k.triage_category(card))
     }
     fn auto_approvable(&self, card: &Card<'_>) -> bool {
-        self.time::<AutoApprovable, _>(|k| k.auto_approvable(card))
+        self.time::<AutoApprovable>(|k| k.auto_approvable(card))
     }
     fn gates(&self, card: &Card<'_>) -> Option<(usize, String)> {
-        self.time::<CardGates, _>(|k| k.gates(card))
+        self.time::<CardGates>(|k| k.gates(card))
     }
     fn approval_needs_agent(&self, card: &Card<'_>) -> bool {
-        self.time::<ApprovalNeedsAgent, _>(|k| k.approval_needs_agent(card))
+        self.time::<ApprovalNeedsAgent>(|k| k.approval_needs_agent(card))
     }
     fn chosen(&self, card: &Card<'_>) -> Result<Option<String>, String> {
-        self.time::<Chosen, _>(|k| k.chosen(card))
+        self.time::<Chosen>(|k| k.chosen(card))
     }
 }
 
@@ -456,7 +463,7 @@ impl Renderer for On<dyn Renderer> {
         self.inner.content_type()
     }
     fn draw(&self, page: &Page<'_>, file: &File<'_>) -> Result<Drawing, String> {
-        self.time::<Draw, _>(|r| r.draw(page, file))
+        self.time::<Draw>(|r| r.draw(page, file))
     }
 }
 
@@ -465,7 +472,7 @@ impl Route for On<dyn Route> {
         self.inner.path()
     }
     fn serve(&self, root: &Path, rest: &str) -> Option<Reply> {
-        self.time::<Serve, _>(|r| r.serve(root, rest))
+        self.time::<Serve>(|r| r.serve(root, rest))
     }
 }
 
@@ -474,7 +481,7 @@ impl HomeRegion for On<dyn HomeRegion> {
         self.inner.id()
     }
     fn region(&self, root: &Path) -> Option<Region> {
-        self.time::<ShowRegion, _>(|r| r.region(root))
+        self.time::<ShowRegion>(|r| r.region(root))
     }
 }
 
@@ -483,7 +490,7 @@ impl BoardAction for On<dyn BoardAction> {
         self.inner.name()
     }
     fn offer(&self, root: &Path, task: &TaskRef<'_>) -> Result<TaskOffer, String> {
-        self.time::<Offer, _>(|a| a.offer(root, task))
+        self.time::<Offer>(|a| a.offer(root, task))
     }
     fn submit(
         &self,
@@ -491,7 +498,7 @@ impl BoardAction for On<dyn BoardAction> {
         task: &TaskRef<'_>,
         submission: &Submission,
     ) -> Result<Submitted, String> {
-        self.time::<Submit, _>(|a| a.submit(root, task, submission))
+        self.time::<Submit>(|a| a.submit(root, task, submission))
     }
 }
 
@@ -506,7 +513,7 @@ impl BoardField for On<dyn BoardField> {
         self.inner.required()
     }
     fn validate(&self, value: &FieldValue) -> Result<FieldValue, String> {
-        self.time::<Validate, _>(|f| f.validate(value))
+        self.time::<Validate>(|f| f.validate(value))
     }
 }
 
@@ -520,10 +527,10 @@ impl Gates for On<dyn Gates> {
         task: &TaskRef<'_>,
         tip: Option<&str>,
     ) -> Result<Vec<Gate>, String> {
-        self.time::<AnswerGates, _>(|g| g.answer(root, task, tip))
+        self.time::<AnswerGates>(|g| g.answer(root, task, tip))
     }
     fn kept_while(&self, root: &Path, task: &TaskRef<'_>) -> String {
-        self.time::<KeptWhile, _>(|g| g.kept_while(root, task))
+        self.time::<KeptWhile>(|g| g.kept_while(root, task))
     }
 }
 
@@ -537,7 +544,7 @@ impl Authority for On<dyn Authority> {
         operation: &Operation,
         within: Duration,
     ) -> Result<Signed, String> {
-        self.time::<Attest, _>(|a| a.attest(root, operation, within))
+        self.time::<Attest>(|a| a.attest(root, operation, within))
     }
 }
 
@@ -546,10 +553,10 @@ impl Watch for On<dyn Watch> {
         self.inner.paths()
     }
     fn changed(&self, root: &Path) -> Option<String> {
-        self.time::<Changed, _>(|w| w.changed(root))
+        self.time::<Changed>(|w| w.changed(root))
     }
     fn forget(&self, root: &Path) {
-        self.time::<Forget, _>(|w| w.forget(root));
+        self.time::<Forget>(|w| w.forget(root));
     }
 }
 
@@ -558,13 +565,13 @@ impl DocCheck for On<dyn DocCheck> {
         self.inner.name()
     }
     fn components(&self, docs: &Docs) -> Vec<String> {
-        self.time::<DocComponents, _>(|c| c.components(docs))
+        self.time::<DocComponents>(|c| c.components(docs))
     }
     fn inputs(&self) -> Vec<String> {
         self.inner.inputs()
     }
     fn check(&self, docs: &Docs) -> Vec<Problem> {
-        self.time::<CheckDocs, _>(|c| c.check(docs))
+        self.time_as::<CheckDocs, _>(|c| c.check(docs))
     }
 }
 
@@ -573,7 +580,7 @@ impl ProseRule for On<dyn ProseRule> {
         self.inner.name()
     }
     fn check(&self, rel: &str, text: &str) -> Vec<(usize, String)> {
-        self.time::<CheckProse, _>(|r| r.check(rel, text))
+        self.time::<CheckProse>(|r| r.check(rel, text))
     }
 }
 
@@ -590,7 +597,7 @@ impl Command for On<dyn Command> {
         out: &mut dyn std::io::Write,
         err: &mut dyn std::io::Write,
     ) -> i32 {
-        self.time::<RunCommand, _>(|c| c.run(args, out, err))
+        self.time::<RunCommand>(|c| c.run(args, out, err))
     }
 }
 
@@ -599,13 +606,13 @@ impl Transport for On<dyn Transport> {
         self.inner.name()
     }
     fn register(&self, handle: &str, reported: &str) -> Result<String, String> {
-        self.time::<RegisterAgent, _>(|t| t.register(handle, reported))
+        self.time::<RegisterAgent>(|t| t.register(handle, reported))
     }
     fn deliver(&self, address: &str, message: &str) -> Result<(), String> {
-        self.time::<Deliver, _>(|t| t.deliver(address, message))
+        self.time::<Deliver>(|t| t.deliver(address, message))
     }
     fn alive(&self, address: &str) -> bool {
-        self.time::<Alive, _>(|t| t.alive(address))
+        self.time::<Alive>(|t| t.alive(address))
     }
 }
 

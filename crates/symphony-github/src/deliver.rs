@@ -1564,10 +1564,10 @@ fn text(request: &Value, field: &str) -> String {
 }
 
 /// The setting a delivery is turned on by, as the settings file writes it.
-const PUBLISHES: &str = "pull_requests = \"publish\"";
+pub(crate) const PUBLISHES: &str = "pull_requests = \"publish\"";
 
 /// Whether `config` has that setting.
-fn publishes(config: &Config) -> bool {
+pub(crate) fn publishes(config: &Config) -> bool {
     config.pull_requests == PullRequests::Publish
 }
 

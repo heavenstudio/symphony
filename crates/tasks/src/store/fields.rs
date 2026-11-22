@@ -50,7 +50,7 @@ impl Store {
             }
         };
         let acts = handle != OWNER;
-        let body = || both(sql::set_field(acts), pg::set_field(acts));
+        let body = || both(sql::set_field(acts), pg::set_field(acts)).posting();
         self.retrying(|| {
             let vars = self.acting(
                 handle,

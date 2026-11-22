@@ -7,6 +7,7 @@
 //! again brings the owner's line to the next tick. A private server leaves the blocks alone.
 
 use super::Hub;
+use crate::lock::Held as _;
 
 impl Hub {
     /// One look at `board`, the board on `store` as this tick read it, against the owner's lines
@@ -16,14 +17,14 @@ impl Hub {
         store: &symphony_board::Store,
         board: &symphony_board::Board,
     ) -> bool {
-        let mut kept = self.decided.lock().unwrap_or_else(|e| e.into_inner());
+        let mut kept = self.decided.lock().held();
         let Some(kept) = kept.as_mut() else {
             return false;
         };
         let Some(said) = self
             .pages
             .read()
-            .unwrap_or_else(|e| e.into_inner())
+            .held()
             .get("")
             .map(|page| std::sync::Arc::clone(&page.said))
         else {

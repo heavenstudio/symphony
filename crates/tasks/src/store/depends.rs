@@ -123,7 +123,8 @@ impl Store {
         }
         let said = said.trim_end_matches(';').to_string();
         self.retrying(|| {
-            let read: Read = self.transact(both(sql::READ, pg::READ), json!({"slug": slug}))?;
+            let read: Read =
+                self.read_together(both(sql::READ, pg::READ), json!({"slug": slug}))?;
             let statuses: HashMap<&str, &str> = (read.tasks.iter())
                 .map(|(slug, status)| (slug.as_str(), status.as_str()))
                 .collect();
@@ -201,7 +202,7 @@ impl Store {
                     "slots": slots,
                 }),
             );
-            let body = both(sql::change(acts, guarded), pg::change(acts, guarded));
+            let body = both(sql::change(acts, guarded), pg::change(acts, guarded)).posting();
             self.written(body, vars, slug)
         })
     }

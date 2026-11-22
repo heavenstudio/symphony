@@ -24,7 +24,7 @@ impl Store {
         if self.db.is_postgresql() {
             return Ok(());
         }
-        let tables: Vec<String> = self.retrying(|| self.transact(sql::TABLES, json!({})))?;
+        let tables: Vec<String> = self.retrying(|| self.read_together(sql::TABLES, json!({})))?;
         let staged = tables.iter().map(String::as_str).filter(|table| {
             table.starts_with("copy_")
                 && table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
@@ -239,7 +239,7 @@ impl Store {
         let dump = || both(sql::DUMP, Pg::read(postgres::copy::DUMP.as_str()));
         let mut dump: Dump = if self.db.is_postgresql() {
             let (mut dump, copied): (Dump, Vec<(String, String, Value)>) =
-                read_strictly(self.retrying(|| self.transact(dump(), json!({})))?)?;
+                read_strictly(self.retrying(|| self.read_together(dump(), json!({})))?)?;
             for (slug, original, normalized) in copied {
                 let original: Value = serde_json::from_str(&original)
                     .map_err(|e| Error::Db(format!("copied fields: {e}")))?;
@@ -257,7 +257,7 @@ impl Store {
             }
             dump
         } else {
-            read_strictly(self.retrying(|| self.transact(dump(), json!({})))?)?
+            read_strictly(self.retrying(|| self.read_together(dump(), json!({})))?)?
         };
         // The execution tables' rows in the order of their ids, and each row's fields in one order
         // at every depth, as the two databases neither return rows nor order a document's fields
