@@ -36,7 +36,8 @@ pub const FILE: &str = "schema-seen.log";
 
 /// Where the recovery of a board that went back is described, and how the owner accepts an older
 /// board: the Symphony's guide to the board, whichever project's board it is.
-pub const RECOVERY: &str = "the Symphony's docs/operations/BOARD_OPERATIONS.md#a-board-that-went-back";
+pub const RECOVERY: &str =
+    "the Symphony's docs/operations/BOARD_OPERATIONS.md#a-board-that-went-back";
 
 /// What a rollback's words begin with after the board's name, which [`Rollback::line_in`] finds.
 const WENT_BACK: &str = " board went back from schema ";
