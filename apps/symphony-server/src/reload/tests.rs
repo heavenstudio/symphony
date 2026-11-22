@@ -3,7 +3,7 @@ use crate::backstop::{self, Backstop};
 use crate::front::{Shared, told};
 use crate::testing::{Tree, git, joined, repository};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1431,20 +1431,36 @@ fn a_release_servers_follow_takes_a_hand_off_and_its_stop_at_their_wakes() {
 }
 
 /// A release's server's follow of `current`, on a period no test reaches, hears the link move from
-/// the machine's own watcher of the machine folder and reads it then: a release not installed whole
-/// leaves it serving, said on the notice with when it is tried again.
+/// its own watcher of the machine folder, made before its first read and kept while it follows,
+/// and reads it then: a release not installed whole leaves it serving, said on the notice with when
+/// it is tried again. The watcher goes with the follow at its stop. The test tells the watcher's
+/// events itself: under load a real backend can lose one outright, which the follow's period is
+/// for (`backstop.rs`), and on no period a lost event would leave the follow waiting for good.
 #[test]
 fn a_release_servers_follow_reads_current_when_its_watcher_hears_the_link_move() {
+    use notify::EventKind::{Create, Modify};
+    use notify::event::{CreateKind, ModifyKind, RenameMode};
     use symphony::machine::release;
     let server = Reloading::new(installs_a_replacement_that_ends);
     let clock = Clock::new();
     let (backstop, waits) = backstop::watched();
-    let follow = server.following::<notify::RecommendedWatcher>(backstop, clock.retry());
+    let follow = server.following::<Handing<false>>(backstop, clock.retry());
     waits.begun(1);
-    // The move `release::point` makes, to a release it would refuse: a new link renamed over.
-    let link = server.home.join(".current.test");
-    std::os::unix::fs::symlink(Path::new(release::RELEASES).join("release-2"), &link).unwrap();
-    std::fs::rename(&link, server.home.join(release::CURRENT)).unwrap();
+    // Past its first read, which found no link, it waits with the machine folder watched.
+    assert_eq!(
+        watching(&server.home),
+        Some(notify::RecursiveMode::NonRecursive)
+    );
+    // The move `release::point` makes, to a release it would refuse, and what a backend says of
+    // it: the new link made beside `current`, then renamed over it.
+    point(&server.home, "release-2");
+    let (made, current) = (
+        server.home.join(".current.test").display().to_string(),
+        server.home.join(release::CURRENT).display().to_string(),
+    );
+    let renamed = Modify(ModifyKind::Name(RenameMode::Both));
+    tell(&server.home, event(Create(CreateKind::Any), &[&made]));
+    tell(&server.home, event(renamed, &[&made, &current]));
     assert_eq!(
         server.notice_after(""),
         format!(
@@ -1455,7 +1471,17 @@ fn a_release_servers_follow_reads_current_when_its_watcher_hears_the_link_move()
         )
     );
     assert_eq!(started(&server), 0);
+    assert_eq!(
+        watching(&server.home),
+        Some(notify::RecursiveMode::NonRecursive),
+        "still watched after the hand-off it failed"
+    );
     server.stop(follow);
+    assert_eq!(
+        watching(&server.home),
+        None,
+        "the watcher goes with the follow"
+    );
 }
 
 /// A build kept as the running image after another version's update failed leaves no retry of
@@ -1789,35 +1815,45 @@ fn current_moves_at_a_change_naming_its_link_a_rescan_or_the_watchers_error() {
     ))));
 }
 
-/// The handler a [`Handing`] watcher was given and what it was asked to watch.
-#[derive(Default)]
-struct Handed {
-    handler: Option<Box<dyn notify::EventHandler>>,
+/// The handler a [`Handing`] watcher was given, which a test tells events as its backend would.
+type Handler = Arc<Mutex<Box<dyn notify::EventHandler>>>;
+
+/// Each folder a [`Handing`] watcher watches: how, and its handler.
+type Watched = BTreeMap<PathBuf, (notify::RecursiveMode, Handler)>;
+
+/// What each [`Handing`] watcher still alive watches. A watcher's folders leave it as it is
+/// dropped. Each test watches folders of its own, so the tests running beside it never meet here,
+/// and a watcher made on another thread (a follow's) is reached all the same.
+static HANDED: Mutex<Watched> = Mutex::new(BTreeMap::new());
+
+fn handed() -> std::sync::MutexGuard<'static, Watched> {
+    HANDED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// A watcher whose backend is the test: each folder it watches is in [`HANDED`] while it lives
+/// ([`watching`], [`tell`]). When `FAILS` it fails to watch, its handler gone with it as a dropped
+/// watcher's is.
+struct Handing<const FAILS: bool> {
+    handler: Handler,
     watched: Vec<(PathBuf, notify::RecursiveMode)>,
 }
 
-std::thread_local! {
-    /// What the [`Handing`] watcher the test on this thread made was handed.
-    static HANDED: std::cell::RefCell<Handed> = std::cell::RefCell::default();
-}
-
-/// A watcher that hands its handler to the test ([`HANDED`]), or, when `FAILS`, fails to watch,
-/// its handler gone with it as a dropped watcher's is.
-struct Handing<const FAILS: bool>;
-
 impl<const FAILS: bool> notify::Watcher for Handing<FAILS> {
     fn new<F: notify::EventHandler>(handler: F, _: notify::Config) -> notify::Result<Self> {
-        if !FAILS {
-            HANDED.with_borrow_mut(|handed| handed.handler = Some(Box::new(handler)));
-        }
-        Ok(Self)
+        Ok(Self {
+            handler: Arc::new(Mutex::new(Box::new(handler))),
+            watched: Vec::new(),
+        })
     }
 
     fn watch(&mut self, path: &Path, mode: notify::RecursiveMode) -> notify::Result<()> {
         if FAILS {
             return Err(notify::Error::generic("no such folder"));
         }
-        HANDED.with_borrow_mut(|handed| handed.watched.push((path.into(), mode)));
+        self.watched.push((path.into(), mode));
+        handed().insert(path.into(), (mode, self.handler.clone()));
         Ok(())
     }
 
@@ -1830,38 +1866,56 @@ impl<const FAILS: bool> notify::Watcher for Handing<FAILS> {
     }
 }
 
-/// The watcher's handler is told `event`, as its backend would.
-fn tell(event: notify::Result<notify::Event>) {
-    HANDED.with_borrow_mut(|handed| {
-        handed
-            .handler
-            .as_mut()
-            .expect("a watcher was made")
-            .handle_event(event);
-    });
+impl<const FAILS: bool> Drop for Handing<FAILS> {
+    fn drop(&mut self) {
+        let mut handed = handed();
+        for (path, _) in &self.watched {
+            handed.remove(path);
+        }
+    }
+}
+
+/// How a live [`Handing`] watcher watches `folder`, if one does.
+fn watching(folder: &Path) -> Option<notify::RecursiveMode> {
+    handed().get(folder).map(|(mode, _)| *mode)
+}
+
+/// The live [`Handing`] watcher of `folder` is told `event`, as its backend would.
+fn tell(folder: &Path, event: notify::Result<notify::Event>) {
+    let handler = handed()
+        .get(folder)
+        .map(|(_, handler)| handler.clone())
+        .unwrap_or_else(|| panic!("no watcher watches {}", folder.display()));
+    handler
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .handle_event(event);
 }
 
 #[test]
 fn a_release_server_hears_current_move_from_a_watch_of_the_machine_folder_alone() {
     let machine = Path::new("/m");
     let wakes = crate::backstop::Wakes::new();
-    let watcher = super::watch_current::<Handing<false>>(machine, wakes.waker());
-    assert!(watcher.is_some());
+    let watcher = super::watch_current::<Handing<false>>(machine, wakes.waker())
+        .expect("the machine folder watched");
     assert_eq!(
-        HANDED.with_borrow(|handed| handed.watched.clone()),
+        watcher.watched,
         vec![(machine.to_path_buf(), notify::RecursiveMode::NonRecursive)]
     );
-    tell(event(
-        notify::EventKind::Create(notify::event::CreateKind::Any),
-        &["/m/registry.json"],
-    ));
+    tell(
+        machine,
+        event(
+            notify::EventKind::Create(notify::event::CreateKind::Any),
+            &["/m/registry.json"],
+        ),
+    );
     assert!(!wakes.wait(Some(Duration::ZERO)), "another entry's event");
     // A move's burst is one wake: the loop reads once it is quiet.
     let renamed = notify::EventKind::Modify(notify::event::ModifyKind::Name(
         notify::event::RenameMode::Any,
     ));
-    tell(event(renamed, &["/m/current"]));
-    tell(event(renamed, &["/m/current"]));
+    tell(machine, event(renamed, &["/m/current"]));
+    tell(machine, event(renamed, &["/m/current"]));
     assert!(
         wakes.wait(Some(Duration::ZERO)),
         "the move wakes the follow"
