@@ -79,7 +79,7 @@ targets are the folders of `tests/` with a `main.rs` that says what each holds (
   same on either engine (`tests/store/search.rs`).
 - **Children**: `sys.rs` and `sys/`, over the leaf `crates/process-cwd`.
 - **A poisoned lock**: `lock.rs`'s `Recovered`, the one recovery the library and the server take
-  too.
+  too, and the only one this crate's `clippy.toml` lets its code take.
 
 ## Invariants a change keeps
 

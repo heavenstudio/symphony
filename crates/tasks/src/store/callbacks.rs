@@ -1179,14 +1179,7 @@ impl Store {
         // The recorded entries are the whole digest's, as older dispatchers record them; what
         // the recipient was told of them is in the PULLs it acknowledged ([`Account`]).
         let pulled = match look.due {
-            true => Some(self.plan_pull(
-                handle,
-                board,
-                visit,
-                &mut look.state,
-                &look.queued,
-                &look.agents,
-            )?),
+            true => Some(self.plan_pull(handle, board, visit, &mut look)?),
             false => None,
         };
         let mut events = line_events(handle, board, lines, lease);
@@ -1557,21 +1550,20 @@ impl Store {
         Ok(events)
     }
 
-    /// The PULL due for `handle`, built again from `board` with the agents a visit saw: what it says,
-    /// and the account of what the recipient in `state` was told of it, with the lines still
-    /// `queued` for it ([`Account`]). An observer a newer dispatcher never wrote for hears the whole
-    /// digest, and has its account upgraded. Each session with no terminal it was told is idle is
-    /// read back into `state` ([`State::recall_idle`]).
+    /// The PULL due for `handle`, built again from `board` with the agents its `look` saw: what it
+    /// says, and the account of what the recipient in the look's state was told of it, with the
+    /// lines still queued for it ([`Account`]). An observer the look upgrades from a legacy one
+    /// hears the whole digest, and has its account upgraded. Each session with no terminal it was
+    /// told is idle is read back into the look's state ([`State::recall_idle`]).
     fn plan_pull(
         &self,
         handle: &str,
         board: &super::Board,
         visit: &Visit<'_>,
-        state: &mut State,
-        queued: &[Queued],
-        agents: &Agents,
+        look: &mut Look,
     ) -> Result<Pulled, Error> {
-        let legacy_upgrade = upgrades_legacy(state);
+        let legacy_upgrade = look.legacy_upgrade;
+        let (state, queued, agents) = (&mut look.state, &look.queued, &look.agents);
         let env = crate::cli::Env::of_process();
         let root = probes::repo_root(&env.cwd);
         let root = root.as_deref();
