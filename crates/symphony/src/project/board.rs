@@ -173,6 +173,13 @@ pub(super) struct FileBoard {
     swept_cap_gb: Option<f64>,
     stale_writer_hours: Option<u32>,
     sweep_disposable: Vec<String>,
+    /// Read by the board's server itself (`symphony_board::project::own_sweep`); named here so
+    /// the file's lint knows the key and holds it to a boolean.
+    #[expect(
+        dead_code,
+        reason = "the server reads the key itself; this holds its type"
+    )]
+    own_sweep: Option<bool>,
     postgresql: Option<String>,
     external_postgresql: Option<toml::Value>,
     #[serde(flatten)]

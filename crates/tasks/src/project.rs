@@ -376,6 +376,23 @@ pub fn disposable(root: &Path) -> Vec<String> {
     patterns
 }
 
+/// The key by which a project has a server of its own run the idle-session sweep, in `[board]`.
+pub const OWN_SWEEP_KEY: &str = "own_sweep";
+
+/// Whether the project file at `root` has a server of its own run the idle-session sweep for it
+/// (`[board] own_sweep = true`): a project served by no other server, as one that runs a source
+/// build with no release on the machine, whose finished agents' terminals nothing else would
+/// close. False when there is no file, it does not read, or the key is unwritten or not `true`:
+/// a server of its own sweeps on no guess, since a preview's board may be a copy that names
+/// another board's terminals. Only that key is read; the rest of the file is the Symphony's.
+pub fn own_sweep(root: &Path) -> bool {
+    std::fs::read_to_string(root.join(FILE))
+        .ok()
+        .and_then(|text| text.parse::<toml::Table>().ok())
+        .and_then(|table| table.get("board")?.get(OWN_SWEEP_KEY)?.as_bool())
+        .unwrap_or(false)
+}
+
 /// The convention's documents folder, read when a project file names no `[[entrypoints]]`.
 const DOCS: &str = "docs";
 
@@ -796,6 +813,29 @@ mod tests {
         ] {
             std::fs::write(root.join(FILE), text).unwrap();
             assert_eq!(disposable(&root), patterns, "{text}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_server_of_its_own_sweeps_only_where_the_project_file_says_so() {
+        let root =
+            std::env::temp_dir().join(format!("symphony-project-own-sweep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        assert!(!own_sweep(&root), "no file");
+        for (text, sweeps) in [
+            ("[board]\nown_sweep = true\n", true),
+            ("[board]\nown_sweep = false\n", false),
+            ("[board]\nguide = \"G.md\"\n", false),
+            // Written as anything but `true`, or in a file that does not read: no sweep on a guess.
+            ("[board]\nown_sweep = \"true\"\n", false),
+            ("[board]\nown_sweep = 1\n", false),
+            ("[agents]\nown_sweep = true\n", false),
+            ("[board\nown_sweep = true\n", false),
+        ] {
+            std::fs::write(root.join(FILE), text).unwrap();
+            assert_eq!(own_sweep(&root), sweeps, "{text}");
         }
         let _ = std::fs::remove_dir_all(&root);
     }

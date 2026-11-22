@@ -723,8 +723,9 @@ folder left without its `.git`, starting and acting on that checkout's board:
   `rev-parse HEAD`, as the worktree's git fails once the project's `.git`, which holds its git
   dir, is gone.
 
-Only the machine's shared installation runs the cancel's cleanup and the reap. Each matters only
-for a project the server serves whose folder sits inside another git checkout; one in no checkout
+Only the machine's shared installation runs the cancel's cleanup and the reap, and for the reap a
+server of its own in the main checkout of a project that asks it to (`[board] own_sweep`,
+[Sessions](../workflow/TASKS.md#sessions)). Each matters only for a project the server serves whose folder sits inside another git checkout; one in no checkout
 finds no repository above it, and no board. A board's
 start, stop or hold makes no folder at or above the repository's common dir again; a start whose board folder goes while its server starts (SurrealDB makes every missing
 folder of its store's path) ends that server and records none. A board whose store is there is never no board: when the SurrealDB

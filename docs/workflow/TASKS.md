@@ -2439,6 +2439,13 @@ registered and stopped as it is removed, so one project's failing or hung sweep 
 other's; each writes its own `reap.json` and its own board's health, which `just tasks status`
 reads. A lock in `symphony/tasks/`, beside the board's server, keeps two sweeps (a second
 app's, or `just tasks reap` by hand) from running at once, and nothing goes into any monitor.
+A server of its own (`just symphony --port N`) runs no sweep, since a preview's board may be a
+copy that names another board's terminals, and says so as it starts: a project no other server
+serves, as one on a source build with no release on the machine, sets `[board] own_sweep = true`
+in its project file, and a server of its own in its main checkout then sweeps for it as the one
+server would, unless its environment names another board (`TASKS_SERVER`, `TASKS_DATABASE`;
+`sweeps_of_its_own` in `apps/symphony-server/src/front.rs`). Without either, idle terminals stay
+until `just tasks clean`.
 It closes (`hc kill`,
 then `hc rm`) one of this board's terminals (label `symphony.board`) whose named agent was
 idle (or stuck on the folder-trust prompt) at two sweeps at least five minutes apart,
