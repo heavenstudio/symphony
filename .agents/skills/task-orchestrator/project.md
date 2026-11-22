@@ -3,6 +3,11 @@
 This repository's own standing instructions for an orchestrator, beside the shipped skill, which
 `symphony init` never writes.
 
+- Keep about seven tasks actively in progress, being built rather than waiting on review or the
+  owner, while ready work remains, whatever usage limit you see (RULES.md
+  `workflow/no-slowing-for-usage-limits`). Each holds a
+  [slot](../../../docs/workflow/TASKS.md#slots); PULL's `low_volume` line says when you hold
+  fewer than `[limits] low_volume`.
 - Register your own callback early in a full session, and check that full-session executors and
   reviewers do the same before working ([the connected stage](../work/connected.md)).
 - A `BLOCKED` notice is an observation of a session you oversee, not leave to approve: inspect
