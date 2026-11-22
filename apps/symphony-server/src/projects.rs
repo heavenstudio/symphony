@@ -479,18 +479,8 @@ async fn dispatch(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     request: Request,
 ) -> Response {
-    let ip = peer.ip();
-    let starter = projects.starter.clone();
-    let allowed = ip.is_loopback()
-        || crate::spawn::blocking(move || starter.gate.allows(ip))
-            .await
-            .unwrap_or(false);
-    if !allowed {
-        return (
-            StatusCode::FORBIDDEN,
-            "Forbidden: the Symphony answers only this machine and its tailnet\n",
-        )
-            .into_response();
+    if !crate::front::peer_allowed(&projects.starter, peer.ip()).await {
+        return crate::front::peer_refused();
     }
     let path = request.uri().path().to_string();
     // `/api/front` holds to loopback's name alone; every other route to a name of this machine.
@@ -730,13 +720,8 @@ async fn forward(project: &Served, inner: &str, mut request: Request) -> Respons
 
 /// `GET /api/front`: the starter's status and the ids served, to loopback's name alone.
 fn front(projects: &Projects, served: &[Served], headers: &HeaderMap) -> Response {
-    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
-    if !host.is_some_and(crate::front::names_loopback) {
-        return (
-            StatusCode::FORBIDDEN,
-            "Forbidden: the Host header does not name this machine's loopback\n",
-        )
-            .into_response();
+    if let Some(refused) = crate::front::loopback_refused(headers) {
+        return refused;
     }
     let mut status = projects.starter.status();
     status.projects = served

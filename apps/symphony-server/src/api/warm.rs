@@ -27,7 +27,7 @@ pub(crate) async fn start(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
             &shared.root,
             &shared.ui_dist,
             shared.embedded_ui,
-            shared.installed_ui,
+            shared.one_server(),
         )?;
         hub.serve_at(&shared.base);
         hub.gate_recorders(shared.recording.clone());

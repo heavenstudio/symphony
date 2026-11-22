@@ -13,11 +13,15 @@ use symphony::taskview;
 use symphony_board::board_health::hours;
 
 impl Hub {
+    /// The hub of the project at `root`, serving the client in `ui_dist`. `one_server`, the
+    /// machine's one server's hub, does what its projects share and a private server's must not:
+    /// it drains the chat journal, closes the owner's asks and the blocks the owner's word ends,
+    /// and keeps the board's health record and hours, the day files and the agents' activity.
     pub fn start(
         root: &Path,
         ui_dist: &Path,
         embedded_ui: bool,
-        drain_chat: bool,
+        one_server: bool,
     ) -> Result<Arc<Self>, String> {
         // The worker's reach is held to the repository the hub holds its folder to, as it is made
         // ([`Hub::new`]).
@@ -25,7 +29,7 @@ impl Hub {
             root,
             ui_dist,
             embedded_ui,
-            drain_chat,
+            one_server,
             crate::backstop::PERIOD,
             taskview::connect,
         )
@@ -62,14 +66,14 @@ impl Hub {
         root: &Path,
         ui_dist: &Path,
         embedded_ui: bool,
-        drain_chat: bool,
+        one_server: bool,
         period: Duration,
         mut connect: impl FnMut(&Path) -> Result<symphony_board::Store, String> + Send + 'static,
     ) -> Result<Arc<Self>, String> {
         let started = Instant::now();
         let mut hub = measured("hub new", || Self::new(root, ui_dist));
         hub.embedded_ui = embedded_ui;
-        if drain_chat {
+        if one_server {
             *hub.callbacks.get_mut().unwrap_or_else(|e| e.into_inner()) =
                 Some(symphony::callbacks::Flusher::new(root));
             eprintln!("→ chat journal: draining enabled for the shared server");

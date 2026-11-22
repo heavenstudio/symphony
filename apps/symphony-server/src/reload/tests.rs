@@ -801,8 +801,10 @@ impl Reloading {
         let follow = super::Follow {
             machine: self.home.clone(),
             release: "release-1".into(),
-            sockets: Vec::new(),
-            lease: std::fs::File::open(&self.root).unwrap(),
+            handed: super::Handed {
+                sockets: Vec::new(),
+                lease: std::fs::File::open(&self.root).unwrap(),
+            },
         };
         std::thread::spawn(move || {
             super::follow::<W>(&serve, &follow, &shared, backstop, retry);
@@ -1337,7 +1339,10 @@ fn a_starters_failed_hand_over_keeps_a_waiting_retrys_time_on_the_notice() {
 fn a_hand_off_look_with_no_request_to_follow_replaces_nothing() {
     use super::{HandOff, handed_over};
     let server = Reloading::new(installs_a_replacement_that_ends);
-    let lease = std::fs::File::open(&server.root).unwrap();
+    let handed = super::Handed {
+        sockets: Vec::new(),
+        lease: std::fs::File::open(&server.root).unwrap(),
+    };
     let look = |home: Option<&Path>| {
         let serve = crate::cli::Serve {
             home: home.map(Path::to_path_buf),
@@ -1346,7 +1351,7 @@ fn a_hand_off_look_with_no_request_to_follow_replaces_nothing() {
             hosts: Vec::new(),
             install: None,
         };
-        let came = handed_over(&serve, &server.shared, &[], &lease, &Retry::new());
+        let came = handed_over(&serve, &server.shared, &handed, &Retry::new());
         assert!(
             !server.shared.handover.load(Ordering::SeqCst),
             "the flag is taken"
@@ -1367,6 +1372,66 @@ fn a_hand_off_look_with_no_request_to_follow_replaces_nothing() {
     );
     assert_eq!(server.notice(), "", "no update failed");
     assert_eq!(started(&server), 0, "no replacement started");
+}
+
+/// A replacement that says it is ready while the machine folder's record cannot be written: the
+/// replacement is not recorded, so it is ended, and this generation, still serving, says that its
+/// own record could not be put back either, before the notice says the update failed. A restore
+/// that fails says why on the line before the failure it follows.
+#[test]
+fn a_hand_off_whose_record_cannot_be_written_says_its_own_was_not_restored() {
+    use super::{HandOff, handed_over};
+    let server = Reloading::new(installs_a_replacement_that_ends);
+    server.register();
+    // A replacement that says it is ready, then waits on the commit with the shell's own read, so
+    // no process of its outlives its end.
+    let replacement = server.folder().join("ready");
+    crate::fixture_script::write(
+        &replacement,
+        r#"#!/bin/sh
+ready=$(printf '%s' "$SYMPHONY_HANDOVER" | sed 's/.*"ready":\([0-9]*\).*/\1/')
+commit=$(printf '%s' "$SYMPHONY_HANDOVER" | sed 's/.*"commit":\([0-9]*\).*/\1/')
+printf R >&"$ready"
+read -r said <&"$commit"
+"#,
+        false,
+    );
+    crate::testing::assert_primed(&replacement);
+    crate::host::Handover {
+        exe: replacement,
+        root: server.root.clone(),
+        install: server.home.clone(),
+    }
+    .ask(&server.home)
+    .unwrap();
+    server.shared.ask_handover();
+    // The record is a folder holding a file, so no record is renamed over it.
+    let record = server.home.join(crate::home::ADDRESS);
+    std::fs::create_dir_all(record.join("held")).unwrap();
+    let handed = super::Handed {
+        sockets: Vec::new(),
+        lease: std::fs::File::open(&server.root).unwrap(),
+    };
+    let serve = server.serve();
+    let (came, told) = told::during(|| handed_over(&serve, &server.shared, &handed, &Retry::new()));
+    assert_eq!(came, HandOff::Failed, "{told:?}");
+    let unwritten = format!("could not write {}", record.display());
+    let restore = told
+        .iter()
+        .position(|line| {
+            line.starts_with(&format!(
+                "· Symphony reload: could not restore this server's record: {unwritten}"
+            ))
+        })
+        .unwrap_or_else(|| panic!("the failed restore is said: {told:?}"));
+    let failed = told
+        .iter()
+        .position(|line| line.starts_with(&format!("· Symphony reload: {FAILED} {unwritten}")))
+        .unwrap_or_else(|| panic!("the failed update is said: {told:?}"));
+    assert!(restore < failed, "{told:?}");
+    assert!(record.join("held").is_dir(), "nothing written over it");
+    assert!(!server.shared.stopping(), "still serving");
+    assert!(!server.shared.replaced.load(Ordering::SeqCst));
 }
 
 /// The reload loop on a period no test reaches ([`backstop::NO_PERIOD`]), from a stamped start,
@@ -1960,8 +2025,10 @@ fn a_release_servers_follow_says_each_attempt_and_each_reason_it_makes_none_once
     let following = super::Follow {
         machine: server.home.clone(),
         release: "release-1".into(),
-        sockets: Vec::new(),
-        lease: std::fs::File::open(&server.root).unwrap(),
+        handed: super::Handed {
+            sockets: Vec::new(),
+            lease: std::fs::File::open(&server.root).unwrap(),
+        },
     };
     let link = server.home.join(release::CURRENT);
     // The moves of `current`, each once the follow waits after the check before it, then its stop.
