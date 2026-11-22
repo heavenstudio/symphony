@@ -514,11 +514,14 @@ fn the_task_page_names_each_guard_its_authority_and_the_last_refusal_and_approve
             json!([["design_signoff", "decided again"]])
         );
         assert!(
-            texts(&mut page, "[data-guards=entry] .guard-head")[0]
-                .as_str()
+            texts(&mut page, "[data-guards=entry] .guard-head")
+                .first()
                 .is_some_and(|head| head.starts_with("Let in by Submit · revision 7 · ")),
         );
-        let entry = texts(&mut page, "[data-guards=entry] .guard")[0].to_string();
+        let entry = texts(&mut page, "[data-guards=entry] .guard")
+            .first()
+            .cloned()
+            .unwrap_or_default();
         for said in [
             "design signoff",
             "Met at generation 11",
@@ -534,7 +537,7 @@ fn the_task_page_names_each_guard_its_authority_and_the_last_refusal_and_approve
             json!([["release_signoff", "no word yet"]])
         );
         assert_eq!(
-            texts(&mut page, "[data-guards=pass] .guard-by"),
+            json!(texts(&mut page, "[data-guards=pass] .guard-by")),
             json!(["ledger · releaseaccepted gen 41 · 2026"])
         );
         assert_eq!(
@@ -564,7 +567,7 @@ fn the_task_page_names_each_guard_its_authority_and_the_last_refusal_and_approve
             page.eval("document.querySelector('.flow-task')?.innerText")
         );
         assert_eq!(
-            texts(&mut page, ".flow-task [role=status]"),
+            json!(texts(&mut page, ".flow-task [role=status]")),
             json!(["Pass review was not taken: release signoff holds it"])
         );
         assert_eq!(
@@ -585,7 +588,7 @@ fn the_task_page_names_each_guard_its_authority_and_the_last_refusal_and_approve
             SHOWN
         ));
         assert_eq!(
-            texts(&mut page, "[data-guards=pass] .guard-record dt"),
+            json!(texts(&mut page, "[data-guards=pass] .guard-record dt")),
             json!([
                 "ledger's word",
                 "Its reasons",
@@ -662,7 +665,7 @@ fn the_task_page_names_each_guard_its_authority_and_the_last_refusal_and_approve
         json!(true)
     );
     assert_eq!(
-        texts(&mut page, "[data-guards=pass] .guard-why"),
+        json!(texts(&mut page, "[data-guards=pass] .guard-why")),
         json!([
             "This app cannot ask ledger: no plugin of this project answers for its adapter, release. Pass review goes from here once one does."
         ])
