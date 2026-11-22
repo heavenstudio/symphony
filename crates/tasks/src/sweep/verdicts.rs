@@ -167,7 +167,7 @@ impl Verdicts {
         if let (Some(inputs), Some(path), Some(policy)) = (&inputs, &path, policy)
             && let Some(saved) = fs::read(path)
                 .ok()
-                .and_then(|bytes| serde_json::from_slice::<Saved>(&bytes).ok())
+                .and_then(|bytes| crate::objects::parse::<Saved>(&bytes))
             && saved.inputs == *inputs
             && (!saved.verdict.left.is_empty() || saved.inventory.is_some())
             && saved

@@ -191,7 +191,10 @@ fn the_land_delivers_it_as_generated_and_the_next_round_finds_the_default_branch
         )),
         "{line}"
     );
-    assert_eq!(host.verbs(), ["publish", "merge", "result", "landed"]);
+    assert_eq!(
+        host.verbs(),
+        ["publish", "arm", "merge", "result", "landed"]
+    );
     assert_eq!(host.request("merge")["method"], "squash");
     let receipt = Receipt::read(&lands(&r), &made_as.slug).unwrap();
     assert_eq!(receipt.operation, "generated");
@@ -708,6 +711,8 @@ fn a_land_cut_before_it_started_the_regenerator_loses_no_output_and_makes_none_t
         squash: Some(squash.clone()),
         held: None,
         import: None,
+        green: None,
+        armed: false,
     }
     .write(&lands(&r))
     .unwrap();

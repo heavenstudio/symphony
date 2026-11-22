@@ -157,6 +157,30 @@ fn given(value: Option<String>) -> Option<String> {
     value.filter(|v| !v.trim().is_empty())
 }
 
+/// The setting [`agent`] judges, as the project file names it in a refusal.
+pub const AGENT_KEY: &str = "[agents] launch default";
+
+/// `written`, the agent `[agents] launch default` names, as every reader of it takes it: a launch
+/// here, the local file's and the board store's reader ([`crate::local`]) and the Symphony's load
+/// of the project file. None when it names none or a blank one, which leaves the board's own
+/// ([`AGENTS`]' first); else one of [`AGENTS`].
+///
+/// # Errors
+///
+/// For an agent no launch starts, naming `key`, the setting as its reader names it.
+pub fn agent(key: &str, written: Option<&str>) -> Result<Option<&'static str>, String> {
+    let Some(named) = written.filter(|named| !named.trim().is_empty()) else {
+        return Ok(None);
+    };
+    match AGENTS.into_iter().find(|known| *known == named) {
+        Some(known) => Ok(Some(known)),
+        None => Err(format!(
+            "{key} {named:?} is not one of {}",
+            AGENTS.join(", ")
+        )),
+    }
+}
+
 /// The board's own model for `agent`.
 fn board_model(agent: &str) -> &'static str {
     if agent == "codex" {
@@ -172,6 +196,16 @@ impl Defaults {
     /// that does not parse, or a `default` that is no agent a launch starts, is an error naming
     /// the file.
     pub fn configured(root: &Path) -> Result<Defaults, String> {
+        Self::configured_with(root, &crate::settings::Stored::default())
+    }
+
+    /// As [`Defaults::configured`], with what the board's store holds (`stored`,
+    /// [`crate::Store::stored`]) over the committed settings and under the local file: the order
+    /// every setting is read in ([`crate::settings`]).
+    pub fn configured_with(
+        root: &Path,
+        stored: &crate::settings::Stored,
+    ) -> Result<Defaults, String> {
         let path = root.join(MANIFEST);
         let committed = match std::fs::read_to_string(&path) {
             Ok(text) => Self::parse(&path.display().to_string(), &text),
@@ -180,6 +214,7 @@ impl Defaults {
         }?;
         // A local file that is refused is read by nobody, and said where the limits are read
         // ([`crate::limits::read_at`]), on every command.
+        let committed = committed.over(&stored.held);
         Ok(match crate::local::beside(&path) {
             Ok(Some(local)) => committed.over(&local),
             _ => committed,
@@ -189,10 +224,10 @@ impl Defaults {
     /// These, the committed settings, with what the local file `local` writes in their place
     /// ([`crate::local::Local::over`]); a value it writes empty is none, as in the project file.
     pub fn over(mut self, local: &crate::local::Local) -> Defaults {
-        let mut agent = self.agent.map(String::from);
+        let mut named = self.agent.map(String::from);
         let models = &mut self.models;
         local.over(
-            [&mut agent, &mut self.model, &mut self.effort],
+            [&mut named, &mut self.model, &mut self.effort],
             [
                 &mut models.orchestrator,
                 &mut models.executor,
@@ -200,8 +235,8 @@ impl Defaults {
                 &mut models.assessor,
             ],
         );
-        // The local file's agent is one of [`AGENTS`], as its reader checked.
-        self.agent = given(agent).and_then(|named| AGENTS.into_iter().find(|a| *a == named));
+        // The local file's agent is one [`agent`] takes, as its reader checked.
+        self.agent = agent(AGENT_KEY, named.as_deref()).ok().flatten();
         for value in [
             &mut self.model,
             &mut self.effort,
@@ -220,19 +255,8 @@ impl Defaults {
         let manifest: Manifest =
             toml::from_str(text).map_err(|error| format!("{path}: [agents] launch: {error}"))?;
         let launch = manifest.agents.launch;
-        let agent = given(launch.default)
-            .map(|named| {
-                AGENTS
-                    .into_iter()
-                    .find(|known| *known == named)
-                    .ok_or_else(|| {
-                        format!(
-                            "{path}: [agents] launch default {named:?} is not one of {}",
-                            AGENTS.join(", ")
-                        )
-                    })
-            })
-            .transpose()?;
+        let agent =
+            agent(AGENT_KEY, launch.default.as_deref()).map_err(|why| format!("{path}: {why}"))?;
         let written: ModelsManifest =
             toml::from_str(text).map_err(|error| format!("{path}: [agents.models]: {error}"))?;
         let models = written.agents.models;
@@ -247,6 +271,12 @@ impl Defaults {
                 assessor: given(models.assessor),
             },
         })
+    }
+
+    /// `[agents] launch`'s `default`, `model` and `effort` as these hold them, in
+    /// [`crate::local::LAUNCH`]'s order: what `tasks limits` says a stored one stands over.
+    pub(crate) fn launch(&self) -> [Option<&str>; 3] {
+        [self.agent, self.model.as_deref(), self.effort.as_deref()]
     }
 
     /// Whether the project names any of the three.
@@ -392,6 +422,31 @@ mod tests {
         ] {
             assert_eq!(parsed(text), expected, "{text}");
         }
+    }
+
+    #[test]
+    fn the_launch_agent_is_one_of_the_agents_none_unwritten_or_blank_and_any_other_refused() {
+        assert_eq!(agent(AGENT_KEY, None), Ok(None));
+        for blank in ["", " ", "\t"] {
+            assert_eq!(agent(AGENT_KEY, Some(blank)), Ok(None), "{blank:?}");
+        }
+        for known in AGENTS {
+            assert_eq!(agent(AGENT_KEY, Some(known)), Ok(Some(known)));
+        }
+        for unknown in ["gemini", "Claude", " codex", "codex ", "claude-code"] {
+            assert_eq!(
+                agent(AGENT_KEY, Some(unknown)),
+                Err(format!(
+                    "[agents] launch default {unknown:?} is not one of codex, claude"
+                )),
+                "{unknown:?}"
+            );
+        }
+        // The setting is named as its reader names it.
+        assert_eq!(
+            agent("[agents.launch] default (line 2)", Some("gemini")),
+            Err("[agents.launch] default (line 2) \"gemini\" is not one of codex, claude".into())
+        );
     }
 
     #[test]

@@ -57,9 +57,9 @@ symphony-schema = { path = "../symphony-schema", version = "1.0.0" }
 symphony-args = { path = "../symphony-args", version = "1.0.0" }
 symphony-api = { path = "../symphony-api", version = "=0.2.0" }
 # The plugin seams a project's plugins implement, and the project file (symphony.toml) they are chosen by.
-symphony-plugin = { path = "../symphony-plugin", version = "1.0.1" }
+symphony-plugin = { path = "../symphony-plugin", version = "1.1.0" }
 # The one reading of a card and its entries, which the docs build shares (`register`).
-symphony-docs = { path = "../symphony-docs", version = "1.0.1" }
+symphony-docs = { path = "../symphony-docs", version = "1.1.0" }
 # Its variables, each by its one SYMPHONY_ name.
 symphony-env = { path = "../symphony-env", version = "1.0.0" }
 toml.workspace = true
@@ -74,3 +74,6 @@ gix = { version = "0.87", default-features = false, features = ["basic", "blob-d
 # store's tests' common file, which waits for its server through the tests' wait (RULES.md
 # `tests/no-test-fails-on-load`).
 test-time = { path = "../test-time" }
+# The tests' stand-in for a project's approval authority signs its attestations as one does
+# (src/save/attest_tests.rs): the board's own version, which verifies them.
+ed25519-dalek = { version = "3", default-features = false }

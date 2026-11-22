@@ -3,7 +3,7 @@
 //! to it brings the sections above it near, and they draw after it, taller than the ghosts they
 //! replace (a picture in each, and in each card's history). On a first visit and on a move in place
 //! from another document, on a desk and a phone. The landing is held by the shell
-//! (`land`, assets/shell.js); here the sections' reads are held until the page has landed, so
+//! (`land`, shell/shell.ts); here the sections' reads are held until the page has landed, so
 //! they draw after it on any machine, and the device keeps no copy of them ([`NO_STORE`]): the
 //! shell's read-ahead of the other document's links would otherwise put the card's sections on it
 //! before the reads are held. A reader who scrolls away during the landing, by a wheel or a
@@ -19,7 +19,7 @@ use serde_json::{Map, Value, json};
 
 use crate::chrome::Chrome;
 use crate::site::Site;
-use crate::{NO_STORE, SHOWN, STALL, common, dist};
+use crate::{NO_STORE, READY, SHOWN, STALL};
 
 const LANDING: &str = "docs/landing.md";
 const FROM: &str = "docs/from.md";
@@ -136,7 +136,7 @@ fn grown() -> (Value, Value) {
 }
 
 fn site() -> Site {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     site.set_document(&landing());
     site.set_document(&from());
     site.set_json("/api/asks", &json!({"asks": [], "recipient": null}));
@@ -151,9 +151,13 @@ fn site() -> Site {
 
 /// True once the page has moved to the link's address and scrolled the fifth card's id (its ghost's,
 /// while its section is read) to the page's scroll padding.
-const LANDED: &str = "(() => { const line = document.getElementById('five');
-    return location.pathname === '/docs/landing.md' && document.documentElement.dataset.navigation === 'ready'
-        && line !== null && Math.abs(line.getBoundingClientRect().top - parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop)) < 1; })()";
+fn landed() -> String {
+    format!(
+        "(() => {{ const line = document.getElementById('five');
+    return location.pathname === '/docs/landing.md' && {READY}
+        && line !== null && Math.abs(line.getBoundingClientRect().top - parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop)) < 1; }})()"
+    )
+}
 
 /// True once the fifth card is drawn and has held still for ten frames with nothing near the
 /// screen still to draw (a reserved box within its sentinel's 600 px) and nothing busy; false
@@ -187,7 +191,8 @@ const PLACE: &str = "(() => { const line = document.getElementById('five'), card
 /// are held) and the card's ghost is at the scroll padding again.
 fn lifted() -> String {
     format!(
-        "document.getElementById('five')?.closest('.settle')?.dataset.settled === 'true' && {LANDED}"
+        "document.getElementById('five')?.closest('.settle')?.dataset.settled === 'true' && {}",
+        landed()
     )
 }
 
@@ -204,10 +209,7 @@ pub(crate) const TWO_FRAMES: &str =
 /// A browser of its own, `width` by `height`, whose device keeps no copy of what it reads.
 fn browser(width: u32, height: u32) -> Option<Chrome> {
     let mut page = crate::chrome()?;
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": width, "height": height, "deviceScaleFactor": 1, "mobile": width < 600}),
-    );
+    page.viewport(width, height, width < 600);
     page.call(
         "Page.addScriptToEvaluateOnNewDocument",
         json!({ "source": NO_STORE }),
@@ -225,13 +227,7 @@ fn arrive(site: &Site, width: u32, height: u32, in_place: bool) -> Option<[Value
         page.open(&site.url(&format!("/{FROM}")));
         let link = format!("a[href=\"{LINK}\"]");
         assert!(
-            page.wait_for(
-                &format!(
-                    "document.documentElement.dataset.navigation === 'ready' && {}",
-                    crate::visible(&link)
-                ),
-                SHOWN
-            ),
+            page.wait_for(&format!("{READY} && {}", crate::visible(&link)), SHOWN),
             "{width}px: the link to the card is drawn"
         );
         site.hold_route("/api/section", true);
@@ -242,7 +238,7 @@ fn arrive(site: &Site, width: u32, height: u32, in_place: bool) -> Option<[Value
     }
     let way = if in_place { "in place" } else { "opened" };
     assert!(
-        page.wait_for(LANDED, SHOWN),
+        page.wait_for(&landed(), SHOWN),
         "{width}px {way}: the page scrolls to the card's ghost first: {}",
         page.eval(PLACE)
     );
@@ -440,7 +436,10 @@ fn once_a_landing_went_quiet_a_change_above_the_card_after_a_script_s_scroll_lan
     // Ten frames still with nothing waiting or busy near: the hold (four such frames) has ended.
     assert!(
         page.wait_for(
-            &format!("{LANDED} && document.querySelector('[data-feed=live]') !== null"),
+            &format!(
+                "{} && document.querySelector('[data-feed=live]') !== null",
+                landed()
+            ),
             SHOWN
         ) && page.wait_for(STILL, SHOWN),
         "the page lands on the card, follows its feed and holds still: {}",
@@ -486,6 +485,193 @@ fn once_a_landing_went_quiet_a_change_above_the_card_after_a_script_s_scroll_lan
     assert!(
         (number(&later, "line") - number(&later, "padding")).abs() > 100.0,
         "the card is not brought back to the scroll padding: left {left}, later {later}"
+    );
+}
+
+/// The root's `overflow-anchor`: `none` while the page's landing holds what the address names
+/// (`land`, shell/shell.ts), so no adjustment of the browser's own scroll anchoring reads to it as
+/// a scroll away; `auto` once the landing has ended.
+const ANCHORING: &str = "getComputedStyle(document.documentElement).overflowAnchor";
+
+/// The root's own `overflow-anchor`, as its style has it: empty for none.
+const OWN_ANCHORING: &str = "document.documentElement.style.overflowAnchor";
+
+/// Leaves the part the page landed on out of what the browser anchors on, so it anchors on what
+/// is drawn below it.
+const ANCHOR_BELOW: &str = "(() => { document.getElementById('five').closest('.doc-part').style.overflowAnchor = 'none'; return true; })()";
+
+/// How far [`GROW`] moves what is below the landed part.
+const GROWN: f64 = 85.0;
+
+/// Grows the part the page landed on below its first line: what is below it moves down the
+/// document, and the line the page landed on does not.
+const GROW: &str = "(() => { document.getElementById('five').closest('.doc-part').style.paddingBottom = '85px'; return true; })()";
+
+/// A change that moves what the browser anchors on and not the element the page landed on (as a
+/// near part half drawn when the ghost lifts does) scrolls nothing while the landing holds, and
+/// the card stays at the scroll padding as the sections above it draw. Its control, the root's
+/// anchoring turned back on by the test, shows what the landing's `overflow-anchor: none` keeps
+/// away: the browser scrolls the page by that change, the page and the element alike, which ends
+/// the landing as a scroll away, and the card is left where the sections put it.
+#[test]
+fn a_change_under_what_the_browser_anchors_on_scrolls_nothing_while_a_landing_holds() {
+    let site = site();
+    for browser_anchors in [false, true] {
+        let Some(mut page) = browser(1280, 900) else {
+            return;
+        };
+        site.hold_route("/api/section", true);
+        page.open(&site.url(&format!("/{LANDING}#five")));
+        assert!(
+            page.wait_for(&lifted(), SHOWN),
+            "anchoring {browser_anchors}: the page lands on the card's ghost and its ghost lifts: {}",
+            page.eval(PLACE)
+        );
+        assert_eq!(
+            page.eval(ANCHORING),
+            json!("none"),
+            "anchoring {browser_anchors}: the browser's own scroll anchoring is off while the landing holds"
+        );
+        page.eval(ANCHOR_BELOW);
+        if browser_anchors {
+            page.eval("document.documentElement.style.removeProperty('overflow-anchor'); true");
+        }
+        // The browser picks what it anchors on as it lays the page out, before the change.
+        page.eval(TWO_FRAMES);
+        let before = page.eval(PLACE);
+        page.eval(GROW);
+        page.eval(TWO_FRAMES);
+        let grown = page.eval(PLACE);
+        page.eval(COUNT_SCROLLS);
+        site.hold_route("/api/section", false);
+        assert!(
+            page.wait_for(STILL, SHOWN),
+            "anchoring {browser_anchors}: the page around the card draws and holds still: {}",
+            page.eval(PLACE)
+        );
+        let later = page.eval(PLACE);
+        eprintln!("ANCHORED {browser_anchors}: before {before}, grown {grown}, later {later}");
+        let number = |place: &Value, key: &str| place[key].as_f64().unwrap_or(f64::NAN);
+        let scrolled = number(&grown, "y") - number(&before, "y");
+        let off = number(&later, "line") - number(&later, "padding");
+        if browser_anchors {
+            assert!(
+                (scrolled - GROWN).abs() <= 1.0,
+                "the control: with its anchoring on, the browser scrolls the page by what grew: before {before}, grown {grown}"
+            );
+            assert_eq!(
+                page.eval("window.pageScrolls"),
+                json!(0),
+                "the control: that scroll ended the landing, and nothing scrolls the page as the sections draw: grown {grown}, later {later}"
+            );
+            assert!(
+                off < -50.0,
+                "the control: the card is not brought back to the scroll padding: grown {grown}, later {later}"
+            );
+        } else {
+            assert!(
+                scrolled.abs() < 0.5,
+                "nothing scrolls the page while the landing holds: before {before}, grown {grown}"
+            );
+            assert!(
+                number(&later, "down") - number(&grown, "down") > 300.0,
+                "the sections above the card draw after the change, taller than their ghosts: grown {grown}, later {later}"
+            );
+            assert!(
+                off.abs() <= 1.0 && number(&later, "card") >= number(&later, "header"),
+                "the card's first line stays at the scroll padding as the sections above draw: grown {grown}, later {later}"
+            );
+        }
+    }
+}
+
+/// A root `overflow-anchor` of the page's own, set before a link is followed to a card, is there
+/// once the landing has ended, as the page wrote it: the landing puts back what it found, and a
+/// navigation with no landing to end touches none.
+#[test]
+fn a_root_overflow_anchor_set_before_a_landing_is_there_after_it() {
+    let site = site();
+    for own in ["none", "auto"] {
+        let Some(mut page) = browser(1280, 900) else {
+            return;
+        };
+        page.open(&site.url(&format!("/{FROM}")));
+        let link = format!("a[href=\"{LINK}\"]");
+        assert!(
+            page.wait_for(&format!("{READY} && {}", crate::visible(&link)), SHOWN),
+            "{own}: the link to the card is drawn"
+        );
+        page.eval(&format!(
+            "document.documentElement.style.overflowAnchor = {}; true",
+            json!(own)
+        ));
+        site.hold_route("/api/section", true);
+        page.eval(&format!("document.querySelector({}).click()", json!(link)));
+        assert!(
+            page.wait_for(&lifted(), SHOWN),
+            "{own}: the page lands on the card's ghost and its ghost lifts: {}",
+            page.eval(PLACE)
+        );
+        assert_eq!(
+            page.eval(OWN_ANCHORING),
+            json!("none"),
+            "{own}: the browser's own scroll anchoring is off while the landing holds"
+        );
+        site.hold_route("/api/section", false);
+        // Ten frames still with nothing waiting or busy near: the hold (four such frames) has ended.
+        assert!(
+            page.wait_for(STILL, SHOWN),
+            "{own}: the page around the card draws and holds still: {}",
+            page.eval(PLACE)
+        );
+        assert_eq!(
+            page.eval(OWN_ANCHORING),
+            json!(own),
+            "{own}: the root's own overflow-anchor is back once the landing has ended"
+        );
+    }
+}
+
+/// A landing whose element is gone (no element has the id the address names) ends on the next
+/// frame, the browser's own scroll anchoring back, though the sections near it still wait to
+/// draw; and the card drawn again later, when its read lands, is not landed on again.
+#[test]
+fn a_landing_whose_element_is_gone_ends_without_waiting_for_the_page_to_go_quiet() {
+    let site = site();
+    let Some(mut page) = browser(1280, 900) else {
+        return;
+    };
+    site.hold_route("/api/section", true);
+    page.open(&site.url(&format!("/{LANDING}#five")));
+    assert!(
+        page.wait_for(&lifted(), SHOWN),
+        "the page lands on the card's ghost and its ghost lifts: {}",
+        page.eval(PLACE)
+    );
+    assert_eq!(
+        page.eval(ANCHORING),
+        json!("none"),
+        "the browser's own scroll anchoring is off while the landing holds"
+    );
+    page.eval("document.getElementById('five').removeAttribute('id'); true");
+    page.eval(TWO_FRAMES);
+    assert_eq!(
+        page.eval(format!("[{ANCHORING}, {PENDING_NEAR}.length > 0]").as_str()),
+        json!(["auto", true]),
+        "the landing ended with its element gone, the sections near it still to draw"
+    );
+    page.eval(COUNT_SCROLLS);
+    site.hold_route("/api/section", false);
+    assert!(
+        page.wait_for(STILL, SHOWN),
+        "the page around the card draws and holds still: {}",
+        page.eval(PLACE)
+    );
+    assert_eq!(
+        page.eval("window.pageScrolls"),
+        json!(0),
+        "nothing scrolls the page once its landing ended: {}",
+        page.eval(PLACE)
     );
 }
 
@@ -617,7 +803,7 @@ fn reader(reading: Reading) -> Option<Chrome> {
 pub(crate) fn landed_on(path: &str, id: &str) -> String {
     format!(
         "(() => {{ const line = document.getElementById({id});
-        return location.pathname === {path} && document.documentElement.dataset.navigation === 'ready'
+        return location.pathname === {path} && {READY}
             && line !== null && Math.abs(line.getBoundingClientRect().top - parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop)) < 1; }})()",
         id = json!(id),
         path = json!(format!("/{path}")),
@@ -726,6 +912,11 @@ fn read_while_drawn(
         "{id} {reading:?}: the page's ghost lifts with it at the scroll padding: {}",
         page.eval(&format!("{element}?.getBoundingClientRect().top ?? null"))
     );
+    assert_eq!(
+        page.eval(ANCHORING),
+        json!("none"),
+        "{id} {reading:?}: the browser's own scroll anchoring is off while the landing holds"
+    );
     page.eval(TWO_FRAMES);
     page.eval(&format!("window.reading = {element}; true"));
     let landed = page.eval(READ);
@@ -795,6 +986,11 @@ fn read_while_drawn(
         page.wait_for(&held(false), SHOWN),
         "{id} {reading:?}: what the reader reads holds still while the reads are held: {}",
         page.eval(READ)
+    );
+    assert_eq!(
+        page.eval(ANCHORING),
+        json!("auto"),
+        "{id} {reading:?}: the reader's act ended the landing, and the browser's own scroll anchoring is back to hold their place"
     );
     let before = page.eval(READ);
     page.eval(COUNT_SCROLLS);

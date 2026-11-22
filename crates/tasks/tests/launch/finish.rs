@@ -172,7 +172,7 @@ fn finish_on_a_board_it_cannot_reach_says_so_and_never_fails() {
     let m = w.machine();
     let [line] = <[_; 1]>::try_from(finish(&gone, &w.hc(), &*m.processes, "sim/jump")).unwrap();
     assert!(
-        line.starts_with("could not clean up the sessions of sim/jump: SurrealDB: "),
+        line.starts_with("could not clean up the sessions of sim/jump: the board's database: "),
         "{line}"
     );
     assert_eq!(w.calls(), Vec::<Vec<String>>::new());

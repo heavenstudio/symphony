@@ -719,7 +719,7 @@ fn a_plugin_of_another_major_is_refused_killed_and_not_started_again_until_its_p
     let refused = remote.declaration().unwrap_err();
     assert_eq!(
         refused,
-        "its process is refused: the plugin speaks protocol 1.0 and this Symphony 0.3: install a \
+        "its process is refused: the plugin speaks protocol 1.0 and this Symphony 0.4: install a \
          Symphony that speaks protocol 1; it is not started again until its program or the \
          project's settings change"
     );
@@ -1243,7 +1243,7 @@ fn an_answer_after_its_call_was_given_up_is_logged_and_dropped_and_the_process_k
     let (let_go, held) = mpsc::channel::<()>();
     let held = Mutex::new(Some(held));
     let respond: Respond = Arc::new(move |id, _| {
-        if let Some(held) = lock(&held).take() {
+        if let Some(held) = held.lock().recover().take() {
             // Until the test lets it go, or lets go of its end.
             let _ = held.recv();
             return Said::Lines(vec![answering(id, &rendered("late"))]);
@@ -1681,11 +1681,11 @@ fn a_real_process_that_stops_reading_is_ended_in_the_wait_and_holds_no_other_cal
     let (x_failed, y_failed) = std::thread::scope(|scope| {
         // Neither call's wait begins before both calls wait: each queues its line, which begins
         // its wait, only once the test lets go of the queue.
-        let queue = lock(&connection.queue);
+        let queue = connection.queue.lock().recover();
         let xs = scope.spawn(|| failed(&x));
         let ys = scope.spawn(|| failed(&y));
         until("both calls wait", || {
-            lock(&connection.waiting).calls.len() == 2
+            connection.waiting.lock().recover().calls.len() == 2
         });
         drop(queue);
         (xs.join().unwrap(), ys.join().unwrap())
@@ -1725,7 +1725,9 @@ fn every_call_that_finds_its_process_ending_is_told_how_the_first_ended_it() {
     let released = Arc::new(AtomicBool::new(false));
     let lingering = released.clone();
     let start: Start = Box::new(move || {
-        let input = lock(&declares)
+        let input = declares
+            .lock()
+            .recover()
             .take()
             .ok_or_else(|| io::Error::other("it is started once"))?;
         Ok(Spawned {
@@ -1745,7 +1747,9 @@ fn every_call_that_finds_its_process_ending_is_told_how_the_first_ended_it() {
     std::thread::scope(|scope| {
         // One call ends it, and its process is not seen ended until the test lets it.
         scope.spawn(|| remote.end(&connection, Some("the first call's reason".into())));
-        until("it is ending", || lock(&connection.waiting).ending);
+        until("it is ending", || {
+            connection.waiting.lock().recover().ending
+        });
         // Another call ends it meanwhile, which leaves the first's reason standing.
         remote.end(&connection, Some("the second call's reason".into()));
         released.store(true, Ordering::SeqCst);
@@ -1928,7 +1932,7 @@ fn a_call_with_no_answer_is_recorded_with_why_and_without_the_plugins_time() {
         (&line["seam"], &line["call"]),
         (&"card_kinds".into(), &"recognises".into())
     );
-    for absent in ["us", "request_bytes", "answer_bytes", "lost"] {
+    for absent in ["us", "request_bytes", "answer_bytes"] {
         assert!(line.get(absent).is_none(), "{absent}: {line}");
     }
     assert!(line["round_trip_us"].as_f64().is_some(), "{line}");
@@ -2521,4 +2525,99 @@ impl Plugin for BarePlugin {
     fn card_kinds(&self) -> Vec<&dyn CardKind> {
         vec![&BareKind]
     }
+}
+
+/// A project's approval authorities: `approvals` signs the guard it is asked of with the time it
+/// was given, `closed` cannot say, `broken` panics.
+struct Approver(&'static str);
+
+static APPROVERS: Approvers = Approvers;
+
+struct Approvers;
+
+impl Plugin for Approvers {
+    fn name(&self) -> &str {
+        "approvers"
+    }
+    fn authorities(&self) -> Vec<&dyn symphony_plugin::Authority> {
+        static EACH: [Approver; 3] = [
+            Approver("approvals"),
+            Approver("closed"),
+            Approver("broken"),
+        ];
+        EACH.iter()
+            .map(|a| -> &dyn symphony_plugin::Authority { a })
+            .collect()
+    }
+}
+
+impl symphony_plugin::Authority for Approver {
+    fn adapter(&self) -> &str {
+        self.0
+    }
+    fn attest(
+        &self,
+        _: &Path,
+        operation: &symphony_plugin::authority::Operation,
+        within: Duration,
+    ) -> Result<symphony_plugin::authority::Signed, String> {
+        match self.0 {
+            "approvals" => Ok(symphony_plugin::authority::Signed::new(
+                format!("{} within {} ms", operation.guard, within.as_millis()),
+                "ab".repeat(64),
+            )),
+            "closed" => Err("the ledger is closed".into()),
+            _ => panic!("the ledger's file is gone"),
+        }
+    }
+}
+
+#[test]
+fn a_plugins_process_answers_its_authorities_as_it_does_linked_and_shows_a_panic_as_its_refusal() {
+    use symphony_plugin::authority::{Operation, Snapshot};
+    use symphony_plugin::execution::{Principal, PrincipalKind};
+    let tree = Tree::new();
+    let remote = Remote::leaked(
+        "approvers",
+        process_in(&tree, "approvers"),
+        peer(&APPROVERS, Arc::default()),
+        patient(),
+    );
+    assert_eq!(
+        remote.declaration().map(|d| d.authorities.clone()),
+        Ok(vec!["approvals".into(), "closed".into(), "broken".into()])
+    );
+    let operation = Operation::new(
+        "sim".into(),
+        "sim/a".into(),
+        "accept".into(),
+        "approved".into(),
+        Snapshot::new("d1".into(), 2, 3, "verify".into(), "awaiting".into()),
+        std::collections::BTreeMap::new(),
+        Principal::new(PrincipalKind::Human, "local".into(), "owner".into()),
+    );
+    let within = Duration::from_millis(2500);
+    let (remote_ones, linked_ones) = (remote.authorities(), APPROVERS.authorities());
+    for (far, near) in remote_ones.iter().zip(&linked_ones).take(2) {
+        assert_eq!(far.adapter(), near.adapter());
+        assert_eq!(
+            far.attest(&tree.root, &operation, within),
+            near.attest(&tree.root, &operation, within)
+        );
+    }
+    assert_eq!(
+        remote_ones[0].attest(&tree.root, &operation, within),
+        Ok(symphony_plugin::authority::Signed::new(
+            "approved within 2500 ms".into(),
+            "ab".repeat(64)
+        ))
+    );
+    assert_eq!(
+        remote_ones[2].attest(&tree.root, &operation, within),
+        Err(
+            "plugin approvers: it refused authorities.attest: approvers panicked: the ledger's \
+             file is gone"
+                .into()
+        )
+    );
 }

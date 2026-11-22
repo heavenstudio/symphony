@@ -47,6 +47,7 @@ pub mod cli;
 pub mod codex_queue;
 pub mod confine;
 pub mod covering;
+pub mod db;
 pub mod execution;
 pub mod folders;
 pub mod gates;
@@ -58,8 +59,10 @@ pub mod launch;
 pub mod limits;
 pub mod live;
 pub mod local;
+pub mod lock;
 mod maps;
 mod move_cli;
+mod objects;
 pub mod on_land;
 pub mod on_review;
 pub mod orchestration;
@@ -78,6 +81,7 @@ pub mod runs;
 pub mod schema;
 pub mod server;
 pub mod session_url;
+pub mod settings;
 pub mod slots;
 pub mod stages;
 pub mod stamps;
@@ -210,7 +214,7 @@ fn copy(
         [board_word, dump] if board_word == "--board" && dump == "--out" => (board()?, true),
         [addr] if named(addr) => (server(addr, DATABASE)?, false),
         [addr, db] if named(addr) && named(db) => {
-            if !rpc::plain(db) {
+            if !crate::db::plain(db) {
                 return Err(format!("{db:?} is not a plain name for a database"));
             }
             (server(addr, db)?, false)

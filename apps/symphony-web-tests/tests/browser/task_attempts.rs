@@ -1,5 +1,5 @@
 //! A task's execution attempts on its page, in the real client, wide and on a phone
-//! (docs/EXECUTION_ATTEMPTS.md, "On a task's page"). A task with attempts draws its history, newest
+//! (docs/engineering/EXECUTION_ATTEMPTS.md, "On a task's page"). A task with attempts draws its history, newest
 //! first, from its own read; a control waits on its confirmation, then posts the attempt's revision
 //! as read and draws the history it answers; a view's address goes to the window the click opened
 //! alone, never into the page or the device; and a task with none loads none of the attempts'
@@ -10,26 +10,18 @@
 //! refusals, are proved on a private board (`apps/symphony-server/src/attempts_tests.rs`). With
 //! `SYMPHONY_ATTEMPT_SHOTS` naming a folder, the page saves its pictures there.
 
-use super::{SHOWN, chrome::Chrome, common, dist, look_parity, site::Site};
+use super::{SHOWN, chrome::Chrome, look_parity, open, samples, site::Site, texts};
 use serde_json::{Value, json};
 use symphony_api::{ATTEMPT_CONTROL_ROUTE, ATTEMPT_VIEW_ROUTE, TASK_ATTEMPTS_PATH};
 
 /// The task whose attempts are drawn.
 const SLUG: &str = "w/a";
 
-/// The wire's samples (`wire.cases.json`'s `samples`).
-fn samples() -> Value {
-    let cases: Value =
-        serde_json::from_str(include_str!("../../../symphony-web/src/wire.cases.json"))
-            .expect("the wire's cases");
-    cases["samples"].clone()
-}
-
 /// The stand-in server: `w/a`'s page counting `attempts`, its thread, its attempts (the sample's
 /// three), a control answered with them after a cancel was asked of the running one, and a view.
 fn site(attempts: usize) -> (Site, Value) {
     let samples = samples();
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let task = super::site::example_listing("in_progress")["tasks"][0].clone();
     let mut page = json!({"task": task, "blocks": [{"type": "paragraph", "spans": [{"type": "text",
         "text": "Run it on the provider."}]}], "children": [], "children_count": 0});
@@ -52,16 +44,6 @@ fn site(attempts: usize) -> (Site, Value) {
     (site, samples)
 }
 
-/// A page of `width` (a phone's, touch and all, at 390), over the stand-in's `path`.
-fn open(page: &mut Chrome, site: &Site, path: &str, width: u32) {
-    let phone = width <= 760;
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": width, "height": if phone { 844 } else { 900 }, "deviceScaleFactor": 1, "mobile": phone}),
-    );
-    page.open(&site.url(path));
-}
-
 /// The page as its fonts and two frames leave it, the attempts scrolled to, in each scheme, saved
 /// as `NAME-light.png` and `NAME-dark.png` in the folder `SYMPHONY_ATTEMPT_SHOTS` names; nothing
 /// without one. The page is left in the browser's own scheme.
@@ -72,12 +54,9 @@ fn shot(page: &mut Chrome, name: &str) {
     let folder = std::path::PathBuf::from(folder);
     std::fs::create_dir_all(&folder).unwrap();
     for scheme in ["light", "dark"] {
-        page.call(
-            "Emulation.setEmulatedMedia",
-            json!({"features": [{"name": "prefers-color-scheme", "value": scheme}]}),
-        );
+        page.scheme(scheme);
         page.eval("document.querySelector('.attempts')?.scrollIntoView({block: 'start'})");
-        page.eval("document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))");
+        page.frames_with_fonts();
         // The colours' transitions into the scheme, finished.
         page.wait_for("document.getAnimations().length === 0", SHOWN);
         std::fs::write(
@@ -89,14 +68,6 @@ fn shot(page: &mut Chrome, name: &str) {
     page.call("Emulation.setEmulatedMedia", json!({"features": []}));
 }
 
-/// The text of what `selector` matches, in order.
-fn texts(page: &mut Chrome, selector: &str) -> Value {
-    page.eval(&format!(
-        "[...document.querySelectorAll({})].map(one => one.textContent.trim())",
-        json!(selector)
-    ))
-}
-
 /// Clicks the button reading `label` in the attempt whose id starts with `id`.
 fn click(page: &mut Chrome, id: &str, label: &str) {
     let clicked = page.eval(&format!(
@@ -106,6 +77,14 @@ fn click(page: &mut Chrome, id: &str, label: &str) {
     ));
     assert_eq!(clicked, json!(true), "no {label} on {id}");
 }
+
+/// What the running attempt (`b…`) says: its text as shown (`shown`, none while the browser skips
+/// its slot's content), its text in the page (`text`), whether the browser renders it
+/// (`rendered`), and where its slot stands in the window (`top`, of `height`).
+const SAID: &str = "(attempt => ({shown: attempt.innerText, text: attempt.textContent, \
+    rendered: attempt.checkVisibility({contentVisibilityAuto: true}), \
+    top: attempt.closest('.viewport-slot').getBoundingClientRect().top, height: innerHeight}))\
+    (document.querySelector('[data-attempt^=b]'))";
 
 #[test]
 fn a_tasks_attempts_are_drawn_newest_first_and_a_control_waits_on_its_confirmation() {
@@ -128,21 +107,39 @@ fn a_tasks_attempts_are_drawn_newest_first_and_a_control_waits_on_its_confirmati
         ),
         json!(["c", "b", "a"])
     );
-    assert_eq!(texts(&mut page, ".attempts h2"), json!(["Attempts 3"]));
     assert_eq!(
-        texts(&mut page, "[data-attempt^=b] button"),
+        json!(texts(&mut page, ".attempts h2")),
+        json!(["Attempts 3"])
+    );
+    assert_eq!(
+        json!(texts(&mut page, "[data-attempt^=b] button")),
         json!(["Cancel", "Stop: pause", "Stop: terminate", "View"])
     );
     assert_eq!(
-        texts(&mut page, "[data-attempt^=c] button"),
+        json!(texts(&mut page, "[data-attempt^=c] button")),
         json!(["Cancel"]),
         "a provider this server does not hold offers no resume or view"
     );
-    let said = page.eval("document.querySelector('[data-attempt^=b]').innerText");
+    // Drawn is not yet shown: the attempts' part is a slot of its own (`content-visibility: auto`,
+    // viewport.tsx), whose content the browser renders only once a frame has found the slot near
+    // the screen, its shown text empty until then. A loaded machine's renderer can hold that frame
+    // back past this read, and how far past the screen a slot is rendered is the browser's own
+    // choice: the attempt is read on the screen, as a reader reads it, once it is rendered.
+    page.eval("document.querySelector('[data-attempt^=b]').scrollIntoView({block: 'nearest'})");
     assert!(
-        said.as_str()
-            .is_some_and(|said| said.contains("resume of aaaaaaaa · resource res-2 (g1)")),
-        "{said}"
+        page.wait_for(
+            "document.querySelector('[data-attempt^=b]').checkVisibility({contentVisibilityAuto: true})",
+            SHOWN
+        ),
+        "the running attempt was never rendered: {}",
+        page.eval(SAID)
+    );
+    let said = page.eval(SAID);
+    assert!(
+        said["shown"]
+            .as_str()
+            .is_some_and(|shown| shown.contains("resume of aaaaaaaa · resource res-2 (g1)")),
+        "the running attempt shows what it resumes and what it holds: {said}"
     );
     assert!(
         site.targets()
@@ -155,7 +152,7 @@ fn a_tasks_attempts_are_drawn_newest_first_and_a_control_waits_on_its_confirmati
 
     click(&mut page, "b", "Stop: pause");
     assert_eq!(
-        texts(&mut page, "[data-attempt^=b] [role=group] span"),
+        json!(texts(&mut page, "[data-attempt^=b] [role=group] span")),
         json!(["Stop: pause attempt bbbbbbbb?"])
     );
     assert!(
@@ -183,7 +180,7 @@ fn a_tasks_attempts_are_drawn_newest_first_and_a_control_waits_on_its_confirmati
         SHOWN
     ));
     assert_eq!(
-        texts(&mut page, "[data-attempt^=b] button"),
+        json!(texts(&mut page, "[data-attempt^=b] button")),
         json!(["Stop: pause", "Stop: terminate", "View"]),
         "the answer's controls"
     );

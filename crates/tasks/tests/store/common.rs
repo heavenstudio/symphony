@@ -28,11 +28,13 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
+use symphony_board::db::DbError;
 use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
+use symphony_board::lock::Recovered as _;
 use symphony_board::pg;
 use symphony_board::port::{NotStarted, Start};
-use symphony_board::rpc::{self, Client, DbError};
-use symphony_board::server::{Home, Postgres};
+use symphony_board::rpc::{self, Client};
+use symphony_board::server::{Home, Postgres, Storage};
 use symphony_board::sys::{Child, Command};
 use symphony_board::{Database, Health, NewSession, NewTask, Store, Task};
 
@@ -77,7 +79,7 @@ impl RawWrite for Client {
     }
 }
 
-fn retry_conflicts<T>(
+pub fn retry_conflicts<T>(
     until: Instant,
     mut once: impl FnMut() -> Result<T, DbError>,
 ) -> Result<T, DbError> {
@@ -158,7 +160,7 @@ pub fn on_exit(cleanup: extern "C" fn()) {
 /// (a server that never came up is reported, log and all, by `start`).
 extern "C" fn stop_server() {
     if let Some(server) = SERVER.get() {
-        let mut shell = server.shell.lock().unwrap_or_else(|held| held.into_inner());
+        let mut shell = server.shell.lock().recover();
         let _ = shell.shutdown();
         let _ = std::fs::remove_file(&server.log);
     }
@@ -231,6 +233,18 @@ pub fn launch_on(
     log: &Path,
     engine: &str,
 ) -> Result<(String, ServerChild), NotStarted<Infallible>> {
+    launch_under(binary, log, engine, None)
+}
+
+/// [`launch_on`], the server keeping its data as `storage` says where one is given: without one,
+/// SurrealKV's memtable is its own, a share of the machine's memory, so what one transaction may
+/// hold differs from machine to machine.
+pub fn launch_under(
+    binary: &Path,
+    log: &Path,
+    engine: &str,
+    storage: Option<Storage>,
+) -> Result<(String, ServerChild), NotStarted<Infallible>> {
     if let Some(folder) = log.parent() {
         std::fs::create_dir_all(folder).unwrap_or_else(|error| {
             panic!(
@@ -275,6 +289,7 @@ pub fn launch_on(
                 .arg(&addr)
                 .arg(project_root().join("tools/fixture_process.sh"))
                 .arg(engine)
+                .envs(storage.into_iter().flat_map(Storage::environment))
                 .stdout(announcer)
                 .stderr(output),
         )
@@ -369,6 +384,60 @@ pub fn client() -> Client {
 
 pub fn server_addr() -> String {
     SERVER.get_or_init(start).addr.clone()
+}
+
+/// A SurrealDB server of a test's own on the engine a board's server runs on: `surrealkv://` under
+/// the board's storage ([`Storage::BOARD`], its 256 MiB memtable), in a folder of its own that goes
+/// with it, the server ended first. It is for a test that copies a whole board: the shared server's
+/// in-memory engine takes the copy's one transaction many times slower (the realistic board's,
+/// 45 s of the server's CPU there and 5 s here, measured 2026-11-22), so a copy a quiet machine
+/// makes well within the client's wait outlasted it at a load of 113.
+pub struct BoardServer {
+    addr: String,
+    shell: ServerChild,
+    dir: PathBuf,
+}
+
+impl BoardServer {
+    /// The server up on a store in a folder of its own under the target's temporary folder.
+    pub fn start() -> BoardServer {
+        let dir = option_env!("CARGO_TARGET_TMPDIR")
+            .map_or_else(std::env::temp_dir, PathBuf::from)
+            .join(format!(
+                "board-surrealkv-{}-{}",
+                std::process::id(),
+                DATABASES.fetch_add(1, Ordering::SeqCst)
+            ));
+        let _ = std::fs::remove_dir_all(&dir); // an ended run's, whose process had this one's id
+        let engine = format!("surrealkv://{}", dir.join("data").display());
+        let (addr, shell) = launch_under(
+            &surreal(),
+            &dir.join("surreal.log"),
+            &engine,
+            Some(Storage::BOARD),
+        )
+        .unwrap_or_else(|why| panic!("the board's SurrealDB server did not come up: {why}"));
+        BoardServer { addr, shell, dir }
+    }
+
+    /// The folder it keeps its store (`data/`) and its log in.
+    pub fn folder(&self) -> &Path {
+        &self.dir
+    }
+
+    /// A client of a database of its own on this server, which waits for each answer as any
+    /// board's client does until told otherwise ([`Client::waiting`]).
+    pub fn client(&self) -> Client {
+        let db = format!("t{}", DATABASES.fetch_add(1, Ordering::SeqCst));
+        Client::new(&self.addr, "sf", &db)
+    }
+}
+
+impl Drop for BoardServer {
+    fn drop(&mut self) {
+        let _ = self.shell.shutdown();
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
 }
 
 /// The database a store test's board is in. A test that runs on both is written once, by
@@ -568,11 +637,19 @@ impl Fixture {
 
     /// A board on `backend` seeded with `seed`.
     pub fn on(backend: Backend, seed: Seed) -> Fixture {
-        let db = backend.database();
+        Fixture::in_database(backend.database(), seed)
+    }
+
+    /// A board in `db` seeded with `seed`. A seed that does not copy says why and the load average
+    /// then, so one that outlasted the client's wait on a loaded machine reads as what it is
+    /// (RULES.md `tests/no-test-fails-on-load`).
+    pub fn in_database(db: Database, seed: Seed) -> Fixture {
         let clock = Arc::new(Mutex::new(NOW));
         let alive = Arc::new(Mutex::new(HashSet::new()));
         let store = open(&db, &clock, &alive);
-        store.copy(&seed.dump).expect("the seed copies");
+        if let Err(why) = store.copy(&seed.dump) {
+            panic!("the seed copies: {why:?}; {}", test_time::Load::now());
+        }
         Fixture {
             store,
             db,
@@ -839,11 +916,65 @@ pub fn bounded<T: Send + 'static>(
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
+/// A new task `slug`, a subtask of `parent`.
+pub fn under(slug: &str, parent: &str) -> NewTask {
+    NewTask {
+        parent: Some(parent.into()),
+        ..NewTask::new(slug, "Jump departure", "owner")
+    }
+}
+
+/// An orchestrator on `a`; `a/b` under it, `a/b/c` under that.
+pub fn chain(backend: Backend) -> (Fixture, String) {
+    let f = Fixture::on(backend, Seed::default());
+    let orch = f.session("orchestrator");
+    f.task("a");
+    f.store.take_role("a", &orch, "orchestrator").unwrap();
+    f.task_with(under("a/b", "a"));
+    f.task_with(under("a/b/c", "a/b"));
+    (f, orch)
+}
+
+/// `amber-heron` and `brisk-finch`, and `sim/jump` at `status`.
+pub fn two_and_a_task(backend: Backend, status: &str) -> Fixture {
+    Fixture::on(
+        backend,
+        Seed::default()
+            .session("amber-heron")
+            .session("brisk-finch")
+            .task("sim/jump", status),
+    )
+}
+
+/// `sim/jump` in review, everyone seen at `NOW`: `ochre-owl` orchestrates, `amber-heron` executed
+/// it, `brisk-finch` reviews it.
+pub fn in_review(backend: Backend) -> Fixture {
+    Fixture::on(
+        backend,
+        Seed::default()
+            .session("ochre-owl")
+            .session("amber-heron")
+            .session("brisk-finch")
+            .task("sim/jump", "review")
+            .role("sim/jump", "ochre-owl", "orchestrator")
+            .role("sim/jump", "amber-heron", "executor")
+            .role("sim/jump", "brisk-finch", "reviewer"),
+    )
+}
+
 /// The refusal's words, or a panic naming what came back instead.
 pub fn refused<T: std::fmt::Debug>(result: Result<T, symphony_board::Error>) -> String {
     match result {
         Err(symphony_board::Error::Refused(message)) => message,
         other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+/// The workflow pair `phase/state`.
+pub fn pair(phase: &str, state: &str) -> symphony_api::workflow::Pair {
+    symphony_api::workflow::Pair {
+        phase: phase.into(),
+        state: state.into(),
     }
 }
 

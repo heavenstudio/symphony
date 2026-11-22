@@ -3,7 +3,7 @@
 // client's block_view.rs draws them. A plugin renders to these blocks, never HTML, so a plugin's
 // content is drawn by them whatever plugin made it. Each switch over the kinds ends in a value of
 // type `never`: a kind the Rust adds fails the type check until it is drawn here. A kind a newer
-// server sends this client (the kit's lists grow in a minor, docs/PLUGIN_PROTOCOL.md) is said
+// server sends this client (the kit's lists grow in a minor, docs/engineering/PLUGIN_PROTOCOL.md) is said
 // where it stands, as unsupported content, and the rest of the page is drawn.
 
 import { createContext, type ReactNode, useContext, useState } from "react";

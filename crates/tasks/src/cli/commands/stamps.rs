@@ -180,5 +180,6 @@ pub(super) fn needs(store: &Store, c: &mut Context) -> Result<(), Stop> {
         said(&written.stamps),
         written.read()
     ));
+    super::finish::poke(c, &slug);
     Ok(())
 }

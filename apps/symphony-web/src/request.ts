@@ -88,7 +88,7 @@ function marker(post: boolean, url: string): (phase: string) => void {
  * One request: a POST of `payload`, else a GET naming `etag` when one is given (a kept read). Its
  * answer, and the headers it came with. The request is given up once `signal` ends, its fetch
  * failing with an `AbortError`, and when no answer comes in time, with a `TimeoutError`: the
- * shell's count of the page's reads (assets/shell.js) takes the second as a read that got no
+ * shell's count of the page's reads (shell/shell.ts) takes the second as a read that got no
  * answer, and the first as none.
  */
 async function exchange(

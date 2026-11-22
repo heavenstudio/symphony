@@ -7,7 +7,7 @@
 //!   closed it, the review gate's turning met. A stretch in review after that approval is the task
 //!   waiting to land.
 //! - Its claims are the executors' holds (`symphony_board::stages::holds`) while it was in progress.
-//! - Its runs are the builds and tests the board's recorder kept for it (docs/MACHINE_WORK.md),
+//! - Its runs are the builds and tests the board's recorder kept for it (docs/workflow/MACHINE_WORK.md),
 //!   a step inside one of them left to that one; none until one is kept.
 //! - Its gates are the gates answer's states, past and current ([`crate::gates::answer`]), a lane
 //!   each, by name, but none for a stamp left out (`gates::stamps::left_out`), which the gates

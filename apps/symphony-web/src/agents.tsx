@@ -39,7 +39,7 @@ const NO_NAMES: ReadonlyMap<string, string> = new Map();
 
 /**
  * What a task's line says it stands at: where a custom workflow holds it, its place by the names
- * its IDs read as (docs/WORKFLOW.md, "The app"), its phase's and state's IDs until they are read;
+ * its IDs read as (docs/workflow/WORKFLOW.md, "The app"), its phase's and state's IDs until they are read;
  * else its status.
  */
 export function standing(task: Task, names: ReadonlyMap<string, string>): string {

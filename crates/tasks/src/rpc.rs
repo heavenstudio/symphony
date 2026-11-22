@@ -6,12 +6,13 @@
 //! connect and a close; a transaction (`BEGIN; ...; COMMIT;`) lives inside one request.
 
 use crate::cbor;
+use crate::lock::Recovered as _;
 use serde_json::{Value, json};
 use std::fmt;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 mod descriptor;
@@ -28,27 +29,7 @@ const TIMEOUT: Duration = Duration::from_secs(300);
 /// since only a wait meets a drained socket's refusal, and the shortest the socket takes.
 const CHECK_WAIT: Duration = Duration::from_micros(1);
 
-/// Why a query did not give its results.
-#[derive(Debug, Clone, PartialEq)]
-pub enum DbError {
-    /// Another transaction committed a write to what this one wrote first: SurrealDB says it "can be
-    /// retried".
-    Conflict,
-    /// A `THROW` in the query, with its message.
-    Thrown(String),
-    /// Anything else, in the server's words (or why it could not be reached).
-    Failed(String),
-}
-
-impl fmt::Display for DbError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            DbError::Conflict => f.write_str("the transaction met another's write"),
-            DbError::Thrown(message) => f.write_str(message),
-            DbError::Failed(message) => f.write_str(message),
-        }
-    }
-}
+pub use crate::db::{DbError, plain};
 
 /// One namespace and database on a SurrealDB server at `addr` (`127.0.0.1:PORT`).
 #[derive(Debug)]
@@ -270,11 +251,7 @@ impl Client {
         let began = Instant::now();
         let caller = std::panic::Location::caller();
         let kept = loop {
-            let kept = self
-                .kept
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .pop();
+            let kept = self.kept.lock().recover().pop();
             let Some(connection) = kept else {
                 break None;
             };
@@ -409,10 +386,7 @@ impl Client {
 
     fn keep(&self, connection: Connection, reply: Reply) -> (u16, Vec<u8>) {
         if reply.open {
-            self.kept
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .push(connection);
+            self.kept.lock().recover().push(connection);
         }
         (reply.status, reply.body)
     }
@@ -634,11 +608,6 @@ pub(crate) fn exchange(
     };
     let raw = talk(&mut stream).map_err(|e| format!("the server at {addr} did not answer: {e}"))?;
     parse_response(&raw)
-}
-
-/// Whether `name` may name a namespace or database: letters, digits and `_`, nothing to quote.
-pub fn plain(name: &str) -> bool {
-    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// Whether a SurrealDB server answers its health check at `addr`.

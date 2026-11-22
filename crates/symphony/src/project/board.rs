@@ -1,12 +1,13 @@
-//! The project file's `[board]` table: the guide task messages render as part of, what the board starts when a task moves to review and
-//! once one lands, the cap on an orchestrator's open tasks, when the pipeline alarm raises, the
-//! size past which the sweep asks for a check of the evidence it set aside, the folder of the
-//! machine's PostgreSQL programs, where a hosted board's PostgreSQL is (`[board.external_postgresql]`,
-//! `symphony_board::pg::external`), and the project's own tools the board reads beside its own: a
-//! machine-work reader, a folder of test-slot locks and a folder of landing assessments. A path
-//! there is project-relative, and one under `.git/` names the repository's common git folder, but
-//! PostgreSQL's, which is the machine's and absolute; none is the Symphony's default, which reads
-//! nothing there.
+//! The project file's `[board]` table: the guide task messages render as part of, what the board
+//! starts when a task moves to review and once one lands, the cap on an orchestrator's open tasks,
+//! when the pipeline alarm raises, the size past which the sweep asks for a check of the evidence
+//! it set aside, how long a build the project no longer runs holds its board's move to a release
+//! (`crate::machine::writers`), the folder of the machine's PostgreSQL programs, where a hosted
+//! board's PostgreSQL is (`[board.external_postgresql]`, `symphony_board::pg::external`), and the
+//! project's own tools the board reads beside its own: a machine-work reader, a folder of
+//! test-slot locks and a folder of landing assessments. A path there is project-relative, and one
+//! under `.git/` names the repository's common git folder, but PostgreSQL's, which is the
+//! machine's and absolute; none is the Symphony's default, which reads nothing there.
 
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -32,7 +33,9 @@ pub struct Board {
     /// (`symphony_board::on_land`).
     pub on_land: Vec<String>,
     /// The open tasks (in progress or in review) an orchestrator may hold before the board refuses
-    /// it new work, which the board reads itself (`symphony_board::slots`); `None` caps nothing.
+    /// it new work, which the board reads itself (`symphony_board::slots`) and judges as it judges
+    /// `[limits]`'s (`symphony_board::limits::judged`); `None` caps nothing, as a value it cannot
+    /// read does, which [`super::Project::parse`] refuses as the board says it.
     pub orchestrator_slots: Option<u32>,
     /// The pipeline alarm, which the board reads itself (`symphony_board::alarm`): review holding
     /// more than this many times the work in progress raises it; `None` is the board's default.
@@ -65,13 +68,9 @@ impl Board {
 
     /// The table as written, each path checked to stay inside the project.
     pub(super) fn from_file(file: FileBoard) -> Result<Board, String> {
-        let inside =
-            |key: &str, path: Option<String>| path.map(|path| super::inside(key, path)).transpose();
-        if file.orchestrator_slots == Some(0) {
-            return Err(
-                "[board] orchestrator_slots is 0; an orchestrator needs at least one slot".into(),
-            );
-        }
+        let inside = |key: &str, path: Option<String>| {
+            path.map(|path| super::inside(key, &path)).transpose()
+        };
         for (key, value) in [
             ("review_alarm_ratio", file.review_alarm_ratio),
             ("review_alarm_hours", file.review_alarm_hours),
@@ -99,6 +98,15 @@ impl Board {
                 "[board] swept_cap_gb is {gb}; it is a number of gigabytes over 0"
             ));
         }
+        // The hours a build the project no longer runs holds its board's move to a release, which
+        // the writer rule reads itself (`crate::machine::writers::Runs`), a day when unwritten;
+        // checked here so a project's lint refuses a value the rule would not take.
+        if file.stale_writer_hours == Some(0) {
+            return Err(format!(
+                "[board] {} is 0; it is a whole number of hours over 0",
+                crate::machine::writers::UNUSED_KEY
+            ));
+        }
         // The folder of the machine's PostgreSQL programs, which the board reads itself
         // (`symphony_board::server::postgres::programs`): the machine's own, so an absolute path,
         // never one inside the project; checked here so a project's lint refuses what the board
@@ -121,7 +129,10 @@ impl Board {
             guide: inside("[board] guide", file.guide)?,
             on_review: file.on_review,
             on_land: file.on_land,
-            orchestrator_slots: file.orchestrator_slots,
+            orchestrator_slots: file.orchestrator_slots.and_then(|value| {
+                let cap = symphony_board::limits::judged(symphony_board::limits::SLOTS, &value);
+                cap.ok().and_then(|cap| u32::try_from(cap).ok())
+            }),
             review_alarm_ratio: file.review_alarm_ratio,
             review_alarm_hours: file.review_alarm_hours,
             review_alarm_clear_hours: file.review_alarm_clear_hours,
@@ -140,7 +151,9 @@ pub(super) struct FileBoard {
     guide: Option<String>,
     on_review: Vec<String>,
     on_land: Vec<String>,
-    orchestrator_slots: Option<u32>,
+    /// Any value the file writes, so one the board cannot read leaves the rest of the project read,
+    /// as `[limits]`'s do (`super::file::FileLimits`).
+    orchestrator_slots: Option<toml::Value>,
     review_alarm_ratio: Option<u32>,
     review_alarm_hours: Option<u32>,
     review_alarm_clear_hours: Option<u32>,
@@ -149,6 +162,7 @@ pub(super) struct FileBoard {
     slot_locks: Option<String>,
     assessments: Option<String>,
     swept_cap_gb: Option<f64>,
+    stale_writer_hours: Option<u32>,
     postgresql: Option<String>,
     external_postgresql: Option<toml::Value>,
     #[serde(flatten)]

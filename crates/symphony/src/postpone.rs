@@ -118,7 +118,9 @@ impl View {
         action: &str,
         now: u64,
     ) -> Result<bool, ReviewError> {
-        act_with_cards(root, owner, path, slug, action, now, Some(&self.cards))
+        act_with_cards(root, owner, path, slug, action, now, || {
+            Ok(Cards::Shown(&self.cards))
+        })
     }
 
     pub fn waiting(&self, root: &Path, owner: &str, now: u64) -> Result<Vec<Card>, ReviewError> {
@@ -291,7 +293,8 @@ pub fn act(
     action: &str,
     now: u64,
 ) -> Result<bool, ReviewError> {
-    if action == "later" {
+    // Only a Later reads the documents, and only once its action is known to be one.
+    act_with_cards(root, owner, path, slug, action, now, || {
         let mut docs = crate::board::scan(root)?;
         let plugins = Plugins::of(root);
         crate::dashboard::merge_decisions(
@@ -299,75 +302,112 @@ pub fn act(
             &crate::branches::branch_cards(root),
             &plugins,
         );
-        let cards = eligible(&docs, &plugins.reading(root, &docs));
-        act_with_cards(root, owner, path, slug, action, now, Some(&cards))
-    } else {
-        act_with_cards(root, owner, path, slug, action, now, None)
-    }
+        Ok(Cards::Read(eligible(&docs, &plugins.reading(root, &docs))))
+    })
 }
 
-fn act_with_cards(
+/// The three things a card's action is.
+const ACTIONS: [&str; 3] = ["later", "undo", "seen"];
+
+/// `action` on the owner's card `slug` of `path`: a Later against the waiting `cards` its reader
+/// was shown ([`later`]), an Undo or a visit against the order kept alone.
+fn act_with_cards<'a>(
     root: &Path,
     owner: &str,
     path: &str,
     slug: &str,
     action: &str,
     now: u64,
-    cards: Option<&BTreeMap<String, Entry>>,
+    cards: impl FnOnce() -> Result<Cards<'a>, ReviewError>,
 ) -> Result<bool, ReviewError> {
-    if !["later", "undo", "seen"].contains(&action) {
+    if !ACTIONS.contains(&action) {
         return Err(ReviewError("action must be later, undo, or seen".into()));
     }
     let id = key(path, slug);
-    if action != "later" {
-        let changed = order_file(root)
-            .try_exists()
-            .map_err(|e| problem(&order_file(root), e))
-            .and_then(|exists| {
-                if !exists {
-                    return Ok(false);
-                }
-                update(root, |order| {
-                    let Some(entries) = order.owners.get_mut(owner) else {
-                        return false;
-                    };
-                    if action == "undo" {
-                        return entries.get(&id).is_some_and(|entry| entry.path == path)
-                            && entries.remove(&id).is_some();
-                    }
-                    let before = entries.len();
-                    for entry in entries.values_mut() {
-                        entry.remaining.remove(&id);
-                    }
-                    entries.retain(|_, entry| !entry.remaining.is_empty());
-                    entries.len() != before
-                })
-                .map(|(changed, _)| changed)
-            });
-        return match changed {
-            Ok(changed) => Ok(changed),
-            Err(error) if action == "seen" => {
-                eprintln!("· could not record card visit {slug}: {error}");
-                Ok(false)
-            }
-            Err(error) => Err(error),
-        };
+    match action {
+        "later" => later(root, owner, path, slug, &id, now, cards()?.waiting()),
+        "undo" => kept(root, owner, |entries| {
+            entries.get(&id).is_some_and(|entry| entry.path == path)
+                && entries.remove(&id).is_some()
+        }),
+        // A visit that cannot be recorded is said and costs the reader nothing.
+        _ => kept(root, owner, |entries| {
+            let before = entries.len();
+            passed(entries, &id);
+            entries.retain(|_, entry| !entry.remaining.is_empty());
+            entries.len() != before
+        })
+        .or_else(|error| {
+            eprintln!("· could not record card visit {slug}: {error}");
+            Ok(false)
+        }),
     }
-    let cards = cards.expect("Later has a decision snapshot");
+}
+
+/// The waiting cards a Later is judged against: its reader's own, or the ones read for it.
+enum Cards<'a> {
+    Shown(&'a BTreeMap<String, Entry>),
+    Read(BTreeMap<String, Entry>),
+}
+
+impl Cards<'_> {
+    fn waiting(&self) -> &BTreeMap<String, Entry> {
+        match self {
+            Cards::Shown(cards) => cards,
+            Cards::Read(cards) => cards,
+        }
+    }
+}
+
+/// `change` made to the entries `owner` keeps, saying whether it changed any; false, with nothing
+/// written, where no order is kept yet or the owner keeps none.
+fn kept(
+    root: &Path,
+    owner: &str,
+    change: impl FnOnce(&mut BTreeMap<String, Entry>) -> bool,
+) -> Result<bool, ReviewError> {
+    let file = order_file(root);
+    if !file.try_exists().map_err(|e| problem(&file, e))? {
+        return Ok(false);
+    }
+    update(root, |order| {
+        order.owners.get_mut(owner).is_some_and(change)
+    })
+    .map(|(changed, _)| changed)
+}
+
+/// The card `id` is no longer one any postponed card of `entries` waits behind.
+fn passed(entries: &mut BTreeMap<String, Entry>, id: &str) {
+    for entry in entries.values_mut() {
+        entry.remaining.remove(id);
+    }
+}
+
+/// The owner's card `id` (`slug` of `path`) postponed among the waiting `cards`: it comes back
+/// after the cards of its group that wait now, or once its lifetime ends.
+fn later(
+    root: &Path,
+    owner: &str,
+    path: &str,
+    slug: &str,
+    id: &str,
+    now: u64,
+    cards: &BTreeMap<String, Entry>,
+) -> Result<bool, ReviewError> {
     let card = cards
-        .get(&id)
+        .get(id)
         .filter(|card| card.path == path)
         .ok_or_else(|| ReviewError(format!("no card waiting on you at {path}#{slug}")))?;
     update(root, |order| {
         prune(order, cards, now);
         let entries = order.owners.entry(owner.into()).or_default();
-        for entry in entries.values_mut() {
-            entry.remaining.remove(&id);
-        }
+        passed(entries, id);
         let remaining = cards
             .iter()
             .filter(|(candidate, meta)| {
-                *candidate != &id && meta.group == card.group && !entries.contains_key(*candidate)
+                candidate.as_str() != id
+                    && meta.group == card.group
+                    && !entries.contains_key(*candidate)
             })
             .map(|(id, _)| id.clone())
             .collect();
@@ -378,7 +418,7 @@ fn act_with_cards(
             .unwrap_or(0)
             .saturating_add(1);
         entries.insert(
-            id.clone(),
+            id.to_string(),
             Entry {
                 until: now.saturating_add(LIFETIME),
                 position,

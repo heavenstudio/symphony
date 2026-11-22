@@ -1,4 +1,4 @@
-//! What a refresh does with the machine's schema updates (docs/RELEASES.md, "An update"), kept in
+//! What a refresh does with the machine's schema updates (docs/workflow/RELEASES.md, "An update"), kept in
 //! the machine folder's ledger ([`symphony::machine::updates`]): once the boards and `current` are
 //! settled and the machine's server waited for, each registered project's board, this
 //! repository's included, is read again.
@@ -50,8 +50,6 @@ pub(crate) struct Look<'a> {
     pub(crate) kept: Option<i64>,
     /// Whether this refresh pointed `current` at the release.
     pub(crate) pointed: bool,
-    /// Why `current` was not pointed, as the refresh said it.
-    pub(crate) held: Option<&'a str>,
     /// How each board the refresh judged ended.
     pub(crate) ends: &'a [Ended],
     /// The machine's server as it answers now, and what its project list says it writes: by id,
@@ -442,20 +440,17 @@ fn one(look: &Look<'_>, boards: &dyn Boards, ledger: &mut Ledger, seen: &Seen<'_
         return lines;
     }
     // A move that failed, or a board its project holds, is a failure whatever serves; else, with
-    // no release serving the schema, no server or a board waiting on another's, it waits.
+    // no release serving the schema or no server, it waits.
     let failed = matches!(seen.end, Some(End::Red { .. } | End::Theirs(_)));
-    let waiting = matches!(seen.end, Some(End::Waiting(_)));
     // A server whose list cannot say yet whether it writes the board, once the refresh waited for
     // it ([`unsure`]), is neither its completion nor its failure: the next refresh judges it.
     let unsure = seen.live == Some(goal) && listed(look, seen) == Some(None);
-    if !failed && (available.is_none() || look.front.is_none() || waiting || unsure) {
+    if !failed && (available.is_none() || look.front.is_none() || unsure) {
         lines.push(format!(
             "updates: {} waits: {}",
             update.id,
             if available.is_none() {
                 format!("no release serving schema {goal} is installed yet")
-            } else if waiting {
-                "its board waits for the boards that hold every move".to_string()
             } else if look.front.is_none() {
                 "no server answers on this machine to write it".to_string()
             } else {
@@ -566,14 +561,7 @@ fn failure(look: &Look<'_>, seen: &Seen<'_>, goal: i64) -> String {
     }
     // A board whose schema cannot be read failed by its own red, said above.
     if let Some(live) = seen.live.filter(|live| *live < goal) {
-        return format!(
-            "its board is at schema {live}, not moved to {goal}{}",
-            look.held
-                .map_or_else(String::new, |held| format!(": {held}"))
-        );
-    }
-    if let Some(held) = look.held {
-        return held.to_string();
+        return format!("its board is at schema {live}, not moved to {goal}");
     }
     let front = look.front.as_ref();
     let server = front.map_or_else(
@@ -775,7 +763,7 @@ fn body(look: &Look<'_>, update: &Update, seen: &Seen<'_>, why: &str) -> String 
             .to_string(),
     };
     format!(
-        "The machine's schema update {id} (docs/RELEASES.md, \"An update\") failed in the release \
+        "The machine's schema update {id} (docs/workflow/RELEASES.md, \"An update\") failed in the release \
          run's refresh of {release} (run {run}): {why}\n\n\
          Its board: {project} at {root}, now {live}; the update is complete once the \
          machine's server writes it at schema {schema}. {available}\n\n\

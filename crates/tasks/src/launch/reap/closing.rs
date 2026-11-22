@@ -277,7 +277,8 @@ fn swept(why: &str) -> bool {
 /// Whether a record's conversation is the one a terminal runs: the same, or a Codex thread the record
 /// took from the agent's callback where the terminal's command line names none (`codex:`).
 fn same_conversation(recorded: &str, running: &str) -> bool {
-    recorded == running || (running == "codex:" && recorded.starts_with("codex:"))
+    recorded == running
+        || (running == crate::launch::CODEX && recorded.starts_with(crate::launch::CODEX))
 }
 
 /// hc refused a close already recorded: the sessions it closed are open again.

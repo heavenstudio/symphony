@@ -218,7 +218,7 @@ impl Store {
         }
         let fence = self.bound_vars(slug, expected)?;
         let acts = handle != OWNER;
-        let body = || both(sql::amend(acts), pg::amend(acts));
+        let body = || both(sql::amend(acts), pg::amend(acts)).posting();
         self.bound_write(
             slug,
             expected,
@@ -257,7 +257,7 @@ impl Store {
             "rewrite": edit.body.is_some(), "body": edit.body.as_deref().unwrap_or_default(),
             "links": edit.links,
         });
-        let body = || both(sql::edit(acts), pg::edit(acts));
+        let body = || both(sql::edit(acts), pg::edit(acts)).posting();
         self.bound_write(slug, expected, handle, &fence, more, body)
     }
 

@@ -8,7 +8,7 @@
 //!
 //! The `tasks` that moved the task records it (`tasks run`, a test's `TASKS_BIN` on a test's board):
 //! a run of the pipeline `review-callback` started by `on_review`, for the task, on its branch's tip
-//! (docs/RUNS.md). With no recorder it runs unrecorded, started by `on_review` still.
+//! (docs/workflow/RUNS.md). With no recorder it runs unrecorded, started by `on_review` still.
 
 use crate::cli::Env;
 use crate::cli::machine_work::recorded::{PARENT_VAR, PIPELINE_VAR, TRIGGER_VAR};
@@ -34,11 +34,7 @@ pub fn delivery_task(parent: Option<&str>, instruction: bool) -> bool {
 /// Whether a task moving to review in `env` may start the command: `TASKS_ON_REVIEW=on` or `off`
 /// says; else only on the repository's own board, which no `TASKS_SERVER` names.
 pub fn enabled(env: &Env) -> bool {
-    match env.var("TASKS_ON_REVIEW") {
-        Some("off") => false,
-        Some("on") => true,
-        _ => env.var("TASKS_SERVER").is_none(),
-    }
+    env.switch("TASKS_ON_REVIEW")
 }
 
 /// The branch a task's `slug` names: the slug itself, or the branch a review task

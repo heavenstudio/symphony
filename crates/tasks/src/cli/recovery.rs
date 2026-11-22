@@ -41,7 +41,8 @@ binding names, a file of the board's folder outside the database's data
                               leaves the board bound to none: run it again
 
 A copy of the whole board replaces the generation by itself. Putting a
-database's files back does not: revoke first, rebind after (docs/TASKS.md).
+database's files back does not: revoke first, rebind after
+(docs/operations/BOARD_OPERATIONS.md).
 Not told apart: data put back without the revoke where no copy came between,
 and data and binding both put back to an older pair that agree. revoke and
 rebind act on the project's own board only from its main checkout; a scratch
@@ -65,7 +66,7 @@ fn authority(env: &Env, acts: bool) -> Result<(FileAuthority, String), String> {
         );
     }
     let database = env.var("TASKS_DATABASE").unwrap_or(DATABASE);
-    if !crate::rpc::plain(database) {
+    if !crate::db::plain(database) {
         return Err(format!(
             "TASKS_DATABASE={database:?} is not a plain name for a database"
         ));

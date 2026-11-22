@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::children::Child as _;
+use symphony_board::sweep::trigger::now as wall_clock;
 
 #[test]
 fn held_count_changes_warn_before_the_periodic_pull_and_failed_reads_report_unknown() {
@@ -262,14 +263,6 @@ fn an_unlaunched_child_verifying_in_a_trial_merge_is_neither_lost_nor_orphaning_
         m.lines()
     );
     // An orphan entry would trigger a PULL; the verifying child creates no actionable gap.
-}
-
-/// The time on this machine's clock, which a real process's start is read against.
-fn wall_clock() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs_f64()
 }
 
 /// `quiet_child` as an in-process subagent: its board command ran in the case's main checkout, and

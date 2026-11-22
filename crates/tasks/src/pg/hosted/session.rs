@@ -11,22 +11,27 @@
 //! which the store sends for a read alone, is that statement and its own transaction.
 
 use super::{Ended, Refusal};
+use crate::db::DbError;
 use crate::pg::external::Share;
 use crate::pg::{Answer, RAISED};
-use crate::rpc::DbError;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+use tokio_postgres::config::Host;
 use tokio_postgres::types::private::BytesMut;
 use tokio_postgres::types::{FromSql, IsNull, ToSql, Type, to_sql_checked};
 use tokio_postgres::{SimpleQueryMessage, error::SqlState};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
-/// The server majors this build is proved on (docs/analysis/hosted-postgresql.md).
+/// The server majors this build is proved on (docs/operations/analysis/hosted-postgresql.md).
 pub const SUPPORTED: [u32; 2] = [16, 18];
 /// How long a cancel request or a closing connection is waited for.
 const ENDING: Duration = Duration::from_secs(2);
+
+/// What is said of a connection nothing answered: no server there, or none in time.
+const UNREACHED: &str = "the server cannot be reached";
+const UNANSWERED: &str = "the server did not answer in time";
 
 pub(super) struct Session {
     client: tokio_postgres::Client,
@@ -169,10 +174,59 @@ fn unconnected(error: &tokio_postgres::Error) -> Refusal {
     } else if said.starts_with("error performing TLS handshake") {
         "the server did not speak TLS, and nothing else is spoken"
     } else if said.starts_with("timeout") || said.starts_with("connection timed out") {
-        "the server did not answer in time"
+        UNANSWERED
     } else {
-        "the server cannot be reached"
+        UNREACHED
     })
+}
+
+/// A connection to the first of the host's addresses that takes one, and the task that drives
+/// it. Each address is asked in turn, as the driver asks them, and when none takes one the
+/// refusal is the one that tells most ([`telling`]): the driver's own walk says the last
+/// address's alone, so a name with an address nothing listens on after the server's (`localhost`,
+/// where the server holds one of its two) would say only that the server cannot be reached,
+/// whatever the server answered.
+async fn reached(
+    config: &tokio_postgres::Config,
+    tls: &MakeRustlsConnect,
+) -> Result<(tokio_postgres::Client, tokio::task::JoinHandle<()>), Refusal> {
+    let unreached = Refusal::Unavailable(UNREACHED);
+    let (Some(Host::Tcp(host)), port) = (
+        config.get_hosts().first(),
+        config.get_ports().first().copied().unwrap_or(5432),
+    ) else {
+        return Err(unreached);
+    };
+    let Ok(addresses) = tokio::net::lookup_host((host.as_str(), port)).await else {
+        return Err(unreached);
+    };
+    let mut refusals = Vec::new();
+    for address in addresses {
+        let mut at = config.clone();
+        // The name stays the one the certificate is checked against.
+        at.hostaddr(address.ip());
+        match at.connect(tls.clone()).await {
+            Ok((client, connection)) => {
+                let driving = tokio::spawn(async move {
+                    // Its end, well or not, is read from the client: closed.
+                    let _ = connection.await;
+                });
+                return Ok((client, driving));
+            }
+            Err(error) => refusals.push(unconnected(&error)),
+        }
+    }
+    Err(telling(refusals).unwrap_or(unreached))
+}
+
+/// Of the refusals a host's addresses gave, in turn, the first that says more than that nothing
+/// answered there (the server's own refusal, or a connection this side refused); the last when
+/// none does, as the driver says it; none of none.
+fn telling(refusals: Vec<Refusal>) -> Option<Refusal> {
+    let silent = |refusal: &Refusal| matches!(refusal, Refusal::Unavailable(why) if [UNREACHED, UNANSWERED].contains(why));
+    let said = refusals.iter().position(|refusal| !silent(refusal));
+    let at = said.or(refusals.len().checked_sub(1))?;
+    refusals.into_iter().nth(at)
 }
 
 /// A statement's error as the store reads one ([`crate::pg::error_of`]): a conflict to decide
@@ -250,15 +304,7 @@ impl Session {
         share: Share,
     ) -> Result<Session, Refusal> {
         let tls = MakeRustlsConnect::new(target.tls.clone());
-        let (client, connection) = target
-            .config
-            .connect(tls.clone())
-            .await
-            .map_err(|error| unconnected(&error))?;
-        let driving = tokio::spawn(async move {
-            // Its end, well or not, is read from the client: closed.
-            let _ = connection.await;
-        });
+        let (client, driving) = reached(&target.config, &tls).await?;
         let mut session = Session {
             client,
             driving,
@@ -294,9 +340,7 @@ impl Session {
         let answered = self.client.simple_query(SQL).await.map_err(|error| {
             error
                 .as_db_error()
-                .map_or(Refusal::Unavailable("the server cannot be reached"), |e| {
-                    refused(e, 0)
-                })
+                .map_or(Refusal::Unavailable(UNREACHED), |e| refused(e, 0))
         })?;
         let row = answered
             .iter()
@@ -324,7 +368,7 @@ impl Session {
             let answered = self.client.simple_query(&sql).await.map_err(|error| {
                 error
                     .as_db_error()
-                    .map_or(Refusal::Unavailable("the server cannot be reached"), |e| {
+                    .map_or(Refusal::Unavailable(UNREACHED), |e| {
                         refused(e, self.backend)
                     })
             })?;
@@ -552,6 +596,36 @@ mod tests {
         }
         // A row short of its columns is refused, never read as a login that may do nothing.
         assert!(held(&good[..4], "board", "login").is_err());
+    }
+
+    #[test]
+    fn the_refusal_of_a_hosts_addresses_is_the_first_that_says_more_than_no_answer() {
+        let (unreached, late) = (
+            Refusal::Unavailable(UNREACHED),
+            Refusal::Unavailable(UNANSWERED),
+        );
+        let login = Refusal::Unavailable("the server refused the login");
+        let full = Refusal::Capacity("the server has no connection left for the login");
+        assert_eq!(telling(vec![]), None);
+        assert_eq!(telling(vec![unreached.clone()]), Some(unreached.clone()));
+        // Whichever address the server holds, its refusal is the one said.
+        for order in [
+            vec![login.clone(), unreached.clone()],
+            vec![unreached.clone(), login.clone()],
+            vec![late.clone(), login.clone(), unreached.clone()],
+        ] {
+            assert_eq!(telling(order.clone()), Some(login.clone()), "{order:?}");
+        }
+        // The first of two that tell, and the last of those that do not, as the driver's walk.
+        assert_eq!(
+            telling(vec![full.clone(), login.clone()]),
+            Some(full.clone())
+        );
+        assert_eq!(
+            telling(vec![unreached.clone(), late.clone()]),
+            Some(late.clone())
+        );
+        assert_eq!(telling(vec![late, unreached.clone()]), Some(unreached));
     }
 
     #[test]

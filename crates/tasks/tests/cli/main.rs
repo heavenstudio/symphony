@@ -43,6 +43,7 @@ mod recovery;
 mod runs;
 mod scratch_folder;
 mod search;
+mod settings;
 mod slots;
 mod stamps;
 mod stats;

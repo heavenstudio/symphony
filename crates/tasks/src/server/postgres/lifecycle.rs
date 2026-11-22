@@ -319,7 +319,7 @@ impl Postgres {
     /// Reclaim the named database's dead space using PostgreSQL's rewrite. It needs temporary
     /// disk room and locks each table exclusively; it changes no board rows or schema version.
     pub fn reclaim(&self, database: &str) -> Result<(), ServerError> {
-        assert!(crate::rpc::plain(database), "a database is a plain name");
+        assert!(crate::db::plain(database), "a database is a plain name");
         let _locked = self.home.lock(Doing::Reclaiming)?;
         self.home.allow_postgresql()?;
         self.home.unheld()?;

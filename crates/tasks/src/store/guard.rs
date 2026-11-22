@@ -1,4 +1,4 @@
-//! The board's side of a project's approval authorities (docs/WORKFLOW.md, "Guards"): the state it
+//! The board's side of a project's approval authorities (docs/workflow/WORKFLOW.md, "Guards"): the state it
 //! accepted from each ([`Store::observe_authority`]), what a guarded edge's admission recorded
 //! ([`Store::workflow_admission`]) and the check a dispatch makes again right before an effect it
 //! cannot take back ([`Store::revalidate_dispatch`]).
@@ -152,7 +152,7 @@ impl Store {
         if body.is_null() {
             return Ok(None);
         }
-        serde_json::from_value(body)
+        crate::objects::read(&body)
             .map(Some)
             .map_err(|e| Error::Db(format!("an admission not in the board's shape: {e}")))
     }

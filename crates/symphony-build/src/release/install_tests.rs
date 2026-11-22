@@ -1,5 +1,5 @@
 //! A release's install in a temporary machine folder, its build a stand-in for cargo that writes
-//! the four binaries, each answering what the install asks of it.
+//! the five binaries, each answering what the install asks of it.
 
 use super::*;
 use crate::test_tree::Tree;
@@ -116,13 +116,13 @@ fn a_green_build_is_installed_whole_with_its_manifest_and_current_pointed_at_it(
         installed.ran.command,
         "the install of release-2026-11-20 on the machine"
     );
-    // The four binaries on the release profile, the server told its client is beside
+    // The five binaries on the release profile, the server told its client is beside
     // it, and no board of the run's named to the build.
     assert_eq!(
         builds(&tree),
         [
             "build --release --locked -p symphony-server -p symphony-board -p symphony-app --bin \
-             symphony-server --bin tasks --bin agent-send --bin symphony beside=1 board=none"
+             symphony-server --bin tasks --bin agent-send --bin symphony --bin tasks-move beside=1 board=none"
         ]
     );
     let machine = tree.path("machine");
@@ -134,6 +134,7 @@ fn a_green_build_is_installed_whole_with_its_manifest_and_current_pointed_at_it(
         manifest.serves,
         Serves {
             schema: 18,
+            additions: 0,
             protocol: Version { major: 0, minor: 3 },
             tasks_api: Version {
                 major: 1,
@@ -152,11 +153,12 @@ fn a_green_build_is_installed_whole_with_its_manifest_and_current_pointed_at_it(
             "bin/tasks",
             "bin/agent-send",
             "bin/symphony",
+            "bin/tasks-move",
             manifest.client.as_str()
         ]
     );
     assert!(manifest.artifacts.iter().all(|artifact| artifact.size > 0));
-    assert_eq!(manifest.artifacts[4].size, 6 + 3);
+    assert_eq!(manifest.artifacts[5].size, 6 + 3);
     assert_eq!(release::current(&machine).as_deref(), Some(TAG));
     assert!(symphony::builds::released(&machine, "tasks").is_some());
     let place = release::folder(&machine, TAG);
@@ -423,6 +425,16 @@ fn what_the_binaries_say_is_read_whole_or_refused() {
     // A server built before it said its pin is read at pin 0, older than every project's.
     let unpinned = r#"{"protocol":{"major":0,"minor":3},"schema":18}"#;
     assert_eq!(read_serves(unpinned, board).map(|serves| serves.pin), Ok(0));
+    // Its additive steps on the schema: none from a server built before it said them.
+    assert_eq!(
+        read_serves(server, board).map(|serves| serves.additions),
+        Ok(0)
+    );
+    let stepped = r#"{"protocol":{"major":0,"minor":3},"schema":18,"additions":2,"pin":1}"#;
+    assert_eq!(
+        read_serves(stepped, board).map(|serves| serves.additions),
+        Ok(2)
+    );
     for (server, board, why) in [
         (
             "nonsense",
@@ -465,6 +477,16 @@ fn what_the_binaries_say_is_read_whole_or_refused() {
             board,
             "the release's symphony-server names the pin 4294967296",
         ),
+        (
+            r#"{"protocol":{"major":0,"minor":3},"schema":18,"additions":-1}"#,
+            board,
+            "the release's symphony-server names the additive steps -1",
+        ),
+        (
+            r#"{"protocol":{"major":0,"minor":3},"schema":18,"additions":"2"}"#,
+            board,
+            "the release's symphony-server names the additive steps \"2\"",
+        ),
     ] {
         let refused = read_serves(server, board).unwrap_err();
         assert!(refused.starts_with(why), "{refused}");
@@ -477,7 +499,7 @@ fn a_binary_that_cannot_say_what_it_serves_is_the_installs_red() {
     checkout(&tree);
     // A server that refuses the question.
     let script = "#!/bin/sh\nout=\"$CARGO_TARGET_DIR/release\"\nmkdir -p \"$out\"\nfor b in \
-                  symphony-server tasks agent-send symphony; do printf '#!/bin/sh\\necho no >&2; \
+                  symphony-server tasks agent-send symphony tasks-move; do printf '#!/bin/sh\\necho no >&2; \
                   exit 3\\n' > \"$out/$b\"; chmod +x \"$out/$b\"; done\n";
     let builder = executable(&tree, "refusing", script).into_os_string();
     let installed = run(&tree, &builder, COMMIT);
@@ -518,13 +540,13 @@ fn the_build_is_cargos_through_the_checkouts_launcher_unless_a_stand_in_is_named
     assert_eq!(stood_in.argv[1..], built.argv[2..]);
 }
 
-/// The install as a release makes it, with cargo itself: this checkout's four binaries built on
+/// The install as a release makes it, with cargo itself: this checkout's five binaries built on
 /// the release profile in its own build folder and installed in a machine folder under that build
 /// folder (`.target/install-trial/machine`), which is left for a look and goes with the build
 /// folder. It takes a release build's time, so it runs only when asked:
 /// `tools/cargo.sh test -p symphony-build --lib the_real_build -- --ignored --nocapture`.
 #[test]
-#[ignore = "a release build of four binaries: minutes, and gigabytes of build folder"]
+#[ignore = "a release build of five binaries: minutes, and gigabytes of build folder"]
 fn the_real_build_installs_this_checkouts_release() {
     let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let checkout = checkout.canonicalize().unwrap();
@@ -556,6 +578,15 @@ fn the_real_build_installs_this_checkouts_release() {
         symphony_plugin::protocol::PROTOCOL.minor
     );
     assert_eq!(release::current(&machine).as_deref(), Some("release-trial"));
+    // The move of a board's store is there beside `tasks`, found as a project's start finds
+    // the release's binaries, and it is that program.
+    let moves = symphony::builds::released(&machine, release::MOVE).unwrap();
+    let said = symphony_board::sys::output(command(&moves).arg("--version")).unwrap();
+    assert!(said.status.success(), "{said:?}");
+    assert!(
+        String::from_utf8_lossy(&said.stdout).starts_with("tasks-move "),
+        "{said:?}"
+    );
 }
 
 /// `git ARGS` in `tree`'s checkout, as an author of the test's own.
@@ -620,4 +651,36 @@ fn a_checkout_git_cannot_read_is_installed_without_notes_and_its_log_says_so() {
     assert_eq!(release::noted(&tree.path("machine")), None);
     let log = tree.read("logs/refresh-install.log");
     assert!(log.contains("no notes.md: git "), "{log}");
+}
+
+#[test]
+fn the_installs_line_names_the_additive_steps_of_its_schema_when_it_has_any() {
+    let line = |additions| {
+        served(&Manifest {
+            release: TAG.into(),
+            commit: COMMIT.into(),
+            serves: Serves {
+                schema: 28,
+                additions,
+                protocol: Version { major: 0, minor: 3 },
+                tasks_api: Version {
+                    major: 1,
+                    minor: 14,
+                },
+                pin: 1,
+            },
+            client: "client/abc".into(),
+            artifacts: Vec::new(),
+        })
+    };
+    let rest = "plugin protocol 0.3 and tasks api 1.14, at Symphony pin 1";
+    assert_eq!(line(0), format!("{TAG} serves board schema 28, {rest}"));
+    assert_eq!(
+        line(1),
+        format!("{TAG} serves board schema 28 with its additive step, {rest}")
+    );
+    assert_eq!(
+        line(3),
+        format!("{TAG} serves board schema 28 with its 3 additive steps, {rest}")
+    );
 }

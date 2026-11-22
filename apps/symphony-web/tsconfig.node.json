@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "vite/client"]
+  },
+  "include": [
+    "src",
+    "vite.config.ts",
+    "dev.ts",
+    "report.ts",
+    "shell/minify.ts",
+    "shell/strip.ts",
+    "shell/*.test.ts"
+  ],
+  "exclude": []
+}

@@ -1,4 +1,4 @@
-// The page's route as the shell routes it: shell.js owns the browser's links and history for the
+// The page's route as the shell routes it: shell.ts owns the browser's links and history for the
 // whole page, and says `review:navigate` once it has moved; a page reads its route again then.
 
 import { useEffect, useState } from "react";
@@ -94,7 +94,7 @@ export function useAnchor(): string {
 
 /**
  * Bring the element the address's fragment names into view, opening every `details` around it.
- * The shell lands it (`reviewLand`, assets/shell.js), once for each navigation: it holds it there
+ * The shell lands it (`reviewLand`, shell/shell.ts), once for each navigation: it holds it there
  * while the page draws around it, as a section drawn above it once the scroll brings it near would
  * push it down, and does nothing once that hold has ended (quiet, or scrolled away). Without a
  * fragment it does nothing: the shell owns the guarded top reset, and a late load must not undo a

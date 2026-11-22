@@ -129,7 +129,7 @@ impl Home {
     /// The replay's record, while there is one; one that does not read names no server.
     pub(super) fn replay_record(&self) -> Option<Replay> {
         match fs::read_to_string(self.dir.join(RECORD)) {
-            Ok(text) => Some(serde_json::from_str(&text).unwrap_or_default()),
+            Ok(text) => Some(crate::objects::parse(&text).unwrap_or_default()),
             Err(problem) if problem.kind() == std::io::ErrorKind::NotFound => None,
             Err(_) => Some(Replay::default()),
         }
@@ -404,7 +404,7 @@ impl Home {
              the server it names has ended and `ps` lists no server on the data. The next command \
              asks again, and settles the record once `ps` can tell. Should it never, remove the \
              record by hand once `ps -ww -axo pid,command` lists no `surreal start` on {} \
-             (docs/TASKS.md, Stuck servers)",
+             (docs/operations/BOARD_OPERATIONS.md, Stuck servers)",
             self.dir.join(RECORD).display(),
             self.data()
         )

@@ -1,4 +1,4 @@
-//! Recovery of a holder's exit on a task an active custom workflow holds (docs/WORKFLOW.md,
+//! Recovery of a holder's exit on a task an active custom workflow holds (docs/workflow/WORKFLOW.md,
 //! "Recovery"): an agent's own release of its role there, or a holder lost, answered by the
 //! position's configured action (`release`, `lost_holder`), never by a target the board invents.
 //! What the store read decides which role rows go, whether the task stays, waiting on a person

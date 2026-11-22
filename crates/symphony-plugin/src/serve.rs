@@ -1,5 +1,5 @@
 //! A plugin answering from a process of its own: its binary's `main` is [`serve`]`(&PLUGIN)`, and
-//! the host that starts it speaks the protocol on its stdin and stdout (docs/PLUGIN_PROTOCOL.md).
+//! the host that starts it speaks the protocol on its stdin and stdout (docs/engineering/PLUGIN_PROTOCOL.md).
 //!
 //! Each line read is an [`Envelope`]; a request is answered on one of [`WORKERS`] threads, so a slow
 //! call holds one worker and the others go on answering, and answers may come back in another order
@@ -433,6 +433,13 @@ fn answer(plugin: &dyn Plugin, request: Request, pages: &Pages) -> Result<Box<Ra
                 g.name()
             })?;
             reply(&gates.kept_while(&asked.root, &asked.task.task()))
+        }
+        Request::Attest(asked) => {
+            let authority = named(plugin.authorities(), "authority", &asked.authority, |a| {
+                a.adapter()
+            })?;
+            let within = std::time::Duration::from_millis(asked.within_ms);
+            reply(&authority.attest(&asked.root, &asked.operation, within))
         }
         Request::Changed(asked) => {
             let watches = plugin.watches();

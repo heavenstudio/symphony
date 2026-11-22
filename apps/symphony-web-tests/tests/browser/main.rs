@@ -128,9 +128,30 @@ fn announced(what: &str, said: &std::sync::mpsc::Receiver<String>) -> Result<Str
     .unwrap_or_else(|stall| Err(stall.to_string()))
 }
 /// A page script that leaves the page no IndexedDB, as a browser without one: the client cache's
-/// store misses every read and keeps nothing (`assets/cache.js`), so a return visit to the board
+/// store misses every read and keeps nothing (`shell/cache.ts`), so a return visit to the board
 /// or the queue draws from the server under its ghost, as one the device has no copy for does.
 const NO_STORE: &str = "Object.defineProperty(window, 'indexedDB', { value: undefined });";
+
+/// The width the window leaves a page beside its scrollbar, as a script's expression: the window's
+/// (`innerWidth`) less a scrollbar's thickness, probed on a box of its own that scrolls. The page
+/// keeps that room whether or not it scrolls (`scrollbar-gutter: stable` on its root,
+/// styles/board.css), and so do its fixed controls, so what fills the window is this wide. Chrome
+/// draws a classic scrollbar, 15 px of every width, or an overlay one, none, as the machine's
+/// settings choose (macOS's automatic scroll bars are classic while a mouse is attached; a phone's
+/// emulation draws overlay ones), so it is never `innerWidth` alone; nor
+/// `document.documentElement.clientWidth`, which leaves the gutter out only while the page
+/// scrolls. It is read from the window, not from the root's own box, so a rule that narrows the
+/// root (a `max-width` or a margin on `html`) narrows what fills the window and not this.
+const PAGE_WIDTH: &str = "(() => { const probe = document.createElement('div'); \
+    probe.style.cssText = 'position:absolute;top:0;left:0;width:100px;height:100px;overflow:scroll;visibility:hidden'; \
+    document.documentElement.append(probe); const bar = probe.offsetWidth - probe.clientWidth; \
+    probe.remove(); return innerWidth - bar; })()";
+
+/// `script`, a page function of the window's width, called with [`PAGE_WIDTH`], as a script's
+/// expression.
+fn at_page_width(script: &str) -> String {
+    format!("({script})({PAGE_WIDTH})")
+}
 
 /// Hold, from the page's first script on, every timer of the asks' retry the page sets
 /// ([`symphony_web_tests::RETRY_MS`]: a failed read of a document's questions or of the chat's
@@ -195,7 +216,7 @@ fn the_ask_poll_hold_keeps_a_retry_left_waiting_and_lets_a_cleared_one_go() {
 /// A page script that keeps every idle callback the page asks for, none run by the browser, until
 /// the test runs them ([`RUN_IDLE`]): `window.idle` holds them. The shell asks the idle browser
 /// for its warm-up and its read-ahead in the task that marks the page ready
-/// (`data-navigation=ready`, shell.js), and for nothing where the browser saves data or its link
+/// (`data-navigation=ready`, shell.ts), and for nothing where the browser saves data or its link
 /// is too slow: so a page that is ready has asked for every one it will, and one that asked for
 /// none warms and reads nothing, with no window to wait through to see it.
 const HOLD_IDLE: &str =
@@ -334,6 +355,22 @@ fn swipe(chrome: &mut Chrome, x: u32, from: u32, by: u32) {
     touch("touchEnd", 0.66, json!([]));
 }
 
+/// The wire's samples (`wire.cases.json`'s `samples`).
+fn samples() -> serde_json::Value {
+    let cases: serde_json::Value =
+        serde_json::from_str(include_str!("../../../symphony-web/src/wire.cases.json"))
+            .expect("the wire's cases");
+    cases["samples"].clone()
+}
+
+/// A page of `width` (a phone's at 760 px or under, 844 px high; else 900), over the stand-in's
+/// `path`.
+fn open(chrome: &mut Chrome, site: &Site, path: &str, width: u32) {
+    let phone = width <= 760;
+    chrome.viewport(width, if phone { 844 } else { 900 }, phone);
+    chrome.open(&site.url(path));
+}
+
 /// The text of every element `selector` matches, in document order.
 fn texts(chrome: &mut Chrome, selector: &str) -> Vec<String> {
     let value = chrome.eval(&format!(
@@ -405,10 +442,7 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         if kind == "board" {
             // The fixture is Ready; the phone now mounts only its selected Review stage.
             // Measure the same loaded lifecycle board as the established byte baseline.
-            chrome.call(
-                "Emulation.setDeviceMetricsOverride",
-                json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
-            );
+            chrome.viewport(1440, 900, false);
         }
         chrome.open(&site.url(path));
         assert!(
@@ -622,7 +656,7 @@ fn superseded_navigation_preserves_the_new_page_scroll_until_ready() {
     "#}));
     chrome.open(&site.url("/"));
     assert!(chrome.wait_for(
-        "location.pathname === '/tasks' && document.documentElement.dataset.navigation === 'ready' && document.querySelector('.kanban') !== null",
+        &format!("location.pathname === '/tasks' && {READY} && document.querySelector('.kanban') !== null"),
         SHOWN
     ));
     assert_eq!(chrome.eval("window.navigationEvents"), json!(2));
@@ -656,10 +690,7 @@ fn assert_navigation_scroll(when: &str) {
     );
     chrome.open(&site.url("/"));
     wait_for_board(&mut chrome);
-    assert!(chrome.wait_for(
-        "document.documentElement.dataset.navigation === 'ready'",
-        SHOWN
-    ));
+    assert!(chrome.wait_for(READY, SHOWN));
     assert_eq!(
         chrome.eval("window.earlyScroll"),
         json!(1200),
@@ -686,7 +717,7 @@ fn assert_navigation_scroll(when: &str) {
     assert_eq!(chrome.eval("scrollY"), json!(5000));
     chrome.eval("document.querySelector('header a[href=\"/tasks\"]').click()");
     assert!(chrome.wait_for(
-            "location.pathname === '/tasks' && document.documentElement.dataset.navigation === 'ready' && document.querySelector('.kanban') !== null",
+            &format!("location.pathname === '/tasks' && {READY} && document.querySelector('.kanban') !== null"),
             SHOWN
         ));
     assert_eq!(
@@ -728,7 +759,9 @@ fn same_kind_navigation_resets_scroll_clamped_by_the_new_page() {
     );
     chrome.open(&site.url("/task/tools/example"));
     assert!(chrome.wait_for(
-        "document.documentElement.dataset.navigation === 'ready' && document.querySelector('.task[data-slug=\"tools/example\"]') !== null",
+        &format!(
+            "{READY} && document.querySelector('.task[data-slug=\"tools/example\"]') !== null"
+        ),
         SHOWN
     ));
     chrome.eval(
@@ -748,10 +781,7 @@ fn same_kind_navigation_resets_scroll_clamped_by_the_new_page() {
         "const next = document.createElement('a'); next.href = {}; document.body.append(next); next.click(); next.remove()",
         json!(destination)
     ));
-    assert!(chrome.wait_for(
-        "document.documentElement.dataset.navigation === 'ready'",
-        SHOWN
-    ));
+    assert!(chrome.wait_for(READY, SHOWN));
     assert_eq!(chrome.eval("window.beforeClamp"), json!(5000));
     assert_eq!(
         chrome.eval("afterClamp > 0 && afterClamp < beforeClamp"),
@@ -837,10 +867,14 @@ fn document_and_queue_loads_preserve_a_scroll_made_on_the_mounted_page() {
         "#}),
         );
         chrome.open(&site.url(path));
-        assert!(chrome.wait_for(
-            &format!("document.documentElement.dataset.navigation === 'ready' && document.querySelector('[data-ready={ready}]') !== null"),
-            SHOWN
-        ), "{path}: {}", chrome.eval("document.body.innerText"));
+        assert!(
+            chrome.wait_for(
+                &format!("{READY} && document.querySelector('[data-ready={ready}]') !== null"),
+                SHOWN
+            ),
+            "{path}: {}",
+            chrome.eval("document.body.innerText")
+        );
         assert_eq!(chrome.eval("window.dataAfterMount"), json!(true), "{path}");
         assert_eq!(chrome.eval("window.earlyScroll"), json!(400), "{path}");
         assert_eq!(
@@ -857,17 +891,14 @@ fn old_page_scrolling_during_navigation_does_not_keep_the_new_page_offset() {
     let Some(mut chrome) = chrome() else { return };
     chrome.open(&site.url("/"));
     wait_for_board(&mut chrome);
-    assert!(chrome.wait_for(
-        "document.documentElement.dataset.navigation === 'ready'",
-        SHOWN
-    ));
+    assert!(chrome.wait_for(READY, SHOWN));
     chrome.eval("document.body.style.minHeight = '30000px'; scrollTo(0,5000)");
     assert_eq!(chrome.eval("scrollY"), json!(5000));
     chrome.eval("document.querySelector('header a[href=\"/tasks\"]').click(); window.oldPageShown = !document.getElementById('review-root-review').hidden; scrollTo(0,4000); window.oldPageScroll = scrollY");
     assert_eq!(chrome.eval("window.oldPageShown"), json!(true));
     assert_eq!(chrome.eval("window.oldPageScroll"), json!(4000));
     assert!(chrome.wait_for(
-        "location.pathname === '/tasks' && document.documentElement.dataset.navigation === 'ready' && document.querySelector('.kanban') !== null",
+        &format!("location.pathname === '/tasks' && {READY} && document.querySelector('.kanban') !== null"),
         SHOWN
     ));
     assert_eq!(chrome.eval("scrollY"), json!(0));
@@ -875,7 +906,9 @@ fn old_page_scrolling_during_navigation_does_not_keep_the_new_page_offset() {
     assert_eq!(chrome.eval("scrollY"), json!(5000));
     chrome.eval("history.back()");
     assert!(chrome.wait_for(
-        "location.pathname === '/' && document.documentElement.dataset.navigation === 'ready' && document.querySelector('.hero-title') !== null",
+        &format!(
+            "location.pathname === '/' && {READY} && document.querySelector('.hero-title') !== null"
+        ),
         SHOWN
     ));
     assert_eq!(chrome.eval("scrollY"), json!(0));
@@ -887,10 +920,7 @@ fn a_failed_navigation_reports_failed_with_the_page_error() {
     let Some(mut chrome) = chrome() else { return };
     chrome.open(&site.url("/"));
     wait_for_board(&mut chrome);
-    assert!(chrome.wait_for(
-        "document.documentElement.dataset.navigation === 'ready'",
-        SHOWN
-    ));
+    assert!(chrome.wait_for(READY, SHOWN));
     chrome.call(
         "Network.setBlockedURLs",
         json!({"urls":["*/assets/board-*.js"]}),
@@ -913,10 +943,7 @@ fn a_page_whose_build_is_gone_loads_again_once_and_one_still_served_says_the_fai
     let Some(mut chrome) = chrome() else { return };
     chrome.open(&site.url("/"));
     wait_for_board(&mut chrome);
-    assert!(chrome.wait_for(
-        "document.documentElement.dataset.navigation === 'ready'",
-        SHOWN
-    ));
+    assert!(chrome.wait_for(READY, SHOWN));
     chrome.eval("window.__kept = true");
     let shell = chrome.eval(
         "document.querySelector(\"script[src*='/assets/symphony-shell-']\").getAttribute('src')",
@@ -1005,10 +1032,7 @@ fn task_controls_read_the_board_again_for_the_window_already_chosen() {
     let site = site();
     site.set_json("/api/task-board", &site::example_listing("ready"));
     let Some(mut chrome) = chrome() else { return };
-    chrome.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    chrome.viewport(1440, 900, false);
     chrome.open(&site.url("/tasks"));
     let shown = "document.querySelector('[data-slug=\"tools/example\"]') !== null && document.querySelector('.column[aria-busy=true]') === null";
     assert!(
@@ -1048,19 +1072,13 @@ fn task_controls_keep_their_values_and_revealed_rows_after_scrolling() {
     let site = site();
     site.set_json("/api/task-board", &site::example_listing("ready"));
     let Some(mut chrome) = chrome() else { return };
-    chrome.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    chrome.viewport(1440, 900, false);
     chrome.call("Page.addScriptToEvaluateOnNewDocument", json!({"source":
         "const observer = new MutationObserver(() => { if (document.head) { const style = document.createElement('style'); style.textContent = '.column { margin-top: 20000px }'; document.head.append(style); observer.disconnect(); } }); observer.observe(document, {childList: true, subtree: true});"
     }));
     chrome.open(&site.url("/tasks"));
     assert!(chrome.wait_for("document.querySelector('.kanban') !== null", SHOWN));
-    assert!(chrome.wait_for(
-        "document.documentElement.dataset.navigation === 'ready'",
-        SHOWN
-    ));
+    assert!(chrome.wait_for(READY, SHOWN));
     assert_eq!(
         chrome.eval("document.querySelector('[data-slug]') === null"),
         json!(true)
@@ -1143,15 +1161,15 @@ fn a_revealed_column_keeps_its_rows_look_ahead_before_it_reaches_the_screen() {
         }),
     );
     let Some(mut chrome) = chrome() else { return };
-    chrome.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1280,"height":800,"deviceScaleFactor":1,"mobile":false}),
-    );
+    chrome.viewport(1280, 800, false);
     chrome.call("Page.addScriptToEvaluateOnNewDocument", json!({"source":
         "const observer = new MutationObserver(() => { if (document.head) { const style = document.createElement('style'); style.textContent = '.column[data-status=ready] { margin-top: 20000px }'; document.head.append(style); observer.disconnect(); } }); observer.observe(document, {childList: true, subtree: true});"
     }));
     chrome.open(&site.url("/tasks"));
-    assert!(chrome.wait_for("document.documentElement.dataset.navigation === 'ready' && document.querySelector('#column-ready') !== null", SHOWN));
+    assert!(chrome.wait_for(
+        &format!("{READY} && document.querySelector('#column-ready') !== null"),
+        SHOWN
+    ));
     assert!(
         !site
             .targets()

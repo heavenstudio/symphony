@@ -24,12 +24,9 @@ pub fn reviewer_verdict(message: &Message) -> Option<&'static str> {
     if message.kind != "verdict" {
         return None;
     }
-    ["approve", "changes"].into_iter().find(|verdict| {
-        message
-            .text
-            .strip_prefix(verdict)
-            .is_some_and(|rest| rest.is_empty() || rest.starts_with(':'))
-    })
+    ["approve", "changes"]
+        .into_iter()
+        .find(|verdict| crate::stages::verdict_is(&message.text, verdict))
 }
 
 /// The kinds of message that reach an inbox; `system` is the record only.
@@ -165,6 +162,25 @@ impl Store {
         self.post(slug, sender, sender, text, to, Some((key, true)), false)
     }
 
+    /// A line of the board's own to `slug`'s orchestrator, made once per `key` on its thread
+    /// however often it is asked, in the post's own write (`delivery_key:[slug, key]`), as
+    /// [`Store::say_keyed`] makes one; an identical line the board said there before under no key
+    /// is taken for it. What the owner said that leaves a task's block standing is told so
+    /// (`symphony::decided`).
+    pub fn tell_orchestrator_once(&self, slug: &str, text: &str, key: &str) -> Result<(), Error> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(refused("an empty message says nothing".into()));
+        }
+        let body = || both(sql::unread(true), pg::unread(true)).posting();
+        let vars = json!({
+            "slug": slug, "sender": BOARD, "text": text, "to": "@orchestrator", "key": key,
+            "said": text, "now": (self.clock)(),
+        });
+        self.retrying(|| self.transact::<Value>(body(), vars.clone()))
+            .map(|_| ())
+    }
+
     /// The owner's message on a task's thread, which waits on an agent's answer: posted as
     /// [`Store::say`] posts, and in the same write it opens the task's ask, or joins the open one
     /// ([`crate::Ask`]). The next line by a session holding a role on the task, or by the session
@@ -210,7 +226,7 @@ impl Store {
         };
         let (task_about, task_words) = super::asks::on_thread_vars(slug, text);
         let shape = keyed.map(|(_, adopt)| adopt);
-        let body = || both(sql::post(poster, shape), pg::post(poster, shape));
+        let body = || both(sql::post(poster, shape), pg::post(poster, shape)).posting();
         let now = (self.clock)();
         let key = keyed.map(|(key, _)| key);
         let vars = self.acting(
@@ -261,7 +277,7 @@ impl Store {
         let vars = json!({
             "slug": slug, "sender": sender, "said": said, "key": key, "now": (self.clock)(),
         });
-        let body = both(sql::RECORD_ONCE.as_str(), pg::record_once());
+        let body = both(sql::RECORD_ONCE.as_str(), pg::record_once()).posting();
         self.transact::<Value>(body, vars).map(|_| ())
     }
 
@@ -334,7 +350,7 @@ impl Store {
             gone.push("no session holds the role".into());
         }
         let text = format!("{what} reaches no live executor: {}", gone.join("; "));
-        let body = || both(sql::unread(key.is_some()), pg::unread(key.is_some()));
+        let body = || both(sql::unread(key.is_some()), pg::unread(key.is_some())).posting();
         let vars = json!({
             "slug": slug, "sender": BOARD, "text": text, "to": "@orchestrator", "key": key,
             "said": format!("{what} reaches no live executor"), "now": (self.clock)(),
@@ -379,8 +395,9 @@ impl Store {
         let mut vars =
             json!({"handle": handle, "delivered": DELIVERED, "since":since, "pool": pool});
         native_bounds(&mut vars);
-        let read: Read =
-            self.retrying(|| self.transact(both(sql::INBOX.as_str(), pg::inbox()), vars.clone()))?;
+        let read: Read = self.retrying(|| {
+            self.read_together(both(sql::INBOX.as_str(), pg::inbox()), vars.clone())
+        })?;
         if !read.known {
             return Err(refused(format!("no session {}", repr(handle))));
         }
@@ -478,7 +495,7 @@ impl Store {
     /// The newest messages to the owner, newest first.
     pub fn to_owner(&self, limit: usize) -> Result<Vec<Message>, Error> {
         let rows: Vec<MessageRow> = self.retrying(|| {
-            self.transact(both(sql::TO_OWNER, pg::to_owner()), json!({"limit": limit}))
+            self.read_together(both(sql::TO_OWNER, pg::to_owner()), json!({"limit": limit}))
         })?;
         Ok(rows.into_iter().map(message).collect())
     }
@@ -493,7 +510,7 @@ impl Store {
             return Ok(Vec::new());
         }
         let rows: Vec<MessageRow> = self.retrying(|| {
-            self.transact(
+            self.read_together(
                 both(sql::QUESTIONS_WAITING, pg::questions_waiting()),
                 json!({"person": person, "open": open}),
             )
@@ -506,7 +523,7 @@ impl Store {
     /// a reader reads it once and follows the lines after it ([`Store::messages_after`]).
     pub fn newest_verdict(&self) -> Result<Option<Message>, Error> {
         let rows: Vec<MessageRow> = self.retrying(|| {
-            self.transact(both(sql::NEWEST_VERDICT, pg::newest_verdict()), json!({}))
+            self.read_together(both(sql::NEWEST_VERDICT, pg::newest_verdict()), json!({}))
         })?;
         Ok(rows.into_iter().next().map(message))
     }
@@ -515,7 +532,7 @@ impl Store {
     /// the snapshot's latest_message, so two writes between reads are both delivered.
     pub fn messages_after(&self, since: i64, through: i64) -> Result<Vec<Message>, Error> {
         let rows: Vec<MessageRow> = self.retrying(|| {
-            self.transact(
+            self.read_together(
                 both(sql::MESSAGES_AFTER, pg::messages_after()),
                 json!({"since": since, "through": through}),
             )
@@ -527,8 +544,9 @@ impl Store {
     /// board's own record lines are not its words). `said` names each one ([`crate::schema`]), so
     /// this reads one message a sender, not every message.
     pub fn last_messages(&self) -> Result<BTreeMap<String, Message>, Error> {
-        let rows: Vec<MessageRow> = self
-            .retrying(|| self.transact(both(sql::LAST_MESSAGES, pg::last_messages()), json!({})))?;
+        let rows: Vec<MessageRow> = self.retrying(|| {
+            self.read_together(both(sql::LAST_MESSAGES, pg::last_messages()), json!({}))
+        })?;
         Ok(rows
             .into_iter()
             .map(|row| (row.sender.clone(), message(row)))
@@ -549,7 +567,7 @@ impl Store {
     /// too, so the newest alone decides.
     pub fn landings_posted(&self) -> Result<BTreeSet<String>, Error> {
         let slugs: Vec<String> = self.retrying(|| {
-            self.transact(
+            self.read_together(
                 both(sql::LANDINGS_POSTED, pg::landings_posted()),
                 json!({"delivered": DELIVERED}),
             )

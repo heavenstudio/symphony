@@ -4,12 +4,12 @@
 //! a read costs: one with nothing new asks the board once and reads nothing again.
 
 use super::Hub;
-use super::read_paths_tests::{observe, requests, served, store_on};
+use super::read_paths_tests::{observe, requests, served};
 use crate::shelf;
 use crate::testing::{
     Tree,
     board::{Fixture, NOW, Seed},
-    git, repository,
+    git, repository, store_on,
 };
 use axum::http::StatusCode;
 use serde_json::{Value, json};
@@ -668,6 +668,60 @@ fn an_assessed_task_reads_its_stamps_at_the_tip_and_offers_the_owners_approve_un
     shared.stop();
 }
 
+/// The owner's approve of the card a task's branch posted stands for its `owner` stamp: the page
+/// reads it met, naming the card, and offers no approve of the tip.
+#[test]
+fn a_task_whose_posted_card_the_owner_approved_reads_its_owner_stamp_met_and_offers_no_approve() {
+    use symphony_board::stamps::{Catalogue, Needs};
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let register = |card: &str| {
+        format!("# Decisions\n\n<!-- register:start -->\n{card}<!-- register:end -->\n")
+    };
+    let look = "- [ ] **look** — Is the page right?\n  [2026-11-20 04:00] agent — Posted.\n";
+    let approved = look.replace("[ ]", "[x]") + "  [2026-11-20 05:00] owner · approved — it is\n";
+    git(&root, &["checkout", "-q", "-b", "tools/own"]);
+    for (text, message) in [
+        (register(look), "post look"),
+        (register(&approved), "approve"),
+    ] {
+        std::fs::write(root.join("docs/DECISIONS.md"), text).unwrap();
+        git(&root, &["add", "-A"]);
+        git(&root, &["commit", "-q", "-m", message]);
+    }
+    git(&root, &["checkout", "-q", "main"]);
+    let tip = git_tip(&root, "tools/own");
+    let f = Fixture::new(Seed::default().task("tools/own", "review"));
+    let needs = Needs {
+        stamps: vec!["owner".into()],
+        tip: Some(tip.clone()),
+        by: f.session("worker"),
+        why: "the owner asked to see the page".into(),
+        import: None,
+    };
+    f.store
+        .set_needs("tools/own", &Catalogue::symphony(), &needs)
+        .unwrap();
+    let (shared, ask) = served(&root, hub(&root, &f, BACKSTOP));
+    let short = tip.get(..7).unwrap();
+    let (status, answer) = ask("/api/task-gates?slug=tools/own");
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let owner = gates(&answer).into_iter().find(|gate| gate.0 == "owner");
+    assert_eq!(
+        owner,
+        Some((
+            "owner".into(),
+            GateState::Met,
+            format!("Approved by the owner on card look, at {short}")
+        )),
+        "{answer}"
+    );
+    let (status, offer) = ask("/api/task-offer?slug=tools/own");
+    assert_eq!(status, StatusCode::OK, "{offer}");
+    assert_eq!(offer["payload"], Value::Null, "{offer}");
+    shared.stop();
+}
+
 /// The recorder's finished run `id` of `label`, for `task` at `commit`, its exit `code`, kept in
 /// `root`'s common dir.
 fn keep_run(root: &Path, id: u32, task: &str, label: &str, (commit, code): (&str, i32)) {
@@ -1086,7 +1140,8 @@ fn a_gates_read_with_nothing_new_asks_the_board_once_and_reads_nothing_again() {
     let states = |answer: &Value| ["tests", "owner", "check"].map(|name| state(answer, name));
 
     // The first read reads everything once: the task and its thread, the recorder's history (no
-    // operation is in its folder), the catalogue, and whether the tip holds work of its own.
+    // operation is in its folder), the catalogue, whether the tip holds work of its own, and the
+    // cards its branch posted, as the thread holds no approve of the tip.
     let (first, _, counted) = read();
     assert_eq!(
         states(&first),
@@ -1099,6 +1154,7 @@ fn a_gates_read_with_nothing_new_asks_the_board_once_and_reads_nothing_again() {
         records: 0,
         catalogues: 1,
         merge_bases: 1,
+        posted: 1,
     };
     assert_eq!(counted, all_once);
 
@@ -1133,7 +1189,8 @@ fn a_gates_read_with_nothing_new_asks_the_board_once_and_reads_nothing_again() {
     };
     assert_eq!(counted, after_run);
 
-    // A new tip: what stood on the old one stands no more, and only the merge base is read again.
+    // A new tip: what stood on the old one stands no more, and only the merge base is read again,
+    // with the cards, at the tip the thread's approve no longer names.
     let later = commit_more(&root, "tools/kept", "work.txt", "more work");
     let (moved, sent, counted) = read();
     assert_eq!(moved["tip"], json!(later));
@@ -1141,18 +1198,20 @@ fn a_gates_read_with_nothing_new_asks_the_board_once_and_reads_nothing_again() {
     assert_eq!(sent, 1);
     let after_tip = Reads {
         merge_bases: 2,
+        posted: 2,
         ..after_run
     };
     assert_eq!(counted, after_tip);
 
     // A commit on main: the catalogue is read again at the main checkout's new head, and the
-    // merge base past the default branch's new tip.
+    // merge base and the cards past the default branch's new tip.
     commit_more(&root, "main", "main.txt", "on main");
     let (_, sent, counted) = read();
     assert_eq!(sent, 1);
     let after_main = Reads {
         catalogues: 2,
         merge_bases: 3,
+        posted: 3,
         ..after_tip
     };
     assert_eq!(counted, after_main);

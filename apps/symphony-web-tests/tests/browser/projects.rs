@@ -6,8 +6,9 @@
 //! file sets a token and a layout; `pantry` names the shelf plugin and the theme package it
 //! provides; `gamma`, in the one case that registers it, serves its documents at its root.
 use super::{
-    HOME_FIRST_VISIT_BYTES, SHOWN, TASKS_FIRST_VISIT_BYTES, binaries, chrome, chrome::Chrome,
-    completed_requests, dist, needed_bytes, owner_controls::ScratchBoard, ping_bytes,
+    HOME_FIRST_VISIT_BYTES, PAGE_WIDTH, READY, SHOWN, TASKS_FIRST_VISIT_BYTES, binaries, chrome,
+    chrome::Chrome, completed_requests, dist, needed_bytes, owner_controls::ScratchBoard,
+    ping_bytes,
 };
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
@@ -363,14 +364,16 @@ fn the_top_left_switch_and_picker_work_by_keyboard_on_a_compact_nested_page() {
 
     let server = shared();
     let Some(mut browser) = chrome() else { return };
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({
-            "width":390,"height":844,"deviceScaleFactor":1,"mobile":true
-        }),
-    );
+    browser.viewport(390, 844, true);
     browser.open(&server.url("/alpha/tasks"));
-    assert!(browser.wait_for("document.documentElement.dataset.navigation === 'ready' && document.querySelector('header a.project-switch') !== null", SHOWN), "nested page missing: {}", observed_page(&mut browser));
+    assert!(
+        browser.wait_for(
+            &format!("{READY} && document.querySelector('header a.project-switch') !== null"),
+            SHOWN
+        ),
+        "nested page missing: {}",
+        observed_page(&mut browser)
+    );
     key(&mut browser, "Tab", "Tab", 9);
     assert_eq!(
         focused(&mut browser),
@@ -408,7 +411,14 @@ fn the_top_left_switch_and_picker_work_by_keyboard_on_a_compact_nested_page() {
         observed_page(&mut browser)
     );
     browser.eval("document.querySelector('header a[href=\"/pantry/tasks\"]').click()");
-    assert!(browser.wait_for("location.pathname === '/pantry/tasks' && document.documentElement.dataset.navigation === 'ready'", SHOWN), "project tasks missing: {}", observed_page(&mut browser));
+    assert!(
+        browser.wait_for(
+            &format!("location.pathname === '/pantry/tasks' && {READY}"),
+            SHOWN
+        ),
+        "project tasks missing: {}",
+        observed_page(&mut browser)
+    );
     // The Home link stays separate from the machine picker, even in the compact theme.
     browser.eval("document.querySelector('header a[href=\"/pantry/\"]').click()");
     assert!(
@@ -492,10 +502,7 @@ fn each_project_fits_the_first_visit_budget_in_its_own_theme_and_the_shared_look
     );
     for (id, primary, layout) in THEMES {
         let Some(mut browser) = chrome() else { return };
-        browser.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true}),
-        );
+        browser.viewport(390, 844, true);
         let page = format!("/{id}/tasks");
         browser.open(&server.url(&page));
         assert!(
@@ -541,10 +548,7 @@ fn each_project_fits_the_first_visit_budget_in_its_own_theme_and_the_shared_look
     // column a project's pages stand in (the queue's: the board alone takes the window's width),
     // their titles at the same size.
     let Some(mut browser) = chrome() else { return };
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1600,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    browser.viewport(1600, 900, false);
     browser.open(&server.url("/alpha/tasks"));
     assert!(
         browser.wait_for(
@@ -555,7 +559,11 @@ fn each_project_fits_the_first_visit_budget_in_its_own_theme_and_the_shared_look
         browser.eval("document.body.innerText")
     );
     let board = browser.eval(COLUMN);
-    assert_eq!(board["width"], json!(1600), "the board's column: {board}");
+    let window = browser.eval(&format!("Math.round({PAGE_WIDTH})"));
+    assert_eq!(
+        board["width"], window,
+        "the board's column fills the window: {board}"
+    );
     browser.open(&server.url("/alpha/queue"));
     assert!(
         browser.wait_for(
@@ -664,7 +672,7 @@ fn addresses(browser: &mut Chrome, base: &str) -> (Vec<String>, Vec<String>) {
 /// The page has finished its navigation and drawn `drawn`.
 fn ready(drawn: &str) -> String {
     format!(
-        "document.documentElement.dataset.navigation === 'ready' && document.querySelector({}) !== null",
+        "{READY} && document.querySelector({}) !== null",
         json!(drawn)
     )
 }
@@ -714,10 +722,7 @@ fn every_link_of_a_projects_pages_names_its_page_under_the_projects_base() {
     let Some(mut browser) = chrome() else { return };
     // This case checks every stage's card links and the machine rail together. A phone mounts
     // Review first, while the seeded parent is Ready and its rail opens as a separate list.
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1600,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    browser.viewport(1600, 900, false);
     for (page, drawn, named) in [
         (
             "/alpha/",
@@ -994,7 +999,7 @@ fn a_click_on_another_projects_link_from_one_served_at_its_root_loads_that_proje
     );
     assert!(
         browser.wait_for(
-            "location.pathname === '/pantry/tasks' && document.documentElement.dataset.navigation === 'ready'",
+            &format!("location.pathname === '/pantry/tasks' && {READY}"),
             SHOWN
         ),
         "{}",
@@ -1072,7 +1077,7 @@ fn the_header_and_the_icons_are_the_symphonys_until_a_theme_has_its_own() {
         "drawn":true,"inPrimary":false,"name":"Lantern Works","named":"app-name","serif":false,
         "fermata":false,"touch":null,"touchType":null
     });
-    let client = "document.documentElement.dataset.navigation === 'ready' && document.querySelector('.hero-title') !== null";
+    let client = &format!("{READY} && document.querySelector('.hero-title') !== null");
     let served = "document.querySelector('main.server-page') !== null";
     for (page, ready, want) in [
         // The machine's own pages: the list, and what no project answers.
@@ -1152,10 +1157,7 @@ fn the_header_and_the_icons_are_the_symphonys_until_a_theme_has_its_own() {
         (390, "alpha", Some(false)),
         (390, "lantern", Some(false)),
     ] {
-        browser.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":844,"deviceScaleFactor":1,"mobile":true}),
-        );
+        browser.viewport(width, 844, true);
         browser.open(&server.url(&format!("/{id}/")));
         assert!(browser.wait_for(client, SHOWN), "{id} at {width}");
         let seen = browser.eval(
@@ -1195,10 +1197,7 @@ fn a_phone_keeps_its_selected_board_stage_only_for_that_project() {
     board.call_in_database(DATABASE, "register", json!({"kind":"worker"}));
     let server = OneServer::start(board.address());
     let Some(mut browser) = chrome() else { return };
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true}),
-    );
+    browser.viewport(390, 844, true);
     for (project, expected, choose) in [
         ("alpha", "review", "Ready"),
         ("pantry", "review", "Design"),
@@ -1206,7 +1205,7 @@ fn a_phone_keeps_its_selected_board_stage_only_for_that_project() {
         ("pantry", "design", "Design"),
     ] {
         browser.open(&server.url(&format!("/{project}/tasks")));
-        assert!(browser.wait_for(&format!("document.querySelector('.waiting-columns .column[data-status={expected}]') !== null && document.documentElement.dataset.navigation === 'ready'"),SHOWN),"{project} did not restore {expected}: {}", observed_page(&mut browser));
+        assert!(browser.wait_for(&format!("document.querySelector('.waiting-columns .column[data-status={expected}]') !== null && {READY}"),SHOWN),"{project} did not restore {expected}: {}", observed_page(&mut browser));
         browser.eval(&format!("[...document.querySelectorAll('.stage-tabs button')].find(button=>button.textContent.startsWith({})).click()",json!(choose)));
     }
     assert_eq!(browser.eval("[localStorage.getItem('alpha:board-waiting-stage'),localStorage.getItem('pantry:board-waiting-stage'),localStorage.getItem('board-waiting-stage')]"),json!(["ready","design",null]));

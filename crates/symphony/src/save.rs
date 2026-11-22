@@ -8,9 +8,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::{Value, json};
 use symphony_board::NewAsk;
+use symphony_board::lock::Recovered as _;
 
 use crate::{Who, asks, branches, clock, commit, edit, register, taskview};
 
+mod attest;
 mod failure;
 mod quick;
 mod quick_task;
@@ -38,8 +40,10 @@ pub const ROUTES: [&str; 14] = [
 
 /// The owner's operation on a task a custom workflow holds, through the board's one admission
 /// (`symphony_board::Store::apply_attested`): `{"slug": SLUG, "request": OperationRequest}`, with
-/// `"attestations": [Signed]` for a guarded edge, the principal the local owner, never one the
-/// payload names ([`symphony_api::workflow::WORKFLOW_APPLY_ROUTE`], which the pages post to).
+/// `"attestations": [Signed]` for a guarded edge, or with none, each guard's asked of the project
+/// authority a selected plugin answers for its adapter (`attest.rs`); the principal the local
+/// owner, never one the payload names ([`symphony_api::workflow::WORKFLOW_APPLY_ROUTE`], which
+/// the pages post to).
 pub const WORKFLOW_APPLY: &str = symphony_api::workflow::WORKFLOW_APPLY_ROUTE;
 
 /// The routes that write to one task, named by the payload's `slug`.
@@ -87,7 +91,7 @@ impl Saves {
     pub fn close_saying(&self, stage: impl Fn(&str)) {
         stage("the save in flight");
         let committer = {
-            let _held = self.writes.lock().unwrap_or_else(|e| e.into_inner());
+            let _held = self.writes.lock().recover();
             self.closed.store(true, Ordering::Release);
             self.committer.get()
         };
@@ -288,7 +292,7 @@ impl Saves {
             return Err("slug is required".to_string().into());
         }
         let request = json!([scope, route, payload]).to_string();
-        let mut unpublished = self.unpublished.lock().unwrap_or_else(|e| e.into_inner());
+        let mut unpublished = self.unpublished.lock().recover();
         if let Some((text, value, ask)) = unpublished.get(&request).cloned() {
             crate::callbacks::publish_asking(&self.root, &text, ask.as_ref())
                 .map_err(Failure::from)?;
@@ -307,66 +311,7 @@ impl Saves {
         // The ask this save opens or joins, if it waits on an agent's answer.
         let mut asking: Option<NewAsk> = None;
         let result = match route {
-            "/api/postpone" => {
-                let (root, rel) = self.scope(scope, string(payload, "path"))?;
-                Self::target(&root, &rel)?;
-                let action = string(payload, "action");
-                let path = self.page(&root, &rel, "")?;
-                let fallback;
-                let order = match order {
-                    Some(order) => Some(order),
-                    None if action == "later" => {
-                        fallback = crate::dashboard::snapshot(
-                            &self.root,
-                            &branches::branch_cards(&self.root),
-                            "",
-                        )
-                        .map_err(|e| Failure::from(e.to_string()))?;
-                        Some(fallback.order.as_ref())
-                    }
-                    None => None,
-                };
-                let path = order
-                    .and_then(|order| {
-                        order.path_for(path.trim_start_matches('/'), string(payload, "slug"))
-                    })
-                    .unwrap_or(path.trim_start_matches('/'));
-                let changed = if let Some(order) = order {
-                    order.act(
-                        &self.root,
-                        crate::postpone::OWNER,
-                        path.trim_start_matches('/'),
-                        string(payload, "slug"),
-                        action,
-                        crate::postpone::now(),
-                    )
-                } else {
-                    crate::postpone::act(
-                        &self.root,
-                        crate::postpone::OWNER,
-                        path.trim_start_matches('/'),
-                        string(payload, "slug"),
-                        action,
-                        crate::postpone::now(),
-                    )
-                }
-                .map_err(|e| Failure::from(e.to_string()))?;
-                let next = if action == "later" {
-                    order
-                        .expect("Later has a decision snapshot")
-                        .waiting(&self.root, crate::postpone::OWNER, crate::postpone::now())
-                        .map_err(|e| Failure::from(e.to_string()))?
-                        .iter()
-                        .find(|card| {
-                            card.doc != path.trim_start_matches('/')
-                                || card.slug != string(payload, "slug")
-                        })
-                        .map(|card| card.href())
-                } else {
-                    None
-                };
-                Ok(json!({"ok":true, "changed":changed, "next":next}))
-            }
+            "/api/postpone" => self.postpone(scope, payload, order),
             "/api/decision" | "/api/comment" | "/api/message" => {
                 self.document(scope, route, payload).map(|(value, ask)| {
                     asking = ask;
@@ -423,16 +368,30 @@ impl Saves {
                     )
                     .into());
                 }
-                // A guarded edge's attestations, each the project authority's signed word: none
-                // where the payload gives none.
-                let attestations: Vec<symphony_api::workflow::Signed> =
+                // A guarded edge's attestations, each the project authority's signed word: the
+                // payload's as given, or where it gives none, asked of the authorities the
+                // project's plugins answer for (attest.rs).
+                let given: Option<Vec<symphony_api::workflow::Signed>> =
                     match payload.get("attestations") {
-                        None | Some(Value::Null) => Vec::new(),
-                        Some(given) => serde_json::from_value(given.clone())
-                            .map_err(|e| format!("attestations: not signed statements: {e}"))?,
+                        None | Some(Value::Null) => None,
+                        Some(given) => Some(
+                            serde_json::from_value(given.clone())
+                                .map_err(|e| format!("attestations: not signed statements: {e}"))?,
+                        ),
                     };
-                let result = self.store()?.apply_attested(
-                    &symphony_board::workflow::local_owner(),
+                let (store, owner) = (self.store()?, symphony_board::workflow::local_owner());
+                let attestations = match given {
+                    Some(given) => given,
+                    None => attest::fetched(
+                        &store,
+                        &crate::plugins::Plugins::of(&self.root),
+                        &self.root,
+                        &request,
+                        &owner,
+                    )?,
+                };
+                let result = store.apply_attested(
+                    &owner,
                     &symphony_board::workflow::Host::local(),
                     &request,
                     &attestations,
@@ -535,6 +494,67 @@ impl Saves {
         result
     }
 
+    /// A card postponed, brought back or visited for the owner: `payload`'s `action` on the card
+    /// `slug` of its page, by the decisions its reader was shown (`order`). A Later is judged
+    /// against the waiting cards, read now where its reader was shown none, and answers where the
+    /// next waiting card is; an Undo or a visit reads no document.
+    fn postpone(
+        &self,
+        scope: &str,
+        payload: &Value,
+        order: Option<&crate::postpone::View>,
+    ) -> Result<Value, Failure> {
+        use crate::postpone::{OWNER, now};
+        let failed = |e: crate::ReviewError| Failure::from(e.to_string());
+        let (root, rel) = self.scope(scope, string(payload, "path"))?;
+        Self::target(&root, &rel)?;
+        let (action, slug) = (string(payload, "action"), string(payload, "slug"));
+        let page = self.page(&root, &rel, "")?;
+        let page = page.trim_start_matches('/');
+        if action != "later" {
+            let changed = match order {
+                Some(order) => {
+                    let path = order.path_for(page, slug).unwrap_or(page);
+                    order.act(
+                        &self.root,
+                        OWNER,
+                        path.trim_start_matches('/'),
+                        slug,
+                        action,
+                        now(),
+                    )
+                }
+                None => crate::postpone::act(&self.root, OWNER, page, slug, action, now()),
+            }
+            .map_err(failed)?;
+            return Ok(json!({"ok":true, "changed":changed, "next":null}));
+        }
+        let fallback;
+        let order = match order {
+            Some(order) => order,
+            None => {
+                fallback =
+                    crate::dashboard::snapshot(&self.root, &branches::branch_cards(&self.root), "")
+                        .map_err(|e| Failure::from(e.to_string()))?;
+                fallback.order.as_ref()
+            }
+        };
+        let path = order
+            .path_for(page, slug)
+            .unwrap_or(page)
+            .trim_start_matches('/');
+        let changed = order
+            .act(&self.root, OWNER, path, slug, action, now())
+            .map_err(failed)?;
+        let next = order
+            .waiting(&self.root, OWNER, now())
+            .map_err(failed)?
+            .iter()
+            .find(|card| card.doc != path || card.slug != slug)
+            .map(|card| card.href());
+        Ok(json!({"ok":true, "changed":changed, "next":next}))
+    }
+
     /// The save `request`'s chat `text` and ask put in the journal for the shared server to hand to
     /// the board, kept until then so an HTTP retry of the save journals the same.
     fn journal(
@@ -544,7 +564,7 @@ impl Saves {
         value: &Value,
         ask: Option<NewAsk>,
     ) -> Result<(), Failure> {
-        let mut unpublished = self.unpublished.lock().unwrap_or_else(|e| e.into_inner());
+        let mut unpublished = self.unpublished.lock().recover();
         unpublished.insert(
             request.to_string(),
             (text.clone(), value.clone(), ask.clone()),
@@ -625,7 +645,7 @@ impl Saves {
         } else {
             String::new()
         };
-        let _held = self.writes.lock().unwrap_or_else(|e| e.into_inner());
+        let _held = self.writes.lock().recover();
         let _file = commit::write_lock(&root)?;
         if self.closed.load(Ordering::Acquire) {
             return Err(Failure {
@@ -633,7 +653,7 @@ impl Saves {
                 error: "document saves are closing".into(),
             });
         }
-        let mut taps = self.taps.lock().unwrap_or_else(|e| e.into_inner());
+        let mut taps = self.taps.lock().recover();
         if !tap.is_empty()
             && let Some((_, state, note)) = taps.iter().find(|(held, ..)| *held == tap)
         {

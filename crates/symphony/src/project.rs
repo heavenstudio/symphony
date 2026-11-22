@@ -20,8 +20,8 @@
 //! which this load takes too.
 
 use std::collections::BTreeMap;
-use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 mod board;
@@ -35,6 +35,10 @@ use crate::entrypoint::{SYMPHONY_ROUTES, below, join};
 pub use board::{Board, WipGuidance};
 use file::{File, FileEntrypoint};
 pub(crate) use model_warnings::warn as warn_models;
+use symphony_board::lock::Recovered as _;
+use symphony_board::project::{inside, path_in};
+// A name as an id: the board's, which judges `[project] id` by it too.
+pub use symphony_board::project::slug;
 pub use theme::Theme;
 
 /// The project file at a project's root.
@@ -65,18 +69,13 @@ struct Seen {
 static SEEN: LazyLock<Mutex<BTreeMap<PathBuf, Seen>>> =
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
-/// `mutex` held, whatever a thread that panicked holding it left.
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
 /// What agents' terminals run in (`hc`, herdr-core, shown in the Herdr app); `none` for a project
 /// without one.
 pub const PANES: [&str; 2] = ["hc", "none"];
 /// The id of a project whose folder's name has no letter or digit to make one of.
 pub const DEFAULT_ID: &str = "project";
 /// Where a project keeps its review guide, in an entrypoint's folder, in the order they are tried:
-/// the Symphony's own `docs/REVIEW.md`, and a consuming project's `docs/workflow/REVIEW.md`.
+/// the Symphony's own `docs/workflow/REVIEW.md`, and a consuming project's `docs/workflow/REVIEW.md`.
 pub const GUIDES: [&str; 2] = ["REVIEW.md", "workflow/REVIEW.md"];
 /// The prefix naming a path in the repository's common git folder.
 const COMMON_DIR: &str = ".git/";
@@ -114,7 +113,7 @@ pub struct Project {
 }
 
 /// How a plugin that answers from a process of its own is started (`[plugins.process]`,
-/// docs/PLUGIN_PROTOCOL.md): its command, a program the file names by a relative path holding a `/`
+/// docs/engineering/PLUGIN_PROTOCOL.md): its command, a program the file names by a relative path holding a `/`
 /// taken under the project's root, run in that root without the session.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PluginProcess {
@@ -153,26 +152,24 @@ impl PluginProcess {
     }
 }
 
-/// How a project's plugin calls are measured, both off unless its file turns them on
-/// (docs/PLUGIN_CALLS.md): `[plugins] timing` records each call's time, `[plugins] loopback` sends
-/// each call through a JSON round trip inside the process and records both times
+/// How a project's plugin calls are measured, off unless its file turns it on
+/// (docs/engineering/PLUGIN_CALLS.md): `[plugins] timing` records each call's time
 /// ([`crate::plugins::Plugins::at`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PluginCalls {
     pub timing: bool,
-    pub loopback: bool,
 }
 
 impl PluginCalls {
-    /// Whether a call is recorded: under either setting.
+    /// Whether a call is recorded: under `timing`.
     pub fn recorded(self) -> bool {
-        self.timing || self.loopback
+        self.timing
     }
 
-    /// The two settings of the `symphony.toml` at `root`, read alone and quietly: nothing else in
-    /// the file is read or checked and nothing is said of it, and a file that does not parse, a
-    /// setting that is not `true` or `false`, or no file, turns neither on. What a plugin command
-    /// reads before it runs ([`crate::plugins::command`]), so with both off it loads no project.
+    /// The `[plugins] timing` of the `symphony.toml` at `root`, read alone and quietly: nothing else
+    /// in the file is read or checked and nothing is said of it, and a file that does not parse, a
+    /// value that is not `true` or `false`, or no file, leaves it off. What a plugin command reads
+    /// before it runs ([`crate::plugins::command`]), so with it off it loads no project.
     pub fn read(root: &Path) -> PluginCalls {
         #[derive(Default, serde::Deserialize)]
         #[serde(default)]
@@ -183,14 +180,12 @@ impl PluginCalls {
         #[serde(default)]
         struct PluginSettings {
             timing: bool,
-            loopback: bool,
         }
         std::fs::read_to_string(root.join(FILE))
             .ok()
             .and_then(|text| toml::from_str::<Settings>(&text).ok())
             .map(|settings| PluginCalls {
                 timing: settings.plugins.timing,
-                loopback: settings.plugins.loopback,
             })
             .unwrap_or_default()
     }
@@ -208,6 +203,8 @@ pub struct Agents {
 /// The defaults a launch takes when it names none; `None` leaves the board's own.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Launch {
+    /// The agent, one a launch starts as the board reads it (`symphony_board::launch::defaults::agent`):
+    /// none for one unwritten or blank.
     pub default: Option<String>,
     pub model: Option<String>,
     pub effort: Option<String>,
@@ -272,7 +269,7 @@ impl Default for Land {
     }
 }
 
-/// When the Symphony's own release run (`symphony-build release`, docs/RELEASES.md) releases
+/// When the Symphony's own release run (`symphony-build release`, docs/workflow/RELEASES.md) releases
 /// besides each day's, and what a green release does then.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Releases {
@@ -290,6 +287,19 @@ pub struct Releases {
     /// `COMMAND… --request FILE` (the GitHub adapter's `symphony-github release`); none, and no
     /// program is run and nothing is published there.
     pub github: Vec<String>,
+    /// The command a release run asks to verify its commit on GitHub's machines in place of
+    /// verifying it here, run as `COMMAND… --request FILE` (the GitHub adapter's
+    /// `symphony-github verify`); none, and no program is run and every run verifies here.
+    pub hosted: Vec<String>,
+    /// While `hosted` names a command, a run on main's tip also starts at a landing once this many
+    /// minutes passed since the last run started and the tip is not the commit last judged: the
+    /// hosted clock, set from how long a run there takes. Such a run verifies nothing here. 0
+    /// starts none by the clock.
+    pub hosted_every_minutes: u32,
+    /// The command each release run runs as a check of its own, `rulesets`, after the checks
+    /// (the GitHub adapter's `symphony-github rulesets --verify`, where its settings publish pull
+    /// requests): red unless it exits 0; none, and the run has no such check.
+    pub rulesets: Vec<String>,
     /// How many reruns of a release candidate may come back red before it is dropped and main's
     /// tip is run again; 0 holds no candidate.
     pub candidate_reruns: u32,
@@ -301,10 +311,19 @@ pub struct Releases {
 impl Releases {
     /// The landings a release run waits for unless the project says: the owner's 20.
     pub const EVERY_LANDINGS: u32 = 20;
+    /// The least minutes between the starts of two runs of the hosted clock unless the project
+    /// says; one run at a time holds the release's lock, so a longer run is followed by the next.
+    pub const HOSTED_EVERY_MINUTES: u32 = 30;
     /// The red reruns a release candidate may take unless the project says.
     pub const CANDIDATE_RERUNS: u32 = 3;
     /// The hours a release candidate is held unless the project says.
     pub const CANDIDATE_HOURS: u32 = 24;
+
+    /// The minutes of the hosted clock: none while `hosted` names no command or the minutes are 0.
+    pub fn hosted_clock(&self) -> Option<u32> {
+        (!self.hosted.is_empty() && self.hosted_every_minutes > 0)
+            .then_some(self.hosted_every_minutes)
+    }
 
     /// Whether a red run holds its commit as the release candidate: neither bound is 0.
     pub fn holds_candidates(&self) -> bool {
@@ -319,6 +338,9 @@ impl Default for Releases {
             refresh: true,
             publish: false,
             github: Vec::new(),
+            hosted: Vec::new(),
+            hosted_every_minutes: Releases::HOSTED_EVERY_MINUTES,
+            rulesets: Vec::new(),
             candidate_reruns: Releases::CANDIDATE_RERUNS,
             candidate_hours: Releases::CANDIDATE_HOURS,
         }
@@ -326,7 +348,7 @@ impl Default for Releases {
 }
 
 /// `generators` of the table `table` checked: each writes inside the project, a folder's outputs
-/// keeping their slash, and has a command.
+/// keeping their slash, and has a command as the land reads one (`symphony_board::land::commanded`).
 fn checked_generators(table: &str, generators: &mut [Generator]) -> Result<(), String> {
     for generator in generators {
         // Outputs are prefixes of changed names: a folder keeps its slash, so `content/`
@@ -336,16 +358,9 @@ fn checked_generators(table: &str, generators: &mut [Generator]) -> Result<(), S
         } else {
             ""
         };
-        generator.outputs = inside(
-            &format!("{table} generators outputs"),
-            generator.outputs.clone(),
-        )? + slash;
-        if generator.command.is_empty() {
-            return Err(format!(
-                "{table} generator {} has no command",
-                generator.name
-            ));
-        }
+        generator.outputs =
+            inside(&format!("{table} generators outputs"), &generator.outputs)? + slash;
+        symphony_board::land::commanded(table, generator)?;
     }
     Ok(())
 }
@@ -451,8 +466,8 @@ impl Project {
     }
 
     /// `text` as the `symphony.toml` of the project at `root`, a table or key the Symphony does not
-    /// know refused by name and line, a `[limits]` value the board cannot read refused as the
-    /// board says it, with its line, and a `[stamps]` catalogue the board would refuse (an empty
+    /// know refused by name and line, a limit the board cannot read (`[limits]`'s, or `[board]
+    /// orchestrator_slots`) refused as the board says it, with its line, and a `[stamps]` catalogue the board would refuse (an empty
     /// one, a key no stamp has) refused as it says it. The files its entrypoints hold are
     /// [`Project::load`]'s to look at.
     pub fn parse(root: &Path, text: &str) -> Result<Project, String> {
@@ -462,8 +477,9 @@ impl Project {
             return Err(refusal);
         }
         let project = Self::resolve(root, file).map_err(|e| format!("{FILE}: {e}"))?;
-        // The board reads `[limits]` itself and takes a default for a value it cannot read, so the
-        // board runs on whatever the file says; the lint and a load refuse that value here.
+        // The board reads `[limits]` and `[board] orchestrator_slots` itself and takes a default for
+        // a value it cannot read, so the board runs on whatever the file says; the lint and a load
+        // refuse that value here.
         if let Some(problem) = symphony_board::limits::parse(FILE, text).problems.first() {
             return Err(problem.clone());
         }
@@ -516,7 +532,7 @@ impl Project {
 
     /// [`Project::of`], and why it is the plain project when it is.
     fn seen(root: &Path) -> (Arc<Project>, Option<String>) {
-        if let Some(held) = lock(&SEEN).get_mut(root)
+        if let Some(held) = SEEN.lock().recover().get_mut(root)
             && held
                 .stamps
                 .iter()
@@ -545,7 +561,7 @@ impl Project {
         }
         let read = Self::load_seen(root, None);
         let seen = (read.project.clone(), read.problem.clone());
-        lock(&SEEN).insert(root.to_path_buf(), read);
+        SEEN.lock().recover().insert(root.to_path_buf(), read);
         seen
     }
 
@@ -554,7 +570,7 @@ impl Project {
     /// that found a file changed meanwhile read the project afresh, and a read of the files before
     /// would only cost the next reader one more load. Whether it was kept.
     fn keep(root: &Path, started: &[(PathBuf, Stamp)], read: Seen) -> bool {
-        let mut seen = lock(&SEEN);
+        let mut seen = SEEN.lock().recover();
         let current = seen.get(root).is_some_and(|held| held.stamps == started);
         if current {
             seen.insert(root.to_path_buf(), read);
@@ -694,27 +710,22 @@ impl Project {
             (None, found) => found,
         });
         let name = p.name.unwrap_or_else(|| folder.clone());
-        if id.is_empty() || slug(&id) != id {
-            return Err(format!(
-                "[project] id {id:?} is not a slug (lowercase letters, digits and dashes)"
-            ));
-        }
+        symphony_board::project::id(&id)?;
         let artifacts = inside(
             "[project] artifacts",
-            p.artifacts.unwrap_or_else(|| "artifacts".into()),
+            &p.artifacts.unwrap_or_else(|| "artifacts".into()),
         )?;
         let plugin_processes =
             plugin_processes(root, &artifacts, &file.plugins.crates, file.plugins.process)?;
         let entrypoints = entrypoints(file.entrypoints, &file.plugins.crates, &plugin_processes)?;
         let register = inside(
             "[project] register",
-            p.register
+            &p.register
                 .unwrap_or_else(|| join(&entrypoints[0].folder, "DECISIONS.md")),
         )?;
-        let default_branch = p.default_branch.unwrap_or_else(|| "main".into());
-        if default_branch.trim().is_empty() {
-            return Err("[project] default_branch is empty".into());
-        }
+        let default_branch = symphony_board::project::default_branch(p.default_branch.as_deref())?
+            .unwrap_or(symphony_board::live::MAIN)
+            .to_string();
         let cargo = p.cargo;
         if cargo
             .first()
@@ -735,7 +746,11 @@ impl Project {
             panes,
             worktrees: a.worktrees,
             launch: Launch {
-                default: a.launch.default,
+                default: symphony_board::launch::defaults::agent(
+                    symphony_board::launch::defaults::AGENT_KEY,
+                    a.launch.default.as_deref(),
+                )?
+                .map(String::from),
                 model: a.launch.model,
                 effort: a.launch.effort,
             },
@@ -770,8 +785,24 @@ impl Project {
                     .into(),
             );
         }
+        if (file.releases.hosted.first()).is_some_and(|program| program.trim().is_empty()) {
+            return Err(
+                "[releases] hosted names no command: leave it out to verify a release here".into(),
+            );
+        }
+        if (file.releases.rulesets.first()).is_some_and(|program| program.trim().is_empty()) {
+            return Err(
+                "[releases] rulesets names no command: leave it out to verify no rulesets".into(),
+            );
+        }
         if let Some(upstream) = land.upstream.take() {
             upstream.judged()?;
+        }
+        if land.watch_seconds == 0 {
+            return Err("[land] watch_seconds is 0: the watcher rests between its rounds".into());
+        }
+        if land.merge_within_minutes == 0 {
+            return Err("[land] merge_within_minutes is 0: a host is given time to merge".into());
         }
         if !v.generators.is_empty() && v.land.is_empty() {
             return Err(
@@ -786,7 +817,7 @@ impl Project {
             generators: v.generators,
             record: v
                 .record
-                .map(|path| inside("[verdicts] record", path))
+                .map(|path| inside("[verdicts] record", &path))
                 .transpose()?,
         };
         let board = Board::from_file(file.board)?;
@@ -802,7 +833,6 @@ impl Project {
             plugins: file.plugins.crates,
             plugin_calls: PluginCalls {
                 timing: file.plugins.timing,
-                loopback: file.plugins.loopback,
             },
             theme,
             agents,
@@ -820,6 +850,9 @@ impl Project {
                 refresh: file.releases.refresh,
                 publish: file.releases.publish,
                 github: file.releases.github,
+                hosted: file.releases.hosted,
+                hosted_every_minutes: file.releases.hosted_every_minutes,
+                rulesets: file.releases.rulesets,
                 candidate_reruns: file.releases.candidate_reruns,
                 candidate_hours: file.releases.candidate_hours,
             },
@@ -1449,13 +1482,13 @@ fn entrypoints(
         let label = entry.label();
         entry.folder = path_in(
             &format!("[[entrypoints]] {label} folder"),
-            table.folder,
+            &table.folder,
             true,
         )?;
         let history = table
             .history
             .into_iter()
-            .map(|folder| path_in(&format!("[[entrypoints]] {label} history"), folder, false))
+            .map(|folder| path_in(&format!("[[entrypoints]] {label} history"), &folder, false))
             .collect::<Result<_, _>>()?;
         if entry.include.is_empty() {
             return Err(format!(
@@ -1550,43 +1583,6 @@ impl Bounds {
                 .is_ok_and(|resolved| resolved.starts_with(uploads))
         })
     }
-}
-
-/// `path` when it is relative and names something inside the project, spelled as the repository
-/// names its files (`./docs/` is `docs`), so every comparison with a listed file holds; else an
-/// error naming `key`.
-fn inside(key: &str, path: String) -> Result<String, String> {
-    path_in(key, path, false)
-}
-
-/// [`inside`], the project's root itself (`.`, written as the empty path) allowed when `root` is.
-fn path_in(key: &str, path: String, root: bool) -> Result<String, String> {
-    let refused = || format!("{key} {path:?} must be a path inside the project");
-    let mut parts = Vec::new();
-    for part in Path::new(&path).components() {
-        match part {
-            Component::Normal(name) => parts.push(name.to_string_lossy()),
-            Component::CurDir => {}
-            _ => return Err(refused()),
-        }
-    }
-    if parts.is_empty() && (!root || path.is_empty()) {
-        return Err(refused());
-    }
-    Ok(parts.join("/"))
-}
-
-/// A name as an id: lowercase letters and digits, each other run a single dash.
-pub fn slug(name: &str) -> String {
-    let mut out = String::new();
-    for ch in name.chars().flat_map(char::to_lowercase) {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch);
-        } else if !out.is_empty() && !out.ends_with('-') {
-            out.push('-');
-        }
-    }
-    out.trim_end_matches('-').to_string()
 }
 
 /// A path's length and modification time, its own and then what it leads to (which differ for a

@@ -1,4 +1,4 @@
-//! Durable execution attempts ([docs/EXECUTION_ATTEMPTS.md](../../../docs/EXECUTION_ATTEMPTS.md)):
+//! Durable execution attempts ([docs/engineering/EXECUTION_ATTEMPTS.md](../../../docs/engineering/EXECUTION_ATTEMPTS.md)):
 //! the board's record of each time a task's role ran on a provider, and the rules that recover it
 //! and decide which of its results may count. A project supplies the provider, as a kit
 //! [`Adapter`], and the host that runs the [`Coordinator`]; the board keeps the history.
@@ -25,7 +25,6 @@
 mod coordinator;
 mod evidence;
 mod keys;
-mod objects;
 mod reader;
 mod record;
 mod rules;
@@ -33,6 +32,9 @@ mod view;
 
 pub use coordinator::Coordinator;
 pub use reader::Reader;
+/// Named by the JSON reader's tests, which write an attempt's row whole ([`crate::objects`]).
+#[cfg(test)]
+pub(crate) use record::Pin;
 pub(crate) use record::Row;
 pub use record::{
     Artifact, Asked, Binding, Cancellation, Cleanup, Collection, Continuation, Dispatch, Ending,

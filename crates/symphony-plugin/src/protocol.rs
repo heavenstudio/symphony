@@ -1,4 +1,4 @@
-//! The plugin protocol's data (docs/PLUGIN_PROTOCOL.md): each seam's call as a request and the type
+//! The plugin protocol's data (docs/engineering/PLUGIN_PROTOCOL.md): each seam's call as a request and the type
 //! of its answer, both serde types, what a plugin declares once ([`Declaration`]), and the line
 //! each travels in ([`Envelope`]). A request names the seam's object (a component, a card kind, a
 //! route…) by its name, a watch by its place among the plugin's watches, and carries owned forms of
@@ -102,6 +102,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
+use crate::authority::{Operation, Signed};
 use crate::vocabulary::{Block, FieldValue, Gate, NavItem, Picture, Region, TaskOffer};
 use crate::{
     ARTIFACTS, Card, CardKind, Drawing, FieldKind, File, Page, Plugin, Problem, Reply, Submission,
@@ -118,8 +119,9 @@ pub struct Version {
 
 /// The protocol this build speaks: major 0 while no process speaks it. Minor 2 hands a page its
 /// project's artifacts folder ([`PageData::artifacts`]); minor 3 asks a register read's card kinds
-/// in one request ([`ReadCards`]); every other call is 1's.
-pub const PROTOCOL: Version = Version { major: 0, minor: 3 };
+/// in one request ([`ReadCards`]); minor 4 asks an approval authority for an attestation
+/// ([`Attest`], [`Declaration::authorities`]); every other call is 1's.
+pub const PROTOCOL: Version = Version { major: 0, minor: 4 };
 
 /// This build's protocol.
 impl Default for Version {
@@ -206,7 +208,7 @@ pub struct Envelope<Q = Box<RawValue>, A = Box<RawValue>> {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answered: Option<A>,
     /// Beside an answer, the plugin's own time for the call, in microseconds: what the host records
-    /// as the call's own time under a process (docs/PLUGIN_CALLS.md).
+    /// as the call's own time under a process (docs/engineering/PLUGIN_CALLS.md).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub us: Option<f64>,
 }
@@ -574,6 +576,15 @@ calls! {
     /// [`Gates::kept_while`](crate::Gates::kept_while).
     KeptWhile = "gates.kept_while" since 1 => String { answerer: String, root: PathBuf, task: TaskData }
 
+    /// [`Authority::attest`](crate::Authority::attest) of the authority answering for the adapter
+    /// `authority`, within `within_ms` milliseconds.
+    Attest = "authorities.attest" since 4 => Result<Signed, String> {
+        authority: String,
+        root: PathBuf,
+        operation: Operation,
+        within_ms: u64,
+    }
+
     /// [`Watch::changed`](crate::Watch::changed).
     Changed = "watches.changed" since 1 => Option<String> {
         /// The watch's place among the plugin's watches.
@@ -864,6 +875,10 @@ pub struct Declaration {
     pub commands: Vec<DeclaredCommand>,
     pub transports: Vec<String>,
     pub theme: Option<Theme>,
+    /// Each approval authority's adapter: since 0.4, and none when none is written, as a plugin
+    /// of 0.3 writes none.
+    #[serde(default)]
+    pub authorities: Vec<String>,
 }
 
 /// A card kind: its name and the markers it reads.
@@ -987,6 +1002,7 @@ impl Declaration {
                 .collect(),
             transports: names(plugin.transports().iter().map(|t| t.name()).collect()),
             theme: plugin.theme(),
+            authorities: names(plugin.authorities().iter().map(|a| a.adapter()).collect()),
         }
     }
 }

@@ -494,15 +494,22 @@ fn every_client_of_a_board_counts_its_requests_in_the_boards_one_log() {
     assert!(!Arc::ptr_eq(&client.queries(), &elsewhere.queries()));
 
     let before = crate::sweep::trigger::now();
-    client
-        .define_then("CREATE thing SET n = 1 RETURN NONE;", json!({}))
-        .unwrap();
+    // Every test's database is defined in the shared server's one namespace, and SurrealDB
+    // answers a conflict to one of two defined there at once: the write is sent again, as the
+    // store's opening sends its own, and each time it was sent is a request the log counts.
+    let mut sent = 0u64;
+    let until = std::time::Instant::now() + test_time::backstop(std::time::Duration::from_secs(30));
+    crate::store_fixture::retry_conflicts(until, || {
+        sent += 1;
+        client.define_then("CREATE thing SET n = 1 RETURN NONE;", json!({}))
+    })
+    .unwrap();
     other.query("SELECT * FROM thing;", json!({})).unwrap();
     let (requests, writes) = client.queries().report(crate::sweep::trigger::now());
     assert_eq!(
         (requests.count, requests.failed, writes.count),
-        (2, 0, 1),
-        "one read, one write"
+        (sent + 1, 0, sent),
+        "one read, and the write each time it was sent"
     );
     let slowest = requests.slowest.unwrap();
     assert!(
@@ -746,7 +753,7 @@ fn a_board_that_went_back_is_warned_of_first_and_written_at_once_until_it_opens_
     let _ = fs::remove_file(&path);
     let line = "it went back from schema 16, so what was written since is lost: nothing was \
                 written; do not run `just tasks migrate`; the Symphony's \
-                docs/TASKS.md#a-board-that-went-back says how to recover it";
+                docs/operations/BOARD_OPERATIONS.md#a-board-that-went-back says how to recover it";
 
     assert!(!recorder.went_back(T0 + 1.0, None), "nothing changed");
     assert_eq!(Report::read(&path), Ok(None), "and nothing was written");

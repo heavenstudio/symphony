@@ -4,6 +4,10 @@
 
 use symphony_api::workflow::*;
 
+/// What a transition or an activation back to the board's own writers names where a custom
+/// definition has its digest: built-in v1 is this build's, committed by no project file.
+pub const DEFAULT: &str = "builtin-v1";
+
 const STATUSES: [&str; 9] = [
     "backlog",
     "concept",

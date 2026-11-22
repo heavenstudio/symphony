@@ -13,11 +13,12 @@ mod media;
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
-use std::sync::{Arc, LazyLock, Mutex, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use regex::Regex;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use symphony_board::lock::Recovered as _;
 
 use crate::edit::{frontmatter_end, heading_anchor};
 use crate::page::Document;
@@ -87,6 +88,8 @@ pub struct Block {
 }
 
 /// Blank-line-separated blocks with their source lines; fences stay whole, and a card keeps its thread.
+/// A card line outside a fence opens a block of its own whatever stands above it, a blank line or
+/// not, so every card the register's readers count ([`parse_decisions`]) is drawn as a card.
 pub fn split_blocks(text: &str) -> Vec<Block> {
     let lines = splitlines(text);
     let mut blocks = Vec::new();
@@ -95,7 +98,14 @@ pub fn split_blocks(text: &str) -> Vec<Block> {
     let mut index = frontmatter_end(&lines).map_or(0, |end| end + 1);
     while index < lines.len() {
         let line = lines[index];
-        if start.is_none() && !in_fence && card_line(line).is_some() {
+        if !in_fence && card_line(line).is_some() {
+            if let Some(from) = start.take() {
+                blocks.push(Block {
+                    start: from + 1,
+                    end: index,
+                    text: lines[from..index].join("\n"),
+                });
+            }
             let end = card_end(&lines, index);
             blocks.push(Block {
                 start: index + 1,
@@ -316,10 +326,7 @@ impl Render {
     #[must_use]
     pub fn with_plugins(mut self, plugins: crate::plugins::Plugins) -> Render {
         self.plugins = plugins;
-        self.cache
-            .get_mut()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clear();
+        self.cache.get_mut().recover().clear();
         self
     }
 
@@ -370,12 +377,6 @@ impl Render {
     /// file at most once per call.
     pub fn sections(&self, text: &str, doc_path: &str) -> Vec<Section> {
         self.section_fragments(text, doc_path, false, false)
-    }
-
-    /// The native client draws card threads separately and derives source lines from section.start
-    /// plus data-line-offset. Moving a block therefore leaves its content hash unchanged.
-    pub fn client_sections(&self, text: &str, doc_path: &str) -> Vec<Section> {
-        self.section_fragments(text, doc_path, true, false)
     }
 
     /// The same pipeline with semantic component/wiki markers retained for `blocks::parse`.
@@ -608,7 +609,7 @@ fn count_groups(html: &str, counts: &[(Group, usize)]) -> String {
 impl Render {
     /// The rendering of `rel` made from `version` of its file, if that is the last one.
     pub(crate) fn cached(&self, rel: &str, version: &str) -> Option<Arc<Document>> {
-        let cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
+        let cache = self.cache.lock().recover();
         cache
             .get(rel)
             .filter(|(had, _)| had == version)
@@ -616,7 +617,7 @@ impl Render {
     }
 
     pub(crate) fn remember(&self, rel: &str, version: String, doc: &Arc<Document>) {
-        let mut cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut cache = self.cache.lock().recover();
         cache.insert(rel.to_string(), (version, Arc::clone(doc)));
     }
 }

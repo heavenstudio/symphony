@@ -21,7 +21,7 @@ const SHELL: &str = "<!DOCTYPE html><html lang=\"en\"><head><title>Symphony</tit
 
 impl Machine {
     pub(super) fn new() -> Machine {
-        Machine::with_gate(Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)))
+        Machine::with_gate(crate::testing::open_gate())
     }
 
     /// [`Machine::new`], its starter judging who may reach it by `gate`.
@@ -1728,7 +1728,7 @@ fn a_release_serves_process_plugins_and_names_the_command_a_linked_one_needs() {
         Some(format!(
             "this Symphony is the release release-1, which serves a plugin only from its process: \
              linked names the plugin map linked: a [plugins.process] command for map in {}, then \
-             `just symphony` in its checkout, lets this server serve it (docs/PLUGIN_PROTOCOL.md)",
+             `just symphony` in its checkout, lets this server serve it (docs/engineering/PLUGIN_PROTOCOL.md)",
             linked.root.join("symphony.toml").display()
         ))
     );
@@ -1769,6 +1769,7 @@ fn a_project_naming_a_linked_plugin_says_it_holds_the_machine_on_a_projects_buil
         commit: "abc".into(),
         serves: Serves {
             schema: symphony_board::SCHEMA,
+            additions: symphony_board::schema::ADDITIONS,
             protocol: version,
             tasks_api: version,
             pin: symphony::machine::PIN,
@@ -1784,6 +1785,6 @@ fn a_project_naming_a_linked_plugin_says_it_holds_the_machine_on_a_projects_buil
         "The machine's Symphony stays a project's build, not the release release-1: linked names \
          the linked plugin shelf, and a release's server serves a plugin only from its process: a \
          [plugins.process] command for it in its symphony.toml lets the release serve every \
-         project (docs/PLUGIN_PROTOCOL.md)."
+         project (docs/engineering/PLUGIN_PROTOCOL.md)."
     );
 }

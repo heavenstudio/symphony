@@ -1,4 +1,4 @@
-//! One run's log ([`symphony_api::RUN_LOG_PATH`], docs/RUNS.md, *Logs*): part of the file the
+//! One run's log ([`symphony_api::RUN_LOG_PATH`], docs/workflow/RUNS.md, *Logs*): part of the file the
 //! board's recorder writes beside the project's day files, read through
 //! [`symphony_board::run_logs::read`], so only a regular file in a day folder of
 //! `symphony/runs/logs/` is ever read, never through a link; never the board, so a board slow or

@@ -38,15 +38,14 @@ impl Store {
             return Ok(BTreeMap::new());
         }
         let answer: Value = self.retrying(|| {
-            self.transact(
+            self.read_together(
                 both(sql::SPENT_UNDER, pg::spent_under()),
                 json!({"slugs": slugs}),
             )
         })?;
         let unread = || Error::Db("the tokens' read is not in the board's shape".into());
         let rows: Vec<UsageRow> =
-            serde_json::from_value(answer.get("rows").cloned().ok_or_else(unread)?)
-                .map_err(|_| unread())?;
+            crate::objects::read(answer.get("rows").ok_or_else(unread)?).map_err(|_| unread())?;
         let mut parents = BTreeMap::new();
         for under in answer
             .get("under")

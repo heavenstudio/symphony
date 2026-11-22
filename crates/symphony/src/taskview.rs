@@ -142,7 +142,7 @@ pub fn asks(questions: BTreeMap<String, u32>, verdict: Option<&TaskVerdict>) -> 
     }
 }
 
-/// The tasks of the owner's sign-off lane (docs/TASKS.md): open, executed, and held by their owner
+/// The tasks of the owner's sign-off lane (docs/workflow/TASKS.md): open, executed, and held by their owner
 /// gate. The Symphony's is held while a card the task posted waits on the owner
 /// ([`crate::gates::owner`]); a gate named `owner` that a plugin of the project at `root` answered
 /// for the task as it is now replaces it ([`crate::gates::merged`]), read from what `kept` holds and
@@ -339,7 +339,7 @@ pub fn page(
 }
 
 /// What the model calls of the task `slug` took, its subtasks' with them, and their estimated
-/// cost at the prices this build embeds: `tasks show --json`'s `tokens` without its rows, from
+/// cost at the prices this build embeds: `tasks show --json`'s `tokens`, its rows with them, from
 /// the same two reads, so the page's figures are that command's.
 pub fn tokens(
     store: &symphony_board::Store,
@@ -352,7 +352,7 @@ pub fn tokens(
     let spent = store.spent_on(&slugs)?;
     let prices = symphony_board::usage::Prices::embedded();
     let tally = symphony_board::usage::Tally::at(&spent, prices);
-    serde_json::from_value(tally.json(&[], prices))
+    serde_json::from_value(tally.json(&spent, prices))
         .map_err(|e| symphony_board::Error::Db(format!("a task's tokens do not read: {e}")))
 }
 
@@ -635,24 +635,6 @@ pub fn agents(store: &symphony_board::Store, root: &Path) -> Result<symphony_api
     agents_probed(store, &symphony_board::cli::probes::machine(&env), None)
 }
 
-pub fn agents_in(
-    store: &symphony_board::Store,
-    root: &Path,
-    common: Option<&Path>,
-    board: &symphony_board::Board,
-) -> Result<symphony_api::Agents, String> {
-    agents_in_observed(
-        store,
-        root,
-        common,
-        board,
-        symphony_board::cli::machine_work::Evidence {
-            local_host: symphony_board::sys::hostname(),
-            snapshot: Default::default(),
-        },
-    )
-}
-
 /// A clock tick supplies its single trusted native observation; HTTP consumers reuse this view.
 pub fn agents_in_observed(
     store: &symphony_board::Store,
@@ -775,7 +757,7 @@ fn fields(
 
 #[cfg(test)]
 #[path = "taskview/page_tests.rs"]
-mod page_tests;
+pub(crate) mod page_tests;
 
 #[cfg(test)]
 #[path = "taskview/agents_tests.rs"]

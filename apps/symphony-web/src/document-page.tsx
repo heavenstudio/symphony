@@ -30,6 +30,7 @@ import { folderPill, isSettled, partEdges, partForm } from "./document";
 import { api, DocumentLive, documentLive, FolderLive, followFolder, named } from "./document-live";
 import { readDiff, readFragment, readVersions } from "./document-read";
 import { Editor, PageContext } from "./editor";
+import { FirstSteps } from "./first";
 import { useFrame, useRefreshed } from "./frame";
 import { PageNotices } from "./live";
 import { useMount } from "./mount";
@@ -44,6 +45,7 @@ import type {
   Document,
   DocumentCard,
   DocumentDiff,
+  Folder,
   Fragment,
   LinkTarget,
   Section,
@@ -790,6 +792,17 @@ export function bothShown(
   return folder ?? intro;
 }
 
+/** What a folder with no document says in their place: what makes the first one, and a card. */
+export function FirstDocument({ folder }: { folder: Folder }) {
+  if (folder.intro !== null || folder.entries.length > 0) return null;
+  return (
+    <FirstSteps>
+      No document is here yet. A Markdown file in this folder is a page of its own, and a card in
+      its register waits for your verdict in the queue:
+    </FirstSteps>
+  );
+}
+
 /** A folder's page: its head, its intro (a document drawn in it) and its entries. */
 export function FolderPage({ path, scope }: { path: string; scope: string }) {
   // An entrypoint's own page, the main checkout's, is kept on this device, pinned, with its
@@ -840,6 +853,7 @@ export function FolderPage({ path, scope }: { path: string; scope: string }) {
         )}
         {/* The page counts its documents once, in the pill above: the entries' heading gives no
             second number to disagree with it. */}
+        <FirstDocument folder={folder} />
         {folder.entries.length > 0 && <h2 className="section-title">In this folder</h2>}
         <div className="folder-entries">
           {folder.entries.map((entry) => {
@@ -931,7 +945,7 @@ export const SANDBOX = "allow-scripts";
  * app's page, under the app's header: its path, as a document's head shows it, over its frame, as
  * wide as the page and as tall as the window below the header, scrolling inside itself. None of the
  * Markdown view's features: no outline, cards, notes, asks, editing, versions, device cache or
- * feed (docs/PROJECT_FILE.md, "HTML documents"). The frame loads the file's own address, the route
+ * feed (docs/operations/PROJECT_FILE.md, "HTML documents"). The frame loads the file's own address, the route
  * with the file's query (`fileAddress`), which the server answers with the file itself under a
  * policy that keeps it to its entrypoint's files and opens no connection
  * (`apps/symphony-server/src/media_files.rs`, `html_document`).

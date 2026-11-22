@@ -4,15 +4,17 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Duration;
 
+use symphony_plugin::authority::{Operation, Signed};
 use symphony_plugin::vocabulary::{
     Block, Gate, GatePast, GateState, LinkTarget, NavItem, Picture, Presentation, ProgressBar,
     Region, Span, TaskOffer, View, Viewer,
 };
 use symphony_plugin::{
-    BoardAction, BoardField, Card, CardKind, Command, Component, DocCheck, Docs, Drawing,
-    FieldKind, File, Gates, Generator, HomeRegion, Page, Plugin, Problem, ProseRule, Renderer,
-    Reply, Route, Submission, Submitted, TaskRef, Theme, Transport, Watch,
+    Authority, BoardAction, BoardField, Card, CardKind, Command, Component, DocCheck, Docs,
+    Drawing, FieldKind, File, Gates, Generator, HomeRegion, Page, Plugin, Problem, ProseRule,
+    Renderer, Reply, Route, Submission, Submitted, TaskRef, Theme, Transport, Watch,
 };
 
 /// A plugin with one object at every seam, each answer made of every argument it is given, so a
@@ -63,6 +65,9 @@ impl Plugin for Every {
         vec![self]
     }
     fn gates(&self) -> Vec<&dyn Gates> {
+        vec![self]
+    }
+    fn authorities(&self) -> Vec<&dyn Authority> {
         vec![self]
     }
     fn watches(&self) -> Vec<&dyn Watch> {
@@ -490,6 +495,33 @@ impl Gates for Every {
     }
     fn kept_while(&self, root: &Path, task: &TaskRef<'_>) -> String {
         format!("{} {} in {}", task.status, task.branch, root.display())
+    }
+}
+
+impl Authority for Every {
+    fn adapter(&self) -> &str {
+        "every"
+    }
+    /// The operation signed whole, with the root and the time it was given: none at all it
+    /// cannot say.
+    fn attest(
+        &self,
+        root: &Path,
+        operation: &Operation,
+        within: Duration,
+    ) -> Result<Signed, String> {
+        if within.is_zero() {
+            return Err(format!(
+                "{} of {} has no time in {}",
+                operation.guard,
+                operation.task,
+                root.display()
+            ));
+        }
+        Ok(Signed::new(
+            format!("{operation:?} in {} within {within:?}", root.display()),
+            format!("{:0128x}", operation.snapshot.task_revision),
+        ))
     }
 }
 

@@ -50,7 +50,7 @@ pub struct Answered {
     /// Its `If-None-Match`, when it named one.
     pub named: Option<String>,
     pub status: u16,
-    /// A read ahead of a visit (assets/shell.js, `ahead`): a read of the API marked as a prefetch,
+    /// A read ahead of a visit (shell/shell.ts, `ahead`): a read of the API marked as a prefetch,
     /// no page's own ([`Site::read_ahead`]).
     pub ahead: bool,
 }
@@ -232,6 +232,9 @@ struct Shared {
     feeds: Vec<Stream>,
     /// How many feed streams were opened.
     opened_feeds: u64,
+    /// The server's notice, which each stream opened says first ([`Site::server_notice`]); none
+    /// until a test says one.
+    notice: Option<Said>,
     /// The board as its route answers it now, but for its build.
     board: serde_json::Value,
     /// The client build the board names.
@@ -370,6 +373,7 @@ impl Site {
             ahead: Vec::new(),
             feeds: Vec::new(),
             opened_feeds: 0,
+            notice: None,
             board: serde_json::from_str(board).expect("a board"),
             build: build_of(&shell),
             board_delay: Duration::ZERO,
@@ -710,8 +714,15 @@ impl Site {
         }
     }
 
+    /// The server's `message` to every page, an empty one clearing it: said on every open feed
+    /// stream, and first on each stream opened after, as the server says its notice
+    /// (apps/symphony-server/src/api.rs, `feed`). A page that opens its feed again, as a document
+    /// does once its sections near the screen, hears it on the new stream.
     pub fn server_notice(&self, message: &str) {
-        self.send(&Said::notice(message));
+        let said = Said::notice(message);
+        let mut shared = self.shared.lock().unwrap();
+        say(&mut shared, &said);
+        shared.notice = Some(said);
     }
 
     /// End every open feed stream, as a server that stops does.
@@ -805,20 +816,22 @@ impl Drop for Site {
 
 /// Say `said` on every open feed stream, in its form; the streams that are gone are dropped.
 fn send(shared: &Mutex<Shared>, said: &Said) {
+    say(&mut shared.lock().unwrap(), said);
+}
+
+/// [`send`], under the lock already held.
+fn say(shared: &mut Shared, said: &Said) {
     let (sse, frame) = (said.sse(), said.frame());
-    let mut shared = shared.lock().unwrap();
-    shared.feeds.retain_mut(|stream| {
-        let bytes = if stream.socket {
-            &frame[..]
-        } else {
-            sse.as_bytes()
-        };
-        stream
-            .out
-            .write_all(bytes)
-            .and_then(|_| stream.out.flush())
-            .is_ok()
-    });
+    shared
+        .feeds
+        .retain_mut(|stream| tell(&mut stream.out, stream.socket, &sse, &frame));
+}
+
+/// Write one thing said to a stream, as its Server-Sent Event (`sse`) or, on a WebSocket, its
+/// frame: whether the stream took it.
+fn tell(out: &mut TcpStream, socket: bool, sse: &str, frame: &[u8]) -> bool {
+    let bytes = if socket { frame } else { sse.as_bytes() };
+    out.write_all(bytes).and_then(|_| out.flush()).is_ok()
 }
 
 /// Keep feed stream `id` open until the page closes it, then count it no more: a page sends
@@ -1253,7 +1266,7 @@ fn serve(
             .split_once('?')
             .is_some_and(|(_, query)| symphony_api::asks_for_file(query));
         let named = headers.get("if-none-match").cloned();
-        // A read of the API marked as a prefetch is a read ahead of a visit (assets/shell.js);
+        // A read of the API marked as a prefetch is a read ahead of a visit (shell/shell.ts);
         // the shell's warmed modules are prefetches too, but no reads of the API.
         let ahead = path.starts_with("/api/")
             && headers
@@ -1382,6 +1395,12 @@ fn serve(
                 if shared.ending_feeds {
                     let _ = out.flush();
                     let _ = out.shutdown(Shutdown::Both);
+                    return;
+                }
+                // The server's notice first, as the server says it on every stream it opens.
+                if let Some(notice) = &shared.notice
+                    && !tell(&mut out, socket, &notice.sse(), &notice.frame())
+                {
                     return;
                 }
                 shared.opened_feeds += 1;

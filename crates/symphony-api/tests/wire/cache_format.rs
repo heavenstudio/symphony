@@ -1,5 +1,5 @@
 //! The client cache's format names the shapes the client keeps on the device
-//! (docs/analysis/client-cache.md, "Across versions"): a kept type whose shape changes lands only
+//! (docs/engineering/analysis/client-cache.md, "Across versions"): a kept type whose shape changes lands only
 //! with a new `CACHE_FORMAT`, so no client reads a kept value of a shape it no longer writes.
 
 use serde_json::{Value, json};

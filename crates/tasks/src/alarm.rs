@@ -120,11 +120,9 @@ pub enum Step<'a> {
     Covered,
 }
 
-/// The line a move writes: `HANDLE moved it FROM → TO`.
-pub const MOVED: &str = " moved it ";
-pub const ARROW: &str = " → ";
-/// The line a claim writes: `HANDLE claimed it`, perhaps `, handed over from …`.
-pub const CLAIMED: &str = " claimed it";
+/// The line a move writes, `HANDLE moved it FROM → TO`, and the line a claim writes, `HANDLE
+/// claimed it`, perhaps `, handed over from …`: the replay's own words, named here as before.
+pub use crate::stages::{ARROW, CLAIMED, MOVED};
 /// What a landing that closes work taken back to in progress says.
 pub const TAKEN_BACK: &str = " was taken back to in_progress";
 
@@ -179,10 +177,7 @@ pub fn step(line: &Line) -> Step<'_> {
             {
                 return Step::Between(was, "blocked");
             }
-            if let Some(to) = text
-                .strip_prefix(crate::store::UNBLOCK_LINE)
-                .and_then(status_word)
-            {
+            if let Some(to) = crate::stages::unblocked_to(text).and_then(status_word) {
                 return Step::Between("blocked", to);
             }
             let claimed = text.split_once(CLAIMED).is_some_and(|(by, rest)| {

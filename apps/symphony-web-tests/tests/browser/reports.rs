@@ -19,7 +19,9 @@
 //! above it.
 use super::cache_pages::{PARTS, keeps, kept, notice, shows, store_opened};
 use super::document_landing::{COUNT_SCROLLS, TWO_FRAMES};
-use super::{SHOWN, chrome, chrome::Chrome, common, components::key, site, site::Site, texts};
+use super::{
+    READY, SHOWN, chrome, chrome::Chrome, common, components::key, site, site::Site, texts,
+};
 use serde_json::{Value, json};
 
 const DAY: f64 = 86_400.0;
@@ -99,19 +101,12 @@ fn served(page: &Value) -> Site {
     site
 }
 
-fn screen(chrome: &mut Chrome, width: u32, height: u32, mobile: bool) {
-    chrome.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":height,"deviceScaleFactor":if mobile { 3 } else { 1 },"mobile":mobile}),
-    );
-}
-
 fn open(chrome: &mut Chrome, site: &Site, drawn: &str) {
     chrome.open(&site.url("/reports"));
     assert!(
         chrome.wait_for(
             &format!(
-                "document.documentElement.dataset.navigation === 'ready' && document.querySelector({}) !== null",
+                "{READY} && document.querySelector({}) !== null",
                 json!(drawn)
             ),
             SHOWN
@@ -147,7 +142,7 @@ fn shown(chrome: &mut Chrome) -> Value {
 fn the_reports_page_fits_a_phone_and_a_tap_shows_a_period_s_every_value_on_every_chart() {
     let site = served(&fortnight());
     let Some(mut chrome) = chrome() else { return };
-    screen(&mut chrome, 390, 844, true);
+    chrome.viewport_scaled(390, 844, 3, true);
     open(&mut chrome, &site, "[data-ready=reports] .chart-plot");
     assert_eq!(texts(&mut chrome, ".app-pages a.active"), ["Reports"]);
     assert_eq!(
@@ -239,7 +234,7 @@ fn the_reports_page_fits_a_phone_and_a_tap_shows_a_period_s_every_value_on_every
 fn on_a_wide_screen_the_charts_are_two_columns_and_dark_takes_its_own_colours() {
     let site = served(&fortnight());
     let Some(mut chrome) = chrome() else { return };
-    screen(&mut chrome, 1440, 900, false);
+    chrome.viewport(1440, 900, false);
     open(&mut chrome, &site, "[data-ready=reports] .chart-plot");
     assert_eq!(
         chrome.eval(
@@ -252,10 +247,7 @@ fn on_a_wide_screen_the_charts_are_two_columns_and_dark_takes_its_own_colours() 
         ("light", ["#2a78d6", "#e87ba4"]),
         ("dark", ["#3987e5", "#d55181"]),
     ] {
-        chrome.call(
-            "Emulation.setEmulatedMedia",
-            json!({"features": [{"name": "prefers-color-scheme", "value": scheme}]}),
-        );
+        chrome.scheme(scheme);
         assert_eq!(chrome.eval(colours), json!(expected), "{scheme}");
     }
 }
@@ -310,7 +302,7 @@ fn what(n: u32) -> &'static str {
 fn on_a_phone_a_window_s_many_changes_fold_and_the_first_chart_shows_on_the_first_screen() {
     let site = served(&changed_often());
     let Some(mut chrome) = chrome() else { return };
-    screen(&mut chrome, 390, 844, true);
+    chrome.viewport_scaled(390, 844, 3, true);
     open(&mut chrome, &site, "[data-ready=reports] .chart-plot");
     // The first chart's place on the page against the screen's height.
     let first = chrome.eval(
@@ -460,7 +452,7 @@ fn the_window_and_the_series_hidden_are_kept_and_hiding_a_large_series_rescales_
         &hours,
     );
     let Some(mut chrome) = chrome() else { return };
-    screen(&mut chrome, 1440, 900, false);
+    chrome.viewport(1440, 900, false);
     open(
         &mut chrome,
         &site,
@@ -538,7 +530,7 @@ fn with_no_roll_up_yet_the_reports_page_says_when_the_first_comes() {
     empty["first"] = Value::Null;
     let site = served(&empty);
     let Some(mut chrome) = chrome() else { return };
-    screen(&mut chrome, 390, 844, true);
+    chrome.viewport_scaled(390, 844, 3, true);
     open(&mut chrome, &site, "[data-ready=reports] .reports-empty");
     let said = chrome.eval("document.querySelector('.reports-empty').innerText");
     assert!(
@@ -644,7 +636,7 @@ fn still() -> String {
 /// and a moment later.
 fn arrive(site: &Site, width: u32, height: u32, in_place: bool) -> Option<[Value; 2]> {
     let mut chrome = chrome()?;
-    screen(&mut chrome, width, height, width < 600);
+    chrome.viewport_scaled(width, height, if width < 600 { 3 } else { 1 }, width < 600);
     let way = if in_place { "in place" } else { "opened" };
     if in_place {
         let link = format!("a[href=\"#{ADDRESSED}\"]");
@@ -652,7 +644,7 @@ fn arrive(site: &Site, width: u32, height: u32, in_place: bool) -> Option<[Value
         assert!(
             chrome.wait_for(
                 &format!(
-                    "document.documentElement.dataset.navigation === 'ready' && document.querySelector({}) !== null",
+                    "{READY} && document.querySelector({}) !== null",
                     json!(format!(".reports[aria-busy=false] {link}"))
                 ),
                 SHOWN
@@ -668,7 +660,7 @@ fn arrive(site: &Site, width: u32, height: u32, in_place: bool) -> Option<[Value
         // shows its ghost: its charts come after.
         assert!(
             chrome.wait_for(
-                "document.documentElement.dataset.navigation === 'ready' && document.querySelector('.reports[aria-busy=true] .ghost-chart') !== null",
+                &format!("{READY} && document.querySelector('.reports[aria-busy=true] .ghost-chart') !== null"),
                 SHOWN
             ),
             "{width}px {way}: the shell is ready over the page's ghost: {}",
@@ -718,7 +710,7 @@ fn a_reader_who_scrolls_away_from_a_landed_chart_is_left_there_as_the_hour_slide
  {
     let site = both_windows();
     let Some(mut chrome) = chrome() else { return };
-    screen(&mut chrome, 1280, 900, false);
+    chrome.viewport(1280, 900, false);
     chrome.open(&site.url(&format!("/reports#{ADDRESSED}")));
     assert!(
         chrome.wait_for(&still(), SHOWN),
@@ -800,12 +792,12 @@ fn a_chart_s_address_lands_nothing_once_the_reader_chose_a_window_before_any_cha
             )
         };
         let Some(mut chrome) = chrome() else { return };
-        screen(&mut chrome, 1280, 900, false);
+        chrome.viewport(1280, 900, false);
         chrome.open(&site.url(&format!("/reports#{ADDRESSED}")));
         assert!(
             chrome.wait_for(
                 &format!(
-                    "document.documentElement.dataset.navigation === 'ready' && document.querySelector({}) !== null && document.querySelector('.chart-slot') === null",
+                    "{READY} && document.querySelector({}) !== null && document.querySelector('.chart-slot') === null",
                     json!(first)
                 ),
                 SHOWN
@@ -890,7 +882,7 @@ fn a_return_visit_draws_the_kept_window_before_its_read_answers_and_an_unchanged
 {
     let site = both_windows();
     let Some(mut chrome) = chrome() else { return };
-    screen(&mut chrome, 1440, 900, false);
+    chrome.viewport(1440, 900, false);
     let saved = first_visit(&mut chrome, &site);
     let reads = symphony_api::REPORTS_PATH;
 
@@ -987,7 +979,7 @@ fn a_return_visit_draws_the_kept_window_before_its_read_answers_and_an_unchanged
 fn a_failed_read_leaves_the_kept_window_drawn_and_said_stale_until_a_retry_answers() {
     let site = both_windows();
     let Some(mut chrome) = chrome() else { return };
-    screen(&mut chrome, 1440, 900, false);
+    chrome.viewport(1440, 900, false);
     let saved = first_visit(&mut chrome, &site);
     let reads = symphony_api::REPORTS_PATH;
 
@@ -1054,7 +1046,7 @@ const THE_END: &str = r#"(() => {
 fn on_a_phone_the_kept_copy_s_notice_leaves_the_page_s_end_clear_and_the_toasts_above_it() {
     let site = both_windows();
     let Some(mut chrome) = chrome() else { return };
-    screen(&mut chrome, 390, 844, true);
+    chrome.viewport_scaled(390, 844, 3, true);
     let saved = first_visit(&mut chrome, &site);
     site.hold_route(symphony_api::REPORTS_PATH, true);
     come_back(&mut chrome, &site);
@@ -1110,7 +1102,7 @@ fn a_kept_window_chosen_again_draws_from_the_device_and_is_not_said_unreachable_
  {
     let site = both_windows();
     let Some(mut chrome) = chrome() else { return };
-    screen(&mut chrome, 1440, 900, false);
+    chrome.viewport(1440, 900, false);
     first_visit(&mut chrome, &site);
     // Days: its fortnight, drawn from the server and kept.
     choose(&mut chrome, "[data-grain=day]");

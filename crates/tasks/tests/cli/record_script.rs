@@ -26,6 +26,7 @@ use std::process::Output;
 use std::time::{Duration, Instant};
 use symphony_api::{End, RunLine};
 use symphony_board::cli::machine_work::recorded::{self, Phase, Record};
+use symphony_board::stamps::read::began;
 use symphony_board::sys::{Command, Stdio, output, wait_output};
 
 const CARGO: &str = r#"#!/bin/bash
@@ -170,9 +171,14 @@ impl Setup {
         said + "caller input\n"
     }
 
-    /// The history once it keeps `count` operations.
+    /// The history once it keeps `count` operations, in the order they began, as the board's
+    /// readers order runs ([`began`]). The history's own order is the order the recorders kept
+    /// them, and a recorder keeps its operation after its command ends: on a loaded machine the
+    /// recorder of a command that ran first can keep its record after the next command's.
     fn history(&self, count: usize) -> Vec<Record> {
-        kept(&self.work, count)
+        let mut history = kept(&self.work, count);
+        history.sort_by(|a, b| began(a).total_cmp(&began(b)));
+        history
     }
 }
 
@@ -700,7 +706,9 @@ const CLIENT_BUILD: &str = "#!/bin/sh\nif [ \"$1\" = build/verified-client ] && 
 /// made the file that names; `metadata` saying no target, so the tests' lanes are the libraries'
 /// and binaries' own tests and the doc tests; `test` (the tests' build and each lane) saying the
 /// client it was handed and the steps folder it sees, red under `FAIL_TESTS`; but the hosted
-/// board's tests, which name its feature, say nothing and are red under `FAIL_HOSTED` alone.
+/// board's tests, which name its feature, say nothing and are red under `FAIL_HOSTED` alone, and
+/// the board's raw-statement fence, a test target `lint-rs` runs as one of its checks, says nothing
+/// and is green.
 const RECIPES_CARGO: &str = r#"#!/bin/sh
 if [ "$1" = metadata ]; then exit 0; fi
 if [ "$1" = nextest ] && [ "$2" = list ]; then
@@ -713,6 +721,7 @@ case " $* " in *' --features hosted-postgresql '*)
     if [ -n "${FAIL_HOSTED:-}" ]; then echo 'hosted stand-in: no PostgreSQL 16'; exit 4; fi
     exit 0 ;;
 esac
+case " $* " in *' --test raw_fence '*) exit 0 ;; esac
 if [ "$1" = test ] || [ "$1" = nextest ]; then
     echo "client=${SYMPHONY_UI_DIST-unset}"
     echo "steps=${SYMPHONY_CHECK_STEPS-unset}"

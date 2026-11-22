@@ -10,10 +10,7 @@ fn the_heros_candidates_share_a_row_on_a_desktop_and_stack_on_a_phone() {
     let site = ParitySite::start();
     let Some(mut browser) = chrome() else { return };
     for width in [1280, 390] {
-        browser.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":width < 400}),
-        );
+        browser.viewport(width, 900, width < 400);
         browser.open(&site.url("/"));
         assert!(browser.wait_for(
             "document.querySelectorAll('.hero .pics figure').length === 3",
@@ -73,10 +70,7 @@ fn the_lamp_picker_has_one_card_border_and_a_visible_keyboard_focus_ring() {
         json!("0px")
     );
     for mode in ["light", "dark"] {
-        browser.call(
-            "Emulation.setEmulatedMedia",
-            json!({"features":[{"name":"prefers-color-scheme","value":mode}]}),
-        );
+        browser.scheme(mode);
         painted_layout(&mut browser);
         assert_eq!(browser.eval("(() => {const pick=document.querySelector('.gallery-pick'), style=getComputedStyle(pick), card=getComputedStyle(pick.parentElement), image=pick.querySelector('img').getBoundingClientRect(), outer=pick.parentElement.getBoundingClientRect();return style.borderTopWidth === '0px' && style.boxShadow === 'none' && Math.abs(image.left-outer.left-parseFloat(card.borderLeftWidth)-parseFloat(card.paddingLeft)) <= 1 && image.width === 80 && image.height === 80;})()"), json!(true), "{mode}: the thumbnail stays left aligned inside the card's single border");
     }

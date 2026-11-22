@@ -83,7 +83,7 @@ impl Observation {
             }
             looked.extend(wanted.iter().cloned());
             let read = both(sql::level(), pg::level());
-            let level: Level = store.transact(read, json!({"slot_wanted": wanted}))?;
+            let level: Level = store.read_together(read, json!({"slot_wanted": wanted}))?;
             for row in level.tasks {
                 self.rows.entry(row.slug.clone()).or_insert(row);
             }

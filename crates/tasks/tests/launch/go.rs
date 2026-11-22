@@ -204,7 +204,7 @@ fn a_hung_window_or_hc_answers_within_the_deadline_all_calls_together_and_its_ch
 }
 
 /// The deadline's kill reaches the hung call's own process alone: a process it started that holds
-/// its output lingers until it ends, and keeps the killed one unreaped meanwhile (docs/TASKS.md,
+/// its output lingers until it ends, and keeps the killed one unreaped meanwhile (docs/workflow/TASKS.md,
 /// "One deadline, one at a time"). The call answers at the deadline all the same.
 #[test]
 fn a_hung_call_answers_at_the_deadline_though_what_it_started_holds_its_output() {

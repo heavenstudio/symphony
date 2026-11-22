@@ -126,5 +126,6 @@ pub(super) fn gate(store: &Store, c: &mut Context) -> Result<(), Stop> {
             short(decision.tip.as_deref().unwrap_or_default())
         ),
     });
+    super::finish::poke(c, &slug);
     Ok(())
 }

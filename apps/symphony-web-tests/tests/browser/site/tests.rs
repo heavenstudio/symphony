@@ -225,6 +225,68 @@ fn a_failure_or_a_hold_names_a_route_or_one_of_its_targets() {
     assert_eq!(held.join().unwrap(), "200");
 }
 
+/// The cache tests' helpers (`cache_pages.rs`) count, slice and hold by the reads they are given,
+/// in the order given: a read never asked counts none, and one outside the reads is not held.
+#[test]
+fn the_cache_helpers_count_slice_and_hold_the_reads_they_are_given() {
+    use crate::cache_pages::{answered, hold, since};
+    let dist = Dist::new("/assets/shell.js", &[]);
+    let site = Site::start(dist.path(), &board());
+    site.set_json("/api/queue", &serde_json::json!({"cards": []}));
+    site.set_json("/api/asks", &serde_json::json!({"asks": []}));
+    let reads = ["/api/queue", "/api/asks", "/api/never-asked"];
+    let status = |path: &str| get(site.addr, path, "").0[9..12].to_string();
+    assert_eq!(answered(&site, &reads), [0, 0, 0]);
+    assert_eq!(answered(&site, &[]), [] as [usize; 0]);
+    assert_eq!(status("/api/asks"), "200");
+    let before = answered(&site, &reads);
+    assert_eq!(before, [0, 1, 0]);
+    assert_eq!(since(&site, &reads, &before, "/api/asks"), []);
+    assert_eq!(status("/api/asks?card=one"), "200");
+    assert_eq!(status("/api/queue"), "200");
+    let targets = |read: &str| -> Vec<String> {
+        since(&site, &reads, &before, read)
+            .into_iter()
+            .map(|answer| answer.target)
+            .collect()
+    };
+    assert_eq!(targets("/api/asks"), ["/api/asks?card=one"]);
+    assert_eq!(targets("/api/queue"), ["/api/queue"]);
+    assert_eq!(targets("/api/never-asked"), [] as [&str; 0]);
+    assert_eq!(answered(&site, &reads), [1, 2, 0]);
+    assert_eq!(
+        answered(&site, &["/api/asks", "/api/queue"]),
+        [2, 1],
+        "counted in the order the reads are given"
+    );
+
+    hold(&site, &["/api/queue"], true);
+    let (addr, asked) = (site.addr, site.targets().len());
+    let held = std::thread::spawn(move || get(addr, "/api/queue", "").0[9..12].to_string());
+    test_time::until_true(
+        "the held request arriving",
+        test_time::backstop(std::time::Duration::from_secs(10)),
+        || site.targets().len() != asked,
+    )
+    .expect("the held request never arrived");
+    assert_eq!(status("/api/asks"), "200", "a read not named is not held");
+    assert_eq!(answered(&site, &reads), [1, 3, 0], "the held read waits");
+    hold(&site, &["/api/queue"], false);
+    assert_eq!(held.join().unwrap(), "200");
+    assert_eq!(answered(&site, &reads), [2, 3, 0]);
+}
+
+/// Asking for the answers to a read that is none of the reads counted is the test's mistake.
+#[test]
+#[should_panic(expected = "/api/asks is none of the reads counted, [\"/api/queue\"]")]
+fn the_answers_since_a_count_are_of_a_read_that_was_counted() {
+    let dist = Dist::new("/assets/shell.js", &[]);
+    let site = Site::start(dist.path(), &board());
+    let reads = ["/api/queue"];
+    let before = crate::cache_pages::answered(&site, &reads);
+    crate::cache_pages::since(&site, &reads, &before, "/api/asks");
+}
+
 /// A retired build file answers 404 until it is restored, and only it: the others stay served.
 #[test]
 fn a_retired_build_file_is_gone_until_it_is_restored() {
@@ -406,4 +468,111 @@ fn a_feed_stream_follows_the_sections_its_request_named_while_it_is_open() {
     .expect("the stream never closed");
     assert!(!site.following("intro"), "a closed stream follows nothing");
     drop(streams);
+}
+
+/// What `stream` said until it said `said`: every byte, the head's too. A stream that never says
+/// it is a stall once `backstop` has passed over all its reads ([`test_time::backstop`]).
+fn heard_until(stream: &mut TcpStream, said: &[u8], backstop: std::time::Duration) -> Vec<u8> {
+    let until = std::time::Instant::now() + backstop;
+    let mut heard = Vec::new();
+    let mut chunk = [0; 512];
+    while !heard.windows(said.len()).any(|window| window == said) {
+        let left = until.saturating_duration_since(std::time::Instant::now());
+        let read = if left.is_zero() {
+            Err(std::io::ErrorKind::TimedOut.into())
+        } else {
+            (stream.set_read_timeout(Some(left))).and_then(|()| stream.read(&mut chunk))
+        };
+        let read = read.unwrap_or_else(|error: std::io::Error| {
+            panic!(
+                "never said {:?} ({error}), only {:?}",
+                String::from_utf8_lossy(said),
+                String::from_utf8_lossy(&heard)
+            )
+        });
+        assert!(
+            read > 0,
+            "ended, saying only {:?}",
+            String::from_utf8_lossy(&heard)
+        );
+        heard.extend_from_slice(&chunk[..read]);
+    }
+    heard
+}
+
+/// Whether `heard` says `said` first after its head (`head`, up to its end).
+fn first_after(heard: &[u8], head: &[u8], said: &[u8]) -> bool {
+    heard
+        .windows(head.len())
+        .position(|window| window == head)
+        .is_some_and(|at| heard[at + head.len()..].starts_with(said))
+}
+
+/// The server's notice is said on every open feed stream and first on each one opened after it,
+/// the last one said, an empty one too, as a Server-Sent Event or a WebSocket's frame, as the
+/// server says it (apps/symphony-server/src/api.rs, `feed`); a stream opened before any notice
+/// says none as it opens.
+#[test]
+fn the_servers_notice_is_said_on_each_open_stream_and_first_on_each_opened_after() {
+    use super::Said;
+    let dist = Dist::new("/assets/shell.js", &[]);
+    let site = Site::start(dist.path(), &board());
+    let backstop = test_time::backstop(std::time::Duration::from_secs(10));
+    let open = |socket: bool, open: usize| {
+        let mut stream = TcpStream::connect(site.addr).unwrap();
+        let upgrade = if socket {
+            "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n"
+        } else {
+            ""
+        };
+        write!(
+            stream,
+            "GET {}?since=1 HTTP/1.1\r\nHost: site\r\n{upgrade}\r\n",
+            symphony_api::FEED_PATH
+        )
+        .unwrap();
+        test_time::until_true("the feed stream open", backstop, || site.feeds() == open)
+            .expect("the stream never opened");
+        stream
+    };
+    let (event_head, socket_head) = (&b": open\n\n"[..], &b"\r\n\r\n"[..]);
+    let mut before = open(false, 1);
+    let opened = heard_until(&mut before, event_head, backstop);
+    assert!(
+        !String::from_utf8_lossy(&opened).contains(symphony_api::SERVER_EVENT),
+        "no notice before one is said: {:?}",
+        String::from_utf8_lossy(&opened)
+    );
+
+    let held = Said::notice("held");
+    site.server_notice("held");
+    heard_until(&mut before, held.sse().as_bytes(), backstop);
+    let mut events = open(false, 2);
+    let mut socket = open(true, 3);
+    assert!(first_after(
+        &heard_until(&mut events, held.sse().as_bytes(), backstop),
+        event_head,
+        held.sse().as_bytes()
+    ));
+    assert!(first_after(
+        &heard_until(&mut socket, &held.frame(), backstop),
+        socket_head,
+        &held.frame()
+    ));
+
+    let cleared = Said::notice("");
+    site.server_notice("");
+    for stream in [&mut before, &mut events] {
+        heard_until(stream, cleared.sse().as_bytes(), backstop);
+    }
+    heard_until(&mut socket, &cleared.frame(), backstop);
+    let mut after = open(false, 4);
+    assert!(
+        first_after(
+            &heard_until(&mut after, cleared.sse().as_bytes(), backstop),
+            event_head,
+            cleared.sse().as_bytes()
+        ),
+        "the last notice said, the empty one, and not the one before it"
+    );
 }

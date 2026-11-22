@@ -12,6 +12,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+use symphony_board::lock::Recovered as _;
+
 pub struct Listeners {
     /// Each recipient's socket, by handle.
     pub paths: BTreeMap<String, PathBuf>,
@@ -103,7 +105,7 @@ fn passing(why: &std::io::Error) -> bool {
 fn heard_so_far(
     said: &Mutex<BTreeMap<String, Vec<String>>>,
 ) -> MutexGuard<'_, BTreeMap<String, Vec<String>>> {
-    said.lock().unwrap_or_else(|failed| failed.into_inner())
+    said.lock().recover()
 }
 
 /// The contents of the SDK envelopes one connection sent, read to its end (the board closes its
