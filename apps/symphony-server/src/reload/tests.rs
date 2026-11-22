@@ -2,7 +2,7 @@ use super::{Retry, RunningImage, Setup, source_event, stamp_install, watch_with}
 use crate::backstop::{self, Backstop};
 use crate::front::{Shared, told};
 use crate::lock::Held as _;
-use crate::testing::handing::{Handing, tell_at, watching};
+use crate::testing::handing::{Handing, event, renamed, tell_at, watching};
 use crate::testing::{Tree, git, joined, repository};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -1525,9 +1525,9 @@ fn a_release_servers_follow_reads_current_when_its_watcher_hears_the_link_move()
         server.home.join(".current.test").display().to_string(),
         server.home.join(release::CURRENT).display().to_string(),
     );
-    let renamed = Modify(ModifyKind::Name(RenameMode::Both));
-    tell_at(&server.home, event(Create(CreateKind::Any), &[&made]));
-    tell_at(&server.home, event(renamed, &[&made, &current]));
+    let over = Modify(ModifyKind::Name(RenameMode::Both));
+    tell_at(&server.home, event(Create(CreateKind::Any), [&made]));
+    tell_at(&server.home, event(over, [&made, &current]));
     assert_eq!(
         server.notice_after(""),
         format!(
@@ -1828,47 +1828,37 @@ fn a_reload_hands_over_only_to_a_release_installed_whole_by_its_own_folder() {
     );
 }
 
-/// A watcher event of `kind` naming `paths`.
-fn event(kind: notify::EventKind, paths: &[&str]) -> notify::Result<notify::Event> {
-    Ok(paths.iter().fold(notify::Event::new(kind), |event, path| {
-        event.add_path(PathBuf::from(path))
-    }))
-}
-
 #[test]
 fn current_moves_at_a_change_naming_its_link_a_rescan_or_the_watchers_error() {
     use notify::EventKind::{Access, Create, Modify, Remove};
     use notify::event::{AccessKind, CreateKind, ModifyKind, RemoveKind, RenameMode};
-    let renamed = Modify(ModifyKind::Name(RenameMode::Both));
+    let over = Modify(ModifyKind::Name(RenameMode::Both));
     // `point`'s new link renamed over the old, as each backend says it.
     assert!(super::moves_current(&event(
-        renamed,
-        &["/m/.current.7", "/m/current"]
+        over,
+        ["/m/.current.7", "/m/current"]
     )));
     assert!(super::moves_current(&event(
         Create(CreateKind::Any),
-        &["/m/current"]
+        ["/m/current"]
     )));
     assert!(super::moves_current(&event(
         Remove(RemoveKind::Any),
-        &["/m/current"]
+        ["/m/current"]
     )));
     // The new link made beside it, the registry written, a release installed, or the link read.
     assert!(!super::moves_current(&event(
         Create(CreateKind::Any),
-        &["/m/.current.7"]
+        ["/m/.current.7"]
     )));
-    assert!(!super::moves_current(&event(
-        renamed,
-        &["/m/projects.json"]
-    )));
+    assert!(!super::moves_current(&event(over, ["/m/projects.json"])));
     assert!(!super::moves_current(&event(
         Create(CreateKind::Folder),
-        &["/m/releases/current-2"]
+        ["/m/releases/current-2"]
     )));
     assert!(!super::moves_current(&event(
         Access(AccessKind::Any),
-        &["/m/current"]
+        ["/m/current"]
     )));
     // What a lost or failing stream says: read it again.
     assert!(super::moves_current(&Ok(notify::Event::new(Modify(
@@ -1882,7 +1872,8 @@ fn current_moves_at_a_change_naming_its_link_a_rescan_or_the_watchers_error() {
 
 #[test]
 fn a_release_server_hears_current_move_from_a_watch_of_the_machine_folder_alone() {
-    let machine = Path::new("/m");
+    // A folder no other test watches (`testing::handing`).
+    let machine = Path::new("/current-watch");
     let wakes = crate::backstop::Wakes::new();
     let watcher = super::watch_current::<Handing<false>>(machine, wakes.waker())
         .expect("the machine folder watched");
@@ -1892,15 +1883,12 @@ fn a_release_server_hears_current_move_from_a_watch_of_the_machine_folder_alone(
     );
     watcher.tell(event(
         notify::EventKind::Create(notify::event::CreateKind::Any),
-        &["/m/registry.json"],
+        [machine.join("registry.json")],
     ));
     assert!(!wakes.wait(Some(Duration::ZERO)), "another entry's event");
     // A move's burst is one wake: the loop reads once it is quiet.
-    let renamed = notify::EventKind::Modify(notify::event::ModifyKind::Name(
-        notify::event::RenameMode::Any,
-    ));
-    watcher.tell(event(renamed, &["/m/current"]));
-    watcher.tell(event(renamed, &["/m/current"]));
+    watcher.tell(renamed(machine.join("current")));
+    watcher.tell(renamed(machine.join("current")));
     assert!(
         wakes.wait(Some(Duration::ZERO)),
         "the move wakes the follow"

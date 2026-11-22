@@ -181,7 +181,7 @@ impl Home {
         let partial = folder.join(format!(".{name}.{}.partial", std::process::id()));
         let (mut export, program, running) = match served {
             (Some(postgres), running) => {
-                assert!(rpc::plain(database), "a database is a plain name");
+                assert!(crate::db::plain(database), "a database is a plain name");
                 let program = postgres.program("pg_dump");
                 let mut export = command(&program);
                 export

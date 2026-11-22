@@ -11,6 +11,11 @@ use super::{is_fence, is_space};
 pub const REGION_START: &str = "<!-- register:start -->";
 pub const REGION_END: &str = "<!-- register:end -->";
 
+/// A card's first line as git's extended pattern (`git grep -E`): the shape [`card_line`] reads, a
+/// list item at the left margin, one of its marks and a name in bold. It finds the documents worth
+/// reading and decides nothing: [`card_line`] reads each line found.
+pub const CARD_LINE: &str = r"^-[[:space:]]+\[[ xX?r~a-]\][[:space:]]+\*\*";
+
 /// A card line, `^-\s+\[(mark)\]\s+\*\*(slug)\*\*\s*(?:[—–-]\s*)?(text)$`: its mark, slug and text as
 /// written (the caller strips them).
 pub fn card_line(line: &str) -> Option<(char, &str, &str)> {

@@ -240,7 +240,7 @@ pub fn cleanup_as(
         .collect();
     let by_session: HashMap<&str, &str> = open
         .iter()
-        .filter(|s| !s.claude_session.is_empty() && s.claude_session != "codex:")
+        .filter(|s| super::resumable(&s.claude_session))
         .map(|s| (s.claude_session.as_str(), s.handle.as_str()))
         .collect();
     let wanted: Option<HashSet<&str>> = (!only.is_empty()).then(|| {
@@ -425,7 +425,9 @@ fn handle_of(
         if let Some(handle) = by_session.get(conversation.as_str()) {
             return Ok(Some(handle.to_string()));
         }
-        let bare = conversation.strip_prefix("codex:").unwrap_or(&conversation);
+        let bare = conversation
+            .strip_prefix(crate::launch::CODEX)
+            .unwrap_or(&conversation);
         if let Some(bound) = store.handle_for_agent(bare)? {
             return Ok(Some(bound));
         }
@@ -443,7 +445,7 @@ fn handle_of(
 pub(super) fn stored_session(terminal: &Object) -> String {
     hc::conversation(&hc::argv(terminal)).unwrap_or_else(|| {
         if hc::agent(terminal) == Some("codex") {
-            "codex:".into()
+            crate::launch::CODEX.into()
         } else {
             String::new()
         }

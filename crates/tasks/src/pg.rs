@@ -24,7 +24,7 @@
 //! is never sent twice, a read no more than a write, so a client never repeats work the server may
 //! have done.
 
-use crate::rpc::DbError;
+use crate::db::DbError;
 use std::io::{BufRead, BufReader, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
@@ -123,7 +123,7 @@ impl Client {
     /// `database` is a name this code chooses (letters, digits, `_`), never a caller's text.
     pub fn new(socket: &Path, database: &str) -> Client {
         assert!(
-            crate::rpc::plain(database),
+            crate::db::plain(database),
             "{database:?} is not a plain name for a database"
         );
         Client {

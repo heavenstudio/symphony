@@ -500,22 +500,12 @@ impl Settings {
 }
 
 /// `path` as a prefix of the project's changed paths, as the Symphony reads a generator's
-/// outputs: its `.` parts dropped and a folder's slash kept (so `gen/` is never `gen-x/`), or none
-/// for a path that is empty or leaves the project.
+/// outputs: by the project file's one rule for a path ([`crate::project::inside`]), a folder's
+/// slash kept (so `gen/` is never `gen-x/`), or none for a path that rule refuses.
 fn inside(path: &str) -> Option<String> {
-    let mut parts = Vec::new();
-    for part in Path::new(path).components() {
-        match part {
-            std::path::Component::Normal(name) => parts.push(name.to_string_lossy()),
-            std::path::Component::CurDir => {}
-            _ => return None,
-        }
-    }
-    if parts.is_empty() {
-        return None;
-    }
     let slash = if path.ends_with('/') { "/" } else { "" };
-    Some(parts.join("/") + slash)
+    let inside = crate::project::inside("[land] generators outputs", path).ok()?;
+    Some(inside + slash)
 }
 
 /// Whether the generator's `outputs` ([`inside`]) hold the project's `path`: the path itself, or
@@ -1692,6 +1682,21 @@ enum Pushed {
     Failed(String, String),
 }
 
+impl Pushed {
+    /// What a landed line says of its push, after what landed: where it went, why none was made,
+    /// or why it failed and the command that pushes by hand, which ends the line.
+    fn said(&self) -> String {
+        match self {
+            Pushed::Done => format!("; pushed to {REMOTE}"),
+            Pushed::Off => "; not pushed: [land] push is off".into(),
+            Pushed::NoRemote => format!("; not pushed: no {REMOTE} remote"),
+            Pushed::Failed(why, retry) => {
+                format!("; NOT PUSHED, landed here only: {why}. Push it with: {retry}")
+            }
+        }
+    }
+}
+
 /// What a generator or the check came to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Ran {
@@ -1917,6 +1922,42 @@ struct Landing<'a> {
 }
 
 impl Landing<'_> {
+    /// The task's `tip` merged onto the default branch from `base` and the branch moved there,
+    /// tried again from each commit a race moved the branch to, [`TRIES`] times: the merge, the
+    /// branch's new top and the generated paths the merge took, `base` left at the commit the
+    /// last try merged from; else the refusal of a branch that moved under every try.
+    fn merge_until_moved(
+        &mut self,
+        base: &mut String,
+        tip: &str,
+    ) -> Result<(String, String, Vec<String>), Stop> {
+        let (slug, default) = (self.slug, self.settings.default_branch.clone());
+        for attempt in 0..TRIES {
+            self.go_on(None).map_err(Stop::Refused)?;
+            match self
+                .integrate(base, &Merging::Tip(tip), attempt > 0)
+                .map_err(|refusal| self.refuse(refusal))?
+            {
+                Attempt::Moved { merge, top, taken } => return Ok((merge, top, taken)),
+                Attempt::Raced(now) => {
+                    // The last try's move is told by the refusal below.
+                    if attempt + 1 < TRIES {
+                        self.say(&format!(
+                            "land {slug}: {default} moved to {}; merging and checking again",
+                            short(&now)
+                        ));
+                    }
+                    *base = now;
+                }
+            }
+        }
+        let line = format!(
+            "{default} moved {TRIES} times while {slug} was merged; nothing landed: run the land \
+             again"
+        );
+        Err(self.refuse(Refusal::here(line)))
+    }
+
     fn say(&mut self, line: &str) {
         let _ = writeln!(self.out, "{line}");
         let _ = self.out.flush();
@@ -2240,36 +2281,7 @@ impl Landing<'_> {
         if self.delivers() {
             return self.deliver(&task, &tip, &judged);
         }
-        let mut landed = None;
-        for attempt in 0..TRIES {
-            self.go_on(None).map_err(Stop::Refused)?;
-            match self
-                .integrate(&base, &Merging::Tip(&tip), attempt > 0)
-                .map_err(|refusal| self.refuse(refusal))?
-            {
-                Attempt::Moved { merge, top, taken } => {
-                    landed = Some((merge, top, taken));
-                    break;
-                }
-                Attempt::Raced(now) => {
-                    // The last try's move is told by the refusal below.
-                    if attempt + 1 < TRIES {
-                        self.say(&format!(
-                            "land {slug}: {default} moved to {}; merging and checking again",
-                            short(&now)
-                        ));
-                    }
-                    base = now;
-                }
-            }
-        }
-        let Some((merge, top, taken)) = landed else {
-            let line = format!(
-                "{default} moved {TRIES} times while {slug} was merged; nothing landed: run the \
-                 land again"
-            );
-            return Err(self.refuse(Refusal::here(line)));
-        };
+        let (merge, top, taken) = self.merge_until_moved(&mut base, &tip)?;
         self.owner_lines_after(&base, &tip);
         self.close(&merge, &top, &taken, &judged, false)
     }
@@ -2430,14 +2442,7 @@ impl Landing<'_> {
         landed.push_str(&self.tokens_said());
         // A signal from here on stops the land with its record kept, which a run again finishes.
         self.go_on(Some(merge)).map_err(Stop::Refused)?;
-        let pushed = match self.push(top) {
-            Pushed::Done => format!("; pushed to {REMOTE}"),
-            Pushed::Off => "; not pushed: [land] push is off".into(),
-            Pushed::NoRemote => format!("; not pushed: no {REMOTE} remote"),
-            Pushed::Failed(why, retry) => {
-                format!("; NOT PUSHED, landed here only: {why}. Push it with: {retry}")
-            }
-        };
+        let pushed = self.push(top).said();
         self.go_on(Some(merge)).map_err(Stop::Refused)?;
         let line = format!("{landed}{pushed}");
         // The thread also says how the approval was judged, before the push, whose retry command
@@ -2962,24 +2967,7 @@ impl Landing<'_> {
             Move::Done => {}
             Move::Raced(now) => return Ok(Attempt::Raced(now)),
             Move::Not { why, restored } => {
-                let mut line = format!(
-                    "{default} could not move to {} in the main checkout: {why}",
-                    short(&top)
-                );
-                match restored {
-                    Ok(restored) => {
-                        if let Some(said) = restored.said(&default, base) {
-                            line.push_str(&format!("; {said}"));
-                        }
-                        if recorded {
-                            line.push_str("; its record dropped: nothing landed");
-                        }
-                    }
-                    Err(why) => line.push_str(&format!(
-                        "; what the move half-wrote in the main checkout could not be restored \
-                         ({why}): the next land tries again"
-                    )),
-                }
+                let line = moving::not_moved(&default, &top, base, &why, &restored, recorded);
                 // The thread heard the move begin: it hears that it did not happen.
                 return Err(if recorded {
                     Refusal::thread(line)
@@ -3000,7 +2988,14 @@ impl Landing<'_> {
             // What origin gained, merged and checked, is what a land stopped now pushes.
             if let Some(mut record) = Record::read(&self.folder, slug) {
                 record.checked.clone_from(&top);
-                let _ = record.write(&self.folder);
+                // The branch moved all the same: only what a land stopped now pushes is behind.
+                if let Err(why) = record.write(&self.folder) {
+                    self.say(&format!(
+                        "land {slug}: its record does not name {} as checked ({why}): a land \
+                         stopped before its push and run again pushes the commit it named before",
+                        short(&top)
+                    ));
+                }
             }
         }
         Ok(Attempt::Moved { merge, top, taken })

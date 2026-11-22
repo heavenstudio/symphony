@@ -1,9 +1,9 @@
 # Relax against cargo
 
 Whether Relax, Makepad's live Rust compiler, could replace or sit beside cargo in Symphony's build
-and test loop, tried on this workspace and measured against cargo, as the relax-not-adopted card
-in [DECISIONS](../DECISIONS.md) records. "Measured 2026-11-11" marks this machine that day: an
-Apple M3 Max, 16 cores, 64 GB, macOS, shared with a dozen other agents' builds.
+and test loop, tried on this workspace and measured against cargo, as the
+[relax-not-adopted](#relax-not-adopted) card records. "Measured 2026-11-11" marks this machine
+that day: an Apple M3 Max, 16 cores, 64 GB, macOS, shared with a dozen other agents' builds.
 
 The ask: evaluate whether adopting Relax (https://makepad.github.io/relax/#architecture) could
 help Symphony's build process, by an empirical test, and adopt it if its numbers are better, with

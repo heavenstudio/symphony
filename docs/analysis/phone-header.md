@@ -1,9 +1,10 @@
 # The header on a phone, in one row
 
-A smaller header for a phone, as proposed on the card **phone-header-one-row** in
-[DECISIONS](../DECISIONS.md). The header today is two rows on a phone, as [The header](header-names.md#on-a-phone)
-describes; this would make it one. That card was rejected for its name, which the owner wants
-gone on a phone; its replacement, **phone-header-mark-only**, is [The mark alone](#the-mark-alone).
+A smaller header for a phone, as proposed on the card
+[**phone-header-one-row**](#phone-header-one-row). The header today is two rows on a phone, as
+[The header](header-names.md#on-a-phone) describes; this would make it one. That card was rejected
+for its name, which the owner wants gone on a phone; its replacement,
+[**phone-header-mark-only**](#phone-header-mark-only), is [The mark alone](#the-mark-alone).
 
 ## The proposal
 

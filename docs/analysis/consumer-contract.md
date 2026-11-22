@@ -573,7 +573,7 @@ release.
 
 ## Open choices
 
-One choice is the owner's, a card of its own in [DECISIONS](../DECISIONS.md): how the art tool and
+One choice is the owner's, a card of its own ([below](#contract-tool-route)): how the art tool and
 the review tool's landing get what they use of the library today, through the machine's commands
 or through copies of their own. Whichever, the write lock the landing shares with the server joins
 the contract.

@@ -17,7 +17,7 @@ use super::statement::both;
 use super::surreal::writers as sql;
 use super::{Failure, Store};
 use crate::board_health::ago;
-use crate::rpc::DbError;
+use crate::db::DbError;
 use crate::schema::{Access, Schema};
 use serde::Deserialize;
 use serde_json::{Value, json};

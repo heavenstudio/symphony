@@ -174,7 +174,8 @@ tokens the task and its subtasks took would cost at the API's list prices, never
 A stretch carries the work done for it, never a share of its hours: an in-progress stretch its
 round's executor and what was spent while the task was reserved, a review its reviewer and, where
 no in-progress stretch follows it in its round, the executor's fixes. Ready, blocked and done
-carry nothing. Of two in-progress stretches in one round, a block between them, the last carries
+carry nothing, except on a task never in progress or in review, whose cost is all on its last
+stretch that is neither done nor cancelled, ready or blocked as it may be. Of two in-progress stretches in one round, a block between them, the last carries
 the round's executor and the words of both say so. Every cost is on exactly one stretch, so the
 stretches add up to the total, and none is split: one whose calls ran past the stretch's edge
 says when they ran. A subtask's cost is on the in-progress or review stretch its first call fell

@@ -1,9 +1,10 @@
 # The agents page, orchestrator-first
 
 What the Agents page would show if it opened on the orchestrators rather than on task cards: three
-layouts, put to the owner on the agents-page-orchestrator-first card in
-[DECISIONS](../DECISIONS.md), and the board they were drawn from. Every figure is this
-repository's own board as the shared server answered it on the evening of 2026-11-16, read only.
+layouts, put to the owner on the
+[agents-page-orchestrator-first](#agents-page-orchestrator-first) card, and the board they were
+drawn from. Every figure is this repository's own board as the shared server answered it on the
+evening of 2026-11-16, read only.
 
 The ask is the owner's note inbox/agents-page-needs-redesign: the page looks like the task board
 rearranged, and should be more orchestrator based, with less task card information. The page was

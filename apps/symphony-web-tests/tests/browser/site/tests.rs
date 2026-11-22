@@ -469,3 +469,106 @@ fn a_feed_stream_follows_the_sections_its_request_named_while_it_is_open() {
     assert!(!site.following("intro"), "a closed stream follows nothing");
     drop(streams);
 }
+
+/// What `stream` said until it said `said`: every byte, the head's too. The read's own timeout
+/// bounds a stream that never says it.
+fn heard_until(stream: &mut TcpStream, said: &[u8]) -> Vec<u8> {
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .unwrap();
+    let mut heard = Vec::new();
+    let mut chunk = [0; 512];
+    while !heard.windows(said.len()).any(|window| window == said) {
+        let read = stream.read(&mut chunk).unwrap_or_else(|error| {
+            panic!(
+                "never said {:?} ({error}), only {:?}",
+                String::from_utf8_lossy(said),
+                String::from_utf8_lossy(&heard)
+            )
+        });
+        assert!(
+            read > 0,
+            "ended, saying only {:?}",
+            String::from_utf8_lossy(&heard)
+        );
+        heard.extend_from_slice(&chunk[..read]);
+    }
+    heard
+}
+
+/// Whether `heard` says `said` first after its head (`head`, up to its end).
+fn first_after(heard: &[u8], head: &[u8], said: &[u8]) -> bool {
+    heard
+        .windows(head.len())
+        .position(|window| window == head)
+        .is_some_and(|at| heard[at + head.len()..].starts_with(said))
+}
+
+/// The server's notice is said on every open feed stream and first on each one opened after it,
+/// the last one said, an empty one too, as a Server-Sent Event or a WebSocket's frame, as the
+/// server says it (apps/symphony-server/src/api.rs, `feed`); a stream opened before any notice
+/// says none as it opens.
+#[test]
+fn the_servers_notice_is_said_on_each_open_stream_and_first_on_each_opened_after() {
+    use super::Said;
+    let dist = Dist::new("/assets/shell.js", &[]);
+    let site = Site::start(dist.path(), &board());
+    let backstop = test_time::backstop(std::time::Duration::from_secs(10));
+    let open = |socket: bool, open: usize| {
+        let mut stream = TcpStream::connect(site.addr).unwrap();
+        let upgrade = if socket {
+            "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n"
+        } else {
+            ""
+        };
+        write!(
+            stream,
+            "GET {}?since=1 HTTP/1.1\r\nHost: site\r\n{upgrade}\r\n",
+            symphony_api::FEED_PATH
+        )
+        .unwrap();
+        test_time::until_true("the feed stream open", backstop, || site.feeds() == open)
+            .expect("the stream never opened");
+        stream
+    };
+    let (event_head, socket_head) = (&b": open\n\n"[..], &b"\r\n\r\n"[..]);
+    let mut before = open(false, 1);
+    let opened = heard_until(&mut before, event_head);
+    assert!(
+        !String::from_utf8_lossy(&opened).contains(symphony_api::SERVER_EVENT),
+        "no notice before one is said: {:?}",
+        String::from_utf8_lossy(&opened)
+    );
+
+    let held = Said::notice("held");
+    site.server_notice("held");
+    heard_until(&mut before, held.sse().as_bytes());
+    let mut events = open(false, 2);
+    let mut socket = open(true, 3);
+    assert!(first_after(
+        &heard_until(&mut events, held.sse().as_bytes()),
+        event_head,
+        held.sse().as_bytes()
+    ));
+    assert!(first_after(
+        &heard_until(&mut socket, &held.frame()),
+        socket_head,
+        &held.frame()
+    ));
+
+    let cleared = Said::notice("");
+    site.server_notice("");
+    for stream in [&mut before, &mut events] {
+        heard_until(stream, cleared.sse().as_bytes());
+    }
+    heard_until(&mut socket, &cleared.frame());
+    let mut after = open(false, 4);
+    assert!(
+        first_after(
+            &heard_until(&mut after, cleared.sse().as_bytes()),
+            event_head,
+            cleared.sse().as_bytes()
+        ),
+        "the last notice said, the empty one, and not the one before it"
+    );
+}

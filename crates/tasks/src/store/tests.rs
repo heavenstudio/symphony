@@ -67,7 +67,7 @@ fn every_snapshot_read_is_a_read_and_binds_its_bounds() {
         Which::Pullable("someone"),
     ] {
         for sessions in [Sessions::Whole, Sessions::Shown] {
-            let (read, vars) = reading(&which, sessions);
+            let (read, vars) = (reading(&which, sessions), super::reading::vars(&which));
             assert_eq!(
                 crate::rpc::Kind::of(&read),
                 crate::rpc::Kind::Read,
@@ -78,6 +78,60 @@ fn every_snapshot_read_is_a_read_and_binds_its_bounds() {
                 (Some("codex:"), Some("codex;")),
                 "{vars}"
             );
+        }
+    }
+}
+
+/// A read's variables are the store's own, the same for each database: what it picks its tasks
+/// by, the cap's only where it reads an orchestrator's slots, and always the executing statuses
+/// and the presence bounds.
+#[test]
+fn a_reads_variables_are_what_it_picks_by_and_the_caps_only_where_slots_are_read() {
+    let slugs = ["p/a".to_string(), "p/b".to_string()];
+    let own = |which: Which| {
+        let vars = super::reading::vars(&which);
+        assert_eq!(vars["executing"], json!(EXECUTING), "{vars}");
+        assert_eq!(vars["codex"], "codex:", "{vars}");
+        assert_eq!(vars["codex_after"], "codex;", "{vars}");
+        let shared: Vec<String> = ["executing", "codex", "codex_after"]
+            .into_iter()
+            .chain(cap::vars().as_object().unwrap().keys().map(String::as_str))
+            .map(str::to_string)
+            .collect();
+        let mut own = vars.as_object().unwrap().clone();
+        own.retain(|name, _| !shared.contains(name));
+        Value::Object(own)
+    };
+    assert_eq!(own(Which::All), json!({}));
+    assert_eq!(own(Which::SlotHoldings), json!({}));
+    assert_eq!(own(Which::Status("ready")), json!({"status": "ready"}));
+    assert_eq!(own(Which::Slug("p/a")), json!({"slug": "p/a"}));
+    assert_eq!(own(Which::Starting("p/a")), json!({"slug": "p/a"}));
+    assert_eq!(own(Which::Children("p/a")), json!({"slug": "p/a"}));
+    assert_eq!(own(Which::Slugs(&slugs)), json!({"wanted": ["p/a", "p/b"]}));
+    assert_eq!(own(Which::Slugs(&[])), json!({"wanted": []}));
+    assert_eq!(own(Which::Linked("docs/x.md")), json!({"doc": "docs/x.md"}));
+    assert_eq!(
+        own(Which::Pullable("someone")),
+        json!({"handle": "someone", "pullable": PULLABLE})
+    );
+    // The cap's variables ride only the reads that count an orchestrator's slots.
+    let cap_vars = cap::vars();
+    let caps: Vec<&String> = cap_vars.as_object().unwrap().keys().collect();
+    assert!(!caps.is_empty());
+    for (which, slots) in [
+        (Which::Starting("p/a"), true),
+        (Which::SlotHoldings, true),
+        (Which::All, false),
+        (Which::Slug("p/a"), false),
+        (Which::Pullable("someone"), false),
+    ] {
+        let vars = super::reading::vars(&which);
+        for name in &caps {
+            assert_eq!(vars.get(name.as_str()).is_some(), slots, "{name}: {vars}");
+            if slots {
+                assert_eq!(vars[name.as_str()], cap_vars[name.as_str()], "{name}");
+            }
         }
     }
 }
@@ -100,9 +154,9 @@ fn a_read_of_the_sessions_shown_reads_them_by_id_and_never_the_table() {
         Which::Linked("docs/x.md"),
         Which::Pullable("someone"),
     ] {
-        let (whole, _) = reading(&which, Sessions::Whole);
+        let whole = reading(&which, Sessions::Whole);
         assert!(whole.contains(TABLE) && !whole.contains(BY_ID), "{whole}");
-        let (shown, _) = reading(&which, Sessions::Shown);
+        let shown = reading(&which, Sessions::Shown);
         assert!(!shown.contains(TABLE) && shown.contains(BY_ID), "{shown}");
         let asker = "array::concat($view_roles.handle, [$handle])";
         assert_eq!(
@@ -212,7 +266,7 @@ fn a_refusal_is_its_words_and_a_database_failure_says_so() {
     );
     assert_eq!(
         Error::Db("cannot reach it".into()).to_string(),
-        "SurrealDB: cannot reach it"
+        "the board's database: cannot reach it"
     );
 }
 

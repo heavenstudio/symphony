@@ -1,7 +1,7 @@
 # Worktree build folders
 
 How agents' worktrees share compiled dependencies, so ten agents do not hold ten copies of them,
-the measurements the choice rests on, and the card it is asked on in [DECISIONS](../DECISIONS.md).
+the measurements the choice rests on, and the card it is asked on, [below](#worktree-build-folders).
 Measured 2026-11-11 on this Mac (APFS, 1.95 TB, 41 to 64 GB free while it ran), at load averages
 of 250 to 600 from the other agents' builds: every time below is slower than on a quiet machine,
 and each pair or trio ran at the same time on the same load.

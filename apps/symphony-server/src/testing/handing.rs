@@ -6,7 +6,8 @@
 //!
 //! A test that holds the watcher tells it directly ([`Handing::tell`]). One whose watcher a loop
 //! made on a thread of its own finds it by the folder it watches ([`watching`], [`tell_at`]): each
-//! such test watches a folder of its own, so the tests running beside it never meet there.
+//! test watches a folder of its own, so the tests running beside it never meet there. What either
+//! tells is an event as a backend says it ([`event`], [`renamed`]).
 
 use crate::lock::Held as _;
 use std::collections::BTreeMap;
@@ -68,12 +69,39 @@ impl<const FAILS: bool> notify::Watcher for Handing<FAILS> {
 }
 
 impl<const FAILS: bool> Drop for Handing<FAILS> {
+    /// Each folder it watched goes from the list where the entry is still its own: a watcher of
+    /// that folder made after it keeps its own.
     fn drop(&mut self) {
         let mut handed = handed();
         for (path, _) in &self.watched {
-            handed.remove(path);
+            if handed
+                .get(path)
+                .is_some_and(|(_, handler)| Arc::ptr_eq(handler, &self.handler))
+            {
+                handed.remove(path);
+            }
         }
     }
+}
+
+/// A backend's event of `kind` naming `paths`.
+pub fn event(
+    kind: notify::EventKind,
+    paths: impl IntoIterator<Item = impl AsRef<Path>>,
+) -> notify::Result<notify::Event> {
+    Ok(paths
+        .into_iter()
+        .fold(notify::Event::new(kind), |event, path| {
+            event.add_path(path.as_ref().to_path_buf())
+        }))
+}
+
+/// A backend's event of `path` renamed into place.
+pub fn renamed(path: impl AsRef<Path>) -> notify::Result<notify::Event> {
+    let kind = notify::EventKind::Modify(notify::event::ModifyKind::Name(
+        notify::event::RenameMode::Any,
+    ));
+    event(kind, [path])
 }
 
 /// How a live [`Handing`] watcher watches `folder`, if one does.
@@ -96,14 +124,11 @@ fn told(handler: &Handler, event: notify::Result<notify::Event>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Handing, tell_at, watching};
-    use notify::{RecursiveMode, Watcher};
+    use super::{Handing, event, renamed, tell_at, watching};
+    use notify::event::{CreateKind, ModifyKind, RenameMode};
+    use notify::{EventKind, RecursiveMode, Watcher};
     use std::path::{Path, PathBuf};
     use std::sync::mpsc;
-
-    fn event(path: &str) -> notify::Result<notify::Event> {
-        Ok(notify::Event::new(notify::EventKind::Any).add_path(PathBuf::from(path)))
-    }
 
     /// The path each event received names.
     fn paths(events: &mpsc::Receiver<notify::Result<notify::Event>>) -> Vec<PathBuf> {
@@ -134,9 +159,9 @@ mod tests {
                 Some(RecursiveMode::Recursive)
             )
         );
-        tell_at(one, event("/handing/one/a"));
-        first.tell(event("/handing/one/b"));
-        tell_at(two, event("/handing/two/c"));
+        tell_at(one, renamed("/handing/one/a"));
+        first.tell(renamed("/handing/one/b"));
+        tell_at(two, renamed("/handing/two/c"));
         assert_eq!(
             paths(&heard_one),
             [PathBuf::from("/handing/one/a"), "/handing/one/b".into()]
@@ -147,6 +172,37 @@ mod tests {
         assert_eq!(watching(two), Some(RecursiveMode::Recursive));
         drop(second);
         assert_eq!(watching(two), None);
+    }
+
+    #[test]
+    fn a_watcher_dropped_after_another_took_its_folder_leaves_the_others_entry() {
+        let folder = Path::new("/handing/taken");
+        let (send_old, heard_old) = mpsc::channel();
+        let (send_new, heard_new) = mpsc::channel();
+        let mut old = Handing::<false>::new(send_old, notify::Config::default()).unwrap();
+        old.watch(folder, RecursiveMode::NonRecursive).unwrap();
+        let mut new = Handing::<false>::new(send_new, notify::Config::default()).unwrap();
+        new.watch(folder, RecursiveMode::Recursive).unwrap();
+        drop(old);
+        assert_eq!(watching(folder), Some(RecursiveMode::Recursive));
+        tell_at(folder, renamed("/handing/taken/a"));
+        assert_eq!(paths(&heard_new), [PathBuf::from("/handing/taken/a")]);
+        assert_eq!(paths(&heard_old), Vec::<PathBuf>::new());
+        drop(new);
+        assert_eq!(watching(folder), None);
+    }
+
+    #[test]
+    fn an_event_names_its_kind_and_each_path_in_order() {
+        let made = event(EventKind::Create(CreateKind::Any), ["/a", "/b"]).unwrap();
+        assert_eq!(made.kind, EventKind::Create(CreateKind::Any));
+        assert_eq!(made.paths, [PathBuf::from("/a"), "/b".into()]);
+        let moved = renamed(Path::new("/c")).unwrap();
+        assert_eq!(
+            moved.kind,
+            EventKind::Modify(ModifyKind::Name(RenameMode::Any))
+        );
+        assert_eq!(moved.paths, [PathBuf::from("/c")]);
     }
 
     #[test]
@@ -162,6 +218,6 @@ mod tests {
     #[test]
     #[should_panic(expected = "no watcher watches /handing/nobody")]
     fn telling_a_folder_no_watcher_watches_says_so() {
-        tell_at(Path::new("/handing/nobody"), event("/handing/nobody/a"));
+        tell_at(Path::new("/handing/nobody"), renamed("/handing/nobody/a"));
     }
 }

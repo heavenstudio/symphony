@@ -1093,19 +1093,20 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
   review, blocked or done: a task moved back to work (a changes verdict) has its merge turned off
   first and its checks said again after, so no check published meanwhile lets the host merge it,
   and stays so until it moves to review.
-- **A head moved under an approve.** A delivery takes an approve naming the head alone, so a
-  task approved and not landed whose branch is at a commit its approve does not name (a merge
-  of the default branch that settles a conflict, a fix, or an approve that named no commit)
-  waits on a fresh one, which only a task in review is given. The dispatch that finds it, a
-  write's or the watcher's round, moves it back to review itself, by the board's own move from
-  done ([Tasks and roles](#tasks-and-roles)), and says so once to `@orchestrator`, naming the
-  head and the commit the approve named: its orchestrator starts its assessor and resumes its reviewer as
-  at any move to review, and nobody moves it by hand. Then it is published as any head: the
-  pull request shows the new head with `symphony/eligible` pending, its merge armed across the
-  push, until an assessment and an approve name it. An approve that comes before the
-  assessment leaves the task done, and the assessment is written all the same ([Needed
-  stamps](#needed-stamps)). One that does not go back is refused, naming `just tasks move SLUG
-  review`.
+- **A head moved under an approve.** A delivery takes an approve naming the head alone, so a task
+  approved and not landed whose branch is at a commit its approve does not name (a merge of the
+  default branch that settles a conflict, a fix, or an approve that named no commit) waits on a
+  fresh one, which only a task in review is given. The dispatch that finds it, a write's or the
+  watcher's round, moves it back to review itself, by the board's own move from done ([Tasks and
+  roles](#tasks-and-roles)) made as its orchestrator, whoever's write started the dispatch (an
+  assessor's holds no role that may make it), and says so once to `@orchestrator`, naming the head
+  and the commit the approve named: its orchestrator starts its assessor and resumes its reviewer as
+  at any move to review, and nobody moves it by hand. Then it is published as any head: the pull
+  request shows the new head with `symphony/eligible` pending, its merge armed across the push,
+  until an assessment and an approve name it. An approve that comes before the assessment leaves the
+  task done, and the assessment is written all the same ([Needed stamps](#needed-stamps)). One that
+  does not go back (a task with no orchestrator, whose dispatch moves as who started it, may be one)
+  is refused, naming `just tasks move SLUG review`.
 - **Who watches.** One watcher per project, `tasks land --watch` (`watch.lock` in the lands'
   folder, `watch.log` its lines), started by each arming where none runs, which reads each armed
   task every `[land] watch_seconds` (30) and ends once none is left. A round writes a task's line
@@ -1143,7 +1144,7 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
 | What the watcher reads | What follows |
 | --- | --- |
 | A check that is not the Symphony's red at the head (a CI the repository adds), or the host reporting the pull request in conflict with the default branch | the task back to in progress (from done by review): its executor merges the default branch once, or puts the check right, and moves it to review, which dispatches it again |
-| The pull request closed unmerged, by someone | back to in progress, naming it; the next dispatch opens another |
+| The pull request closed unmerged, by someone | back to in progress, naming it, moved as its orchestrator whoever's write's dispatch found it (an assessor's included); the next dispatch opens another |
 | Neither merged nor red once `[land] merge_within_minutes` (30) passed since its evidence stood (review time counts for nothing) | the task stays where it is, the work not at fault: `just land SLUG` arms it again |
 | Any of these where the task cannot go back (cancelled or closed, a document save, which stays pending and shown, or what the regenerator made, which it cancels and makes again) | `tools/delivery-failed-SLUG` filed to `@orchestrator`, naming the pull request and why; a second failure is a line on the one open |
 
@@ -1667,17 +1668,17 @@ landing](#the-default-landing)).
   task's thread, or the owner's approve of the cards the task posted for the owner's look, read
   from git in the main checkout, never from a worktree's files. The cards' approve stands when
   the branch posted a card (one in a project document at T, inline where it decides or in a
-  register, that the merge base of T with the default branch holds no copy of in any document, the owner's lines and its mark aside, as the pages
-  read a branch's posted cards), each card it posted has `approved` as its newest owner verdict
-  at T, committed (a reject, a question, pending, dismissed or none, on any of them, and it does
-  not), and nothing came after the newest of those approves but the owner's lines: every commit
-  on T's first-parent line after the one the owner's page showed when the owner gave it (the
-  commit before the first that carries the approve) adds the owner's lines under those cards
-  and nothing else, or is a merge of the default branch that is git's own merge of its two
-  parents. Any other commit after it, code, a document or a card's text, keeps it from
-  standing, whoever reviewed it: the owner asked for a look of their own, and its reading names
-  that commit. Met by the cards, the reading names them, `Approved by the owner on card NAME, at
-  1a2b3c4`, which the task page shows and the land's line carries. It is never waived.
+  register, that the merge base of T with the default branch holds no copy of in any document, the
+  owner's lines and its mark aside, as the pages read a branch's posted cards), each card it posted
+  has `approved` as its newest owner verdict at T, committed (a reject, a question, pending,
+  dismissed or none, on any of them, and it does not), and nothing came after the newest of those
+  approves but the owner's lines: every commit on T's first-parent line after the one the owner's
+  page showed when the owner gave it (the commit before the first that carries the approve) adds the
+  owner's lines under those cards and nothing else, or is a merge of the default branch that is
+  git's own merge of its two parents. Any other commit after it, code, a document or a card's text,
+  keeps it from standing, whoever reviewed it: the owner asked for a look of their own, and its
+  reading names that commit. Met by the cards, the reading names them, `Approved by the owner on
+  card NAME, at 1a2b3c4`, which the task page shows and the land's line carries. It is never waived.
 - **The needs** are the board's own field `fields._board.needs`, out of `just tasks field`'s
   reach as the red mark is: the stamps, the tip the assessment read (none, from
   the brief), who made it and why. `just tasks needs SLUG STAMP… [--tip TIP] --why WHY --as

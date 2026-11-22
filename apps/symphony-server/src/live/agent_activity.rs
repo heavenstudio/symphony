@@ -11,12 +11,12 @@
 
 use crate::lock::Held as _;
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write as _};
-use std::os::unix::fs::{FileExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use symphony_board::recording::{Gate, State};
+use symphony_board::runs::{ends_a_line, regular};
 use symphony_board::{Board, Health, Session};
 
 /// The day files' folder in the git common dir, in the one folder of Symphony's there, as the runs'
@@ -74,11 +74,9 @@ fn hour_of(at: f64) -> f64 {
     (at / HOUR).floor() * HOUR
 }
 
-/// The UTC day `at` falls in, `YYYY-MM-DD`.
-pub(crate) fn day(at: f64) -> String {
-    let stamp = symphony_board::server::snapshot::stamp(at);
-    stamp.get(..10).unwrap_or(&stamp).to_string()
-}
+/// The UTC day `at` falls in, `YYYY-MM-DD`, as a day file is named: what the tests name one by.
+#[cfg(test)]
+pub(crate) use symphony_api::run_day as day;
 
 /// `value` to the thousandth: a line says no more than that.
 fn rounded(value: f64) -> f64 {
@@ -87,11 +85,7 @@ fn rounded(value: f64) -> f64 {
 
 /// The machine's load average over 1 and over 15 minutes; none when it cannot be read.
 pub(crate) fn load_average() -> Option<[f64; 2]> {
-    let mut loads = [0.0_f64; 3];
-    // SAFETY: getloadavg writes at most the 3 values asked for into the array, which outlives the
-    // call.
-    let read = unsafe { libc::getloadavg(loads.as_mut_ptr(), 3) };
-    (read == 3).then_some([loads[0], loads[2]])
+    symphony_board::sys::load_average().map(|[one, _, fifteen]| [one, fifteen])
 }
 
 /// Who writes a line ([`Start`]).
@@ -858,63 +852,11 @@ pub(crate) fn append(folder: &Path, lines: &[Line]) -> io::Result<()> {
     Ok(())
 }
 
-/// `path` opened as `options` say, never through a link and never waiting on a FIFO, and only when
-/// it is a regular file.
-fn regular(path: &Path, options: &mut OpenOptions) -> io::Result<File> {
-    let file = options
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(path)?;
-    if !file.metadata()?.is_file() {
-        return Err(io::Error::other(format!(
-            "{}: not a regular file",
-            path.display()
-        )));
-    }
-    Ok(file)
-}
-
-/// Whether `file` is empty or ends a line: else a writer before was cut short in its line.
-fn ends_a_line(file: &File) -> io::Result<bool> {
-    let length = file.metadata()?.len();
-    if length == 0 {
-        return Ok(true);
-    }
-    let mut last = [0];
-    file.read_exact_at(&mut last, length - 1)?;
-    Ok(last[0] == b'\n')
-}
-
-/// Whether `name` is a day file's: `YYYY-MM-DD.jsonl`.
-fn day_file(name: &str) -> bool {
-    let Some(day) = name.strip_suffix(".jsonl") else {
-        return false;
-    };
-    day.len() == 10
-        && day.bytes().enumerate().all(|(at, byte)| match at {
-            4 | 7 => byte == b'-',
-            _ => byte.is_ascii_digit(),
-        })
-}
-
 /// Each day file in `folder` of a day more than [`KEPT_DAYS`] days before `now`'s removed; nothing
-/// else there, and no link, folder or FIFO under such a name.
+/// else there, and no link, folder or FIFO under such a name: the rule the runs' day files are
+/// kept by.
 pub(crate) fn prune(folder: &Path, now: f64) {
-    let oldest = format!("{}.jsonl", day(now - f64::from(KEPT_DAYS) * DAY));
-    let Ok(entries) = fs::read_dir(folder) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else {
-            continue;
-        };
-        if day_file(name)
-            && name < oldest.as_str()
-            && entry.file_type().is_ok_and(|kind| kind.is_file())
-        {
-            let _ = fs::remove_file(entry.path());
-        }
-    }
+    symphony_board::runs::prune(folder, now, KEPT_DAYS);
 }
 
 /// The lines of `day`'s file in `folder`, in order; a line that does not read (cut short, an empty
