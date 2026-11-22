@@ -122,9 +122,10 @@ impl Shared {
         })
     }
 
-    /// Whether this is the machine's one server, started with its install folder (`--home`): the
-    /// server that alone does what its machine's projects share, as a private one must not (the
-    /// chat journal and the board's records, [`crate::live::Hub::start`]; a cancel's cleanup).
+    /// Whether this is the machine's one server, started with an install folder (`--home` or
+    /// `--install`): the server that alone does what its machine's projects share, as a private
+    /// one must not (the chat journal and the board's records, [`crate::live::Hub::start`]; a
+    /// cancel's cleanup).
     pub(crate) fn one_server(&self) -> bool {
         self.installed_ui
     }
