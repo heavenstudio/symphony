@@ -42,8 +42,8 @@ are under [Design and history](#design-and-history).
 - [Plugin protocol](PLUGIN_PROTOCOL.md) — a plugin answering from a process of its own: the
   setting, the seams it answers, its process, its commands, a register read in one request, the
   line, each call's minor, the versions and the wire's shape.
-- [Plugin calls](PLUGIN_CALLS.md) — each call into a project's plugins timed, and sent through a
-  JSON round trip inside the process: the two settings, the record and how to read it.
+- [Plugin calls](PLUGIN_CALLS.md) — each call into a project's plugins timed: the setting, the
+  record and how to read it.
 - [Commands for a project's tools](TOOL_COMMANDS.md) — draw one card, check a branch for a
   landing, read status and triage, and share the document write lock.
 - [Workflow definitions](WORKFLOW.md) — a project's own delivery workflow: the format, its

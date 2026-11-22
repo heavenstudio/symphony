@@ -767,15 +767,11 @@ with no line, or a line for any other, is an error, not a pass. So is a server b
 client files beside it last changed (a hand run after `just client-update`), whose own bytes the
 check cannot tell; it says to rebuild.
 
-A binary links what it may run, and a test holds a library out of the two that never run it
-(`tests/links.rs` of `symphony` and of `symphony-server`): the loopback that measures a compiled
-plugin's calls through the protocol's JSON (installed with the plugins,
-`symphony::plugins::install`, so a binary that installs none links none of it; a plugin answering
-from its process needs only the host's side of the protocol). The same test of `symphony` holds
-the JSON Schema validator out of it, which would add a fifth to its size: a schema check is a
-library call a consumer's code makes (`symphony::schema::validate`), and `symphony serve` answers
-`validate` as a function it lacks. And it holds the board's migration out of it, with both
-databases' schema texts: `symphony` opens a board only to read, by the reader's entry
+A binary links what it may run, and a test holds a library out of one that never runs it
+(`tests/links.rs` of `symphony`): the JSON Schema validator, which would add a fifth to its size:
+a schema check is a library call a consumer's code makes (`symphony::schema::validate`), and
+`symphony serve` answers `validate` as a function it lacks. And it holds the board's migration out
+of it, with both databases' schema texts: `symphony` opens a board only to read, by the reader's entry
 (`Store::read_as`, `Store::reading`), which names no migration, where an opening by the rule
 (`Store::opening`) links it for the writer it may be handed.
 

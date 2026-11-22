@@ -4,8 +4,8 @@
 //! [`Plugins`], so the Symphony's own code names no plugin. A plugin the project's
 //! `[plugins.process]` names a command for answers from a process of its own instead, which this
 //! process starts ([`process`], docs/PLUGIN_PROTOCOL.md): a project chooses per plugin. A project
-//! whose file turns on `[plugins] timing` or `loopback` has each call into its plugins measured
-//! ([`measure`], docs/PLUGIN_CALLS.md).
+//! whose file turns on `[plugins] timing` has each call into its plugins timed ([`measure`],
+//! docs/PLUGIN_CALLS.md).
 
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
@@ -25,18 +25,16 @@ pub mod measure;
 pub mod process;
 
 /// What this process holds: the plugins its host installed, and how a call into one of them is
-/// measured ([`measure::measured`]). The two are installed together, so a binary that installs no
-/// plugin (the Symphony's own server and command line) links none of that measuring: above all the
-/// loopback's plugin side of the protocol, which reads each request back and writes each answer.
-/// A plugin answering from its process needs only the host's side ([`process`]).
+/// timed ([`measure::measured`]). The two are installed together, so a binary that installs no
+/// plugin (the Symphony's own server and command line) links none of that wrapping: a plugin
+/// answering from its process times its own calls ([`process`]).
 struct Held {
     plugins: &'static [&'static dyn Plugin],
     measure: Measure,
 }
 
-/// `plugin` with each call into it measured into the record at a path, through the JSON loopback
-/// when asked ([`measure::measured`]).
-type Measure = fn(&'static dyn Plugin, &Path, bool) -> &'static dyn Plugin;
+/// `plugin` with each call into it timed into the record at a path ([`measure::measured`]).
+type Measure = fn(&'static dyn Plugin, &Path) -> &'static dyn Plugin;
 
 static COMPILED: OnceLock<Held> = OnceLock::new();
 
@@ -185,9 +183,9 @@ fn piped(root: Option<&Path>) -> Piped {
 /// The command `name` `symphony` runs in the project at `root`: one of a plugin of the project
 /// answering from its process, run as its program; else that of the first plugin this process
 /// holds that adds one, measured as the project at `root` says when there is one
-/// ([`Plugins::at`]). Whether the project names a plugin's process, and its two settings, are read
+/// ([`Plugins::at`]). Whether the project names a plugin's process, and its timing, are read
 /// alone and quietly first ([`PluginProcess::named_at`](crate::project::PluginProcess::named_at),
-/// [`PluginCalls::read`]): with none of them, the command runs as it would with neither setting,
+/// [`PluginCalls::read`]): with none of them, the command runs untimed,
 /// the project neither loaded nor checked and nothing said of its file. None found is
 /// [`Commands::failed`]'s lines, empty when no plugin's process failed.
 pub fn command(name: &str, root: Option<&Path>) -> Result<&'static dyn Command, Vec<String>> {
@@ -299,9 +297,9 @@ impl Plugins {
         )
     }
 
-    /// The plugins of `project`, its checkout at `root`, each call into them measured as its
-    /// `[plugins] timing` and `loopback` say into its record ([`record`]); as they are when both
-    /// are off. A plugin answering from its process records its own calls, as a process call.
+    /// The plugins of `project`, its checkout at `root`, each call into them timed into its record
+    /// ([`record`]) when its `[plugins] timing` says so; as they are when it is off. A plugin
+    /// answering from its process records its own calls, as a process call.
     pub fn at(project: &Project, root: &Path) -> Self {
         let plugins = Self::for_project(project);
         let record = project
@@ -324,7 +322,7 @@ impl Plugins {
         Self::at(&Project::of(root), root)
     }
 
-    /// These plugins, each call into them measured as `calls` says into the record at `record`
+    /// These plugins, each call into them timed into the record at `record` when `calls` says so
     /// ([`measure`]); these same plugins when `calls` records nothing. A plugin answering from its
     /// process is left as it is: it records its own calls ([`Plugins::at`]).
     pub fn measured(self, calls: PluginCalls, record: &Path) -> Self {
@@ -350,7 +348,7 @@ impl Plugins {
                 .iter()
                 .map(|plugin| match process::remote(*plugin) {
                     Some(_) => *plugin,
-                    None => measure(*plugin, record, calls.loopback),
+                    None => measure(*plugin, record),
                 })
                 .collect(),
         )
