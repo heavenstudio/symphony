@@ -3222,8 +3222,8 @@ mod tests {
         );
     }
 
-    /// A run that finds the lock held is still reported when its record cannot be written, and
-    /// says so beside the line that names the holder.
+    /// A record [`record::write`] cannot write (its `runs` folder is a file) is said by
+    /// [`unsaid`] with the cause the write gave.
     #[test]
     fn a_record_that_cannot_be_written_is_said_on_stderr_by_its_cause() {
         let folder = std::env::temp_dir().join(format!("unrecorded-{}", std::process::id()));

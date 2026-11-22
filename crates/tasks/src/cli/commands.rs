@@ -490,8 +490,8 @@ fn claim(store: &Store, c: &mut Context) -> Result<(), Stop> {
 
 /// `land SLUG`, `land SLUG --dispatch` and `land --watch`: the default landing, its last line said.
 fn land(store: &Store, c: &mut Context) -> Result<(), Stop> {
-    let p = c.parsed;
     use crate::land::dispatch;
+    let p = c.parsed;
     let slug = c.arg("slug");
     crate::land::admit(c.env).map_err(Stop::Refused)?;
     let line = if p.flag("watch") {
@@ -532,8 +532,8 @@ fn land(store: &Store, c: &mut Context) -> Result<(), Stop> {
 /// `regenerate`: the regenerator run, or with `--status` or `--wait` where it stands, refused
 /// while what it made is not current.
 fn regenerate(store: &Store, c: &mut Context) -> Result<(), Stop> {
-    let p = c.parsed;
     use crate::land::regenerate;
+    let p = c.parsed;
     if p.flag("status") || p.flag("wait") {
         let (env, wait) = (c.env, p.flag("wait"));
         let mut said = false;
