@@ -168,7 +168,7 @@ async fn workflow_apply(shared: &Arc<Shared>, payload: serde_json::Value) -> Res
             )
                 .into_response()
         }
-        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e),
+        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }
 
