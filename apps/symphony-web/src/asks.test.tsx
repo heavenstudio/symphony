@@ -1,6 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  type AskDraft,
+  AskForm,
   Asks,
   AskThread,
   concerns,
@@ -12,7 +14,7 @@ import {
   sendDraft,
 } from "./asks";
 import { STALE } from "./shared";
-import { asking, memoryStorage, reply, server } from "./testing";
+import { asking, fire, memoryStorage, reply, server } from "./testing";
 import type { Ask } from "./wire";
 import { CHECKING } from "./words";
 
@@ -209,6 +211,101 @@ describe("a document's questions", () => {
     expect(html).not.toContain("<blockquote>");
     expect(html).toContain(">More, please</textarea>");
     expect(html).not.toMatch(/disabled=""[^>]*>Send follow-up<\/button>/);
+  });
+});
+
+describe("a draft's form", () => {
+  const KEY = "review-ask-reply:7";
+
+  /** A draft of `text` with no file, as its hook gives one; `over` says otherwise. */
+  function aDraft(text = "", over: Partial<AskDraft> = {}): AskDraft {
+    return {
+      key: KEY,
+      text,
+      sending: false,
+      trouble: null,
+      stale: false,
+      attach: {
+        zone: KEY,
+        files: [],
+        pending: [],
+        trouble: null,
+        busy: false,
+        empty: true,
+        remove: () => {},
+        compose: (words: string) => words,
+        clear: () => {},
+      },
+      mount: new AbortController().signal,
+      setText: vi.fn<(text: string) => void>(),
+      setSending: () => {},
+      setTrouble: () => {},
+      onSent: () => {},
+      ...over,
+    };
+  }
+
+  /** The form of `draft`, labelled Follow up, whose submit says Send. */
+  const form = (draft: AskDraft, onSend = async () => {}) => (
+    <AskForm draft={draft} id="reply-7" label="Follow up" word="Send" onSend={onSend} />
+  );
+
+  it("draws its box under its label by its id, and its submit by its word", () => {
+    const html = renderToStaticMarkup(form(aDraft("More, please")));
+    expect(html).toContain('<form data-attach="review-ask-reply:7">');
+    expect(html).toContain('<label for="reply-7">Follow up</label>');
+    expect(html).toMatch(/<textarea[^>]*id="reply-7"[^>]*maxLength="4000"[^>]*>More, please</);
+    expect(html).toMatch(/<button[^>]*type="submit"[^>]*>Send<\/button>/);
+    expect(html).not.toMatch(/<button[^>]*type="submit"[^>]*disabled=""/);
+    expect(html).not.toContain('role="alert"');
+  });
+
+  it("cannot be sent with nothing to send, and needs words while it holds no file", () => {
+    const empty = renderToStaticMarkup(form(aDraft("  ")));
+    expect(empty).toMatch(/<textarea[^>]*required=""/);
+    expect(empty).toMatch(/<button[^>]*type="submit"[^>]*disabled=""[^>]*>Send<\/button>/);
+    const draft = aDraft("");
+    const filed = renderToStaticMarkup(
+      form({ ...draft, attach: { ...draft.attach, empty: false } }),
+    );
+    expect(filed).not.toMatch(/<textarea[^>]*required=""/);
+    expect(filed).not.toMatch(/<button[^>]*type="submit"[^>]*disabled=""/);
+  });
+
+  it("waits while it is sent, a file uploads or the page may be out of date", () => {
+    const sending = renderToStaticMarkup(form(aDraft("More", { sending: true })));
+    expect(sending).toMatch(/<textarea[^>]*disabled=""/);
+    expect(sending).toMatch(/<button[^>]*type="submit"[^>]*disabled=""[^>]*>Sending…<\/button>/);
+    const stale = renderToStaticMarkup(form(aDraft("More", { stale: true })));
+    expect(stale).not.toMatch(/<textarea[^>]*disabled=""/);
+    expect(stale).toMatch(
+      new RegExp(`<button[^>]*type="submit"[^>]*disabled=""[^>]*>${CHECKING}</button>`),
+    );
+    const draft = aDraft("More");
+    const busy = renderToStaticMarkup(form({ ...draft, attach: { ...draft.attach, busy: true } }));
+    expect(busy).toMatch(/<button[^>]*type="submit"[^>]*disabled=""[^>]*>Send<\/button>/);
+  });
+
+  it("says what a send that failed said", () => {
+    const html = renderToStaticMarkup(form(aDraft("More", { trouble: "The board is busy." })));
+    expect(html).toContain('<p role="alert">The board is busy.</p>');
+  });
+
+  it("sends on its submit, the browser's own left out", () => {
+    const send = vi.fn(async () => {});
+    const drawn = AskForm({ draft: aDraft("More"), id: "r", label: "L", word: "W", onSend: send });
+    const event = { preventDefault: vi.fn() };
+    (drawn.props.onSubmit as (event: unknown) => void)(event);
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps each change of its words in the draft and on this device", () => {
+    const draft = aDraft("Mor");
+    const drawn = AskForm({ draft, id: "r", label: "L", word: "W", onSend: async () => {} });
+    fire(drawn, (element) => element.props.id === "r", "onChange", { target: { value: "More" } });
+    expect(draft.setText).toHaveBeenCalledWith("More");
+    expect(storage.getItem(KEY)).toBe("More");
   });
 });
 

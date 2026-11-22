@@ -78,7 +78,7 @@ fn loopback_hosts_refuse_foreign_names_and_incomplete_authorities() {
 
 #[test]
 fn idle_session_maintenance_starts_only_for_the_shared_installation() {
-    let gate = Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now));
+    let gate = crate::testing::open_gate();
     let home = Path::new("/private-preview-fixture");
     let shared = Shared::new(1, 1, home, Some(home), gate);
     // Stop is sticky, so a started worker exits before any wait or external command.
@@ -107,7 +107,7 @@ fn leaving_the_server_scope_joins_its_owned_workers() {
         1,
         Path::new("/background-scope-fixture"),
         None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+        crate::testing::open_gate(),
     );
     // Each wait on an event here; only a stall reaches this backstop.
     const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(30));

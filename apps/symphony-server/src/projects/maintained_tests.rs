@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use symphony::machine::{Entry, Registry};
 
@@ -15,7 +15,6 @@ use super::{Maintain, Projects, Warming};
 use crate::backstop::NO_PERIOD;
 use crate::front::Shared;
 use crate::front::test_clock::TestClock;
-use crate::gate::Gate;
 use crate::testing::{Tree, joined};
 
 /// The backstop of every wait here: rounds that take milliseconds on a quiet machine.
@@ -47,7 +46,7 @@ impl Machine {
             1,
             &tree.path(starter).canonicalize().unwrap(),
             Some(&tree.path("install")),
-            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+            crate::testing::open_gate(),
             &format!("/{starter}"),
         );
         Machine { tree, starter }

@@ -8,7 +8,6 @@
 
 use super::Hub;
 use crate::front::Shared;
-use crate::gate::Gate;
 use crate::testing::{
     Tree,
     board::{Fixture, HOST, NOW, Seed},
@@ -1132,7 +1131,7 @@ fn a_board_that_went_back_is_said_unwell_with_its_line_on_every_page_until_a_sto
     .refusal();
     let went_back = "The task board is unwell: it went back from schema 16 to 13, so what was \
                      written since is lost: nothing was written; do not run `just tasks migrate`; \
-                     the Symphony's docs/TASKS.md#a-board-that-went-back says how to recover it.";
+                     the Symphony's docs/BOARD_OPERATIONS.md#a-board-that-went-back says how to recover it.";
 
     assert!(
         hub.reconnect(&mut |_: &Path| Err(refusal.clone()))
@@ -1336,13 +1335,7 @@ fn a_board_whose_store_cannot_be_served_is_a_failed_pass_and_unwell_not_boardles
 async fn the_health_route_answers_from_the_hubs_memory() {
     let tree = Tree::new();
     let root = repository(&tree);
-    let shared = Shared::new(
-        1,
-        1234,
-        &root,
-        None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
+    let shared = Shared::new(1, 1234, &root, None, crate::testing::open_gate());
     let ask = |shared: Arc<Shared>| async move {
         let request = Request::builder()
             .uri("/api/health")
