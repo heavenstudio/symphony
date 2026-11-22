@@ -14,7 +14,7 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{IntoResponse, Json, Response};
+use axum::response::{IntoResponse, Response};
 use symphony::markup::escape;
 use symphony_api::page_names;
 
@@ -168,12 +168,7 @@ pub(crate) fn html(status: StatusCode, page: String) -> Response {
 
 /// `why` as an API error with `status`: `{"error": why}`.
 pub(crate) fn json(status: StatusCode, why: &str) -> Response {
-    (
-        status,
-        [(header::CACHE_CONTROL, "no-store")],
-        Json(serde_json::json!({ "error": why })),
-    )
-        .into_response()
+    crate::api::error(status, why)
 }
 
 /// Whether a miss at `route` (a project's route, its branch scope taken off) answers JSON: under
