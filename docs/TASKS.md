@@ -2610,7 +2610,7 @@ counts as a sign of life, and so does every tool call of a subagent (below):
 
 | health | meaning |
 |---|---|
-| live | seen in the last 90 s, or inside one long tool call that could still be running |
+| live | seen in the last 90 s, inside one long tool call that could still be running, or waiting on a recorded build or test of its own that still runs |
 | stale | quiet, or its monitor has stopped: its work is still held, nobody may take it |
 | lost | gone for 10 minutes holding claimable work: that work can be claimed, on the record |
 | left | it said `just tasks leave` (its roles were released, the open work it orchestrated given to another orchestrator, or waiting for one while none stays), or it has been gone 10 minutes holding nothing anyone could claim |
@@ -2648,7 +2648,14 @@ an orchestrator never keep a child it registered alive. The hook looks at the bo
 only for a board command or a key already bound. A foreground Bash call
 reads live for as long as its timeout allows (at most 10 minutes), so a long
 `verify-full` does not look like silence; of calls running side by side, the
-one that may run longest keeps the mark, and only its own end clears it. Each
+one that may run longest keeps the mark, and only its own end clears it. A
+build or test that outlives its call (one started in the background, or moved
+there when its call's timeout ran out) keeps its session live by its recorder:
+while its command runs, the recorder of a run whose record names the session
+says it was seen, every 20 s and once more as the run ends, so the session
+is neither stale nor lost nor orphaning its task while it waits, and ages from
+the run's end as from any last sign of life
+([its session is there](MACHINE_WORK.md#recording-builds-and-tests)). Each
 tool call of a bound subagent also records, on its binding (never its session
 row, which keeps where its orchestrator ran `register`), the checkout that call
 ran in: the top folder above the hook's `cwd` and the branch checked out there,
