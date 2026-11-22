@@ -238,6 +238,7 @@ pub(super) fn applied(guarded: bool) -> crate::store::statement::Statement<'stat
             guarded,
         ),
     )
+    .posting()
 }
 
 /// The write's variables: the roles the holder held that it relies on (none for an attempt's

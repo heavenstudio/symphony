@@ -219,6 +219,10 @@ fn a_value_of_the_wrong_type_or_range_is_said_with_its_line() {
             "[limits] orchestrator_slots (line 2) is 0; an orchestrator needs at least one slot",
         ),
         (
+            "[limits]\norchestrator_slots = 4294967296\n",
+            "[limits] orchestrator_slots (line 2) is 4294967296; past what it can be",
+        ),
+        (
             "[limits]\norchestrator_tasks = -1\n",
             "[limits] orchestrator_tasks (line 2) is -1; an orchestrator holds at least one task",
         ),

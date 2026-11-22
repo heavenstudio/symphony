@@ -57,7 +57,7 @@ use crate::github::clean_title;
 use crate::mint;
 use crate::preflight::{self, Operation, Wanted};
 use crate::reconcile::{Context, Outcome};
-use crate::state::{Binding, Entry, Event, Pull, State, Store};
+use crate::state::{Binding, Entry, Event, Locked, Pull, State, Store};
 use crate::transport::{Failure, Request, Transport, rate_limited};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -1563,40 +1563,72 @@ fn text(request: &Value, field: &str) -> String {
     request[field].as_str().unwrap_or_default().to_string()
 }
 
+/// The setting a delivery is turned on by, as the settings file writes it.
+pub(crate) const PUBLISHES: &str = "pull_requests = \"publish\"";
+
+/// Whether `config` has that setting.
+pub(crate) fn publishes(config: &Config) -> bool {
+    config.pull_requests == PullRequests::Publish
+}
+
+/// What a command of this program serves by: the committed settings, their revision and the
+/// repository they name.
+pub(crate) struct Serving {
+    pub(crate) config: Config,
+    pub(crate) revision: String,
+    pub(crate) repository: Repository,
+}
+
+/// The committed settings a command serves by: read, enabled, naming a repository, and with the
+/// command's own setting, which `on` reads and `setting` writes as the file does. Else why the
+/// command is turned off, the line each command says.
+pub(crate) fn served(
+    ctx: &Context<'_>,
+    setting: &str,
+    on: impl FnOnce(&Config) -> bool,
+) -> Result<Serving, String> {
+    let loaded = (ctx.source.load())
+        .map_err(|why| format!("turned off: its settings do not read: {why}"))?;
+    let config = loaded.config;
+    let serves = config.enabled && on(&config);
+    let Some(repository) = config.repository.clone().filter(|_| serves) else {
+        return Err(format!(
+            "turned off: the committed settings do not say enabled = true and {setting}"
+        ));
+    };
+    Ok(Serving {
+        config,
+        revision: loaded.revision,
+        repository,
+    })
+}
+
+/// The state kept here for a command that writes it: its store, made if it is not there, the
+/// lock held while the command runs, and the state as it reads, new where none was kept. Else why
+/// it is unavailable.
+pub(crate) fn kept(ctx: &Context<'_>) -> Result<(Store, Locked, State), String> {
+    let folder = (ctx.board.state_folder()).map_err(|error| error.said().to_string())?;
+    let store = Store::open(&folder)?;
+    let lock = store.lock()?;
+    let state = store.state()?.unwrap_or_default();
+    Ok((store, lock, state))
+}
+
 /// The answer to `verb` of `request`.
 fn answer(ctx: &Context<'_>, remote: &dyn Remote, verb: &str, request: &Value) -> Value {
-    let loaded = match ctx.source.load() {
-        Ok(loaded) => loaded,
-        Err(why) => return refused(format!("turned off: its settings do not read: {why}")),
+    let serving = match served(ctx, PUBLISHES, publishes) {
+        Ok(serving) => serving,
+        Err(why) => return refused(why),
     };
-    let config = loaded.config;
-    let serves = config.enabled && config.pull_requests == PullRequests::Publish;
-    let Some(repository) = config.repository.clone().filter(|_| serves) else {
-        return refused(
-            "turned off: the committed settings do not say enabled = true and pull_requests = \
-             \"publish\"",
-        );
-    };
-    let opened = (ctx.board.state_folder())
-        .map_err(|error| error.said().to_string())
-        .and_then(|folder| Store::open(&folder));
-    let store = match opened {
-        Ok(store) => store,
-        Err(why) => return unavailable(why),
-    };
-    let _lock = match store.lock() {
-        Ok(lock) => lock,
-        Err(why) => return unavailable(why),
-    };
-    let state = match store.state() {
-        Ok(state) => state.unwrap_or_default(),
+    let (store, _lock, state) = match kept(ctx) {
+        Ok(kept) => kept,
         Err(why) => return unavailable(why),
     };
     let mut run = Run {
         ctx,
-        config,
-        revision: loaded.revision,
-        repository,
+        config: serving.config,
+        revision: serving.revision,
+        repository: serving.repository,
         store,
         state,
         by: clean_title(&text(request, "by")),
@@ -1648,21 +1680,14 @@ pub fn preflight(ctx: &Context<'_>, base: &str, out: &mut dyn Write) -> Outcome 
         let _ = writeln!(out, "{}", text(answer, "why"));
         Ok(1)
     };
-    let config = match ctx.source.load() {
-        Ok(loaded) => loaded.config,
+    let Serving {
+        config, repository, ..
+    } = match served(ctx, PUBLISHES, publishes) {
+        Ok(serving) => serving,
         Err(why) => {
-            let _ = writeln!(out, "turned off: its settings do not read: {why}");
+            let _ = writeln!(out, "{why}");
             return Ok(1);
         }
-    };
-    let serves = config.enabled && config.pull_requests == PullRequests::Publish;
-    let Some(repository) = config.repository.clone().filter(|_| serves) else {
-        let _ = writeln!(
-            out,
-            "turned off: the committed settings do not say enabled = true and pull_requests = \
-             \"publish\""
-        );
-        return Ok(1);
     };
     if !plain(base, "-._/") {
         return Err(format!("no branch is named {base:?}"));

@@ -378,17 +378,14 @@ fn pass_inner(
         };
         // A review whose recorded reviewer still runs fails here as its launch would, in a dry run
         // too.
-        let job = job_for(
-            store,
-            &hc,
-            &view.agents,
-            &board,
+        let wanted = Job {
+            board: &board,
             task,
             role,
-            &used,
-            &held,
-            operating.as_ref(),
-        );
+            held: &held,
+            operating: operating.as_ref(),
+        };
+        let job = job_for(store, &hc, &view.agents, &used, &wanted);
         let (resuming, idle) = job
             .as_ref()
             .map_or((None, None), |(resuming, idle)| (resuming.clone(), *idle));
@@ -528,25 +525,34 @@ fn idle_for<'a>(
     })
 }
 
-/// Who a job on `task` as `role` goes to: a review to the task's recorded reviewer that its launch
+/// One job of a pass, as the pass read it: the task on its board, the role it is staffed as, who
+/// held it ([`Store::ever_held`], for a review) and the custom workflow that holds it, if any.
+struct Job<'a> {
+    board: &'a Board,
+    task: &'a Task,
+    role: &'a str,
+    held: &'a Held,
+    operating: Option<&'a Operating>,
+}
+
+/// Who `job` goes to, none of `used`: a review to the task's recorded reviewer that its launch
 /// resumes, by the launch's own rule ([`super::restore::reviewer_to_resume`]), never another idle
 /// one, and refused, as the launch is, while that reviewer still runs; else the idle agent
 /// [`idle_for`] picks, if any. Neither: a launch.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one job of the pass, named by what it reads"
-)]
 fn job_for<'a>(
     store: &Store,
     hc: &dyn Hc,
     agents: &'a [agents::Agent],
-    board: &Board,
-    task: &Task,
-    role: &str,
     used: &HashSet<String>,
-    held: &Held,
-    operating: Option<&Operating>,
+    job: &Job<'_>,
 ) -> Result<(Option<String>, Option<&'a agents::Agent>), Error> {
+    let Job {
+        board,
+        task,
+        role,
+        held,
+        operating,
+    } = *job;
     if role == "reviewer"
         && let Some(record) = super::restore::reviewer_to_resume(store, hc, &task.slug)?
     {

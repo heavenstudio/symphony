@@ -4,7 +4,7 @@ A plugin can answer from a process of its own instead of being linked into the h
 (the server, the `symphony` command) starts the plugin's binary and speaks with it in JSON lines on
 its stdin and stdout. A project chooses per plugin. Replacing such a plugin is replacing its binary,
 with no rebuild of the server. The requests and answers are the serde types of
-`symphony_plugin::protocol`, the ones the loopback sends inside the process
+`symphony_plugin::protocol`, which also name each call in the record of a project's plugin calls
 ([PLUGIN_CALLS](PLUGIN_CALLS.md)). The plugin's side is `symphony_plugin::serve`
 (`crates/symphony-plugin/src/serve.rs`) and the host's is `crates/symphony/src/plugins/process.rs`.
 
@@ -192,7 +192,8 @@ plugins linked in the binary; a linked plugin that the project's file gives a pr
 even while that process does not start, so a copy built into the binary never stands in for the
 project's own. The project is found and its plugins started only when its file names a
 `[plugins.process]`, read alone and quietly first; in a project with none, `symphony NAME` runs a
-linked plugin's command with no project loaded or checked. `commands.run` is the loopback's alone.
+linked plugin's command with no project loaded or checked. `commands.run` goes on no pipe: it names
+a linked command's run in the record ([PLUGIN_CALLS](PLUGIN_CALLS.md)).
 
 A command is known by the plugin's declaration, so `symphony NAME` and `symphony help` start each
 process of the project for it. While one cannot start or declare, its commands are not known:
@@ -389,17 +390,17 @@ holds both.
 
 ## Measured
 
-Under `[plugins] timing` or `loopback` ([PLUGIN_CALLS](PLUGIN_CALLS.md)) each call of a plugin's
-process writes its line to the project's record, `path` `process`: `us` the plugin's own time as it
-says it (its JSON both ways and the call), `round_trip_us` the host's whole wait (its line built
-and written, the answer read back), the two lines' bytes, and `failed` with why when the call had
-no answer. A register read's batch is one line for each request, `card_kinds` `read`, its `name`
-the kinds' names. The declaration is the start's and is not recorded.
+Under `[plugins] timing` ([PLUGIN_CALLS](PLUGIN_CALLS.md)) each call of a plugin's process writes
+its line to the project's record, `path` `process`: `us` the plugin's own time as it says it (its
+JSON both ways and the call), `round_trip_us` the host's whole wait (its line built and written,
+the answer read back), the two lines' bytes, and `failed` with why when the call had no answer. A
+register read's batch is one line for each request, `card_kinds` `read`, its `name` the kinds'
+names. The declaration is the start's and is not recorded.
 
-In a Symphony checkout, what a call costs linked, through the loopback and from a process, for its
-test plugin's components and card kind, as the median of a thousand interleaved rounds: each call's
-row, components.render among them, and the range of what a call costs from the process more than
-linked over them all. A call of a known time (the test plugin's `slow`, spending 500 µs in the
+In a Symphony checkout, what a call costs linked and from a process, for its test plugin's
+components and card kind, as the median of a thousand interleaved rounds: each call's row,
+components.render among them, and the range of what a call costs from the process more than linked
+over them all. A call of a known time (the test plugin's `slow`, spending 500 µs in the
 plugin) shows each meter moves by it, and the test fails if one does not. Then a card's eight
 card-kind calls summed, and a page of ten components drawn whole, linked and from a process, neither
 page recorded. A second test reads registers of 50 and 500 cards linked, from a process card by

@@ -1,0 +1,6 @@
+# The second project the product specs' pictures register (tools/product-pictures.sh), beside the
+# fixture: one with documents and no task board, as a project is before its first board command.
+
+[project]
+name = "Pantry"
+id = "pantry"

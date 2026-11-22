@@ -38,22 +38,25 @@ ago() {
     TASKS_NOW=$((NOW - seconds)) "$TASKS" "$@" >/dev/null
 }
 
-# `session NAME KIND VARIABLE`: a session registered twelve days before NOW, before any task,
-# printed with its name, its handle left in VARIABLE.
+# `session NAME KIND VARIABLE [quiet]`: a session registered twelve days before NOW, before any
+# task, printed with its name, its handle left in VARIABLE. A quiet one is not seen at each moment
+# with the others: its own commands alone see it, so it goes quiet after its last.
 session() {
     local handle
     handle="$(TASKS_NOW=$((NOW - 12 * day)) "$TASKS" register --kind "$2")"
     echo "$1 $handle"
-    sessions+=("$handle")
+    [ "${4:-}" = quiet ] || sessions+=("$handle")
     printf -v "$3" '%s' "$handle"
 }
 
-lead="" cook="" baker="" taster="" assessor=""
+lead="" cook="" baker="" taster="" assessor="" timer="" tagger=""
 session swift-heron orchestrator lead
 session amber-finch worker cook
 session lucid-otter worker baker
 session keen-wren reviewer taster
 session opal-crane worker assessor
+session pale-robin worker timer quiet
+session dusky-swift worker tagger quiet
 
 # The print view's branch: one commit on the fixture's, made at a moment of its own, so its id is
 # the same in every copy.
@@ -114,6 +117,20 @@ ago $((6 * hour)) needs site/print-view review pictures owner --as "$assessor" \
     --why "tests: a style sheet alone, which no test reads"
 ago $((5 * hour)) role site/print-view reviewer --as "$taster"
 ago $((5 * hour)) say site/print-view "Reading the second round now." --as "$taster"
+
+# In progress, its executor last heard from four minutes before NOW: stale, still holding it.
+ago $((30 * hour)) create site/step-timer "A timer beside each step" --priority 2 --as "$lead" \
+    --body "A step that says *bake 25 minutes* starts a timer with one press."
+ago $((3 * hour)) claim site/step-timer --as "$timer"
+ago 240 say site/step-timer "The timer runs; the sound it ends with next." --to @orchestrator \
+    --as "$timer"
+
+# In progress, its executor silent for five hours: lost, the task waiting on nobody.
+ago $((2 * day)) create site/diet-tags "Tag recipes by diet" --priority 3 --as "$lead" \
+    --body "Vegetarian, vegan and gluten-free, each a tag a search can ask for."
+ago $((6 * hour)) claim site/diet-tags --as "$tagger"
+ago $((5 * hour)) say site/diet-tags "Vegetarian tagged on 140 recipes; vegan next." \
+    --to @orchestrator --as "$tagger"
 
 # Blocked in design on a card the owner has not answered.
 ago $((4 * day)) create site/search-empty-state "Say something when a search finds nothing" \

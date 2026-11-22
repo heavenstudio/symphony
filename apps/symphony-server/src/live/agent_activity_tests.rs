@@ -1173,7 +1173,7 @@ fn recording_makes_no_board_write_though_the_board_counts_writes() {
 
 /// A hub started as the shared server or a private one, on a scratch repository and board, once
 /// its first board read is through.
-fn hub_started(drain_chat: bool) -> (Tree, Arc<Hub>, PathBuf) {
+fn hub_started(one_server: bool) -> (Tree, Arc<Hub>, PathBuf) {
     let tree = Tree::new();
     let root = repository(&tree);
     let mut store = Some(executor_on_a_scratch_board().store);
@@ -1181,7 +1181,7 @@ fn hub_started(drain_chat: bool) -> (Tree, Arc<Hub>, PathBuf) {
         &root,
         &root.join("build/client"),
         false,
-        drain_chat,
+        one_server,
         crate::backstop::PERIOD,
         move |_| store.take().ok_or_else(|| "one store in this test".into()),
     )

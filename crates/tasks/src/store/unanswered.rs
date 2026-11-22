@@ -553,7 +553,7 @@ impl Store {
     }
 
     pub(crate) fn record_unanswered_restore(&self, slug: &str, text: &str) -> Result<(), Error> {
-        let body = both(sql::restore_said(), pg::restore_said());
+        let body = both(sql::restore_said(), pg::restore_said()).posting();
         self.transact::<serde_json::Value>(
             body,
             json!({"slug":slug, "text":text, "now":self.now()}),

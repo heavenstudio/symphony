@@ -1,5 +1,6 @@
 //! Native reads, media and root SPA, including compatibility bookmark routes.
 
+use crate::lock::Held as _;
 use std::collections::VecDeque;
 use std::path::{Component, Path};
 use std::sync::Arc;
@@ -10,6 +11,7 @@ use axum::http::{Method, StatusCode, header};
 use axum::response::{IntoResponse, Json, Response};
 use serde_json::json;
 
+use crate::attempts::Failed;
 use crate::front::Shared;
 use crate::live::Hub;
 
@@ -118,9 +120,6 @@ fn cursor(shared: &Shared, path: &str) -> Option<u64> {
     }
     shared.api.get()?.cursor(scope)
 }
-
-/// A read's refusal: its status and why.
-type Failed = (StatusCode, String);
 
 /// The reads in their order: what is asked, the refusals, the routes answered before the hub is
 /// warm, the hub, the routes over the hub. The order decides which refusal a request gets.
@@ -850,7 +849,7 @@ fn agents(hub: &Hub, hosted: bool, page: Option<(AgentsAsked, bool)>) -> Result<
 
 /// A region the hub keeps of the page of the worktree `scope`, as its last read left it.
 fn page_read(hub: &Hub, scope: &str, path: &str) -> Response {
-    let pages = hub.pages.read().unwrap_or_else(|e| e.into_inner());
+    let pages = hub.pages.read().held();
     let Some(page) = pages.get(scope) else {
         return error(StatusCode::NOT_FOUND, "this worktree was removed");
     };
@@ -1368,7 +1367,7 @@ fn events_since(
     if let Some(problem) = hub.problem(scope) {
         return Err(problem);
     }
-    let pages = hub.pages.read().unwrap_or_else(|e| e.into_inner());
+    let pages = hub.pages.read().held();
     let page = pages.get(scope).ok_or("this worktree was removed")?;
     if since > page.board.version
         || page

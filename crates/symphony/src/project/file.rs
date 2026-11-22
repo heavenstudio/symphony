@@ -170,7 +170,6 @@ pub(super) struct FilePlugins {
     /// `[plugins.process]`: a plugin's name and the command that starts its process.
     pub(super) process: BTreeMap<String, Vec<String>>,
     pub(super) timing: bool,
-    pub(super) loopback: bool,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }

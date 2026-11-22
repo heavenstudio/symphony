@@ -6,13 +6,17 @@ a plain project of every default. A table or key the Symphony does not know is r
 line where the project is loaded or linted (`just symphony-status --lint`), and left out, the rest
 read, where the Symphony runs with the file as it is. A file that does not load is run as the plain
 project: the server serves the project with the defaults, and every page of it says so and why,
-until it loads. Three keys nothing acted on are gone (`[agents] transports`, `[board] export` and
-`[board] disposable`), each refused as any unknown key is. The board reads its own keys (`[board]`'s
-commands and thresholds, `[limits]`, `[agents] launch`, `[agents.models]` and `[stamps]`) from the
-main checkout's copy, so a branch cannot change its own. A path is relative to the project's root
-and stays inside it, unless its key says otherwise. The board judges the paths it reads itself
-(`[board] guide`, `slot_locks` and `assessments`) by the same rule, and reads one that leads out
-of the project, or is empty, as unwritten.
+until it loads. Four keys are gone, three nothing acted on (`[agents] transports`, `[board]
+export` and `[board] disposable`) and `[plugins] loopback`, each refused as any unknown key is. The
+board reads its own keys (`[board]`'s commands and thresholds, `[limits]`, `[agents] launch`,
+`[agents.models]` and `[stamps]`) from the main checkout's copy, so a branch cannot change its own.
+A path is relative to the project's root and stays inside it, unless its key says otherwise. A key
+the board reads itself is judged there by the rule its row below says, as the Symphony judges it.
+The board reads a path it refuses (`[board] guide`, `slot_locks` and `assessments`: one that leads
+out of the project, or is empty) and an `id` it refuses as unwritten, says a limit it refuses and
+takes the limit's default ([`[limits]`](#limits)), and refuses an agent, a default branch or a
+generator's command where it needs one: at a launch, a land, or a move of its live board to a newer
+schema.
 
 ```toml
 [project]
@@ -60,10 +64,10 @@ not have.
 
 `symphony settings-check [DIR]` (`just symphony-cli settings-check`) reads the project file of DIR,
 the current folder by default, as the Symphony loads it, and judges its shape alone: a table or
-key the Symphony does not know, a value of the wrong type (a number where a text is read) and a
-required value left out (an entrypoint's `url` or `folder`) are each named on stderr, exit 1; a
-file that loads is exit 0. It judges no name against a list: a model, an agent or a recipe is any
-text, so a model nobody has heard of passes. Unlike the lint it reads no document and asks no
+key the Symphony does not know, a value of the wrong type (a number where a text is read) or one
+its row below refuses, and a required value left out (an entrypoint's `url` or `folder`) are each
+named on stderr, exit 1; a file that loads is exit 0. It judges no model or recipe against a list:
+either is any text, so a model nobody has heard of passes. Unlike the lint it reads no document and asks no
 build which plugins it holds. A role or launch fallback model recognizable as the other agent's warns on
 stderr with its key and line, without changing the check's exit code.
 
@@ -111,8 +115,8 @@ trace. Every other table or key (the rest of `[project]`, `[board]` and `[agents
 file overrides.
 
 Whatever is wrong with it is said with the file and the line: a refused setting, a key of one of
-its three tables the Symphony does not know, a value of the wrong type or below its least, an agent
-a launch does not start, or text that is no TOML. None of the file is then read and the committed
+its three tables the Symphony does not know, a value of the wrong type or outside its range, an
+agent a launch does not start, or text that is no TOML. None of the file is then read and the committed
 settings hold, so a broken local file stops neither the board nor a launch: every board command
 says it on stderr, as it says a limit it cannot read, and the settings check exits 1 on it.
 
@@ -158,7 +162,7 @@ What the local file is refused, the store is refused, by the same rules and the 
 (`PROTECTED` and `PROTECTED_KEYS` in `crates/tasks/src/local.rs`): a setting that holds a command
 or a program the Symphony runs, or that decides what lands, is never kept there, as a place no
 commit records must not change the landing gate or run a command. A value is judged when it is
-written, since no landing passes over it: its type, a limit's least, an agent a launch starts,
+written, since no landing passes over it: its type, a limit's range, an agent a launch starts,
 one of `panes`' two values. A refusal names the key and why, and nothing is written. Each entry
 is judged again when it is read, alone: one the store may not hold, however its row came to be
 in the table, is said on stderr and never read, and the others hold.
@@ -190,10 +194,10 @@ engine carries the entries.
 | Key | Default | What it sets |
 | --- | --- | --- |
 | `name` | the folder's name | the name the pages show |
-| `id` | `name` made a slug (lowercase letters, digits and dashes), refused when it makes none; with no `name` written, the folder's name made one, `project` when that makes none | the project's segment on the machine's server (`/<id>/`) and its data folder |
+| `id` | `name` made a slug, refused when it makes none; with no `name` written, the folder's name made one, `project` when that makes none | the project's segment on the machine's server (`/<id>/`) and its data folder: a slug (lowercase letters and digits, single dashes between them), any other refused |
 | `register` | `DECISIONS.md` in the first entrypoint's folder | the decision register |
 | `artifacts` | `artifacts` | the folder of served files and the Symphony's private files |
-| `default_branch` | `main` | the branch tasks land on |
+| `default_branch` | `main` | the branch tasks land on, as written; an empty or blank one is refused |
 | `cargo` | `tools/cargo.sh` in the Symphony's own workspace, `cargo` elsewhere | the command that runs Cargo when the machine's server rebuilds itself from this checkout |
 
 ## `[[entrypoints]]`
@@ -241,7 +245,6 @@ neither serves no `.html` file, as its patterns serve none they leave out.
 | `crates` | `[]` | the project's plugins, each by the name its plugin declares: a host linking them, or a process of their own ([PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md)) |
 | `process` | none | `[plugins.process]`: a plugin's name, then the command that starts its process, run in the project's root |
 | `timing` | `false` | record each plugin call's time ([PLUGIN_CALLS](PLUGIN_CALLS.md)) |
-| `loopback` | `false` | send each call through a JSON round trip inside the process, and record both times |
 
 ## `[theme]`
 
@@ -273,7 +276,7 @@ limits` prints what holds and where it came from.
 
 | Key | Default | What it sets |
 | --- | --- | --- |
-| `default` | `"codex"` | the agent a launch starts: `"codex"` or `"claude"` |
+| `default` | `"codex"` | the agent a launch starts: `"codex"` or `"claude"`, a blank one the default, any other refused |
 | `model` | the board's own for that agent | its model |
 | `effort` | the board's own for that agent | its effort |
 
@@ -359,7 +362,7 @@ A generator, in `[land] generators` or `[verdicts] generators`, usually written 
 | --- | --- | --- |
 | `name` | (required) | its name, in its key and in what the regenerator says |
 | `outputs` | (required) | the path it writes, a folder ending in `/`; a land keeps the default branch's side of it |
-| `command` | (required) | what runs it, in the project's root |
+| `command` | (required) | what runs it, in the project's root; one with no word, or an empty first one, is refused |
 | `when_changed` | `false` | run only after an earlier generator changed something |
 
 ## `[board]`
@@ -369,7 +372,7 @@ A generator, in `[land] generators` or `[verdicts] generators`, usually written 
 | `guide` | `TASKS.md` | the board's guide: the links and pictures in task messages resolve from it |
 | `on_review` | `[]`: none | the command started, detached from the main checkout, when a task moves to review, with its slug, branch and tip appended |
 | `on_land` | `[]`: none | the command started once `just land` closed a task, with its slug and merge appended |
-| `orchestrator_slots` | none: no cap | the tasks in progress an orchestrator holds before the board refuses it new work; `[limits]` wins |
+| `orchestrator_slots` | none: no cap | the tasks in progress an orchestrator holds before the board refuses it new work, as `[limits] orchestrator_slots`, which wins |
 | `review_alarm_ratio` | `2` | review over this many times the work in progress raises the pipeline alarm ([TASKS](TASKS.md#the-pipeline-alarm)) |
 | `review_alarm_hours` | `4` | the hours review must stay over the ratio to raise it |
 | `review_alarm_clear_hours` | `1` | the hours review must stay at or under it to clear it |
@@ -468,7 +471,7 @@ key on one machine.
 
 | Key | Default | What it sets |
 | --- | --- | --- |
-| `orchestrator_slots` | `[board] orchestrator_slots`, else none | the tasks in progress an orchestrator holds |
+| `orchestrator_slots` | `[board] orchestrator_slots`, else none | the tasks in progress an orchestrator holds: a whole number from `1` to `4294967295` |
 | `orchestrator_tasks` | `16` | the open tasks an orchestrator holds the orchestrator role on, at which the board gives it no more and its take or a hand-over to it is refused, a red apart ([TASKS](TASKS.md#the-limit-on-the-tasks-an-orchestrator-holds)); at least `1` |
 | `low_volume` | `4` | PULL's low-volume line below this many open slots; `0` says it to none |
 | `machine_agents` | none: no limit | the agents this machine runs, past which a launch is refused |

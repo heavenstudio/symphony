@@ -237,7 +237,8 @@ discovered or loaded at run time, a configuration answers once and a second inst
 cancels and stops as above and is offered no resume or view, so a host need do nothing to keep
 working. A resume and a view are reached only through what an install holds, so a binary that
 installs no provider links neither, nor the admission a resume makes, as one that installs no
-plugin links no plugin's loopback ([size budgets](CHECKS.md#size-budgets)).
+plugin links none of the wrapping that times a plugin's calls
+([size budgets](CHECKS.md#size-budgets)).
 
 ## What this does not deliver
 

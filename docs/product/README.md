@@ -5,6 +5,10 @@ whoever uses it rather than whoever builds it. How it is built (formats, routes,
 files) stays in the documents the [index](../README.md) lists; a spec links them and repeats none
 of it.
 
+- [What every page shares](FRAME.md) — the header, Activity and its toasts, the chat, the bar of
+  waiting cards and the notices.
+- [Home](HOME.md) — the next card to answer, the few after it, and how the project stands.
+- [The project picker](PROJECTS.md) — every project the machine serves, and which needs the owner.
 - [The review queue](QUEUE.md) — every card waiting on the owner, in the order to answer them.
 - [Reading a document](DOCUMENT.md) — contents, comments, evidence, versions and branch comparisons.
 - [Cards and verdicts](CARDS.md) — deciding, notes, Later, branch drafts and saved history.
@@ -12,6 +16,7 @@ of it.
 - [A task's page](TASK.md) — its gates, timeline, brief, changes and thread, and the owner's approval.
 - [Reports](REPORTS.md) — the project's work over time: what was done, by how many agents, at what cost.
 - [Runs](RUNS.md) — every recorded build and test, what runs now, and one run's steps, failures and log.
+- [The agents page](AGENTS.md) — who is at work, who went quiet, and how to reach each.
 - [Themes and appearance](THEMES.md) — a project's own name, icon and colours, and one device's own look.
 
 ## The form of a spec
@@ -44,11 +49,14 @@ few cards in three folders), takes every line of [pictures.txt](pictures.txt) wi
 on a phone (390x844), wide (1280x800) or both, as the line says, in the light scheme, and writes
 `pictures/NAME-phone.png` and `pictures/NAME-wide.png`. The fixture has a board of its own, which
 `tools/product-pictures/board.sh` fills with a few tasks, one at least in every stage and waiting
-on each kind of thing the board names, and `tools/product-pictures/records.sh` writes there what
-its machine recorded: the runs of the last days and twelve days of hours, for Runs and Reports.
-The pictures after the list's `=theme` line are of the same project with a theme of its own
-(`tools/product-pictures/theme.toml`). The script reaches no shared server and no project's
-board, and stops the server it started.
+on each kind of thing the board names, and with agents live, stale and lost, and
+`tools/product-pictures/records.sh` writes there what its machine recorded: the runs of the last
+days and twelve days of hours, for Runs and Reports. The pictures after the list's `=machine` line
+are of the machine's one server, started then over a machine folder of the script's own that
+holds the fixture and a second project with no board (`tools/product-pictures/pantry`), so its `/`
+is the project picker with one of each. Those after its `=theme` line are of the fixture's own
+server again, with a theme of its own (`tools/product-pictures/theme.toml`). The script reaches no
+shared server, no project's board and no terminal, and stops the servers it started.
 
 - **A new picture** is a line in `pictures.txt`: its name, the widths a document shows it at, the
   page's path and, for a state that takes a press to reach, the steps of `symphony shot` that
@@ -67,7 +75,9 @@ board, and stops the server it started.
 - **Every picture is taken at one moment**, a Monday at 09:30 UTC that the script names: the
   fixture's board and its machine's records are written at moments counted back from it, the
   server's board clock and its reads of those records (Reports' window, Runs' days) are held
-  there, and `symphony shot --clock` holds the page's own. So a page that shows an
-  age or a time ("oldest 6 d", a thread's dates) is the same picture on any day. A page whose
-  words come from somewhere else that moves (a commit's date read from git, the machine's name)
-  is pictured only once the fixture fixes that too.
+  there, and `symphony shot --clock` holds the page's own. So a page that shows an age or a time
+  ("oldest 6 d", a thread's dates) is the same picture on any day. Every date the fixture's files
+  write (a card's dated lines, the commits) is before that moment, so an age reads as days and
+  never as *new*. A page whose words come from somewhere else that moves (a commit's date read
+  from git, the machine's name, a count by the machine's own day) is pictured only once the
+  fixture fixes that too.
