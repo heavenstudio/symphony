@@ -1,9 +1,10 @@
 //! The Markdown syntax every reader of the docs shares, against the rules the docs are read by.
 
 use symphony_docs::syntax::{
-    LineIndex, WikiLink, anchors, card_end, card_line, carded, cards, code_ranges, components,
-    entries, entry_line, heading, heading_anchor, is_continuation, is_indented, line_links,
-    line_of, lines, links, mask_code_spans, pictures, unseen_owner, unseen_owner_line, wikilinks,
+    CARD_LINE, LineIndex, WikiLink, anchors, card_end, card_line, carded, cards, code_ranges,
+    components, entries, entry_line, heading, heading_anchor, is_continuation, is_indented,
+    line_links, line_of, lines, links, mask_code_spans, pictures, unseen_owner, unseen_owner_line,
+    wikilinks,
 };
 
 #[test]
@@ -231,6 +232,21 @@ fn a_card_line_is_a_task_item_with_a_bold_slug() {
     assert_eq!(card_line("- [z] **a**"), None);
     assert_eq!(card_line("- [x] plain task"), None);
     assert_eq!(card_line("  - [x] **nested**"), None);
+}
+
+#[test]
+fn the_card_line_pattern_takes_each_mark_card_line_reads_and_no_other() {
+    let class = (CARD_LINE.split_once(r"\[["))
+        .and_then(|(_, rest)| rest.split_once(r"]\]"))
+        .map(|(class, _)| class)
+        .expect("a bracket of marks");
+    for mark in (' '..='~').chain(['é', '✓', '\u{a0}']) {
+        assert_eq!(
+            class.contains(mark),
+            card_line(&format!("- [{mark}] **a**")).is_some(),
+            "{mark:?}"
+        );
+    }
 }
 
 #[test]

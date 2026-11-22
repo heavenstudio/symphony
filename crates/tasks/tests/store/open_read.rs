@@ -8,7 +8,8 @@ use crate::relay::Relay;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use symphony_board::Store;
-use symphony_board::rpc::{Client, DbError, Kind};
+use symphony_board::db::DbError;
+use symphony_board::rpc::{Client, Kind};
 
 fn open(client: Client) -> Store {
     Store::with(client, Box::new(|| NOW), Box::new(|_| true), HOST).expect("the store opens")

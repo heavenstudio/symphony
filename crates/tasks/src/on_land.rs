@@ -63,11 +63,7 @@ pub fn says(env: &Env) -> Duration {
 /// Whether a landing in `env` may start the command: [`SWITCH`] says `on` or `off`; else only on
 /// the repository's own board, which no `TASKS_SERVER` names.
 pub fn enabled(env: &Env) -> bool {
-    match env.var(SWITCH) {
-        Some("off") => false,
-        Some("on") => true,
-        _ => env.var("TASKS_SERVER").is_none(),
-    }
+    env.switch(SWITCH)
 }
 
 #[derive(Default, Deserialize)]

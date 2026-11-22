@@ -7,7 +7,7 @@ use super::postgres::stage_lines as pg;
 use super::report_lines::line_of;
 use super::statement::both;
 use super::surreal::stage_lines as sql;
-use super::{Error, Store, refused, repr};
+use super::{Error, Store};
 use crate::stages::{self, Facts, InStatus, Line};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -38,7 +38,7 @@ impl Store {
         let mut since = BTreeMap::new();
         for slug in slugs {
             let Some(found) = read.get(slug) else {
-                return Err(refused(format!("no task {}", repr(slug))));
+                return Err(super::work::no_task(slug));
             };
             since.insert(slug.clone(), found.since);
         }

@@ -11,9 +11,9 @@
 //! which the store sends for a read alone, is that statement and its own transaction.
 
 use super::{Ended, Refusal};
+use crate::db::DbError;
 use crate::pg::external::Share;
 use crate::pg::{Answer, RAISED};
-use crate::rpc::DbError;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

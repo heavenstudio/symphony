@@ -43,7 +43,10 @@ process that started it (`postgresql.starter` in the board's folder), and a serv
 starter has ended is on its way out. The board's patience is that
 wait's backstop, and a server still stopping by then is left to finish, the refusal saying the
 machine's load and to run the command again. A server that is starting is never waited for:
-its start is refused, naming the retry. A command uses one connection
+its start is refused, naming the retry. A stop (a move's, a hold's) can meet the same server
+on its way out after it has read its record: when `pg_ctl` finds the server's record gone, the
+stop waits for its end, which the kernel reports, under the same backstop, and the server is
+stopped. A command uses one connection
 for its lifetime; there is no pool. Its backend lives as long
 and keeps what memory its largest statement took, so a read of long lists (a whole board, the
 messages to the owner) is sent a statement a list and answered an item a row, all in one transaction

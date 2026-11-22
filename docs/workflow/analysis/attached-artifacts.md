@@ -3,9 +3,8 @@
 Where a task's pictures and other evidence live once they leave the worktree that made them, how a
 card, a thread post or a document names one so the link works where it is read, and how long each
 is kept. This is a design: of its tasks, the second is built (the committed half), and the rest are
-not yet. F, the split, is chosen on its card in [DECISIONS](../../DECISIONS.md). The tasks that
-build it are on the
-board, in the order of [The implementation tasks](#the-implementation-tasks).
+not yet. F, the split, is chosen on [its card](#pictures-in-every-clone). The tasks that build it
+are on the board, in the order of [The implementation tasks](#the-implementation-tasks).
 
 - **The requirement: a clone shows what the documents show.** A git clone shows the images,
   above all those the documents reference, those of past decisions included.

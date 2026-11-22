@@ -48,7 +48,7 @@ async fn within<T>(what: &str, work: impl Future<Output = T>) -> T {
 }
 
 /// A board read's failure on a server that took the request and gave no answer within the wait.
-pub(super) const SLOW: &str = "SurrealDB: the server at 127.0.0.1:1 is slow: no answer within 3s: read failed on a freshly opened socket after 0 completed requests: Resource temporarily unavailable (os error 35); the request only reads, so it went once more, on a new connection: read failed on a freshly opened socket after 0 completed requests: Resource temporarily unavailable (os error 35); it was not sent a third time";
+pub(super) const SLOW: &str = "the board's database: the server at 127.0.0.1:1 is slow: no answer within 3s: read failed on a freshly opened socket after 0 completed requests: Resource temporarily unavailable (os error 35); the request only reads, so it went once more, on a new connection: read failed on a freshly opened socket after 0 completed requests: Resource temporarily unavailable (os error 35); it was not sent a third time";
 
 struct Held {
     hub: Arc<Hub>,

@@ -17,7 +17,9 @@
 //! apart from the statuses' task-hours. A board that runs none writes the file it always wrote.
 
 use crate::cli::Env;
-use crate::stages::{self, CLAIMED, CLOSED, Facts, Hold, Line, RELEASED, Segment, Stages};
+use crate::stages::{
+    self, CLAIMED, CLOSED, Facts, Hold, Line, RELEASED, Segment, Stages, verdict_is,
+};
 use crate::{ReportPlace, ReportRead, ReportTask, red};
 use std::path::{Path, PathBuf};
 use symphony_api::reports::{
@@ -30,7 +32,7 @@ pub const DAY: f64 = 86_400.0;
 /// How many of the open tasks longest in their status a day names.
 pub const LONGEST: usize = 10;
 /// The folder of day files in the git common dir: in the one folder of Symphony's there, beside
-/// the runs' (DECISIONS: symphony-own-names).
+/// the runs' (docs/engineering/analysis/own-names.md#symphony-own-names).
 pub const FOLDER: &str = "symphony/reports";
 /// Names the folder of day files instead, for a test or a board `TASKS_SERVER` names.
 pub const FOLDER_VAR: &str = "SYMPHONY_REPORTS";
@@ -208,12 +210,6 @@ fn replay(task: &ReportTask, now: f64) -> Replayed<'_> {
         holds: stages::holds(&task.lines, task.created),
         series,
     }
-}
-
-/// Whether a verdict's text is this verdict, alone or before its `: text`.
-fn verdict_is(text: &str, verdict: &str) -> bool {
-    text.strip_prefix(verdict)
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with(':'))
 }
 
 fn is_claim(line: &Line) -> bool {

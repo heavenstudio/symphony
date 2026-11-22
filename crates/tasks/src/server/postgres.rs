@@ -20,7 +20,9 @@
 //! connections. A board's in a scratch place ends once the starter's [`Lifeline`] reads its end,
 //! a scratch SurrealDB's rule; any other board's outlives its starter, as its SurrealDB does, and
 //! ends at a stop or a hold. A start waits for the supervisor's word, never polls; a stop is
-//! PostgreSQL's fast shutdown, waited for by `pg_ctl`. Both take the board's starters' lock, as
+//! PostgreSQL's fast shutdown, waited for by `pg_ctl`, and a stop that meets a server ending on
+//! its own, gone by the time `pg_ctl` reads its record, waits for its end
+//! ([`Postgres::stop_failed`]). Both take the board's starters' lock, as
 //! SurrealDB's do. A start that finds a server of the data on its way out, as a scratch board's
 //! is in the moment after the command that started it ended, waits for that server's end
 //! ([`Postgres::outgoing_ended`]) and then starts its own: one whose record says it is stopping,
@@ -485,7 +487,8 @@ impl Postgres {
     /// they had not committed rolled back, the rest written), waited for by `pg_ctl` the board's
     /// patience at most, then its socket's folder removed. What it was, if anything. One still
     /// stopping by then is left to finish, the caller told so, and never sent a second signal.
-    /// Under the starters' lock.
+    /// One that ended on its own before pg_ctl read its record is waited for to its end, and is
+    /// stopped ([`Postgres::stop_failed`]). Under the starters' lock.
     pub fn stop(&self) -> Result<Option<Serving>, ServerError> {
         let _starters = self.home.lock(Doing::Stopping)?;
         self.home.allow_postgresql()?;
@@ -517,14 +520,7 @@ impl Postgres {
         )
         .map_err(io("could not run", &pg_ctl))?;
         if !said.status.success() {
-            return Err(ServerError::NotUp(format!(
-                "the board's PostgreSQL (pid {}) was asked to stop and has not within {} s: it \
-                 is left to finish, never signalled again ({}); its log is {}",
-                record.pid,
-                self.home.patience.as_secs(),
-                String::from_utf8_lossy(&said.stderr).trim(),
-                self.log().display()
-            )));
+            self.stop_failed(&record, String::from_utf8_lossy(&said.stderr).trim())?;
         }
         self.socket_removed();
         Ok(Some(Serving {
@@ -532,6 +528,45 @@ impl Postgres {
             socket: self.socket(),
             version,
         }))
+    }
+
+    /// What a stop whose `pg_ctl` failed comes to, `said` what pg_ctl said, judged by the server
+    /// `record` named when the stop read it. One whose record is gone ended on its own since: a
+    /// scratch board's does as the command that started it ends ([`SUPERVISED`]'s watchdog), and
+    /// pg_ctl, reading the record after the stop did, finds none to signal. Its end is waited for
+    /// as the kernel says it ([`gone`]), the board's patience its backstop, which only a stall
+    /// reaches and which says the load; then it is stopped. One whose record still names a live
+    /// server of the data still runs: pg_ctl's wait met its bound, or it could not signal it.
+    /// Neither is signalled again.
+    fn stop_failed(&self, record: &PidFile, said: &str) -> Result<(), ServerError> {
+        let left = |why: String| {
+            ServerError::NotUp(format!(
+                "the board's PostgreSQL (pid {}) {why}: it is left to finish, never signalled \
+                 again; its log is {}",
+                record.pid,
+                self.log().display()
+            ))
+        };
+        if self.recorded().is_some() {
+            return Err(left(format!(
+                "was asked to stop, and pg_ctl, which waits {} s at most for its end, says it has \
+                 not ended ({said}; {})",
+                self.home.patience.as_secs().max(1),
+                load_said()
+            )));
+        }
+        let took = format!("took its record with it before pg_ctl read it ({said})");
+        match gone(record.pid, self.home.patience) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(left(format!(
+                "{took}, and has not ended in the {} s this stop waited for it ({})",
+                self.home.patience.as_secs(),
+                load_said()
+            ))),
+            Err(why) => Err(left(format!(
+                "{took}, and its end could not be waited for ({why})"
+            ))),
+        }
     }
 
     /// The socket's folder removed once it holds nothing: a server that stopped cleanly took its

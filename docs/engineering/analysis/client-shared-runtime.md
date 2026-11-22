@@ -2,8 +2,8 @@
 
 Whether the client's eight page modules can share one copy of the code they all carry, so that a
 page's module holds only its own code: what each module holds, the ways the locked toolchain
-offers, a prototype of the most promising one, what it would change, and the card it is asked on
-in [DECISIONS](../../DECISIONS.md). Measured 2026-11-13 on this Mac with Rust 1.99.0, dx 0.7.10 and
+offers, a prototype of the most promising one, what it would change, and the card it is asked on,
+[below](#client-shared-runtime). Measured 2026-11-13 on this Mac with Rust 1.99.0, dx 0.7.10 and
 wasm-bindgen 0.2.129, against the client main had committed at 310a8c3, at load averages of 30 to
 136 from a release run and other agents' builds: every time below is slower than on a quiet
 machine, and moves with the machine's load as much as with the files ([below](#the-prototype)).

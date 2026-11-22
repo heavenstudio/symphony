@@ -35,7 +35,9 @@ targets are the folders of `tests/` with a `main.rs` that says what each holds (
   `transaction.rs`); `lib.rs`'s doc states the rule of every write. Its statements are
   `store/surreal/` and `store/postgres/` ([below](#the-stores-statements-live-in-one-place)).
   `schema.rs` is the tables, the indexes, the version and its steps; `live.rs` which builds may
-  move a live board; `rpc.rs`, `cbor.rs` and `pg.rs` the clients.
+  move a live board; `rpc.rs`, `cbor.rs` and `pg.rs` the clients, and `db.rs` what both answer
+  in (`DbError`, `plain`). `store/reading.rs` holds the variables of a read of tasks, which each
+  engine's statements name alike.
 - **Reaching a board**: `project.rs`, `git.rs`, `folders.rs` (the state folders, named once),
   `builds.rs`, `confine.rs` (where an unasked recipe's path may lead), `launch/bounds.rs`.
 - **Callbacks, delivery and PULL**: `store/callbacks.rs`, `store/dispatcher.rs`,

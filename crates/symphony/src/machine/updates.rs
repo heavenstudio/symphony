@@ -440,7 +440,7 @@ impl TaskBoard for CliBoard {
     fn status(&self, slug: &str) -> Result<Option<String>, String> {
         match self.call("get", &json!({"slug": slug})) {
             Ok(task) => Ok(task["status"].as_str().map(str::to_string)),
-            Err(refused) if refused.0.starts_with("no task ") => Ok(None),
+            Err(refused) if refused.0.starts_with(symphony_board::Error::NO_TASK) => Ok(None),
             Err(error) => Err(error.0),
         }
     }

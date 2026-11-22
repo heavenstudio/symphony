@@ -1,7 +1,7 @@
 # Owner asks
 
-What becomes of what the owner says that waits on an agent's answer, as proposed on the owner-asks
-card in [DECISIONS](../../DECISIONS.md), and what the proposal rests on. Each fact about the code names
+What becomes of what the owner says that waits on an agent's answer, as proposed on the
+[owner-asks](#owner-asks) card, and what the proposal rests on. Each fact about the code names
 the file and function it was read in, at main `7ad7376` and still so at `58309d8`. "On this
 board, 2026-11-11" marks this repository's own board that day.
 

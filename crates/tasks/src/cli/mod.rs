@@ -28,7 +28,7 @@ pub(crate) mod text;
 mod usage;
 
 use crate::maps::Collect as _;
-use crate::rpc::{self, Client};
+use crate::rpc::Client;
 use crate::server::Home;
 use crate::{DATABASE, NAMESPACE, Store, sys};
 use std::collections::BTreeMap;
@@ -64,6 +64,18 @@ impl Env {
             .get(name)
             .map(String::as_str)
             .filter(|v| !v.is_empty())
+    }
+
+    /// Whether what the switch `name` guards may start here: `on` or `off` says; else only on the
+    /// repository's own board, which no `TASKS_SERVER` names (a test's starts none). The one rule
+    /// of every command a board write starts detached: the review and land commands, the
+    /// dispatch, the regenerator and the sweep.
+    pub(crate) fn switch(&self, name: &str) -> bool {
+        match self.var(name) {
+            Some("off") => false,
+            Some("on") => true,
+            _ => self.var("TASKS_SERVER").is_none(),
+        }
     }
 
     /// The deadline `name` sets in seconds (a fraction or none), else `fallback`: how a test gives
@@ -171,7 +183,7 @@ fn run(
     let mut lead = 0;
     let mut scratch = None;
     while args.get(lead).is_some_and(|arg| arg == "--database") {
-        let Some(database) = args.get(lead + 1).filter(|name| rpc::plain(name)) else {
+        let Some(database) = args.get(lead + 1).filter(|name| crate::db::plain(name)) else {
             let _ = writeln!(err, "--database needs a plain database name");
             return 2;
         };
@@ -314,7 +326,7 @@ const NEAREST_SLUGS: usize = 3;
 fn with_nearest_slug(store: &Store, why: String) -> String {
     // The slug as `repr` quotes it: in single quotes, or in double ones when it holds a single one.
     let quoted = |open: char| {
-        why.strip_prefix("no task ")
+        why.strip_prefix(crate::Error::NO_TASK)
             .and_then(|rest| rest.strip_prefix(open))
             .and_then(|rest| rest.strip_suffix(open))
             .filter(|slug| !slug.contains(open) && !slug.contains('\\'))
@@ -609,7 +621,7 @@ fn reach_board(
     held: Option<&Path>,
 ) -> Result<Reached, String> {
     let db = env.var("TASKS_DATABASE").unwrap_or(DATABASE);
-    if !rpc::plain(db) {
+    if !crate::db::plain(db) {
         return Err(format!(
             "TASKS_DATABASE={db:?} is not a plain name for a database"
         ));
@@ -1092,5 +1104,32 @@ mod tests {
             machine(boot_clock(&Env::default())),
             machine(sys::boot_clock())
         );
+    }
+
+    /// A switch says `on` or `off`; unset, empty or any other word leaves the rule: only the
+    /// repository's own board, which no `TASKS_SERVER` names, starts what it guards.
+    #[test]
+    fn a_switch_is_on_or_off_else_only_the_boards_own_server_starts_it() {
+        let env = |vars: &[(&str, &str)]| Env {
+            vars: vars
+                .iter()
+                .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+                .collect(),
+            cwd: PathBuf::new(),
+        };
+        let server = ("TASKS_SERVER", "127.0.0.1:1");
+        assert!(env(&[]).switch("TASKS_X"));
+        assert!(!env(&[server]).switch("TASKS_X"));
+        assert!(env(&[server, ("TASKS_X", "on")]).switch("TASKS_X"));
+        assert!(!env(&[("TASKS_X", "off")]).switch("TASKS_X"));
+        // Another switch's word, an empty one and a word that is neither decide nothing.
+        assert!(!env(&[server, ("TASKS_Y", "on")]).switch("TASKS_X"));
+        assert!(env(&[("TASKS_Y", "off")]).switch("TASKS_X"));
+        assert!(env(&[("TASKS_X", "")]).switch("TASKS_X"));
+        assert!(!env(&[server, ("TASKS_X", "")]).switch("TASKS_X"));
+        assert!(!env(&[server, ("TASKS_X", "yes")]).switch("TASKS_X"));
+        assert!(env(&[("TASKS_X", "ON")]).switch("TASKS_X"));
+        // An empty `TASKS_SERVER` names no server.
+        assert!(env(&[("TASKS_SERVER", "")]).switch("TASKS_X"));
     }
 }

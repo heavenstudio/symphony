@@ -5,7 +5,8 @@ three questions about what the port's data layer and the server are built on: wh
 should read the server through GraphQL, with Apollo or another client cache, in place of today's
 JSON reads and live feed; if so, which Rust GraphQL library; and whether the server should stay
 on Axum or move to Actix Web, Rocket, Warp, bare Hyper or another framework. Each is a card of its
-own in [DECISIONS](../../DECISIONS.md), so each can be answered alone.
+own, so each can be answered alone: [graphql](#graphql), [graphql-library](#graphql-library) and
+[server-framework](#server-framework).
 
 Every claim says how it is known: **measured** (on this machine, by the runs named), **read in
 code** (the file named) or **read in docs** (the source linked, looked up on 2026-11-14), or

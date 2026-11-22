@@ -34,11 +34,7 @@ pub fn delivery_task(parent: Option<&str>, instruction: bool) -> bool {
 /// Whether a task moving to review in `env` may start the command: `TASKS_ON_REVIEW=on` or `off`
 /// says; else only on the repository's own board, which no `TASKS_SERVER` names.
 pub fn enabled(env: &Env) -> bool {
-    match env.var("TASKS_ON_REVIEW") {
-        Some("off") => false,
-        Some("on") => true,
-        _ => env.var("TASKS_SERVER").is_none(),
-    }
+    env.switch("TASKS_ON_REVIEW")
 }
 
 /// The branch a task's `slug` names: the slug itself, or the branch a review task

@@ -234,6 +234,46 @@ fn a_server_is_outgoing_when_its_record_names_it_and_its_starter_has_ended() {
     assert_eq!(board.pg.starter_ended(&record(86894)), None, "cut short");
 }
 
+/// A stop whose `pg_ctl` found no record, where the data holds none, judges by the process the
+/// stop read: one that has ended was stopped, and one still running when the board's patience is
+/// met is left, the refusal saying pg_ctl's words, that the wait stalled and the load.
+#[test]
+fn a_stop_whose_server_took_its_record_with_it_is_stopped_once_its_process_has_ended() {
+    let pg = Home::new(Path::new("/nowhere/board"), Path::new("/s"))
+        .patience(std::time::Duration::ZERO)
+        .postgresql(Path::new("/nowhere/bin"));
+    let record = |pid| PidFile {
+        pid,
+        socket: pg.socket(),
+        ready: true,
+        stopping: false,
+    };
+    let said = "pg_ctl: PID file \"/nowhere/board/postgresql/postmaster.pid\" does not exist";
+    assert!(pg.stop_failed(&record(ENDED), said).is_ok());
+    let mut running = command("/bin/cat")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    let pid = i64::from(running.id());
+    let refused = pg.stop_failed(&record(pid), said).unwrap_err().to_string();
+    drop(running.stdin.take());
+    running.wait().unwrap();
+    assert!(
+        refused.starts_with(&format!(
+            "the board's PostgreSQL (pid {pid}) took its record with it before pg_ctl read it \
+             ({said}), and has not ended in the 0 s this stop waited for it (load average "
+        )),
+        "{refused}"
+    );
+    assert!(
+        refused.ends_with(
+            "it is left to finish, never signalled again; its log is /nowhere/board/postgresql.log"
+        ),
+        "{refused}"
+    );
+}
+
 #[test]
 fn programs_that_are_not_there_are_refused_naming_the_setting_and_the_install() {
     let refused = Home::new(Path::new("/tmp/board"), Path::new("/s"))

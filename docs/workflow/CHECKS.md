@@ -60,8 +60,9 @@ a measurement before and after.
 
 ## Consumer API changes
 
-A public Rust item a known consumer calls is replaced across at least two releases
-(RULES.md `code/consumer-api-two-releases`, [its card](analysis/release-candidate.md#consumer-api-break-release)):
+A public Rust item a known consumer calls is replaced across at least two releases (RULES.md
+`code/consumer-api-two-releases`,
+[its card](analysis/release-candidate.md#consumer-api-break-release)):
 
 1. Ship the replacement alongside the old item, which keeps its signature and behaviour. Do not
    mark the old item `#[deprecated]`: a consumer's lint denies warnings, so the warning itself
@@ -311,13 +312,13 @@ says.
   last edit: a run before an edit is evidence of the text before it. Typed so, each is a test
   run the recorder keeps with its commit
   ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), so its reviewer reads it as
-  recorded, like any test. A guide, or a document under
-  `docs/` but `docs/history/`, a card's own lines and a register region aside, also runs the check for the owner's words in the
-  shapes the guides gave them, dated or straight-quoted (`just test-rs -p symphony-app --test hooks
+  recorded, like any test. A guide, or a document under `docs/` but `docs/history/`, a card's own
+  lines and a register region aside, also runs the check for the owner's words in the shapes the
+  guides gave them, dated or straight-quoted (`just test-rs -p symphony-app --test hooks
   owner_words`, RULES.md `docs/no-ledger-in-documents`), and its reviewer reads for any other
-  shape. For a shipped skill,
-  `just symphony-cli init --root .` run so the installed copies and their stamps are current, and
-  the shipped skills' tests (`just test-rs -p symphony-app --lib init`). It runs no other test.
+  shape. For a shipped skill, `just symphony-cli init --root .` run so the installed copies and
+  their stamps are current, and the shipped skills' tests
+  (`just test-rs -p symphony-app --lib init`). It runs no other test.
 - **A change of settings** (values of `symphony.toml` for settings the Symphony already reads,
   with the guide's or the rules' words that repeat them): `just settings-check` at the tip, the
   project file's shape alone ([PROJECT_FILE](../operations/PROJECT_FILE.md#the-settings-check)), recorded as
@@ -810,6 +811,22 @@ never to a dependent's.
 It is a step of `just verify` (`size-check`), so [the release run](#the-release-run) runs it on
 main's tip. No task's gate runs it, as it costs a release build of the whole workspace, except a
 task whose change adds weight to a shipped binary ([a red at the size check](#a-red-at-the-size-check)).
+
+What every agent reads at the start of a session has lines as well, in bytes, in
+`crates/symphony/tests/hooks/size_lines.toml`: `RULES.md`, the root guide and the three package
+guides (`apps/symphony-web`, `apps/symphony-desktop`, `crates/tasks`), each file under
+`crates/symphony/shipped/skills/`, and each project page beside an installed skill
+(`.agents/skills/NAME/project.md`). The hooks test beside that file
+(`just test-rs -p symphony-app --test hooks size_lines`) is red on a file past its line, naming the
+file, its bytes and its line, on one of those files with no line, and on a line for a file that is
+none of them. A line is the file's size in the commit that sets it plus a tenth, rounded up to a
+multiple of 100 bytes, so an added rule fits and a retold mechanism does not. A red asks for a cut
+first, or for the mechanism the file retells to move to its document or module comment; a line is
+raised only as a binary's is ([a red at the size check](#a-red-at-the-size-check)), by the
+orchestrator's gate decision naming `crates/symphony/tests/hooks/size_lines.toml:KEY`, to the size
+plus a tenth and never higher. KEY is the file's path with its `.md` dropped and each `/` and `.`
+made `-` (`apps-symphony-web-AGENTS`), as a raise names no path, and the test reads each line as a
+raise does. The file of lines is under `tests/`, a check path, so a change to it keeps `review`.
 
 ### Where a line stands
 

@@ -61,7 +61,7 @@ but still identifying a person's computer. The literal value is withheld here. T
 information, not an authentication token. Both phone images in that folder omit machine labels
 and have no matching exposure.
 
-These are evidence of an earlier design comparison. The [decision register](../../DECISIONS.md)
+These are evidence of an earlier design comparison. [Its card](../../workflow/TASKS.md#timeline-burst-drawing)
 records which parts were captured and which options were drawn by hand. A new capture of today's
 UI would not be evidence of that comparison. The applied remedy is an explicit opaque redaction
 of the two machine-label regions in each original. Each mask visibly says `privacy redacted`, so

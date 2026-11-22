@@ -186,8 +186,7 @@ const TRANSITIONS: [(&str, &[&str]); 7] = [
 /// has closed is one this names.
 pub fn approved(thread: &[Message]) -> Option<&Message> {
     let last = thread.iter().rev().find(|m| m.kind == "verdict")?;
-    let rest = last.text.strip_prefix("approve")?;
-    (rest.is_empty() || rest.starts_with(':')).then_some(last)
+    stages::verdict_is(&last.text, "approve").then_some(last)
 }
 
 /// Who sends an approved task no landing has closed back to review ([`Store::move_to`]).
@@ -266,7 +265,19 @@ fn plain_slug(slug: &str) -> bool {
 }
 
 pub(super) fn no_task(slug: &str) -> Error {
-    refused(format!("no task {}", repr(slug)))
+    refused(format!("{}{}", Error::NO_TASK, repr(slug)))
+}
+
+impl Error {
+    /// How the board refuses a slug no task has, before the slug as it quotes it (`no task 'x'`):
+    /// what a caller that goes on without the task, or answers that there is none, reads the
+    /// refusal by ([`Error::is_no_task`]).
+    pub const NO_TASK: &str = "no task ";
+
+    /// Whether this is the board's refusal of a slug no task has.
+    pub fn is_no_task(&self) -> bool {
+        matches!(self, Error::Refused(why) if why.starts_with(Error::NO_TASK))
+    }
 }
 
 /// slug -> parent, for every task.
@@ -1509,5 +1520,38 @@ mod tests {
         assert_eq!(top(&["feature", "other"]), None);
         assert_eq!(top(&["feature", "gone/work"]), None);
         assert_eq!(top(&[]), None);
+    }
+
+    /// The refusal of a slug no task has is read by how the board words it, whatever the slug's
+    /// quoting; another refusal that only names a task, and a database's error in the same words,
+    /// are not it.
+    #[test]
+    fn a_refusal_of_a_slug_no_task_has_is_read_as_one_and_no_other_is() {
+        assert!(no_task("tools/x").is_no_task());
+        assert!(no_task("it's").is_no_task());
+        assert!(no_task("").is_no_task());
+        assert_eq!(no_task("tools/x").to_string(), "no task 'tools/x'");
+        assert!(!refused("there is no task tools/x".into()).is_no_task());
+        assert!(!refused("no tasks wait".into()).is_no_task());
+        assert!(!refused(String::new()).is_no_task());
+        assert!(!Error::Db("no task 'tools/x'".into()).is_no_task());
+        // The approve standing on a thread is its last verdict, when that is an approve.
+        let verdict = |text: &str| Message {
+            id: 1,
+            slug: "tools/x".into(),
+            sender: "plum".into(),
+            recipient: None,
+            kind: "verdict".into(),
+            text: text.into(),
+            ts: 0.0,
+        };
+        let thread = [verdict("changes: one"), verdict("approve: at 1a2b3c4")];
+        assert_eq!(
+            approved(&thread).map(|m| m.text.as_str()),
+            Some("approve: at 1a2b3c4")
+        );
+        assert!(approved(&[verdict("approve"), verdict("approved by nobody")]).is_none());
+        assert!(approved(&[verdict("approve"), verdict("done: merged")]).is_none());
+        assert!(approved(&[]).is_none());
     }
 }

@@ -1,10 +1,11 @@
 # The header
 
 What the header calls the Symphony's pages, how it sits on a phone, and where Appearance lives, as
-proposed on the three header cards in [DECISIONS](../../DECISIONS.md). The pictures are this
-repository's own pages on a private server, dark, at 1440 wide and on a phone (390 wide at 3x),
-taken with `just symphony-cli shot` on 2026-11-11. "Before" is main's client at 7ad7376; "after" is
-the branch `app/header-names`, which builds all three proposals.
+proposed on the three header cards: [header-page-names](#header-page-names),
+[header-on-a-phone](#header-on-a-phone) and [header-appearance](#header-appearance). The pictures
+are this repository's own pages on a private server, dark, at 1440 wide and on a phone (390 wide
+at 3x), taken with `just symphony-cli shot` on 2026-11-11. "Before" is main's client at 7ad7376;
+"after" is the branch `app/header-names`, which builds all three proposals.
 
 ## What is wrong today
 

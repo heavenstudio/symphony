@@ -24,10 +24,7 @@
 //!    another when the merge happened, the board records the merge and the recovery owed.
 
 use super::needs::{self, Needed};
-use super::{
-    Attempt, Landing, MANIFEST, Merging, Pushed, REMOTE, Record, Refusal, Stop, TRIES, evidence,
-    short, taken_said,
-};
+use super::{Landing, MANIFEST, Record, Refusal, Stop, evidence, short, taken_said};
 use crate::cli::Env;
 use crate::store::workflow::explicit_action;
 use crate::sweep::git::{ancestor, rev};
@@ -421,7 +418,6 @@ impl Landing<'_> {
     /// refused; then the bound head merged, checked and moved to; then [`Landing::finalize`].
     fn dispatch(&mut self, intent: &Intent) -> Result<String, Stop> {
         let slug = self.slug;
-        let default = self.settings.default_branch.clone();
         let dispatched = self
             .store
             .dispatch_effect(&self.adapter(), slug, intent.revision);
@@ -438,34 +434,7 @@ impl Landing<'_> {
         let tip = intent.bindings.head.clone();
         self.clean().map_err(|line| self.refuse(line.into()))?;
         let mut base = self.base().map_err(|line| self.refuse(line.into()))?;
-        let mut landed = None;
-        for attempt in 0..TRIES {
-            self.go_on(None).map_err(Stop::Refused)?;
-            match self
-                .integrate(&base, &Merging::Tip(&tip), attempt > 0)
-                .map_err(|refusal| self.refuse(refusal))?
-            {
-                Attempt::Moved { merge, top, taken } => {
-                    landed = Some((merge, top, taken));
-                    break;
-                }
-                Attempt::Raced(now) => {
-                    if attempt + 1 < TRIES {
-                        self.say(&format!(
-                            "land {slug}: {default} moved to {}; merging and checking again",
-                            short(&now)
-                        ));
-                    }
-                    base = now;
-                }
-            }
-        }
-        let Some((merge, top, taken)) = landed else {
-            return Err(self.refuse(Refusal::here(format!(
-                "{default} moved {TRIES} times while {slug} was merged; nothing landed: run the \
-                 land again"
-            ))));
-        };
+        let (merge, top, taken) = self.merge_until_moved(&mut base, &tip)?;
         self.owner_lines_after(&base, &tip);
         self.finalize(&intent, &merge, &top, &taken, false)
     }
@@ -492,14 +461,7 @@ impl Landing<'_> {
         landed.push_str(&taken_said(taken, &default, &self.settings.generators));
         landed.push_str(&self.tokens_said());
         self.go_on(Some(merge)).map_err(Stop::Refused)?;
-        let pushed = match self.push(top) {
-            Pushed::Done => format!("; pushed to {REMOTE}"),
-            Pushed::Off => "; not pushed: [land] push is off".into(),
-            Pushed::NoRemote => format!("; not pushed: no {REMOTE} remote"),
-            Pushed::Failed(why, retry) => {
-                format!("; NOT PUSHED, landed here only: {why}. Push it with: {retry}")
-            }
-        };
+        let pushed = self.push(top).said();
         self.go_on(Some(merge)).map_err(Stop::Refused)?;
         let mut line = format!("{landed}{pushed}");
         let finalized = self

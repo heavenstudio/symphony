@@ -1,9 +1,11 @@
 # Reports and monitoring
 
 What a project's runs, task pages and reports would show, where each figure comes from, and the
-evidence behind the three reports cards in [DECISIONS](../../DECISIONS.md). Each fact about the code
-names the file and function it was read in. "Read 2026-11-11" marks the state of this machine
-that day. The consuming project's files were only read; nothing there was changed.
+evidence behind the three reports cards: [reports-ci-runs](#reports-ci-runs),
+[reports-task-gates-timeline](#reports-task-gates-timeline) and
+[reports-pipeline-defects](#reports-pipeline-defects). Each fact about the code names the file and
+function it was read in. "Read 2026-11-11" marks the state of this machine that day. The consuming
+project's files were only read; nothing there was changed.
 
 ## The ask
 

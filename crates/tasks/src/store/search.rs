@@ -3,10 +3,11 @@
 //! analyzer's terms and the same BM25 ([`super::postgres::search`]). The exact slug branch retains
 //! identifiers containing punctuation even when the analyzer splits them into words.
 //!
-//! The search by meaning the board had is deleted (DECISIONS: board-search-by-meaning). Its tables
-//! (`task_chunk` with its `embedding` field and HNSW index, `task_embedding_source`,
-//! `task_embedding_checkpoint`) keep their definitions in the schema, as removing one is a schema
-//! move, and a board that holds their rows keeps them: nothing here reads or writes them.
+//! The search by meaning the board had is deleted
+//! (docs/engineering/analysis/code-review-2026-11.md#board-search-by-meaning). Its tables (`task_chunk` with
+//! its `embedding` field and HNSW index, `task_embedding_source`, `task_embedding_checkpoint`) keep
+//! their definitions in the schema, as removing one is a schema move, and a board that holds their
+//! rows keeps them: nothing here reads or writes them.
 use super::postgres::{self, Pg};
 use super::statement::both;
 use super::surreal::search as sql;

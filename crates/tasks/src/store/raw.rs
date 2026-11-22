@@ -267,7 +267,7 @@ fn object(fields: Value) -> Map<String, Value> {
 /// `table`, which must be a plain name: it goes into a statement as it is.
 fn named(table: &str) -> String {
     assert!(
-        crate::rpc::plain(table),
+        crate::db::plain(table),
         "{table:?} is not a plain name for a table"
     );
     table.to_string()
@@ -277,7 +277,7 @@ fn named(table: &str) -> String {
 /// statement as it is.
 fn plain(field: &str) {
     assert!(
-        !field.is_empty() && field.split('.').all(crate::rpc::plain),
+        !field.is_empty() && field.split('.').all(crate::db::plain),
         "{field:?} is not a plain name for a field"
     );
 }

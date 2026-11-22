@@ -116,7 +116,7 @@ impl Pending {
 }
 
 pub(crate) fn restorable(launch: &TaskSessionRow) -> bool {
-    !launch.claude_session.is_empty() && launch.claude_session != "codex:"
+    crate::launch::resumable(&launch.claude_session)
 }
 
 /// A reviewer's record on a review instruction, a child a launch starts no reviewer on (it sends

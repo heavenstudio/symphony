@@ -24,12 +24,9 @@ pub fn reviewer_verdict(message: &Message) -> Option<&'static str> {
     if message.kind != "verdict" {
         return None;
     }
-    ["approve", "changes"].into_iter().find(|verdict| {
-        message
-            .text
-            .strip_prefix(verdict)
-            .is_some_and(|rest| rest.is_empty() || rest.starts_with(':'))
-    })
+    ["approve", "changes"]
+        .into_iter()
+        .find(|verdict| crate::stages::verdict_is(&message.text, verdict))
 }
 
 /// The kinds of message that reach an inbox; `system` is the record only.

@@ -4,8 +4,8 @@ Whether the Symphony's web client is better kept in Dioxus, as it is, or moved t
 React 19 built by Vite first and Preact from the same source second, with only the front end in
 question: the server, its API, the feed, the board and the tools stay as they are. Three of the
 client's pages were written again in JSX ([below](#the-experiment)) and measured beside the Dioxus
-pages they copy, on the same machine, server and fixture; the card that asks the question is in
-[DECISIONS](../../DECISIONS.md).
+pages they copy, on the same machine, server and fixture; the card that asks the question is
+[below](#client-framework).
 
 ## The choice
 

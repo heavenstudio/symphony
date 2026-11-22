@@ -4,7 +4,7 @@ A reading of the workspace's structure, its architecture risks, its code smells 
 documentation, as ranked findings a maintainer can act on. Each finding names its evidence, what it
 costs today, the smallest change that would fix it and a size: small (an hour or two), a task, or a
 project (several tasks). Nothing here is built; each finding is a task to file or a choice to put
-in [DECISIONS](../../DECISIONS.md).
+on a card at the finding.
 
 Read at main's `3780edd9` on 2026-11-15, with no build and no test run: the numbers are line
 counts, `cargo tree`, `git rev-list`, `git cat-file` and grep, and a number a choice rests on is
