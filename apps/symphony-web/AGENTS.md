@@ -91,7 +91,9 @@ Each is one a lint or a test does not hold by itself, or names the one that does
   field a newer server adds changes nothing; a block, span or media kind the client does not know
   is drawn as unsupported content, the rest of the page with it.
 - **A failed read is said through `failed`** (`trouble.tsx`) in a read's words, never a post's
-  `NO_ANSWER`, and is tried again through `tryAgain` (`state.ts`) while nothing is drawn.
+  `NO_ANSWER`, and is tried again through `tryAgain` (`state.ts`) while nothing is drawn. Such a
+  part looks on this device again (`parts.ts`), so a database that opened after the store's
+  500 ms deadline still gives the copy when the server does not answer.
 - **No wait by a number** (RULES.md `code/no-timed-waits`): a wait is for its event, and a number
   paces one only through `timing.ts`'s helpers. Biome refuses the rest.
 - **Every key the browser stores goes through `stored`, and every link through `href`**
@@ -179,7 +181,9 @@ input no case lists: a reviewer reads the file's diff for those.
   the whole target, which the release run runs. It builds the client once per run unless
   `SYMPHONY_UI_DIST` names a built distribution's `public/`, and needs Chrome (`SYMPHONY_CHROME`).
   A hidden control takes no focus, so a test waits for `visible(SELECTOR)` before it focuses one;
-  a test of a ghost turns the device's store off (`NO_STORE`).
+  a test of a ghost turns the device's store off (`NO_STORE`). A test of a page with its cache
+  names the store's wait (`symphonyCacheOpenMs`, `shell/cache.ts`), or a loaded machine's slow
+  open runs it without the cache.
 
 ## The build and the distribution
 

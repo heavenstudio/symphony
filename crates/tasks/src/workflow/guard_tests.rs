@@ -3,6 +3,7 @@
 //! graphs leave a route around a guard.
 
 use super::*;
+use crate::store_fixture::pair;
 use crate::workflow::activate::tests::{TWO, custom};
 use crate::workflow::{Custom, agent_session, local_owner};
 use ed25519_dalek::{Signer, SigningKey};
@@ -129,13 +130,6 @@ pub(crate) fn sign_attestation(seed: u8, attestation: &Attestation) -> Signed {
 
 pub(crate) fn sign_observation(seed: u8, observation: &Observation) -> Signed {
     signed(seed, true, &serde_json::to_string(observation).unwrap())
-}
-
-fn pair(phase: &str, state: &str) -> Pair {
-    Pair {
-        phase: phase.into(),
-        state: state.into(),
-    }
 }
 
 /// The accepted state the fixtures attest at.

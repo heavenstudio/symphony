@@ -4,7 +4,7 @@
 //! a rate limit, issues that move while they are listed, and the adapter turned off mid-run.
 
 use crate::github::Fault;
-use crate::{Rig, memory};
+use crate::{Rig, draft, memory};
 use symphony_github::credential::Secret;
 use symphony_github::plan::{import_slug, marker_for, with_marker};
 use symphony_github::state::{Event, Flag};
@@ -12,20 +12,6 @@ use symphony_github::transport::{Failure, Request, Response, Transport};
 
 const IMPORT: &str = "issues = \"import\"\nimport_labels = [\"symphony\"]";
 const EXCHANGE: &str = "issues = \"exchange\"\nimport_labels = [\"symphony\"]";
-
-fn draft(rig: &Rig, slug: &str, title: &str, body: &str) {
-    let file = rig.dir.0.join("public.md");
-    std::fs::write(&file, body).unwrap();
-    rig.run(&[
-        "publish",
-        slug,
-        "--title",
-        title,
-        "--body-file",
-        file.to_str().unwrap(),
-    ])
-    .ok();
-}
 
 #[test]
 fn a_publication_whose_answer_was_lost_is_found_by_its_marker_and_not_made_twice() {

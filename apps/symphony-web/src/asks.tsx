@@ -236,18 +236,93 @@ function AsksBody({ path, scope }: AsksProps) {
   );
 }
 
-function NewAsk({ path, scope, onSent }: AsksProps & { onSent: () => void }) {
-  const key = `review-ask:${scope}/${path}`;
+/** A question's or a follow-up's draft as its form draws it: what `sendDraft` sends, with what a
+ * failed send said and whether the page may show what is out of date. */
+export interface AskDraft extends Draft {
+  attach: Attach;
+  trouble: string | null;
+  stale: boolean;
+}
+
+/**
+ * The draft kept under `key` in this browser, with its attachments, which tells `onSent` once it
+ * was sent. It waits while the page may show what is out of date, and stays editable.
+ */
+export function useAskDraft(key: string, onSent: () => void): AskDraft {
   const [text, setText] = useState(() => load(key) ?? "");
-  const [anchor, setAnchor] = useState("");
-  const [quote, setQuote] = useState("");
   const [sending, setSending] = useState(false);
   const [trouble, setTrouble] = useState<string | null>(null);
   const attach = useAttach(key);
   const mount = useMount();
-  // The question waits while the page may show what is out of date; the draft stays editable.
   const stale = useStore(STALE);
-  const draft = { key, text, sending, attach, mount, setText, setSending, setTrouble, onSent };
+  return {
+    key,
+    text,
+    sending,
+    attach,
+    mount,
+    setText,
+    setSending,
+    setTrouble,
+    onSent,
+    trouble,
+    stale,
+  };
+}
+
+/** A draft's form: its box under `label`, its attachments, what a failed send said and its submit,
+ * which says `word` and calls `onSend`. */
+export function AskForm({
+  draft,
+  id,
+  label,
+  word,
+  onSend,
+}: {
+  draft: AskDraft;
+  id: string;
+  label: string;
+  word: string;
+  onSend: () => Promise<void>;
+}) {
+  const { key, text, sending, attach, trouble, stale } = draft;
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        void onSend();
+      }}
+      data-attach={attach.zone}
+    >
+      <label htmlFor={id}>{label}</label>
+      <Textarea
+        id={id}
+        value={text}
+        maxLength={4000}
+        required={attach.empty}
+        disabled={sending}
+        onChange={(event) => {
+          draft.setText(event.target.value);
+          save(key, event.target.value);
+        }}
+      />
+      <AttachControls attach={attach} disabled={sending} />
+      {trouble !== null && <p role="alert">{trouble}</p>}
+      <Button
+        type="submit"
+        disabled={sending || stale || attach.busy || !ready(text, attach.empty)}
+      >
+        {sending ? "Sending…" : stale ? CHECKING : word}
+      </Button>
+    </form>
+  );
+}
+
+function NewAsk({ path, scope, onSent }: AsksProps & { onSent: () => void }) {
+  const key = `review-ask:${scope}/${path}`;
+  const [anchor, setAnchor] = useState("");
+  const [quote, setQuote] = useState("");
+  const draft = useAskDraft(key, onSent);
   const send = () =>
     sendDraft(draft, `${scope}/api/ask`, (question) => ({ path, question, anchor, quote }));
   return (
@@ -280,34 +355,7 @@ function NewAsk({ path, scope, onSent }: AsksProps & { onSent: () => void }) {
           </Button>
         </>
       )}
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          void send();
-        }}
-        data-attach={attach.zone}
-      >
-        <label htmlFor="new-ask">Question</label>
-        <Textarea
-          id="new-ask"
-          value={text}
-          maxLength={4000}
-          required={attach.empty}
-          disabled={sending}
-          onChange={(event) => {
-            setText(event.target.value);
-            save(key, event.target.value);
-          }}
-        />
-        <AttachControls attach={attach} disabled={sending} />
-        {trouble !== null && <p role="alert">{trouble}</p>}
-        <Button
-          type="submit"
-          disabled={sending || stale || attach.busy || !ready(text, attach.empty)}
-        >
-          {sending ? "Sending…" : stale ? CHECKING : "Ask"}
-        </Button>
-      </form>
+      <AskForm draft={draft} id="new-ask" label="Question" word="Ask" onSend={send} />
     </>
   );
 }
@@ -315,14 +363,7 @@ function NewAsk({ path, scope, onSent }: AsksProps & { onSent: () => void }) {
 export function AskThread({ ask, scope, onSent }: { ask: Ask; scope: string; onSent: () => void }) {
   const [shown, watch] = useVisibility();
   const key = `review-ask-reply:${ask.id}`;
-  const [text, setText] = useState(() => load(key) ?? "");
-  const [sending, setSending] = useState(false);
-  const [trouble, setTrouble] = useState<string | null>(null);
-  const attach = useAttach(key);
-  const mount = useMount();
-  // The follow-up waits while the page may show what is out of date; the draft stays editable.
-  const stale = useStore(STALE);
-  const draft = { key, text, sending, attach, mount, setText, setSending, setTrouble, onSent };
+  const draft = useAskDraft(key, onSent);
   const send = () =>
     sendDraft(draft, `${scope}/api/ask-reply`, (message) => ({
       id: String(ask.id),
@@ -341,34 +382,13 @@ export function AskThread({ ask, scope, onSent }: { ask: Ask; scope: string; onS
               <BlocksView blocks={message.blocks ?? []} />
             </div>
           ))}
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              void send();
-            }}
-            data-attach={attach.zone}
-          >
-            <label htmlFor={`reply-${ask.id}`}>Follow up</label>
-            <Textarea
-              id={`reply-${ask.id}`}
-              value={text}
-              maxLength={4000}
-              required={attach.empty}
-              disabled={sending}
-              onChange={(event) => {
-                setText(event.target.value);
-                save(key, event.target.value);
-              }}
-            />
-            <AttachControls attach={attach} disabled={sending} />
-            {trouble !== null && <p role="alert">{trouble}</p>}
-            <Button
-              type="submit"
-              disabled={sending || stale || attach.busy || !ready(text, attach.empty)}
-            >
-              {sending ? "Sending…" : stale ? CHECKING : "Send follow-up"}
-            </Button>
-          </form>
+          <AskForm
+            draft={draft}
+            id={`reply-${ask.id}`}
+            label="Follow up"
+            word="Send follow-up"
+            onSend={send}
+          />
         </>
       )}
     </article>

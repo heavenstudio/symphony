@@ -4,17 +4,10 @@
 use super::*;
 use crate::rows::Dump;
 use crate::store::postgres::Pg;
-use crate::store_fixture::{Backend, Fixture, Seed};
+use crate::store_fixture::{Backend, Fixture, Seed, pair, refused};
 use symphony_plugin::execution::PrincipalKind;
 
 const BACKENDS: [Backend; 2] = [Backend::SurrealDb, Backend::PostgreSql];
-
-fn pair(phase: &str, state: &str) -> Pair {
-    Pair {
-        phase: phase.into(),
-        state: state.into(),
-    }
-}
 
 #[test]
 fn a_position_and_a_transition_are_read_by_field_as_their_decoders_read_them() {
@@ -182,13 +175,6 @@ fn managed(f: &Fixture, slug: &str) -> Transition {
     let first = moved(slug, 1, pair("build", "working"), "in_progress");
     f.store.record_transition(&first, 0).unwrap();
     first
-}
-
-fn refused(result: Result<impl std::fmt::Debug, Error>) -> String {
-    match result {
-        Err(Error::Refused(why)) => why,
-        other => panic!("expected a refusal, got {other:?}"),
-    }
 }
 
 #[test]

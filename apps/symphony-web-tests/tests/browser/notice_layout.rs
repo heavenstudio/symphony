@@ -29,10 +29,7 @@ fn a_stale_notice_leaves_header_and_fixed_controls_uncovered() {
         SHOWN
     ));
     for width in [320, 390, 1024] {
-        chrome.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":false}),
-        );
+        chrome.viewport(width, 900, false);
         chrome.eval("scrollTo(0,0); new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
         assert_eq!(
             chrome.eval(r#"(() => {
@@ -69,13 +66,8 @@ fn the_notice_reserve_keeps_one_page_end_across_the_phone_breakpoint() {
     let ends: Vec<Value> = [761, 760, 761]
         .into_iter()
         .map(|width| {
-            chrome.call(
-                "Emulation.setDeviceMetricsOverride",
-                json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":false}),
-            );
-            chrome.eval(
-                "new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))",
-            );
+            chrome.viewport(width, 900, false);
+            chrome.frames();
             chrome.eval(r#"(() => {
                 const reserve = document.querySelector('.page-notice-reserve').getBoundingClientRect();
                 return {reserve: reserve.height, end: document.querySelector('main').getBoundingClientRect().bottom - reserve.top};
@@ -116,10 +108,7 @@ fn at_320_px_a_task_pages_stale_notice_going_live_keeps_the_reserve_under_the_co
         site.set_json(path, &responses[path]);
     }
     let Some(mut chrome) = chrome() else { return };
-    chrome.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":320,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    chrome.viewport(320, 900, false);
     chrome.open(&site.url("/task/visual/in-progress"));
     assert!(
         chrome.wait_for(
@@ -152,7 +141,7 @@ fn at_320_px_a_task_pages_stale_notice_going_live_keeps_the_reserve_under_the_co
         "the stale notice must go once the feed is back: {}",
         chrome.eval("document.body.innerText")
     );
-    chrome.eval("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+    chrome.frames();
     assert_eq!(
         chrome.eval(PAGE_END),
         stale,
@@ -171,10 +160,7 @@ fn a_task_page_error_is_a_notice_and_clearing_it_on_reconnect_keeps_the_page_end
     }
     site.fail_route("/api/task-offer", true);
     let Some(mut chrome) = chrome() else { return };
-    chrome.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":320,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    chrome.viewport(320, 900, false);
     chrome.open(&site.url("/task/visual/in-progress"));
     assert!(
         chrome.wait_for(
@@ -257,10 +243,7 @@ fn composed(page: &str, width: u32, height: u32) -> Option<(Site, Chrome)> {
         vec![json!({"type":"paragraph","spans":[{"type":"text","text":"What the pantry keeps."}]})],
     );
     let mut chrome = chrome()?;
-    chrome.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":height,"deviceScaleFactor":1,"mobile":width <= 600}),
-    );
+    chrome.viewport(width, height, width <= 600);
     chrome.open(&site.url(page));
     assert!(
         chrome.wait_for(
@@ -461,10 +444,7 @@ fn on_a_phone_the_pages_without_a_composer_keep_their_notices_on_screen() {
         }
         // Each page a first visit, on a stand-in and in a browser context of its own.
         chrome.fresh_context();
-        chrome.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true}),
-        );
+        chrome.viewport(390, 844, true);
         chrome.open(&site.url(page));
         wait_for_feed(&site).expect("the page never followed the feed");
         site.server_notice(HELD);

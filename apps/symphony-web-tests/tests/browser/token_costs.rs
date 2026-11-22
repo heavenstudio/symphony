@@ -3,7 +3,7 @@
 //! the page's foot; the board asks the cost of the cards it drew in one read apart from its
 //! listings, once they are drawn, and shows each card's figure before its time. With a folder
 //! named, the four views' pictures, wide and on a phone, light and dark.
-use super::{SHOWN, binaries, chrome, common, dist, look_parity, site, site::Site};
+use super::{SHOWN, binaries, chrome, common, look_parity, site, site::Site, texts};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -240,7 +240,7 @@ fn no_tokens() -> Value {
 
 /// The stand-in answering the fixture task's page and thread, and the design's task's timeline.
 fn worked_site() -> Site {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let content = look_parity::responses();
     for path in ["/api/task-page", "/api/task-history"] {
         site.set_json(path, &content[path]);
@@ -248,15 +248,6 @@ fn worked_site() -> Site {
     site.set_json(symphony_api::TASK_TIMELINE_PATH, &worked_timeline());
     site.set_json(TASK_TOKENS_PATH, &worked_tokens());
     site
-}
-
-/// The text of each element `selector` matches, in the page's order.
-fn texts(page: &mut chrome::Chrome, selector: &str) -> Vec<String> {
-    serde_json::from_value(page.eval(&format!(
-        "[...document.querySelectorAll({})].map(e => e.textContent.trim())",
-        json!(selector)
-    )))
-    .unwrap_or_default()
 }
 
 /// What each stretch that carries a cost says after its time, in the design's table's order.
@@ -281,10 +272,7 @@ fn a_tasks_cost_follows_its_time_on_its_timeline_and_nothing_is_at_the_pages_foo
         let Some(mut page) = chrome() else {
             panic!("Chrome is required for the tokens' acceptance")
         };
-        page.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":width < 400}),
-        );
+        page.viewport(width, 900, width < 400);
         page.open(&site.url(PAGE));
         assert!(
             page.wait_for(
@@ -456,10 +444,7 @@ fn a_task_with_no_tokens_draws_no_cost_anywhere_on_desktop_and_phone() {
             let Some(mut page) = chrome() else {
                 panic!("Chrome is required for the tokens' acceptance")
             };
-            page.call(
-                "Emulation.setDeviceMetricsOverride",
-                json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":width < 400}),
-            );
+            page.viewport(width, 900, width < 400);
             page.open(&site.url(PAGE));
             assert!(
                 page.wait_for(
@@ -501,7 +486,7 @@ fn a_task_with_no_tokens_draws_no_cost_anywhere_on_desktop_and_phone() {
 
 #[test]
 fn the_board_asks_the_cost_of_the_cards_it_drew_once_and_shows_it() {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     site.set_json("/api/task-board", &site::example_listing("ready"));
     site.set_json(
         TASK_COSTS_PATH,
@@ -510,10 +495,7 @@ fn the_board_asks_the_cost_of_the_cards_it_drew_once_and_shows_it() {
     let Some(mut page) = chrome() else {
         panic!("Chrome is required for the cards' acceptance")
     };
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    page.viewport(1440, 900, false);
     page.open(&site.url("/tasks"));
     assert!(
         page.wait_for(
@@ -757,7 +739,7 @@ fn pictured_site() -> Site {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs_f64();
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let content = look_parity::responses();
     for path in ["/api/task-page", "/api/task-history"] {
         site.set_json(path, &content[path]);
