@@ -3,16 +3,14 @@
 //! The worker that calls a round at each sweep is `front/sweep_tests.rs`'s.
 
 use std::sync::Arc;
-use std::time::Instant;
 
 use super::*;
 use crate::front::MachineClock;
-use crate::gate::Gate;
 
 fn shared(tree: &crate::testing::Tree) -> Arc<Shared> {
     let root = tree.path("alpha");
     std::fs::create_dir_all(&root).unwrap();
-    let gate = Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now));
+    let gate = crate::testing::open_gate();
     Shared::project(
         i64::from(std::process::id()),
         1,

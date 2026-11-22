@@ -3,14 +3,13 @@
 use super::{Hub, Sweep};
 use crate::backstop::Backstop;
 use crate::front::{Shared, router};
-use crate::gate::Gate;
 use crate::testing::{Tree, git, repository, shelf};
 use notify::event::{AccessKind, CreateKind, Flag, ModifyKind, RemoveKind, RenameMode};
 use notify::{Event, EventKind, Watcher};
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_api::{Block, Document, GalleryItem, Media};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -158,7 +157,7 @@ async fn watcher_refreshes_gallery_picture_but_reuses_it_for_document_events() {
         address.port(),
         &root,
         Some(&root),
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+        crate::testing::open_gate(),
     );
     assert!(shared.api.set(hub.clone()).is_ok());
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();

@@ -60,31 +60,10 @@ async fn the_route_answers_a_logs_tail_and_a_range_and_refuses_what_is_no_runs_l
     use axum::http::StatusCode;
     let tree = Tree::new();
     let root = crate::testing::repository(&tree);
-    let shared = crate::front::Shared::new(
-        1,
-        1234,
-        &root,
-        None,
-        crate::gate::Gate::new(Arc::new(|_| Ok(None)), Arc::new(std::time::Instant::now)),
-    );
+    let shared = crate::front::Shared::new(1, 1234, &root, None, crate::testing::open_gate());
     let ask = |uri: String| {
         let shared = shared.clone();
-        let request = axum::http::Request::builder()
-            .uri(uri)
-            .header("Host", "localhost:1234")
-            .body(())
-            .unwrap();
-        async move {
-            let response = crate::api::answer(&shared, request).await.unwrap();
-            let status = response.status();
-            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-                .await
-                .unwrap();
-            (
-                status,
-                serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
-            )
-        }
+        async move { crate::testing::get_json(&shared, &uri).await }
     };
     let run = "0123456789abcdef0123456789abcdef";
     let (status, said) = ask(format!("/api/run-log?run={run}&tail=1&from=2")).await;

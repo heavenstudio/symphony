@@ -47,7 +47,7 @@ impl SweepFixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir(&root).unwrap();
-        let gate = Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now));
+        let gate = crate::testing::open_gate();
         let shared = Shared::project(
             i64::from(std::process::id()),
             1,

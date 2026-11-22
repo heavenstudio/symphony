@@ -1,5 +1,6 @@
-//! Compatibility wrappers and frozen invocation/stream connection state. These controls do not
-//! supply publication evidence; native producer tests cover target admission on real boards.
+//! The api's entries with no context given, and frozen invocation/stream connection state. These
+//! controls do not supply publication evidence; native producer tests cover target admission on
+//! real boards.
 
 use super::super as api;
 use serde_json::{Value, json};
@@ -34,9 +35,9 @@ fn connect_only_valid_v2_calls_remain_pending_before_any_connection_in_every_inp
                 Err("v1 connection selected".into())
             };
             let code = if mode == "lines" {
-                api::serve(&mut input, &mut out, connect)
+                api::serve_in(&mut input, &mut out, connect, None)
             } else {
-                api::run(&mut input, &mut out, connect)
+                api::run_in(&mut input, &mut out, connect, None)
             };
             assert_eq!(code, 0, "{mode}: {call}: {out:?}");
             let response: Value = serde_json::from_slice(&out).unwrap();
@@ -76,9 +77,9 @@ fn legacy_wrappers_keep_one_lazy_connection_for_lists_and_lines() {
             Err("v1 connection selected".into())
         };
         let code = if streaming {
-            api::serve(&mut input, &mut out, connect)
+            api::serve_in(&mut input, &mut out, connect, None)
         } else {
-            api::run(&mut input, &mut out, connect)
+            api::run_in(&mut input, &mut out, connect, None)
         };
         assert_eq!(code, 0, "streaming={streaming}: {out:?}");
         let replies = if streaming {
@@ -167,7 +168,7 @@ fn a_connect_only_entry_names_no_integration_state_and_reaches_no_board_for_it()
         connections.set(connections.get() + 1);
         Err("never reached".into())
     };
-    assert_eq!(api::run(&mut input, &mut out, connect), 0);
+    assert_eq!(api::run_in(&mut input, &mut out, connect, None), 0);
     let answer: Value = serde_json::from_slice(&out).unwrap();
     assert_eq!(
         answer,
