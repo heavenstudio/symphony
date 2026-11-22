@@ -1,0 +1,1 @@
+import{ht as e,un as t}from"./shared-25b9f24a9c38ac7f.js";var n=e();function r({children:e}){return(0,n.jsxs)(`p`,{className:`first-steps`,children:[e,` `,(0,n.jsx)(`a`,{href:t,target:`_blank`,rel:`noopener noreferrer`,children:`Getting started`})]})}function i(e){return e.every(([,e])=>e===0)}export{i as n,r as t};
