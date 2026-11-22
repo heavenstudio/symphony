@@ -1000,10 +1000,12 @@ async function followTagged<T>(
       if (answer.same) {
         told.answered(null);
       } else {
-        last = read(answer.value);
-        if (last === null) throw new Error(unreadable);
+        // An answer it cannot read leaves the last one it read standing.
+        const value = read(answer.value);
+        if (value === null) throw new Error(unreadable);
+        last = value;
         etag = answer.etag;
-        told.answered(last);
+        told.answered(value);
       }
     } catch (error) {
       if (signal.aborted) return;
@@ -1506,7 +1508,7 @@ export async function followRun(
   wait: Wait = pause,
 ): Promise<void> {
   const url = `${RUN_PATH}?run=${encodeURIComponent(id)}`;
-  const log = async (last: RunPage | null): Promise<boolean> => {
+  const readLog = async (last: RunPage | null): Promise<boolean> => {
     let logRead = true;
     if (last?.run.log != null) {
       try {
@@ -1540,7 +1542,7 @@ export async function followRun(
     signal,
     told,
     wait,
-    log,
+    readLog,
   );
 }
 
