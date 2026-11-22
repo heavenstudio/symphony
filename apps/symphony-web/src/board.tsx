@@ -40,6 +40,7 @@ import { said } from "./request";
 import { useAnchor } from "./route";
 import { useScrollRow } from "./scrollrow";
 import { SelectField } from "./select";
+import { snapshot } from "./shared";
 import { load, save } from "./storage";
 import { isTask } from "./task";
 import { statusWords } from "./taskcard";
@@ -88,9 +89,26 @@ export function firstPageHeight(count: number): number {
   return Math.min(count, PAGE) * ROW + (count > PAGE ? MORE : 0);
 }
 
-/** The lifecycle columns and their complete totals, saved for the next visit's ghost. */
+/** A column's key for a workflow's phase begins with this (flow.tsx's `PHASE`, whose chunk the
+ * board's first visit does not load). */
+const PHASE_KEY = "phase:";
+
+/** The lifecycle columns and their complete totals, and a workflow's phases with theirs, saved
+ * for the next visit's ghost. */
 export function boardShape(counts: [string, number][]): [string, number][] {
-  return STAGES.map((status) => [status, counts.find(([one]) => one === status)?.[1] ?? 0]);
+  return [
+    ...STAGES.map((status): [string, number] => [
+      status,
+      counts.find(([one]) => one === status)?.[1] ?? 0,
+    ]),
+    ...counts.filter(([status]) => status.startsWith(PHASE_KEY)),
+  ];
+}
+
+/** The phone's stage the ghost draws: the one `saved`, a workflow's phase among them, else the
+ * first of the board's own tabs. */
+export function ghostStage(saved: string | null): string {
+  return saved?.startsWith(PHASE_KEY) ? saved : savedStage(saved);
 }
 function defaultShape(): [string, number][] {
   return STAGES.map((status) => [status, status === "build" || status === "test" ? 0 : 1]);
@@ -108,9 +126,18 @@ export function recallShape(kept: string | null): [string, number][] {
   return shape.length === 0 ? defaultShape() : shape;
 }
 
-/** `shape` as SHAPE keeps it. */
-export function keepShape(shape: [string, number][]): string {
-  return shape.map(([status, count]) => `${status} ${count}`).join("\n");
+/** The line SHAPE ends with when the board was a custom workflow's, which a shape's line never is. */
+const WORKFLOW = "workflow";
+
+/** `shape` as SHAPE keeps it, and whether a custom `workflow` held the board. */
+export function keepShape(shape: [string, number][], workflow = false): string {
+  const lines = shape.map(([status, count]) => `${status} ${count}`);
+  return [...lines, ...(workflow ? [WORKFLOW] : [])].join("\n");
+}
+
+/** The ghost SHAPE `kept` gives: its columns' shape, and whether a custom workflow held the board. */
+export function recallGhost(kept: string | null): { shape: [string, number][]; workflow: boolean } {
+  return { shape: recallShape(kept), workflow: (kept ?? "").split("\n").includes(WORKFLOW) };
 }
 
 /** A task's card while it loads: its box as tall as `card`'s pitch less the space under it, a bar
@@ -149,10 +176,17 @@ function GhostColumn({ status, count }: { status: string; count: number }) {
 }
 
 /** The task board before its first read: its filters and, in the `shape` it last had, its columns
- * with a card for each task they held, each as this browser last drew it. */
-export function GhostBoard({ shape }: { shape: [string, number][] }) {
+ * with a card for each task they held, each as this browser last drew it. A phone keeps the row of
+ * work under way its room, unless the board was a custom `workflow`'s, which draws none. */
+export function GhostBoard({
+  shape,
+  workflow = false,
+}: {
+  shape: [string, number][];
+  workflow?: boolean;
+}) {
   const phone = windowWidth() <= 760;
-  const stages = phone ? [savedStage(load(STAGE_KEY))] : STAGES;
+  const stages = phone ? [ghostStage(load(STAGE_KEY))] : STAGES;
   return (
     <div className="waiting-board waiting-ghost">
       <div className="board-toolbar">
@@ -171,6 +205,7 @@ export function GhostBoard({ shape }: { shape: [string, number][] }) {
           <span className="ghost-field" style={{ width: "8.125rem" }} />
         </div>
       </div>
+      {phone && !workflow && <div className="under-way" />}
       <nav className="wait-strip" aria-hidden="true">
         <span className="open-count">0 open</span>
         {WAIT_KINDS.map((kind, index) => (
@@ -235,6 +270,43 @@ export function BoardContext({ work, connected }: { work: MachineWork; connected
       </p>
       <a href={href("/agents#machine-context")}>Machine details and advisory targets</a>
     </details>
+  );
+}
+
+/** What the phone's row of work under way is given. */
+export interface UnderWayProps {
+  /** The tasks in progress that no machine builds or tests, the blocked ones left out. */
+  inProgress: number;
+  /** The tasks a machine builds and those one tests; none while no machine reports its work. */
+  machines: [building: number, testing: number] | null;
+  /** Show a stage's lane. */
+  onStage: (stage: string) => void;
+}
+
+/**
+ * How much work is under way, on a phone, where one stage is mounted and the Build and Test tabs
+ * are past the row's edge: every task in progress, a machine's builds and tests among them and
+ * named as such, each count a button to its lane. The tasks no machine has are "in progress", as
+ * their tab is, never "working": the wait strip's Working counts the tasks an agent is at, in any
+ * stage. Four cells of fixed shares in one fixed row (`styles/boardwait.css`), so a count that
+ * changes, or a machine's first report, moves nothing.
+ */
+export function UnderWay({ inProgress, machines, onStage }: UnderWayProps) {
+  const [building, testing] = machines ?? [0, 0];
+  const lane = (stage: string, count: number, label: string) => (
+    <button type="button" data-stage={stage} onClick={() => onStage(stage)}>
+      <b>{count}</b> {label}
+    </button>
+  );
+  return (
+    <nav className="under-way" aria-label="Work under way">
+      <span className="under-way-all">
+        <b>{inProgress + building + testing}</b> under way
+      </span>
+      {lane("in_progress", inProgress, "in progress")}
+      {machines !== null && lane("build", building, "building")}
+      {machines !== null && lane("test", testing, "testing")}
+    </nav>
   );
 }
 
@@ -483,18 +555,30 @@ export function TaskBoard({
   const { search, days } = filters;
   const [wait, setWait] = useState("");
   // A custom workflow's lanes, tabs and strip, from a chunk of its own read once the listing says
-  // one is active, and again when its generation moves (`flow.tsx`).
+  // one is active, and again when its generation moves (`flow.tsx`). A chunk that does not come is
+  // said with its retry, as a task's page says its own, once the shell has said the page's build
+  // is not gone (the page then loads again); the board draws its own lanes meanwhile.
   const [flow, setFlow] = useState<Flow | null>(null);
+  const [flowFailed, setFlowFailed] = useState(false);
   const generation = waiting?.workflow;
   useEffect(() => {
     const reading = new AbortController();
-    if (generation)
-      void import("./flow")
-        .then((chunk) => chunk.readFlow(scope, reading.signal, NAMES, [STAGES, PHONE_STAGES]))
-        .then((read) => reading.signal.aborted || setFlow(read));
-    else setFlow(null);
+    if (!generation) {
+      setFlow(null);
+      NAMES.clear();
+    } else if (!flowFailed)
+      import("./flow").then(
+        (chunk) =>
+          void chunk
+            .readFlow(scope, reading.signal, NAMES, [STAGES, PHONE_STAGES])
+            .then((read) => reading.signal.aborted || setFlow(read)),
+        async () => {
+          const shell = snapshot("reviewShell") as { gone(): Promise<boolean> } | undefined;
+          if (!reading.signal.aborted && !(await shell?.gone())) setFlowFailed(true);
+        },
+      );
     return () => reading.abort();
-  }, [scope, generation]);
+  }, [scope, generation, flowFailed]);
   const [stages, tabs] = flow?.lanes(waiting) ?? [STAGES, PHONE_STAGES];
   const name = (stage: string) => NAMES.get(stage) ?? statusLabel(stage);
   // The phone's stage this device chose, kept as chosen, and the one shown: the first of the
@@ -715,6 +799,14 @@ export function TaskBoard({
     onFilter(search, days, next);
   };
   const machine = work.machines.length > 0;
+  // Show a stage on a phone: one of the tabs chosen and kept, or a machine's stage opened.
+  const show = (stage: string) => {
+    if (tabs.includes(stage)) {
+      setSelected(stage);
+      save(STAGE_KEY, stage);
+      setOpened("");
+    } else setOpened(stage);
+  };
   // A phone's two rows of choices scroll across: each keeps its chosen one whole in view.
   const waits = useScrollRow(wait);
   const tabRow = useScrollRow(`${opened}:${tab}`);
@@ -781,6 +873,20 @@ export function TaskBoard({
           wait === "" && search === "" ? (meta("ready")?.ordinary ?? count("ready")) : undefined
         }
       />
+      {/* Under a wait filter, whose counts are the filter's, the row keeps its room, so the strip
+          under it stays where the chip was pressed. A custom workflow's lanes are phases: its
+          board draws none, from the listing that names it, before its lanes are read. */}
+      {phone &&
+        !generation &&
+        (wait === "" ? (
+          <UnderWay
+            inProgress={meta("in_progress")?.ordinary ?? count("in_progress")}
+            machines={machine ? [count("build"), count("test")] : null}
+            onStage={show}
+          />
+        ) : (
+          <div className="under-way" />
+        ))}
       <nav
         ref={waits}
         className="wait-strip scroll-row"
@@ -818,6 +924,12 @@ export function TaskBoard({
         </FirstSteps>
       )}
       {flow?.strip({ waiting, wait, choose: chooseWait, open: setOpened, opened, phone })}
+      {flowFailed && generation && (
+        <p className="flow-failed" role="alert">
+          {"The workflow's phases could not be loaded. "}
+          <Button onClick={() => setFlowFailed(false)}>Retry</Button>
+        </p>
+      )}
       {wait === "" && (
         <nav ref={tabRow} className="stage-tabs scroll-row" aria-label="Task stages">
           {tabs.map((stage) => (
@@ -829,11 +941,7 @@ export function TaskBoard({
                   ? "page"
                   : undefined
               }
-              onClick={() => {
-                setSelected(stage);
-                save(STAGE_KEY, stage);
-                setOpened("");
-              }}
+              onClick={() => show(stage)}
             >
               {name(stage)} <i>{meta(stage)?.ordinary ?? count(stage)}</i>
               {(meta(stage)?.blocked ?? 0) > 0 && <b>+{meta(stage)?.blocked}</b>}
@@ -845,9 +953,9 @@ export function TaskBoard({
                 key={stage}
                 type="button"
                 aria-current={opened === stage ? "page" : undefined}
-                onClick={() => setOpened(stage)}
+                onClick={() => show(stage)}
               >
-                {statusLabel(stage)} {count(stage)}
+                {name(stage)} {count(stage)}
               </button>
             ))}
         </nav>

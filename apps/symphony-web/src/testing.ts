@@ -89,6 +89,8 @@ export const CASES = cases as unknown as {
   decode: [string, [string, string][]][];
   /** `blocks` holds every kind of block, span and media, and every word they name. */
   samples: {
+    settings: unknown;
+    emptySettings: unknown;
     queue: unknown;
     emptyQueue: unknown;
     board: unknown;
@@ -118,8 +120,12 @@ export const CASES = cases as unknown as {
     /** The owner's next actions on a task in review, one unavailable; an apply's answer. */
     nextActions: unknown;
     applied: unknown;
+    /** The owner's actions at Verify, Accept taking the accepted output of the task it depends on. */
+    takingActions: unknown;
     /** A waiting listing of tasks the workflow holds, one blocked in Build. */
     heldListing: unknown;
+    taskGuards: unknown;
+    guardRefusal: unknown;
     /** A task's attempts: one stopped, its resume running, one of a provider not held; a view. */
     attempts: unknown;
     attemptLink: unknown;

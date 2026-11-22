@@ -34,8 +34,8 @@ moves between the pages with it and hears from the agents without leaving the pa
   machine's one Symphony, which serves each project under its id, however many it serves; a
   Symphony started for one checkout alone has none.
 - **The pages**, always in this order: **Home**, **Queue**, **Docs**, **Board**, **Reports**,
-  **Runs**, **Agents**, then any page the project adds of its own. The one shown is lit. A
-  task's page lights **Board**, and a document or a folder lights **Docs**.
+  **Settings**, **Runs**, **Agents**, then any page the project adds of its own. The one shown is
+  lit. A task's page lights **Board**, and a document or a folder lights **Docs**.
 - **The crumbs** say what the lit page does not: a document's folders and its name, each folder a
   link, or a task's slug.
 - **Appearance** (the half-filled circle) opens [a small panel](THEMES.md#appearance) that
@@ -136,8 +136,8 @@ no press and say *Checking…*; what is typed stays editable. The chat's **Send*
 ![The chat open on a phone](pictures/frame-sheet-phone.png)
 
 - The header is two rows: the name, **Projects**, **Appearance** and **Activity**, then the
-  pages across the width. The seven pages fit; a project's own beyond them scroll sideways, and
-  one that does not fit whole is drawn as an empty shape rather than cut.
+  pages across the width. The first seven show whole; **Agents** and a project's own beyond them
+  scroll sideways, and one that does not fit whole is drawn as an empty shape rather than cut.
 - There are no crumbs, and the header scrolls away with the page.
 - On the narrowest phones **Activity** is its bell alone.
 - The chat is a sheet over the lower part of the page, the bar and **+** under it, instead of a

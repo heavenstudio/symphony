@@ -125,6 +125,68 @@ fn a_phones_chosen_stage_survives_a_full_load() {
     fits(&mut page);
 }
 
+/// One machine reporting no work of its own: with it the board draws its Build and Test stages.
+fn a_machine() -> Value {
+    json!({"freshness": "fresh", "unassigned": [], "machines": [{"machine_id": "alpha",
+        "label": "alpha", "producer_id": "fixture", "sequence": 1, "age_ms": 100,
+        "freshness": "fresh", "complete": true, "reason": "", "counts": null, "operations": []}]})
+}
+
+const UNDER_WAY: &str =
+    "[...document.querySelectorAll('.under-way > *')].map(cell => cell.textContent)";
+
+/// The owner read "In progress 0" on a phone while every task in progress was in a build or a
+/// test, whose tabs are past the row's edge: the first screen says how many are under way, the
+/// builds and tests among them, each count showing its lane, at both phone widths with no word cut.
+/// The tasks no machine has read "in progress", as their tab does, apart from the strip's Working.
+#[test]
+fn a_phones_first_screen_says_how_much_is_under_way_builds_and_tests_among_it() {
+    let site = site_of(&listing_of(&[
+        ("review", 2),
+        ("in_progress", 1),
+        ("build", 2),
+        ("test", 3),
+    ]));
+    site.set_json("/api/machine-work", &a_machine());
+    let Some(mut page) = chrome() else { return };
+    for width in [390, 320] {
+        open_on_screen(&mut page, &site, width, 844);
+        assert!(
+            page.wait_for(
+                &format!("JSON.stringify({UNDER_WAY}) === JSON.stringify(['6 under way', '1 in progress', '2 building', '3 testing'])"),
+                SHOWN
+            ),
+            "at {width} px the row read {}",
+            page.eval(UNDER_WAY)
+        );
+        assert_eq!(page.eval(MOUNTED), json!(["review"]));
+        assert_eq!(
+            page.eval("(() => { const row = document.querySelector('.under-way').getBoundingClientRect(); return row.top >= 0 && row.bottom <= innerHeight && [...document.querySelectorAll('.under-way > *')].every(cell => cell.scrollWidth <= cell.clientWidth && cell.getBoundingClientRect().right <= innerWidth); })()"),
+            json!(true),
+            "at {width} px the row is on the first screen, every count whole: {}",
+            page.eval("[...document.querySelectorAll('.under-way > *')].map(cell => [cell.textContent, cell.scrollWidth, cell.clientWidth, [...cell.childNodes].map(part => { const range = document.createRange(); range.selectNodeContents(part); return range.getBoundingClientRect().width; })])")
+        );
+        fits(&mut page);
+        for (stage, status) in [
+            ("build", "build"),
+            ("test", "test"),
+            ("in_progress", "in_progress"),
+        ] {
+            page.eval(&format!(
+                "document.querySelector('.under-way [data-stage={stage}]').click()"
+            ));
+            assert!(
+                page.wait_for(&format!("JSON.stringify({MOUNTED}) === JSON.stringify([{}]) && document.querySelector('.waiting-columns .taskcard') !== null", json!(status)), SHOWN),
+                "at {width} px {stage}'s count showed {}",
+                page.eval(MOUNTED)
+            );
+            fits(&mut page);
+        }
+        // The next width opens on Review again.
+        choose(&mut page, "Review");
+    }
+}
+
 /// A refresh starts its position hold after the finger came down. Each subsequent movement
 /// arrives before that hold's first frame, as a drag or its momentum can. Explicit offsets make
 /// the regression deterministic; this checks the shell's response, not a device's physics.
@@ -367,6 +429,12 @@ fn removed_scrollers_release_idle_holds_without_ending_connected_scrolling() {
         let result = page.eval(&format!(
             r#"(async () => {{
                 document.documentElement.style.overflowAnchor = 'none';
+                // The reader's own scroll starts with their input, which ends what holds the page's
+                // place: the board's return to the place its entry keeps (the round before's, once
+                // a slow machine rests on it) and the shell's hold after it. A script's scroll ends
+                // neither, and the hold puts the page back. That scroll's event would come after
+                // the touch had moved, so the page would be one of its scrollers.
+                dispatchEvent(new WheelEvent('wheel'));
                 // The page's scroll event comes before this frame's callbacks, ahead of the touch;
                 // its scrollend may come at any time, during the touch as well.
                 scrollTo(0,600);

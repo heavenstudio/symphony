@@ -496,6 +496,20 @@ describe("the live board's counts", () => {
     );
   });
 
+  it("keep that a custom workflow held the board, so its phone ghost reserves no row it lacks", async () => {
+    const waiting = { kinds: [], columns: [], workflow: 2 };
+    const { board } = live((url) =>
+      url === "/api/machine-work"
+        ? answer(200, NO_WORK)
+        : answer(200, listing([], [["ready", 2]], { statuses: ["ready"], waiting })),
+    );
+    await board.counts();
+    await board.machineWork();
+    expect(localStorage.getItem(SHAPE)).toBe(
+      "concept 0\ndesign 0\nready 2\nin_progress 0\nbuild 0\ntest 0\nreview 0\ndone 0\nworkflow",
+    );
+  });
+
   // The counts count a task waiting on the owner in its stage, and the board draws it in the
   // sign-off lane: once a column's first page brings it, the next visit's ghost outlines no box
   // for it in its stage.
@@ -1606,6 +1620,19 @@ describe("the task board's page", () => {
     expect(html).toContain("The task board could not be read");
     expect(html).not.toContain("ghost-kanban");
     expect(html).not.toContain('role="alert"');
+  });
+
+  it("opens a phone's ghost with the row of work under way the board it kept draws", () => {
+    vi.stubGlobal("innerWidth", 390);
+    const storage = memoryStorage();
+    vi.stubGlobal("localStorage", storage);
+    vi.stubGlobal("document", { getElementById: () => null });
+    storage.setItem(SHAPE, "ready 2");
+    expect(renderToStaticMarkup(<TasksPage scope="" />)).toContain('<div class="under-way"></div>');
+    storage.setItem(SHAPE, "ready 2\nworkflow");
+    const held = renderToStaticMarkup(<TasksPage scope="" />);
+    expect(held).not.toContain("under-way");
+    expect(held).toContain('<nav class="wait-strip"');
   });
 
   it("opens on the shape this browser kept of the board", () => {

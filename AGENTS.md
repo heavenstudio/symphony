@@ -127,7 +127,8 @@ consuming project's.
   own preferences (`just tasks settings`), which hold at once and need no landing
   ([PROJECT_FILE](docs/operations/PROJECT_FILE.md#the-boards-store)). An Agent launch passes the model
   `just tasks limits` names for the role, as a subagent otherwise inherits its orchestrator's.
-  `just symphony-cli model ROLE MODEL` changes one.
+  `just symphony-cli model ROLE MODEL` changes one. No usage limit slows the pace they set
+  (RULES.md `workflow/no-slowing-for-usage-limits`).
 - **A change of settings needs no reviewer**: a change of the values `symphony.toml` gives
   settings the Symphony already reads, with the words here that repeat them and nothing else,
   lands on `just settings-check` green at its tip, which is its `tests` stamp. A value that is a

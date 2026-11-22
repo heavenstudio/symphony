@@ -627,6 +627,7 @@ fn a_held_task_wants_the_role_its_open_claim_edges_give_never_its_projected_stat
             tasks,
             sessions: Vec::new(),
             latest_message: 0,
+            workflow_generation: None,
         };
         eligible(&task, &board, &Config::default(), Some(&w))
     };
@@ -683,6 +684,7 @@ fn a_held_task_wants_the_role_its_open_claim_edges_give_never_its_projected_stat
         tasks: vec![task.clone()],
         sessions: Vec::new(),
         latest_message: 0,
+        workflow_generation: None,
     };
     assert_eq!(eligible(&task, &board, &Config::default(), None), None);
 }

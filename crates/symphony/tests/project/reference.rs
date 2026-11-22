@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use super::common::repo;
 
 /// The reference, from the workspace's root.
-const REFERENCE: &str = "docs/operations/PROJECT_FILE.md";
+pub(super) const REFERENCE: &str = "docs/operations/PROJECT_FILE.md";
 
 /// The source of the struct the whole file is read into, whose fields are its tables, and of the
 /// project's own tables'.
@@ -36,8 +36,8 @@ const TABLES: [(&str, &str, &str); 23] = [
         "[[workflow_mappings]]",
     ),
     (
-        "crates/tasks/src/workflow/guard.rs",
-        "Attester",
+        "crates/tasks/src/workflow.rs",
+        "WrittenAuthority",
         "[[workflow_authorities]]",
     ),
     (FILE, "FileProject", "[project]"),
@@ -70,7 +70,7 @@ const TABLES: [(&str, &str, &str); 23] = [
     ("crates/tasks/src/stamps.rs", "Written", "[stamps.NAME]"),
 ];
 
-fn read(file: &str) -> String {
+pub(super) fn read(file: &str) -> String {
     std::fs::read_to_string(repo().join(file)).unwrap_or_else(|e| panic!("{file}: {e}"))
 }
 
@@ -123,7 +123,7 @@ fn code(line: &str) -> Option<&str> {
 /// The keys `text` lists, each with the table it is listed under: the first code span of a heading
 /// that is a table's name, then the first code span of each row of the tables below it. A fenced
 /// block is passed over.
-fn listed(text: &str) -> BTreeSet<(String, String)> {
+pub(super) fn listed(text: &str) -> BTreeSet<(String, String)> {
     let (mut table, mut fenced, mut keys) = (None, false, BTreeSet::new());
     for line in text.lines() {
         if line.starts_with("```") {
