@@ -8,6 +8,7 @@
 //! they changed does it read which threads have messages after the last one it announced.
 
 use super::Hub;
+use crate::lock::Held as _;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -74,13 +75,9 @@ impl AskWatch {
 impl Hub {
     /// One look at the asks file: every page hears which threads moved.
     pub(super) fn asks_tick(&self) {
-        let change = self
-            .asks
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .look(&self.root);
+        let change = self.asks.lock().held().look(&self.root);
         if let Some(data) = change {
-            let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
+            let mut pages = self.pages.write().held();
             for page in pages.values_mut() {
                 self.publish(page, vec![json!({"region":"asks", "data":data})]);
             }
@@ -90,13 +87,13 @@ impl Hub {
     /// The board's chat recipient as its last read named it, `None` before the first read: what
     /// an ask's reply says the chat goes to, without connecting to the board for each read.
     pub(crate) fn chat_recipient(&self) -> Option<Option<String>> {
-        self.chat.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.chat.lock().held().clone()
     }
 
     /// Keep `recipient`, the board's chat recipient just read; once it changes after the first
     /// read, the change every page hears, so an open chat says where it goes now.
     pub(super) fn chat_read(&self, recipient: Option<String>) -> Option<Value> {
-        let mut held = self.chat.lock().unwrap_or_else(|e| e.into_inner());
+        let mut held = self.chat.lock().held();
         if held.as_ref() == Some(&recipient) {
             return None;
         }
