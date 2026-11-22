@@ -738,7 +738,9 @@ binary this workspace delivers (`symphony-server`, `symphony`, `tasks` and
 `just size-check` builds the four as `cargo install` builds them, with `Cargo.toml`'s
 `[profile.release]`, and runs `symphony-build size-budget`, which prints each size beside its
 budget (`symphony-build`, the commands only this repository's build and release run use, is no
-binary it delivers, and has no line).
+binary it delivers, and has no line; nor has `tasks-move`, which a release installs beside
+`tasks` for the one move of a board's store and no project links or runs by a recipe, its bytes
+said in the release's manifest and the install's line).
 Past a line it fails, naming the size, the budget and how to see what grew: `cargo bloat --release
 --crates --bin NAME` (`cargo install cargo-bloat --root DIR`, never a workspace dependency) beside
 the same at a commit within it (the last release, or before the first one, the commit that last
