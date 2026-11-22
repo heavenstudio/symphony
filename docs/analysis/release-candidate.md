@@ -4,10 +4,10 @@ How a red found by the full run gets fixed so that a release comes, and what the
 command are called. This is a design: built are the refresh's rule that a pin moves only
 forward, which any candidate needs (A, below), the rename to `just release`
 ([below](#the-names)) and A's held candidate (`crates/symphony/src/release/candidate.rs`,
-[RELEASES](../RELEASES.md#the-release-candidate)). A is chosen on its card in
-[DECISIONS](../DECISIONS.md). This page is A as its review corrected it; the corrections follow
-from A and stand with it, auto-approved on its card, and the three choices A leaves open are cards
-of their own there.
+[RELEASES](../RELEASES.md#the-release-candidate)). A is chosen on
+[its card](#release-candidate-process). This page is A as its review corrected it; the corrections
+follow from A and stand with it, auto-approved on its card, and the three choices A leaves open are
+cards of their own below.
 
 The asks, in the order the board records them (the express-path task holds the first; its scope
 note says the release candidate question came next):

@@ -78,6 +78,14 @@ fn click(page: &mut Chrome, id: &str, label: &str) {
     assert_eq!(clicked, json!(true), "no {label} on {id}");
 }
 
+/// What the running attempt (`b…`) says: its text as shown (`shown`, none while the browser skips
+/// its slot's content), its text in the page (`text`), whether the browser renders it
+/// (`rendered`), and where its slot stands in the window (`top`, of `height`).
+const SAID: &str = "(attempt => ({shown: attempt.innerText, text: attempt.textContent, \
+    rendered: attempt.checkVisibility({contentVisibilityAuto: true}), \
+    top: attempt.closest('.viewport-slot').getBoundingClientRect().top, height: innerHeight}))\
+    (document.querySelector('[data-attempt^=b]'))";
+
 #[test]
 fn a_tasks_attempts_are_drawn_newest_first_and_a_control_waits_on_its_confirmation() {
     let (site, _) = site(3);
@@ -112,11 +120,26 @@ fn a_tasks_attempts_are_drawn_newest_first_and_a_control_waits_on_its_confirmati
         json!(["Cancel"]),
         "a provider this server does not hold offers no resume or view"
     );
-    let said = page.eval("document.querySelector('[data-attempt^=b]').innerText");
+    // Drawn is not yet shown: the attempts' part is a slot of its own (`content-visibility: auto`,
+    // viewport.tsx), whose content the browser renders only once a frame has found the slot near
+    // the screen, its shown text empty until then. A loaded machine's renderer can hold that frame
+    // back past this read, and how far past the screen a slot is rendered is the browser's own
+    // choice: the attempt is read on the screen, as a reader reads it, once it is rendered.
+    page.eval("document.querySelector('[data-attempt^=b]').scrollIntoView({block: 'nearest'})");
     assert!(
-        said.as_str()
-            .is_some_and(|said| said.contains("resume of aaaaaaaa · resource res-2 (g1)")),
-        "{said}"
+        page.wait_for(
+            "document.querySelector('[data-attempt^=b]').checkVisibility({contentVisibilityAuto: true})",
+            SHOWN
+        ),
+        "the running attempt was never rendered: {}",
+        page.eval(SAID)
+    );
+    let said = page.eval(SAID);
+    assert!(
+        said["shown"]
+            .as_str()
+            .is_some_and(|shown| shown.contains("resume of aaaaaaaa · resource res-2 (g1)")),
+        "the running attempt shows what it resumes and what it holds: {said}"
     );
     assert!(
         site.targets()

@@ -28,7 +28,7 @@ pub(crate) mod text;
 mod usage;
 
 use crate::maps::Collect as _;
-use crate::rpc::{self, Client};
+use crate::rpc::Client;
 use crate::server::Home;
 use crate::{DATABASE, NAMESPACE, Store, sys};
 use std::collections::BTreeMap;
@@ -183,7 +183,7 @@ fn run(
     let mut lead = 0;
     let mut scratch = None;
     while args.get(lead).is_some_and(|arg| arg == "--database") {
-        let Some(database) = args.get(lead + 1).filter(|name| rpc::plain(name)) else {
+        let Some(database) = args.get(lead + 1).filter(|name| crate::db::plain(name)) else {
             let _ = writeln!(err, "--database needs a plain database name");
             return 2;
         };
@@ -621,7 +621,7 @@ fn reach_board(
     held: Option<&Path>,
 ) -> Result<Reached, String> {
     let db = env.var("TASKS_DATABASE").unwrap_or(DATABASE);
-    if !rpc::plain(db) {
+    if !crate::db::plain(db) {
         return Err(format!(
             "TASKS_DATABASE={db:?} is not a plain name for a database"
         ));

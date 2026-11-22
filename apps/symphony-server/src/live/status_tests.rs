@@ -15,7 +15,8 @@ use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 /// A board's failure on a server that refused the connection.
-const REFUSED: &str = "SurrealDB: cannot connect to 127.0.0.1:1: Connection refused (os error 61)";
+const REFUSED: &str =
+    "the board's database: cannot connect to 127.0.0.1:1: Connection refused (os error 61)";
 
 /// What a page hears of a board that took the request and answered too late.
 fn slow_board(error: &str) -> Value {

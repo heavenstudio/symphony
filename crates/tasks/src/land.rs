@@ -500,22 +500,12 @@ impl Settings {
 }
 
 /// `path` as a prefix of the project's changed paths, as the Symphony reads a generator's
-/// outputs: its `.` parts dropped and a folder's slash kept (so `gen/` is never `gen-x/`), or none
-/// for a path that is empty or leaves the project.
+/// outputs: by the project file's one rule for a path ([`crate::project::inside`]), a folder's
+/// slash kept (so `gen/` is never `gen-x/`), or none for a path that rule refuses.
 fn inside(path: &str) -> Option<String> {
-    let mut parts = Vec::new();
-    for part in Path::new(path).components() {
-        match part {
-            std::path::Component::Normal(name) => parts.push(name.to_string_lossy()),
-            std::path::Component::CurDir => {}
-            _ => return None,
-        }
-    }
-    if parts.is_empty() {
-        return None;
-    }
     let slash = if path.ends_with('/') { "/" } else { "" };
-    Some(parts.join("/") + slash)
+    let inside = crate::project::inside("[land] generators outputs", path).ok()?;
+    Some(inside + slash)
 }
 
 /// Whether the generator's `outputs` ([`inside`]) hold the project's `path`: the path itself, or

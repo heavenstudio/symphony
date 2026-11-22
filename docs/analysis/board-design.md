@@ -1,8 +1,8 @@
 # The board at a glance
 
 What it takes for a project's task board to say, before anything is opened, what is stuck, on whom
-it waits and for how long; the three layouts proposed on the board-at-a-glance card in
-[DECISIONS](../DECISIONS.md), the Projects page's health line on the projects-health card, and the
+it waits and for how long; the three layouts proposed on the [board-at-a-glance](#board-at-a-glance)
+card, the Projects page's health line on the [projects-health](#projects-health) card, and the
 board they were measured on. "Read 2026-11-11" marks the consuming project's board as the shared
 server answered it at 19:10 that day.
 

@@ -7,11 +7,12 @@
 //! could make a session healthier moves its `last_seen`). A write that meets another's (SurrealDB's
 //! optimistic conflict) or finds itself stale reads and decides again.
 
+use crate::db::DbError;
 use crate::health::{self, EXECUTING, Health};
 use crate::maps::Collect as _;
 pub(crate) use crate::quote::repr;
 use crate::rows::{LinkRow, MessageRow, RoleRow, SessionRow, TaskRow};
-use crate::rpc::{Client, DbError};
+use crate::rpc::Client;
 use crate::schema;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -74,7 +75,7 @@ mod writers;
 use beside::Beside;
 use postgres::{self as pg, Pg};
 use statement::{Statement, both};
-use surreal::reading::{native_bounds, reading};
+use surreal::reading::reading;
 use surreal::session_read;
 
 pub(crate) use crate::stages::BLOCK_LINE;
@@ -88,7 +89,7 @@ pub use launches::NewLaunch;
 pub use messages::reviewer_verdict;
 pub use opening::{Opening, Standing};
 pub use raw::{Raw, Rows as RawRows};
-use reading::native_health;
+use reading::{native_bounds, native_health};
 pub use report_lines::{ReportPlace, ReportRead, ReportTask};
 pub use search::{SearchHit, SearchSource};
 pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
@@ -130,7 +131,7 @@ const REFUSED: &str = "refused: ";
 pub enum Error {
     /// The request was refused and nothing was written, in its words.
     Refused(String),
-    /// SurrealDB could not be reached or did not take the statements.
+    /// The board's database could not be reached or did not take the statements.
     Db(String),
 }
 
@@ -138,7 +139,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Refused(message) => f.write_str(message),
-            Error::Db(message) => write!(f, "SurrealDB: {message}"),
+            Error::Db(message) => write!(f, "the board's database: {message}"),
         }
     }
 }
@@ -895,7 +896,7 @@ impl Store {
         deliver: bool,
     ) -> Result<Task, Failure> {
         let which = Which::Slug(slug);
-        let (read, more) = reading(&which, Sessions::Shown);
+        let (read, more) = (reading(&which, Sessions::Shown), reading::vars(&which));
         if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
             vars.extend(more);
         }
@@ -1447,7 +1448,7 @@ fn message(row: MessageRow) -> Message {
 /// The read of `which` with the sessions `sessions` asks for, in each database's language, and
 /// its variables.
 fn read_of(which: &Which, sessions: Sessions) -> (Statement<'static>, Value) {
-    let (read, vars) = reading(which, sessions);
+    let (read, vars) = (reading(which, sessions), reading::vars(which));
     let statement = Statement {
         surreal: read.into(),
         postgres: Some(pg::reading::reading(which, sessions)),

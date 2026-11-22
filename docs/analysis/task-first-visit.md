@@ -2,10 +2,10 @@
 
 What a task's page shows the first time a browser opens it, before its reads answer, and what
 moves when they do: today's way (A) against drawing what is under the head only once the task's
-page has answered (B), as the card in [DECISIONS](#task-first-visit-head-first)
-asks. Measured 2026-11-16 on this Mac in headless Chrome, against the browser target's stand-in
-server and its fixture task (`apps/symphony-ui/tests/browser/layout_shift.rs`), at main `325f08f1`
-for A and on a throwaway build of B made for this page and not kept.
+page has answered (B), as [the card](#task-first-visit-head-first) asks. Measured 2026-11-16 on
+this Mac in headless Chrome, against the browser target's stand-in server and its fixture task
+(`apps/symphony-ui/tests/browser/layout_shift.rs`), at main `325f08f1` for A and on a throwaway
+build of B made for this page and not kept.
 
 ## The choice
 

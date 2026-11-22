@@ -9,8 +9,10 @@ project: the server serves the project with the defaults, and every page of it s
 until it loads. Four keys are gone, three nothing acted on (`[agents] transports`, `[board]
 export` and `[board] disposable`) and `[plugins] loopback`, each refused as any unknown key is. The
 board reads its own keys (`[board]`'s commands and thresholds, `[limits]`, `[agents] launch`,
-`[agents.models]` and `[stamps]`) from the main checkout's copy, so a branch cannot change its own. A path is relative to the project's root
-and stays inside it, unless its key says otherwise.
+`[agents.models]` and `[stamps]`) from the main checkout's copy, so a branch cannot change its own.
+A path is relative to the project's root and stays inside it, unless its key says otherwise. The
+board judges the paths it reads itself (`[board] guide`, `slot_locks` and `assessments`) by the
+same rule, and reads one that leads out of the project, or is empty, as unwritten.
 
 ```toml
 [project]
@@ -372,7 +374,7 @@ A generator, in `[land] generators` or `[verdicts] generators`, usually written 
 | `review_alarm_clear_hours` | `1` | the hours review must stay at or under it to clear it |
 | `swept_cap_gb` | `5` | the gigabytes the evidence kept of removed worktrees may hold before the sweep asks for a check by hand |
 | `stale_writer_hours` | `24` | the hours a build that wrote the board, on this machine, may go without running before it holds no move of the board to a release, unless it is a build the project runs now: one a link in its main checkout's `.target/bin` names ([RELEASES](RELEASES.md#the-refresh)); a whole number over 0 |
-| `postgresql` | discover `postgres` on `PATH` | an explicit absolute folder of the machine's PostgreSQL programs takes precedence over discovery; the server of a board whose home names PostgreSQL starts it ([DECISIONS](analysis/postgresql-binary-source.md#postgresql-binary-source)) |
+| `postgresql` | discover `postgres` on `PATH` | an explicit absolute folder of the machine's PostgreSQL programs takes precedence over discovery; the server of a board whose home names PostgreSQL starts it ([its card](analysis/postgresql-binary-source.md#postgresql-binary-source)) |
 | `external_postgresql` | none: the board is the machine's own | `[board.external_postgresql]`, where a hosted board's PostgreSQL is and the budget of its connections, as below |
 | `machine_wip` | none | `[board.machine_wip.MACHINE]`, advice per machine, as below |
 | `machine_work_reader` | none | the project's own machine-work reader, an executable the server runs ([MACHINE_WORK](MACHINE_WORK.md)) |

@@ -3,7 +3,7 @@
 use super::postgres::snapshot as pg;
 use super::statement::both;
 use super::surreal::snapshot as sql;
-use super::{Board, Error, Snapshot, Store, View};
+use super::{Board, Error, Snapshot, Store, View, Which, reading};
 use serde_json::json;
 
 impl Store {
@@ -20,7 +20,7 @@ impl Store {
         {
             return Ok((Self::board_view(View::new(self, snapshot.clone())), marker));
         }
-        let (body, vars) = sql::board();
+        let (body, vars) = (sql::board(), reading::vars(&Which::All));
         let snapshot: Snapshot =
             self.retrying(|| self.transact(both(&body, pg::board()), vars.clone()))?;
         let sequence = snapshot.callback_sequence;

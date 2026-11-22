@@ -26,7 +26,7 @@ pub use session::SUPPORTED;
 
 use super::external::{Settings, Share, TABLE};
 use super::{Answer, Step};
-use crate::rpc::DbError;
+use crate::db::DbError;
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, Weak, mpsc};
