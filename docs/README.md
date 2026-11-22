@@ -37,6 +37,8 @@ are under [Design and history](#design-and-history).
 - [Writing a plugin and a theme](PLUGIN_WRITING.md) — a first plugin from nothing: its crate, its
   code and test, its settings, its component in a document and how to see it drawn; a theme's
   tokens by name, in the project file alone and from a plugin.
+- [The board's JSON APIs](BOARD_API.md) — `tasks api`, the board's methods as a versioned JSON
+  contract for a program, and the agents API with what a callback and the PULL digest push.
 - [Plugin protocol](PLUGIN_PROTOCOL.md) — a plugin answering from a process of its own: the
   setting, the seams it answers, its process, its commands, a register read in one request, the
   line, each call's minor, the versions and the wire's shape.
@@ -61,6 +63,9 @@ are under [Design and history](#design-and-history).
 For whoever runs Symphony for others or changes Symphony itself. A project on one machine needs
 none of these: its board runs on the SurrealDB that `symphony init` fetches.
 
+- [Operating the board](BOARD_OPERATIONS.md) — the board's store and the schema contract between
+  its builds, which build moves a live board, who writes it, its server, snapshots and holds, what
+  the command may write, stuck servers, a board that went back or was copied, and board health.
 - [PostgreSQL board lifecycle](POSTGRESQL.md) — a board on PostgreSQL: scratch engine identity,
   server selection, holds, snapshots, recovery and space reclamation; the hosted board, which no
   command reaches yet.

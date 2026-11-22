@@ -152,7 +152,10 @@ per task, and the limit on the open tasks one holds
 ([TASKS](../../docs/TASKS.md#the-limit-on-the-tasks-an-orchestrator-holds)); `limits.rs` the project's `[limits]` and the alarm's thresholds, read again when the file
 changes ([TASKS](../../docs/TASKS.md#limits-and-models)); `local.rs` the one reader of the local settings
 file over them and over a launch's agent and models
-([PROJECT_FILE](../../docs/PROJECT_FILE.md#the-local-settings-file)); `alarm.rs` and `alarm/` the pipeline
+([PROJECT_FILE](../../docs/PROJECT_FILE.md#the-local-settings-file)), and the one judge of what
+that file and the board's store may hold; `settings.rs` with `store/stored_settings.rs` and
+`cli/commands/settings.rs` the board's store of preferences, read between the project file and
+the local file ([PROJECT_FILE](../../docs/PROJECT_FILE.md#the-boards-store)); `alarm.rs` and `alarm/` the pipeline
 alarm, `cli/pull/pipeline.rs` as PULL says it ([TASKS](../../docs/TASKS.md#the-pipeline-alarm));
 `store/work/moves.rs` a move that names where it goes from; `health.rs` a session's health, derived
 and never stored; `stages.rs` where a task's time went

@@ -2,7 +2,6 @@
 
 use super::{Hub, OrderExpiry};
 use crate::front::{Shared, router};
-use crate::gate::Gate;
 use crate::testing::{Tree, git, repository};
 use axum::body::{Body, to_bytes};
 use axum::extract::ConnectInfo;
@@ -10,7 +9,6 @@ use axum::http::Request;
 use serde_json::{Value, json};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Instant;
 use tower::ServiceExt;
 
 #[test]
@@ -165,13 +163,7 @@ async fn cached_postponements_keep_distinct_proposals_independent() {
     for scope in ["design~a", "design~b"] {
         hub.ensure_page(scope).unwrap();
     }
-    let shared = Shared::new(
-        1,
-        1234,
-        &root,
-        None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
+    let shared = Shared::new(1, 1234, &root, None, crate::testing::open_gate());
     assert!(shared.api.set(hub).is_ok());
     // Inherited main cards use one preference entry even when acted on from branch pages.
     let later = request_json(
@@ -279,13 +271,7 @@ async fn visits_without_visible_changes_skip_scans_snapshots_and_hub_refreshes()
         let hub = Arc::new(Hub::new(&root, &root.join("client/public")));
         hub.refresh_docs(None).unwrap();
         let before = hub.pages.read().unwrap()[""].board.clone();
-        let shared = Shared::new(
-            1,
-            1234,
-            &root,
-            None,
-            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-        );
+        let shared = Shared::new(1, 1234, &root, None, crate::testing::open_gate());
         assert!(shared.api.set(hub.clone()).is_ok());
         // The cached snapshot stays valid; a scan or a refresh would fail on this input.
         let bad = tree.path("main/docs/unrelated.md");

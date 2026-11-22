@@ -21,7 +21,7 @@ at its own schema, or moves an older one forward; one opened to read, the Sympho
 board one schema ahead. Every write transaction then starts with the guard (`GUARD` there, and its
 PostgreSQL twin in `crates/tasks/src/store/postgres/mod.rs`), which refuses unless the board is at
 the store's own schema. In this repository main's build moves the live board at its first board
-command once a schema lands (`crates/tasks/src/live.rs`, [TASKS](../TASKS.md#where-it-lives)), so
+command once a schema lands (`crates/tasks/src/live.rs`, [BOARD_OPERATIONS](../BOARD_OPERATIONS.md#which-build-moves-a-live-board)), so
 the board is ahead of the machine's server from that command until the refresh points `current` at
 a release of the new schema and the server follows it ([the switch](../RELEASES.md#the-switch)).
 
@@ -169,7 +169,7 @@ release `current` names. Every other writer is refused as now.
 **What it costs.** Built once: the record and the migration step that adds it (a schema step of
 its own, which changes `meta` and is not listed: the last window paid in full), the guard on both
 engines, the server's tick and notice, the tests above and the words in
-[TASKS](../TASKS.md#who-writes-a-board) and [RELEASES](../RELEASES.md#the-switch). Then per schema
+[BOARD_OPERATIONS](../BOARD_OPERATIONS.md#who-writes-a-board) and [RELEASES](../RELEASES.md#the-switch). Then per schema
 step: one line or none, one catalogue file, and the reviewer's read of the line.
 
 **When it pays.** From the first schema step that lands once a release carrying the mechanism is
@@ -224,7 +224,7 @@ for this board, which moves with main today.
 
 Considered, not proposed. While the board is ahead, the server would hand each write to the
 project's own `tasks` at the board's schema, here the main checkout's build, which moved the board,
-through `tasks api` ([TASKS](../TASKS.md#the-tasks-api)). Nothing would be declared, as every write
+through `tasks api` ([BOARD_API](../BOARD_API.md#the-tasks-api)). Nothing would be declared, as every write
 would be made by a build at the board's schema, and it would hold for every step, workflow-runtime's
 too. But the api carries the owner's kind of write (a message, a move, a new task, an ask) and not
 the clock's (the callback pass, the judging, the gives), which would stay paused; what the server

@@ -224,7 +224,7 @@ another project or board refuses the whole read, however its id came.
   out its sessions.
 - **`tasks api`'s `attempts`** (2.5, `{"slug": S}`) reads a task's history as the board's own
   service, under the project the call runs in, with no control offered
-  ([the tasks API](TASKS.md#the-tasks-api)).
+  ([the tasks API](BOARD_API.md#the-tasks-api)).
 
 ### The provider seam
 

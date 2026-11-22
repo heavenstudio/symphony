@@ -111,13 +111,7 @@ async fn an_answer_that_says_nosniff_already_says_it_once_and_another_type_keeps
 fn project() -> (Tree, Router) {
     let tree = Tree::new();
     let root = repository(&tree);
-    let shared = Shared::new(
-        1,
-        1,
-        &root,
-        None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
+    let shared = Shared::new(1, 1, &root, None, crate::testing::open_gate());
     let mut hub = Hub::new(&root, &root.join("build/client"));
     hub.connect_reader = Box::new(|_| Err("this fixture has no board".into()));
     hub.refresh_page("", &root).unwrap();

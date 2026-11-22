@@ -1,7 +1,6 @@
 use super::{Retry, RunningImage, Setup, source_event, stamp_install, watch_with};
 use crate::backstop::{self, Backstop};
 use crate::front::{Shared, told};
-use crate::gate::Gate;
 use crate::testing::{Tree, git, joined, repository};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -75,7 +74,7 @@ fn a_source_edit_whose_event_is_lost_still_starts_a_build_within_a_period() {
         1,
         &root,
         Some(&home),
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+        crate::testing::open_gate(),
     );
     let hub = Arc::new(crate::live::Hub::new(&root, &home.join("client/public")));
     assert!(shared.api.set(hub.clone()).is_ok());
@@ -715,7 +714,7 @@ impl Reloading {
             1,
             &root,
             Some(&home),
-            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+            crate::testing::open_gate(),
         );
         let hub = Arc::new(crate::live::Hub::new(&root, &home.join("client/public")));
         assert!(shared.api.set(hub.clone()).is_ok());

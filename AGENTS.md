@@ -190,7 +190,10 @@ change follows the settings-only landing below. A machine's own choice needs no 
 `symphony.local.toml` beside the main checkout's `symphony.toml`, which git does not version,
 overrides the launch agent, the models and `[limits]` there and nothing else (`--local` on the
 model command writes it there instead), and `just tasks limits` names it for each setting it
-overrides ([PROJECT_FILE](docs/PROJECT_FILE.md#the-local-settings-file)). An Agent launch passes the
+overrides ([PROJECT_FILE](docs/PROJECT_FILE.md#the-local-settings-file)). Between the two the
+board keeps preferences of its own (`just tasks settings`), read after `symphony.toml` and before
+the local file, which hold at once and need no landing either
+([PROJECT_FILE](docs/PROJECT_FILE.md#the-boards-store)). An Agent launch passes the
 model `just tasks limits` names for the role (a subagent otherwise inherits its orchestrator's
 model). A resumed agent keeps the model it started on. The work-in-progress limits are settings
 the same way, in `[limits]`.
