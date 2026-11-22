@@ -38,8 +38,19 @@ pub const TABLES: [&str; 2] = ["agents", limits::TABLE];
 pub const LAUNCH: [&str; 3] = ["default", "model", "effort"];
 
 /// The tables that hold commands or programs the Symphony runs, or decide what lands: refused in a
-/// local file whole, each key by name.
-pub const PROTECTED: [&str; 5] = ["plugins", "verdicts", "land", "releases", "stamps"];
+/// local file whole, each key by name. The three workflow tables decide what lands (the stages, the
+/// edges and their guards, the authorities whose word meets them); the two lists of tables among
+/// them are refused in a local file as arrays all the same, which hold no table of settings.
+pub const PROTECTED: [&str; 8] = [
+    "plugins",
+    "verdicts",
+    "land",
+    "releases",
+    "stamps",
+    "workflow",
+    "workflow_mappings",
+    "workflow_authorities",
+];
 /// The keys of other tables that do: `[project]`'s and `[board]`'s.
 pub const PROTECTED_KEYS: [(&str, &[&str]); 2] = [
     ("project", &["cargo", "default_branch"]),

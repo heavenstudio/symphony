@@ -16,7 +16,10 @@
 //! (`apps/symphony-server/src/live/workflow_tests.rs`). With `SYMPHONY_WORKFLOW_SHOTS` naming a
 //! folder, the flow saves its pictures there.
 
-use super::{NO_STORE, SHOWN, chrome::Chrome, look_parity, open, samples, site::Site, texts};
+use super::{
+    NO_STORE, SHOWN, assets::module, chrome::Chrome, dist, look_parity, open, samples, site::Site,
+    texts,
+};
 use serde_json::{Value, json};
 use std::time::{SystemTime, UNIX_EPOCH};
 use symphony_api::TASK_TIMELINE_PATH;
@@ -285,8 +288,17 @@ fn the_board_draws_the_workflows_phases_as_columns_and_tabs_and_filters_by_a_sta
         "a custom workflow's board draws no row of work under way"
     );
     shot(&mut page, "board-phone");
-    // Nor does the next visit's ghost reserve that row, from the board this device kept. With the
-    // store off the visit draws its ghost, the board's read held while it shows.
+
+    // The phone keeps the phase's tab it chose, and the ghost of its next visit draws that phase,
+    // with the count it last had: Review's one card, not the board's own first tab. Nor does that
+    // ghost reserve the row of work under way, from the board this device kept. With the store
+    // off the visit keeps no copy of the board, which would be drawn in the ghost's place, and the
+    // board's read is held while the ghost shows.
+    page.eval("[...document.querySelectorAll('.stage-tabs button')].find(tab => tab.textContent.startsWith('Review')).click()");
+    assert!(page.wait_for(
+        "document.querySelector('.stage-tabs [aria-current=page]')?.textContent.startsWith('Review')",
+        SHOWN
+    ));
     assert!(
         page.wait_for(
             "Object.keys(localStorage).some(key => key.endsWith('board-waiting-shape') && localStorage.getItem(key).endsWith('\\nworkflow'))",
@@ -300,7 +312,7 @@ fn the_board_draws_the_workflows_phases_as_columns_and_tabs_and_filters_by_a_sta
         json!({ "source": NO_STORE }),
     );
     site.hold_route("/api/task-board", true);
-    page.open(&site.url("/tasks"));
+    open(&mut page, &site, "/tasks", 390);
     assert!(
         page.wait_for(
             "document.querySelector('.waiting-ghost .wait-strip') !== null",
@@ -308,12 +320,104 @@ fn the_board_draws_the_workflows_phases_as_columns_and_tabs_and_filters_by_a_sta
         ),
         "no ghost of the board"
     );
+    assert!(page.wait_for(
+        "document.querySelector('.waiting-ghost .ghost-column') !== null",
+        SHOWN
+    ));
+    shot(&mut page, "board-phone-ghost");
+    assert_eq!(
+        page.eval("[...document.querySelectorAll('.waiting-ghost .ghost-column')].map(column => [column.dataset.for, column.querySelectorAll('.waiting-card-ghost').length])"),
+        json!([["phase:review", 1]])
+    );
     assert_eq!(
         page.eval("document.querySelector('.under-way')"),
         Value::Null,
         "the ghost of a custom workflow's board reserves no row of work under way"
     );
     site.hold_route("/api/task-board", false);
+    assert!(page.wait_for(
+        "document.querySelector('.stage-tabs [aria-current=page]')?.textContent.startsWith('Review')",
+        SHOWN
+    ));
+}
+
+/// The file of the workflow's chunk (`flow.tsx`) the board this build serves imports, as the page
+/// asks for it: the build's folder keeps its earlier builds' chunks beside its own.
+fn flow_chunk() -> String {
+    let board = module(dist(), "board").script;
+    let script = std::fs::read_to_string(dist().join(board.trim_start_matches('/')))
+        .expect("the board's script");
+    // A chunk's name alone, `flow-` and its hash then `.js`: a class name such as `flow-failed`,
+    // a stylesheet of the chunk's or a word ending in `flow` (`workflow-…`) is passed over.
+    let named = |start: usize| {
+        if start > 0 && script.as_bytes()[start - 1].is_ascii_alphanumeric() {
+            return None;
+        }
+        let rest = &script[start + "flow-".len()..];
+        let hash = rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+            .unwrap_or(rest.len());
+        (hash > 0 && rest[hash..].starts_with(".js"))
+            .then(|| &script[start..start + "flow-".len() + hash + ".js".len()])
+    };
+    let chunk = (script.match_indices("flow-"))
+        .find_map(|(start, _)| named(start))
+        .expect("the board imports the workflow's chunk");
+    format!("/assets/{chunk}")
+}
+
+#[test]
+fn a_workflow_chunk_that_does_not_load_is_said_and_retried_into_its_phases() {
+    let (site, _) = site();
+    let Some(mut page) = super::chrome() else {
+        panic!("Chrome is required for the workflow's acceptance")
+    };
+    let chunk = flow_chunk();
+    site.retire(&chunk);
+    open(&mut page, &site, "/tasks", 1440);
+    let notice = ".flow-failed[role=alert]";
+    assert!(
+        page.wait_for(
+            &format!("document.querySelector('{notice}') !== null"),
+            SHOWN
+        ),
+        "{:?}",
+        page.eval("document.querySelector('main')?.innerText")
+    );
+    assert_eq!(
+        texts(&mut page, notice),
+        ["The workflow's phases could not be loaded. Retry"]
+    );
+    assert_eq!(
+        page.eval("document.querySelector('.column[data-status^=\"phase:\"]') === null && document.querySelector('.column[data-status=ready]') !== null"),
+        json!(true),
+        "the board draws its own lanes meanwhile"
+    );
+    shot(&mut page, "board-flow-failed");
+
+    // A later load works: the retry asks for the chunk again, and the phases are drawn.
+    site.restore(&chunk);
+    page.eval(&format!(
+        "document.querySelector('{notice} button').click()"
+    ));
+    assert!(
+        page.wait_for(
+            "document.querySelector('.column[data-status=\"phase:verify\"] [data-slug=\"w/d\"]') !== null",
+            SHOWN
+        ),
+        "the retry never drew the phases: {:?}",
+        site.requests()
+    );
+    assert_eq!(
+        page.eval(&format!("document.querySelector('{notice}') === null")),
+        json!(true)
+    );
+    let asked = site
+        .requests()
+        .iter()
+        .filter(|r| r.contains(&chunk))
+        .count();
+    assert_eq!(asked, 2, "{:?}", site.requests());
 }
 
 #[test]

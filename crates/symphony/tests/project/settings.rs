@@ -9,6 +9,7 @@ use std::path::Path;
 
 use super::reference::{REFERENCE, listed, read};
 use crate::Tree;
+use crate::board::HELD_FLOW;
 use symphony::settings::{Machine, class, page, scopes};
 use symphony_api::{Setting, SettingClass, SettingKind, SettingScope, SettingsEntry, SettingsPage};
 
@@ -118,13 +119,10 @@ fn a_project_with_no_file_shows_every_default_and_says_none_is_written() {
         github.state.as_ref().unwrap().why,
         "Off: no symphony-github.toml on main."
     );
-    let workflow = entry(&page, "workflow");
-    assert!(workflow.settings.is_empty(), "the workflow claims no class");
-    assert_eq!(workflow.state.as_ref().unwrap().word, "Built in");
-    assert_eq!(
-        workflow.source.as_ref().unwrap().said,
-        "default: no [workflow] written"
-    );
+    let workflow = setting(&page, "workflow", "[workflow]");
+    assert_eq!(workflow.value, "The board's own, built-in v1.");
+    assert_eq!(workflow.source.said, "default: no [workflow] written");
+    assert_eq!(workflow.class, SettingClass::Reviewed);
 }
 
 const PROJECT: &str = "\
@@ -298,6 +296,57 @@ fn a_local_file_holds_over_the_project_file_and_names_what_it_overrides() {
     let agents = setting(&page, "limits", "[limits] machine_agents");
     assert_eq!((agents.value.as_str(), &agents.source.over), ("4", &None));
     assert_eq!(agents.source.scope, Some(SettingScope::Machine));
+}
+
+/// `[agents] launch` written in both files: the local file's agent and model hold over the
+/// committed ones and name them, and an effort it writes empty is none, so the default holds.
+#[test]
+fn a_local_launch_holds_over_the_committed_one_key_by_key() {
+    let tree = Tree::new();
+    tree.write(
+        "symphony.toml",
+        "[agents]\nlaunch = { default = \"claude\", model = \"opus\", effort = \"high\" }\n",
+    );
+    tree.write(
+        "symphony.local.toml",
+        "[agents.launch]\ndefault = \"codex\"\nmodel = \"gpt-x\"\neffort = \"\"\n",
+    );
+    let page = page(&tree.root, &bare());
+    assert_eq!(page.problems, Vec::<String>::new());
+    for (key, value, line) in [("default", "codex", 2), ("model", "gpt-x", 3)] {
+        let launch = setting(&page, "launch", &format!("[agents] launch {key}"));
+        assert_eq!(launch.value, value, "{key}");
+        assert_eq!(launch.source.scope, Some(SettingScope::Machine), "{key}");
+        assert_eq!(
+            launch.source.said,
+            format!("symphony.local.toml [agents] launch {key}, line {line}")
+        );
+        assert_eq!(launch.source.line, Some(line));
+        assert_eq!(
+            launch.source.over,
+            Some(format!("symphony.toml [agents] launch {key}, line 2"))
+        );
+        assert_eq!(
+            launch.scopes,
+            [SettingScope::Project, SettingScope::Machine]
+        );
+    }
+    let effort = setting(&page, "launch", "[agents] launch effort");
+    assert_eq!(
+        (effort.value.as_str(), effort.source.said.as_str()),
+        ("xhigh", "default: the board's own for codex")
+    );
+    assert_eq!((effort.source.scope, &effort.source.over), (None, &None));
+    assert_eq!(
+        entry(&page, "launch").about,
+        "A launch whose caller names nothing starts codex on gpt-x (effort xhigh)."
+    );
+    // A role with no model of its own runs on the launch's, the local file's.
+    let executor = setting(&page, "models", "[agents.models] executor");
+    assert_eq!(
+        (executor.value.as_str(), executor.source.said.as_str()),
+        ("gpt-x", "default: [agents] launch model")
+    );
 }
 
 #[test]
@@ -523,11 +572,23 @@ fn github_reads_the_branch_head_commits_and_a_file_that_does_not_enable_is_off()
     let broken = page(&tree.root, &bare());
     let state = entry(&broken, "github").state.clone().unwrap();
     assert_eq!(state.on, Some(false));
+    // It names the project file that does not read, and the branch it would have named none.
+    let (message, rest) = state
+        .why
+        .strip_prefix("Off: symphony.toml at HEAD does not read (")
+        .and_then(|why| why.rsplit_once(')'))
+        .unwrap_or_else(|| panic!("{state:?}"));
     assert!(
-        state
-            .why
-            .starts_with("Off: symphony-github.toml does not read (symphony.toml at HEAD: "),
+        !message.is_empty() && !message.contains("symphony"),
         "{state:?}"
+    );
+    assert_eq!(
+        rest,
+        ", so it names no branch to read symphony-github.toml on."
+    );
+    assert_eq!(
+        entry(&broken, "github").settings[0].source.said,
+        "default: no symphony-github.toml"
     );
 }
 
@@ -554,6 +615,58 @@ fn plugins_and_documents_say_what_the_project_selects_and_serves() {
     );
 }
 
+/// A project's own workflow is said as one, with the line of its table, and with its mappings and
+/// its approval authorities when it writes them; all three tables are reviewed.
+#[test]
+fn a_custom_workflow_is_said_with_its_line_mappings_and_authorities() {
+    let mapping = "\n[[workflow_mappings]]\nfrom = { phase = \"ready\", state = \"available\" }\n\
+                   to = { phase = \"build\", state = \"available\" }\n";
+    let tree = Tree::new();
+    tree.write("symphony.toml", &format!("{HELD_FLOW}{mapping}"));
+    let custom = page(&tree.root, &bare());
+    assert_eq!(custom.problems, Vec::<String>::new());
+    let workflow = setting(&custom, "workflow", "[workflow]");
+    assert_eq!(
+        workflow.value,
+        "The project's own, with mappings, which the board activates once the default branch \
+         commits it."
+    );
+    assert_eq!(workflow.kind, SettingKind::Sentence);
+    assert_eq!(workflow.class, SettingClass::Reviewed);
+    assert_eq!(workflow.scopes, [SettingScope::Project]);
+    assert_eq!(workflow.source.said, "symphony.toml [workflow], line 2");
+    assert_eq!(workflow.source.line, Some(2));
+    // Guarded, with the authority that attests its guard committed for the project.
+    let flow = HELD_FLOW
+        .replacen("adapters = []", "adapters = [\"approvals\"]", 1)
+        .replacen(
+            "guards = []",
+            "guards = [{ id = \"approved\", adapter = \"approvals\" }]",
+            1,
+        )
+        .replacen(
+            "dependencies = \"none\", guards = []",
+            "dependencies = \"none\", guards = [\"approved\"]",
+            1,
+        );
+    let authority = "\n[[workflow_authorities]]\nadapter = \"approvals\"\nissuer = \"ledger\"\n\
+                     contract = 1\nkey = \"ed25519:\
+                     5866666666666666666666666666666666666666666666666666666666666666\"\n";
+    tree.write(
+        "symphony.toml",
+        &format!("[project]\nid = \"demo\"\n{flow}{mapping}{authority}"),
+    );
+    let guarded = page(&tree.root, &bare());
+    assert_eq!(guarded.problems, Vec::<String>::new());
+    let workflow = setting(&guarded, "workflow", "[workflow]");
+    assert_eq!(
+        workflow.value,
+        "The project's own, with mappings and approval authorities, which the board activates \
+         once the default branch commits it."
+    );
+    assert_eq!(workflow.source.said, "symphony.toml [workflow], line 4");
+}
+
 /// The top-level table a heading of the reference names, and the nested table's key when it
 /// names one of a table's own (`[board.external_postgresql]` is `board`'s `external_postgresql`).
 fn top(heading: &str) -> (&str, Option<&str>) {
@@ -566,7 +679,16 @@ fn top(heading: &str) -> (&str, Option<&str>) {
 fn every_key_of_the_reference_has_the_class_the_local_file_s_lists_give_it() {
     // What the reference says is never read from a local file, as holding a command or deciding
     // what lands: the expectation, written out, against the reader's own lists.
-    let tables = ["plugins", "verdicts", "land", "releases", "stamps"];
+    let tables = [
+        "plugins",
+        "verdicts",
+        "land",
+        "releases",
+        "stamps",
+        "workflow",
+        "workflow_mappings",
+        "workflow_authorities",
+    ];
     let keys = [
         ("project", "cargo"),
         ("project", "default_branch"),
@@ -602,8 +724,13 @@ fn every_key_of_the_reference_has_the_class_the_local_file_s_lists_give_it() {
             "{table} {key}"
         );
     }
-    // The workflow's tables are in neither list: the page shows them with no class.
-    assert_eq!(class("workflow", "format"), SettingClass::Preference);
+    // Each of the workflow's three tables is listed with its keys, and each is reviewed.
+    for table in &tables[5..] {
+        assert!(
+            reviewed.iter().any(|(listed, _)| listed == table),
+            "{table}"
+        );
+    }
 }
 
 #[test]
@@ -648,8 +775,7 @@ fn every_setting_the_page_shows_has_the_class_and_the_scopes_of_its_key() {
         // The two tables of `[agents]`, shown key by key.
         ("agents", "launch"),
         ("agents", "models"),
-        // The workflow is an entry with no setting.
-        ("workflow", "*"),
+        // The workflow's mappings and authorities are said in its sentence.
         ("workflow_mappings", "*"),
         ("workflow_authorities", "*"),
     ];

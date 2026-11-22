@@ -123,6 +123,12 @@ fn a_setting_that_runs_a_command_or_decides_what_lands_is_refused_by_name_with_t
         ),
         ("[stamps.review]\nstale = 1\n", "[stamps] review"),
         ("\n[land]\n", "[land] (line 2)"),
+        // The workflow decides what lands: its stages, its guards and their authorities.
+        ("[workflow]\nformat = 1\n", "[workflow] format (line 2)"),
+        (
+            "[workflow_authorities]\nadapter = \"a\"\n",
+            "[workflow_authorities] adapter (line 2)",
+        ),
     ] {
         let said = problems(text);
         assert_eq!(said.len(), 1, "{text}: {said:?}");
@@ -176,6 +182,13 @@ fn any_other_table_or_key_is_refused_as_none_a_local_file_overrides() {
         problems("[[entrypoints]]\nurl = \"/d/\"\nfolder = \"d\"\n"),
         [format!(
             "{PATH}: entrypoints (line 1) is array; a local file holds tables of settings"
+        )]
+    );
+    // So is the workflow's list of mappings, reviewed as it is.
+    assert_eq!(
+        problems("[[workflow_mappings]]\nfrom = { phase = \"a\", state = \"b\" }\n"),
+        [format!(
+            "{PATH}: workflow_mappings (line 1) is array; a local file holds tables of settings"
         )]
     );
 }

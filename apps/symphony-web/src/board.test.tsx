@@ -7,6 +7,7 @@ import {
   firstPageHeight,
   GhostBoard,
   GhostCard,
+  ghostStage,
   keepShape,
   laneSide,
   MORE,
@@ -452,6 +453,30 @@ describe("lazy cards and placeholders", () => {
     const html = render(<GhostBoard shape={shape} />);
     expect([...html.matchAll(/data-for="([^"]*)"/g)].map((m) => m[1])).toEqual(["ready"]);
     expect(html.match(/waiting-card-ghost/g)).toHaveLength(6);
+  });
+  it("keeps a workflow's phase counts and draws the phone's saved phase in the ghost", () => {
+    const shape = boardShape([
+      ["phase:build", 2],
+      ["phase:verify", 3],
+      ["ready", 1],
+    ]);
+    expect(shape.slice(STAGES.length)).toEqual([
+      ["phase:build", 2],
+      ["phase:verify", 3],
+    ]);
+    expect(recallShape(keepShape(shape))).toEqual(shape);
+    expect(ghostStage("phase:verify")).toBe("phase:verify");
+    expect(ghostStage("ready")).toBe("ready");
+    expect(ghostStage("gone")).toBe(ghostStage(null));
+    vi.stubGlobal("innerWidth", 390);
+    localStorage.setItem(STAGE_KEY, "phase:verify");
+    const html = render(<GhostBoard shape={shape} />);
+    expect([...html.matchAll(/data-for="([^"]*)"/g)].map((m) => m[1])).toEqual(["phase:verify"]);
+    expect(html.match(/waiting-card-ghost/g)).toHaveLength(3);
+    // A desk draws its own columns, whatever phase a phone saved.
+    vi.stubGlobal("innerWidth", 1440);
+    const desk = render(<GhostBoard shape={shape} />);
+    expect([...desk.matchAll(/data-for="([^"]*)"/g)].map((m) => m[1])).toEqual(STAGES);
   });
   it("says a failed first read and offers retry", () => {
     const html = render(<UnreadBoard why="offline" retry={() => {}} />);

@@ -630,13 +630,8 @@ async fn workflow(hub: Arc<Hub>, path: &str, request: &Request) -> Response {
     let read = crate::spawn::blocking(move || {
         let store = hub.reader().map_err(|e| unavailable(&e, ""))?;
         let read = if actions {
-            store
-                .workflow_actions(
-                    &slug,
-                    &symphony_board::workflow::local_owner(),
-                    &symphony_board::workflow::Host::local(),
-                )
-                .map(|next| no_store(Json(next)))
+            owner_actions(&store, &slug)
+                .map(|read| no_store(Json(read)))
                 .map_err(task_failure)
         } else {
             store
@@ -1282,6 +1277,28 @@ async fn plugin_response(shared: &Shared, root: &Path, path: &str, request: &Req
             crate::media_files::contained(shared, &base, &base, &file, request).await
         }
     }
+}
+
+/// The local owner's next actions on `slug`, with the accepted output standing for each task it
+/// depends on where an edge leaving its pair takes them, which the page sends with that edge
+/// (docs/workflow/WORKFLOW.md, "Accepted outputs").
+fn owner_actions(
+    store: &symphony_board::Store,
+    slug: &str,
+) -> Result<symphony_api::workflow::ActionsRead, symphony_board::Error> {
+    let next = store.workflow_actions(
+        slug,
+        &symphony_board::workflow::local_owner(),
+        &symphony_board::workflow::Host::local(),
+    )?;
+    let takes = (store.accepted_outputs(slug)?.takes.into_iter())
+        .map(|(task, output)| symphony_api::workflow::TakenOutput { task, output })
+        .collect();
+    Ok(symphony_api::workflow::ActionsRead {
+        snapshot: next.snapshot,
+        actions: next.actions,
+        takes,
+    })
 }
 
 fn no_store(value: impl IntoResponse) -> Response {

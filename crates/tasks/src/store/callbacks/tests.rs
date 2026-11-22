@@ -463,6 +463,7 @@ fn a_look_is_current_while_its_state_records_it_and_its_inbox_is_read_to_the_new
         tasks: Vec::new(),
         sessions: Vec::new(),
         latest_message,
+        workflow_generation: None,
     };
     let look = look_over(recorded());
     assert!(look.unchanged());
@@ -583,6 +584,7 @@ fn a_looks_changed_lines_are_none_until_what_it_hears_moves_and_then_the_whole_l
         tasks: Vec::new(),
         sessions: Vec::new(),
         latest_message: 0,
+        workflow_generation: None,
     };
     let me = "amber-wren";
     // A look at the tasks of `statuses`, each `me`'s to execute, and the ready ones of `ready`.
@@ -632,6 +634,7 @@ fn a_planned_pull_is_an_event_only_when_its_account_queues_one() {
         tasks: Vec::new(),
         sessions: Vec::new(),
         latest_message: 0,
+        workflow_generation: None,
     };
     let entry = ("ready_unstaffed".to_string(), "p/a".to_string());
     let withheld = ("ready_unstaffed".to_string(), "p/b".to_string());

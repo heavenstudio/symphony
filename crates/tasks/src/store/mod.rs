@@ -218,6 +218,10 @@ pub struct Board {
     pub sessions: Vec<Session>,
     /// The newest message's id: a reader polling for change compares it.
     pub latest_message: i64,
+    /// The active custom workflow's activation generation, read in the same round trip: none on a
+    /// board that never activated one. A page that draws by the definition reads it again when
+    /// this moves, which a relabel does while it moves no task.
+    pub workflow_generation: Option<u64>,
 }
 
 pub struct Store {
@@ -362,6 +366,7 @@ impl Store {
             tasks: view.tasks(),
             sessions,
             latest_message: view.snap.latest,
+            workflow_generation: view.snap.workflow_generation,
         }
     }
 
@@ -1044,6 +1049,10 @@ struct Snapshot {
     sessions: Vec<SessionRow>,
     held: Vec<String>,
     latest: i64,
+    /// The active workflow's generation (`Which::All`; none on any other read, and on a board
+    /// that never activated one).
+    #[serde(default)]
+    workflow_generation: Option<u64>,
     /// What the tasks read wait on that is not done (`Which::Slug`, `Which::Pullable`).
     open_deps: Vec<LinkRow>,
     /// The tasks the session asking holds a role on (`Which::Pullable`).
