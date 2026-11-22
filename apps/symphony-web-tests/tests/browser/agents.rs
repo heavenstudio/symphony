@@ -5,7 +5,7 @@
 //! task coming to happen above the card they read moves nothing of, however late the page's tasks
 //! run.
 use super::feed_deltas::{agent, agent_page, held};
-use super::{LATE_TASKS, LATE_TASKS_TAKEN, SHOWN, chrome, common, dist, site::Site, wait_for_feed};
+use super::{LATE_TASKS, LATE_TASKS_TAKEN, SHOWN, chrome, site::Site, wait_for_feed};
 use serde_json::{Value, json};
 
 /// The read of the open tasks `orch-agent` orchestrates, from `cursor` when one is given.
@@ -20,7 +20,7 @@ const LIST: &str = "[document.querySelectorAll('[id^=\"following-orch-agent-\"]'
 
 #[test]
 fn a_following_list_past_one_page_reads_the_rest_by_load_more() {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let mut orchestrator = agent("orch-agent", "live");
     orchestrator["kind"] = json!("orchestrator");
     orchestrator["following"] = json!(32);
@@ -123,7 +123,7 @@ fn a_task_happening_above_the_reader_moves_nothing_while_the_pages_tasks_run_lat
 /// [`a_task_happening_above_the_reader_moves_nothing_on_the_agents_page`], with React's scheduler's
 /// tasks running `late` frames late from the change until the reader's place is seen held.
 fn happening_above_the_reader(late: u32) {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let roles = [("work-agent", "executor")];
     // `place/t-00`, first of the page's tasks, waits in Ready: Happening now opens with `place/t-01`.
     let tasks: Vec<Value> = (0..=14)
@@ -142,10 +142,7 @@ fn happening_above_the_reader(late: u32) {
         &agent_page(&[agent("work-agent", "live")], &tasks),
     );
     let Some(mut page) = chrome() else { return };
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": 390, "height": 844, "deviceScaleFactor": 1, "mobile": true}),
-    );
+    page.viewport(390, 844, true);
     page.call(
         "Page.addScriptToEvaluateOnNewDocument",
         json!({ "source": LATE_TASKS }),

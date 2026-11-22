@@ -5,7 +5,7 @@
 //!
 //! In the run's own checkout, at the release's commit and in its build folder, it builds the
 //! release profile of the four binaries a project runs (`symphony-server`, `tasks`, `agent-send`,
-//! `symphony`), the server with no client compiled in (`SYMPHONY_CLIENT_BESIDE`): it serves the one
+//! `symphony`) and of the one that moves a board's store (`tasks-move`), the server with no client compiled in (`SYMPHONY_CLIENT_BESIDE`): it serves the one
 //! installed beside it. The client is the distribution the commit holds
 //! (`apps/symphony-server/client/public/`), which the release's own verification compared byte for
 //! byte with a build of its sources, so nothing builds it again. What the release serves is asked
@@ -39,7 +39,7 @@ pub(crate) const STEP: &str = "refresh-install";
 /// environment: the tests' stand-in for cargo. No flag sets it.
 pub(crate) const BUILDER: &str = "SYMPHONY_RELEASE_BUILDER";
 /// The packages that hold the release's binaries ([`release::BINARIES`]): the server's, the
-/// board's (`tasks` and `agent-send`) and the library's (`symphony`).
+/// board's (`tasks`, `agent-send` and `tasks-move`) and the library's (`symphony`).
 const PACKAGES: [&str; 3] = ["symphony-server", "symphony-board", "symphony-app"];
 /// The client's distribution, in the release's checkout.
 const CLIENT: &str = "apps/symphony-server/client/public";

@@ -6,10 +6,7 @@ fn the_panel_collapse_chevron_is_centered_on_phone_and_desktop_and_keeps_its_act
     let site = site();
     let Some(mut page) = chrome() else { return };
     for width in [320, 390, 1440] {
-        page.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":844,"deviceScaleFactor":1,"mobile":width < 600}),
-        );
+        page.viewport(width, 844, width < 600);
         page.call(
             "Emulation.setTouchEmulationEnabled",
             json!({"enabled":width < 600}),
@@ -197,10 +194,7 @@ fn select_options_stay_visible_at_panel_and_page_bottom_on_desktop_short_window_
     let site = site();
     let Some(mut page) = chrome() else { return };
     for (width, height) in [(1280, 800), (390, 844), (1280, 640)] {
-        page.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":height,"deviceScaleFactor":1,"mobile":width==390}),
-        );
+        page.viewport(width, height, width == 390);
         page.open(&site.url("/"));
         open_panel(&mut page);
         task_tab(&mut page);
@@ -255,10 +249,7 @@ fn a_tap_that_chooses_a_priority_over_send_sends_nothing() {
         "Emulation.setTouchEmulationEnabled",
         json!({"enabled":true,"maxTouchPoints":5}),
     );
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true}),
-    );
+    page.viewport(390, 844, true);
     page.open(&site.url("/"));
     open_panel(&mut page);
     task_tab(&mut page);
@@ -448,10 +439,7 @@ fn a_long_recipient_list_scrolls_each_option_into_view_and_repositions_on_resize
     let site = site();
     forty_recipients(&site);
     let Some(mut page) = chrome() else { return };
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true}),
-    );
+    page.viewport(390, 844, true);
     recipient_at_bottom(&mut page, &site);
     assert_eq!(
         page.eval("document.querySelectorAll('[role=listbox] [role=option]').length"),
@@ -477,10 +465,7 @@ fn a_long_recipient_list_scrolls_each_option_into_view_and_repositions_on_resize
     // shows at its end.
     page.eval("document.querySelector('main').style.paddingBottom='100vh'");
     recipient_follows_background_scroll(&mut page, false);
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":390,"height":360,"deviceScaleFactor":1,"mobile":true}),
-    );
+    page.viewport(390, 360, true);
     assert!(page.wait_for("(() => {const r=document.querySelector('[role=listbox]').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;})()", SHOWN));
     recipient_follows_background_scroll(&mut page, true);
     key(&mut page, "Home", "Home", 36);
@@ -496,10 +481,7 @@ fn an_open_list_keeps_where_the_reader_scrolled_it_while_the_page_scrolls() {
     let site = site();
     forty_recipients(&site);
     let Some(mut page) = chrome() else { return };
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true}),
-    );
+    page.viewport(390, 844, true);
     recipient_at_bottom(&mut page, &site);
     page.eval("document.querySelector('main').style.paddingBottom='100vh'");
     // The reader scrolls the list itself, as a wheel or a finger does, and the list keeps the
@@ -574,10 +556,7 @@ fn postponed_labels_and_comparison_borders_follow_the_theme_in_both_modes() {
         ("light", "rgb(107, 104, 98)", "rgb(228, 224, 216)"),
         ("dark", "rgb(161, 156, 147)", "rgb(44, 42, 38)"),
     ] {
-        page.call(
-            "Emulation.setEmulatedMedia",
-            json!({"features":[{"name":"prefers-color-scheme","value":mode}]}),
-        );
+        page.scheme(mode);
         for route in ["/queue", "/docs/look-parity.md#palette"] {
             page.open(&site.url(route));
             assert!(
@@ -610,10 +589,7 @@ fn selected_queue_categories_keep_the_theme_fill_and_foreground_while_hovered() 
     let site = site();
     let Some(mut page) = chrome() else { return };
     for mode in ["light", "dark"] {
-        page.call(
-            "Emulation.setEmulatedMedia",
-            json!({"features":[{"name":"prefers-color-scheme","value":mode}]}),
-        );
+        page.scheme(mode);
         page.open(&site.url("/queue"));
         assert!(page.wait_for(
             "document.querySelector('#you [data-category]:not([data-category=\"\"])') !== null",

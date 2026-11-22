@@ -12,7 +12,7 @@
 
 use serde_json::json;
 
-use super::{SHOWN, STALL, Site, assets::module, chrome, chrome::Chrome, common, dist};
+use super::{READY, SHOWN, STALL, Site, assets::module, chrome, chrome::Chrome, common, dist};
 
 /// The stand-in with what a task page reads.
 fn site() -> Site {
@@ -43,7 +43,7 @@ fn shows(chrome: &mut Chrome, selector: &str) {
     assert!(
         chrome.wait_for(
             &format!(
-                "document.querySelector({}) !== null && document.documentElement.dataset.navigation === 'ready'",
+                "document.querySelector({}) !== null && {READY}",
                 json!(selector)
             ),
             SHOWN

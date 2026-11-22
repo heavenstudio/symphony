@@ -332,7 +332,7 @@ where applicable, but its checkout file cannot serve as this record in an epheme
 The future hosted implementation includes this small control-record interface and scratch
 recovery tests. A provider restore alone is not a safe automatic rollback. The board's side of
 that interface is its recovery authority
-([TASKS](../TASKS.md#a-board-that-was-copied-or-restored)): a store is handed the generation
+([BOARD_OPERATIONS](../BOARD_OPERATIONS.md#a-board-that-was-copied-or-restored)): a store is handed the generation
 the control record names and refuses every bound write where the database holds another or the
 record names none. The generation it names is the database's own text, replaced at each copy and
 rebind, and a board home's file of it on one machine is not this record.
@@ -426,7 +426,7 @@ Not built, each still this design's and none claimed by the adapter:
   the server still reach the machine's own board;
 - the project's identity bound into the board's record, and a hosted deployment's durable
   place for the recovery authority: the board's recovery generation and the writes bound to it
-  ([TASKS](../TASKS.md#a-board-that-was-copied-or-restored)) are the board's own and a hosted
+  ([BOARD_OPERATIONS](../BOARD_OPERATIONS.md#a-board-that-was-copied-or-restored)) are the board's own and a hosted
   board has them as any, but the authority that says which generation a board is bound to is
   handed to a store by its caller, and nothing here keeps one outside a container;
 - a refusal of a schema whose definitions differ at the same version (a digest);

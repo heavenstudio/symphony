@@ -302,7 +302,7 @@ the load averages are the one-minute ones.
 
 `Store::copy` takes the fixture in one request. The server gives it 270 s, thirty short of the
 300 s its client waits, and ends it there with the board as it was
-([TASKS](../TASKS.md#a-board-that-was-copied-or-restored)).
+([BOARD_OPERATIONS](../BOARD_OPERATIONS.md#a-board-that-was-copied-or-restored)).
 
 | copy | load before → after | seconds |
 |---|---|---|

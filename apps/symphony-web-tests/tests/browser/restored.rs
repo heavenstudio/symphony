@@ -1,5 +1,5 @@
 //! Restored native browser contracts. Security cases use the real server, never fixture CSP.
-use super::{SHOWN, binaries, chrome, common, dist, site::Site, texts};
+use super::{READY, SHOWN, binaries, chrome, dist, site::Site, texts};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
@@ -361,10 +361,7 @@ fn restored_mockups_keep_opaque_origins_in_frames_full_size_and_svg_hops() {
     let Some(mut browser) = chrome() else { return };
     let site = Native::start();
     browser.call("Page.addScriptToEvaluateOnNewDocument",json!({"source":"window.probes=[]; window.addEventListener('message',e=>probes.push({origin:e.origin,...e.data}));"}));
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":420,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    browser.viewport(420, 900, false);
     browser.open(&site.url("/docs/PROBE.md"));
     assert!(
         browser.wait_for("window.probes.length === 1", SHOWN),
@@ -500,7 +497,7 @@ fn paragraph(text: &str) -> Value {
 
 #[test]
 fn restored_document_pictures_load_near_the_viewport_and_stay_mounted_after_scrolling_away() {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     document(
         &site,
         vec![
@@ -540,7 +537,7 @@ fn restored_document_pictures_load_near_the_viewport_and_stay_mounted_after_scro
 /// focus as its src lands.
 #[test]
 fn restored_document_picture_holds_its_box_and_the_keyboard_focus_as_it_shows() {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     document(
         &site,
         vec![
@@ -608,7 +605,7 @@ fn restored_document_picture_holds_its_box_and_the_keyboard_focus_as_it_shows() 
 /// latch, far down the page, is none of them.
 #[test]
 fn restored_picture_viewer_leaves_out_a_picture_still_waiting() {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let image = |name: &str, style: &str| json!({"type":"image","image":{"src":format!("/{name}.svg"),"alt":name,"presentation":{"attributes":{"width":"200","height":"200","style":style}}}});
     // A paragraph between them: pictures side by side share a line, as tall as the far one's margin.
     document(
@@ -709,7 +706,7 @@ fn assert_notice_surface(browser: &mut super::chrome::Chrome, selector: &str, ro
 
 #[test]
 fn server_notices_survive_loading_and_failed_document_and_folder_routes() {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     document(
         &site,
         vec![paragraph("A loaded document establishes the server feed.")],
@@ -785,7 +782,7 @@ fn server_notices_survive_loading_and_failed_document_and_folder_routes() {
 
 #[test]
 fn reconnect_pills_are_statuses_and_leave_document_reading_layout_unchanged() {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     document(
         &site,
         (0..100)
@@ -817,16 +814,14 @@ fn reconnect_pills_are_statuses_and_leave_document_reading_layout_unchanged() {
     ] {
         browser.open(&site.url(path));
         assert!(browser.wait_for(
-            &format!("document.documentElement.dataset.navigation === 'ready' && document.querySelector({}) !== null && document.querySelector({})?.dataset.feed === 'live'", json!(ready), json!(page)),
+            &format!("{READY} && document.querySelector({}) !== null && document.querySelector({})?.dataset.feed === 'live'", json!(ready), json!(page)),
             SHOWN,
         ), "{path}: {}", browser.eval("document.body.innerText"));
         let reading = path.starts_with("/docs/");
         if reading {
             // Disable the browser aid that can conceal a reconnect notice moving the page.
             browser.eval("document.documentElement.style.overflowAnchor='none'; scrollTo({top:1200,behavior:'instant'})");
-            browser.eval(
-                "new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))",
-            );
+            browser.frames();
             assert_eq!(
                 browser.eval("scrollY"),
                 json!(1200),
@@ -936,7 +931,7 @@ fn mount_notice_rows(browser: &mut super::chrome::Chrome, status: &str) {
 /// condition ([`Chrome::until`](super::chrome::Chrome::until)).
 #[test]
 fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let tasks: Vec<_> = NOTICE_STAGES.iter().flat_map(|status| (0..12).map(move |i| json!({
         "slug": format!("notice/{status}-{i}"),
         "title": format!("Loaded {status} task {i} keeps its real row through an unavailable board snapshot"),
@@ -952,10 +947,7 @@ fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
         }),
     );
     let Some(mut browser) = chrome() else { return };
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1024,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    browser.viewport(1024, 900, false);
     browser.open(&site.url("/tasks"));
     browser.until(
         "the board, following its feed",
@@ -974,10 +966,7 @@ fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
     for width in [300, 390, 1024] {
         let phone = width <= 760;
         let rows = if phone { 12 } else { 72 };
-        browser.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":false}),
-        );
+        browser.viewport(width, 900, false);
         browser.until(
             &format!("{width}px: the stage columns drawn"),
             &format!(
@@ -1057,7 +1046,7 @@ fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
 // own place above the dock where it is in the page's flow (390 px, `noticeGeometry`).
 #[test]
 fn document_page_end_clears_the_reconnect_notice_and_two_real_toasts_rise_over_a_floating_one() {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     document(
         &site,
         (0..100)
@@ -1073,10 +1062,7 @@ fn document_page_end_clears_the_reconnect_notice_and_two_real_toasts_rise_over_a
     browser.open(&site.url("/docs/PROBE.md"));
     assert!(browser.wait_for("document.querySelector('.document-page')?.dataset.feed==='live' && document.querySelector('[data-doc-key=intro] p')!==null && Array.isArray(window.reviewKnownIds)", SHOWN));
     for (i, width) in [390, 1024].into_iter().enumerate() {
-        browser.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":false}),
-        );
+        browser.viewport(width, 900, false);
         browser.eval("document.documentElement.style.overflowAnchor='none';scrollTo(0,document.documentElement.scrollHeight);new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
         assert!(browser.wait_for("document.querySelector('#new-ask') !== null && [...document.querySelectorAll('link[rel=stylesheet]')].every(link=>link.sheet!==null)", SHOWN));
         browser.eval("scrollTo(0,document.documentElement.scrollHeight);new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
@@ -1126,9 +1112,7 @@ fn document_page_end_clears_the_reconnect_notice_and_two_real_toasts_rise_over_a
         // ResizeObserver delivers after layout and before paint. Sample the
         // painted stale geometry at a fixed frame boundary, never by retrying
         // its bounds. The reading offset is asserted both before and after.
-        browser.eval(
-            "new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))",
-        );
+        browser.frames();
         let geometry = browser.eval(r#"(() => {
             const stack=document.querySelector('.page-notices');
             const notice=stack.getBoundingClientRect();
@@ -1174,7 +1158,7 @@ fn document_page_end_clears_the_reconnect_notice_and_two_real_toasts_rise_over_a
 
 #[test]
 fn restored_document_native_hash_card_uses_one_anchor_inset() {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let mut blocks = vec![
         paragraph("Document introduction."),
         json!({"type":"card","slug":"anchor-card","mark":"pending","title":"Anchor card","body":[paragraph("A question to review.")],"verdict":{"group":"decide","open":true,"posted":null,"decided":null},"thread":[],"line":3,"line_offset":null,"comparison":[]}),
@@ -1184,10 +1168,7 @@ fn restored_document_native_hash_card_uses_one_anchor_inset() {
     document(&site, blocks);
     let Some(mut browser) = chrome() else { return };
     for width in [1280, 390] {
-        browser.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":false}),
-        );
+        browser.viewport(width, 900, false);
         browser.open(&site.url("/docs/PROBE.md"));
         assert!(browser.wait_for(
             "location.hash==='' && performance.getEntriesByName('document-ready').length>0 && document.querySelector('.decision#anchor-card') !== null",
@@ -1208,7 +1189,7 @@ fn restored_document_native_hash_card_uses_one_anchor_inset() {
 
 #[test]
 fn branch_document_comparisons_show_previous_content_and_keep_removed_blocks_read_only() {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let path = "@design~policy/docs/PROBE.md";
     let sections = json!([
         {"start":1,"end":2,"key":"added","hash":"a","part":0,"blocks":[paragraph("New paragraph")],"comparison":{"kind":"added"}},
@@ -1308,7 +1289,7 @@ fn branch_document_comparisons_show_previous_content_and_keep_removed_blocks_rea
 
 #[test]
 fn restored_gallery_loads_only_the_selected_model_and_lightbox_uses_originals_and_keys() {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let image = |id: &str| json!({"type":"image","image":{"src":format!("/{id}-thumb.svg"),"alt":id,"presentation":{"attributes":{"width":"200","height":"200","data-full":format!("/{id}-original.svg")}}}});
     document(
         &site,
@@ -1428,7 +1409,7 @@ fn question_reads(browser: &mut super::Chrome) -> Vec<super::chrome::Request> {
 /// The read that replaced it answers and draws, and no read is left in flight.
 #[test]
 fn a_question_read_the_feeds_news_replaces_is_aborted_not_left_in_flight() {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     document(&site, vec![paragraph("A passage for a question.")]);
     let ask = json!({"id":7,"path":"docs/PROBE.md","anchor":"","quote":"","question":"Question","asked":1.0,"answers":[],"status":"open","updated":1.0,"messages":[{"seq":1,"kind":"question","by":"owner","text":"","at":1.0,"blocks":[paragraph("A typed question")]}]});
     site.set_json("/api/asks", &json!({"asks":[ask],"recipient":"fixture"}));
@@ -1493,7 +1474,7 @@ fn a_question_read_the_feeds_news_replaces_is_aborted_not_left_in_flight() {
 
 #[test]
 fn restored_ask_feed_and_navigation_preserve_drafts_while_rendering_typed_answers() {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     document(&site, vec![paragraph("A passage for a question.")]);
     let mut ask = json!({"id":7,"path":"docs/PROBE.md","anchor":"","quote":"","question":"Question","asked":1.0,"answers":[],"status":"open","updated":1.0,"messages":[{"seq":1,"kind":"question","by":"owner","text":"","at":1.0,"blocks":[paragraph("Original typed answer")]}]});
     site.set_json("/api/asks", &json!({"asks":[ask],"recipient":"fixture"}));
@@ -1603,7 +1584,7 @@ const SETTLED: &str = "document.querySelector('.section-loading') === null && [.
 fn a_document_s_own_stream_reopens_while_scrolling_read_no_ask_or_chat_until_a_loss() {
     const QUESTIONS: &str = "/api/asks?format=blocks&path=docs%2FLONG.md";
     const CHAT: &str = "/api/ask?format=blocks&id=7";
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let sections: Vec<Value> = (0..40)
         .map(|at| {
             let blocks: Vec<Value> = (0..6)

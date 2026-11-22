@@ -21,7 +21,7 @@ const SHELL: &str = "<!DOCTYPE html><html lang=\"en\"><head><title>Symphony</tit
 
 impl Machine {
     pub(super) fn new() -> Machine {
-        Machine::with_gate(Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)))
+        Machine::with_gate(crate::testing::open_gate())
     }
 
     /// [`Machine::new`], its starter judging who may reach it by `gate`.

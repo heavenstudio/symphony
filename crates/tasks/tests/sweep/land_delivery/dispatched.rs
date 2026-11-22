@@ -1398,6 +1398,139 @@ fn a_first_dispatch_that_stops_before_it_binds_is_said_and_made_by_the_next_disp
     assert_eq!((kept.stage, kept.armed), (Stage::Armed, true));
 }
 
+// -- a dispatch after the merge ----------------------------------------------------------------------
+
+#[test]
+fn a_dispatch_after_the_land_of_its_merge_says_it_landed_and_stops_nothing() {
+    let (r, bare) = delivering();
+    let (people, wt, tip) = ready(&r, SLUG);
+    let (host, _) = armed_green(&r, &bare, &people);
+    // The host merges on green, and the watcher's round closes the task and drops its journal.
+    let (said, ..) = watched(&r, &host, dispatch::seconds(), 2, &[]);
+    let squash = head(&bare, "main");
+    assert!(
+        said.contains(&format!("landed {SLUG} on main at {}", &squash[..12])),
+        "{said}"
+    );
+    assert!(!Journal::path(&lands(&r), SLUG).exists());
+    let (asked, thread) = (host.verbs().len(), r.board.said(SLUG).len());
+    // A write's dispatch that waited for that land (the approve's, the assessor's): the host is
+    // asked nothing, and the thread is told of no stop and no command to run.
+    let (_, result) = dispatched(&r, SLUG, &people.orch, &host);
+    assert_eq!(
+        result.unwrap(),
+        format!(
+            "{SLUG} landed already as {} from {} by pull request #3 of owner/name: nothing is \
+             dispatched",
+            &squash[..7],
+            &tip[..7]
+        )
+    );
+    assert_eq!(host.verbs().len(), asked);
+    assert_eq!(r.board.said(SLUG).len(), thread);
+    assert_eq!(posts(&r, SLUG, "its dispatch stopped"), 0);
+    assert_eq!(posts(&r, SLUG, "--dispatch"), 0);
+    assert!(
+        !Journal::path(&lands(&r), SLUG).exists(),
+        "none left behind"
+    );
+    assert_eq!(landings(&r, SLUG).len(), 1);
+    // Its branch at another head than the one merged is the refusal it was: a slug delivered once.
+    write(&wt, "sim/jump.gd", "extends Node2D\n");
+    git(&wt, &["commit", "-qam", "more, after it landed"]);
+    let stopped = dispatched(&r, SLUG, &people.orch, &host).1.unwrap_err();
+    assert!(
+        stopped.contains("its branch is now at") && stopped.contains("a slug is delivered once"),
+        "{stopped}"
+    );
+    assert_eq!(host.verbs().len(), asked);
+    assert_eq!(posts(&r, SLUG, &stopped), 1, "said on the thread");
+}
+
+/// A host whose own merge, armed and held by a check of another's, comes between a dispatch's
+/// read of the pull request and its publication, as GitHub merges seconds after the last check.
+struct MergesBeforePublish<'a, 'r>(&'a Host<'r>);
+
+impl Transport for MergesBeforePublish<'_, '_> {
+    fn ask(&self, verb: &str, request: &Value) -> Result<Value, String> {
+        if verb == "publish" {
+            *self.0.waiting.borrow_mut() = false;
+            self.0.merge_on_green();
+        }
+        self.0.ask(verb, request)
+    }
+}
+
+#[test]
+fn a_publish_refused_for_a_merge_made_meanwhile_stops_nothing_at_its_head_alone() {
+    for case in ["its head", "another head"] {
+        let (r, bare) = delivering();
+        let (people, wt, tip) = ready(&r, SLUG);
+        let (host, _) = armed_green(&r, &bare, &people);
+        host.waits();
+        // What has the next dispatch publish again: its evidence changed, or its head.
+        if case == "its head" {
+            ran(&r, SLUG, &tip, "cargo test -p sim --lib", 0);
+        } else {
+            write(&wt, "sim/jump.gd", "extends Node2D\n");
+            git(&wt, &["commit", "-qam", "more, while it was armed"]);
+        }
+        let asked = host.verbs().len();
+        let racing = MergesBeforePublish(&host);
+        let stopped = dispatched(&r, SLUG, &people.orch, &racing).1.unwrap_err();
+        // Read open, refused at the publication, then read again: merged.
+        assert_eq!(
+            host.verbs()[asked..],
+            ["result", "publish", "result"],
+            "{case}"
+        );
+        let squash = head(&bare, "main");
+        let refused = format!(
+            "{SLUG} was not published (refused): pull request #3 is merged or closed: nothing \
+             more is published; nothing merged"
+        );
+        if case == "another head" {
+            // Merged at the head armed, not the one this dispatch was asked to publish.
+            assert_eq!(stopped, refused, "{case}");
+            assert_eq!(posts(&r, SLUG, "its dispatch stopped"), 1, "{case}");
+            let (text, to) = last_post(&r, SLUG);
+            assert_eq!(
+                text,
+                format!(
+                    "land {SLUG}: its dispatch stopped: {refused}; `just land {SLUG} --dispatch` \
+                     dispatches it again, as a later write to it does"
+                )
+            );
+            assert_eq!(to.as_deref(), Some("@orchestrator"));
+            assert_eq!(landings(&r, SLUG).len(), 0, "{case}");
+            continue;
+        }
+        assert_eq!(
+            stopped,
+            format!(
+                "{SLUG}: pull request #3 of owner/name merged {} while it was dispatched: nothing \
+                 more is published to it, and the watcher's next round closes the task",
+                &tip[..7]
+            )
+        );
+        assert_eq!(posts(&r, SLUG, "its dispatch stopped"), 0);
+        assert_eq!(posts(&r, SLUG, "--dispatch"), 0);
+        assert_eq!(landings(&r, SLUG).len(), 0, "the watcher's to close");
+        let kept = journal(&r, SLUG);
+        assert!(kept.watched(), "{:?}", kept.stage);
+        // The watcher's next round reads the merge and closes the task, once.
+        let (said, line, _) = watched(&r, &host, dispatch::seconds(), 2, &[]);
+        assert_eq!(line, "nothing is armed at the host: the watcher ends");
+        assert!(
+            said.contains(&format!("landed {SLUG} on main at {}", &squash[..12])),
+            "{said}"
+        );
+        assert_eq!(landings(&r, SLUG).len(), 1);
+        assert_eq!(status(&r, SLUG), "done");
+        assert_eq!(Receipt::read(&lands(&r), SLUG).unwrap().head, tip);
+    }
+}
+
 /// The posts on `slug`'s thread that hold `text`.
 fn posts(r: &Repo, slug: &str, text: &str) -> usize {
     (r.board.said(slug).iter())
