@@ -10,6 +10,7 @@ use axum::http::{Method, StatusCode, header};
 use axum::response::{IntoResponse, Json, Response};
 use serde_json::json;
 
+use crate::attempts::Failed;
 use crate::front::Shared;
 use crate::live::Hub;
 
@@ -118,9 +119,6 @@ fn cursor(shared: &Shared, path: &str) -> Option<u64> {
     }
     shared.api.get()?.cursor(scope)
 }
-
-/// A read's refusal: its status and why.
-type Failed = (StatusCode, String);
 
 /// The reads in their order: what is asked, the refusals, the routes answered before the hub is
 /// warm, the hub, the routes over the hub. The order decides which refusal a request gets.

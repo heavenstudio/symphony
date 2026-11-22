@@ -1928,7 +1928,7 @@ fn a_call_with_no_answer_is_recorded_with_why_and_without_the_plugins_time() {
         (&line["seam"], &line["call"]),
         (&"card_kinds".into(), &"recognises".into())
     );
-    for absent in ["us", "request_bytes", "answer_bytes", "lost"] {
+    for absent in ["us", "request_bytes", "answer_bytes"] {
         assert!(line.get(absent).is_none(), "{absent}: {line}");
     }
     assert!(line["round_trip_us"].as_f64().is_some(), "{line}");

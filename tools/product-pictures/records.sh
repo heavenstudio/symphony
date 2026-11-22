@@ -3,7 +3,8 @@
 # (tools/product-pictures.sh, which runs this in the fixture project's copy once its board is
 # filled): the day files a shared server and the board's recorder would have written in the copy's
 # git folder, each at a moment counted back from NOW, so the pages are the same on any day. A
-# server of a project's own, as the pictures', writes none of them, so they stay as written here.
+# server of a project's own, as Reports' and Runs' pictures', writes none of them, so they stay as
+# written here.
 #
 #   NOW=SECONDS tools/product-pictures/records.sh
 #
