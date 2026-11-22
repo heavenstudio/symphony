@@ -309,3 +309,29 @@ fn a_command_its_runner_refused_is_named_apart_with_its_line() {
         ]
     );
 }
+
+#[test]
+fn a_red_run_that_kept_a_log_is_followed_by_the_logs_path_and_no_other_run_is() {
+    let kept = |log: &str| -> recorded::Run {
+        serde_json::from_value(serde_json::json!({
+            "pipeline": "verify", "trigger": "owner", "runs": "/board/runs", "log": log,
+        }))
+        .unwrap()
+    };
+    let mut failed = red(3, "just test-rs -p board", TIP, 101);
+    failed.run = Some(kept("logs/2026-01-01/a.log"));
+    let mut passed = green(4, "just check", TIP);
+    passed.run = Some(kept("logs/2026-01-01/b.log"));
+    // A red recorded with no pipeline kept no log: nothing to name.
+    let bare = red(5, "just test-client", TIP, 1);
+    let lines = printed(&[failed, passed, bare], Ok(""));
+    let logs: Vec<&String> = lines.iter().filter(|line| line.contains("LOG")).collect();
+    assert_eq!(
+        logs,
+        [
+            "  LOG of the red `just test-rs -p board`, what failed is at its end: \
+          /board/runs/logs/2026-01-01/a.log"
+        ],
+        "{lines:#?}"
+    );
+}

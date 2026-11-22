@@ -1668,7 +1668,9 @@ landing](#the-default-landing)).
   stamp reads it (`crates/tasks/src/cli/commands/runs.rs`): `TIP`; `RUNS`, a row for each build
   and test command the task and the work under it ran there, its newest run's result (`green`,
   `red`, `running`, `queued`), when, how long, who, why it is red, and how many runs of it came
-  before there; `REFUSED`, when there are any, a row for each run there its runner refused, with
+  before there, then, for each red run there that kept a log (a run of a pipeline,
+  [RUNS](RUNS.md)), a `LOG` line with the log's path, since which test failed is in the command's
+  own output, at the log's end, and the board reads no runner's format; `REFUSED`, when there are any, a row for each run there its runner refused, with
   the refusal's line ([what clears what](#what-clears-a-red-run)); `TESTS`, the `tests` stamp met or not with its reader's line; `CHECK`, the
   project's `[verdicts] check` as the task page's check gate reads it, its newest run there by
   anyone or `no run`; and `ELSEWHERE`, how many of the task's runs are at other commits, none of

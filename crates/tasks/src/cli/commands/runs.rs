@@ -3,6 +3,8 @@
 //! command the task ran there with its newest result and the runs before it there, the `tests`
 //! stamp as its reader reads it, the project's `[verdicts] check` (the task page's check gate) with
 //! its newest run at the tip or none, and the task's runs at other commits, which are not the tip's.
+//! A red run that kept a log is followed by the log's path, since which test failed is in the
+//! command's own output and the board reads no runner's format.
 //! A command its runner refused there before building or running anything is named apart, with the
 //! refusal's line: no run of the command, so no red and no green (`stamps::read::refused`).
 //! The tip is the task's branch's in the main checkout, else the commit `--tip` names there.
@@ -132,6 +134,15 @@ pub(super) fn lines(shown: &Shown<'_>) -> Vec<String> {
             .map(|command| row(shown.slug, command))
             .collect();
         lines.extend(columns(&rows).into_iter().map(|row| format!("  {row}")));
+        lines.extend(found.commands.iter().filter_map(|command| {
+            let run = command.newest;
+            let red = run.state == Step::Finished && read::red(run).is_some();
+            let log = log_of(run).filter(|_| red)?;
+            Some(format!(
+                "  LOG of the red `{}`, what failed is at its end: {log}",
+                run.label
+            ))
+        }));
     }
     if !found.refused.is_empty() {
         lines.push(format!(
@@ -169,6 +180,14 @@ pub(super) fn lines(shown: &Shown<'_>) -> Vec<String> {
         ));
     }
     lines
+}
+
+/// Where `run`'s log is: the file its recorder kept its command's output in, by its whole path;
+/// none for a run recorded without one.
+fn log_of(run: &Record) -> Option<String> {
+    let kept = run.run.as_ref()?;
+    let (runs, log) = (kept.runs.as_deref()?, kept.log.as_deref()?);
+    Some(std::path::Path::new(runs).join(log).display().to_string())
 }
 
 /// When `run` last moved: ended, else began.
