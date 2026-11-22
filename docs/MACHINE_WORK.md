@@ -260,13 +260,14 @@ call, so nothing beats for it. While COMMAND runs, its recorder tells the board 
 heartbeat makes, and once more when COMMAND ended, so the session reads live for as
 long as the run goes on and ages from its end as from any last sign of life
 ([Health](TASKS.md#sessions)). It is the one write a recorder makes on the board:
-tried once each time and waited for 1 s at most, without starting the board's server,
-and a board that does not answer, does not know the session or knows it left is
-told nothing. Only the handle the record names is said: never a session found by the
-folder the run works in, so of two agents in one checkout each is kept by its own
-runs alone. A recorder inside a recorded command says nothing, as the one around it
-does, and one that died says nothing more: its session ages from the last time it
-was said.
+tried once each time, each of its answers waited for 1 s at most, without starting the
+board's server, and a board that does not answer, does not know the session or knows
+it left is told nothing. The session said is the one the record names, however the
+run was attributed as it began (above): it is never looked up by the folder the run
+works in again while the run goes on, never matched by a directory prefix, and never
+one of two agents placed in one checkout, so each of those is kept by its own runs
+alone. A recorder inside a recorded command says nothing, as the one around it does,
+and one that died says nothing more: its session ages from the last time it was said.
 
 ### A command its runner refused
 

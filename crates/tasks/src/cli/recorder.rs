@@ -43,8 +43,9 @@
 //! board that the session is there ([`Session`]): every [`SEEN`], and once more as the command
 //! ends. An agent waiting on its own build or test makes no tool call, and reads live by that for
 //! as long as the run goes on, then ages from its end. It is the one write a recorder makes on the
-//! board, by one try, waited for [`WAIT`] at most, and its command never waits on it but for the
-//! last, where the recorder runs it as its child.
+//! board, by one try, each answer waited for [`WAIT`] at most. Its command never waits on it, and
+//! its caller only for the last where the recorder runs the command as its child: the status
+//! comes once that is said.
 //!
 //! Nothing it records reaches the command's streams: a record it cannot write leaves the command
 //! running as it would unrecorded. A run's or a step's stdout and stderr, which its lines name a
@@ -828,28 +829,33 @@ fn on_board(
     place: &crate::store::RunPlace,
     wait: Duration,
 ) -> Option<(Option<String>, Option<String>)> {
-    board(env, wait)?.run_for(place).ok()
+    let (reached, clock) = reached(env, wait)?;
+    let store = super::open_unchecked(reached, &clock).ok()?;
+    store.run_for(place).ok()
 }
 
 /// The board `env` reaches, its server never started, each of its answers waited for `wait` at
-/// most, read by the clock every board command reads; none when it is not there.
-fn board(env: &Env, wait: Duration) -> Option<crate::store::Store> {
+/// most, and the clock every board command reads; none when it is not there.
+fn reached(env: &Env, wait: Duration) -> Option<(super::Reached, super::Clock)> {
     let reached = super::reach(env, &env.cwd, false).ok()?;
     let reached = super::Reached {
         client: reached.client.waiting(wait),
         ..reached
     };
-    let clock = super::Clock::of(env).unwrap_or(super::Clock::Machine);
-    super::open_unchecked(reached, &clock).ok()
+    Some((
+        reached,
+        super::Clock::of(env).unwrap_or(super::Clock::Machine),
+    ))
 }
 
 /// The session a run's record names, which its recorder says is there while the run goes on: an
 /// agent waiting on its own build or test makes no tool call, so nothing else beats for it, and
 /// it would read stale, then lost, with its work at the machine's mercy (docs/TASKS.md, "Health").
 /// The board is told every [`SEEN`] and once more as the run ends, so the session ages from that
-/// end as from any last sign of life. Only the handle the record names is told of, never a
-/// session found by where the run works, and a recorder that died says nothing more: its session
-/// ages from the last time it did.
+/// end as from any last sign of life. The session told of is the one the record names, however
+/// the run was attributed as it began ([`attributed`]): never looked up by where the run works
+/// again while it goes on, so no other session placed in its checkout is told of. A recorder that
+/// died says nothing more: its session ages from the last time it did.
 struct Session {
     env: Env,
     handle: String,
@@ -873,12 +879,16 @@ impl Session {
         true
     }
 
-    /// The board told the session is there, when that is due ([`Session::due`]), by one try: a
+    /// The board told the session is there, when that is due ([`Session::due`]), by one try,
+    /// opened as the beat hook opens it for its one write (its schema read only past the guard): a
     /// board that is down, slow, moving under it or that does not know the session (or knows it
     /// left) is told nothing, and the record goes on.
     fn seen(&self, ended: bool) {
-        if self.due(std::time::Instant::now(), ended)
-            && let Some(store) = board(&self.env, self.wait)
+        if !self.due(std::time::Instant::now(), ended) {
+            return;
+        }
+        if let Some((reached, clock)) = reached(&self.env, self.wait)
+            && let Ok(store) = super::open_beating(reached, &clock)
         {
             let _ = store.seen_once(&self.handle);
         }
