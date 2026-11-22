@@ -12,7 +12,7 @@ card both /docs/DECISIONS.md#weekly-digest-day --click .doc-actions>button --key
 board both /tasks
 board-decisions wide /tasks --click .wait-chip.k-decision
 task both /task/site/print-view
-task-thread wide /task/site/print-view --hover .task-tokens>summary --wait-for #task-send --hover .task-tokens>summary
+task-thread wide /task/site/print-view --hover [id^=composer-] --wait-for #task-send --hover #task-send
 reports both /reports
 reports-days wide /reports --click [data-grain=day]
 runs both /runs

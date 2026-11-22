@@ -113,21 +113,6 @@ the other way (`Home::move_to`, `crates/tasks/src/server/moving.rs`). It is a pr
 own, the owner's to run from the main checkout as `tasks-reclaim` is, and no board command: the
 `tasks` every session runs links none of it.
 
-A release installs it beside its `tasks` ([the install](../RELEASES.md#the-install)), so a
-project with no build of its own moves its board with what the release holds, at the schema
-its `tasks` writes. Its orchestrator or owner runs it from the project's main checkout by its
-path in the machine folder, since no recipe reaches it and `just tasks` would refuse a live
-board's move ([where it lives](../TASKS.md#where-it-lives)):
-
-```sh
-"$HOME/Library/Application Support/Symphony/current/bin/tasks-move" postgresql --as HANDLE
-```
-
-Elsewhere than macOS the machine folder is `$XDG_DATA_HOME/symphony`, else
-`~/.local/share/symphony`, and `SYMPHONY_MACHINE_DIR` names another. A release before the
-one that first installed it holds none: the project waits for `current` to name one that does.
-No refresh runs it: a board moves when its project says so, after its pin (step 4 above).
-
 1. **Hold.** The board is held as for any maintenance: its database is stopped, and every board
    command is refused and says why. Agents' work in progress is untouched; their board commands
    and the board's pages wait for the release. A hold its caller set before
@@ -156,6 +141,22 @@ No refresh runs it: a board moves when its project says so, after its pin (step 
 Nothing is deleted but the move's work folder. The old store, with every database it held
 beside the board's, and the export stay in `moved/`, and the snapshot with the snapshots, until
 the owner says otherwise.
+
+A release installs `tasks-move` beside its `tasks` ([the install](../RELEASES.md#the-install)),
+so a project with no build of its own moves its board with what the release holds, at the schema
+its `tasks` writes. Its orchestrator or owner runs it from the project's main checkout by its
+path in the machine folder, since no recipe reaches it and `just tasks` would refuse a live
+board's move ([where it lives](../TASKS.md#where-it-lives)):
+
+```sh
+"$HOME/Library/Application Support/Symphony/current/bin/tasks-move" postgresql --as HANDLE
+```
+
+Elsewhere than macOS the machine folder is `$XDG_DATA_HOME/symphony`, else
+`~/.local/share/symphony`, and `SYMPHONY_MACHINE_DIR` names another. A release before the
+one that first installed it holds none: the project waits for `current` to name one that does.
+No refresh runs it: a board moves when its project says so, after its pin (step 4 of
+[the order](#the-order)).
 
 **A failure.** Before the switch nothing of the board has changed places: the work folder is
 removed, the export already written stays in `moved/STAMP-ENGINE/` beside nothing else, and the
