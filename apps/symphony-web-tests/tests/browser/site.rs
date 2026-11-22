@@ -341,6 +341,10 @@ impl Site {
                 symphony_api::RUNS_PATH,
                 serde_json::json!({"runs": [], "more": false, "pipelines": [], "unread": []}),
             ),
+            (
+                symphony_api::SETTINGS_PATH,
+                serde_json::json!({"files": [], "sections": []}),
+            ),
         ] {
             files.insert(
                 path.into(),

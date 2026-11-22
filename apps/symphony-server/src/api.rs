@@ -74,6 +74,7 @@ pub(crate) const READS: &[&str] = &[
     symphony_api::RUNS_PATH,
     symphony_api::RUN_PATH,
     symphony_api::SCHEMA_UPDATES_PATH,
+    symphony_api::SETTINGS_PATH,
     symphony_api::workflow::WORKFLOW_PATH,
     symphony_api::workflow::WORKFLOW_ACTIONS_PATH,
     symphony_api::TASK_ATTEMPTS_PATH,
@@ -444,6 +445,16 @@ async fn off_board(
             let hub = shared.hub()?;
             let read = crate::spawn::blocking(move || runs::answer(&hub, &filters).map(Json));
             answered(read.await, "the runs could not be read: ")
+        }
+        // The settings are the project's files and this machine's programs alone, the board
+        // never read; a read, which writes nothing.
+        symphony_api::SETTINGS_PATH => {
+            let hub = shared.hub()?;
+            let read = crate::spawn::blocking(move || {
+                let machine = symphony::settings::Machine::of_process();
+                Ok(Json(symphony::settings::page(&hub.root, &machine)))
+            });
+            answered(read.await, "the settings could not be read: ")
         }
         symphony_api::RUN_PATH => {
             let run = query(request, "run")
@@ -1654,6 +1665,7 @@ fn client_kind(project: &symphony_api::ProjectView, path: &str) -> Option<&'stat
         "/queue" => Some("queue"),
         "/reports" => Some("reports"),
         "/runs" => Some("runs"),
+        "/settings" => Some("settings"),
         _ if path.starts_with("/task/") => Some("task"),
         _ if project
             .nav
@@ -1702,6 +1714,8 @@ mod agent_page;
 
 #[cfg(test)]
 mod route_groups_tests;
+#[cfg(test)]
+mod settings_tests;
 #[cfg(test)]
 mod tests;
 

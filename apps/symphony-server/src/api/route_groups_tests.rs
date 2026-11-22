@@ -124,6 +124,7 @@ async fn before_the_hub_the_reads_off_the_board_say_the_server_is_starting() {
         format!("{}?run=r1", symphony_api::RUN_LOG_PATH),
         symphony_api::RUNS_PATH.to_string(),
         format!("{}?run=r1", symphony_api::RUN_PATH),
+        symphony_api::SETTINGS_PATH.to_string(),
     ] {
         let response = answer(&shared, get(&route)).await.unwrap();
         assert_eq!(sent(response).await, starting, "{route}");

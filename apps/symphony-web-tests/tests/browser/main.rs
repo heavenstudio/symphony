@@ -69,6 +69,7 @@ mod restored;
 mod run_records;
 mod runs;
 mod server_notices;
+mod settings;
 mod shot;
 mod site;
 mod skeleton;
@@ -430,6 +431,7 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         ("/queue", "queue", "[data-ready=queue]", None),
         ("/reports", "reports", "[data-ready=reports]", None),
         ("/runs", "runs", "[data-ready=runs]", None),
+        ("/settings", "settings", "[data-ready=settings]", None),
         (
             "/task/visual/in-progress",
             "task",
