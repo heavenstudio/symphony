@@ -318,6 +318,62 @@ fn the_downloads_of_a_check_are_in_a_folder_of_its_own_among_the_runs_logs() {
     );
 }
 
+/// A run's commit not held here is fetched for once, and a fetch that fails is said where it
+/// failed, on the run's `err`, before the run is judged by what is held: this is the one site of
+/// [`super::unsaid`] in this file.
+#[test]
+fn a_fetch_for_a_commit_not_held_that_fails_is_said_and_the_run_is_not_believed() {
+    let tree = Tree::new();
+    let root = &tree.root;
+    git(root, &["init", "-q", "-b", "main"]).unwrap();
+    tree.write(WORKFLOW, "name: Release verification\n");
+    let identity = ["-c", "user.name=t", "-c", "user.email=t@example.com"];
+    git(root, &["add", WORKFLOW]).unwrap();
+    git(
+        root,
+        &[&identity[..], &["commit", "-q", "-m", "workflow"]].concat(),
+    )
+    .unwrap();
+    let tip = git(root, &["rev-parse", "HEAD"]).unwrap();
+    // No remote `origin` here, so the fetch fails at once, reaching no network.
+    let hosting = Hosting {
+        root,
+        main: root,
+        command: &[],
+        commit: &tip,
+        tip: &tip,
+        remote: "origin",
+        branch: "main",
+        by: "release-run",
+    };
+    let absent = "f".repeat(40);
+    let mut err = Vec::new();
+    assert_eq!(
+        hosting.committed(&absent, Within::bound(far()), &mut err),
+        Some(format!(
+            "its run ran the {WORKFLOW} of {}, a commit origin/main does not hold",
+            short(&absent)
+        ))
+    );
+    let said = String::from_utf8(err).unwrap();
+    let head = format!(
+        "symphony-build release: origin/main could not be fetched for the commit {}: ",
+        short(&absent)
+    );
+    assert!(
+        said.starts_with(&head) && said.len() > head.len() && said.lines().count() == 1,
+        "{said}"
+    );
+
+    // A commit held here is not fetched for: nothing is said, and its file is main's.
+    let mut err = Vec::new();
+    assert_eq!(
+        hosting.committed(&tip, Within::bound(far()), &mut err),
+        None
+    );
+    assert!(err.is_empty(), "{}", String::from_utf8_lossy(&err));
+}
+
 #[test]
 fn the_workflow_main_commits_names_its_plan_job_and_artifacts_as_they_are_read_here() {
     let file = Path::new(env!("CARGO_MANIFEST_DIR"))

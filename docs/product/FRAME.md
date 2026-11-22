@@ -114,8 +114,8 @@ A notice floats over the foot of the window while something about the page is no
 | *This project's settings do not load, so it is served with the defaults: …* | the project's settings file has an error, which the notice quotes |
 
 While one of the first three shows, the buttons that save on a document or a task's page (a
-verdict, **Later**, a comment's or the task's message's **Send**) take no press and say
-*Checking…*; what is typed stays editable. The chat's **Send** is not held.
+verdict, **Later**, a comment's or the task's message's **Send**), and the queue's **Later**, take
+no press and say *Checking…*; what is typed stays editable. The chat's **Send** is not held.
 
 ## States
 
