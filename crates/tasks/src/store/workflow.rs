@@ -466,7 +466,7 @@ impl Store {
         // The versions first, the holders after: a claim between the two is seen by the
         // second, or fences the write by the version it moved.
         let mut read: Standings =
-            self.retrying(|| self.transact(both(sql::STANDINGS, pg::standings()), json!({})))?;
+            self.retrying(|| self.read_together(both(sql::STANDINGS, pg::standings()), json!({})))?;
         let board = self.board()?;
         let read_slug = |slug: &str| read.tasks.iter().any(|t| t.slug == slug);
         let seen: Vec<Value> = (board.tasks.iter())
@@ -518,7 +518,7 @@ impl Store {
     /// was.
     fn moved_since(&self, tasks: &[crate::workflow::activate::Standing]) -> Result<bool, Error> {
         let now: Standings =
-            self.retrying(|| self.transact(both(sql::STANDINGS, pg::standings()), json!({})))?;
+            self.retrying(|| self.read_together(both(sql::STANDINGS, pg::standings()), json!({})))?;
         Ok(now.tasks.len() != tasks.len()
             || (now.tasks.iter().zip(tasks))
                 .any(|(now, then)| now.slug != then.slug || now.version != then.version))
@@ -869,7 +869,7 @@ impl Store {
     /// a task that is not there.
     pub fn workflow_position(&self, slug: &str) -> Result<Option<TaskPosition>, Error> {
         let body: Value = self.retrying(|| {
-            self.transact(both(sql::POSITION, pg::position()), json!({"slug": slug}))
+            self.read_together(both(sql::POSITION, pg::position()), json!({"slug": slug}))
         })?;
         decoded(body, "workflow position")
     }
