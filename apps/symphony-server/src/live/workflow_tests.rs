@@ -234,8 +234,9 @@ fn the_owner_reads_a_workflow_and_takes_an_edge_through_the_pages_routes() {
     assert_eq!(status, 404, "{missing}");
 }
 
-/// [`TWO`] with the owner's Block guarded by `approved`, which the `approvals` authority attests
-/// by a key the project commits (the curve's base point, which signs nothing here).
+/// [`TWO`] and [`READY`] with the owner's Block guarded by `approved`, which the `approvals`
+/// authority attests by a key the project commits (the curve's base point, which signs nothing
+/// here).
 fn guarded() -> Custom {
     let text = TWO
         .replacen("adapters = []", "adapters = [\"approvals\"]", 1)
@@ -250,7 +251,7 @@ fn guarded() -> Custom {
             1,
         );
     assert!(text.contains("guards = [\"approved\"]"), "{text}");
-    let (definition, mappings) = written(&text).unwrap();
+    let (definition, mappings) = written(&format!("{text}{READY}")).unwrap();
     let definition = definition.unwrap();
     let revision = definition
         .revision(Source {
