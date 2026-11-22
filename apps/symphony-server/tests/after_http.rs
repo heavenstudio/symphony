@@ -355,6 +355,17 @@ fn manual_routes(f: &Fixture) {
     assert_eq!(doc["path"], "docs/TOPIC.md");
     assert_eq!(doc["cards"][0]["slug"], "one");
     f.get("/api/document?path=manual/TOPIC.md").status(400);
+    // A route no file has finds the document of its name, by route, wherever its folder is.
+    f.get("/api/document?path=docs/old/OTHER.md").status(404);
+    for (route, moved) in [
+        ("docs/old/OTHER.md", json!(["docs/OTHER.md"])),
+        ("docs/OTHER.md", json!([])),
+        ("docs/old/GONE.md", json!([])),
+    ] {
+        let path = format!("/api/moved?path={route}");
+        assert_eq!(f.get(&path).status(200).json(), moved, "{route}");
+    }
+    f.get("/api/moved?path=manual/OTHER.md").status(400);
     let versions = f.get("/api/versions?path=docs/TOPIC.md").status(200).json();
     assert_eq!(versions["versions"].as_array().unwrap().len(), 1);
     assert_eq!(

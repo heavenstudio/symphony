@@ -251,8 +251,8 @@ What it costs:
   throwaway script rewrites them, and the docs audit checks every link. A link written
   `[[NAME#Heading]]` finds its document by name and does not change.
 - **The consuming project's links.** Its guides link this repository's documents on GitHub 34
-  times, 20 of them `docs/workflow/REVIEW.md`. They break until its own task rewrites them, which the
-  landing's `Consumer-Note` says.
+  times, 20 of them `docs/REVIEW.md`, which moves to `docs/workflow/REVIEW.md`. They break until
+  its own task rewrites them, which the landing's `Consumer-Note` says.
 - **Two constants.** The lint of slugs in prose and the recipes audit pass `analysis` only as the
   first folder under `docs/` (`crates/symphony/src/lint.rs:16`,
   `crates/symphony/src/docs_audit/recipes.rs:39`); they would pass it at any depth.
