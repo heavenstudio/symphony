@@ -48,10 +48,7 @@ fn files_load_before_hunks_and_only_the_opened_file_is_read_on_desktop_and_phone
         let Some(mut page) = chrome() else {
             panic!("Chrome is required for task diff acceptance")
         };
-        page.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":width < 400}),
-        );
+        page.viewport(width, 900, width < 400);
         open(&mut page, &site);
 
         assert!(

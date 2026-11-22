@@ -11,7 +11,10 @@
 
 use serde_json::{Value, json};
 
-use crate::cache_pages::{LIVE, PARTS, keeps, kept, notice, shows, store_opened};
+use crate::cache_pages::{
+    LIVE, PARTS, answered, hold, keeps, kept, notice, oldest, return_held, shows, since,
+    store_opened,
+};
 use crate::chrome::Chrome;
 use crate::site::{Answered, Site};
 use crate::{common, look_parity};
@@ -106,41 +109,6 @@ fn visit(chrome: &mut Chrome, site: &Site) {
     keeps(chrome, &KEPT);
 }
 
-/// When the older of the task's kept parts was kept.
-fn oldest(chrome: &mut Chrome) -> f64 {
-    kept(chrome)
-        .iter()
-        .filter(|(part, _)| KEPT.contains(&part.as_str()))
-        .map(|(_, saved)| saved.as_f64().unwrap())
-        .fold(f64::INFINITY, f64::min)
-}
-
-/// How many answers the stand-in has sent to each of [`READS`].
-pub(super) fn answered(site: &Site) -> Vec<usize> {
-    READS.iter().map(|read| site.answers(read).len()).collect()
-}
-
-/// The answers to `read` since `before` ([`answered`]).
-pub(super) fn since(site: &Site, before: &[usize], read: &str) -> Vec<Answered> {
-    let at = READS.iter().position(|each| *each == read).unwrap();
-    site.answers(read)[before[at]..].to_vec()
-}
-
-pub(super) fn hold(site: &Site, reads: &[&str], held: bool) {
-    for read in reads {
-        site.hold_route(read, held);
-    }
-}
-
-/// Open the fixture task again with `reads` held back; the answers counted before it.
-fn return_held(chrome: &mut Chrome, site: &Site, reads: &[&str]) -> Vec<usize> {
-    let before = answered(site);
-    hold(site, reads, true);
-    chrome.open("about:blank");
-    chrome.open(&site.url(&route(SLUG)));
-    before
-}
-
 /// The page shows what this device kept, saying `said` of it. It is asked right after the page
 /// opens, before its module (the task page's script and the chunks it imports) has drawn a
 /// `main`: none yet is not yet, never a failure.
@@ -210,7 +178,7 @@ pub(super) fn unchanged_once(answers: &[Answered], what: &str) {
 /// The board, read fresh and once: its version starts the feed.
 #[track_caller]
 fn board_read_fresh(site: &Site, before: &[usize]) {
-    let board = since(site, before, "/api/board");
+    let board = since(site, &READS, before, "/api/board");
     assert_eq!(
         board
             .iter()
@@ -246,14 +214,14 @@ fn a_warm_task_page_draws_its_brief_and_newest_messages_before_any_answer_and_an
     };
     visit(&mut chrome, &site);
     let first = api_bytes(&mut chrome);
-    let saved = oldest(&mut chrome);
-    let before = return_held(&mut chrome, &site, &READS);
+    let saved = oldest(&mut chrome, |part| KEPT.contains(&part));
+    let before = return_held(&mut chrome, &site, &READS, &READS, &route(SLUG));
     draws(&mut chrome, SLUG, "Task brief", "Owner message");
     let said = notice(&mut chrome, saved, false);
     from_the_device(&mut chrome, &said);
     actions_wait(&mut chrome);
     assert_eq!(
-        answered(&site),
+        answered(&site, &READS),
         before,
         "drawn before any read was answered"
     );
@@ -271,8 +239,14 @@ fn a_warm_task_page_draws_its_brief_and_newest_messages_before_any_answer_and_an
         "the draft typed meanwhile"
     );
     board_read_fresh(&site, &before);
-    unchanged_once(&since(&site, &before, "/api/task-page"), "the task page");
-    unchanged_once(&since(&site, &before, "/api/task-history"), "the thread");
+    unchanged_once(
+        &since(&site, &READS, &before, "/api/task-page"),
+        "the task page",
+    );
+    unchanged_once(
+        &since(&site, &READS, &before, "/api/task-history"),
+        "the thread",
+    );
     // A 304 carries no body: its head alone crossed the wire.
     let warm = api_bytes(&mut chrome);
     for path in ["/api/task-page", "/api/task-history"] {
@@ -300,8 +274,8 @@ fn a_message_posted_or_a_brief_edited_while_away_is_a_200_drawn_and_kept() {
     visit(&mut chrome, &site);
     // A message posted while away: the thread's newest page answers 200, the page 304.
     site.set_json("/api/task-history", &with_message(2, "Posted while away"));
-    let saved = oldest(&mut chrome);
-    let before = return_held(&mut chrome, &site, &READS);
+    let saved = oldest(&mut chrome, |part| KEPT.contains(&part));
+    let before = return_held(&mut chrome, &site, &READS, &READS, &route(SLUG));
     let said = notice(&mut chrome, saved, false);
     from_the_device(&mut chrome, &said);
     // The notice can show before a loaded machine has drawn the kept thread under it: the thread is
@@ -321,12 +295,15 @@ fn a_message_posted_or_a_brief_edited_while_away_is_a_200_drawn_and_kept() {
         json!([1, 2]),
         "each message once, in order"
     );
-    let history = since(&site, &before, "/api/task-history");
+    let history = since(&site, &READS, &before, "/api/task-history");
     assert!(
         history.len() == 1 && history[0].named.is_some() && history[0].status == 200,
         "{history:#?}"
     );
-    unchanged_once(&since(&site, &before, "/api/task-page"), "the task page");
+    unchanged_once(
+        &since(&site, &READS, &before, "/api/task-page"),
+        "the task page",
+    );
     shows(
         &mut chrome,
         &format!("{PARTS}.then(kept => kept[{}] > {saved})", json!(KEPT[1])),
@@ -339,26 +316,29 @@ fn a_message_posted_or_a_brief_edited_while_away_is_a_200_drawn_and_kept() {
         json!([{"type": "paragraph", "spans": [{"type": "text", "text": "Task brief, edited"}]}]);
     edited["task"]["updated"] = json!(2.0);
     site.set_json("/api/task-page", &edited);
-    let saved = oldest(&mut chrome);
-    let before = return_held(&mut chrome, &site, &READS);
+    let saved = oldest(&mut chrome, |part| KEPT.contains(&part));
+    let before = return_held(&mut chrome, &site, &READS, &READS, &route(SLUG));
     draws(&mut chrome, SLUG, "Task brief", "Posted while away");
     let said = notice(&mut chrome, saved, false);
     from_the_device(&mut chrome, &said);
     hold(&site, &READS, false);
     draws(&mut chrome, SLUG, "Task brief, edited", "Posted while away");
     shows(&mut chrome, LIVE, "the page, once read");
-    let page_read = since(&site, &before, "/api/task-page");
+    let page_read = since(&site, &READS, &before, "/api/task-page");
     assert!(
         page_read.len() == 1 && page_read[0].named.is_some() && page_read[0].status == 200,
         "{page_read:#?}"
     );
-    unchanged_once(&since(&site, &before, "/api/task-history"), "the thread");
+    unchanged_once(
+        &since(&site, &READS, &before, "/api/task-history"),
+        "the thread",
+    );
     shows(
         &mut chrome,
         &format!("{PARTS}.then(kept => kept[{}] > {saved})", json!(KEPT[0])),
         "the edited page kept",
     );
-    return_held(&mut chrome, &site, &READS);
+    return_held(&mut chrome, &site, &READS, &READS, &route(SLUG));
     draws(&mut chrome, SLUG, "Task brief, edited", "Posted while away");
     hold(&site, &READS, false);
     shows(&mut chrome, LIVE, "the third visit");
@@ -379,11 +359,11 @@ fn the_landing_offer_is_read_on_every_visit_and_never_kept() {
         &format!("(b => b?.textContent === '✓ Land it' && !b.disabled)({land})"),
         "the landing button",
     );
-    let before = answered(&site);
+    let before = answered(&site, &READS);
     // The offer is answered at once; the task's own reads wait.
-    let saved = oldest(&mut chrome);
+    let saved = oldest(&mut chrome, |part| KEPT.contains(&part));
     let held = ["/api/board", "/api/task-page", "/api/task-history"];
-    return_held(&mut chrome, &site, &held);
+    return_held(&mut chrome, &site, &READS, &held, &route(SLUG));
     let said = notice(&mut chrome, saved, false);
     from_the_device(&mut chrome, &said);
     chrome.eval("window.scrollTo(0, document.body.scrollHeight)");
@@ -392,7 +372,7 @@ fn the_landing_offer_is_read_on_every_visit_and_never_kept() {
         &format!("(b => b?.textContent === 'Checking…' && b.disabled)({land})"),
         "the landing button waits while the page is drawn from the device",
     );
-    let offers = since(&site, &before, "/api/task-offer");
+    let offers = since(&site, &READS, &before, "/api/task-offer");
     assert!(
         !offers.is_empty()
             && offers
@@ -441,14 +421,14 @@ fn a_check_that_fails_is_asked_again_until_it_answers_and_a_board_that_fails_is_
         return;
     };
     visit(&mut chrome, &site);
-    let saved = oldest(&mut chrome);
+    let saved = oldest(&mut chrome, |part| KEPT.contains(&part));
     // Neither the board nor the page's check answers: the copy stays drawn, saying so. (The
     // page's check waits for no board, so one that answered would leave nothing to check.)
     let target = target("/api/task-page", SLUG);
-    let before = answered(&site);
+    let before = answered(&site, &READS);
     site.fail_route(&target, true);
     site.fail_route("/api/board", true);
-    return_held(&mut chrome, &site, &[]);
+    return_held(&mut chrome, &site, &READS, &[], &route(SLUG));
     let unreachable = notice(&mut chrome, saved, true);
     from_the_device(&mut chrome, &unreachable);
     actions_wait(&mut chrome);
@@ -458,7 +438,7 @@ fn a_check_that_fails_is_asked_again_until_it_answers_and_a_board_that_fails_is_
     let checking = notice(&mut chrome, saved, false);
     from_the_device(&mut chrome, &checking);
     let failed = |site: &Site| {
-        since(site, &before, "/api/task-page")
+        since(site, &READS, &before, "/api/task-page")
             .iter()
             .filter(|answer| answer.status == 500)
             .count()
@@ -466,13 +446,16 @@ fn a_check_that_fails_is_asked_again_until_it_answers_and_a_board_that_fails_is_
     if let Err(stall) =
         test_time::until_true("the check asked again", crate::STALL, || failed(&site) >= 2)
     {
-        panic!("{stall}: {:#?}", since(&site, &before, "/api/task-page"));
+        panic!(
+            "{stall}: {:#?}",
+            since(&site, &READS, &before, "/api/task-page")
+        );
     }
     from_the_device(&mut chrome, &checking);
     actions_wait(&mut chrome);
     site.fail_route(&target, false);
     shows(&mut chrome, LIVE, "the check, once answered");
-    let asked = since(&site, &before, "/api/task-page");
+    let asked = since(&site, &READS, &before, "/api/task-page");
     assert_eq!(
         asked
             .last()
@@ -492,8 +475,8 @@ fn a_task_gone_while_away_says_so_and_this_device_forgets_it() {
     let gone = format!("no task '{SLUG}'");
     site.miss_route("/api/task-page", Some(&gone));
     site.miss_route("/api/task-history", Some(&gone));
-    let saved = oldest(&mut chrome);
-    return_held(&mut chrome, &site, &READS);
+    let saved = oldest(&mut chrome, |part| KEPT.contains(&part));
+    return_held(&mut chrome, &site, &READS, &READS, &route(SLUG));
     let said = notice(&mut chrome, saved, false);
     from_the_device(&mut chrome, &said);
     hold(&site, &READS, false);

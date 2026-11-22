@@ -204,10 +204,7 @@ pub(crate) const TWO_FRAMES: &str =
 /// A browser of its own, `width` by `height`, whose device keeps no copy of what it reads.
 fn browser(width: u32, height: u32) -> Option<Chrome> {
     let mut page = crate::chrome()?;
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": width, "height": height, "deviceScaleFactor": 1, "mobile": width < 600}),
-    );
+    page.viewport(width, height, width < 600);
     page.call(
         "Page.addScriptToEvaluateOnNewDocument",
         json!({ "source": NO_STORE }),

@@ -693,10 +693,7 @@ fn a_read_the_page_gave_up_holds_no_warm_up() {
 fn desktop_loading(opener: &str) -> Option<(super::Site, Chrome, super::assets::Module)> {
     let site = site();
     let mut browser = chrome()?;
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": 1280, "height": 800, "deviceScaleFactor": 1, "mobile": false}),
-    );
+    browser.viewport(1280, 800, false);
     browser.save_data();
     browser.open(&site.url("/"));
     wait_for_board(&mut browser);

@@ -88,7 +88,7 @@ impl Drop for Run {
 
 /// The page as the screenshot evidence keeps it, under `artifacts/run-columns/` of the checkout.
 fn screenshot(chrome: &mut Chrome, name: &str) {
-    chrome.eval("document.fonts.ready.then(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))))");
+    chrome.frames_with_fonts();
     let shot = chrome.call("Page.captureScreenshot", json!({"format":"png"}));
     let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../artifacts/run-columns");
     std::fs::create_dir_all(&folder).unwrap();

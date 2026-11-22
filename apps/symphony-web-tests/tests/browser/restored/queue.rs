@@ -438,10 +438,7 @@ fn restored_queue_counts_order_scope_anchors_and_refresh_keep_reading_position()
         "the addressed heading must match the single anchor inset within one pixel"
     );
     for width in [1280, 390] {
-        browser.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":false}),
-        );
+        browser.viewport(width, 900, false);
         browser.eval("document.getElementById('agent').scrollIntoView()");
         assert!(
             browser.wait_for(anchored, SHOWN),
@@ -450,7 +447,7 @@ fn restored_queue_counts_order_scope_anchors_and_refresh_keep_reading_position()
     }
     browser.call("Emulation.clearDeviceMetricsOverride", json!({}));
     // The restored viewport's resize must reach layout before the section is aligned.
-    browser.eval("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+    browser.frames();
     browser.eval("document.getElementById('agent').scrollIntoView()");
     assert!(
         browser.wait_for(anchored, SHOWN),

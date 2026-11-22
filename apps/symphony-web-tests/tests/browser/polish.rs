@@ -21,21 +21,6 @@ fn crumbs(page: &mut Chrome) -> Value {
     page.eval("[...document.querySelectorAll('nav.crumbs > a, nav.crumbs > span')].map(e => [e.textContent, e.getAttribute('href')])")
 }
 
-/// The page's colour scheme, as the operating system would set it.
-fn scheme(page: &mut Chrome, mode: &str) {
-    page.call(
-        "Emulation.setEmulatedMedia",
-        json!({"features":[{"name":"prefers-color-scheme","value":mode}]}),
-    );
-}
-
-fn viewport(page: &mut Chrome, width: u32, height: u32) {
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":height,"deviceScaleFactor":1,"mobile":width < 600}),
-    );
-}
-
 /// The card colour of each scheme's default theme: the surface every popup draws on.
 const SURFACES: [(&str, &str); 2] = [("light", "rgb(255, 255, 255)"), ("dark", "rgb(29, 28, 25)")];
 
@@ -43,9 +28,9 @@ const SURFACES: [(&str, &str); 2] = [("light", "rgb(255, 255, 255)"), ("dark", "
 fn an_open_select_and_the_appearance_panel_draw_on_an_opaque_bounded_surface_in_both_schemes() {
     let site = site();
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1280, 900);
+    page.viewport(1280, 900, false);
     for (mode, surface) in SURFACES {
-        scheme(&mut page, mode);
+        page.scheme(mode);
         page.open(&site.url("/tasks"));
         assert!(page.wait_for(
             "document.querySelector('button[aria-label=\"Finished tasks\"]') !== null",
@@ -137,7 +122,7 @@ fn a_list_too_tall_for_the_window_is_as_wide_as_its_longest_option_beside_its_sc
     site.set_json("/api/task-page", &detail);
     let Some(mut page) = chrome() else { return };
     // Too short for the task recipients: the list scrolls, its scrollbar inside its box.
-    viewport(&mut page, 1280, 320);
+    page.viewport(1280, 320, false);
     page.open(&site.url("/task/visual/in-progress"));
     assert!(page.wait_for("document.querySelector('[id^=composer-]') !== null", SHOWN));
     page.eval("document.querySelector('[id^=composer-]').scrollIntoView({block:'center'})");
@@ -236,9 +221,9 @@ fn the_chat_panel_is_one_surface_whose_send_stays_in_view_with_a_long_thread_or_
     let site = site();
     site.set_json("/api/ask", &long_conversation());
     let Some(mut page) = chrome() else { return };
-    scheme(&mut page, "dark");
+    page.scheme("dark");
     for (width, height) in [(1280, 800), (390, 844)] {
-        viewport(&mut page, width, height);
+        page.viewport(width, height, width < 600);
         for (case, draft, files) in [
             // A reply in the composer, so Send is enabled and takes clicks.
             (
@@ -324,7 +309,7 @@ fn the_add_task_tab_draws_its_form_under_the_tabs_and_what_a_save_came_to_above_
     site.set_json("/api/quick-task", &json!({"slug":"inbox/first"}));
     let Some(mut page) = chrome() else { return };
     for (width, height) in [(1280, 800), (390, 844)] {
-        viewport(&mut page, width, height);
+        page.viewport(width, height, width < 600);
         page.open(&site.url("/"));
         page.eval("localStorage.removeItem('review-quick-draft')");
         page.open(&site.url("/"));
@@ -395,7 +380,7 @@ fn a_task_header_says_each_thing_once_and_apart_and_its_brief_keeps_a_measure() 
         &json!({"task":task,"blocks":[paragraph(brief.trim())],"children":[],"children_count":0}),
     );
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1440, 900);
+    page.viewport(1440, 900, false);
     page.open(&site.url("/task/visual/long"));
     assert!(page.wait_for(
         "document.querySelector('.task-body p') !== null && document.querySelector('#task-priority') !== null",
@@ -414,7 +399,7 @@ fn a_tasks_send_is_the_sheets_filled_send() {
     let site = site();
     let Some(mut page) = chrome() else { return };
     for (mode, _) in SURFACES {
-        scheme(&mut page, mode);
+        page.scheme(mode);
         page.open(&site.url("/task/visual/in-progress"));
         // The composer mounts as it nears the window, below the brief and the task's timeline.
         assert!(page.wait_for(
@@ -584,7 +569,7 @@ fn a_task_page_crumbs_only_its_slug_under_the_lit_board_and_an_unknown_slug_says
     );
     assert_eq!(crumbs(&mut page), json!([["product/nope", null]]));
     for (mode, _) in SURFACES {
-        scheme(&mut page, mode);
+        page.scheme(mode);
         page.open(&bare.url("/task/product/nope"));
         assert!(page.wait_for("document.querySelector('.trouble a') !== null", SHOWN));
         assert_eq!(
@@ -607,7 +592,7 @@ fn native_controls_follow_the_scheme_and_the_theme_file_is_picked_from_a_drawn_b
     let site = site();
     let Some(mut page) = chrome() else { return };
     for (mode, surface) in SURFACES {
-        scheme(&mut page, mode);
+        page.scheme(mode);
         for route in ["/", "/tasks", "/docs/"] {
             page.open(&site.url(route));
             assert!(page.wait_for("document.querySelector('main') !== null", SHOWN));
@@ -929,7 +914,7 @@ fn a_folders_intro_the_server_no_longer_has_draws_nothing_and_reconnects_nothing
 fn a_wait_filter_read_failure_is_said_and_retries_without_a_click() {
     let site = site();
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1440, 900);
+    page.viewport(1440, 900, false);
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
         "document.querySelector('.taskcard') !== null && document.querySelector('.wait-chip.k-nobody') !== null",
@@ -967,7 +952,7 @@ fn every_callout_badge_reads_at_four_and_a_half_to_one_in_both_schemes() {
     );
     let Some(mut page) = chrome() else { return };
     for (mode, _) in SURFACES {
-        scheme(&mut page, mode);
+        page.scheme(mode);
         page.open(&site.url("/docs/PROBE.md"));
         assert!(page.wait_for(
             "document.querySelectorAll('.callout-kind').length === 6",
@@ -1146,7 +1131,7 @@ fn a_send_keeps_the_focus_in_the_sheet_so_escape_still_closes_it() {
 fn buttons_share_one_shape_and_one_focus_ring_and_pages_one_heading() {
     let site = site();
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1280, 900);
+    page.viewport(1280, 900, false);
     let mut headings = Vec::new();
     for route in [
         "/",
@@ -1170,7 +1155,7 @@ fn buttons_share_one_shape_and_one_focus_ring_and_pages_one_heading() {
         "every page has one h1, of one size: {headings:?}"
     );
 
-    viewport(&mut page, 390, 844);
+    page.viewport(390, 844, true);
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
         "document.querySelector('.board-filters-toggle') !== null",
@@ -1213,7 +1198,7 @@ fn smaller_ones_land_on_their_anchor_stay_on_screen_and_read_as_sentences() {
     let site = site();
     let Some(mut page) = chrome() else { return };
     // a) A link to the machine context lands on it once the agents arrive.
-    viewport(&mut page, 1280, 420);
+    page.viewport(1280, 420, false);
     page.open(&site.url("/agents#machine-context"));
     assert!(
         page.wait_for("(() => {const d=document.getElementById('machine-context');const top=d?.getBoundingClientRect().top;return d !== null && d.open && top >= 0 && top < 140;})()", SHOWN),
@@ -1231,7 +1216,7 @@ fn smaller_ones_land_on_their_anchor_stay_on_screen_and_read_as_sentences() {
     assert!(!text.contains("Following"), "{text}");
 
     // b) The collapse button's tooltip stays inside the window.
-    viewport(&mut page, 1280, 900);
+    page.viewport(1280, 900, false);
     page.open(&site.url("/"));
     open_panel(&mut page);
     page.eval("document.querySelector('#quick-sheet button.collapse').focus()");
@@ -1251,7 +1236,7 @@ fn smaller_ones_land_on_their_anchor_stay_on_screen_and_read_as_sentences() {
     );
 
     // d) The phone's search/filter button names the region and its expanded state.
-    viewport(&mut page, 390, 844);
+    page.viewport(390, 844, true);
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
         "document.querySelector('.board-filters-toggle') !== null",
@@ -1293,7 +1278,7 @@ fn click_middle(page: &mut Chrome, selector: &str) {
 fn a_task_card_opens_its_task_from_its_title() {
     let site = bare_site();
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1280, 900);
+    page.viewport(1280, 900, false);
     page.open(&site.url("/tasks"));
     page.reveal("#column-review");
     let title = "[data-slug='tools/example'] .taskcard-title";
@@ -1383,7 +1368,7 @@ fn the_tasks_filters_read_apart_and_a_chosen_window_moves_nothing() {
     site.set_json("/api/task-board", &every_status());
     let Some(mut page) = chrome() else { return };
     for (width, height) in [(1280, 900), (390, 844)] {
-        viewport(&mut page, width, height);
+        page.viewport(width, height, width < 600);
         page.open(&site.url("/tasks"));
         assert!(
             page.wait_for(
@@ -1441,7 +1426,7 @@ fn separately_opened_backlog_and_cancelled_lists_take_the_height_of_their_own_ca
     board["counts"][8] = json!(["cancelled", 13]);
     site.set_json("/api/task-board", &board);
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1280, 900);
+    page.viewport(1280, 900, false);
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
         "document.querySelector('button.board-backlog') !== null",
@@ -1569,7 +1554,7 @@ fn the_tasks_board_keeps_its_height_as_rows_load() {
         let Some(mut page) = chrome_holding_ready() else {
             return;
         };
-        viewport(&mut page, width, height);
+        page.viewport(width, height, width < 600);
         page.open(&site.url("/tasks"));
         if width <= 760 {
             assert!(page.wait_for(
@@ -1594,7 +1579,7 @@ fn the_tasks_board_keeps_its_height_as_rows_load() {
             "document.querySelectorAll('.column[data-status=ready] [id^=\"row-\"]').length === 30 && document.querySelector('.column[data-status=ready] .taskcard') !== null",
             SHOWN
         ));
-        page.eval("document.fonts.ready.then(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))");
+        page.frames_with_fonts();
         let first = page.eval(READY_COLUMN);
         let waiting = first["waiting"].as_u64().unwrap();
         assert!(
@@ -1656,7 +1641,7 @@ fn a_link_to_a_card_far_down_a_column_lands_under_the_header_and_stays() {
     // it up instead, and it stays as the last rows draw.
     for (width, height, row) in [(1280, 900, 20), (1280, 900, 28), (390, 844, 19)] {
         let Some(mut page) = chrome() else { return };
-        viewport(&mut page, width, height);
+        page.viewport(width, height, width < 600);
         page.open(&site.url(&format!("/tasks#row-load/ready-{row}")));
         let named = named_card(row);
         assert!(
@@ -1667,7 +1652,7 @@ fn a_link_to_a_card_far_down_a_column_lands_under_the_header_and_stays() {
             "{width}px: the named card or the rows below it never drew: {}",
             page.eval(&named)
         );
-        page.eval("document.fonts.ready.then(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))");
+        page.frames_with_fonts();
         let landed = page.eval(&named);
         let top = landed["top"].as_f64().unwrap();
         // The board scrolls inside itself to put the card at its top, or to its end for one of
@@ -1698,7 +1683,7 @@ fn the_waiting_stage_labels_start_alike_in_their_columns() {
     let site = bare_site();
     site.set_json("/api/task-board", &every_status());
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1280, 900);
+    page.viewport(1280, 900, false);
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
         "document.querySelectorAll('.waiting-columns .column').length === 8",
@@ -1760,7 +1745,7 @@ fn leave(page: &mut Chrome) -> Value {
 fn a_select_popup_grows_from_its_trigger_leaves_easing_out_and_under_reduced_motion_only_fades() {
     let site = site();
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1280, 900);
+    page.viewport(1280, 900, false);
     page.open(&site.url("/tasks"));
     // Below its trigger it grows from its top edge, drifting down from the trigger.
     open_finished(&mut page);
@@ -1784,7 +1769,7 @@ fn a_select_popup_grows_from_its_trigger_leaves_easing_out_and_under_reduced_mot
     );
     // A window too short below its trigger opens it above, growing from its bottom edge.
     let trigger_bottom = below["trigger"][1].as_f64().unwrap();
-    viewport(&mut page, 1280, (trigger_bottom + 52.0).ceil() as u32);
+    page.viewport(1280, (trigger_bottom + 52.0).ceil() as u32, false);
     open_finished(&mut page);
     let above = page.eval(POPUP);
     assert_eq!(above["side"], json!("top"), "{above}");
@@ -1809,7 +1794,7 @@ fn a_select_popup_grows_from_its_trigger_leaves_easing_out_and_under_reduced_mot
         json!({"features":[{"name":"prefers-reduced-motion","value":"reduce"}]}),
     );
     for height in [900, (trigger_bottom + 52.0).ceil() as u32] {
-        viewport(&mut page, 1280, height);
+        page.viewport(1280, height, false);
         open_finished(&mut page);
         assert_eq!(
             page.eval(ENTRANCE),

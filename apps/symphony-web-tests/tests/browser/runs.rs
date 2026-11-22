@@ -132,10 +132,7 @@ fn answer_log(site: &Site) {
 }
 
 fn screen(chrome: &mut Chrome, width: u32, height: u32, mobile: bool) {
-    chrome.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":height,"deviceScaleFactor":if mobile { 3 } else { 1 },"mobile":mobile}),
-    );
+    chrome.viewport_scaled(width, height, if mobile { 3 } else { 1 }, mobile);
 }
 
 /// Waits until the page is ready and draws `drawn`.

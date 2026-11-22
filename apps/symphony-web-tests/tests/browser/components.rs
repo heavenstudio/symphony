@@ -138,10 +138,7 @@ fn choose_file(page: &mut super::Chrome, name: &str) {
 fn an_entry_select_loads_its_popup_on_use_and_keeps_keyboard_selection_and_escape() {
     let site = site();
     let Some(mut page) = chrome() else { return };
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    page.viewport(1440, 900, false);
     page.save_data();
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
@@ -296,10 +293,7 @@ fn an_entry_select_loads_its_popup_on_use_and_keeps_keyboard_selection_and_escap
 fn a_shadcn_theme_file_changes_controls_in_both_modes_survives_navigation_and_resets() {
     let site = site();
     let Some(mut page) = chrome() else { return };
-    page.call(
-        "Emulation.setEmulatedMedia",
-        json!({"features":[{"name":"prefers-color-scheme","value":"light"}]}),
-    );
+    page.scheme("light");
     // A device's saved theme contains its selector as well as the stored declarations.
     let seed = page.call(
         "Page.addScriptToEvaluateOnNewDocument",
@@ -347,10 +341,7 @@ fn a_shadcn_theme_file_changes_controls_in_both_modes_survives_navigation_and_re
         page.eval("getComputedStyle(document.querySelector('.filters input')).borderRadius"),
         json!("16px")
     );
-    page.call(
-        "Emulation.setEmulatedMedia",
-        json!({"features":[{"name":"prefers-color-scheme","value":"dark"}]}),
-    );
+    page.scheme("dark");
     assert_eq!(
         page.eval("getComputedStyle(document.querySelector('.filters input')).color"),
         json!("rgb(217, 230, 242)")

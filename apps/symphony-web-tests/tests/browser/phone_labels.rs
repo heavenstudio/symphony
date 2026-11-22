@@ -96,14 +96,8 @@ fn site() -> Site {
 
 /// A phone `width` wide in `scheme`, with no pointer moved yet, so a focus shows its outline.
 fn phone(page: &mut Chrome, width: u32, scheme: &str) {
-    page.call(
-        "Emulation.setEmulatedMedia",
-        json!({"features":[{"name":"prefers-color-scheme","value":scheme}]}),
-    );
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":844,"deviceScaleFactor":2,"mobile":true}),
-    );
+    page.scheme(scheme);
+    page.viewport_scaled(width, 844, 2, true);
 }
 
 fn open(page: &mut Chrome, site: &Site, path: &str, ready: &str) {
@@ -209,7 +203,7 @@ fn shot(page: &mut Chrome, name: &str) {
     let Ok(run) = std::env::var("SYMPHONY_PHONE_LABEL_SHOTS") else {
         return;
     };
-    page.eval("document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))");
+    page.frames_with_fonts();
     let image = page.call("Page.captureScreenshot", json!({"format":"png"}));
     let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../artifacts/app/phone-navigation-labels");

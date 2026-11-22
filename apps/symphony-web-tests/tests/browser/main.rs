@@ -355,6 +355,22 @@ fn swipe(chrome: &mut Chrome, x: u32, from: u32, by: u32) {
     touch("touchEnd", 0.66, json!([]));
 }
 
+/// The wire's samples (`wire.cases.json`'s `samples`).
+fn samples() -> serde_json::Value {
+    let cases: serde_json::Value =
+        serde_json::from_str(include_str!("../../../symphony-web/src/wire.cases.json"))
+            .expect("the wire's cases");
+    cases["samples"].clone()
+}
+
+/// A page of `width` (a phone's at 760 px or under, 844 px high; else 900), over the stand-in's
+/// `path`.
+fn open(chrome: &mut Chrome, site: &Site, path: &str, width: u32) {
+    let phone = width <= 760;
+    chrome.viewport(width, if phone { 844 } else { 900 }, phone);
+    chrome.open(&site.url(path));
+}
+
 /// The text of every element `selector` matches, in document order.
 fn texts(chrome: &mut Chrome, selector: &str) -> Vec<String> {
     let value = chrome.eval(&format!(
@@ -426,10 +442,7 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         if kind == "board" {
             // The fixture is Ready; the phone now mounts only its selected Review stage.
             // Measure the same loaded lifecycle board as the established byte baseline.
-            chrome.call(
-                "Emulation.setDeviceMetricsOverride",
-                json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
-            );
+            chrome.viewport(1440, 900, false);
         }
         chrome.open(&site.url(path));
         assert!(
@@ -1026,10 +1039,7 @@ fn task_controls_read_the_board_again_for_the_window_already_chosen() {
     let site = site();
     site.set_json("/api/task-board", &site::example_listing("ready"));
     let Some(mut chrome) = chrome() else { return };
-    chrome.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    chrome.viewport(1440, 900, false);
     chrome.open(&site.url("/tasks"));
     let shown = "document.querySelector('[data-slug=\"tools/example\"]') !== null && document.querySelector('.column[aria-busy=true]') === null";
     assert!(
@@ -1069,10 +1079,7 @@ fn task_controls_keep_their_values_and_revealed_rows_after_scrolling() {
     let site = site();
     site.set_json("/api/task-board", &site::example_listing("ready"));
     let Some(mut chrome) = chrome() else { return };
-    chrome.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    chrome.viewport(1440, 900, false);
     chrome.call("Page.addScriptToEvaluateOnNewDocument", json!({"source":
         "const observer = new MutationObserver(() => { if (document.head) { const style = document.createElement('style'); style.textContent = '.column { margin-top: 20000px }'; document.head.append(style); observer.disconnect(); } }); observer.observe(document, {childList: true, subtree: true});"
     }));
@@ -1164,10 +1171,7 @@ fn a_revealed_column_keeps_its_rows_look_ahead_before_it_reaches_the_screen() {
         }),
     );
     let Some(mut chrome) = chrome() else { return };
-    chrome.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1280,"height":800,"deviceScaleFactor":1,"mobile":false}),
-    );
+    chrome.viewport(1280, 800, false);
     chrome.call("Page.addScriptToEvaluateOnNewDocument", json!({"source":
         "const observer = new MutationObserver(() => { if (document.head) { const style = document.createElement('style'); style.textContent = '.column[data-status=ready] { margin-top: 20000px }'; document.head.append(style); observer.disconnect(); } }); observer.observe(document, {childList: true, subtree: true});"
     }));

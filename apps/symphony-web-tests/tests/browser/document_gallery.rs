@@ -107,10 +107,7 @@ fn viewport(page: &mut Chrome, width: u32, height: u32, touch: bool) {
         "Emulation.setTouchEmulationEnabled",
         json!({"enabled":touch,"maxTouchPoints":5}),
     );
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":height,"deviceScaleFactor":1,"mobile":width < 600}),
-    );
+    page.viewport(width, height, width < 600);
 }
 
 /// Opens the document and waits until every picture of both rows is a named control.

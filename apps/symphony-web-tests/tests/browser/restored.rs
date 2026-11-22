@@ -361,10 +361,7 @@ fn restored_mockups_keep_opaque_origins_in_frames_full_size_and_svg_hops() {
     let Some(mut browser) = chrome() else { return };
     let site = Native::start();
     browser.call("Page.addScriptToEvaluateOnNewDocument",json!({"source":"window.probes=[]; window.addEventListener('message',e=>probes.push({origin:e.origin,...e.data}));"}));
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":420,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    browser.viewport(420, 900, false);
     browser.open(&site.url("/docs/PROBE.md"));
     assert!(
         browser.wait_for("window.probes.length === 1", SHOWN),
@@ -824,9 +821,7 @@ fn reconnect_pills_are_statuses_and_leave_document_reading_layout_unchanged() {
         if reading {
             // Disable the browser aid that can conceal a reconnect notice moving the page.
             browser.eval("document.documentElement.style.overflowAnchor='none'; scrollTo({top:1200,behavior:'instant'})");
-            browser.eval(
-                "new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))",
-            );
+            browser.frames();
             assert_eq!(
                 browser.eval("scrollY"),
                 json!(1200),
@@ -952,10 +947,7 @@ fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
         }),
     );
     let Some(mut browser) = chrome() else { return };
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1024,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    browser.viewport(1024, 900, false);
     browser.open(&site.url("/tasks"));
     browser.until(
         "the board, following its feed",
@@ -974,10 +966,7 @@ fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
     for width in [300, 390, 1024] {
         let phone = width <= 760;
         let rows = if phone { 12 } else { 72 };
-        browser.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":false}),
-        );
+        browser.viewport(width, 900, false);
         browser.until(
             &format!("{width}px: the stage columns drawn"),
             &format!(
@@ -1073,10 +1062,7 @@ fn document_page_end_clears_the_reconnect_notice_and_two_real_toasts_rise_over_a
     browser.open(&site.url("/docs/PROBE.md"));
     assert!(browser.wait_for("document.querySelector('.document-page')?.dataset.feed==='live' && document.querySelector('[data-doc-key=intro] p')!==null && Array.isArray(window.reviewKnownIds)", SHOWN));
     for (i, width) in [390, 1024].into_iter().enumerate() {
-        browser.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":false}),
-        );
+        browser.viewport(width, 900, false);
         browser.eval("document.documentElement.style.overflowAnchor='none';scrollTo(0,document.documentElement.scrollHeight);new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
         assert!(browser.wait_for("document.querySelector('#new-ask') !== null && [...document.querySelectorAll('link[rel=stylesheet]')].every(link=>link.sheet!==null)", SHOWN));
         browser.eval("scrollTo(0,document.documentElement.scrollHeight);new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
@@ -1126,9 +1112,7 @@ fn document_page_end_clears_the_reconnect_notice_and_two_real_toasts_rise_over_a
         // ResizeObserver delivers after layout and before paint. Sample the
         // painted stale geometry at a fixed frame boundary, never by retrying
         // its bounds. The reading offset is asserted both before and after.
-        browser.eval(
-            "new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))",
-        );
+        browser.frames();
         let geometry = browser.eval(r#"(() => {
             const stack=document.querySelector('.page-notices');
             const notice=stack.getBoundingClientRect();
@@ -1184,10 +1168,7 @@ fn restored_document_native_hash_card_uses_one_anchor_inset() {
     document(&site, blocks);
     let Some(mut browser) = chrome() else { return };
     for width in [1280, 390] {
-        browser.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":false}),
-        );
+        browser.viewport(width, 900, false);
         browser.open(&site.url("/docs/PROBE.md"));
         assert!(browser.wait_for(
             "location.hash==='' && performance.getEntriesByName('document-ready').length>0 && document.querySelector('.decision#anchor-card') !== null",

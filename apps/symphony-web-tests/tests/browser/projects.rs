@@ -364,12 +364,7 @@ fn the_top_left_switch_and_picker_work_by_keyboard_on_a_compact_nested_page() {
 
     let server = shared();
     let Some(mut browser) = chrome() else { return };
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({
-            "width":390,"height":844,"deviceScaleFactor":1,"mobile":true
-        }),
-    );
+    browser.viewport(390, 844, true);
     browser.open(&server.url("/alpha/tasks"));
     assert!(browser.wait_for("document.documentElement.dataset.navigation === 'ready' && document.querySelector('header a.project-switch') !== null", SHOWN), "nested page missing: {}", observed_page(&mut browser));
     key(&mut browser, "Tab", "Tab", 9);
@@ -493,10 +488,7 @@ fn each_project_fits_the_first_visit_budget_in_its_own_theme_and_the_shared_look
     );
     for (id, primary, layout) in THEMES {
         let Some(mut browser) = chrome() else { return };
-        browser.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true}),
-        );
+        browser.viewport(390, 844, true);
         let page = format!("/{id}/tasks");
         browser.open(&server.url(&page));
         assert!(
@@ -542,10 +534,7 @@ fn each_project_fits_the_first_visit_budget_in_its_own_theme_and_the_shared_look
     // column a project's pages stand in (the queue's: the board alone takes the window's width),
     // their titles at the same size.
     let Some(mut browser) = chrome() else { return };
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1600,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    browser.viewport(1600, 900, false);
     browser.open(&server.url("/alpha/tasks"));
     assert!(
         browser.wait_for(
@@ -719,10 +708,7 @@ fn every_link_of_a_projects_pages_names_its_page_under_the_projects_base() {
     let Some(mut browser) = chrome() else { return };
     // This case checks every stage's card links and the machine rail together. A phone mounts
     // Review first, while the seeded parent is Ready and its rail opens as a separate list.
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1600,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    browser.viewport(1600, 900, false);
     for (page, drawn, named) in [
         (
             "/alpha/",
@@ -1157,10 +1143,7 @@ fn the_header_and_the_icons_are_the_symphonys_until_a_theme_has_its_own() {
         (390, "alpha", Some(false)),
         (390, "lantern", Some(false)),
     ] {
-        browser.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":844,"deviceScaleFactor":1,"mobile":true}),
-        );
+        browser.viewport(width, 844, true);
         browser.open(&server.url(&format!("/{id}/")));
         assert!(browser.wait_for(client, SHOWN), "{id} at {width}");
         let seen = browser.eval(
@@ -1200,10 +1183,7 @@ fn a_phone_keeps_its_selected_board_stage_only_for_that_project() {
     board.call_in_database(DATABASE, "register", json!({"kind":"worker"}));
     let server = OneServer::start(board.address());
     let Some(mut browser) = chrome() else { return };
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true}),
-    );
+    browser.viewport(390, 844, true);
     for (project, expected, choose) in [
         ("alpha", "review", "Ready"),
         ("pantry", "review", "Design"),

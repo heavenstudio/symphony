@@ -50,13 +50,6 @@ fn site() -> Site {
     site_of(&listing())
 }
 
-fn viewport(page: &mut Chrome, width: u32, height: u32) {
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":height,"deviceScaleFactor":1,"mobile":width <= 760}),
-    );
-}
-
 /// Open the board, live, on a touch screen of 390 by 844 px.
 fn open_on_a_phone(page: &mut Chrome, site: &Site) {
     open_on_screen(page, site, 390, 844);
@@ -67,7 +60,7 @@ fn open_on_screen(page: &mut Chrome, site: &Site, width: u32, height: u32) {
         "Emulation.setTouchEmulationEnabled",
         json!({"enabled":true,"maxTouchPoints":5}),
     );
-    viewport(page, width, height);
+    page.viewport(width, height, width <= 760);
     page.open(&site.url("/tasks"));
     assert!(
         page.wait_for(
@@ -490,7 +483,7 @@ fn removed_scrollers_release_idle_holds_without_ending_connected_scrolling() {
 fn desktop_columns_keep_a_readable_width_and_scroll_inside_the_page_with_chat_open() {
     let site = site();
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1440, 900);
+    page.viewport(1440, 900, false);
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
         "document.querySelector('.waiting-columns .taskcard') !== null",
@@ -510,7 +503,7 @@ fn desktop_columns_keep_a_readable_width_and_scroll_inside_the_page_with_chat_op
         ])
     );
     for width in [1440, 1100, 800] {
-        viewport(&mut page, width, 900);
+        page.viewport(width, 900, width <= 760);
         for chat in [false, true] {
             if chat {
                 page.eval("document.querySelector('#quick-open').click()");
@@ -575,7 +568,7 @@ fn search_and_filters_start_collapsed_and_keep_the_query_when_toggled_at_every_w
         SHOWN
     ));
     for (width, height) in [(1440, 900), (800, 1000)] {
-        viewport(&mut page, width, height);
+        page.viewport(width, height, width <= 760);
         assert!(page.wait_for(&format!("innerWidth === {width} && document.querySelector('#board-filters')?.checkVisibility() === false && document.querySelector('.board-filters-toggle')?.checkVisibility() === true"), SHOWN));
         page.eval("document.querySelector('.board-filters-toggle').click()");
         assert!(page.wait_for("document.querySelector('#board-filters').checkVisibility() && document.querySelector('#board-filters input').value === 'found'", SHOWN));
@@ -587,7 +580,7 @@ fn search_and_filters_start_collapsed_and_keep_the_query_when_toggled_at_every_w
 fn backlog_stays_horizontal_while_pressed_and_returns_to_the_columns() {
     let site = site();
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1100, 850);
+    page.viewport(1100, 850, false);
     page.open(&site.url("/tasks"));
     assert!(page.wait_for("document.querySelector('.board-backlog') !== null", SHOWN));
     let position = page.eval("(() => { const r = document.querySelector('.board-backlog').getBoundingClientRect(); return [r.x + r.width/2, r.y + r.height/2]; })()");
@@ -603,7 +596,7 @@ fn backlog_stays_horizontal_while_pressed_and_returns_to_the_columns() {
 fn an_explicit_row_link_reveals_its_offscreen_desktop_column() {
     let site = site();
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1100, 850);
+    page.viewport(1100, 850, false);
     page.open(&site.url("/tasks#row-phone%2Freview-1"));
     assert!(page.wait_for("(() => { const board = document.querySelector('.waiting-columns'), card = document.querySelector('[data-slug=\"phone/review-1\"]'); if (!board || !card) return false; const r = card.getBoundingClientRect(), b = board.getBoundingClientRect(); return board.scrollLeft > 0 && r.left >= b.left && r.right <= b.right && r.top >= 0 && r.bottom <= innerHeight; })()", SHOWN));
 }
@@ -612,7 +605,7 @@ fn an_explicit_row_link_reveals_its_offscreen_desktop_column() {
 fn returning_from_a_list_restores_the_columns_horizontal_position() {
     let site = site();
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1100, 850);
+    page.viewport(1100, 850, false);
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
         "document.querySelector('.column[data-status=done]') !== null",

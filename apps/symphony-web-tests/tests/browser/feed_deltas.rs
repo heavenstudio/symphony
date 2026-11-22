@@ -78,10 +78,7 @@ fn opened(page: &mut Chrome, site: &Site, path: &str) -> usize {
 
 /// The board's cards span stages on a wide screen; on a phone only Review mounts initially.
 fn opened_board(page: &mut Chrome, site: &Site) {
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1600,"height":1000,"deviceScaleFactor":1,"mobile":false}),
-    );
+    page.viewport(1600, 1000, false);
     page.open(&site.url("/tasks"));
     page.reveal("#column-review");
     assert!(page.wait_for(

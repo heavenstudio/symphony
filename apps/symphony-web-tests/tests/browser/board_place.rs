@@ -87,13 +87,6 @@ fn site(tasks: &[Value]) -> Site {
     site
 }
 
-fn viewport(page: &mut Chrome, width: u32, height: u32) {
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":height,"deviceScaleFactor":1,"mobile":width <= 760}),
-    );
-}
-
 /// One feed event of `changes`, the board's answer moved to `tasks` first, as a server's is.
 fn push(site: &Site, version: u64, tasks: &[Value], changes: Value) {
     site.set_json("/api/task-board", &listing(tasks));
@@ -105,7 +98,7 @@ fn push(site: &Site, version: u64, tasks: &[Value], changes: Value) {
 
 /// Open the board, live and following the feed, at `width` by `height`.
 fn open(page: &mut Chrome, site: &Site, width: u32, height: u32) {
-    viewport(page, width, height);
+    page.viewport(width, height, width <= 760);
     page.open(&site.url("/tasks"));
     assert!(
         page.wait_for(

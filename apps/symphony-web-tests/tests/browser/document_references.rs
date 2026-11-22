@@ -3,7 +3,7 @@
 //! `src/docs.css`): it wraps inside its paragraph rather than running under the document's edge,
 //! the page no wider than its window, every character of it there to read and to copy, and the
 //! ordinary prose beside it still wraps between its words alone.
-use super::{SHOWN, chrome, chrome::Chrome, common, dist, site::Site, visible};
+use super::{SHOWN, chrome, common, dist, site::Site, visible};
 use serde_json::{Value, json};
 
 const DOC: &str = "docs/REFERENCE.md";
@@ -41,13 +41,6 @@ fn reference_site() -> Site {
     site
 }
 
-fn viewport(page: &mut Chrome, width: u32, height: u32) {
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":height,"deviceScaleFactor":1,"mobile":width < 600}),
-    );
-}
-
 /// Each reference as its paragraph lays it out (its text, what a copy of it takes, whether it
 /// stands on more than one line and whether every box of it is inside its paragraph), the words
 /// of the prose that do not stand whole on one line, and whether the page is no wider than its
@@ -73,7 +66,7 @@ fn document_paragraph_wraps_a_long_reference_inside_itself_at_a_phones_widths() 
     let Some(mut page) = chrome() else { return };
     // At both widths the hash is wider than its paragraph's whole line.
     for width in [320, 390] {
-        viewport(&mut page, width, 800);
+        page.viewport(width, 800, width < 600);
         page.open(&site.url(&format!("/{DOC}")));
         assert!(
             page.wait_for(&visible(".doc-body p:nth-of-type(3) > code"), SHOWN),

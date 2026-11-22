@@ -116,14 +116,6 @@ pub(super) struct Scheme {
 pub(super) const DARK: Scheme = Scheme { name: "dark" };
 pub(super) const LIGHT: Scheme = Scheme { name: "light" };
 
-/// Have `browser`'s page answer `prefers-color-scheme` as `scheme`, whatever the machine's is.
-fn set_scheme(browser: &mut Chrome, scheme: Scheme) {
-    browser.call(
-        "Emulation.setEmulatedMedia",
-        json!({"features":[{"name":"prefers-color-scheme","value":scheme.name}]}),
-    );
-}
-
 /// What a measured load opens once its page is settled: a panel, by the control that opens it,
 /// and what it shows once its read is in.
 #[derive(Clone, Copy, Debug)]
@@ -203,12 +195,9 @@ fn measure_in(
     before: &str,
 ) -> Loads {
     if let Some(scheme) = scheme {
-        set_scheme(browser, scheme);
+        browser.scheme(scheme.name);
     }
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": width.width, "height": width.height, "deviceScaleFactor": 1, "mobile": width.mobile}),
-    );
+    browser.viewport(width.width, width.height, width.mobile);
     let held = open.map_or("", |open| open.held);
     browser.call(
         "Page.addScriptToEvaluateOnNewDocument",
@@ -627,11 +616,8 @@ fn first_visit(
     order: Order,
 ) -> f64 {
     browser.fresh_context();
-    set_scheme(browser, scheme);
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": width.width, "height": width.height, "deviceScaleFactor": 1, "mobile": width.mobile}),
-    );
+    browser.scheme(scheme.name);
+    browser.viewport(width.width, width.height, width.mobile);
     browser.call(
         "Page.addScriptToEvaluateOnNewDocument",
         json!({ "source": RECORD }),

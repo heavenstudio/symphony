@@ -100,10 +100,7 @@ fn served(page: &Value) -> Site {
 }
 
 fn screen(chrome: &mut Chrome, width: u32, height: u32, mobile: bool) {
-    chrome.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":height,"deviceScaleFactor":if mobile { 3 } else { 1 },"mobile":mobile}),
-    );
+    chrome.viewport_scaled(width, height, if mobile { 3 } else { 1 }, mobile);
 }
 
 fn open(chrome: &mut Chrome, site: &Site, drawn: &str) {
@@ -252,10 +249,7 @@ fn on_a_wide_screen_the_charts_are_two_columns_and_dark_takes_its_own_colours() 
         ("light", ["#2a78d6", "#e87ba4"]),
         ("dark", ["#3987e5", "#d55181"]),
     ] {
-        chrome.call(
-            "Emulation.setEmulatedMedia",
-            json!({"features": [{"name": "prefers-color-scheme", "value": scheme}]}),
-        );
+        chrome.scheme(scheme);
         assert_eq!(chrome.eval(colours), json!(expected), "{scheme}");
     }
 }

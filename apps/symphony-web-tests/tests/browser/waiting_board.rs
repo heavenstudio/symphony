@@ -115,10 +115,7 @@ fn listing() -> Value {
 }
 
 fn open(page: &mut crate::Chrome, site: &Site, width: u32) {
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":if width <= 760 {844} else {900},"deviceScaleFactor":1,"mobile":width<=760}),
-    );
+    page.viewport(width, if width <= 760 { 844 } else { 900 }, width <= 760);
     page.open(&site.url("/tasks"));
     if width > 760 {
         assert!(page.wait_for(
@@ -137,10 +134,7 @@ fn the_board_fills_the_window_for_both_its_ghost_and_its_cards() {
         site.set_json("/api/task-board", &listing());
         site.hold_route("/api/task-board", true);
         let Some(mut page) = chrome() else { return };
-        page.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":width<=760}),
-        );
+        page.viewport(width, 900, width <= 760);
         page.open(&site.url("/tasks"));
         assert!(page.wait_for(
             "document.querySelector('.waiting-board.waiting-ghost') !== null",

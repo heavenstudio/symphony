@@ -142,10 +142,7 @@ fn happening_above_the_reader(late: u32) {
         &agent_page(&[agent("work-agent", "live")], &tasks),
     );
     let Some(mut page) = chrome() else { return };
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": 390, "height": 844, "deviceScaleFactor": 1, "mobile": true}),
-    );
+    page.viewport(390, 844, true);
     page.call(
         "Page.addScriptToEvaluateOnNewDocument",
         json!({ "source": LATE_TASKS }),

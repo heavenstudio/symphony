@@ -104,14 +104,8 @@ fn listing() -> Value {
 /// left them, the Ready lane's cards out of the window and not drawn.
 fn open(page: &mut crate::Chrome, site: &Site, width: u32, scheme: &str) {
     page.open("about:blank");
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": width, "height": 900, "deviceScaleFactor": 1, "mobile": width <= 760}),
-    );
-    page.call(
-        "Emulation.setEmulatedMedia",
-        json!({"features": [{"name": "prefers-color-scheme", "value": scheme}]}),
-    );
+    page.viewport(width, 900, width <= 760);
+    page.scheme(scheme);
     page.open(&site.url("/tasks"));
     if width <= 760 {
         assert!(page.wait_for(
@@ -523,10 +517,7 @@ fn every_stage_is_named_over_the_lanes_and_the_last_is_reached_whole_from_the_fi
     );
 
     // A window that holds every lane marks none; a phone has its own stage selector.
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": 2600, "height": 900, "deviceScaleFactor": 1, "mobile": false}),
-    );
+    page.viewport(2600, 900, false);
     assert!(page.wait_for(
         "[...document.querySelectorAll('.stage-jump button')].every(button => button.dataset.side === 'shown' && !button.textContent.includes('›'))",
         SHOWN
@@ -544,10 +535,7 @@ fn the_ghost_keeps_the_stage_rows_room_so_the_lanes_do_not_move_when_they_load()
     site.set_json("/api/task-board", &listing());
     site.hold_route("/api/task-board", true);
     let Some(mut page) = chrome() else { return };
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": 1440, "height": 900, "deviceScaleFactor": 1, "mobile": false}),
-    );
+    page.viewport(1440, 900, false);
     page.call(
         "Page.addScriptToEvaluateOnNewDocument",
         json!({ "source": crate::NO_STORE }),

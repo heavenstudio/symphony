@@ -34,10 +34,7 @@ fn content_site() -> Site {
 }
 
 fn screen(page: &mut Chrome, width: u32, height: u32, mobile: bool) {
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":height,"deviceScaleFactor":if mobile { 3 } else { 1 },"mobile":mobile}),
-    );
+    page.viewport_scaled(width, height, if mobile { 3 } else { 1 }, mobile);
 }
 
 fn open(page: &mut Chrome, site: &Site, path: &str, ready: &str) {

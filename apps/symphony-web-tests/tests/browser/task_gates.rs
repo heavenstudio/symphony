@@ -75,24 +75,6 @@ fn seen(answer: &Value) -> Value {
     json!({"count":gates.len(),"waiting":waiting,"unsigned":unsigned})
 }
 
-fn view(page: &mut Chrome, width: u32, height: u32, mobile: bool) {
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":height,"deviceScaleFactor":1,"mobile":mobile}),
-    );
-}
-
-fn scheme(page: &mut Chrome, mode: &str) {
-    page.call(
-        "Emulation.setEmulatedMedia",
-        json!({"features":[{"name":"prefers-color-scheme","value":mode}]}),
-    );
-}
-
-fn frames(page: &mut Chrome) {
-    page.eval("document.fonts.ready.then(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))");
-}
-
 fn pause(page: &mut Chrome, ms: u64) {
     page.eval(&format!("new Promise(r => setTimeout(r, {ms}))"));
 }
@@ -112,7 +94,7 @@ fn drawn(page: &mut Chrome, count: usize) {
         "the gates were not drawn: {:?}",
         page.eval("document.querySelector('main')?.innerText")
     );
-    frames(page);
+    page.frames_with_fonts();
 }
 
 /// How many times the page asked for the gates.
@@ -234,7 +216,7 @@ fn long() -> Value {
 fn task_page_gates_are_three_lines_each_on_a_phone_and_bounded_columns_wide_every_word_shown() {
     let site = site(&pictured());
     let Some(mut page) = chrome() else { return };
-    view(&mut page, 390, 844, true);
+    page.viewport(390, 844, true);
     open_gates(&mut page, &site, 4);
     assert_eq!(
         page.eval("[...document.querySelectorAll('.task-gates li.gate')].map(row => row.dataset.gate + ' ' + row.dataset.state)"),
@@ -279,8 +261,8 @@ fn task_page_gates_are_three_lines_each_on_a_phone_and_bounded_columns_wide_ever
     // The pictures' width is one line a gate, as A draws it; narrower, as an upright tablet is,
     // a detail and its why wrap rather than lose their end.
     for (width, one_line) in [(1280, true), (1000, false), (820, false)] {
-        view(&mut page, width, 900, false);
-        frames(&mut page);
+        page.viewport(width, 900, false);
+        page.frames_with_fonts();
         every_word_shown(
             &mut page,
             140,
@@ -291,7 +273,7 @@ fn task_page_gates_are_three_lines_each_on_a_phone_and_bounded_columns_wide_ever
 
     site.set_json(GATES, &long());
     for width in [1280, 1000, 820] {
-        view(&mut page, width, 900, false);
+        page.viewport(width, 900, false);
         open_gates(&mut page, &site, 4);
         every_word_shown(&mut page, 140, false, &format!("long text at {width}"));
         assert_eq!(
@@ -301,7 +283,7 @@ fn task_page_gates_are_three_lines_each_on_a_phone_and_bounded_columns_wide_ever
         );
     }
     // The pill's names and the words between them are one run of text, spaced as written.
-    view(&mut page, 1280, 900, false);
+    page.viewport(1280, 900, false);
     open_gates(&mut page, &site, 4);
     assert_eq!(
         page.eval("(() => {const name=document.querySelector('.gates-waits span[dir=auto]'), and=document.createRange();and.selectNodeContents(name.nextSibling);const a=[...name.getClientRects()].pop(), b=and.getClientRects()[0];return {joiner: name.nextSibling.textContent, line: Math.round(a.top) === Math.round(b.top), gap: Math.round(b.left - a.right)};})()"),
@@ -309,7 +291,7 @@ fn task_page_gates_are_three_lines_each_on_a_phone_and_bounded_columns_wide_ever
         "no space opens between a name in the waits-on pill and the words after it"
     );
     // A phone keeps every word, the waits-on pill wrapped inside the card.
-    view(&mut page, 390, 844, true);
+    page.viewport(390, 844, true);
     open_gates(&mut page, &site, 4);
     assert_eq!(
         page.eval(CUT),
@@ -337,7 +319,7 @@ fn colours(missing: &str, waived: &str, met: &str) -> Value {
 fn task_page_gates_take_each_states_colour_from_the_theme_light_dark_and_imported() {
     let site = site(&pictured());
     let Some(mut page) = chrome() else { return };
-    view(&mut page, 1280, 900, false);
+    page.viewport(1280, 900, false);
     for (mode, expected) in [
         (
             "light",
@@ -352,7 +334,7 @@ fn task_page_gates_take_each_states_colour_from_the_theme_light_dark_and_importe
             ),
         ),
     ] {
-        scheme(&mut page, mode);
+        page.scheme(mode);
         open_gates(&mut page, &site, 4);
         assert_eq!(
             page.eval(COLOURS),
@@ -365,7 +347,7 @@ fn task_page_gates_take_each_states_colour_from_the_theme_light_dark_and_importe
         "Page.addScriptToEvaluateOnNewDocument",
         json!({"source":"localStorage.setItem('studio.cssVars', ':root[data-studio-theme]{--like:#00aa00;--question:#aa0000;--resolved:#0000aa;}');"}),
     );
-    scheme(&mut page, "light");
+    page.scheme("light");
     open_gates(&mut page, &site, 4);
     page.call(
         "Page.removeScriptToEvaluateOnNewDocument",
@@ -398,7 +380,7 @@ fn task_changed(updated: f64) -> Value {
 fn task_page_gates_draw_only_the_latest_read_and_a_failed_read_leaves_the_page_working() {
     let site = site(&pictured());
     let Some(mut page) = chrome() else { return };
-    view(&mut page, 1280, 900, false);
+    page.viewport(1280, 900, false);
     // The first read is held and answers last, with other gates: a newer read drops it.
     let first = json!({"slug":SLUG,"branch":SLUG,"gates":[{"name":"stale","state":"missing","detail":"the first read's answer"}]});
     site.answer_in_turn(GATES, &[first, pictured()]);
@@ -533,7 +515,7 @@ fn task_page_gates_read_again_on_the_events_that_change_them_and_never_on_a_plai
         &task_page(|page| page["task"]["links"] = json!(["docs/look-parity.md#palette"])),
     );
     let Some(mut page) = chrome() else { return };
-    view(&mut page, 1280, 900, false);
+    page.viewport(1280, 900, false);
     open_gates(&mut page, &site, 4);
     wait_for_feed(&site).expect("the page never followed the feed");
     assert_eq!(reads(&site), 1);
@@ -599,13 +581,13 @@ fn task_page_gates_are_read_as_the_page_mounts_however_far_below_the_screen() {
         }),
     );
     let Some(mut page) = chrome() else { return };
-    view(&mut page, 390, 844, true);
+    page.viewport(390, 844, true);
     page.open(&site.url(PAGE));
     assert!(page.wait_for(
         "document.querySelectorAll('.task-head .facts li').length === 150 && document.querySelector('.task-gates-slot') !== null",
         SHOWN
     ));
-    frames(&mut page);
+    page.frames_with_fonts();
     assert_eq!(
         page.eval("Math.round(document.querySelector('.task-gates-slot').getBoundingClientRect().top) > innerHeight + 600"),
         json!(true),
@@ -615,7 +597,7 @@ fn task_page_gates_are_read_as_the_page_mounts_however_far_below_the_screen() {
     drawn(&mut page, 4);
     assert_eq!(reads(&site), 1, "one read, with no scroll");
     page.eval("document.querySelector('.task-gates-slot').scrollIntoView()");
-    frames(&mut page);
+    page.frames_with_fonts();
     pause(&mut page, 400);
     assert_eq!(reads(&site), 1, "nearing the screen asks nothing more");
 }
@@ -651,7 +633,7 @@ fn brief_while_and_after(page: &mut Chrome, site: &Site, count: usize) -> (i64, 
     page.open(&site.url(PAGE));
     wait_reads(page, site, asked + 1);
     assert!(page.wait_for("document.querySelector('.task-body') !== null", SHOWN));
-    frames(page);
+    page.frames_with_fonts();
     let before = page.eval(BRIEF).as_i64().unwrap();
     site.hold_route(GATES, false);
     if count > 0 {
@@ -663,7 +645,7 @@ fn brief_while_and_after(page: &mut Chrome, site: &Site, count: usize) -> (i64, 
                 .any(|request| request.url.contains(GATES) && request.finished)
         })
         .expect("the gates were never answered");
-        frames(page);
+        page.frames_with_fonts();
     }
     (before, page.eval(BRIEF).as_i64().unwrap())
 }
@@ -677,7 +659,7 @@ fn task_page_gates_hold_the_room_they_will_take_so_the_brief_stays_put() {
     for (view_name, width, height, mobile) in
         [("phone", 390, 844, true), ("wide", 1280, 900, false)]
     {
-        view(&mut page, width, height, mobile);
+        page.viewport(width, height, mobile);
         for count in [0, 1, 4, 12] {
             let answer = short(count);
             site.set_json(GATES, &answer);
