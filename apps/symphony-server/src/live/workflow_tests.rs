@@ -306,13 +306,7 @@ fn the_owner_reads_a_tasks_guards_and_a_guards_refusal_names_it_beside_its_words
     let tree = Tree::new();
     let project = Project::made_by(&tree, "flow", writer);
     project.reads(&["flow/one"]);
-    let shared = Shared::new(
-        1,
-        1234,
-        &project.root,
-        None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
+    let shared = Shared::new(1, 1234, &project.root, None, crate::testing::open_gate());
     assert!(shared.api.set(project.hub.clone()).is_ok());
     let database = symphony::taskview::connect_in(&project.root, env(&project.root))
         .unwrap()
