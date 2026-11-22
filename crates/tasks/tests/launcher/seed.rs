@@ -615,11 +615,7 @@ fn a_seed_ended_by_a_signal_ends_a_lock_tool_slow_to_end_before_it_ends() {
     .unwrap();
     fs::set_permissions(&slow, fs::Permissions::from_mode(0o755)).unwrap();
     let ready = tools.join("lockf.ready");
-    let path = std::env::join_paths(
-        std::iter::once(tools.clone())
-            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
-    )
-    .unwrap();
+    let path = first_on_path(&tools);
     for (signal, name) in TRAPPED {
         let said = f.base.join(format!("said-slow-{name}"));
         let _ = fs::remove_file(&ready);
@@ -632,6 +628,101 @@ fn a_seed_ended_by_a_signal_ends_a_lock_tool_slow_to_end_before_it_ends() {
         let ended = Seeding::end(&mut seed, &how, &said);
         f.left_nothing(ended, signal, &how, &said);
     }
+}
+
+/// A member of the job that its group's KILL misses (a lock tool that left the group, here) keeps
+/// the job's FIFO open past the seed's reads of it, so they time out: the seed reads again and ends
+/// only once that member is gone, a timed-out read never taken for its end. A BASH_ENV DEBUG trap
+/// writes each command of the seed's own shell to `ran`, so the member is ended only after a second
+/// read, which comes once the first timed out.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_seed_ends_only_once_its_jobs_last_member_is_gone_however_often_its_read_times_out() {
+    let f = Seeding::new("signalled-left");
+    let tools = f.base.join("left-lockf");
+    fs::create_dir(&tools).unwrap();
+    let left = tools.join("lockf");
+    // It leaves the job's group, keeps the FIFO the job handed it, says its pid and waits for the
+    // test's signal, or ends by itself after the 600 s the seed's lock wait is.
+    fs::write(
+        &left,
+        r#"#!/bin/sh
+exec /usr/bin/perl -MPOSIX -e '
+setpgid(0, 0) or die "setpgid: $!";
+open(my $out, ">", "$ARGV[0].pid.part") or die "$!";
+print $out $$;
+close($out);
+rename("$ARGV[0].pid.part", "$ARGV[0].pid") or die "$!";
+alarm(600);
+pause();
+' "$0"
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&left, fs::Permissions::from_mode(0o755)).unwrap();
+    let pid = tools.join("lockf.pid");
+    let path = first_on_path(&tools);
+    for (signal, name) in TRAPPED {
+        let said = f.base.join(format!("said-left-{name}"));
+        let ran = f.base.join(format!("ran-left-{name}"));
+        let startup = f.base.join(format!("startup-left-{name}"));
+        fs::write(&startup, commands_to(&ran)).unwrap();
+        let _ = fs::remove_file(&pid);
+        let mut seed = f.seed(
+            &said,
+            &[
+                ("PATH", path.as_os_str()),
+                ("BASH_ENV", startup.as_os_str()),
+            ],
+        );
+        Seeding::until_ready(&mut seed, &said, "the lock tool left its group", || {
+            pid.exists()
+        });
+        let member: libc::pid_t = fs::read_to_string(&pid).unwrap().parse().unwrap();
+        send(&seed, signal);
+        let reads = || {
+            fs::read_to_string(&ran)
+                .unwrap_or_default()
+                .lines()
+                .filter(|command| command.starts_with("read -r -t "))
+                .count()
+        };
+        Seeding::until_ready(
+            &mut seed,
+            &said,
+            "the seed read for its job's end again",
+            || reads() >= 2,
+        );
+        // SAFETY: kill only sends SIGKILL to the lock tool this test's seed started; the seed,
+        // still waiting for it, says it has not ended, so its pid is its own.
+        assert_eq!(unsafe { libc::kill(member, libc::SIGKILL) }, 0);
+        let how = format!("SIG{name} while a lock tool outside its group ran");
+        let ended = Seeding::end(&mut seed, &how, &said);
+        f.left_nothing(ended, signal, &how, &said);
+    }
+}
+
+/// A bash startup file (`BASH_ENV`) under which a seed writes each command its own shell runs
+/// (`BASH_SUBSHELL` 0) to `ran`, one a line, before it runs it: a DEBUG trap, which functions
+/// inherit under `set -T`.
+#[cfg(target_os = "macos")]
+fn commands_to(ran: &Path) -> String {
+    format!(
+        r#"set -T
+trap '[ "$BASH_SUBSHELL" -eq 0 ] && printf "%s\n" "$BASH_COMMAND" >> "{ran}"' DEBUG
+"#,
+        ran = ran.display()
+    )
+}
+
+/// The search path with `tools` first, so a stand-in there is the program a seed runs.
+#[cfg(target_os = "macos")]
+fn first_on_path(tools: &Path) -> std::ffi::OsString {
+    std::env::join_paths(
+        std::iter::once(tools.to_path_buf())
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap()
 }
 
 #[test]

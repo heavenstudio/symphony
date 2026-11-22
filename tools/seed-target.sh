@@ -106,6 +106,23 @@ staged=""
 job=""
 starting=""
 pending=""
+# `until_ended`: once the read end of the job's FIFO (6) reads its end of file. macOS can lose a
+# FIFO's end for a read already blocked on it as its last writer goes, while a read begun after
+# answers it at once (crates/process-cwd/src/spawn.rs; measured here with the job killed as the
+# read blocks: 9 ends lost in 1.2 million reads at loads of 70 to 145, and each of the 7 asked
+# again answered at once): so each read is given a second and asked again once it times out, a
+# check for an event its watcher can drop (RULES.md code/no-timed-waits). A read that times out
+# leaves REPLY as it was in macOS's bash (3.2) and answers above 128 from bash 4 on; an end of
+# file sets it empty. Nothing writes to the FIFO, so a line read ends the wait too.
+until_ended() {
+    local status
+    while :; do
+        REPLY=unended
+        read -r -t 1 <&6
+        status=$?
+        [ "$status" -gt 128 ] || [ "$REPLY" = unended ] || return 0
+    done
+}
 # shellcheck disable=SC2329 # the traps below run it
 finish() {
     if [ -n "$job" ]; then
@@ -116,7 +133,7 @@ finish() {
         # Each member holds the write end of the job's FIFO (`under_lock`), so the read end's end
         # of file is the last of them gone.
         kill -KILL -- "-$job" 2>/dev/null
-        read -r <&6
+        until_ended
         exec 6<&-
         job=""
     fi
