@@ -3,10 +3,11 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, LazyLock, PoisonError};
+use std::sync::{Arc, LazyLock};
 
 use fancy_regex::Regex as Fancy;
 use regex::{Captures, Regex};
+use symphony_board::lock::Recovered as _;
 
 use crate::edit::heading_anchor;
 use crate::markup::{dirname, join, normpath};
@@ -106,33 +107,46 @@ pub(crate) fn doc_paths(root: &Path) -> Vec<String> {
     live.into_iter().chain(history).collect()
 }
 
-/// The document a wikilink names: the path it spells from the linking page if that exists, else the one
-/// document whose path ends with it (a live one before one in history), so a document can move folders.
-pub(crate) fn find_doc(target: &str, doc_path: &str, paths: &[String]) -> Option<String> {
+/// The file a wikilink to `target` names: `target` trimmed, `.md` added when it lacks it.
+pub(crate) fn doc_name(target: &str) -> String {
     let mut name = target.trim().to_string();
     if !name.ends_with(".md") {
         name.push_str(".md");
     }
+    name
+}
+
+/// The document a wikilink names: the path it spells from the linking page if that exists, else the one
+/// document whose path ends with it (a live one before one in history), so a document can move folders.
+/// The first of [`find_docs`].
+pub(crate) fn find_doc(target: &str, doc_path: &str, paths: &[String]) -> Option<String> {
+    find_docs(target, doc_path, paths).next().cloned()
+}
+
+/// Every document of `paths` a wikilink to `target` from `doc_path` may name, in the order
+/// [`find_doc`] takes them: the path it spells from the linking page alone when that exists, else
+/// each whose path ends with it. More than one is a name documents share, which `find_doc` settles
+/// by `paths`' order alone.
+pub(crate) fn find_docs<'a>(
+    target: &str,
+    doc_path: &str,
+    paths: &'a [String],
+) -> impl Iterator<Item = &'a String> {
+    let name = doc_name(target);
     let direct = normpath(&join(dirname(doc_path), &name));
-    if paths.contains(&direct) {
-        return Some(direct);
-    }
+    let spelled = paths.iter().find(|path| **path == direct);
     // A route's first name counts too: at an entrypoint on `/`, `index.md` is a whole route.
-    let tail = format!("/{}", name.trim_start_matches('/'));
-    paths
+    let whole = name.trim_start_matches('/').to_string();
+    let tail = format!("/{whole}");
+    let named = paths
         .iter()
-        .find(|p| format!("/{p}").ends_with(&tail))
-        .cloned()
+        .filter(move |path| spelled.is_none() && (**path == whole || path.ends_with(&tail)));
+    spelled.into_iter().chain(named)
 }
 
 fn resolve_wikilink(target: &str, doc_path: &str, paths: &[String]) -> String {
-    let found = find_doc(target, doc_path, paths).unwrap_or_else(|| {
-        let mut name = target.trim().to_string();
-        if !name.ends_with(".md") {
-            name.push_str(".md");
-        }
-        normpath(&join(dirname(doc_path), &name))
-    });
+    let found = find_doc(target, doc_path, paths)
+        .unwrap_or_else(|| normpath(&join(dirname(doc_path), &doc_name(target))));
     format!("/{found}")
 }
 
@@ -210,7 +224,7 @@ pub(crate) fn card_docs(
             )
         })
         .collect();
-    let mut cache = cache.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut cache = cache.lock().recover();
     if let Some((had, found)) = cache.as_ref()
         && *had == stamp
     {

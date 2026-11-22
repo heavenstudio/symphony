@@ -25,15 +25,15 @@ This repository's own standing instructions for an orchestrator, beside the ship
   a release candidate is open, and for nothing else: its reviewer is started only once neither
   holds, as a pull request delivers it and GitHub merges it within seconds of its approve. Once
   the board's landed line is on its thread, run `just release` at once, without asking, unless
-  the land's own `--due` started a run ([the cadence](../../../docs/RELEASES.md#the-cadence)).
+  the land's own `--due` started a run ([the cadence](../../../docs/workflow/RELEASES.md#the-cadence)).
 - Bending a rule is an orchestrator's decision: where a rule here would hold development back
   for no gain the task needs (a size or first-visit budget at its line once the cut was made
   first, a wait the work does not need), decide it without a card and without asking, and say on
   the task's thread which rule gave way, why, and what was measured. A quality gate that gives
   way is recorded with `just tasks gate`
-  ([gate decisions](../../../docs/TASKS.md#gate-decisions)): a raised budget or cap is still a
+  ([gate decisions](../../../docs/workflow/TASKS.md#gate-decisions)): a raised budget or cap is still a
   commit of its own with its account, judged by the task's reviewer, and a waivable stamp is
   waived for one tip. What stays the owner's word is
-  [who runs it](../../../docs/RELEASES.md#who-runs-it): pointing `current` back, restarting the
+  [who runs it](../../../docs/workflow/RELEASES.md#who-runs-it): pointing `current` back, restarting the
   shared server by hand, a release run by hand outside the cadence and the schema rule, and
   turning publication or a project's delivery on.

@@ -1,4 +1,4 @@
-//! The one admission of a workflow operation on the board (docs/WORKFLOW.md, "Admission"): the
+//! The one admission of a workflow operation on the board (docs/workflow/WORKFLOW.md, "Admission"): the
 //! active workflow read, a principal's next actions previewed, and an operation applied. Every
 //! surface that moves a task a custom workflow holds (the CLI, the api the app writes through, an
 //! agent) calls [`Store::apply_operation`], with the principal its host bound, never one a request
@@ -21,8 +21,7 @@
 
 use super::postgres as pg;
 use super::surreal::{self, cap as sql_cap, workflow as sql};
-use super::{Error, Failure, Opens, Store, Which, statement::both};
-use crate::Health;
+use super::{Error, Failure, Opens, Store, Which, executors_or, statement::both};
 use crate::workflow::admit::{self, Context, Facts, Prerequisite, Refusal};
 use crate::workflow::guard::{Accepted, Attester, Checked, Guarding};
 use crate::workflow::{Active, Host, Recorded, TaskPosition, Transition};
@@ -113,7 +112,7 @@ struct Found {
     accepted: Option<String>,
 }
 
-/// The accepted outputs of a task a custom workflow holds (docs/WORKFLOW.md, "Accepted outputs"):
+/// The accepted outputs of a task a custom workflow holds (docs/workflow/WORKFLOW.md, "Accepted outputs"):
 /// its own standing, and, where an edge leaving its pair depends on `accepted_output`, each task
 /// it depends on with the output standing for it, which a request taking that edge names.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -524,10 +523,9 @@ impl Store {
                 continue;
             }
             let session = sessions.iter().find(|s| s.row.handle == pair.0);
-            let expired = role.expires.is_some_and(|expires| expires < now);
-            let gone = session.is_none_or(|s| matches!(s.health, Health::Lost | Health::Left));
-            if expired || gone {
-                if !expired && let Some(session) = session {
+            let (drop, fence) = super::lapsed(role.expires, session.map(|s| s.health), now);
+            if drop {
+                if fence && let Some(session) = session {
                     seen.push(json!({"handle": pair.0, "last_seen": session.row.last_seen}));
                 }
                 lapsed.push(pair);
@@ -571,16 +569,10 @@ impl Store {
         }
         let slug = &decided.task.slug;
         let view = self.view(&Which::Starting(slug))?;
-        let mut by: Vec<String> = (taking.add.iter())
+        let adds = (taking.add.iter())
             .filter(|(_, role)| role == "executor")
-            .map(|(handle, _)| handle.clone())
-            .chain(view.holders("executor").map(|r| r.handle.clone()))
-            .collect();
-        if by.is_empty()
-            && let Some(handle) = agent(principal)
-        {
-            by.push(handle.to_string());
-        }
+            .map(|(handle, _)| handle.clone());
+        let by = executors_or(adds.chain(view.executors()), agent(principal));
         let opens = Opens {
             status: Some(status.to_string()),
             by,

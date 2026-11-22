@@ -38,5 +38,5 @@ team URL was verified.
 Primary documentation checked for the proposal: PostgreSQL 16 SSL, role limits, functions,
 anonymous blocks, grants, protocol, isolation, JSON, triggers, text search, initdb and pg_dump;
 PostgreSQL 18 libpq connection/execution and initdb; PgBouncer's feature matrix. The
-[analysis](../analysis/hosted-postgresql.md) links the precise pages next to the claims they
+[analysis](../operations/analysis/hosted-postgresql.md) links the precise pages next to the claims they
 support. Documented SQL availability is not an integration pass on either major.

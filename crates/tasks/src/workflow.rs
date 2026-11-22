@@ -1,4 +1,4 @@
-//! Delivery-workflow definitions as the board runs them (docs/WORKFLOW.md): the strict reader of
+//! Delivery-workflow definitions as the board runs them (docs/workflow/WORKFLOW.md): the strict reader of
 //! a project file's `[workflow]`, `[[workflow_mappings]]` and `[[workflow_authorities]]`,
 //! normalization, revision identity,
 //! the host's prerequisites and capability grants, built-in definition v1, and the reader of the

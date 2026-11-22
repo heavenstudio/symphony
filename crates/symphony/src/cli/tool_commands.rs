@@ -1,5 +1,5 @@
 //! The two commands a project's art and landing tools consume. Their output contract and the
-//! lock a lander shares with document saves are in docs/TOOL_COMMANDS.md.
+//! lock a lander shares with document saves are in docs/engineering/TOOL_COMMANDS.md.
 
 use std::collections::BTreeMap;
 use std::io::Write;

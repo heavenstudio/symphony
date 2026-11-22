@@ -1,4 +1,4 @@
-//! The writes of an external effect's boundary (docs/WORKFLOW.md, "External effects"), decided by
+//! The writes of an external effect's boundary (docs/workflow/WORKFLOW.md, "External effects"), decided by
 //! [`crate::workflow::effect`]: a prepare edge admitted and its intent recorded in one write, the
 //! intent moved on to dispatched or withdrawn, and the finalize edge taken with what the adapter
 //! read back. Each asks the host-verified adapter, never the request, for what the effect is bound

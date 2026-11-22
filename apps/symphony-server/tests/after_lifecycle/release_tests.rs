@@ -311,7 +311,7 @@ fn a_start_by_the_release_while_a_project_holds_the_switch_starts_nothing_and_na
             "✖ Symphony: the machine's Symphony is not started from the release release-1, as the \
              switch to it is held: pantry names the linked plugin fixture-shelf, and a release's \
              server serves a plugin only from its process: a [plugins.process] command for it in \
-             {} lets the release serve every project (docs/PLUGIN_PROTOCOL.md); `just symphony` \
+             {} lets the release serve every project (docs/engineering/PLUGIN_PROTOCOL.md); `just symphony` \
              in {}, by pantry's own build, starts the machine's server\n",
             held.root.join("symphony.toml").display(),
             held.root.display()
@@ -365,7 +365,7 @@ fn a_project_naming_a_linked_plugin_holds_the_switch_on_its_pages_and_in_the_sta
         "The machine's Symphony stays a project's build, not the release release-1: pantry names \
          the linked plugin fixture-shelf, and a release's server serves a plugin only from its \
          process: a [plugins.process] command for it in its symphony.toml lets the release serve \
-         every project (docs/PLUGIN_PROTOCOL.md).",
+         every project (docs/engineering/PLUGIN_PROTOCOL.md).",
     );
     let standing = symphony::machine::switch::standing(&repo.home);
     let registered = symphony::machine::Registry::read(&repo.home).unwrap();
@@ -377,7 +377,7 @@ fn a_project_naming_a_linked_plugin_holds_the_switch_on_its_pages_and_in_the_sta
              build of {}\nmachine: the switch to release-1 is held: pantry names the linked \
              plugin fixture-shelf, and a release's server serves a plugin only from its process: \
              a [plugins.process] command for it in {} lets the release serve every project \
-             (docs/PLUGIN_PROTOCOL.md)\n",
+             (docs/engineering/PLUGIN_PROTOCOL.md)\n",
             host.pid,
             host.root,
             root.join("symphony.toml").display()

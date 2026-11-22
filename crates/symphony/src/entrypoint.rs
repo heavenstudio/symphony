@@ -26,7 +26,7 @@ pub const MARKDOWN: Renderer = Renderer {
 };
 
 /// HTML pages, each a document of its own: listed beside the Markdown ones and drawn whole in the
-/// app, in a sandboxed frame, with none of the Markdown view's features (docs/PROJECT_FILE.md).
+/// app, in a sandboxed frame, with none of the Markdown view's features (docs/operations/PROJECT_FILE.md).
 pub const HTML: Renderer = Renderer {
     name: "html",
     extensions: &["html", "htm"],

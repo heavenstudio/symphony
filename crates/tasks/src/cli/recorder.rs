@@ -3,7 +3,7 @@
 //! limits, its exit status its caller's; and recorded in the work folder ([`recorded`]) while it
 //! runs: queued, running once it started, said again every [`BEAT`] while it runs, then kept in the
 //! history and finished with how it ended. A build or test it records puts the task it ran for in
-//! the board's Build or Test column (docs/MACHINE_WORK.md). A build wrapper runs it by the board's
+//! the board's Build or Test column (docs/workflow/MACHINE_WORK.md). A build wrapper runs it by the board's
 //! binary (`tools/record.sh`, a review callback, the release run): the `tasks` recipe `symphony init`
 //! installs refuses it, as an agent runs `just tasks` unasked and this runs any command.
 //!
@@ -68,7 +68,7 @@
 //! before it hands a build to a `tasks` that may be older than this command.
 //!
 //! An operation is also a run, or a step of one, which the day files keep a line of
-//! ([`crate::runs`], docs/RUNS.md): a step when `--step` names it and it runs inside a run or a step
+//! ([`crate::runs`], docs/workflow/RUNS.md): a step when `--step` names it and it runs inside a run or a step
 //! ([`recorded::PIPELINE_VAR`] names that one's pipeline); a run when `--pipeline` names one and it
 //! runs inside no recorded command; neither otherwise.
 //! Its line says what started it ([`recorded::TRIGGER_VAR`], else its session, else the owner), the
@@ -92,14 +92,15 @@
 
 use super::Env;
 use super::machine_work::recorded::{self, Phase, Record, Run, Step};
+use crate::lock::Recovered as _;
 use crate::sys::{self, FileLock};
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 /// The command's name.
@@ -155,17 +156,18 @@ pub fn help() -> String {
     let versions: Vec<String> = PROBE.lines().map(|line| format!("`{line}`")).collect();
     format!(
         "{USAGE}\nRun COMMAND as it would run alone, its exit status yours, and record it for the\n\
-         board's Build or Test column while it runs (docs/MACHINE_WORK.md). The task is\n\
-         --task, else $TASKS_TASK, else the one task the session holds. Run it by the\n\
-         board's binary (.target/bin/tasks run), as a build wrapper does: `just tasks`,\n\
-         which an agent runs unasked, refuses it, since it runs any command.\n\n\
+         board's Build or Test column while it runs (docs/workflow/MACHINE_WORK.md).\n\
+         The task is --task, else $TASKS_TASK, else the one task the session holds. Run\n\
+         it by the board's binary (.target/bin/tasks run), as a build wrapper does:\n\
+         `just tasks`, which an agent runs unasked, refuses it, since it runs any\n\
+         command.\n\n\
          options:\n  \
          -h, --help       show this help message and exit\n  \
          --phase PHASE    build or test: the column it is recorded in\n  \
          --label TEXT     how the column names it (default: the command's words)\n  \
          --task SLUG      the task it runs for\n  \
          --as HANDLE      the session it runs for (default: $TASKS_SESSION)\n  \
-         --pipeline NAME  a run of this pipeline, when no recorded command runs it (docs/RUNS.md)\n  \
+         --pipeline NAME  a run of this pipeline, when no recorded command runs it (docs/workflow/RUNS.md)\n  \
          --step NAME      a step of the run that runs it, by this name\n  \
          --commit SHA     the full commit id it checks, when not its checkout's\n  \
          --branch NAME    that commit's branch\n  \
@@ -850,7 +852,7 @@ fn reached(env: &Env, wait: Duration) -> Option<(super::Reached, super::Clock)> 
 
 /// The session a run's record names, which its recorder says is there while the run goes on: an
 /// agent waiting on its own build or test makes no tool call, so nothing else beats for it, and
-/// it would read stale, then lost, with its work at the machine's mercy (docs/TASKS.md, "Health").
+/// it would read stale, then lost, with its work at the machine's mercy (docs/workflow/TASKS.md, "Health").
 /// The board is told every [`SEEN`] and once more as the run ends, so the session ages from that
 /// end as from any last sign of life. The session told of is the one the record names, however
 /// the run was attributed as it began ([`attributed`]): never looked up by where the run works
@@ -871,7 +873,7 @@ impl Session {
     /// A time it is told is the last one, whether or not the board answers: a board that does not
     /// is asked again at the next, never at every beat.
     fn due(&self, now: std::time::Instant, ended: bool) -> bool {
-        let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut last = self.last.lock().recover();
         if !ended && now.saturating_duration_since(*last) < SEEN {
             return false;
         }
@@ -1229,7 +1231,7 @@ impl Recording {
     }
 
     fn held(&self) -> std::sync::MutexGuard<'_, Record> {
-        self.record.lock().unwrap_or_else(PoisonError::into_inner)
+        self.record.lock().recover()
     }
 
     /// Its record changed by `change`, said now, and written.
@@ -1364,13 +1366,14 @@ mod supervised {
     };
     use crate::cli::Env;
     use crate::cli::machine_work::recorded;
+    use crate::lock::Recovered as _;
     use crate::run_logs::{Copying, Files, Source, Stream};
     use std::ffi::CString;
     use std::io::{self, Write};
     use std::os::fd::{AsRawFd, FromRawFd as _, OwnedFd};
     use std::os::unix::ffi::OsStrExt as _;
     use std::sync::mpsc::{self, RecvTimeoutError};
-    use std::sync::{Arc, Mutex, PoisonError};
+    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
     /// What the recorder's watch saw of its command, when it saw it, and the most CPU it read the
@@ -1705,7 +1708,7 @@ mod supervised {
             let read = tree.read(at);
             most = most.max(read);
             if let Some(reading) = read.and(most).and_then(|ticks| reading(&tree, ticks)) {
-                *latest.lock().unwrap_or_else(PoisonError::into_inner) = Some(reading);
+                *latest.lock().recover() = Some(reading);
             }
             match next {
                 Ok(Some(seen)) => {
@@ -1826,7 +1829,7 @@ mod supervised {
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     if started {
-                        recording.beat(*latest.lock().unwrap_or_else(PoisonError::into_inner));
+                        recording.beat(*latest.lock().recover());
                     }
                 }
                 Ok(Err(error)) => {

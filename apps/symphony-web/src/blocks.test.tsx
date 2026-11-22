@@ -769,7 +769,7 @@ describe("blocks inside a line of text", () => {
   });
 });
 
-// The kit's lists of kinds grow in a minor (docs/PLUGIN_PROTOCOL.md), so a newer server may send
+// The kit's lists of kinds grow in a minor (docs/engineering/PLUGIN_PROTOCOL.md), so a newer server may send
 // this client a kind its types do not know, which the read lets through (`blocks-read.ts`).
 describe("a kind the client does not know", () => {
   const later = (value: object) => value as never;

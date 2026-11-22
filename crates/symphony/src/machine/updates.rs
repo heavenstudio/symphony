@@ -1,4 +1,4 @@
-//! The machine's schema updates (docs/RELEASES.md, "An update"): one entry for each time a
+//! The machine's schema updates (docs/workflow/RELEASES.md, "An update"): one entry for each time a
 //! registered project's board reaches a schema that the machine's server must come to write, kept
 //! in the machine folder's `updates.json` ([`FILE`]). A release's refresh writes it
 //! (`crates/symphony-build/src/release/updates.rs`, under the release run's lock). The machine's

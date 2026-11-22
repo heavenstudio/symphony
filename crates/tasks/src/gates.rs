@@ -1,4 +1,4 @@
-//! A task's gate decisions (docs/TASKS.md, "Gate decisions"): a quality gate given way for one
+//! A task's gate decisions (docs/workflow/TASKS.md, "Gate decisions"): a quality gate given way for one
 //! task by a recorded decision, read by its assessor, its reviewer and its land.
 //!
 //! A decision is one of two kinds ([`Kind`]):

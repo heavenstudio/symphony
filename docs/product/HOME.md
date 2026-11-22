@@ -129,4 +129,4 @@ row.
 - [The review queue](QUEUE.md): the order **Next up** follows.
 - [Cards and verdicts](CARDS.md): what **Open this card** opens.
 - [What every page shares](FRAME.md): the header, Activity and the notices.
-- [Review](../REVIEW.md): how a card is written and answered.
+- [Review](../workflow/REVIEW.md): how a card is written and answered.

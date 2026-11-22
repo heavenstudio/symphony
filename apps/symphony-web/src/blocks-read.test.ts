@@ -62,7 +62,7 @@ describe("blocks read where they arrive", () => {
     expect(readBlocks([block])).toEqual([block]);
   });
 
-  // The kit's lists of kinds grow in a minor (docs/PLUGIN_PROTOCOL.md): a kind a newer server
+  // The kit's lists of kinds grow in a minor (docs/engineering/PLUGIN_PROTOCOL.md): a kind a newer server
   // sends is drawn as unsupported, and the blocks around it as they are.
   it.each([
     ["a block kind it does not know", { type: "marquee" }],

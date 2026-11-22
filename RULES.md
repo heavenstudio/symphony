@@ -11,7 +11,7 @@ project's landing, stamps, certificates and gates are its own
 ### `workflow/parent-feature-delivery`
 
 A top-level task owns one feature branch and one delivery cycle; its
-[subtasks](docs/TASKS.md#subtasks) are slices of it, carried by one agent unless another, on
+[subtasks](docs/workflow/TASKS.md#subtasks) are slices of it, carried by one agent unless another, on
 disjoint files, demonstrably shortens it. A slice commits into the feature branch, runs only its
 focused checks and closes with `just tasks done SLUG "integration commit and focused result"`;
 only the parent goes to review, once. This holds over a slice brief that asks for more.
@@ -22,12 +22,12 @@ A task's gate is evidence that its change works, not the suite. Every task, pare
 feature or fix, runs the tests closest to what it changed and `just lint-rs` (the client built
 for a client change, its distribution never committed) and posts the exact commands and results
 with what its kind of change asks for, such as before and after screenshots of a changed page
-([CHECKS](docs/CHECKS.md#the-gate-is-evidence)). What it needs to land is its assessment's: an
+([CHECKS](docs/workflow/CHECKS.md#the-gate-is-evidence)). What it needs to land is its assessment's: an
 assessor that neither filed, orchestrates nor executed it writes the stamps it needs
-(`just tasks stamps`, [TASKS](docs/TASKS.md#needed-stamps)) when it is filed and each time it
+(`just tasks stamps`, [TASKS](docs/workflow/TASKS.md#needed-stamps)) when it is filed and each time it
 moves to review, before any reviewer. Higher risk asks for stronger evidence, never for the
 suite: no task runs `just verify`, whatever a brief asks. It is the release run's
-([RELEASES](docs/RELEASES.md#the-release-run)).
+([RELEASES](docs/workflow/RELEASES.md#the-release-run)).
 
 ### `workflow/never-chase-main`
 
@@ -35,7 +35,7 @@ A task merges main into its branch once, when its work is complete and it is abo
 review, and runs its closest tests again at that tip. From then on it never merges main because
 main moved, and a reviewer never sends a branch back only for that: it merges again only when
 its land reports a conflict, or a reviewer names what main gained that breaks the change or that
-the change breaks ([CHECKS](docs/CHECKS.md#after-main-moves)). A figure a guide quotes is
+the change breaks ([CHECKS](docs/workflow/CHECKS.md#after-main-moves)). A figure a guide quotes is
 measured once, at the review tip. A release candidate's fix merges `release-candidate` in main's
 place (`workflow/release-reds-first`).
 
@@ -45,7 +45,7 @@ What a task built and ran while it was made is not built or run again to review 
 runs at its tip are its evidence, and a reviewer takes a green one as run. It builds or runs only
 what the record does not cover and reading cannot settle (a doubt it names, with the smallest
 target that answers it; a mutation; a run the executor left out), and asks in a changes for a run
-the evidence claims and no record shows ([CHECKS](docs/CHECKS.md#no-second-build-in-review)).
+the evidence claims and no record shows ([CHECKS](docs/workflow/CHECKS.md#no-second-build-in-review)).
 What changes do to each other on main is the release run's to find, never a review's.
 
 ### `workflow/fast-bugfixes`
@@ -82,13 +82,13 @@ moved out of the release run): a fix that must change one says on its thread why
 not the thing to fix, and a fresh reviewer judges that. A test red on load is discarded in the
 fix instead (`tests/no-test-fails-on-load`). A budget or a cap, a red's or any task's, gives way
 only by its orchestrator's decision recorded on the task (`just tasks gate`,
-[TASKS](docs/TASKS.md#gate-decisions)), once the cut came first. While a run holds a release
+[TASKS](docs/workflow/TASKS.md#gate-decisions)), once the cut came first. While a run holds a release
 candidate, a red's fix starts at the local branch `release-candidate`, never at main, merges
 that branch and never main before review (once the candidate advanced to a delivered head it
 is rebased onto it instead, never merging it), and commits the client its own sources make
 when it changes what the client is built from. Its task's text says so, and the rest (a red
 covered by another landing or fixed outside this repository) is
-[RELEASES](docs/RELEASES.md#the-release-candidate).
+[RELEASES](docs/workflow/RELEASES.md#the-release-candidate).
 
 ### `workflow/shared-data-lands-first`
 
@@ -128,8 +128,8 @@ use; never a code like `M17`.
 A public Rust item a consumer calls keeps working in the release that brings its replacement,
 without `#[deprecated]`: a consumer's lint denies warnings. A separate task removes it only in a
 later release, with read-only evidence that consumers have migrated, updating the consumer-API
-compile guards with it. The procedure is [CHECKS](docs/CHECKS.md#consumer-api-changes), from
-[its card](docs/analysis/release-candidate.md#consumer-api-break-release).
+compile guards with it. The procedure is [CHECKS](docs/workflow/CHECKS.md#consumer-api-changes), from
+[its card](docs/workflow/analysis/release-candidate.md#consumer-api-break-release).
 
 ### `code/no-timed-waits`
 
@@ -178,7 +178,7 @@ A test passes or fails on what the code did, never on how long a loaded machine 
 bound on a cost is a bound on the CPU the work took or on a count of the work. A wait is a wait
 on its condition, its only time a wall-clock backstop a stall alone reaches. Elapsed time stays
 only where the product's promise is elapsed time, its clock injected where it can be. The helper
-is `crates/test-time` ([CHECKS](docs/CHECKS.md#time-in-tests)). No budget, allowance or
+is `crates/test-time` ([CHECKS](docs/workflow/CHECKS.md#time-in-tests)). No budget, allowance or
 tolerance is widened to pass, and nobody lowers the machine's load, or holds other work back, to
 help a run pass.
 
@@ -207,7 +207,7 @@ not write, execute or request the work. Once it approves, nothing is queued for 
 
 Only the owner approves a design document or a card; an agent never marks its own output
 approved, and answers a callout with a nested `[!resolved]` note under it
-([REVIEW](docs/REVIEW.md#commenting-in-place)).
+([REVIEW](docs/workflow/REVIEW.md#commenting-in-place)).
 
 ### `workflow/approval-goes-with-the-ask`
 
@@ -234,7 +234,7 @@ quoted in the basis, already decide it (`review/decided-is-not-asked`), or its o
 leaves one option standing. Taste or look, a product direction with live alternatives, money and
 an act that cannot be undone stay the owner's: recommended, never auto-approved. An
 auto-approved card stays in the register, and any verdict of the owner's overrides it
-([REVIEW](docs/REVIEW.md)).
+([REVIEW](docs/workflow/REVIEW.md)).
 
 ### `review/decided-is-not-asked`
 
@@ -246,14 +246,14 @@ links the approved one. Before any card goes to the owner its agent checks the o
 verdicts: an approved card decides a later one only when the choice it approved already answers
 what the later card asks and each of the later card's other options would change that choice.
 Only the owner's own words decide, never an auto-approved card, an agent's recorded answer or a
-question of the owner's ([REVIEW](docs/REVIEW.md#before-a-card-goes-to-the-owner)).
+question of the owner's ([REVIEW](docs/workflow/REVIEW.md#before-a-card-goes-to-the-owner)).
 
 ### `docs/cards-clear-and-concise`
 
 A card holds what its judgement call needs and nothing more: short paragraphs, plain words, one
 question. It opens with what changes for the owner, in one or two plain sentences, before any
 option, for someone who has not read the internals. Detail goes in a linked file, and pictures
-where the thing judged is visual ([REVIEW](docs/REVIEW.md#writing-a-card)).
+where the thing judged is visual ([REVIEW](docs/workflow/REVIEW.md#writing-a-card)).
 
 ### `docs/one-decision-per-card`
 
@@ -275,8 +275,8 @@ in plain words. The owner's exact words and the dated history of who decided wha
 cards, each card's dated lines, and on task threads. A card sits at the place in its document
 where the thing it decides is said, never in a section at the document's end, and in the
 decision register (`docs/DECISIONS.md`) only when no document says it
-([REVIEW](docs/REVIEW.md#where-a-card-is-written)). The prose around a card says how things are,
-and where the reason matters it links the card ([REVIEW](docs/REVIEW.md#slugs-in-prose)).
+([REVIEW](docs/workflow/REVIEW.md#where-a-card-is-written)). The prose around a card says how things are,
+and where the reason matters it links the card ([REVIEW](docs/workflow/REVIEW.md#slugs-in-prose)).
 `crates/symphony/tests/hooks/owner_words.rs` fails on the shapes it knows outside a card's own
 lines, and a reviewer reads for the others.
 
@@ -333,7 +333,7 @@ scratch repository and a scratch board, never the real worktrees or the live boa
 
 A consuming project's checkout on this machine is read-only to an agent working here: nothing in
 it is changed but what a release's refresh moves there, and an act the owner's word names, such
-as a pin's commit made once by hand ([its card](docs/RELEASES.md#consumer-manifest-line)).
+as a pin's commit made once by hand ([its card](docs/workflow/RELEASES.md#consumer-manifest-line)).
 
 ### `commits/only-the-land-pushes`
 
@@ -341,7 +341,7 @@ Nothing is pushed but a task's branch, by the dispatch of its land, for the pull
 delivers it, and a release's tag, by the release run: nothing else of a task. Main is pushed by
 nobody, the owner included, while this repository sets `[land] delivery`: it moves only by
 GitHub's squash of a task's pull request, and its ruleset refuses any other update
-([TASKS](docs/TASKS.md#a-land-delivered-by-a-pull-request)). A consuming project's branch is
+([TASKS](docs/workflow/TASKS.md#a-land-delivered-by-a-pull-request)). A consuming project's branch is
 pushed only on the owner's word naming that push.
 
 ### `delete-by-name`

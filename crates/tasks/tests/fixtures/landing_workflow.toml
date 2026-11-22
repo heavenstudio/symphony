@@ -1,4 +1,4 @@
-# A delivery workflow whose landing is the default landing's (docs/WORKFLOW.md, "External
+# A delivery workflow whose landing is the default landing's (docs/workflow/WORKFLOW.md, "External
 # effects"): work is built, awaits review, is approved by a fresh reviewer naming the head it
 # read, and landed by the adapter default_land (prepared, then confirmed); a landing prepared may
 # be sent back. The board's tests activate it, with the mappings the tests add.

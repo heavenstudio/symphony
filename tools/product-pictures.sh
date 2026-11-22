@@ -70,7 +70,7 @@ serve="$("$root/tools/rs-bin.sh" --build symphony-server)"
 tasks="$("$root/tools/rs-bin.sh" --build tasks)"
 copy="$("$root/tools/rs-bin.sh" --build tasks-copy)"
 # The board's database is the machine's PostgreSQL, 18 or later, on which the copy's first board
-# command makes its board, as a project's is (docs/PROJECT_FILE.md#board).
+# command makes its board, as a project's is (docs/operations/PROJECT_FILE.md#board).
 # TASKS_RECORDER=off: nothing here is a build or a test of a task's. No hook, sweep or terminal of
 # this machine's is the copy's: a board command there starts none, and the terminals' two
 # programs are false, so the one server's own sweep of the copy's board reaches none either.

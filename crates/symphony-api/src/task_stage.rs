@@ -50,7 +50,7 @@ pub struct WaitingBoard {
     pub states: Vec<(String, usize)>,
     /// The active custom workflow's activation generation: absent on a board whose own writers keep
     /// its tasks, so a page draws a workflow's phases and states only where one is active, and
-    /// reads its definition again when it changes (docs/WORKFLOW.md, "The app").
+    /// reads its definition again when it changes (docs/workflow/WORKFLOW.md, "The app").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow: Option<u64>,
 }

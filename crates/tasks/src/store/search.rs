@@ -4,7 +4,7 @@
 //! identifiers containing punctuation even when the analyzer splits them into words.
 //!
 //! The search by meaning the board had is deleted
-//! (docs/analysis/code-review-2026-11.md#board-search-by-meaning). Its tables (`task_chunk` with
+//! (docs/engineering/analysis/code-review-2026-11.md#board-search-by-meaning). Its tables (`task_chunk` with
 //! its `embedding` field and HNSW index, `task_embedding_source`, `task_embedding_checkpoint`) keep
 //! their definitions in the schema, as removing one is a schema move, and a board that holds their
 //! rows keeps them: nothing here reads or writes them.

@@ -1,5 +1,5 @@
 //! The default landing of a task a custom workflow holds: the adapter `default_land` on the
-//! workflow's external-effect boundary ([`crate::workflow::effect`], docs/WORKFLOW.md "External
+//! workflow's external-effect boundary ([`crate::workflow::effect`], docs/workflow/WORKFLOW.md "External
 //! effects"). A task the board's own writers keep never comes here, and lands as it always did.
 //!
 //! A managed task lands only by its graph: the land takes the prepare edge leaving its pair whose

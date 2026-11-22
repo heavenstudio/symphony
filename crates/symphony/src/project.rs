@@ -21,7 +21,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 mod board;
@@ -35,6 +35,7 @@ use crate::entrypoint::{SYMPHONY_ROUTES, below, join};
 pub use board::{Board, WipGuidance};
 use file::{File, FileEntrypoint};
 pub(crate) use model_warnings::warn as warn_models;
+use symphony_board::lock::Recovered as _;
 use symphony_board::project::{inside, path_in};
 // A name as an id: the board's, which judges `[project] id` by it too.
 pub use symphony_board::project::slug;
@@ -68,18 +69,14 @@ struct Seen {
 static SEEN: LazyLock<Mutex<BTreeMap<PathBuf, Seen>>> =
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
-/// `mutex` held, whatever a thread that panicked holding it left.
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
 /// What agents' terminals run in (`hc`, herdr-core, shown in the Herdr app); `none` for a project
 /// without one.
 pub const PANES: [&str; 2] = ["hc", "none"];
 /// The id of a project whose folder's name has no letter or digit to make one of.
 pub const DEFAULT_ID: &str = "project";
 /// Where a project keeps its review guide, in an entrypoint's folder, in the order they are tried:
-/// the Symphony's own `docs/REVIEW.md`, and a consuming project's `docs/workflow/REVIEW.md`.
+/// `REVIEW.md` at the folder's top, which neither the Symphony nor the consuming project keeps,
+/// then `workflow/REVIEW.md`, where both keep theirs (`docs/workflow/REVIEW.md`).
 pub const GUIDES: [&str; 2] = ["REVIEW.md", "workflow/REVIEW.md"];
 /// The prefix naming a path in the repository's common git folder.
 const COMMON_DIR: &str = ".git/";
@@ -117,7 +114,7 @@ pub struct Project {
 }
 
 /// How a plugin that answers from a process of its own is started (`[plugins.process]`,
-/// docs/PLUGIN_PROTOCOL.md): its command, a program the file names by a relative path holding a `/`
+/// docs/engineering/PLUGIN_PROTOCOL.md): its command, a program the file names by a relative path holding a `/`
 /// taken under the project's root, run in that root without the session.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PluginProcess {
@@ -157,7 +154,7 @@ impl PluginProcess {
 }
 
 /// How a project's plugin calls are measured, off unless its file turns it on
-/// (docs/PLUGIN_CALLS.md): `[plugins] timing` records each call's time
+/// (docs/engineering/PLUGIN_CALLS.md): `[plugins] timing` records each call's time
 /// ([`crate::plugins::Plugins::at`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PluginCalls {
@@ -273,7 +270,7 @@ impl Default for Land {
     }
 }
 
-/// When the Symphony's own release run (`symphony-build release`, docs/RELEASES.md) releases
+/// When the Symphony's own release run (`symphony-build release`, docs/workflow/RELEASES.md) releases
 /// besides each day's, and what a green release does then.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Releases {
@@ -536,7 +533,7 @@ impl Project {
 
     /// [`Project::of`], and why it is the plain project when it is.
     fn seen(root: &Path) -> (Arc<Project>, Option<String>) {
-        if let Some(held) = lock(&SEEN).get_mut(root)
+        if let Some(held) = SEEN.lock().recover().get_mut(root)
             && held
                 .stamps
                 .iter()
@@ -565,7 +562,7 @@ impl Project {
         }
         let read = Self::load_seen(root, None);
         let seen = (read.project.clone(), read.problem.clone());
-        lock(&SEEN).insert(root.to_path_buf(), read);
+        SEEN.lock().recover().insert(root.to_path_buf(), read);
         seen
     }
 
@@ -574,7 +571,7 @@ impl Project {
     /// that found a file changed meanwhile read the project afresh, and a read of the files before
     /// would only cost the next reader one more load. Whether it was kept.
     fn keep(root: &Path, started: &[(PathBuf, Stamp)], read: Seen) -> bool {
-        let mut seen = lock(&SEEN);
+        let mut seen = SEEN.lock().recover();
         let current = seen.get(root).is_some_and(|held| held.stamps == started);
         if current {
             seen.insert(root.to_path_buf(), read);

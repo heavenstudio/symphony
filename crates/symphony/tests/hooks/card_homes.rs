@@ -1,4 +1,4 @@
-//! The decision register links each document that holds a card (docs/REVIEW.md, "Where a card is
+//! The decision register links each document that holds a card (docs/workflow/REVIEW.md, "Where a card is
 //! written"): the list is kept by hand, so this holds it to what the documents hold, both ways.
 
 use crate::support::repo as workspace;

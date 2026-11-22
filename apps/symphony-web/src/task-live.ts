@@ -3,7 +3,7 @@
 // offers and its timeline. Each is asked as the page mounts, behind nothing: the page and the
 // thread are drawn at once from what this device kept of them (`taskItem`), marked stale, and
 // checked with their copy's tag; every part is asked again until it answers, and none waits for
-// another's read (docs/analysis/components-draw-when-their-data-arrives.md).
+// another's read (docs/design/analysis/components-draw-when-their-data-arrives.md).
 //
 // The board's feed (live.tsx's `keepBoard`, which reads the board, follows its feed and starts
 // again when the stream is lost) is heard one event at a time, with the page as it stood when it

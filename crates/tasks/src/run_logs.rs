@@ -1,4 +1,4 @@
-//! A run's log (docs/RUNS.md, *Logs*): what the command of a run, or of a step of one, wrote on its
+//! A run's log (docs/workflow/RUNS.md, *Logs*): what the command of a run, or of a step of one, wrote on its
 //! stdout and stderr, without its terminal escape codes ([`Plain`]), in one file:
 //! `logs/YYYY-MM-DD/RUN.log` in the day files' folder ([`crate::runs`]), the UTC day it was asked
 //! for. Its recorder ([`crate::cli::recorder`]) reads piped streams as they come, copying each on to

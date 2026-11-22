@@ -32,13 +32,14 @@ import { readDiff, readFragment, readVersions } from "./document-read";
 import { Editor, PageContext } from "./editor";
 import { FirstSteps } from "./first";
 import { useFrame, useRefreshed } from "./frame";
+import { appPath } from "./links";
 import { PageNotices } from "./live";
 import { useMount } from "./mount";
 import { PostponeControls } from "./postpone";
 import { documentsHref, entrypoints, fileAddress, href, project, scoped } from "./project";
 import { ComparisonNote, DocumentWithTasks, SectionDifference } from "./related";
 import { getJson, said } from "./request";
-import { anchor, scrollAnchor, useAnchor } from "./route";
+import { anchor, anchorIds, scrollAnchor, useAnchor } from "./route";
 import { failed as failedRead, ready as readyWord, Trouble } from "./trouble";
 import { AtOnce, NearViewport, Settle, Skeleton } from "./viewport";
 import type {
@@ -99,6 +100,105 @@ export interface DocumentPageProps {
   embedded?: boolean;
 }
 
+/**
+ * The routes of the server's answer to where a document may have moved (`/api/moved`,
+ * `docview::moved`): each a route a page may link, as a path of the app; none for any other answer.
+ */
+export function readMoved(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (route): route is string => typeof route === "string" && appPath(`/${route}`),
+  );
+}
+
+/**
+ * The address of the document `route` in the checkout `scope`, the fragment `hash` (`#…`) kept.
+ */
+export function movedAddress(scope: string, route: string, hash: string): string {
+  return `${href(scoped(scope, `/${route}`))}${hash}`;
+}
+
+/**
+ * Open `address` in this page's place, as the shell follows a link, but in the route's place in
+ * the history: Back leaves the route that has no document.
+ */
+function follow(address: string): void {
+  history.replaceState(null, "", address);
+  dispatchEvent(new PopStateEvent("popstate"));
+}
+
+/**
+ * Where the document the server has none of at `path` may be, once it said so (`asking`): the
+ * documents of its name (`/api/moved`), null until that read answered. The one document of its
+ * name is opened in this page's place, the address's fragment kept, as a link filed before its
+ * document moved names it; more than one is the reader's choice; a failed read finds none.
+ */
+function useMoved(path: string, scope: string, asking: boolean): string[] | null {
+  const [moved, setMoved] = useState<string[] | null>(null);
+  useEffect(() => {
+    setMoved(null);
+    if (!asking) return;
+    const reading = new AbortController();
+    getJson(api(scope, "/api/moved", path), reading.signal).then(
+      (value) => {
+        if (reading.signal.aborted) return;
+        const routes = readMoved(value);
+        const [only] = routes;
+        if (routes.length === 1 && only !== undefined) {
+          follow(movedAddress(scope, only, location.hash));
+        } else {
+          setMoved(routes);
+        }
+      },
+      () => {
+        if (!reading.signal.aborted) setMoved([]);
+      },
+    );
+    return () => reading.abort();
+  }, [path, scope, asking]);
+  return moved;
+}
+
+export interface MissingProps {
+  /** The route the page found no document at. */
+  path: string;
+  scope: string;
+  /** The documents of its name ([`readMoved`]): more than one is offered to choose. */
+  moved: string[];
+  /** The address's fragment (`#…`), which each choice keeps. */
+  hash: string;
+  retry: () => void;
+}
+
+/**
+ * What a page that has no document at its route says: Document not found, with All documents and
+ * Retry, and, when documents share the route's name, each of them to choose rather than the first.
+ */
+export function Missing({ path, scope, moved, hash, retry }: MissingProps) {
+  const name = moved[0]?.split("/").pop() ?? "";
+  return (
+    <Trouble
+      title="Document not found"
+      text={`There is no document at ${path}: it may have been moved, renamed or removed.`}
+      back={[scoped(scope, documentsHref(project())), "All documents"]}
+      retry={retry}
+    >
+      {moved.length > 1 && (
+        <>
+          <p>{`It may be one of the documents named ${name}:`}</p>
+          <ul className="trouble-choices">
+            {moved.map((route) => (
+              <li key={route}>
+                <a href={movedAddress(scope, route, hash)}>{route}</a>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </Trouble>
+  );
+}
+
 /** A document's page: what this device kept of it at once, then the server's, then its feed. */
 export function DocumentPage({ path, scope, embedded = false }: DocumentPageProps) {
   const frame = useFrame();
@@ -146,6 +246,9 @@ export function DocumentPage({ path, scope, embedded = false }: DocumentPageProp
   const [deviceAt, unreachable] = device ?? [null, false];
   const removed = state?.removed ?? false;
   const introStale = page.stale && !page.missing;
+  // A document the server has none of is looked for by its name before the page says so.
+  const moved = useMoved(path, scope, page.missing && !embedded);
+  const missing = page.missing && (embedded || moved !== null);
   useEffect(() => {
     if (!embedded || notice === null) return;
     notice({
@@ -168,7 +271,7 @@ export function DocumentPage({ path, scope, embedded = false }: DocumentPageProp
     page.retry.current += 1;
   };
   const ready =
-    state !== null ? (marked ? "document" : "outline") : readyWord(page.missing, trouble !== null);
+    state !== null ? (marked ? "document" : "outline") : readyWord(missing, trouble !== null);
   let body: ReactNode = null;
   if (state !== null) {
     body = (
@@ -185,14 +288,15 @@ export function DocumentPage({ path, scope, embedded = false }: DocumentPageProp
         {!embedded && <Asks key={`${scope}/${path}`} path={path} scope={scoped(scope, "")} />}
       </>
     );
-  } else if (page.missing) {
+  } else if (missing) {
     // A folder's intro shows nothing in its place: the folder is still there.
     if (!embedded) {
       body = (
-        <Trouble
-          title="Document not found"
-          text={`There is no document at ${path}: it may have been moved, renamed or removed.`}
-          back={[scoped(scope, documentsHref(project())), "All documents"]}
+        <Missing
+          path={path}
+          scope={scope}
+          moved={moved ?? NONE}
+          hash={location.hash}
           retry={retry}
         />
       );
@@ -222,7 +326,7 @@ export function DocumentPage({ path, scope, embedded = false }: DocumentPageProp
         data-ready={ready}
         data-feed={page.stale ? "stale" : "live"}
         data-cache={device ? "device" : undefined}
-        aria-busy={`${state === null && trouble === null && !page.missing}`}
+        aria-busy={`${state === null && trouble === null && !missing}`}
       >
         {body}
         {/* Until the document is shown, what kept it away is the block above's to say, once. */}
@@ -454,8 +558,7 @@ export const HydratedSection = memo(function HydratedSection({
   }, [fold, key, page]);
   const ready = section.blocks.length > 0;
   useEffect(() => {
-    const target = anchor();
-    if (ready && target !== "" && ids.includes(target)) scrollAnchor();
+    if (ready && anchorIds(anchor()).some((name) => ids.includes(name))) scrollAnchor();
   }, [ready, ids]);
   // The outer slot owns the comparison even while a settled card is closed. Its unfolded child
   // owns only the live content, so opening it never repeats the change's label or history.
@@ -945,7 +1048,7 @@ export const SANDBOX = "allow-scripts";
  * app's page, under the app's header: its path, as a document's head shows it, over its frame, as
  * wide as the page and as tall as the window below the header, scrolling inside itself. None of the
  * Markdown view's features: no outline, cards, notes, asks, editing, versions, device cache or
- * feed (docs/PROJECT_FILE.md, "HTML documents"). The frame loads the file's own address, the route
+ * feed (docs/operations/PROJECT_FILE.md, "HTML documents"). The frame loads the file's own address, the route
  * with the file's query (`fileAddress`), which the server answers with the file itself under a
  * policy that keeps it to its entrypoint's files and opens no connection
  * (`apps/symphony-server/src/media_files.rs`, `html_document`).

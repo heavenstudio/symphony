@@ -161,9 +161,9 @@ only the newest three are listed, so the first chart stays on the first screen.
 
 ## Related
 
-- [Reports and monitoring](../analysis/reports-and-monitoring.md#the-day-files): what the hourly
+- [Reports and monitoring](analysis/reports-and-monitoring.md#the-day-files): what the hourly
   record holds and how each figure is computed.
-- [Agent activity](../AGENT_ACTIVITY.md): what the agents' hours record.
-- [Task board](../TASKS.md#what-the-tokens-cost): how tokens are counted and priced.
+- [Agent activity](../workflow/AGENT_ACTIVITY.md): what the agents' hours record.
+- [Task board](../workflow/TASKS.md#what-the-tokens-cost): how tokens are counted and priced.
 - [Runs](RUNS.md): the builds and tests behind the work, one by one.
-- [Workflow](../WORKFLOW.md): a project's own phases and states.
+- [Workflow](../workflow/WORKFLOW.md): a project's own phases and states.

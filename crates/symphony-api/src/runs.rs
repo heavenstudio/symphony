@@ -1,7 +1,7 @@
 //! A project's runs: one [`RunLine`] per run and per step of one, as the board's recorder (`tasks
 //! run`) appends them to the day files `symphony/runs/YYYY-MM-DD.jsonl` in the git common dir, and
 //! as the Runs page, the roll-up and the send to another machine's server read them
-//! (docs/RUNS.md).
+//! (docs/workflow/RUNS.md).
 //!
 //! A run or a step writes a start line once its command started ([`RunLine::end`] none), then an
 //! end line with the same [`RunLine::run`] and its end. A reader takes each run once ([`fold`]): its
@@ -82,7 +82,7 @@ impl End {
     }
 }
 
-/// One test binary's results, as its run's log says them (docs/RUNS.md, *Tests*).
+/// One test binary's results, as its run's log says them (docs/workflow/RUNS.md, *Tests*).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Suite {
@@ -100,7 +100,7 @@ pub struct Suite {
     pub error: bool,
 }
 
-/// A test that failed, as its run's log says it (docs/RUNS.md, *Tests*).
+/// A test that failed, as its run's log says it (docs/workflow/RUNS.md, *Tests*).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct FailedTest {
@@ -159,7 +159,7 @@ pub struct RunLine {
     /// include its steps'.
     pub cpu_s: Option<f64>,
     /// Beside `cpu_s`, whether its recorder knows it leaves out CPU the command's processes took
-    /// (`true`), saw no such loss (`false`), or could not watch for one (absent): docs/RUNS.md.
+    /// (`true`), saw no such loss (`false`), or could not watch for one (absent): docs/workflow/RUNS.md.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpu_partial: Option<bool>,
     /// The newest earlier run of the same pipeline, step and label on the same tree, both clean.
@@ -193,7 +193,7 @@ impl RunLine {
 
 /// The read of one run's log: `GET` [`RUN_LOG_PATH`]`?run=ID` answers its last [`RUN_LOG_TAIL`]
 /// bytes, `&tail=N` its last N, `&from=A` (and `&to=B`) the bytes from A (to B); never more than
-/// [`RUN_LOG_MOST`] at once (docs/RUNS.md, *Logs*).
+/// [`RUN_LOG_MOST`] at once (docs/workflow/RUNS.md, *Logs*).
 pub const RUN_LOG_PATH: &str = "/api/run-log";
 /// What a read of a log that names no range answers: its tail, this many bytes.
 pub const RUN_LOG_TAIL: u64 = 64 * 1024;
@@ -221,7 +221,7 @@ pub struct RunLog {
 
 /// The Runs page's list: `GET` [`RUNS_PATH`] answers a [`RunsPage`], the project's runs (never
 /// their steps) newest first by when each was asked for, [`RUNS_PAGE`] at a time, read from its
-/// newest day files back [`RUNS_DAYS`] days (docs/RUNS.md, *The Runs page*). It takes `pipeline`,
+/// newest day files back [`RUNS_DAYS`] days (docs/workflow/RUNS.md, *The Runs page*). It takes `pipeline`,
 /// `end` (an [`End`], or `started` for a run with no end line yet), `task` and `branch`, each
 /// matched whole, and `before`, a time: the runs asked for before it, for the page after one whose
 /// last run was asked for then.

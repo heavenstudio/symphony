@@ -1,4 +1,4 @@
-//! A green release's refresh (docs/RELEASES.md, "The refresh"): the machine brought to the release
+//! A green release's refresh (docs/workflow/RELEASES.md, "The refresh"): the machine brought to the release
 //! once it is tagged and pushed, or once `--refresh` names it again. It is the machine's install of
 //! the release and nothing in any project's checkout: no branch, no commit, no pin moved, no main
 //! fast-forwarded. A project takes the release's kit and helpers by its own landing.
@@ -283,7 +283,7 @@ pub(crate) struct Ended {
 /// schema of the release `current` names (none: none named), its lines said in `refresh` and to
 /// `out` and its steps put in `steps`: how each board ended. A release at `kept` or behind it moves
 /// only a board left behind it, and says nothing of the rest. Each board is judged and moved alone
-/// (docs/RELEASES.md, "The boards"): snapshotted just before its own move, and one that lags, red or
+/// (docs/workflow/RELEASES.md, "The boards"): snapshotted just before its own move, and one that lags, red or
 /// its project's to finish, holds neither another board nor `current`.
 fn boards(
     against: &Against<'_>,

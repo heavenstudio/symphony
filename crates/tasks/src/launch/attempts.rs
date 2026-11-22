@@ -1,7 +1,7 @@
 //! hc as an execution provider: each launch, restore and close of a local terminal is recorded as
 //! an execution attempt ([`crate::execution`]), through the coordinator's public API alone, so a
 //! local run and a remote one share one history
-//! ([docs/EXECUTION_ATTEMPTS.md](../../../../docs/EXECUTION_ATTEMPTS.md#local-terminals)).
+//! ([docs/engineering/EXECUTION_ATTEMPTS.md](../../../../docs/engineering/EXECUTION_ATTEMPTS.md#local-terminals)).
 //!
 //! The provider is the configuration [`CONFIGURATION`], built here: no project setting names it
 //! and nothing remote is read. Its resource is the terminal's own address, as hc gave it. A launch

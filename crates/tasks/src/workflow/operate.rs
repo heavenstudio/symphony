@@ -1,5 +1,5 @@
 //! What the active custom workflow says of a task it holds, for the board's operational readers
-//! (docs/WORKFLOW.md, "Operations"): PULL and `next`, the launcher and the staffing pass, the slot
+//! (docs/workflow/WORKFLOW.md, "Operations"): PULL and `next`, the launcher and the staffing pass, the slot
 //! cap, the pipeline alarm and the sweeps. Each reads the task's declared position and the edges
 //! that leave it, never a state's name or the status the position projects to: which roles its
 //! claim edges give, the role its position staffs and whether a session that is there holds it,
@@ -25,7 +25,7 @@ pub struct Operating {
     pub revision: Revision,
     pub generation: u64,
     /// The accepted output standing for each task a workflow holds that a task read depends on,
-    /// by its slug, with the workflow revision it stood at when read (docs/WORKFLOW.md, "Accepted
+    /// by its slug, with the workflow revision it stood at when read (docs/workflow/WORKFLOW.md, "Accepted
     /// outputs"): read only where an edge depends on `accepted_output`
     /// ([`crate::Store::operating_for`]), and none for a task whose last transition left none.
     pub accepted: Vec<(String, u64, String)>,

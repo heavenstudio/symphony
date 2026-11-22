@@ -1,4 +1,4 @@
-//! Go to session (docs/TASKS.md, "Going to a session"). Each agent's way into its session is
+//! Go to session (docs/workflow/TASKS.md, "Going to a session"). Each agent's way into its session is
 //! resolved on the board's tick ([`symphony_api::resolve_sessions`]); a page links a web address
 //! itself. What reaches a pane comes here: from this machine, `POST /api/agent-focus` has the
 //! Herdr app show it ([`symphony_board::launch::go::focus`]); from any machine the gate admits
@@ -10,7 +10,6 @@
 use crate::api::error;
 use crate::front::Shared;
 use crate::live::Hub;
-use crate::lock::Held as _;
 use axum::body::to_bytes;
 use axum::extract::{ConnectInfo, Request};
 use axum::http::StatusCode;
@@ -20,6 +19,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use symphony_api::{AgentFocus, AgentScreen, SessionGo};
 use symphony_board::launch::go as herdr;
+use symphony_board::lock::Recovered as _;
 
 /// The largest focus request read: a handle in a JSON object.
 const FOCUS_BYTES: usize = 4096;
@@ -111,7 +111,7 @@ impl Going<'_> {
         go: &SessionGo,
     ) -> Result<Going<'a>, (StatusCode, String)> {
         let key = format!("{what} {}", go.handle);
-        let fresh = hub.going.lock().held().insert(key.clone());
+        let fresh = hub.going.lock().recover().insert(key.clone());
         if fresh {
             Ok(Going { hub, key })
         } else {
@@ -129,7 +129,7 @@ impl Going<'_> {
 
 impl Drop for Going<'_> {
     fn drop(&mut self) {
-        self.hub.going.lock().held().remove(&self.key);
+        self.hub.going.lock().recover().remove(&self.key);
     }
 }
 

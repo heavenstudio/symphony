@@ -174,5 +174,5 @@ panels over the page as a phone does, rather than pushing it aside.
   header.
 - [Themes and appearance](THEMES.md): a project's own name, mark and look, and what
   **Appearance** imports.
-- [Review](../REVIEW.md): the cards the bar steps through, and attaching files.
-- [Project file](../PROJECT_FILE.md): a project's own name, mark, theme and pages.
+- [Review](../workflow/REVIEW.md): the cards the bar steps through, and attaching files.
+- [Project file](../operations/PROJECT_FILE.md): a project's own name, mark, theme and pages.

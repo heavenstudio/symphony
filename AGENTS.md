@@ -5,7 +5,7 @@ The app's workspace owns its server, its web client and its Mac app under `apps/
 `apps/symphony-desktop`), and under `crates/` the review library (`crates/symphony`), its own build
 and release commands (`crates/symphony-build`), the wire types, the task board (`crates/tasks`),
 the plugin kit, the headless Chrome driver, the optional GitHub issue exchange
-(`crates/symphony-github`, [GITHUB](docs/GITHUB.md)) and the tests' CPU meters and waits
+(`crates/symphony-github`, [GITHUB](docs/operations/GITHUB.md)) and the tests' CPU meters and waits
 (`crates/test-time`). The app's formats and operating contract live in [docs/](docs/README.md). A
 consuming project owns its landing policy and shared-service safeguards.
 
@@ -20,24 +20,24 @@ editing those packages.
 `Cargo.toml` and `Cargo.lock` belong to this workspace, and its members inherit its package
 settings and dependency versions; the toolchain pin is `rust-toolchain.toml`. A consuming project
 builds on these libraries through an immutable Git dependency pin, and the packages made to be
-published are [RELEASES](docs/RELEASES.md#packages-on-cratesio)'s.
+published are [RELEASES](docs/workflow/RELEASES.md#packages-on-cratesio)'s.
 
 - A public Rust item a consumer calls changes by the
-  [two-release rule](docs/CHECKS.md#consumer-api-changes) (RULES.md
+  [two-release rule](docs/workflow/CHECKS.md#consumer-api-changes) (RULES.md
   `code/consumer-api-two-releases`).
 - A landing that changes what a project must do to take the next release (the board schema, such
   an item, a `symphony.toml` key, something to run once) says so in a
   `Consumer-Note: SECTION: TEXT` trailer of one of its own commits
-  ([when a landing owes one](docs/CHECKS.md#what-a-landing-tells-a-consumer)); `just lint-rs` is
+  ([when a landing owes one](docs/workflow/CHECKS.md#what-a-landing-tells-a-consumer)); `just lint-rs` is
   red on the ones git can see left unsaid.
 
 ### Where each part is said
 
-- **A project's settings** are its `symphony.toml` ([PROJECT_FILE](docs/PROJECT_FILE.md), the
+- **A project's settings** are its `symphony.toml` ([PROJECT_FILE](docs/operations/PROJECT_FILE.md), the
   defaults in `crates/symphony/src/project.rs`); one machine's preferences over them are
   `symphony.local.toml` beside it, never versioned, read by `crates/tasks/src/local.rs` alone.
 - **A project's own code is a plugin** (`crates/symphony-plugin`,
-  [PLUGIN_PROTOCOL](docs/PLUGIN_PROTOCOL.md)): it renders to generic blocks, never HTML, and the
+  [PLUGIN_PROTOCOL](docs/engineering/PLUGIN_PROTOCOL.md)): it renders to generic blocks, never HTML, and the
   client draws each block with one component.
 - **A project's documents** are served from its `[[entrypoints]]`
   (`crates/symphony/src/entrypoint.rs`), each named by its route in every link and on the wire.
@@ -49,19 +49,19 @@ published are [RELEASES](docs/RELEASES.md#packages-on-cratesio)'s.
   A project's state stays in its checkout: a path under its artifacts folder goes through
   `Project::artifact`, never an `artifacts/` literal, and the client keys what it keeps in the
   browser by the project's id.
-- **The board** is [TASKS](docs/TASKS.md); recorded builds and tests are
-  [MACHINE_WORK](docs/MACHINE_WORK.md) and [RUNS](docs/RUNS.md); what a task proves is
-  [CHECKS](docs/CHECKS.md); releases are [RELEASES](docs/RELEASES.md).
+- **The board** is [TASKS](docs/workflow/TASKS.md); recorded builds and tests are
+  [MACHINE_WORK](docs/workflow/MACHINE_WORK.md) and [RUNS](docs/workflow/RUNS.md); what a task proves is
+  [CHECKS](docs/workflow/CHECKS.md); releases are [RELEASES](docs/workflow/RELEASES.md).
 
 ### Building and testing
 
 Use `just lint-rs` (which runs `just client-lint` too), `just test-rs`, `just symphony-ui-dist`
 and `just symphony-ui-dev` from this folder; `tools/cargo.sh` runs ordinary Cargo in this
 workspace. A task's gate is RULES.md `workflow/evidence-is-the-gate`
-([CHECKS](docs/CHECKS.md)); `just verify` is the release run's alone, never a task's.
+([CHECKS](docs/workflow/CHECKS.md)); `just verify` is the release run's alone, never a task's.
 
 - A build or test goes through `tools/record.sh`, as the recipes do, so the board records it for
-  the task its session holds ([MACHINE_WORK](docs/MACHINE_WORK.md#recording-builds-and-tests)).
+  the task its session holds ([MACHINE_WORK](docs/workflow/MACHINE_WORK.md#recording-builds-and-tests)).
   An orchestrator running one for a task, or a subagent without a session of its own, names it:
   `TASKS_TASK=SLUG just test-rs …`, with `TASKS_SESSION=HANDLE` when it has a handle.
 - The target folder is this folder's `.target/` unless `CARGO_TARGET_DIR` names another: a linked
@@ -70,7 +70,7 @@ workspace. A task's gate is RULES.md `workflow/evidence-is-the-gate`
 - `tools/rs-bin.sh NAME` runs a declared workspace binary, building it first when it must
   (`--build`, `--where` and `--link` in its comments). A board binary run from a linked worktree
   against the live board runs the main checkout's build: a branch's own build of the board runs
-  on a scratch board ([TASKS](docs/TASKS.md#where-it-lives)).
+  on a scratch board ([TASKS](docs/workflow/TASKS.md#where-it-lives)).
 - Tests use a temporary machine folder (`SYMPHONY_MACHINE_DIR`). Never run a shared-service
   restart as a test: use a private port and a scratch board. A start in a linked worktree never
   starts, registers with or replaces the one server: `just symphony --port 0` there runs a server
@@ -82,13 +82,13 @@ workspace. A task's gate is RULES.md `workflow/evidence-is-the-gate`
 `apps/symphony-server/client/public/`, which the server package embeds. A branch commits no
 distribution, whatever it changed: the regenerator a land starts rebuilds it from main's newest
 tip and delivers it as a task of its own
-([TASKS](docs/TASKS.md#what-the-generators-make-delivered-by-a-pull-request)), and a land refuses
+([TASKS](docs/workflow/TASKS.md#what-the-generators-make-delivered-by-a-pull-request)), and a land refuses
 a branch that changes it, so a task builds the client for its tests and pictures and puts the
 distribution back (`git checkout -- apps/symphony-server/client/public`). The one exception is a
 release candidate's fix that changes what the client is built from: the head its approve names
 commits the distribution its own sources make, and the branch then merges main once, keeping
 main's side of it, and delivers that second head
-([RELEASES](docs/RELEASES.md#the-release-candidate)). `just client-check` compares a fresh build
+([RELEASES](docs/workflow/RELEASES.md#the-release-candidate)). `just client-check` compares a fresh build
 with the committed distribution; the rest is
 [the client's guide's](apps/symphony-web/AGENTS.md#the-build-and-the-distribution).
 
@@ -102,9 +102,9 @@ A tool that is absent or incompatible fails with setup guidance; no hosted GitHu
 - Board fixtures: lsof, the pinned SurrealDB (`tools/surreal.sh`, or `SYMPHONY_SURREAL`), and
   PostgreSQL 18 or later, on which a fixture's first board command makes its board.
 - The board's server tests (`just test-rs -p symphony-board --test server`): PostgreSQL 18 or
-  later with its programs beside it ([the setup](docs/PROJECT_FILE.md#board)).
+  later with its programs beside it ([the setup](docs/operations/PROJECT_FILE.md#board)).
 - The hosted board's check (`just hosted-check`): PostgreSQL 16's programs as well, and
-  `openssl` ([POSTGRESQL](docs/POSTGRESQL.md#a-hosted-board)).
+  `openssl` ([POSTGRESQL](docs/operations/POSTGRESQL.md#a-hosted-board)).
 - The release run's tests: cargo-nextest, provisioned by its own `nextest-setup` step; focused
   `just test-rs` uses Cargo and needs none.
 
@@ -123,23 +123,23 @@ consuming project's.
   as its heartbeat, and no allow rule passes a command with an env prefix.
 - **Models and limits are settings**: `[agents] launch`, `[agents.models]` and `[limits]` in
   `symphony.toml`, a machine's own choice in `symphony.local.toml`
-  ([TASKS](docs/TASKS.md#limits-and-models),
-  [PROJECT_FILE](docs/PROJECT_FILE.md#the-local-settings-file)), and between the two the board's
+  ([TASKS](docs/workflow/TASKS.md#limits-and-models),
+  [PROJECT_FILE](docs/operations/PROJECT_FILE.md#the-local-settings-file)), and between the two the board's
   own preferences (`just tasks settings`), which hold at once and need no landing
-  ([PROJECT_FILE](docs/PROJECT_FILE.md#the-boards-store)). An Agent launch passes the model
+  ([PROJECT_FILE](docs/operations/PROJECT_FILE.md#the-boards-store)). An Agent launch passes the model
   `just tasks limits` names for the role, as a subagent otherwise inherits its orchestrator's.
   `just symphony-cli model ROLE MODEL` changes one.
 - **A change of settings needs no reviewer**: a change of the values `symphony.toml` gives
   settings the Symphony already reads, with the words here that repeat them and nothing else,
   lands on `just settings-check` green at its tip, which is its `tests` stamp. A value that is a
   command or a program, or that decides what lands or where the board is kept, keeps `review`
-  ([the check](docs/PROJECT_FILE.md#the-settings-check), [which keys](docs/TASKS.md#needed-stamps)).
+  ([the check](docs/operations/PROJECT_FILE.md#the-settings-check), [which keys](docs/workflow/TASKS.md#needed-stamps)).
 - **Landing by pull request.** Nobody runs a land and nobody pushes `main`, the owner included
-  (`[land] delivery`, [GITHUB_SETUP](docs/GITHUB_SETUP.md#delivery-by-pull-request)). A task's
+  (`[land] delivery`, [GITHUB_SETUP](docs/operations/GITHUB_SETUP.md#delivery-by-pull-request)). A task's
   move to review dispatches it: its branch pushed, its pull request opened, its evidence written
   there as checks. Once every stamp it needs stands on its head, GitHub squashes it within
   seconds and the board closes the task
-  ([a land dispatched at review](docs/TASKS.md#a-land-dispatched-at-review)). A task nobody
+  ([a land dispatched at review](docs/workflow/TASKS.md#a-land-dispatched-at-review)). A task nobody
   assessed at its head waits in review and nothing merges it, so its assessor is started at
   each move to review. A
   dispatch that stops, a red check, a conflict or a pull request closed unmerged is said on the
@@ -148,15 +148,15 @@ consuming project's.
   `.target/bin/symphony-github`, a build of main put there by hand
   (`tools/cargo.sh build -p symphony-github`, then copied) and again once a change to that
   program lands. A decision the owner must make is a card at the place in its document where
-  the thing it decides is said ([REVIEW](docs/REVIEW.md#where-a-card-is-written)), not a
+  the thing it decides is said ([REVIEW](docs/workflow/REVIEW.md#where-a-card-is-written)), not a
   question in chat.
-- **Releases.** A land starts a release run by [the cadence](docs/RELEASES.md#the-cadence), and a
+- **Releases.** A land starts a release run by [the cadence](docs/workflow/RELEASES.md#the-cadence), and a
   green release refreshes the machine. What an orchestrator runs without asking (a refresh's
   retry, the run after a landing that moves the board's schema, once the board's landed line is
   on its thread, pointing `current` forward after a schema move) and what stays the owner's
   word (a run by hand, the schedule, publication, restarting the shared server by hand,
   pointing `current` back) is
-  [who runs it](docs/RELEASES.md#who-runs-it), [the way back](docs/RELEASES.md#the-way-back) and
+  [who runs it](docs/workflow/RELEASES.md#who-runs-it), [the way back](docs/workflow/RELEASES.md#the-way-back) and
   [the orchestrator's page](.agents/skills/task-orchestrator/project.md). A pin moved by hand to
   a commit of main waits until `just tasks regenerate --status --wait` exits 0 and takes the
   commit it names.
@@ -187,7 +187,7 @@ copy alone.
 - **What an agent is told, and where.** A launch prompt is the skill, the slug and the handle.
   What is one task's alone goes in its brief or on its thread. What holds for every task is
   committed: a rule in [RULES.md](RULES.md), guidance here, in a package's guide or in
-  [CHECKS](docs/CHECKS.md), and what one role alone needs in `project.md` beside that role's
+  [CHECKS](docs/workflow/CHECKS.md), and what one role alone needs in `project.md` beside that role's
   installed skill (`.agents/skills/ROLE/project.md`), which init never writes.
 - **Prompts.** The allow rules pass the board and reply recipes (`just tasks`, `just agent-send`,
   `just symphony-status`, `just symphony-reply`, `just symphony-ask`) and `just land` with no
@@ -196,7 +196,7 @@ copy alone.
   into the main checkout's artifacts folder (`crates/tasks/src/confine.rs`).
 - **Recipes in text.** Every `just NAME` a skill, a doc, a guide or a binary's string names is an
   installed recipe, this repository's own where `tools/named-recipes.txt` lists it, or the
-  consumer's landing ([CHECKS](docs/CHECKS.md#the-recipes-a-text-names)); the docs audit and
+  consumer's landing ([CHECKS](docs/workflow/CHECKS.md#the-recipes-a-text-names)); the docs audit and
   `crates/symphony/tests/hooks/named_recipes.rs` fail on any other.
 - **Hooks.** `symphony hook tasks-beat` makes a session's tool calls its heartbeat and never
   refuses one; `symphony hook memory-guard` is RULES.md `memory-lives-in-the-repo`.
@@ -218,7 +218,7 @@ worktree leads nowhere once the sweep moves it.
 `just agent-send ARGS` the board, and `just land SLUG` the default landing. This repository's
 justfile imports the installed `symphony.just` like any project's, and its own recipes of those
 names win: they run this workspace's binaries through ordinary Cargo. `just release` cuts this
-repository's releases ([RELEASES](docs/RELEASES.md)) and is no recipe `symphony init` installs.
+repository's releases ([RELEASES](docs/workflow/RELEASES.md)) and is no recipe `symphony init` installs.
 
 Board roles, verdicts, review callbacks and the default landing belong to Symphony. A consumer
 with a landing of its own keeps it: its `land` recipe replaces the Symphony's for that project,

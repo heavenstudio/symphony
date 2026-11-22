@@ -1,4 +1,4 @@
-//! `symphony-build release` (`just release`): Symphony's releases (docs/RELEASES.md), a command of
+//! `symphony-build release` (`just release`): Symphony's releases (docs/workflow/RELEASES.md), a command of
 //! this repository's own build binary, which no project is given. A run takes main's tip as
 //! fetched from the remote, the commit a project can fetch, into a clean checkout of its own
 //! outside the repository's folder ([`place`]) and runs the full verification there: a release is
@@ -117,7 +117,7 @@ machine's server follows; no project's checkout, branch or pin is written. \
 A run red in a check holds its commit as the release candidate, the local branch \
 release-candidate, until its reds' own lands answer them; then it is rerun, and main's tip is run \
 only once none is held. Where [releases] hosted names a command, the full verification is asked \
-of GitHub's runners through it and run here only when they give no result (docs/RELEASES.md).
+of GitHub's runners through it and run here only when they give no result (docs/workflow/RELEASES.md).
 
 options:
   -h, --help            show this help message and exit
@@ -841,7 +841,7 @@ fn unread(main: &Path, problem: &str) -> String {
     format!(
         "the project file {} does not load, so nothing says what a run verifies, releases or \
          refreshes, and none is run as if its settings were unset: {problem}. The settings check \
-         reads it the same way (docs/PROJECT_FILE.md, \"The settings check\")",
+         reads it the same way (docs/operations/PROJECT_FILE.md, \"The settings check\")",
         main.join(symphony::project::FILE).display()
     )
 }
@@ -1108,7 +1108,7 @@ fn github_by_hand(
         return refused(
             err,
             "[releases] github names no command in symphony.toml, so nothing publishes a GitHub \
-             Release (docs/RELEASES.md)",
+             Release (docs/workflow/RELEASES.md)",
         );
     }
     let ordered = match ordered_releases(&repo.root) {
@@ -1325,7 +1325,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         ),
     };
     // A green release, tagged and pushed, publishes on crates.io, then refreshes the machine
-    // (docs/RELEASES.md).
+    // (docs/workflow/RELEASES.md).
     if ran.is_ok()
         && !options.refresh
         && record.pushed

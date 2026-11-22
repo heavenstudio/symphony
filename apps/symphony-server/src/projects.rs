@@ -33,12 +33,12 @@
 //! starter's checkout is maintained by the server's own workers, under whatever id it is
 //! registered with.
 
-use crate::lock::Held as _;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
+use symphony_board::lock::Recovered as _;
 
 use axum::Router;
 use axum::extract::{ConnectInfo, Request, State};
@@ -249,7 +249,7 @@ impl Projects {
     /// Start the maintenance of each other project served now, once: none once the server stopped
     /// them or its starter is stopping, as nothing would join it.
     fn go_live(&self) {
-        let mut held = self.held.lock().held();
+        let mut held = self.held.lock().recover();
         if held.live || held.stopped || self.starter.stopping() {
             return;
         }
@@ -278,7 +278,7 @@ impl Projects {
     fn read(&self) -> std::sync::MutexGuard<'_, Held> {
         // A panic while reading leaves the list before it whole: the new one is stored last, in
         // one assignment with the stamp it was read at.
-        let mut held = self.held.lock().held();
+        let mut held = self.held.lock().recover();
         let stamp = fs::metadata(self.machine.join(PROJECTS)).ok().map(|meta| {
             (
                 meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
@@ -425,7 +425,7 @@ fn lacking(build: &Build, starter_id: &str, entry: &Entry) -> Option<String> {
         ),
         (Lack::Plugins(names), Some(_)) => format!(
             "a [plugins.process] command for {} in {}, then `just symphony` in its checkout, lets \
-             this server serve it (docs/PLUGIN_PROTOCOL.md)",
+             this server serve it (docs/engineering/PLUGIN_PROTOCOL.md)",
             names.join(", "),
             entry.root.join(symphony::project::FILE).display()
         ),
@@ -775,7 +775,7 @@ fn listed(project: &Served) -> symphony_api::ListedProject {
     listed.unwell = hub.standing().unwell();
     listed.writes = hub.writes();
     // A writer's panic leaves at worst a page between two of its regions' updates, as the list's.
-    let pages = hub.pages.read().held();
+    let pages = hub.pages.read().recover();
     if let Some(page) = pages.get("") {
         listed.version = Some(page.board.version);
         listed.waiting = Some(page.board.counts.waiting);
@@ -818,7 +818,7 @@ fn list(served: &[Served]) -> String {
             let counts = hub.and_then(|hub| {
                 // A writer's panic leaves at worst a page between two of its regions' updates:
                 // these counts are shown, and the project's next delta corrects them.
-                let pages = hub.pages.read().held();
+                let pages = hub.pages.read().recover();
                 pages.get("").map(|page| page.board.counts.clone())
             });
             let standing = hub.map(|hub| hub.standing());

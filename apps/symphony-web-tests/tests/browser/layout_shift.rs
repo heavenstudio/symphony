@@ -749,7 +749,7 @@ fn a_task_holds_still_while_its_thread_loads() {
 /// and from four rows to two, the timeline drawn under it:
 /// `div.task-gates-slot [13,396,364,434]→[13,364,364,243]`,
 /// `section#timeline [0,0,0,0]→[13,638,364,206]`. The owner kept that move (the card
-/// `task-first-visit-head-first` in docs/analysis/task-first-visit.md, every outline at once); the
+/// `task-first-visit-head-first` in docs/design/analysis/task-first-visit.md, every outline at once); the
 /// limit only goes down.
 const PHONE_PAGE_FIRST_LIMIT: f64 = 0.14;
 /// The same visit with the gates' answer drawn before the page's: it scores 0.0636, the timeline

@@ -1527,3 +1527,11 @@ figcaption p {
     height: calc(100dvh - 48px);
   }
 }
+/* The documents a route's name may be, when more than one has it: Document not found's choice. */
+.trouble-choices {
+  margin: 0 0 var(--sp-4);
+  padding-left: var(--sp-5);
+}
+.trouble-choices li + li {
+  margin-top: var(--sp-1);
+}

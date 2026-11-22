@@ -130,14 +130,14 @@ fn a_hold_names_its_project_its_plugins_and_where_their_commands_go() {
         one.said(),
         "pantry names the linked plugin shelf, and a release's server serves a plugin only from \
          its process: a [plugins.process] command for it in /work/pantry/symphony.toml lets the \
-         release serve every project (docs/PLUGIN_PROTOCOL.md)"
+         release serve every project (docs/engineering/PLUGIN_PROTOCOL.md)"
     );
     // Its own pages name the file as its own; the status and a start keep its path.
     assert_eq!(
         one.said_on_its_pages(),
         "pantry names the linked plugin shelf, and a release's server serves a plugin only from \
          its process: a [plugins.process] command for it in its symphony.toml lets the release \
-         serve every project (docs/PLUGIN_PROTOCOL.md)"
+         serve every project (docs/engineering/PLUGIN_PROTOCOL.md)"
     );
     let two = Hold {
         plugins: vec!["shelf".into(), "map".into()],
@@ -251,7 +251,7 @@ fn a_start_by_a_release_while_the_switch_is_held_is_refused_naming_the_holder_an
             "the machine's Symphony is not started from the release {RELEASE}, as the switch to it \
              is held: linked names the linked plugin shelf, and a release's server serves a plugin \
              only from its process: a [plugins.process] command for it in {} lets the release \
-             serve every project (docs/PLUGIN_PROTOCOL.md); `just symphony` in {}, by linked's own \
+             serve every project (docs/engineering/PLUGIN_PROTOCOL.md); `just symphony` in {}, by linked's own \
              build, starts the machine's server",
             linked.root.join(FILE).display(),
             linked.root.display()

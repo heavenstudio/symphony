@@ -30,6 +30,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use symphony_board::db::DbError;
 use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
+use symphony_board::lock::Recovered as _;
 use symphony_board::pg;
 use symphony_board::port::{NotStarted, Start};
 use symphony_board::rpc::{self, Client};
@@ -64,8 +65,8 @@ pub const HOST: &str = "this-host";
 pub const LOOKUP_BACKSTOP: &str = "86400";
 
 /// Raw fixture writes can meet SurrealDB's deferred HNSW compaction even after a store call
-/// commits. Retry conflicts, with capped, jittered backoff, until the backstop of the store's 30 s
-/// patience: a loaded machine slows the compaction, never ends it.
+/// commits. Retry conflicts, with capped, jittered backoff, until [`conflicts_deadline`]: a loaded
+/// machine slows the compaction, never ends it.
 /// Multi-statement callers must be idempotent or supply their own transaction.
 pub trait RawWrite {
     fn write(&self, sql: &str, vars: serde_json::Value) -> Result<Vec<serde_json::Value>, DbError>;
@@ -73,9 +74,14 @@ pub trait RawWrite {
 
 impl RawWrite for Client {
     fn write(&self, sql: &str, vars: serde_json::Value) -> Result<Vec<serde_json::Value>, DbError> {
-        let until = Instant::now() + test_time::backstop(Duration::from_secs(30));
-        retry_conflicts(until, || self.query(sql, vars.clone()))
+        retry_conflicts(conflicts_deadline(), || self.query(sql, vars.clone()))
     }
+}
+
+/// Until when a fixture's write is sent again on a conflict ([`retry_conflicts`]), from now: the
+/// backstop of the store's 30 s patience, which only a stall reaches.
+pub fn conflicts_deadline() -> Instant {
+    Instant::now() + test_time::backstop(Duration::from_secs(30))
 }
 
 pub fn retry_conflicts<T>(
@@ -159,7 +165,7 @@ pub fn on_exit(cleanup: extern "C" fn()) {
 /// (a server that never came up is reported, log and all, by `start`).
 extern "C" fn stop_server() {
     if let Some(server) = SERVER.get() {
-        let mut shell = server.shell.lock().unwrap_or_else(|held| held.into_inner());
+        let mut shell = server.shell.lock().recover();
         let _ = shell.shutdown();
         let _ = std::fs::remove_file(&server.log);
     }
@@ -387,26 +393,53 @@ pub fn server_addr() -> String {
 
 /// A SurrealDB server of a test's own on the engine a board's server runs on: `surrealkv://` under
 /// the board's storage ([`Storage::BOARD`], its 256 MiB memtable), in a folder of its own that goes
-/// with it, the server ended first. It is for a test that copies a whole board: the shared server's
-/// in-memory engine takes the copy's one transaction many times slower (the realistic board's,
-/// 45 s of the server's CPU there and 5 s here, measured 2026-11-22), so a copy a quiet machine
-/// makes well within the client's wait outlasted it at a load of 113.
+/// with it, the server ended first, or with the next run if the test's process was killed
+/// ([`BoardServer::start`]). It is for a test that copies a whole board: a copy is one request, so
+/// its client's wait is its whole bound, and the shared server's in-memory engine takes the copy's
+/// one transaction many times slower than a board's engine, slow enough that a loaded machine
+/// stretched it past that wait. What each engine took is measured on its task's thread,
+/// tests/round-trip-copy-slow-under-load.
 pub struct BoardServer {
     addr: String,
     shell: ServerChild,
     dir: PathBuf,
 }
 
+/// How a [`BoardServer`]'s folder's name starts: `board-surrealkv-PID-N`, PID its test process's.
+const BOARD_FOLDER: &str = "board-surrealkv-";
+
+/// Every [`BoardServer`] folder under `root` whose test process has ended removed: one a run
+/// killed before its server dropped left behind. A run still going keeps its own, and nothing else
+/// under `root` is touched.
+pub fn remove_ended_board_folders(root: &Path) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let ended = (entry.file_name().to_str())
+            .and_then(|name| name.strip_prefix(BOARD_FOLDER))
+            .and_then(|rest| rest.split_once('-'))
+            .and_then(|(pid, _)| pid.parse::<i64>().ok())
+            .is_some_and(|pid| !symphony_board::sys::pid_alive(pid));
+        if ended {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
 impl BoardServer {
-    /// The server up on a store in a folder of its own under the target's temporary folder.
+    /// The server up on a store in a folder of its own under the target's temporary folder, where
+    /// the binary's first one removes what ended runs left ([`remove_ended_board_folders`]).
     pub fn start() -> BoardServer {
-        let dir = option_env!("CARGO_TARGET_TMPDIR")
-            .map_or_else(std::env::temp_dir, PathBuf::from)
-            .join(format!(
-                "board-surrealkv-{}-{}",
-                std::process::id(),
-                DATABASES.fetch_add(1, Ordering::SeqCst)
-            ));
+        static SWEPT: std::sync::Once = std::sync::Once::new();
+        let root =
+            option_env!("CARGO_TARGET_TMPDIR").map_or_else(std::env::temp_dir, PathBuf::from);
+        SWEPT.call_once(|| remove_ended_board_folders(&root));
+        let dir = root.join(format!(
+            "{BOARD_FOLDER}{}-{}",
+            std::process::id(),
+            DATABASES.fetch_add(1, Ordering::SeqCst)
+        ));
         let _ = std::fs::remove_dir_all(&dir); // an ended run's, whose process had this one's id
         let engine = format!("surrealkv://{}", dir.join("data").display());
         let (addr, shell) = launch_under(

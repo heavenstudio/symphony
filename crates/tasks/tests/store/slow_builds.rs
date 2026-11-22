@@ -49,11 +49,11 @@ fn leased(f: &Fixture, handle: &str) -> bool {
 
 /// Where in a leased dispatch the time passes:
 /// - once it has read the board and the recipient's record (its first read of the clock in
-///   `dispatch_one` past the board's read);
+///   `dispatch_leased`, which `dispatch_one` calls under the lease, past the board's read);
 /// - once it has recorded what it built and is about to deliver it (`deliver_pending`'s first);
 /// - once it has renewed the lease and its first batch's turn comes (the deadline's check in
 ///   `deliver_batches`).
-const BUILDING: &str = "dispatch_one";
+const BUILDING: &str = "dispatch_leased";
 const DELIVERING: &str = "deliver_pending";
 const SENDING: &str = "deliver_batches";
 

@@ -1075,7 +1075,7 @@ fn by_call_and_name(path: &Path, key: &str) -> BTreeMap<String, Vec<f64>> {
 /// process than linked, over every call; the render of `slow`, which spends [`SPENT`] in the
 /// plugin, so each meter is seen to move by it; and a page of ten components drawn linked and from
 /// the process, neither recorded. Best in a release build on a quiet machine, run twice
-/// (docs/PLUGIN_PROTOCOL.md says the command).
+/// (docs/engineering/PLUGIN_PROTOCOL.md says the command).
 #[test]
 #[ignore = "a measurement, not a check: run it alone with --ignored --nocapture"]
 fn the_cost_of_a_plugins_calls_linked_and_from_its_process() {
@@ -1195,7 +1195,7 @@ fn the_cost_of_a_plugins_calls_linked_and_from_its_process() {
 /// card, and from its process in one request (`card_kinds.read`): a measurement, not a check. Run
 /// alone, it prints each read's median in milliseconds over registers of 50 and 500 cards, the
 /// reads interleaved and none recorded, and the bytes of the batch's lines. Best in a release
-/// build on a quiet machine (docs/PLUGIN_PROTOCOL.md says the command).
+/// build on a quiet machine (docs/engineering/PLUGIN_PROTOCOL.md says the command).
 #[test]
 #[ignore = "a measurement, not a check: run it alone with --ignored --nocapture"]
 fn the_cost_of_a_register_read_linked_card_by_card_from_its_process_and_batched() {

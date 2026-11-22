@@ -1,20 +1,20 @@
 # The most bytes each binary this workspace delivers may weigh, built as `cargo install` builds it
 # (the workspace's release profile) for aarch64-apple-darwin, and the most the client distribution
 # the server embeds may weigh. `just size-check` builds the binaries and checks every line
-# (`symphony-build size-budget`, docs/CHECKS.md "Size budgets"); the release run's `just verify`
+# (`symphony-build size-budget`, docs/workflow/CHECKS.md "Size budgets"); the release run's `just verify`
 # runs it.
 #
 # A line is its size plus 4 %, rounded down to a multiple of 10,000 bytes. The commit of a reduction
 # sets it, lowering it to that (as `symphony-build size-budget` prints it). A binary past its line is
 # taken back under by a reduction first; a line is raised only by its task's orchestrator's decision
-# (`just tasks gate SLUG tools/size-budget.toml:NAME --raise NEW`, docs/TASKS.md "Gate decisions"),
+# (`just tasks gate SLUG tools/size-budget.toml:NAME --raise NEW`, docs/workflow/TASKS.md "Gate decisions"),
 # in a commit of its own that names the growth and why no reduction will do, to the size plus 4 %
-# and never higher, on a fresh reviewer's approve (docs/CHECKS.md, "Where a line stands" and "A red
+# and never higher, on a fresh reviewer's approve (docs/workflow/CHECKS.md, "Where a line stands" and "A red
 # at the size check").
 
 # The builds `symphony-build publish-client` keeps under apps/symphony-server/client/public, which
 # the server's build script embeds: each build whole, a file two builds share counted for each, and
-# index.html and builds.json once (docs/CHECKS.md "Size budgets"). At c0d5409's distribution that is
+# index.html and builds.json once (docs/workflow/CHECKS.md "Size budgets"). At c0d5409's distribution that is
 # 2,272,465 bytes: builds of 756,886, 754,713 and 755,142 and 5,724 of page; the line is that plus
 # 4 %. It replaces 1,530,000, a line on every file once (1,568,481 there), which moved with how many
 # files the builds share and not with what they weigh: the builds grew 2,173 bytes, while the

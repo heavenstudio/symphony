@@ -61,7 +61,7 @@ fn refused_unpublished(d: &Delivery) -> Vec<String> {
 
 /// What a delivery says verifies a ruleset it does not know.
 const VERIFY: &str = "who administers the repository verifies them with `symphony-github rulesets \
-                      --verify` (docs/GITHUB_SETUP.md)";
+                      --verify` (docs/operations/GITHUB_SETUP.md)";
 
 /// When GitHub says ruleset `id` last changed.
 fn changed_at(d: &Delivery, id: i64) -> String {

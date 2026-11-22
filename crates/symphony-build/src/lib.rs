@@ -1,5 +1,5 @@
-//! This repository's own build and release commands, `symphony-build`'s (docs/RELEASES.md,
-//! docs/CHECKS.md): publishing a built client, the client's release inputs, the size budgets, the
+//! This repository's own build and release commands, `symphony-build`'s (docs/workflow/RELEASES.md,
+//! docs/workflow/CHECKS.md): publishing a built client, the client's release inputs, the size budgets, the
 //! crates check, the splitter's repair, the pages' time to synced and the release run
 //! ([`release`]). A package of its own, never published and never shipped, so the library every
 //! project links (`symphony-app`) compiles none of it; what it reads of the library is the

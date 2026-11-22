@@ -2,7 +2,7 @@
 // document's sections, the chat's answers): every field the block components draw, each of its
 // type, and nothing else, as Rust's serde reads them. A field a newer server adds changes nothing,
 // and neither does a kind of block, span or media it adds (a minor of the plugin kit,
-// docs/PLUGIN_PROTOCOL.md): it passes with its fields unread, and the components say it where it
+// docs/engineering/PLUGIN_PROTOCOL.md): it passes with its fields unread, and the components say it where it
 // stands as content this client cannot draw. A word the client does not know (a callout's kind, a
 // figure's size, a tag, a shape) fails the whole read, as does a kind that is no text, and the
 // page says so and reads again. Each table of kinds and words names every one the wire types know,

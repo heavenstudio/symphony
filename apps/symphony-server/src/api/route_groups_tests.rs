@@ -319,6 +319,7 @@ async fn a_route_is_refused_the_argument_it_requires_with_that_arguments_words()
     }
     for route in [
         "/api/document",
+        "/api/moved",
         "/api/folder",
         "/api/section",
         "/api/history",

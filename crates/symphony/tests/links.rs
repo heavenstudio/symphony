@@ -5,7 +5,7 @@
 //! its size. It opens boards only to read (`Store::read_as`, `Store::reading`), so it links none of
 //! the migration that makes or moves one, the two databases' schema texts among it. And on macOS
 //! it exports no symbol, as no other code loads it. The size each would add
-//! is the binary's budget's to hold (docs/CHECKS.md, "Size budgets"). The commands only this
+//! is the binary's budget's to hold (docs/workflow/CHECKS.md, "Size budgets"). The commands only this
 //! repository's own build and release run use are a package of their own (crates/symphony-build),
 //! which this library never compiles, so there is nothing of theirs to look for here.
 

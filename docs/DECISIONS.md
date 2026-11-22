@@ -1,65 +1,66 @@
 # Decision register
 
 A decision is a card at the place in its document where the thing it decides is said
-([where a card is written](REVIEW.md#where-a-card-is-written)). This page holds the cards no
+([where a card is written](workflow/REVIEW.md#where-a-card-is-written)). This page holds the cards no
 document says the subject of, and links each document that holds cards. The queue lists every card
 that waits, and `just symphony-status --json` names every card with its file and line. How cards,
-verdicts and their dated history work is in [REVIEW](REVIEW.md).
+verdicts and their dated history work is in [REVIEW](workflow/REVIEW.md).
 
 ## Documents that hold cards
 
 A document's first card adds its line here.
 
-- [Checks](CHECKS.md)
-- [Setting up GitHub](GITHUB_SETUP.md)
-- [Releases](RELEASES.md)
-- [Concept review](REVIEW.md)
-- [Task board](TASKS.md)
-- [The agents page, orchestrator-first](analysis/agents-page.md)
-- [Artifacts attached, not committed](analysis/attached-artifacts.md)
-- [The board at a glance](analysis/board-design.md)
-- [The board's cutover to PostgreSQL, and the way back](analysis/board-pg-cutover.md)
-- [The board's store, measured before it moves](analysis/board-store-baseline.md)
-- [Where decision cards live](analysis/cards-in-their-documents.md)
-- [The client cache](analysis/client-cache.md)
-- [Dioxus or JSX for the client](analysis/client-framework-comparison.md)
-- [The built client out of git](analysis/client-off-git.md)
-- [One runtime for the client's modules](analysis/client-shared-runtime.md)
-- [Code and architecture review, November 2026](analysis/code-review-2026-11.md)
-- [Components draw when their data arrives](analysis/components-draw-when-their-data-arrives.md)
-- [Configurable delivery workflows](analysis/configurable-delivery-workflow.md)
-- [Symphony behind a versioned contract](analysis/consumer-contract.md)
-- [A desktop Symphony app](analysis/desktop-client.md)
-- [Historical personal-path treatment](analysis/github-history-treatment.md)
-- [Optional GitHub integration](analysis/github-integration.md)
-- [Landing through GitHub pull requests](analysis/github-pr-landing.md)
-- [GraphQL, its library and the server's framework](analysis/graphql-and-server-framework.md)
-- [The header](analysis/header-names.md)
-- [Hosted ingress and board readiness](analysis/hosted-ingress.md)
-- [Managed PostgreSQL for a hosted board](analysis/hosted-postgresql.md)
-- [Needed stamps](analysis/needed-stamps.md)
-- [Symphony's own names](analysis/own-names.md)
-- [Owner asks](analysis/owner-asks.md)
-- [The header on a phone, in one row](analysis/phone-header.md)
-- [Delivering Symphony without rebuilds](analysis/plugin-delivery.md)
-- [Where the board's PostgreSQL comes from](analysis/postgresql-binary-source.md)
-- [Product documentation review, November 2026](analysis/product-docs-review-2026-11.md)
-- [A project's task workflow](analysis/project-workflow.md)
-- [Relax against cargo](analysis/relax-build-trial.md)
-- [A release candidate held still](analysis/release-candidate.md)
-- [The release pipeline, redesigned](analysis/release-pipeline.md)
-- [Durable project artifacts](analysis/remote-artifact-store.md)
-- [Execution providers and durable attempts](analysis/remote-execution-attempts.md)
-- [Reports and monitoring](analysis/reports-and-monitoring.md)
-- [Artifact approvals at workflow transitions](analysis/revision-bound-transition-guards.md)
-- [The read-only window after a schema move](analysis/schema-move-read-only-window.md)
-- [A Settings page](analysis/settings-page.md)
-- [Symphony's mark](analysis/symphony-mark.md)
-- [Updating a project's Symphony](analysis/symphony-update.md)
-- [A task's first visit](analysis/task-first-visit.md)
-- [Navigating a task's timeline](analysis/timeline-navigation.md)
-- [Orchestrators and messages on a task's timeline](analysis/timeline-orchestrator.md)
-- [Worktree build folders](analysis/worktree-build-folders.md)
+- [Checks](workflow/CHECKS.md)
+- [Setting up GitHub](operations/GITHUB_SETUP.md)
+- [Releases](workflow/RELEASES.md)
+- [Concept review](workflow/REVIEW.md)
+- [Task board](workflow/TASKS.md)
+- [The agents page, orchestrator-first](product/analysis/agents-page.md)
+- [Artifacts attached, not committed](workflow/analysis/attached-artifacts.md)
+- [The board at a glance](product/analysis/board-design.md)
+- [The board's cutover to PostgreSQL, and the way back](operations/analysis/board-pg-cutover.md)
+- [The board's store, measured before it moves](operations/analysis/board-store-baseline.md)
+- [Where decision cards live](workflow/analysis/cards-in-their-documents.md)
+- [The client cache](engineering/analysis/client-cache.md)
+- [Dioxus or JSX for the client](engineering/analysis/client-framework-comparison.md)
+- [The built client out of git](engineering/analysis/client-off-git.md)
+- [One runtime for the client's modules](engineering/analysis/client-shared-runtime.md)
+- [Code and architecture review, November 2026](engineering/analysis/code-review-2026-11.md)
+- [Components draw when their data arrives](design/analysis/components-draw-when-their-data-arrives.md)
+- [Configurable delivery workflows](workflow/analysis/configurable-delivery-workflow.md)
+- [Symphony behind a versioned contract](engineering/analysis/consumer-contract.md)
+- [A desktop Symphony app](product/analysis/desktop-client.md)
+- [Historical personal-path treatment](operations/analysis/github-history-treatment.md)
+- [Optional GitHub integration](operations/analysis/github-integration.md)
+- [Landing through GitHub pull requests](workflow/analysis/github-pr-landing.md)
+- [GraphQL, its library and the server's framework](engineering/analysis/graphql-and-server-framework.md)
+- [The header](design/analysis/header-names.md)
+- [Hosted ingress and board readiness](operations/analysis/hosted-ingress.md)
+- [Managed PostgreSQL for a hosted board](operations/analysis/hosted-postgresql.md)
+- [Needed stamps](workflow/analysis/needed-stamps.md)
+- [Symphony's own names](engineering/analysis/own-names.md)
+- [Owner asks](product/analysis/owner-asks.md)
+- [The header on a phone, in one row](design/analysis/phone-header.md)
+- [Delivering Symphony without rebuilds](engineering/analysis/plugin-delivery.md)
+- [Where the board's PostgreSQL comes from](operations/analysis/postgresql-binary-source.md)
+- [Product documentation review, November 2026](product/analysis/product-docs-review-2026-11.md)
+- [A project's task workflow](workflow/analysis/project-workflow.md)
+- [Relax against cargo](engineering/analysis/relax-build-trial.md)
+- [A release candidate held still](workflow/analysis/release-candidate.md)
+- [The release pipeline, redesigned](workflow/analysis/release-pipeline.md)
+- [Durable project artifacts](engineering/analysis/remote-artifact-store.md)
+- [Execution providers and durable attempts](engineering/analysis/remote-execution-attempts.md)
+- [Reports and monitoring](product/analysis/reports-and-monitoring.md)
+- [Artifact approvals at workflow transitions](workflow/analysis/revision-bound-transition-guards.md)
+- [The read-only window after a schema move](operations/analysis/schema-move-read-only-window.md)
+- [A Settings page](product/analysis/settings-page.md)
+- [Symphony's mark](design/analysis/symphony-mark.md)
+- [Updating a project's Symphony](workflow/analysis/symphony-update.md)
+- [A task's first visit](design/analysis/task-first-visit.md)
+- [Navigating a task's timeline](design/analysis/timeline-navigation.md)
+- [Orchestrators and messages on a task's timeline](design/analysis/timeline-orchestrator.md)
+- [A task's cost on its card, its page and its timeline](design/analysis/token-cost.md)
+- [Worktree build folders](engineering/analysis/worktree-build-folders.md)
 
 ## Cards with no document of their own
 
@@ -71,11 +72,11 @@ A document's first card adds its line here.
 - [-] **skeleton-loading-look** — While a page waits for its data, it shows pale bars where its text will be, with a soft light passing over them every 1.8 s (still bars for anyone who turns motion off). A task and a document show the bars until their first screen has arrived, 3 s at most, then appear whole; the task board shows its controls at once, with bars in each column until its tasks arrive. Nothing jumps any more as a page loads: the largest layout shift on any page, phone or wide, is now 0.011, down from 0.17 on a document and 0.14 in the chat (under 0.05 is good). Three smaller changes come with it: the chat's form stays at the foot of its panel, with New conversation just above it; a wide page keeps room for its scrollbar, so the header no longer jumps 15 px; and the bars' two colours are theme settings a project can change (`--skeleton`, `--skeleton-shine`). Is this the look? Approve, or comment with what to change.
   [2026-11-11 21:00] agent — Posted for the board task `app/skeleton-loading`. Pictures with motion off, so the bars are still.
 
-    A task on a phone, before and after: ![A task loading before](analysis/skeleton-loading-task-phone-before.webp) ![A task loading after](analysis/skeleton-loading-task-phone.webp)
+    A task on a phone, before and after: ![A task loading before](design/analysis/skeleton-loading-task-phone-before.webp) ![A task loading after](design/analysis/skeleton-loading-task-phone.webp)
 
-    A document on a phone, before, after and dark, and on a wide screen: ![A document loading before](analysis/skeleton-loading-document-phone-before.webp) ![A document loading after](analysis/skeleton-loading-document-phone.webp) ![A document loading, dark](analysis/skeleton-loading-document-phone-dark.webp) ![A document loading, wide](analysis/skeleton-loading-document-wide.webp)
+    A document on a phone, before, after and dark, and on a wide screen: ![A document loading before](design/analysis/skeleton-loading-document-phone-before.webp) ![A document loading after](design/analysis/skeleton-loading-document-phone.webp) ![A document loading, dark](design/analysis/skeleton-loading-document-phone-dark.webp) ![A document loading, wide](design/analysis/skeleton-loading-document-wide.webp)
 
-    The chat on a phone with its conversation in, before and after: ![The chat before](analysis/skeleton-loading-chat-phone-before.webp) ![The chat after](analysis/skeleton-loading-chat-phone.webp)
+    The chat on a phone with its conversation in, before and after: ![The chat before](design/analysis/skeleton-loading-chat-phone-before.webp) ![The chat after](design/analysis/skeleton-loading-chat-phone.webp)
 
     **Layout shift**, the worse of a first and a repeat visit, phone / wide, before → after: document 0.171 / 0.124 → 0.007 / 0; chat 0.143 / 0.030 → 0 / 0; task 0.107 / 0.075 → 0.011 / 0.008; register 0.050 / 0.079 → 0.007 / 0.006; task board 0.018 / 0.048 → 0.001 / 0; home and the activity panel 0 before and after. A browser test now fails any page at 0.05 or more.
   [2026-11-11 22:05] owner · rejected — It should have a closer outline to what it shadows. If it should have a "box" it should have a box with the "text shadows" on it.
@@ -103,8 +104,8 @@ A document's first card adds its line here.
 ### Page loading
 
 - [r] **skeleton-first-visit** — The first time a browser opens a task's page at a width, the page's outline cannot know the task's title, facts, gates or brief, so what follows them moves when the page arrives. Every later visit lands within 1 px either way. What should the first outline guess? A: fixed guesses: a title of one line wide and two on a phone, one line of facts, four gates and a brief of seven lines. B: the sizes of the last task this browser drew at that width, and A's guesses only before any. Recommended: B. Approve and say A or B in the note, or comment.
-  [2026-11-12 08:01] agent — Base: the task's page loading on a phone today, then loaded. ![The task loading on a phone today, then loaded](analysis/skeleton-first-visit-base.webp)
-  [2026-11-12 08:01] agent — The same task's first visit on a phone, then loaded, under each: ![A browser that drew no task, with fixed guesses, then loaded: A](analysis/skeleton-first-visit-a.webp) ![A browser that drew another task first, with its sizes, then loaded: B](analysis/skeleton-first-visit-b.webp)
+  [2026-11-12 08:01] agent — Base: the task's page loading on a phone today, then loaded. ![The task loading on a phone today, then loaded](design/analysis/skeleton-first-visit-base.webp)
+  [2026-11-12 08:01] agent — The same task's first visit on a phone, then loaded, under each: ![A browser that drew no task, with fixed guesses, then loaded: A](design/analysis/skeleton-first-visit-a.webp) ![A browser that drew another task first, with its sizes, then loaded: B](design/analysis/skeleton-first-visit-b.webp)
   [2026-11-12 08:01] agent — Posted for the board task `app/skeleton-loading`, which builds B. Measured on two tasks of different titles, facts, gates and briefs, each opened first in a browser that drew no task (A) and after the other task (B), on a phone and wide. How far each part lands from its outline:
 
     | part | A, fixed guesses | B, the last task's sizes |
@@ -129,20 +130,20 @@ A document's first card adds its line here.
 - [r] **skeleton-loading-outline** — Replaces: skeleton-loading-look. While a page loads, each placeholder has the outline of what it stands for: a card, column, message or row is drawn as its real box (border, corners, padding, size), with a pale bar where each line of its text will go, at that line's height; pills, fields, headings and ranks have their own shapes, and a picture still to come is its box, filled. The task board shows its heading and filters at once, with a bar in the Status and Finished tasks boxes, over columns topped with their status colours: each column shows a card for each task the last visit counted there (one before any visit), and a column no agent has taken up shows cards without a role chip. A task shows its head (a title of two lines on a phone), its gates, its brief and its thread; a document its path, title and links, its outline (the On this page button on a phone) and its body; the queue its group cards, topic chips and ranked rows; the chat two messages. The light passes over the bars every 1.8 s (still bars for anyone who turns motion off). On a repeat visit each part lands within 1 px of its outline, as the browser keeps what it last drew. On a first visit what the page cannot know yet still moves: a task's gates, brief or title of another length move what follows them (the test task's thread lands 313 px higher on a phone, 177 px wide), and the board's lower row moves with its columns' heights (19 px). Is this the look? Approve, or comment with what to change.
   [2026-11-12 02:43] agent — Posted for the board task `app/skeleton-loading`. Each picture is before, now and loaded, side by side, light above dark, with motion off.
 
-    The task board, on a phone and wide: ![The task board loading on a phone](analysis/skeleton-outline-tasks-phone.webp) ![The task board loading, wide](analysis/skeleton-outline-tasks-wide.webp)
+    The task board, on a phone and wide: ![The task board loading on a phone](design/analysis/skeleton-outline-tasks-phone.webp) ![The task board loading, wide](design/analysis/skeleton-outline-tasks-wide.webp)
 
-    A task, on a phone and wide: ![A task loading on a phone](analysis/skeleton-outline-task-phone.webp) ![A task loading, wide](analysis/skeleton-outline-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](analysis/skeleton-outline-task-part-phone.webp) ![A task's thread loading, wide](analysis/skeleton-outline-task-part-wide.webp)
+    A task, on a phone and wide: ![A task loading on a phone](design/analysis/skeleton-outline-task-phone.webp) ![A task loading, wide](design/analysis/skeleton-outline-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](design/analysis/skeleton-outline-task-part-phone.webp) ![A task's thread loading, wide](design/analysis/skeleton-outline-task-part-wide.webp)
 
-    A document, on a phone and wide: ![A document loading on a phone](analysis/skeleton-outline-document-phone.webp) ![A document loading, wide](analysis/skeleton-outline-document-wide.webp) Then with its head in and its body still reading, before and now: ![A document's body loading on a phone](analysis/skeleton-outline-document-part-phone.webp) ![A document's body loading, wide](analysis/skeleton-outline-document-part-wide.webp)
+    A document, on a phone and wide: ![A document loading on a phone](design/analysis/skeleton-outline-document-phone.webp) ![A document loading, wide](design/analysis/skeleton-outline-document-wide.webp) Then with its head in and its body still reading, before and now: ![A document's body loading on a phone](design/analysis/skeleton-outline-document-part-phone.webp) ![A document's body loading, wide](design/analysis/skeleton-outline-document-part-wide.webp)
 
-    The queue: ![The queue loading on a phone](analysis/skeleton-outline-queue-phone.webp) ![The queue loading, wide](analysis/skeleton-outline-queue-wide.webp)
+    The queue: ![The queue loading on a phone](design/analysis/skeleton-outline-queue-phone.webp) ![The queue loading, wide](design/analysis/skeleton-outline-queue-wide.webp)
 
-    The chat: ![The chat loading on a phone](analysis/skeleton-outline-chat-phone.webp) ![The chat loading, wide](analysis/skeleton-outline-chat-wide.webp)
+    The chat: ![The chat loading on a phone](design/analysis/skeleton-outline-chat-phone.webp) ![The chat loading, wide](design/analysis/skeleton-outline-chat-wide.webp)
 
     **Layout shift**, the worse of a first and a repeat visit, phone / wide, before → now: document 0.171 / 0.124 → 0 / 0; chat 0.143 / 0.030 → 0 / 0; task 0.107 / 0.075 → 0 / 0; register 0.050 / 0.079 → 0 / 0.006; task board 0.018 / 0.048 → 0.002 / 0.001; home and the activity panel 0 before and now (under 0.05 is good).
   [2026-11-12 03:57] agent — Updated for the gates card that now sits under a task's head. A task's placeholder now includes that card too, with a line for each gate this browser last saw (four the first time), so the brief stays put as the page arrives. The task again, before, now and loaded, against main as it is now:
 
-    ![A task loading on a phone, with its gates](analysis/skeleton-outline-gates-task-phone.webp) ![A task loading, wide, with its gates](analysis/skeleton-outline-gates-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](analysis/skeleton-outline-gates-task-part-phone.webp) ![A task's thread loading, wide](analysis/skeleton-outline-gates-task-part-wide.webp)
+    ![A task loading on a phone, with its gates](design/analysis/skeleton-outline-gates-task-phone.webp) ![A task loading, wide, with its gates](design/analysis/skeleton-outline-gates-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](design/analysis/skeleton-outline-gates-task-part-phone.webp) ![A task's thread loading, wide](design/analysis/skeleton-outline-gates-task-part-wide.webp)
 
     The task board and the other pages look as above, and the layout shift is unchanged: a task 0 / 0 with its gates in.
   [2026-11-12 06:01] agent — Reworded after review. "Nothing moves" was wrong: the layout-shift score cannot see a placeholder replaced by the real page, as every real element is new. Now each part is measured where its outline stood and where the page draws it, on the test pages:
@@ -154,13 +155,13 @@ A document's first card adds its line here.
 
     Each picture is before, the first visit, the next visit (the board and a task) and loaded, light above dark, motion off. The yellow Reconnecting notice under a document's placeholder shows on main too.
 
-    The task board: ![The task board loading on a phone](analysis/skeleton-shape-tasks-phone.webp) ![The task board loading, wide](analysis/skeleton-shape-tasks-wide.webp)
+    The task board: ![The task board loading on a phone](design/analysis/skeleton-shape-tasks-phone.webp) ![The task board loading, wide](design/analysis/skeleton-shape-tasks-wide.webp)
 
-    A task: ![A task loading on a phone](analysis/skeleton-shape-task-phone.webp) ![A task loading, wide](analysis/skeleton-shape-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](analysis/skeleton-shape-task-part-phone.webp) ![A task's thread loading, wide](analysis/skeleton-shape-task-part-wide.webp)
+    A task: ![A task loading on a phone](design/analysis/skeleton-shape-task-phone.webp) ![A task loading, wide](design/analysis/skeleton-shape-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](design/analysis/skeleton-shape-task-part-phone.webp) ![A task's thread loading, wide](design/analysis/skeleton-shape-task-part-wide.webp)
 
-    A document: ![A document loading on a phone](analysis/skeleton-shape-document-phone.webp) ![A document loading, wide](analysis/skeleton-shape-document-wide.webp)
+    A document: ![A document loading on a phone](design/analysis/skeleton-shape-document-phone.webp) ![A document loading, wide](design/analysis/skeleton-shape-document-wide.webp)
 
-    The queue: ![The queue loading on a phone](analysis/skeleton-shape-queue-phone.webp) ![The queue loading, wide](analysis/skeleton-shape-queue-wide.webp)
+    The queue: ![The queue loading on a phone](design/analysis/skeleton-shape-queue-phone.webp) ![The queue loading, wide](design/analysis/skeleton-shape-queue-wide.webp)
   [2026-11-12 06:32] owner · approved
   [2026-11-12 08:01] agent — Corrected after a second review: the card claimed more than its test measured, on test pages of one task per column. Now measured on pages shaped as the live ones: columns of 1 to 20 tasks whose titles take one to three lines, cards with and without a chip row, three queue groups of one, no and three rows, and two tasks of different titles, facts, gates and briefs. Each part is measured where its outline stood and where the page draws it, on a phone and wide.
 
@@ -171,13 +172,13 @@ A document's first card adds its line here.
 
     Each picture is before, the first visit, then for a task its first visit after another task, the next visit (the board, a task and the queue) and loaded, light above dark, motion off.
 
-    The task board: ![The task board loading on a phone](analysis/skeleton-kept-tasks-phone.webp) ![The task board loading, wide](analysis/skeleton-kept-tasks-wide.webp)
+    The task board: ![The task board loading on a phone](design/analysis/skeleton-kept-tasks-phone.webp) ![The task board loading, wide](design/analysis/skeleton-kept-tasks-wide.webp)
 
-    A task: ![A task loading on a phone](analysis/skeleton-kept-task-phone.webp) ![A task loading, wide](analysis/skeleton-kept-task-wide.webp)
+    A task: ![A task loading on a phone](design/analysis/skeleton-kept-task-phone.webp) ![A task loading, wide](design/analysis/skeleton-kept-task-wide.webp)
 
-    The queue: ![The queue loading on a phone](analysis/skeleton-kept-queue-phone.webp) ![The queue loading, wide](analysis/skeleton-kept-queue-wide.webp)
+    The queue: ![The queue loading on a phone](design/analysis/skeleton-kept-queue-phone.webp) ![The queue loading, wide](design/analysis/skeleton-kept-queue-wide.webp)
 
-    A document: ![A document loading on a phone](analysis/skeleton-kept-document-phone.webp) ![A document loading, wide](analysis/skeleton-kept-document-wide.webp)
+    A document: ![A document loading on a phone](design/analysis/skeleton-kept-document-phone.webp) ![A document loading, wide](design/analysis/skeleton-kept-document-wide.webp)
   [2026-11-12 20:35] agent · resolved
 
 ### Delivery to projects

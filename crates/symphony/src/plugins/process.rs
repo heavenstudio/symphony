@@ -1,4 +1,4 @@
-//! A plugin that answers from a process of its own (`[plugins.process]`, docs/PLUGIN_PROTOCOL.md):
+//! A plugin that answers from a process of its own (`[plugins.process]`, docs/engineering/PLUGIN_PROTOCOL.md):
 //! the host's side of the protocol. Its project names it in `[plugins] crates` as a linked plugin
 //! is named, and its command in `[plugins.process]`; [`made`] gives the one [`Remote`] for that
 //! name, command and checkout in this process, kept for the process's life, which stands in the
@@ -46,10 +46,11 @@ use std::io::{self, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, Condvar, LazyLock, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Condvar, LazyLock, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::value::RawValue;
+use symphony_board::lock::Recovered as _;
 use symphony_plugin::protocol::{
     Answered, ApprovalNeedsAgent, Ask, AutoApprovable, CacheVersion, CardData, CardGates, Chosen,
     Declaration, Declare, Envelope, KindAnswers, LINE_MAX, Lined, Member, PROTOCOL, PageData,
@@ -130,7 +131,7 @@ impl Default for Limits {
 /// process holds for that name, command and checkout, made at the first ask.
 pub fn made(name: &str, process: &PluginProcess) -> &'static Remote {
     static MADE: LazyLock<Mutex<Vec<&'static Remote>>> = LazyLock::new(|| Mutex::new(Vec::new()));
-    let mut made = lock(&MADE);
+    let mut made = MADE.lock().recover();
     if let Some(found) = made.iter().find(|remote| {
         remote.name == name
             && remote.process.command == process.command
@@ -166,14 +167,18 @@ pub fn answering(name: &str, own: &PluginProcess) -> Option<PluginProcess> {
 /// linked worktree: [`answering`]) has not declared: what a load it refused waits for.
 pub fn undeclared(root: &Path) -> bool {
     let answers = crate::builds::main_checkout(root).unwrap_or_else(|| root.to_path_buf());
-    lock(&REMOTES)
+    REMOTES
+        .lock()
+        .recover()
         .iter()
         .any(|remote| remote.process.root == answers && remote.declared.get().is_none())
 }
 
 /// The remote `plugin` is, when it is one: a plugin of a project answering from its own process.
 pub fn remote(plugin: &dyn Plugin) -> Option<&'static Remote> {
-    lock(&REMOTES)
+    REMOTES
+        .lock()
+        .recover()
         .iter()
         .copied()
         .find(|remote| std::ptr::addr_eq(*remote, plugin))
@@ -181,11 +186,6 @@ pub fn remote(plugin: &dyn Plugin) -> Option<&'static Remote> {
 
 /// Every remote made in this process, made by [`made`] or a test's peer.
 static REMOTES: LazyLock<Mutex<Vec<&'static Remote>>> = LazyLock::new(|| Mutex::new(Vec::new()));
-
-/// `mutex` held, whatever a thread that panicked holding it left.
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
 
 /// A process started, as the host speaks with it and ends it.
 pub struct Spawned {
@@ -431,17 +431,17 @@ impl Connection {
 
     /// When and how it ended, once it has.
     fn ended(&self) -> Option<(Instant, String)> {
-        lock(&self.waiting).ended.clone()
+        self.waiting.lock().recover().ended.clone()
     }
 
     /// Why it takes no call: how it ended, waited for while another call ends it, or that it is
     /// ending still past [`ENDS_IN`].
     fn closed(&self) -> String {
-        let waiting = lock(&self.waiting);
+        let waiting = self.waiting.lock().recover();
         let (waiting, _) = self
             .ended
             .wait_timeout_while(waiting, ENDS_IN, |waiting| waiting.ended.is_none())
-            .unwrap_or_else(PoisonError::into_inner);
+            .recover();
         waiting
             .ended
             .clone()
@@ -542,7 +542,7 @@ impl Remote {
             record: Mutex::new(None),
         }));
         let _ = remote.me.set(remote);
-        lock(&REMOTES).push(remote);
+        REMOTES.lock().recover().push(remote);
         remote
     }
 
@@ -560,12 +560,12 @@ impl Remote {
 
     /// Its calls recorded into `record`, or none.
     pub(super) fn record_into(&self, record: Option<&'static Record>) {
-        *lock(&self.record) = record;
+        *self.record.lock().recover() = record;
     }
 
     /// Its process's id while it runs.
     pub fn pid(&self) -> Option<u32> {
-        match &*lock(&self.state) {
+        match &*self.state.lock().recover() {
             State::Running(connection) if connection.ended().is_none() => connection.pid,
             State::Idle | State::Running(_) | State::Down { .. } | State::Refused { .. } => None,
         }
@@ -573,7 +573,7 @@ impl Remote {
 
     /// Why it is down, while it is.
     pub fn down(&self) -> Option<String> {
-        match &*lock(&self.state) {
+        match &*self.state.lock().recover() {
             State::Running(connection) => connection.ended().map(|(_, why)| why),
             State::Down { why, .. } | State::Refused { why, .. } => Some(why.clone()),
             State::Idle => None,
@@ -610,7 +610,7 @@ impl Remote {
     /// the other's; a log that would grow past its bound is rolled to `NAME.1.log` first.
     fn append(&self, text: &str) {
         static LOGS: Mutex<()> = Mutex::new(());
-        let _one = lock(&LOGS);
+        let _one = LOGS.lock().recover();
         let log = &self.process.log;
         if let Some(folder) = log.parent() {
             let _ = std::fs::create_dir_all(folder);
@@ -643,7 +643,7 @@ impl Remote {
 
     /// The connection to its running process, started when it is not and may be.
     fn connection(&self) -> Result<Arc<Connection>, String> {
-        let mut state = lock(&self.state);
+        let mut state = self.state.lock().recover();
         let ended = match &*state {
             State::Running(connection) => match connection.ended() {
                 None => return Ok(connection.clone()),
@@ -663,7 +663,7 @@ impl Remote {
             }
             State::Idle | State::Running(_) | State::Down { .. } | State::Refused { .. } => {}
         }
-        let mut starts = lock(&self.starts);
+        let mut starts = self.starts.lock().recover();
         while starts.front().is_some_and(|at| at.elapsed() >= WINDOW) {
             starts.pop_front();
         }
@@ -835,7 +835,7 @@ impl Remote {
             if let Err(why) = input.write_all(&line).and_then(|()| input.flush()) {
                 drop(input);
                 let deadline = Instant::now() + GRACE;
-                while !lock(&connection.waiting).ending && Instant::now() < deadline {
+                while !connection.waiting.lock().recover().ending && Instant::now() < deadline {
                     #[expect(
                         clippy::disallowed_methods,
                         reason = "no-timed-waits baseline: looks again for a flag another thread sets, where a condvar is the event"
@@ -899,7 +899,7 @@ impl Remote {
                 return;
             }
         };
-        let mut waiting = lock(&connection.waiting);
+        let mut waiting = connection.waiting.lock().recover();
         if let Some(call) = waiting.calls.remove(&id) {
             drop(waiting);
             let bytes = line.len() + 1;
@@ -941,21 +941,21 @@ impl Remote {
     /// call waiting on it failed with why. The remote is down from then on.
     fn end(&self, connection: &Connection, reason: Option<String>) {
         {
-            let mut waiting = lock(&connection.waiting);
+            let mut waiting = connection.waiting.lock().recover();
             if waiting.ending {
                 return;
             }
             waiting.ending = true;
         }
-        lock(&connection.queue).take();
+        connection.queue.lock().recover().take();
         let how = {
-            let mut process = lock(&connection.process);
+            let mut process = connection.process.lock().recover();
             if reason.is_some() {
                 process.kill();
             }
             reaped(&mut **process)
         };
-        if let Some(errors) = lock(&connection.errors).take() {
+        if let Some(errors) = connection.errors.lock().recover().take() {
             let _ = errors.recv_timeout(GRACE);
         }
         let pid = connection.pid();
@@ -965,7 +965,7 @@ impl Remote {
         };
         self.log(&why);
         let calls = {
-            let mut waiting = lock(&connection.waiting);
+            let mut waiting = connection.waiting.lock().recover();
             waiting.ended = Some((Instant::now(), why.clone()));
             waiting.given_up.clear();
             std::mem::take(&mut waiting.calls)
@@ -1023,7 +1023,7 @@ impl Remote {
             Err(why) => Err(why),
         };
         let round_trip = started.elapsed();
-        let record = *lock(&self.record);
+        let record = *self.record.lock().recover();
         if let Some(record) = record {
             let (seam, call) = call.names;
             let (us, request_bytes, answer_bytes, failed) = match &asked {
@@ -1082,7 +1082,7 @@ impl Remote {
         let bytes = line.len();
         let (answer, answered) = mpsc::channel();
         {
-            let mut waiting = lock(&connection.waiting);
+            let mut waiting = connection.waiting.lock().recover();
             if waiting.ending {
                 drop(waiting);
                 return Err(connection.closed());
@@ -1090,7 +1090,7 @@ impl Remote {
             waiting.calls.insert(id, answer);
         }
         let sent = self.queued(connection, line).inspect_err(|_| {
-            lock(&connection.waiting).calls.remove(&id);
+            connection.waiting.lock().recover().calls.remove(&id);
         })?;
         let reply = match answered.recv_timeout(wait) {
             Ok(reply) => reply?,
@@ -1114,7 +1114,7 @@ impl Remote {
     /// A queue full, its lines not taken, ends the connection.
     fn queued(&self, connection: &Connection, line: Vec<u8>) -> Result<u64, String> {
         {
-            let held = lock(&connection.queue);
+            let held = connection.queue.lock().recover();
             let Some(queue) = held.as_ref() else {
                 drop(held);
                 return Err(connection.closed());
@@ -1148,7 +1148,7 @@ impl Remote {
         wait: Duration,
     ) -> Option<String> {
         {
-            let mut waiting = lock(&connection.waiting);
+            let mut waiting = connection.waiting.lock().recover();
             waiting.calls.remove(&id)?;
             waiting.given_up.insert(id);
         }
@@ -1178,7 +1178,7 @@ impl Remote {
     /// The call `id`, given up and sent a `cancel`, once [`Limits::cancel`] has passed since: a
     /// process that has not answered it is ended, and one that has is kept.
     fn after_cancel(&self, connection: &Connection, id: u64) {
-        if lock(&connection.waiting).given_up.contains(&id) {
+        if connection.waiting.lock().recover().given_up.contains(&id) {
             let cancel = self.limits.cancel;
             self.end(
                 connection,

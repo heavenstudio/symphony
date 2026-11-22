@@ -1,4 +1,4 @@
-//! Durable execution attempts ([docs/EXECUTION_ATTEMPTS.md](../../../docs/EXECUTION_ATTEMPTS.md)):
+//! Durable execution attempts ([docs/engineering/EXECUTION_ATTEMPTS.md](../../../docs/engineering/EXECUTION_ATTEMPTS.md)):
 //! the board's record of each time a task's role ran on a provider, and the rules that recover it
 //! and decide which of its results may count. A project supplies the provider, as a kit
 //! [`Adapter`], and the host that runs the [`Coordinator`]; the board keeps the history.

@@ -1,6 +1,18 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PLAIN } from "./project";
-import { anchor, currentRoute, engaged, HOME, parseRoute, scrollAnchor, whenFree } from "./route";
+import {
+  anchor,
+  anchorElement,
+  anchorIds,
+  currentRoute,
+  engaged,
+  HOME,
+  headingAnchor,
+  parseRoute,
+  scrollAnchor,
+  whenFree,
+} from "./route";
 import { observers } from "./testing";
 
 const NAV = [{ label: "▤ shelf", title: "Shelf", href: "/shelf", document: "docs/SHELF.md" }];
@@ -122,6 +134,36 @@ describe("the page's route and its address", () => {
     expect(landed).toEqual([element]);
   });
 
+  it("finds a heading its fragment names by its text, the id itself first", () => {
+    const ids: Record<string, string> = { "the-order": "heading", "The order": "own" };
+    const page = (present: string[]) => ({
+      getElementById: (id: string) => (present.includes(id) ? { id: ids[id] } : null),
+    });
+    vi.stubGlobal("location", { hash: "#The%20order" });
+    vi.stubGlobal("document", page(["the-order"]));
+    expect(anchorElement()).toEqual({ id: "heading" });
+    vi.stubGlobal("document", page(["the-order", "The order"]));
+    expect(anchorElement()).toEqual({ id: "own" });
+    vi.stubGlobal("document", page([]));
+    expect(anchorElement()).toBeNull();
+    vi.stubGlobal("location", { hash: "" });
+    vi.stubGlobal("document", page(["the-order", ""]));
+    expect(anchorElement()).toBeNull();
+  });
+
+  it("has the shell land a heading its fragment names by its text", () => {
+    const element = { parentElement: null, scrollIntoView: vi.fn() };
+    const landed: unknown[] = [];
+    vi.stubGlobal("HTMLDetailsElement", class {});
+    vi.stubGlobal("reviewLand", (target: unknown) => landed.push(target));
+    vi.stubGlobal("document", {
+      getElementById: (id: string) => (id === "the-order" ? element : null),
+    });
+    vi.stubGlobal("location", { hash: "#The%20order" });
+    scrollAnchor();
+    expect(landed).toEqual([element]);
+  });
+
   it("scrolls on its own where no shell holds the landing", () => {
     const element = { parentElement: null, scrollIntoView: vi.fn() };
     vi.stubGlobal("HTMLDetailsElement", class {});
@@ -144,6 +186,65 @@ describe("the page's route and its address", () => {
     expect(engaged()).toBe(false);
     vi.stubGlobal("document", { querySelector: () => null, activeElement: null });
     expect(engaged()).toBe(false);
+  });
+});
+
+describe("a heading's anchor", () => {
+  // crates/symphony/tests/edit/section.rs `the_anchor_matches_the_rendered_heading_id`, and the
+  // headings crates/symphony/tests/render/anchors.rs renders.
+  it.each([
+    ["Confirmed direction", "confirmed-direction"],
+    [
+      "Harbor Guild picture · Third pass: less brass, round their lamps",
+      "harbor-guild-picture-third-pass-less-brass-round-their-lamps",
+    ],
+    ["Capture, intrusion, and false identities", "capture-intrusion-and-false-identities"],
+    ["Café — naïve  spacing", "cafe-naive-spacing"],
+    ["NOR-L01 Lumen", "nor-l01-lumen"],
+    ["x_y 2.5", "x_y-25"],
+    ["Types of weapon", "types-of-weapon"],
+    ["Deeper `down` and *up*", "deeper-down-and-up"],
+    ["The order", "the-order"],
+  ])("of %j is %j, as the renderer gives it", (heading, id) => {
+    expect(headingAnchor(heading)).toBe(id);
+  });
+
+  it.each([
+    ["  The order\t", "the-order", "the spaces at its ends trimmed"],
+    ["\u001cThe\u001forder\u001d", "the-order", "an information separator a space"],
+    ["a - b -- c", "a-b-c", "each run of spaces and hyphens one hyphen"],
+    ["-a-", "-a-", "a hyphen at an end kept"],
+    ["A\u00a0B", "a-b", "a no-break space folded to a space"],
+    ["ﬁle ½", "file-12", "a compatibility form folded"],
+    ["日本 😀 ★", "", "no ASCII letter, none"],
+    ["", "", "no text, none"],
+    ["the-order", "the-order", "an anchor its own"],
+  ])("of %j is %j: %s", (heading, id) => {
+    expect(headingAnchor(heading)).toBe(id);
+  });
+
+  it("is the shell's word for word", () => {
+    const body = (file: string, from: string) => {
+      const text = readFileSync(new URL(file, import.meta.url), "utf8");
+      const start = text.indexOf(from);
+      expect(start, `${file} has ${from}`).toBeGreaterThanOrEqual(0);
+      return text.slice(start + from.length, text.indexOf("\n}\n", start));
+    };
+    const shell = body("../shell/shell.ts", "\nfunction headingAnchor(");
+    expect(shell).toContain("normalize");
+    expect(shell).toBe(body("./route.ts", "\nexport function headingAnchor("));
+  });
+});
+
+describe("the ids a fragment names", () => {
+  it.each([
+    ["", []],
+    ["the-order", ["the-order"]],
+    ["The order", ["The order", "the-order"]],
+    ["L12", ["L12", "l12"]],
+    ["★", ["★"]],
+  ])("of %j are %j, its own first", (target, ids) => {
+    expect(anchorIds(target)).toEqual(ids);
   });
 });
 

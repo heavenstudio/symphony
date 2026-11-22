@@ -1112,7 +1112,7 @@ fn unmade_board(root: &Path, named: Option<&Path>) -> bool {
 
 /// The builds a project runs: the hooks' first (they run `symphony`, whose heartbeat runs `tasks`),
 /// then the other ones [`RUNS`] names. These are the binaries the workspace delivers, each held to
-/// a size budget (`symphony-build size-budget`, docs/CHECKS.md "Size budgets"). The workspace's
+/// a size budget (`symphony-build size-budget`, docs/workflow/CHECKS.md "Size budgets"). The workspace's
 /// `symphony-build`, the commands only its own build and release run use, is none of them.
 pub const BUILDS: [&str; 4] = ["symphony", "tasks", "agent-send", "symphony-server"];
 
@@ -1172,11 +1172,11 @@ const HEARTBEAT_BUILDS: [&str; 2] = ["symphony", "tasks"];
 /// Where a Symphony checkout's `cargo build --release` leaves its builds.
 const RELEASE: &str = ".target/release";
 
-/// The reference of the project file's tables and keys, docs/PROJECT_FILE.md, where a project
+/// The reference of the project file's tables and keys, docs/operations/PROJECT_FILE.md, where a project
 /// that has no Symphony checkout reads it: in the Symphony's repository.
 pub const PROJECT_FILE_REFERENCE: &str = concat!(
     env!("CARGO_PKG_REPOSITORY"),
-    "/blob/main/docs/PROJECT_FILE.md"
+    "/blob/main/docs/operations/PROJECT_FILE.md"
 );
 
 /// What is left for the owner to do after a run at `root`, each one line: what init cannot do for

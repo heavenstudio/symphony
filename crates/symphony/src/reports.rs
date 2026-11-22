@@ -1,5 +1,5 @@
 //! The hourly roll-up of a project into its day files ([`symphony_api::reports`];
-//! docs/analysis/reports-and-monitoring.md, *The day files*):
+//! docs/product/analysis/reports-and-monitoring.md, *The day files*):
 //! today's file written again with what the day held up to now, and yesterday's made final once,
 //! from one read of the board ([`symphony_board::reports`] counts it), two cheap reads of the
 //! default branch's history ([`git`]), one more for each red that names the commits it came

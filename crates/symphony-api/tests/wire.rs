@@ -61,7 +61,7 @@ fn the_board_reads_and_writes_back_as_the_same_json() {
     assert_eq!(written, fixture);
 }
 
-/// The gates of the task the approved pictures draw (docs/analysis/reports-gates-a-*.svg): what the
+/// The gates of the task the approved pictures draw (docs/product/analysis/reports-gates-a-*.svg): what the
 /// gates panel and the timeline read.
 #[test]
 fn a_tasks_gates_read_and_write_back_as_the_same_json_in_the_order_the_page_draws() {
@@ -98,7 +98,7 @@ fn a_tasks_gates_read_and_write_back_as_the_same_json_in_the_order_the_page_draw
     assert!(review.past[0].at < review.at.unwrap());
 }
 
-/// The timeline of the task the approved pictures draw (docs/analysis/reports-timeline-*.svg): what
+/// The timeline of the task the approved pictures draw (docs/product/analysis/reports-timeline-*.svg): what
 /// the server answers for it and the task page draws.
 #[test]
 fn a_tasks_timeline_reads_and_writes_back_as_the_same_json_with_the_pictures_totals() {

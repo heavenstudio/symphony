@@ -1,5 +1,5 @@
 //! Which workspace members go to crates.io, and that each one that does carries what crates.io shows
-//! and needs (docs/RELEASES.md, "Packages on crates.io"). A member is either published, with all of
+//! and needs (docs/workflow/RELEASES.md, "Packages on crates.io"). A member is either published, with all of
 //! it, or `publish = false`: [`PUBLISHED`] is the one place that says which, so a member published
 //! by accident, or kept back by one, fails here. Read from `cargo metadata`, which resolves what a
 //! member inherits from the workspace as `cargo publish` does, and from each manifest's own
@@ -130,7 +130,7 @@ fn text<'a>(package: &'a Value, field: &str) -> &'a str {
     package[field].as_str().unwrap_or_default()
 }
 
-/// The helpers, each on a version line of its own (docs/RELEASES.md): with the [`KIT`], what a
+/// The helpers, each on a version line of its own (docs/workflow/RELEASES.md): with the [`KIT`], what a
 /// project may link at the version it names.
 const HELPERS: [&str; 5] = [
     "process-cwd",
@@ -145,7 +145,7 @@ const HELPERS: [&str; 5] = [
 /// helpers alone. A type of any other member shown in its public items would move its version with
 /// that member's, and the kit's major with the app's; its tests' dependencies (`dev`) are not
 /// published, and so not counted. That no public item of the kit shows a helper's type is read in
-/// review, as rustc's lint for it is unstable (docs/CHECKS.md).
+/// review, as rustc's lint for it is unstable (docs/workflow/CHECKS.md).
 fn leaked<'a>(package: &'a Value, members: &BTreeSet<&str>) -> Vec<&'a str> {
     let line: &[&str] = if KIT.contains(&name(package)) {
         &KIT
@@ -527,7 +527,7 @@ fn the_servers_package_is_one_crates_io_takes() {
         size <= UPLOAD_LIMIT,
         "{crate_file} is {size} bytes, past the {UPLOAD_LIMIT} crates.io takes: the client builds \
          it carries (apps/symphony-server/client/public) are to be cut to the newest \
-         (docs/RELEASES.md, \"Packages on crates.io\")"
+         (docs/workflow/RELEASES.md, \"Packages on crates.io\")"
     );
     // Every distributed client file, notices included, survives Cargo's include rules byte for
     // byte. The client build target separately proves each build carries its required notices.
@@ -642,7 +642,7 @@ fn a_keyword_crates_io_refuses_is_told_by_its_shape() {
 /// build that does not ask for it by name: the board has the feature, no member's features turn
 /// it on, its own default among them, no member asks the board for it, and the driver's crates
 /// are the board's alone, each optional. So the installed release and every default build are
-/// what they were without it (docs/POSTGRESQL.md, "A hosted board").
+/// what they were without it (docs/operations/POSTGRESQL.md, "A hosted board").
 #[test]
 fn no_member_turns_the_hosted_board_on_unless_a_build_names_its_feature() {
     const FEATURE: &str = "hosted-postgresql";

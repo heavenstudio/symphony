@@ -1,9 +1,9 @@
 //! Board display-stage counts and pagination share one filtered snapshot.
 
 use super::{Hub, Json, Request, Response, StatusCode, error, no_store, query};
-use crate::lock::Held as _;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
+use symphony_board::lock::Recovered as _;
 
 /// What a listing's `status` selects beside the board's statuses: the owner's sign-off column and
 /// the display stages of work a machine builds or tests.
@@ -64,7 +64,7 @@ impl Key {
 
 /// The column of a task a custom workflow holds: this, then its phase's ID. A phase's ID is the
 /// project's own and may be any board status's word, so a phase's column never takes a status's
-/// key, and a phase named for Build or Test never takes the process overlays' (docs/WORKFLOW.md,
+/// key, and a phase named for Build or Test never takes the process overlays' (docs/workflow/WORKFLOW.md,
 /// "The app").
 pub(super) const PHASE: &str = "phase:";
 
@@ -90,7 +90,7 @@ pub(super) fn status_argument(request: &Request) -> Result<(), String> {
 }
 
 /// Whether `id` is a workflow ID's shape: a lowercase ASCII letter, then lowercase letters, digits,
-/// `_` and `-` (docs/WORKFLOW.md, "Definition format 1").
+/// `_` and `-` (docs/workflow/WORKFLOW.md, "Definition format 1").
 pub(super) fn workflow_id(id: &str) -> bool {
     id.starts_with(|c: char| c.is_ascii_lowercase())
         && id
@@ -129,7 +129,7 @@ pub(super) fn listing(
         } else {
             hub.machine_snapshot()
         },
-        hub.task_signoff.lock().held().clone(),
+        hub.task_signoff.lock().recover().clone(),
         hub.workflow_generation(),
     )
 }
@@ -297,7 +297,7 @@ fn project(
     }
     // `work=0`: the reader has the machine's work from `/api/machine-work` and the feed. Its
     // recorders' heartbeats move it every sample, so a listing without it keeps one validator
-    // while its tasks and counts stand (docs/analysis/client-cache.md).
+    // while its tasks and counts stand (docs/engineering/analysis/client-cache.md).
     let without_work = query(request, "work").as_deref() == Some("0");
     no_store(Json(symphony_api::TaskListing {
         machine_work: if without_work {

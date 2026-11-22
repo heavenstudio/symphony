@@ -1,4 +1,4 @@
-//! A custom workflow in the real client, wide and on a phone (docs/WORKFLOW.md, "The app"). The
+//! A custom workflow in the real client, wide and on a phone (docs/workflow/WORKFLOW.md, "The app"). The
 //! board's columns are its phases by their order (Build, then two review stages, Review and
 //! Verify), a phone's tabs the phases by their phone order, each held card names its place, and a
 //! state chip filters the board by it. The task page offers the server's next actions, one of them
@@ -272,6 +272,12 @@ fn the_board_draws_the_workflows_phases_as_columns_and_tabs_and_filters_by_a_sta
         page.eval("document.documentElement.scrollWidth <= innerWidth"),
         json!(true),
         "no sideways scroll on a phone"
+    );
+    // A workflow's lanes are phases: its board draws no row of work under way.
+    assert_eq!(
+        page.eval("document.querySelector('.under-way')"),
+        Value::Null,
+        "a custom workflow's board draws no row of work under way"
     );
     shot(&mut page, "board-phone");
 }

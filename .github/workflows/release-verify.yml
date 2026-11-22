@@ -1,5 +1,5 @@
 # The release's verification of one commit on GitHub's macOS runners: that commit's own
-# `just verify`, a job for each step its tools/verify.sh names (docs/RELEASES.md, "On GitHub's
+# `just verify`, a job for each step its tools/verify.sh names (docs/workflow/RELEASES.md, "On GitHub's
 # runners"). Started by a dispatch alone, for a full commit: a person's, or `just release`'s where
 # the project turns that on. It is given no secret and its token reads the repository and nothing
 # more, so it tags, pushes and publishes nothing; what reads its result tags and publishes on the
@@ -69,7 +69,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       # just, fnm for the Node tools/node.sh runs, and PostgreSQL 18 for the board's tests and 16
-      # for the hosted check, as docs/PROJECT_FILE.md and docs/POSTGRESQL.md install them, and
+      # for the hosted check, as docs/operations/PROJECT_FILE.md and docs/operations/POSTGRESQL.md install them, and
       # OpenSSL 3 first on PATH for that check's certificates: the image's own `openssl` is 1.1.1,
       # whose authority's certificate repeats an extension and is read by no client.
       - name: The tools no pin of the tree holds

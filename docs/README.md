@@ -1,126 +1,125 @@
 # Symphony documentation
 
-New to Symphony: read [getting started](GETTING_STARTED.md), then the page specs. The reference
-sections below say how each part behaves now. Proposed changes and the evidence behind decisions
-are under [Design and history](#design-and-history).
+New to Symphony: read [getting started](operations/GETTING_STARTED.md), then the page specs. The
+documents are in a folder for each area, and each folder's own page says what it holds. The
+reference documents say how each part behaves now; each area keeps the proposals and the evidence
+behind its decisions in an `analysis/` folder of its own, listed on the area's page.
 
 ## Start here
 
-- [Getting started](GETTING_STARTED.md) — a project of your own, in order: install, `symphony
-  init`, a first document and decision card, a first task to its landing, agents on the work.
-- [The commands](COMMANDS.md) — the recipes, which command to reach for, and where each is
-  explained.
+- [Getting started](operations/GETTING_STARTED.md) — a project of your own, in order: install,
+  `symphony init`, a first document and decision card, a first task to its landing, agents on the
+  work.
+- [The commands](operations/COMMANDS.md) — the recipes, which command to reach for, and where each
+  is explained.
+- [Product specs](product/README.md) — what each page of the app is for and how it behaves, with
+  pictures.
+
+## Product
+
+What each page is for: [its page](product/README.md).
+
 - [Product specs](product/README.md) — what each page of the app is for and how it behaves, with
   pictures; the form of a spec and how its pictures are taken.
 - [The Mac app](../apps/symphony-desktop/README.md) — the servers you follow, in the dock and the
   menu bar: what it does, how to build it, what is not in it yet.
+- [Its analyses](product/README.md#analysis) — its proposals and their evidence.
 
-## Using it
+## Design
 
-- [Concept review](REVIEW.md) — review cards, comments, questions and the owner queue.
-- [Task board](TASKS.md) — the board, sessions, roles and agent communication; the pages are
-  [the task board](product/BOARD.md) and [a task's page](product/TASK.md).
-- [The project file](PROJECT_FILE.md) — `symphony.toml`: every table and key a project can set,
-  with its default.
-- [Releases](RELEASES.md) — taking a release on a project, then how a release is cut by the
-  release run or out of cycle, named and read, and the release run's schedule.
-- [Setting up GitHub](GITHUB_SETUP.md) — the optional `symphony-github` from nothing to a check
-  that passes: building it, the token for the issue exchange, the GitHub Apps and rulesets a
-  delivery by pull request needs, in order, and what each failure a newcomer meets says.
-- [GitHub issue exchange and pull request delivery](GITHUB.md) — the reference for that adapter,
-  turned off unless the default branch commits its settings: its settings and token files, its
-  commands, what a reconcile writes, what it keeps, what pauses it, and how a land is delivered
-  and the protection that delivery reads.
+- [Design](design/README.md) — how the app looks: the header, the mark, a page while it loads and
+  the timeline; analyses only, with no reference document yet.
 
-## Extending it
+## Workflow
 
-- [Writing a plugin and a theme](PLUGIN_WRITING.md) — a first plugin from nothing: its crate, its
-  code and test, its settings, its component in a document and how to see it drawn; a theme's
-  tokens by name, in the project file alone and from a plugin.
-- [The board's JSON APIs](BOARD_API.md) — `tasks api`, the board's methods as a versioned JSON
-  contract for a program, and the agents API with what a callback and the PULL digest push.
-- [Plugin protocol](PLUGIN_PROTOCOL.md) — a plugin answering from a process of its own: the
-  setting, the seams it answers, its process, its commands, a register read in one request, the
-  line, each call's minor, the versions and the wire's shape.
-- [Plugin calls](PLUGIN_CALLS.md) — each call into a project's plugins timed: the setting, the
-  record and how to read it.
-- [Commands for a project's tools](TOOL_COMMANDS.md) — draw one card, check a branch for a
-  landing, read status and triage, and share the document write lock.
-- [Workflow definitions](WORKFLOW.md) — a project's own delivery workflow: the format, its
-  validation, activation, admission and wire records.
+How work moves: [its page](workflow/README.md).
 
-## What it records
-
-- [Machine build and test work](MACHINE_WORK.md) — observed build/test phases, the board's build
-  and test recorder (`tasks run`), and advisory machine targets.
-- [Runs](RUNS.md) — the day files of a project's runs and their steps: the line each writes,
-  where, for how long, and how a reader takes them.
-- [Agent activity](AGENT_ACTIVITY.md) — the day files of the agents' health changes and their
-  hours: sessions started, stale and lost, running by role and model, and the machine's load.
-
-## Hosting and contracts
-
-For whoever runs Symphony for others or changes Symphony itself. A project on one machine needs
-none of these: its board runs on the machine's PostgreSQL, which `symphony init` asks for
-([the setting](PROJECT_FILE.md#board)).
-
-- [Operating the board](BOARD_OPERATIONS.md) — the board's store and the schema contract between
-  its builds, which build moves a live board, who writes it, its server, snapshots and holds, what
-  the command may write, stuck servers, a board that went back or was copied, and board health.
-- [PostgreSQL board lifecycle](POSTGRESQL.md) — a board on PostgreSQL: its engine identity,
-  server selection, holds, snapshots, recovery and space reclamation; the hosted board, which no
-  command reaches yet.
-- [Upstream and downstream repositories](UPSTREAM_DOWNSTREAM.md) — the regular import of the
-  public repository into a private copy with its ancestry kept, the export of selected reusable
-  changes back, their checks, refusals and recovery; manual tasks, with PR delivery not enabled.
-- [Working artifact contracts](ARTIFACTS.md) — optional verified publication and scoped private
-  storage; the local/fake-provider core and the integrations still required for hosted use.
-- [Execution adapter](EXECUTION_ADAPTER.md) — bounded provider operations, scoped identities,
-  trusted actor context, capabilities and the independent execution wire contract.
-- [Execution attempts](EXECUTION_ATTEMPTS.md) — the board's durable record of each provider
-  attempt: admission, fenced recovery, controls, evidence eligibility and host grants; a task's
-  page reads its attempts, and no setting reaches them yet.
-- [Checks](CHECKS.md) — what a task in this repository proves before review, and the release run's
-  full verification.
+- [Concept review](workflow/REVIEW.md) — review cards, comments, questions and the owner queue.
+- [Task board](workflow/TASKS.md) — the board, sessions, roles and agent communication; the pages
+  are [the task board](product/BOARD.md) and [a task's page](product/TASK.md).
+- [Workflow definitions](workflow/WORKFLOW.md) — a project's own delivery workflow: the format,
+  its validation, activation, admission and wire records.
+- [Checks](workflow/CHECKS.md) — what a task in this repository proves before review, and the
+  release run's full verification.
+- [Releases](workflow/RELEASES.md) — taking a release on a project, then how a release is cut by
+  the release run or out of cycle, named and read, and the release run's schedule.
+- [Machine build and test work](workflow/MACHINE_WORK.md) — observed build/test phases, the
+  board's build and test recorder (`tasks run`), and advisory machine targets.
+- [Runs](workflow/RUNS.md) — the day files of a project's runs and their steps: the line each
+  writes, where, for how long, and how a reader takes them.
+- [Agent activity](workflow/AGENT_ACTIVITY.md) — the day files of the agents' health changes and
+  their hours: sessions started, stale and lost, running by role and model, and the machine's
+  load.
+- [Its analyses](workflow/README.md#analysis) — its proposals and their evidence.
 
 Agents working in this repository follow the standing [Rules](../RULES.md).
 
-## Design and history
+## Engineering
+
+Extending it, and the contracts a project or a provider builds against:
+[its page](engineering/README.md).
+
+- [Writing a plugin and a theme](engineering/PLUGIN_WRITING.md) — a first plugin from nothing: its
+  crate, its code and test, its settings, its component in a document and how to see it drawn; a
+  theme's tokens by name, in the project file alone and from a plugin.
+- [The board's JSON APIs](engineering/BOARD_API.md) — `tasks api`, the board's methods as a
+  versioned JSON contract for a program, and the agents API with what a callback and the PULL
+  digest push.
+- [Plugin protocol](engineering/PLUGIN_PROTOCOL.md) — a plugin answering from a process of its
+  own: the setting, the seams it answers, its process, its commands, a register read in one
+  request, the line, each call's minor, the versions and the wire's shape.
+- [Plugin calls](engineering/PLUGIN_CALLS.md) — each call into a project's plugins timed: the
+  setting, the record and how to read it.
+- [Commands for a project's tools](engineering/TOOL_COMMANDS.md) — draw one card, check a branch
+  for a landing, read status and triage, and share the document write lock.
+- [Working artifact contracts](engineering/ARTIFACTS.md) — optional verified publication and
+  scoped private storage; the local/fake-provider core and the integrations still required for
+  hosted use.
+- [Execution adapter](engineering/EXECUTION_ADAPTER.md) — bounded provider operations, scoped
+  identities, trusted actor context, capabilities and the independent execution wire contract.
+- [Execution attempts](engineering/EXECUTION_ATTEMPTS.md) — the board's durable record of each
+  provider attempt: admission, fenced recovery, controls, evidence eligibility and host grants; a
+  task's page reads its attempts, and no setting reaches them yet.
+- [Its analyses](engineering/README.md#analysis) — its proposals and their evidence.
+
+## Operations
+
+Setting it up and running it: [its page](operations/README.md). A project on one machine needs
+none of the repositories around this one: its board runs on the machine's PostgreSQL, which
+`symphony init` asks for ([the setting](operations/PROJECT_FILE.md#board)).
+
+- [Getting started](operations/GETTING_STARTED.md) and [the commands](operations/COMMANDS.md), as
+  above.
+- [The project file](operations/PROJECT_FILE.md) — `symphony.toml`: every table and key a project
+  can set, with its default.
+- [Setting up GitHub](operations/GITHUB_SETUP.md) — the optional `symphony-github` from nothing to
+  a check that passes: building it, the token for the issue exchange, the GitHub Apps and rulesets
+  a delivery by pull request needs, in order, and what each failure a newcomer meets says.
+- [GitHub issue exchange and pull request delivery](operations/GITHUB.md) — the reference for that
+  adapter, turned off unless the default branch commits its settings: its settings and token
+  files, its commands, what a reconcile writes, what it keeps, what pauses it, and how a land is
+  delivered and the protection that delivery reads.
+- [Operating the board](operations/BOARD_OPERATIONS.md) — the board's store and the schema
+  contract between its builds, which build moves a live board, who writes it, its server,
+  snapshots and holds, what the command may write, stuck servers, a board that went back or was
+  copied, and board health.
+- [PostgreSQL board lifecycle](operations/POSTGRESQL.md) — a board on PostgreSQL: its engine
+  identity, server selection, holds, snapshots, recovery and space reclamation; the hosted board,
+  which no command reaches yet.
+- [Upstream and downstream repositories](operations/UPSTREAM_DOWNSTREAM.md) — the regular import
+  of the public repository into a private copy with its ancestry kept, the export of selected
+  reusable changes back, their checks, refusals and recovery; manual tasks, with PR delivery not
+  enabled.
+- [Its analyses](operations/README.md#analysis) — its proposals and their evidence.
+
+## Decisions and history
 
 A decision is a card at the place in its document where the thing it decides is said
-([where a card is written](REVIEW.md#where-a-card-is-written)); the
+([where a card is written](workflow/REVIEW.md#where-a-card-is-written)); the
 [decision register](DECISIONS.md) holds the cards no document says the subject of and links the
-documents that hold the others. [Analysis](analysis/) holds proposals and evidence. An approved design can
-still await implementation; its approval alone does not make it current app behavior.
+documents that hold the others. Each area's analyses hold proposals and evidence. An approved
+design can still await implementation; its approval alone does not make it current app behavior.
 
-- [Durable project artifacts](analysis/remote-artifact-store.md) — a proposed optional storage
-  boundary for working evidence, Git revisions and recovery on a fresh application disk.
-- [A project's task workflow](analysis/project-workflow.md) — the proposed project-defined
-  steps, the existing gate boundary, and migration that preserves the default flow.
-- [The board's cutover to PostgreSQL](analysis/board-pg-cutover.md) — the order for moving
-  live boards, one board's move, the way back, and this repository's board's move on 2026-11-21.
-- [Managed PostgreSQL](analysis/hosted-postgresql.md) — the proposed hosted connection,
-  connection budget, database boundary and PostgreSQL 16/18 validation contract.
-- [Configurable delivery workflows](analysis/configurable-delivery-workflow.md) — the proposed
-  C contract: separate phase/state, authoritative operations, migration and implementation briefs.
-- [Artifact approvals at workflow transitions](analysis/revision-bound-transition-guards.md) —
-  proposed input-bound human decisions, invalidation and atomic project-guard admission.
-- [Execution providers and durable attempts](analysis/remote-execution-attempts.md) — a proposal
-  for project-owned execution adapters, durable recovery and authorized attempt history.
-- [Hosted ingress and board readiness](analysis/hosted-ingress.md) — proposed trusted proxy and
-  visitor admission, project permissions, foreground lifecycle and readiness; the local gate stays.
-- [Desktop client analysis](analysis/desktop-client.md) — the design and evidence behind the
-  Mac app.
-- [The slow tests, reviewed](analysis/slow-tests.md) — a time per test for the release run's six
-  slowest binaries, what each slow test proves, and what is kept, made faster, merged or removed.
-- [The release pipeline, redesigned](analysis/release-pipeline.md) — a night of red release runs
-  read by run, a pre-certified CI proposal checked against the stamps, and the options with
-  what was chosen of them, a hosted run on GitHub among them.
-- [A Settings page](analysis/settings-page.md) — a concept: where a project's settings live
-  now, what on and off mean for its integrations and tools, and a page that shows what is in
-  force and writes the preferences alone.
-- [Naming inventory and superseded plan](analysis/own-names.md) — historical naming evidence,
-  with pointers to the current naming rules and state paths.
 - [History](history/README.md) — retained records and superseded measurements.
 
 The consuming project keeps its own review rules, content and workflow documentation.

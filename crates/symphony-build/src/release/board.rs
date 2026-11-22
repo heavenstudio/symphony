@@ -42,7 +42,7 @@ pub(crate) const RUN: &str = "run";
 /// What a release run red's mark says is red.
 const MARK: &str = "release";
 /// The document a red task implements.
-const LINK: &str = "docs/RELEASES.md";
+const LINK: &str = "docs/workflow/RELEASES.md";
 /// The generations of a key looked at before the board is taken to be wrong.
 const GENERATIONS: u32 = 1000;
 /// How much of a log a red task quotes: its last lines, within so many bytes; fewer after what it
@@ -333,7 +333,7 @@ code was not the thing to fix.";
 const ADMINISTRATORS: &str = "Who fixes: whoever administers the repository on GitHub, not an \
 executor with a commit. This check reads who may bypass the default branch's rules, with the gh of \
 whoever runs the release, and its lines above say what it found, each thing missing among them. \
-Where they say the policy does not hold, the rules are put right on GitHub (docs/GITHUB.md, \"Who \
+Where they say the policy does not hold, the rules are put right on GitHub (docs/operations/GITHUB.md, \"Who \
 bypasses the rules\"); where they say the rulesets were not read whole, that gh is signed in as \
 someone who administers the repository; only where they say the adapter is turned off is it a \
 setting of the project's, put right as a change of settings. No code is changed and no check \
@@ -780,13 +780,13 @@ fn passed_alone(night: &Night<'_>, checks: &[Ran]) -> Option<(String, String, St
         "The Symphony release run {id} ({when}), on {on} at {commit}, failed these tests in company, \
          and each passed when the run reran it alone, one at a time, in the same checkout and over \
          the same build (RULES.md `tests/rerun-the-failure-alone`). So none of them is a red of the \
-         release (docs/RELEASES.md, \"The release run\", step 5), and the release was judged \
+         release (docs/workflow/RELEASES.md, \"The release run\", step 5), and the release was judged \
          without them; this task is for them, all of this run's in one.\n\n\
          {lines}\n\n\
          Find why each failed in company and passed alone: an order or a resource it shares with \
          another test, the machine's load (a wall-clock bound, a sleep-ordered step or a timeout), \
          or the runner. Then fix the code or the runner, rewrite the test on a condition, a count, \
-         CPU time or an injected clock (docs/CHECKS.md, \"Time in tests\"), or discard it with one \
+         CPU time or an injected clock (docs/workflow/CHECKS.md, \"Time in tests\"), or discard it with one \
          line on this thread naming the test, the evidence and what it proved (RULES.md \
          `tests/no-test-fails-on-load`). Never a timeout, a budget or a tolerance widened, a retry \
          added or a test ignored to pass. It holds no release: it is p1 work, not red, staffed as \
@@ -1900,7 +1900,7 @@ mod tests {
         for said in [
             "Who fixes: whoever administers the repository on GitHub, not an executor with a \
              commit.",
-            "the rules are put right on GitHub (docs/GITHUB.md, \"Who bypasses the rules\")",
+            "the rules are put right on GitHub (docs/operations/GITHUB.md, \"Who bypasses the rules\")",
             "that gh is signed in as someone who administers the repository",
             "No code is changed and no check loosened for it.",
             "puts it to the owner (`just tasks say SLUG TEXT --to owner`), then cancels the task \
@@ -2444,7 +2444,7 @@ mod tests {
         let docs = Ran {
             log: tree.write(
                 "docs.log",
-                "✖ docs/TASKS.md: a broken link\n\
+                "✖ docs/workflow/TASKS.md: a broken link\n\
                  error: recipe `_verify` failed on line 109 with exit code 1\n\
                  error: recipe `verify` failed on line 105 with exit code 1\n",
             ),

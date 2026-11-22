@@ -84,7 +84,7 @@ const HINT: &str = "` (`cargo install cargo-bloat --root DIR`) beside the same a
                     commit that last set the budget (`git log -1 -- tools/size-budget.toml`). A \
                     reduction takes the bytes back first; a line is raised only in a commit of \
                     its own that names the growth and why no reduction will do, to the size plus \
-                    4 % and never higher, on a fresh reviewer's approve (docs/CHECKS.md, \"A red \
+                    4 % and never higher, on a fresh reviewer's approve (docs/workflow/CHECKS.md, \"A red \
                     at the size check\").\n";
 
 #[test]
@@ -280,7 +280,7 @@ fn the_clients_line_counts_each_kept_build_whole_and_the_page_once() {
              apps/symphony-server/client/public/assets, beside `.builds[1]`'s. A reduction takes \
              the bytes back first; a line is raised only in a commit of its own that names the \
              growth and why no reduction will do, to the size plus 4 % and never higher, on a \
-             fresh reviewer's approve (docs/CHECKS.md, \"A red at the size check\").\n",
+             fresh reviewer's approve (docs/workflow/CHECKS.md, \"A red at the size check\").\n",
             grouped(counted as u64),
             grouped(counted as u64 - 1),
             grouped(embedded as u64)

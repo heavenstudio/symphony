@@ -188,6 +188,22 @@ fn one(client: &pg::Client, sql: &str) -> Option<String> {
 const WAITING: &str =
     "FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'";
 
+/// Held on a scope whose thread a lock holds: when the scope's own body panics, every other
+/// backend of this board's database is ended through `watcher`, before the scope joins the thread.
+/// The holder's lock goes with its backend and the thread's request with its own, wherever it
+/// waits, so a failure is said now rather than at the client's wait ([`patient`]).
+struct EndsOthersOnPanic<'a>(&'a pg::Client);
+
+impl Drop for EndsOthersOnPanic<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            let others = "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+                 WHERE datname = current_database() AND pid <> pg_backend_pid()";
+            let _ = self.0.request(&[Step::bare(others)]);
+        }
+    }
+}
+
 #[test]
 fn an_import_cut_short_leaves_the_board_as_it_was_and_made_again_ends_whole() {
     let board = realistic::board();
@@ -207,6 +223,7 @@ fn an_import_cut_short_leaves_the_board_as_it_was_and_made_again_ends_whole() {
     let importer = f.other();
     std::thread::scope(|scope| {
         let importing = scope.spawn(|| importer.copy(&board));
+        let _stalled = EndsOthersOnPanic(&watcher);
         let backstop = test_time::backstop(Duration::from_secs(120));
         let waits = || one(&watcher, &format!("SELECT count(*) {WAITING}")) == Some("1".into());
         test_time::until_true("the import waits on the table held", backstop, waits).unwrap();

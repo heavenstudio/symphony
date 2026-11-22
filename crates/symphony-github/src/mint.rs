@@ -1,5 +1,5 @@
 //! The installation token of a GitHub App, made here where the settings name the App's
-//! installation and private key beside a token file (docs/GITHUB.md, "Tokens it makes").
+//! installation and private key beside a token file (docs/operations/GITHUB.md, "Tokens it makes").
 //!
 //! A token file the settings give no App is read as it is ([`credential::read`]): its token is
 //! sent, and one GitHub expired is answered 401. A token file they give an App is the program's
@@ -246,7 +246,7 @@ pub fn standing(ctx: &Context<'_>, config: &Config, file: &Path) -> Result<Held,
 pub const TOKEN_FILE: &str = "token_file";
 
 /// The permissions the token is asked for, each the least the calls it is sent with need
-/// (docs/GITHUB.md, "The token"): a delivery's pushes, pull requests and checks, a release's
+/// (docs/operations/GITHUB.md, "The token"): a delivery's pushes, pull requests and checks, a release's
 /// contents, a hosted verification's workflow run, and the issues the exchange reads or writes.
 #[must_use]
 pub fn permissions(config: &Config) -> BTreeMap<&'static str, &'static str> {

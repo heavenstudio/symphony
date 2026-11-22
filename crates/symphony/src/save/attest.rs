@@ -1,6 +1,6 @@
 //! The attestations the owner's workflow operation is taken with when its payload gives none: each
 //! guard of its edge asked of the approval authority a plugin the project selects answers for that
-//! guard's adapter ([`symphony_plugin::Authority`], docs/WORKFLOW.md, "Guards"), for the
+//! guard's adapter ([`symphony_plugin::Authority`], docs/workflow/WORKFLOW.md, "Guards"), for the
 //! operation's own snapshot and the principal the host bound. What an authority answers goes to
 //! the board unchanged, which verifies it as it verifies a pushed one (the committed key, the
 //! operation and principal it names, the accepted generation, its time): nothing here decides a

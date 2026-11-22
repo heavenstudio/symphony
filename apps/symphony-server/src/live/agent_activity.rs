@@ -1,4 +1,4 @@
-//! The agents' activity as the machine's one server sees it (docs/AGENT_ACTIVITY.md): each
+//! The agents' activity as the machine's one server sees it (docs/workflow/AGENT_ACTIVITY.md): each
 //! session's health as the board snapshot of each tick works it out, kept from tick to tick, so a
 //! session that went stale or lost and came back, or left, is said once it does, and once an hour
 //! what the hour held, by kind and model: the sessions started, gone stale and gone lost, the time
@@ -9,18 +9,18 @@
 //! `symphony/agents/YYYY-MM-DD.jsonl` in the git common dir ([`folder`]). Only the machine's one
 //! server keeps a recorder (`startup.rs`); a private server keeps none and writes nothing.
 
-use crate::lock::Held as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use symphony_board::lock::Recovered as _;
 use symphony_board::recording::{Gate, State};
 use symphony_board::runs::{ends_a_line, regular};
 use symphony_board::{Board, Health, Session};
 
 /// The day files' folder in the git common dir, in the one folder of Symphony's there, as the runs'
-/// (docs/RUNS.md).
+/// (docs/workflow/RUNS.md).
 pub(crate) const FOLDER: &str = "symphony/agents";
 /// Names the day files' folder in place of the common dir's: a test's own.
 pub(crate) const FOLDER_VAR: &str = "SYMPHONY_AGENT_ACTIVITY";
@@ -917,7 +917,7 @@ impl super::Hub {
         let Some(gate) = self.recording_gate.get() else {
             return;
         };
-        let mut recorder = self.agent_activity.lock().held();
+        let mut recorder = self.agent_activity.lock().recover();
         if let Some(recorder) = recorder.as_mut() {
             super::measured("agent activity", || {
                 gated_record(gate, recorder, board, || self.now());
@@ -930,7 +930,7 @@ impl super::Hub {
         let Some(gate) = self.recording_gate.get() else {
             return;
         };
-        let mut recorder = self.agent_activity.lock().held();
+        let mut recorder = self.agent_activity.lock().recover();
         if let Some(recorder) = recorder.as_mut() {
             gated_stop(gate, recorder, || self.now());
         }

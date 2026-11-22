@@ -59,6 +59,7 @@ pub mod launch;
 pub mod limits;
 pub mod live;
 pub mod local;
+pub mod lock;
 mod maps;
 mod move_cli;
 mod objects;

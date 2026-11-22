@@ -10,7 +10,8 @@ pub enum DbError {
     /// Another transaction committed a write to what this one wrote first, and the database says
     /// the transaction can be retried.
     Conflict,
-    /// A `THROW` in the query, with its message.
+    /// The statement's own refusal, with its message: a `THROW` in SurrealDB's query, or a `RAISE`
+    /// in PostgreSQL's (SQLSTATE `P0001`).
     Thrown(String),
     /// Anything else, in the server's words (or why it could not be reached).
     Failed(String),
