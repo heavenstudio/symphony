@@ -78,17 +78,8 @@ async fn embedded_and_project_scoped_pages_use_the_same_root_asset_urls() {
     let tree = crate::testing::Tree::new();
     let root = tree.path("repo");
     std::fs::create_dir(&root).unwrap();
-    let mut shared = crate::front::Shared::project(
-        1,
-        1,
-        &root,
-        None,
-        crate::gate::Gate::new(
-            std::sync::Arc::new(|_| Ok(None)),
-            std::sync::Arc::new(std::time::Instant::now),
-        ),
-        "/alpha",
-    );
+    let mut shared =
+        crate::front::Shared::project(1, 1, &root, None, crate::testing::open_gate(), "/alpha");
     // This case exercises the embedded bundle, including when the release run names its
     // freshly built directory through SYMPHONY_UI_DIST. Keep that process-wide setting intact.
     std::sync::Arc::get_mut(&mut shared).unwrap().embedded_ui = true;

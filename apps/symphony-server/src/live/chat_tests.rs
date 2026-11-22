@@ -2,7 +2,6 @@
 
 use super::Hub;
 use crate::front::Shared;
-use crate::gate::Gate;
 use crate::testing::{Tree, board, git, repository};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
@@ -124,7 +123,7 @@ fn only_the_shared_server_drains_the_chat_journal() {
         0,
         &root,
         home.as_deref(),
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+        crate::testing::open_gate(),
     );
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)

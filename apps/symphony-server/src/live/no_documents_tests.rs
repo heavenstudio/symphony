@@ -4,20 +4,17 @@
 
 use super::Hub;
 use crate::front::{Shared, router};
-use crate::gate::Gate;
 use crate::testing::{
     Tree,
     board::{Fixture, Seed},
-    repository_holding,
+    repository_holding, request,
 };
-use axum::body::{Body, to_bytes};
+use axum::body::to_bytes;
 use axum::extract::connect_info::MockConnectInfo;
-use axum::http::{Request, StatusCode};
+use axum::http::StatusCode;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use symphony_board::sys::Command;
+use std::time::Duration;
 use tower::ServiceExt;
 
 const CHILD: &str = "SYMPHONY_NO_DOCUMENTS_CHILD";
@@ -36,38 +33,12 @@ fn without_documents(tree: &Tree) -> PathBuf {
     )
 }
 
-fn request(path: &str) -> Request<Body> {
-    Request::builder()
-        .uri(path)
-        .header("Host", "127.0.0.1:1")
-        .body(Body::empty())
-        .unwrap()
-}
-
 #[test]
 fn a_project_without_documents_serves_its_board_tasks_agents_and_health_and_says_so_once() {
     if std::env::var_os(CHILD).is_none() {
         let fixture = Fixture::new(Seed::default().task("tools/without-docs", "ready"));
         let board = fixture.store.client();
-        let done = symphony_board::sys::output(
-            Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", TEST, "--nocapture"])
-                .env(CHILD, "1")
-                .env("TASKS_SERVER", board.addr())
-                .env("TASKS_DATABASE", board.database())
-                .env_remove("ASKS_DB")
-                .env_remove("TASKS_SESSION")
-                .env_remove("SYMPHONY_UI_DIST")
-                .env_remove("GIT_DIR")
-                .env_remove("GIT_WORK_TREE")
-                .env_remove("GIT_COMMON_DIR")
-                .env_remove("GIT_INDEX_FILE"),
-        )
-        .unwrap();
-        let out = String::from_utf8_lossy(&done.stdout);
-        let err = String::from_utf8_lossy(&done.stderr);
-        assert!(done.status.success(), "{out}\n{err}");
-        assert!(out.contains("1 passed"), "child ran no test: {out}");
+        let (_, err) = crate::testing::child_on(board, CHILD, TEST);
         let said = |line: &str| err.lines().filter(|l| l.contains(line)).count();
         assert_eq!(
             said("→ documents: no docs/ directory under "),
@@ -89,13 +60,7 @@ fn a_project_without_documents_serves_its_board_tasks_agents_and_health_and_says
     let mut tree = Tree::new();
     tree.root = tree.root.canonicalize().unwrap();
     let root = without_documents(&tree);
-    let shared = Shared::new(
-        1,
-        1,
-        &root,
-        None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
+    let shared = Shared::new(1, 1, &root, None, crate::testing::open_gate());
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()

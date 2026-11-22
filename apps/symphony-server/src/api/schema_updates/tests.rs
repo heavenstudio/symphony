@@ -216,13 +216,7 @@ async fn the_route_answers_from_the_hubs_machine_folder_once_there_is_a_hub() {
     let machine = tree.path("machine");
     std::fs::create_dir_all(&machine).unwrap();
     write(&machine, vec![served()]);
-    let shared = crate::front::Shared::new(
-        1,
-        1234,
-        &root,
-        None,
-        crate::gate::Gate::new(Arc::new(|_| Ok(None)), Arc::new(std::time::Instant::now)),
-    );
+    let shared = crate::front::Shared::new(1, 1234, &root, None, crate::testing::open_gate());
     let ask = || {
         let request = axum::http::Request::builder()
             .uri(symphony_api::SCHEMA_UPDATES_PATH)
