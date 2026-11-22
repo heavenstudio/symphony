@@ -116,6 +116,10 @@ impl Board {
             symphony_board::project::disposable_pattern(pattern)
                 .map_err(|why| format!("[board] sweep_disposable: {why}"))?;
         }
+        // Whether a server of the project's own sweeps idle sessions, which that server reads
+        // itself (`symphony_board::project::own_sweep`): a boolean by its field's type, with
+        // nothing more to check.
+        let _: Option<bool> = file.own_sweep;
         // The folder of the machine's PostgreSQL programs, which the board reads itself
         // (`symphony_board::server::postgres::programs`): the machine's own, so an absolute path,
         // never one inside the project; checked here so a project's lint refuses what the board
@@ -175,10 +179,6 @@ pub(super) struct FileBoard {
     sweep_disposable: Vec<String>,
     /// Read by the board's server itself (`symphony_board::project::own_sweep`); named here so
     /// the file's lint knows the key and holds it to a boolean.
-    #[expect(
-        dead_code,
-        reason = "the server reads the key itself; this holds its type"
-    )]
     own_sweep: Option<bool>,
     postgresql: Option<String>,
     external_postgresql: Option<toml::Value>,
