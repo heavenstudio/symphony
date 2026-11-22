@@ -31,8 +31,8 @@ export const SLOT = "timeline-slot";
 /**
  * The box's height on a phone (the list) for a task this browser has drawn no timeline of, in
  * pixels: the most a phone's timeline shows before its "Show all", the owner's 240
- * (docs/DECISIONS.md), so the brief and the thread start near the page's top, the earliest steps
- * that do not fit fading out.
+ * (task-page-timeline-place, docs/analysis/reports-and-monitoring.md), so the brief and the thread
+ * start near the page's top, the earliest steps that do not fit fading out.
  */
 export const NARROW = 240;
 /**

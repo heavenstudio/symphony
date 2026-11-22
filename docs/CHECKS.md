@@ -813,15 +813,15 @@ guides (`apps/symphony-web`, `apps/symphony-desktop`, `crates/tasks`), each file
 `crates/symphony/shipped/skills/`, and each project page beside an installed skill
 (`.agents/skills/NAME/project.md`). The hooks test beside that file
 (`just test-rs -p symphony-app --test hooks size_lines`) is red on a file past its line, naming the
-file, its bytes and its line, on one of those files with no line, and on a line for a file that is
-none of them. A line is the file's size in the commit that sets it plus a tenth, rounded up to a
-multiple of 100 bytes, so an added rule fits and a retold mechanism does not. A red asks for a cut
-first, or for the mechanism the file retells to move to its document or module comment; a line is
-raised only as a binary's is ([a red at the size check](#a-red-at-the-size-check)), by the
-orchestrator's gate decision naming `crates/symphony/tests/hooks/size_lines.toml:KEY`, to the size
-plus a tenth and never higher. KEY is the file's path with its `.md` dropped and each `/` and `.`
-made `-` (`apps-symphony-web-AGENTS`), as a raise names no path, and the test reads each line as a
-raise does. The file of lines is under `tests/`, a check path, so a change to it keeps `review`.
+file, its bytes, its line and the line a raise takes, on one of those files with no line, and on a
+line for a file that is none of them. A line is the file's size in the commit that sets it plus a
+tenth, rounded up to a multiple of 100 bytes, so an added rule fits and a retold mechanism does not.
+A red asks for a cut first, or for the mechanism the file retells to move to its document or module
+comment; a line is raised only as a binary's ([a red at the size check](#a-red-at-the-size-check)),
+by the orchestrator's gate decision naming `crates/symphony/tests/hooks/size_lines.toml:KEY`, to the
+size plus a tenth and never higher. KEY is the file's path with its `.md` dropped and each `/` and
+`.` made `-` (`apps-symphony-web-AGENTS`), as a raise names no path, and the test reads each line as
+a raise does. The file of lines is under `tests/`, a check path, so a change to it keeps `review`.
 
 ### Where a line stands
 
