@@ -449,3 +449,122 @@ fn a_start_counts_against_its_executors_and_only_with_none_against_its_mover() {
     assert_eq!(executors_or(Vec::new(), Some("mover")), handles(&["mover"]));
     assert_eq!(executors_or(Vec::new(), None), Vec::<String>::new());
 }
+
+#[test]
+fn a_rules_write_is_each_part_its_change_holds_and_a_move_says_whether_it_cancels() {
+    assert_eq!(Change::default().parts(&[], None), RuleParts::default());
+    let some = || Some(json!({}));
+    let change = Change {
+        reason: Some("why".into()),
+        needs: some(),
+        gates: some(),
+        blocked: some(),
+        unlanded: some(),
+        status: Some("cancelled".into()),
+        ..Change::default()
+    };
+    let placing = workflow::Transition {
+        id: workflow::Transition::id_of("sim/a", 2),
+        slug: "sim/a".into(),
+        revision: 2,
+        generation: 1,
+        digest: "d1".into(),
+        edge: None,
+        operation: None,
+        activation: None,
+        from: None,
+        to: symphony_api::workflow::Pair {
+            phase: "build".into(),
+            state: "working".into(),
+        },
+        resume: None,
+        status: "in_progress".into(),
+        principal: symphony_plugin::execution::Principal::new(
+            symphony_plugin::execution::PrincipalKind::Human,
+            "local".into(),
+            "owner".into(),
+        ),
+        effects: vec![],
+        key: None,
+        recovery: None,
+        accepted: None,
+        at: 1.0,
+    };
+    assert_eq!(
+        change.parts(&[json!({"slot": 1})], Some(&placing)),
+        RuleParts {
+            placed: true,
+            reason: true,
+            blocked: true,
+            needs: true,
+            gates: true,
+            unlanded: true,
+            moved: Some(true),
+            holds: true,
+        }
+    );
+    // Each field alone sets its own part and no other.
+    let only = |change: Change, part: RuleParts| assert_eq!(change.parts(&[], None), part);
+    let none = RuleParts::default();
+    only(
+        Change {
+            reason: Some("why".into()),
+            ..Change::default()
+        },
+        RuleParts {
+            reason: true,
+            ..none
+        },
+    );
+    only(
+        Change {
+            needs: some(),
+            ..Change::default()
+        },
+        RuleParts {
+            needs: true,
+            ..none
+        },
+    );
+    only(
+        Change {
+            gates: some(),
+            ..Change::default()
+        },
+        RuleParts {
+            gates: true,
+            ..none
+        },
+    );
+    only(
+        Change {
+            blocked: some(),
+            ..Change::default()
+        },
+        RuleParts {
+            blocked: true,
+            ..none
+        },
+    );
+    // A mark lifted (null) is written as one set.
+    only(
+        Change {
+            unlanded: Some(Value::Null),
+            ..Change::default()
+        },
+        RuleParts {
+            unlanded: true,
+            ..none
+        },
+    );
+    only(
+        Change {
+            status: Some("ready".into()),
+            ..Change::default()
+        },
+        RuleParts {
+            moved: Some(false),
+            ..none
+        },
+    );
+}

@@ -772,36 +772,8 @@ impl Store {
                 None
             };
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
-            let (reason, needs, gates, unlanded, blocked, moved, holds) = (
-                change.reason.is_some(),
-                change.needs.is_some(),
-                change.gates.is_some(),
-                change.unlanded.is_some(),
-                change.blocked.is_some(),
-                (change.status.as_deref()).map(|status| status == "cancelled"),
-                !ruled.slots.is_empty(),
-            );
-            let placed = placing.is_some();
-            let body = both(
-                surreal::rule(
-                    reason,
-                    (needs, gates),
-                    unlanded,
-                    blocked,
-                    moved,
-                    holds,
-                    placed,
-                ),
-                pg::rule(
-                    reason,
-                    (needs, gates),
-                    unlanded,
-                    blocked,
-                    moved,
-                    holds,
-                    placed,
-                ),
-            );
+            let parts = change.parts(&ruled.slots, placing.as_ref());
+            let body = both(surreal::rule(parts), pg::rule(parts));
             let mut vars = change.vars(slug, actor, version, view.now);
             vars["slots"] = Value::Array(ruled.slots);
             if let Some(placing) = placing {
@@ -1303,7 +1275,45 @@ struct Change {
     unlanded: Option<Value>,
 }
 
+/// What a rule's write adds to the write every rule makes ([`surreal::rule`], [`pg::rule`]),
+/// each part by its name ([`Change::parts`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct RuleParts {
+    /// The task, reopened under a custom workflow, placed first (`workflow::REOPEN_PLACED`).
+    placed: bool,
+    /// The move's reason posted after its line.
+    reason: bool,
+    /// What the block it makes waits on written.
+    blocked: bool,
+    /// The task's needs written.
+    needs: bool,
+    /// The task's gate decisions written.
+    gates: bool,
+    /// Its mark of an approve not landed set or lifted.
+    unlanded: bool,
+    /// A change of status, and whether to cancelled: what a block waited on removed, its hold
+    /// and its dependants settled.
+    moved: Option<bool>,
+    /// The slot counters it holds guarded.
+    holds: bool,
+}
+
 impl Change {
+    /// What its write adds ([`RuleParts`]), `slots` the slot counters it holds and `placing` the
+    /// placement of a task it reopens under a custom workflow.
+    fn parts(&self, slots: &[Value], placing: Option<&workflow::Transition>) -> RuleParts {
+        RuleParts {
+            placed: placing.is_some(),
+            reason: self.reason.is_some(),
+            blocked: self.blocked.is_some(),
+            needs: self.needs.is_some(),
+            gates: self.gates.is_some(),
+            unlanded: self.unlanded.is_some(),
+            moved: (self.status.as_deref()).map(|status| status == "cancelled"),
+            holds: !slots.is_empty(),
+        }
+    }
+
     /// Whether it moves the task, blocks it, or adds or drops an executor or a reviewer: what a
     /// custom workflow's edges alone do to a task it holds. The orchestrator's role and a
     /// reservation are the board's coordination, which its writers keep: a launch reserves the
