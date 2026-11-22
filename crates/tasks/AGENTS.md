@@ -175,7 +175,10 @@ writes, and refuses a mismatch rather than read again; a store finds no authorit
 The store's modules hold the rules; a statement's text is `store/surreal/`'s, under a name the
 store's module asks for whole, and its PostgreSQL twin `store/postgres/`'s by the same name: a
 call names both (`store/statement.rs`'s `both`), and one with no twin is refused on a PostgreSQL
-board before anything is sent. No SurrealQL is written anywhere else but in the files
+board before anything is sent. What a statement does is said, never read from either text: its
+call says whether it writes (`Store::transact` sends a write behind the guard, and a read says so),
+and the statement whether it posts a line and which additive step's tables it names; a debug build
+refuses, naming its line, one whose SurrealQL does otherwise (`store/statement.rs`). No SurrealQL is written anywhere else but in the files
 `store/surreal/fence_tests.rs` lists with their reasons. Nothing reaches a client but through
 `store/transaction.rs`, `store/raw.rs` and `store/database.rs`. A test that needs a row no command
 writes asks `Store::raw` by table, id and equal fields and writes no statement of its own; one

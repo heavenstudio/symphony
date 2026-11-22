@@ -21,7 +21,7 @@ impl Store {
         }
         let (body, vars) = (sql::board(), reading::vars(&Which::All));
         let snapshot: Snapshot =
-            self.retrying(|| self.transact(both(&body, pg::board()), vars.clone()))?;
+            self.retrying(|| self.read_together(both(&body, pg::board()), vars.clone()))?;
         let sequence = snapshot.callback_sequence;
         *cached = Some(snapshot.clone());
         Ok((Self::board_view(View::new(self, snapshot)), sequence))

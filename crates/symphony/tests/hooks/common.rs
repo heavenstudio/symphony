@@ -55,7 +55,7 @@ pub(crate) fn hook_commands(settings: &Value, event: &str) -> Vec<(String, Strin
 }
 
 /// A fresh folder under the system's temporary one, removed when dropped.
-pub(crate) struct TempDir(pub PathBuf);
+pub(crate) struct TempDir(PathBuf);
 
 impl TempDir {
     pub(crate) fn new(tag: &str) -> Self {
@@ -72,14 +72,6 @@ impl TempDir {
     }
 
     pub(crate) fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl std::ops::Deref for TempDir {
-    type Target = Path;
-
-    fn deref(&self) -> &Path {
         &self.0
     }
 }

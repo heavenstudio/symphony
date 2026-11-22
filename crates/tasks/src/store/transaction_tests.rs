@@ -1,6 +1,7 @@
 //! The guard a write starts with, on a board of the store's contract that lacks an additive step
-//! the store has ([`schema::Steps`]): a write naming a table of the step is refused before any of
-//! its statements, in either language and any quoting; what no word of it shows, the database
+//! the store has ([`schema::Steps`]): a write that says it names a table of the step is refused
+//! before any of its statements, on either database, its text naming the table in any quoting as a
+//! debug build holds it to ([`Statement::disagreement`]); what it does not say, the database
 //! refuses itself (a field it does not define; on SurrealDB, STRICT, a table it does not define),
 //! as the transaction's; so nothing of it is written either way. Once a build that may move the
 //! board has added the step, the same write passes.
@@ -105,7 +106,7 @@ fn a_write_needing_a_step_the_board_lacks_is_refused_whole_until_the_board_takes
                 "PERFORM 1 FROM (SELECT count(*) FROM FIXTURE_TAG) AS n;",
             ),
         ];
-        for write in named {
+        for write in named.map(|write| write.naming(&["fixture_tag"])) {
             match store.transact::<Value>(write, json!({})) {
                 Err(Failure::Stop(Error::Refused(why))) => assert!(
                     why.contains(&format!(
@@ -152,7 +153,8 @@ fn a_write_needing_a_step_the_board_lacks_is_refused_whole_until_the_board_takes
                 then(
                     "CREATE type::record('fixture_tag', 'one') SET name = 'one' RETURN NONE;",
                     "INSERT INTO fixture_tag (id, doc) VALUES ('\"one\"', '{\"name\": \"one\"}');",
-                ),
+                )
+                .naming(&["fixture_tag"]),
                 json!({}),
             )
             .unwrap();

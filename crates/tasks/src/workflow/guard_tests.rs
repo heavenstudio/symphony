@@ -852,9 +852,17 @@ fn the_project_file_commits_authorities_only_for_a_workflow_and_a_project_id() {
             .unwrap_err()
             .contains("[project] id names none")
     );
+    // An id the project file's rule refuses names no project, as the board's lookup reads it.
+    for id in ["", " ", "Sim", "sim lab"] {
+        assert_eq!(
+            crate::workflow::attested_project(&format!("[project]\nid = {id:?}\n")),
+            None,
+            "{id:?}"
+        );
+    }
     assert_eq!(
-        crate::workflow::attested_project("[project]\nid = \" \"\n"),
-        None
+        crate::workflow::attested_project("[project]\nid = \"sim\"\n").as_deref(),
+        Some("sim")
     );
     let only = format!(
         "[[workflow_authorities]]\nadapter = \"approvals\"\nissuer = \"ledger\"\ncontract = 1\n\

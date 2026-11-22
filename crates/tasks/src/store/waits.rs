@@ -162,7 +162,7 @@ impl Store {
                     "source_changed": format!("{REFUSED}assessment source changed before publication"),
                 }),
             );
-            self.written(both(body.as_str(), pg::record(acting)), vars, slug)
+            self.written(both(body.as_str(), pg::record(acting)).posting(), vars, slug)
         })
     }
 

@@ -213,10 +213,11 @@ pub fn project_problems(root: &Path) -> Vec<String> {
 
 /// `symphony settings-check [DIR]`, the settings check: the project file at DIR (the current
 /// folder) read as the Symphony reads it ([`crate::project::Project::load`]), judged on its shape
-/// alone. A table or key the Symphony does not know, a value of the wrong type or a required value
-/// left out is named on `err`, exit 1; a file that loads is said on `out`, exit 0. It judges no
-/// name against a list (a model, an agent's or a recipe's name is any text) and, unlike the lint,
-/// reads no plugin this build holds and no document. Recognizable cross-agent model names warn
+/// alone. A table or key the Symphony does not know, a value of the wrong type or one its key's
+/// rule refuses (an agent no launch starts among them), or a required value left out is named on
+/// `err`, exit 1; a file that loads is said on `out`, exit 0. It judges no model or recipe against a
+/// list (either is any text) and, unlike the lint, reads no plugin this build holds and no document.
+/// Recognizable cross-agent model names warn
 /// without changing the exit code, judged on the settings in force, the local file's over the
 /// project file's. The local settings file beside the main checkout's project
 /// file is judged with it ([`crate::project::Project::local_problems`]): a setting it may not

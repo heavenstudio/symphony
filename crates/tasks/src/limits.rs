@@ -279,33 +279,33 @@ pub fn parse(path: &str, text: &str) -> Read {
         .filter(|key| !KEYS.contains(&key.as_str()))
         .map(|key| setting(TABLE, key).named())
         .collect();
-    // The cap: `[limits]`'s, else `[board]`'s, where an older build reads it.
+    // The cap: `[limits]`'s, else `[board]`'s, where an older build reads it. A value the rule
+    // refuses is said in its table's words, with what holds instead.
+    let no_cap = "no cap on an orchestrator's open tasks applies";
     let slots = |table: &str, value: &Value| {
         let at = setting(table, SLOTS);
-        let (least, below) = least(SLOTS);
-        whole(value, least)
+        judged(SLOTS, value)
             .map(|cap| (cap, at.clone()))
-            .map_err(|why| {
-                let why = why.unwrap_or(below);
-                format!(
-                    "{path}: {} is {}; {why}; no cap on an orchestrator's open tasks applies",
-                    at.named(),
-                    shown(value)
-                )
-            })
+            .map_err(|why| format!("{path}: {} is {}; {why}", at.named(), shown(value)))
     };
+    // What is said of `[board]`'s cap written beside `[limits]`', after what is said of that one.
+    let mut beside = None;
     let cap = match (limits.get(SLOTS), board.get(SLOTS)) {
         (Some(ours), Some(older)) => {
             let held = slots(TABLE, ours);
-            if let (Ok((cap, at)), Ok((other, _))) = (&held, slots("board", older))
-                && cap != &other
-            {
-                read.problems.push(format!(
+            beside = match (&held, slots("board", older)) {
+                (Ok((cap, at)), Ok((other, _))) if cap != &other => Some(format!(
                     "{path}: {} is {other}, left out: {} is {cap}, which holds",
                     setting("board", SLOTS).named(),
                     at.named()
-                ));
-            }
+                )),
+                (Ok((cap, at)), Err(refused)) => Some(format!(
+                    "{refused}; left out: {} is {cap}, which holds",
+                    at.named()
+                )),
+                (Err(_), Err(refused)) => Some(format!("{refused}; {no_cap}")),
+                _ => None,
+            };
             Some(held)
         }
         (Some(ours), None) => Some(slots(TABLE, ours)),
@@ -317,9 +317,10 @@ pub fn parse(path: &str, text: &str) -> Read {
             read.limits.orchestrator_slots = Some(cap);
             read.written.insert(SLOTS, at);
         }
-        Some(Err(problem)) => read.problems.push(problem),
+        Some(Err(problem)) => read.problems.push(format!("{problem}; {no_cap}")),
         None => {}
     }
+    read.problems.extend(beside);
     // The three limits that are one whole number each, and what a value that is none leaves.
     let whole_limits = [
         (TASKS, format!("it takes its default, {ORCHESTRATOR_TASKS}")),
@@ -334,17 +335,15 @@ pub fn parse(path: &str, text: &str) -> Read {
             continue;
         };
         let at = setting(TABLE, key);
-        let (least, below) = least(key);
-        match whole(value, least) {
+        match judged(key, value) {
             Ok(most) => {
                 read.limits.set(key, most);
                 read.written.insert(key, at);
             }
             Err(why) => read.problems.push(format!(
-                "{path}: {} is {}; {}; {left}",
+                "{path}: {} is {}; {why}; {left}",
                 at.named(),
-                shown(value),
-                why.unwrap_or(below)
+                shown(value)
             )),
         }
     }
@@ -361,9 +360,7 @@ pub fn parse(path: &str, text: &str) -> Read {
             continue;
         };
         let at = setting("board", key);
-        match whole(value, 1)
-            .and_then(|n| u32::try_from(n).map_err(|_| Some("past what it can be")))
-        {
+        match whole(value, 1).and_then(|n| u32::try_from(n).map_err(|_| Some(PAST))) {
             Ok(n) => {
                 *into = n;
                 alarm_written.push((key, at));
@@ -390,13 +387,33 @@ pub fn parse(path: &str, text: &str) -> Read {
     read
 }
 
+/// `value`, written for the limit `key` of [`LEAST`], as every reader of a limit takes it, wherever
+/// it is written: the project file's `[limits]`, or `[board]` for the cap, as the board reads it
+/// ([`parse`]) and the Symphony's load refuses what it cannot read; the local file and the board's
+/// store ([`crate::local`]). A whole number from its least, and the cap ([`SLOTS`]) at most
+/// [`u32::MAX`], the most the Symphony's project holds it in (`project::Board`); else why not, a
+/// value below its least told what its least says.
+///
+/// # Errors
+///
+/// Why it is not one: no whole number, below its least, or past what it can be.
+pub fn judged(key: &str, value: &Value) -> Result<usize, &'static str> {
+    let (least, below) = least(key);
+    let most = whole(value, least).map_err(|why| why.unwrap_or(below))?;
+    if key == SLOTS && u32::try_from(most).is_err() {
+        return Err(PAST);
+    }
+    Ok(most)
+}
+
+/// Why a whole number is refused that is greater than its setting can hold.
+const PAST: &str = "past what it can be";
+
 /// `value` as a whole number of at least `least`; else why not: `None` for one below it (its
 /// setting says what it is at least), else what it is.
 pub(crate) fn whole(value: &Value, least: i64) -> Result<usize, Option<&'static str>> {
     match value {
-        Value::Integer(n) if *n >= least => {
-            usize::try_from(*n).map_err(|_| Some("past what it can be"))
-        }
+        Value::Integer(n) if *n >= least => usize::try_from(*n).map_err(|_| Some(PAST)),
         Value::Integer(_) => Err(None),
         _ => Err(Some("not a whole number")),
     }

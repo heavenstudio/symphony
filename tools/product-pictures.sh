@@ -237,13 +237,15 @@ while read -r name widths path steps || [ -n "$name" ]; do
     else
         base="$own"
     fi
+    # What shot prints is a line's `--eval` value, the page set up for its picture and nothing to
+    # read: only its errors are said.
     if [ "$widths" != wide ]; then
         # shellcheck disable=SC2086 # a line's steps are shot's own options, split on spaces
-        "$shot" shot "$base$path" --out "$out/$name-phone.png" --phone --scheme light --clock "$NOW" --timeout 60 $steps
+        "$shot" shot "$base$path" --out "$out/$name-phone.png" --phone --scheme light --clock "$NOW" --timeout 60 $steps >/dev/null
     fi
     if [ "$widths" != phone ]; then
         # shellcheck disable=SC2086
-        "$shot" shot "$base$path" --out "$out/$name-wide.png" --size 1280x800 --scheme light --clock "$NOW" --timeout 60 $steps
+        "$shot" shot "$base$path" --out "$out/$name-wide.png" --size 1280x800 --scheme light --clock "$NOW" --timeout 60 $steps >/dev/null
     fi
     taken=$((taken + 1))
 done <"$list"
