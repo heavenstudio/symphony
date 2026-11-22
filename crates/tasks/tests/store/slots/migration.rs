@@ -69,6 +69,7 @@ fn schema_13_upgrade_preserves_board_data_and_indexes_recorded_branch_lookup() {
              ELSE { CREATE counter:board SET last = 1 RETURN NONE; };
          };
          UPDATE meta:schema SET version = 13;
+         DELETE meta:additions;
          COMMIT TRANSACTION;",
             json!({"marker":marker}),
         )
