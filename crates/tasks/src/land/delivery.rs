@@ -948,9 +948,17 @@ impl Landing<'_> {
             });
             let answer = (self.ask("publish", &delivering(request, &journal)))
                 .map_err(|why| self.refuse(Refusal::here(format!("nothing merged: {why}"))))?;
-            let binding = self
-                .bound(&answer, &journal, tip)
-                .map_err(|line| self.refuse(Refusal::here(line)))?;
+            let binding = self.bound(&answer, &journal, tip).map_err(|line| {
+                // Refused, as the host merged this head since the dispatch read it: no stop to
+                // say. A host away, or one that did not answer, is said as it is.
+                let merged = (state(&answer).0 == "refused")
+                    .then(|| self.merged_meanwhile(&journal, tip))
+                    .flatten();
+                match merged {
+                    Some(landed) => Stop::Refused(landed),
+                    None => self.refuse(Refusal::here(line)),
+                }
+            })?;
             if let Some(import) = &mut journal.import {
                 import.repository =
                     pinned(&answer, import).map_err(|line| self.refuse(Refusal::here(line)))?;
