@@ -324,7 +324,7 @@ fn pass_inner(
     let machine = Machine::of(env);
     // What a launch here starts: the project's `[agents] launch`, on the model `[agents.models]`
     // names for the role, else the board's own.
-    let defaults = Defaults::configured(&machine.root).map_err(refused)?;
+    let defaults = Defaults::configured_with(&machine.root, &store.stored()).map_err(refused)?;
     let mut candidates = store.board()?.tasks;
     // The custom workflow by whose edges the tasks it holds are staffed, read once for the pass.
     let operating = store.operating_for(&candidates)?;

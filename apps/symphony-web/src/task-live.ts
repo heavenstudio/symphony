@@ -456,9 +456,9 @@ export function timelinePart(scope: string, slug: string): Part<unknown, TaskEve
 }
 
 /**
- * The tokens of the task `slug` and what they cost, as the server sent them: the chunk of the
- * page's disclosure of them (task-tokens.tsx), which a first visit does not carry, reads them as it
- * draws them. Asked once the disclosure opens.
+ * The tokens of the task `slug` and what they cost, as the server sent them: the timeline's chunk
+ * (timeline-cost.ts), which a first visit does not carry, reads them as it says their cost after
+ * each time. Asked as the timeline's box mounts, beside the timeline.
  */
 export function tokensPart(scope: string, slug: string): Part<unknown, TaskEvent> {
   return {

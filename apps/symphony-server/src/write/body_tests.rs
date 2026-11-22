@@ -6,7 +6,6 @@ use axum::extract::connect_info::MockConnectInfo;
 use futures_util::stream;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Instant;
 use tower::ServiceExt;
 
 async fn refused(response: Response, status: StatusCode, message: &str) {
@@ -90,13 +89,7 @@ async fn malformed_json_and_transport_errors_stay_bad_requests() {
 }
 
 fn app(root: &std::path::Path) -> (Arc<Shared>, axum::Router) {
-    let shared = Shared::new(
-        1,
-        8123,
-        root,
-        None,
-        crate::gate::Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
+    let shared = Shared::new(1, 8123, root, None, crate::testing::open_gate());
     let app = crate::front::router(shared.clone()).layer(MockConnectInfo(
         "127.0.0.1:5000".parse::<SocketAddr>().unwrap(),
     ));

@@ -12,7 +12,6 @@
 use super::Hub;
 use super::owner_asks::Kept;
 use crate::front::Shared;
-use crate::gate::Gate;
 use crate::testing::board::{Fixture, HOST, NOW, Seed};
 use crate::testing::{Tree, repository_holding};
 use axum::body::{Body, to_bytes};
@@ -21,7 +20,6 @@ use axum::http::Request;
 use serde_json::{Value, json};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Instant;
 use symphony_board::rpc::Client;
 use symphony_board::sys::Command;
 use symphony_board::{Opening, Schema, Store};
@@ -206,13 +204,7 @@ fn a_board_one_ahead_is_written_by_the_tick_and_a_save_only_when_its_step_keeps_
 /// What a page's save of `payload` as the task's priority answers, past front's check: the status,
 /// and the JSON said, or else the text.
 fn saved(hub: &Arc<Hub>, payload: Value) -> (u16, Value) {
-    let shared = Shared::new(
-        1,
-        1234,
-        &hub.root,
-        None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
+    let shared = Shared::new(1, 1234, &hub.root, None, crate::testing::open_gate());
     assert!(shared.api.set(Arc::clone(hub)).is_ok());
     let request = Request::builder()
         .method("POST")

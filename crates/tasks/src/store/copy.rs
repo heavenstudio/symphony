@@ -423,7 +423,7 @@ fn read_strictly<T: serde::de::DeserializeOwned>(read: Value) -> Result<T, Error
 /// derives, each keyed alike on both engines. Of `counter` every row is carried but the ones
 /// each engine or the copy makes for itself ([`own`]): the task holds, each recipient's place in
 /// its outbox (the number its next line is keyed by), and the fences, which only ever count up.
-pub const CARRIED: [&str; 8] = [
+pub const CARRIED: [&str; 9] = [
     "callback_state",
     "callback_lease",
     "callback_event",
@@ -432,6 +432,7 @@ pub const CARRIED: [&str; 8] = [
     "artifact_ledger",
     "unanswered_restore",
     "counter",
+    "setting",
 ];
 
 /// How far a restored lease's revision is moved on where the cluster it replaces could not be
@@ -536,6 +537,11 @@ impl Store {
         let (raw, postgresql) = (self.raw(), self.database().is_postgresql());
         let mut tables = serde_json::Map::new();
         for table in CARRIED {
+            // A table of a step the board lacks holds nothing to carry.
+            if self.lacks(table)? {
+                tables.insert(table.to_string(), Value::Array(Vec::new()));
+                continue;
+            }
             let listed = raw.table(table).get()?;
             let mut rows: Vec<Value> = (listed.as_array().into_iter().flatten())
                 .map(|row| {
@@ -554,6 +560,17 @@ impl Store {
         Ok(Value::Object(tables))
     }
 
+    /// Whether `table` is one an additive step defines that this store may not use on its board
+    /// ([`Store::additions`]): one the board, or this build, lacks.
+    fn lacks(&self, table: &str) -> Result<bool, Error> {
+        let Some(step) =
+            (crate::schema::ADDED.iter()).position(|step| step.tables.contains(&table))
+        else {
+            return Ok(false);
+        };
+        Ok(self.additions()? <= i64::try_from(step).unwrap_or(i64::MAX))
+    }
+
     /// `carried`, another board's ([`Store::carried`]), written here row by row under its keys,
     /// replacing what those tables held: of `counter`, all but the rows a board has of its own.
     /// A table it does not know is refused before anything is written.
@@ -569,6 +586,15 @@ impl Store {
         }
         let (raw, postgresql) = (self.raw(), self.database().is_postgresql());
         for (table, rows) in &tables {
+            if self.lacks(table)? {
+                if rows.as_array().is_some_and(|rows| !rows.is_empty()) {
+                    return Err(Error::Refused(format!(
+                        "{table} is a table of a step this board lacks: its rows cannot be \
+                         carried here"
+                    )));
+                }
+                continue;
+            }
             if table == "counter" {
                 let listed = raw.table(table).get()?;
                 for row in listed.as_array().into_iter().flatten() {
@@ -820,16 +846,20 @@ mod placed {
             .chain(CARRIED)
             .chain(LEFT.iter().map(|(table, _)| *table))
             .collect();
-        for table in crate::store::postgres::schema::TABLES {
+        let contract = crate::store::postgres::schema::TABLES
+            .iter()
+            .map(|table| table.name);
+        let added = (crate::schema::ADDED.iter()).flat_map(|step| step.tables.iter().copied());
+        let tables: Vec<&str> = contract.chain(added).collect();
+        for table in &tables {
             assert_eq!(
-                placed.iter().filter(|name| **name == table.name).count(),
+                placed.iter().filter(|name| *name == table).count(),
                 1,
-                "{} is placed once among DUMPED, CARRIED and LEFT (store/copy.rs): a table a \
-                 move neither copies nor carries is lost by it",
-                table.name
+                "{table} is placed once among DUMPED, CARRIED and LEFT (store/copy.rs): a table a \
+                 move neither copies nor carries is lost by it"
             );
         }
-        assert_eq!(placed.len(), crate::store::postgres::schema::TABLES.len());
+        assert_eq!(placed.len(), tables.len());
         assert!(LEFT.iter().all(|(_, why)| !why.is_empty()));
     }
 

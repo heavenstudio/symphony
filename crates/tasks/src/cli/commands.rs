@@ -28,6 +28,7 @@ mod limits;
 mod list;
 mod panes;
 mod runs;
+mod settings;
 mod stamps;
 mod stats;
 mod wait;
@@ -206,6 +207,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             }
         }
         "limits" => limits::run(store, c)?,
+        "settings" => settings::run(store, c)?,
         "workflow" => workflow::run(store, c)?,
         "stamps" => stamps::stamps(store, c)?,
         "runs" => runs::runs(store, c)?,

@@ -32,6 +32,81 @@ pub fn git(root: &std::path::Path, args: &[&str]) {
     );
 }
 
+/// The gate nearly every fixture serves behind: no peer is on the tailnet, at the machine's clock.
+/// A test whose gate answers a peer, panics when asked, names this machine or sets the clock
+/// builds its own.
+pub fn open_gate() -> crate::gate::Gate {
+    crate::gate::Gate::new(
+        std::sync::Arc::new(|_| Ok(None)),
+        std::sync::Arc::new(std::time::Instant::now),
+    )
+}
+
+/// What the API answers a GET of `uri` asked of `shared` from this machine, as the server on port
+/// 1234 a fixture stands for: its status and its body read as JSON.
+pub async fn get_json(
+    shared: &std::sync::Arc<crate::front::Shared>,
+    uri: &str,
+) -> (axum::http::StatusCode, serde_json::Value) {
+    let request = axum::http::Request::builder()
+        .uri(uri)
+        .header("Host", "localhost:1234")
+        .body(())
+        .unwrap();
+    let response = crate::api::answer(shared, request).await.unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, serde_json::from_slice(&body).unwrap())
+}
+
+/// A GET of `path` with no body, asked of the router as a page on this machine asks it.
+pub fn request(path: &str) -> axum::http::Request<axum::body::Body> {
+    axum::http::Request::builder()
+        .uri(path)
+        .header("Host", "127.0.0.1:1")
+        .body(axum::body::Body::empty())
+        .unwrap()
+}
+
+/// A store on `client`'s board at the fixture's time and host.
+pub fn store_on(client: &symphony_board::rpc::Client) -> symphony_board::Store {
+    symphony_board::Store::with(
+        symphony_board::rpc::Client::new(client.addr(), "sf", client.database()),
+        Box::new(|| board::NOW),
+        Box::new(|_| false),
+        board::HOST,
+    )
+    .unwrap()
+}
+
+/// The test `test` run alone in a child of this test binary on `board`, `marker` set so it takes
+/// its child side, with nothing of this process's session, client build or git folder: what it
+/// printed and what it logged, once it passed.
+pub fn child_on(board: &symphony_board::rpc::Client, marker: &str, test: &str) -> (String, String) {
+    let done = symphony_board::sys::output(
+        symphony_board::sys::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", test, "--nocapture"])
+            .env(marker, "1")
+            .env("TASKS_SERVER", board.addr())
+            .env("TASKS_DATABASE", board.database())
+            .env_remove("ASKS_DB")
+            .env_remove("TASKS_SESSION")
+            .env_remove("SYMPHONY_UI_DIST")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_COMMON_DIR")
+            .env_remove("GIT_INDEX_FILE"),
+    )
+    .unwrap();
+    let out = String::from_utf8_lossy(&done.stdout).into_owned();
+    let err = String::from_utf8_lossy(&done.stderr).into_owned();
+    assert!(done.status.success(), "{out}\n{err}");
+    assert!(out.contains("1 passed"), "child ran no test: {out}");
+    (out, err)
+}
+
 /// A FIFO at `path`, held open for reading and writing, so neither a fixture child's open for
 /// writing nor this one blocks.
 pub fn fifo(path: &std::path::Path) -> std::fs::File {
@@ -196,6 +271,84 @@ mod tests {
 
     extern "C" fn interrupted(_: libc::c_int) {
         SIGNALS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// The open gate answers this machine and nobody else: its whois finds no peer on the
+    /// tailnet, and an address outside the tailnet is never asked about.
+    #[test]
+    fn the_open_gate_admits_this_machine_and_no_peer() {
+        let gate = open_gate();
+        for (ip, admitted) in [
+            ("127.0.0.1", true),
+            ("::1", true),
+            ("::ffff:127.0.0.1", true),
+            ("100.83.24.99", false),
+            ("192.168.1.5", false),
+        ] {
+            assert_eq!(gate.allows(ip.parse().unwrap()), admitted, "{ip}");
+        }
+    }
+
+    #[test]
+    fn a_request_is_a_get_of_its_path_and_query_from_this_machine_with_no_body() {
+        let asked = request("/api/tasks?slug=tools/run");
+        assert_eq!(asked.method(), axum::http::Method::GET);
+        assert_eq!(asked.uri(), "/api/tasks?slug=tools/run");
+        let headers: Vec<_> = asked.headers().iter().collect();
+        assert_eq!(headers.len(), 1, "{headers:?}");
+        assert_eq!(asked.headers()["Host"], "127.0.0.1:1");
+        use axum::body::HttpBody;
+        assert!(asked.body().is_end_stream());
+    }
+
+    /// The JSON ask gives a refusal's status and body as it gives an answer's, and asks as the
+    /// fixture's own host: a route no hub is needed for answers it.
+    #[tokio::test]
+    async fn the_json_ask_reads_a_refusals_status_and_body() {
+        let tree = Tree::new();
+        let root = repository(&tree);
+        let shared = crate::front::Shared::new(1, 1234, &root, None, open_gate());
+        let (status, said) = get_json(&shared, "/api/reports?grain=month").await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(
+            said,
+            serde_json::json!({ "error": "grain is hour, day or week, not month" })
+        );
+        assert!(shared.api.get().is_none(), "no hub was started");
+    }
+
+    /// A second store on a client's board reads what the first wrote, at the fixture's clock.
+    #[test]
+    fn a_store_on_a_clients_board_reads_that_board_at_the_fixtures_clock() {
+        let fixture = board::Fixture::new(board::Seed::default().task("tools/run", "ready"));
+        let store = store_on(fixture.store.client());
+        assert_eq!(store.now(), board::NOW);
+        assert_eq!(store.get("tools/run").unwrap().slug, "tools/run");
+        assert!(store.get("tools/other").is_err());
+        let again = store_on(&fixture.other_client());
+        let slugs: Vec<_> = (again.tasks(None).unwrap().into_iter())
+            .map(|task| task.slug)
+            .collect();
+        assert_eq!(slugs, ["tools/run"]);
+    }
+
+    /// A child that ran no test passed nothing: the name it was given selects none.
+    #[test]
+    fn a_child_that_runs_no_test_is_refused() {
+        let board = board::client();
+        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            child_on(
+                &board,
+                "SYMPHONY_TESTING_NO_CHILD",
+                "testing::tests::no_such_test",
+            )
+        }))
+        .unwrap_err();
+        let message = *refused.downcast::<String>().unwrap();
+        assert!(
+            message.starts_with("child ran no test: ") && message.contains("0 passed"),
+            "{message}"
+        );
     }
 
     #[test]

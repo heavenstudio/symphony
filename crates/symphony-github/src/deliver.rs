@@ -58,7 +58,7 @@ use crate::mint;
 use crate::preflight::{self, Operation, Wanted};
 use crate::reconcile::{Context, Outcome};
 use crate::state::{Binding, Entry, Event, Locked, Pull, State, Store};
-use crate::transport::{Failure, Request, Transport};
+use crate::transport::{Failure, Request, Transport, rate_limited};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::io::Write;
@@ -227,10 +227,7 @@ pub(crate) struct Lost(pub(crate) String);
 
 impl Host<'_> {
     pub(crate) fn path(&self, rest: &str) -> String {
-        format!(
-            "/repos/{}/{}{rest}",
-            self.repository.owner, self.repository.name
-        )
+        crate::github::path(&self.repository, rest)
     }
 
     pub(crate) fn send(
@@ -251,8 +248,7 @@ impl Host<'_> {
             Err(Failure::Unknown(why)) if write => return Ok(Err(Lost(why))),
             Err(Failure::NotSent(why) | Failure::Unknown(why)) => return Err(unavailable(why)),
         };
-        let limited = response.status == 429
-            || (response.status == 403 && response.headers.contains_key("retry-after"));
+        let limited = rate_limited(&response).is_some();
         match response.status {
             _ if limited => Err(unavailable("GitHub's rate limit: nothing more is sent now")),
             401 => Err(unavailable("GitHub refused the credential (401)")),

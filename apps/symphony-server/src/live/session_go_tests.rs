@@ -7,8 +7,8 @@ use crate::front::{Shared, router};
 use crate::gate::Gate;
 use crate::testing::{
     Tree,
-    board::{Fixture, HOST, NOW, Seed},
-    repository,
+    board::{Fixture, NOW, Seed},
+    repository, store_on,
 };
 use axum::body::{Body, to_bytes};
 use axum::extract::connect_info::MockConnectInfo;
@@ -20,7 +20,6 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use symphony_board::launch::LaunchError;
 use symphony_board::launch::hc::Hc;
-use symphony_board::rpc::Client;
 use tower::ServiceExt;
 
 /// This machine's tailnet names, as `tailscale status` gives them.
@@ -356,17 +355,6 @@ impl Drop for Served {
     fn drop(&mut self) {
         self.shared.stop();
     }
-}
-
-/// A store on `client`'s board at the fixture's time and host.
-fn store_on(client: &Client) -> symphony_board::Store {
-    symphony_board::Store::with(
-        Client::new(client.addr(), "sf", client.database()),
-        Box::new(|| NOW),
-        Box::new(|_| false),
-        HOST,
-    )
-    .unwrap()
 }
 
 /// No call but showing a pane, bringing the app forward and reading a screen ever reached hc.
