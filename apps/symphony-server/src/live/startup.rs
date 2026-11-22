@@ -4,6 +4,7 @@
 
 use super::{Hub, measured, run};
 use crate::backstop::Sweep;
+use crate::lock::Held as _;
 use notify::Watcher;
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -41,8 +42,8 @@ impl Hub {
         self.draining.send_replace(true);
         self.disarm_initial_board();
         // The ticks' wait between two reads ends at once.
-        self.ticks.lock().unwrap_or_else(|e| e.into_inner()).take();
-        let mut worker = self.worker.lock().unwrap_or_else(|e| e.into_inner());
+        self.ticks.lock().held().take();
+        let mut worker = self.worker.lock().held();
         if let Some(worker) = worker.take()
             && worker.join().is_err()
         {
@@ -74,15 +75,12 @@ impl Hub {
         let mut hub = measured("hub new", || Self::new(root, ui_dist));
         hub.embedded_ui = embedded_ui;
         if one_server {
-            *hub.callbacks.get_mut().unwrap_or_else(|e| e.into_inner()) =
-                Some(symphony::callbacks::Flusher::new(root));
+            *hub.callbacks.get_mut().held() = Some(symphony::callbacks::Flusher::new(root));
             eprintln!("→ chat journal: draining enabled for the shared server");
             // The owner's asks are the one server's to close, as it alone hands saves to the board.
-            *hub.owner_asks.get_mut().unwrap_or_else(|e| e.into_inner()) =
-                Some(super::owner_asks::Kept::default());
+            *hub.owner_asks.get_mut().held() = Some(super::owner_asks::Kept::default());
             // So are the blocks the owner's word ends: one server moves them, from its pages.
-            *hub.decided.get_mut().unwrap_or_else(|e| e.into_inner()) =
-                Some(symphony::decided::Kept::default());
+            *hub.decided.get_mut().held() = Some(symphony::decided::Kept::default());
             // The board's health record is the one server's alone: `tasks status` reads it,
             // and a private server's passes would write over it.
             let mut env = symphony::children::board_env();
@@ -104,17 +102,14 @@ impl Hub {
             match symphony_board::reports::folder(&env) {
                 Ok(folder) => {
                     let runs = symphony_board::runs::folder(&env);
-                    *hub.reports.get_mut().unwrap_or_else(|e| e.into_inner()) =
-                        Some(super::reports::Rollup::new(folder, runs));
+                    *hub.reports.get_mut().held() = Some(super::reports::Rollup::new(folder, runs));
                 }
                 Err(why) => eprintln!("→ reports: no day files written ({why})"),
             }
             // So are the agents' day files, which a private server's ticks would say twice.
             match super::agent_activity::folder(&env) {
                 Ok(folder) => {
-                    *hub.agent_activity
-                        .get_mut()
-                        .unwrap_or_else(|e| e.into_inner()) =
+                    *hub.agent_activity.get_mut().held() =
                         Some(super::agent_activity::Recorder::new(folder));
                 }
                 Err(why) => eprintln!("→ agent activity: not recorded ({why})"),
@@ -151,18 +146,16 @@ impl Hub {
         let mut watched = BTreeSet::new();
         measured("initial watches", || hub.watch(&mut watcher, &mut watched));
         // The sweep's first stamps come before the first read too.
-        *hub.swept.lock().unwrap_or_else(|e| e.into_inner()) =
-            measured("initial sweep", || Sweep::new(&hub.swept_paths()));
+        *hub.swept.lock().held() = measured("initial sweep", || Sweep::new(&hub.swept_paths()));
         measured("initial documents", || hub.refresh_docs(None))?;
         let docs_ready = started.elapsed();
         let weak = Arc::downgrade(&hub);
-        *hub.worker.lock().unwrap_or_else(|e| e.into_inner()) =
-            Some(std::thread::spawn(move || {
-                let first = initial_board(&weak, &starting, &mut connect, docs_ready, started);
-                if let Some(board) = first {
-                    run(weak, watcher, watched, backstop, board, connect);
-                }
-            }));
+        *hub.worker.lock().held() = Some(std::thread::spawn(move || {
+            let first = initial_board(&weak, &starting, &mut connect, docs_ready, started);
+            if let Some(board) = first {
+                run(weak, watcher, watched, backstop, board, connect);
+            }
+        }));
         Ok(hub)
     }
 
@@ -171,10 +164,7 @@ impl Hub {
         let (start, starting) = mpsc::channel();
         // Each holder of this lock only takes or puts the sender, so a panic under it leaves either
         // the sender or nothing: both are a whole state, and the poisoned value is used as it is.
-        *self
-            .initial_start
-            .get_mut()
-            .unwrap_or_else(|e| e.into_inner()) = Some(start);
+        *self.initial_start.get_mut().held() = Some(start);
         self.initial_board.send_replace(false);
         starting
     }
@@ -182,12 +172,7 @@ impl Hub {
     /// Activate the owned read once, after announcement or when a data caller needs it.
     pub(crate) fn start_initial_board(&self) {
         // A panic under this lock leaves the sender or nothing (see `arm_initial_board`).
-        if let Some(start) = self
-            .initial_start
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-        {
+        if let Some(start) = self.initial_start.lock().held().take() {
             let _ = start.send(());
         }
     }
@@ -206,10 +191,7 @@ impl Hub {
     /// Drop an activation that never came, so a worker still waiting on it ends.
     pub(super) fn disarm_initial_board(&self) {
         // A panic under this lock leaves the sender or nothing (see `arm_initial_board`).
-        self.initial_start
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take();
+        self.initial_start.lock().held().take();
     }
 }
 

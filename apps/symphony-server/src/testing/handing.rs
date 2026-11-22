@@ -8,9 +8,10 @@
 //! made on a thread of its own finds it by the folder it watches ([`watching`], [`tell_at`]): each
 //! such test watches a folder of its own, so the tests running beside it never meet there.
 
+use crate::lock::Held as _;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 /// The handler a [`Handing`] watcher was given.
 type Handler = Arc<Mutex<Box<dyn notify::EventHandler>>>;
@@ -21,7 +22,7 @@ type Watched = BTreeMap<PathBuf, (notify::RecursiveMode, Handler)>;
 static HANDED: Mutex<Watched> = Mutex::new(BTreeMap::new());
 
 fn handed() -> MutexGuard<'static, Watched> {
-    HANDED.lock().unwrap_or_else(PoisonError::into_inner)
+    HANDED.lock().held()
 }
 
 /// A watcher whose backend is the test: each folder it watches is listed, with its handler, while
@@ -90,10 +91,7 @@ pub fn tell_at(folder: &Path, event: notify::Result<notify::Event>) {
 }
 
 fn told(handler: &Handler, event: notify::Result<notify::Event>) {
-    handler
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .handle_event(event);
+    handler.lock().held().handle_event(event);
 }
 
 #[cfg(test)]

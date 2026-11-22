@@ -2,6 +2,7 @@
 //! client address first; read and save handlers also check Host and Origin.
 
 use crate::backstop::{Waker, Wakers, Wakes};
+use crate::lock::Held as _;
 use crate::{cli::Serve, gate::Gate, sys};
 use axum::Router;
 use axum::body::{Body, HttpBody};
@@ -236,12 +237,9 @@ impl Shared {
     pub fn stop(&self) {
         self.stopped.send_replace(true);
         self.stop_wakers.wake();
-        self.stop_pipes
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
-        self.end_maintenance(&mut self.maintenance.lock().unwrap_or_else(|e| e.into_inner()));
-        let _held = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+        self.stop_pipes.lock().held().clear();
+        self.end_maintenance(&mut self.maintenance.lock().held());
+        let _held = self.lifecycle.lock().held();
         if let Some(hub) = self.api.get() {
             hub.stop();
         }
@@ -251,7 +249,7 @@ impl Shared {
     /// joined: each sees the stop at its next look and ends the child it runs. Workers kept once it
     /// stopped are joined at once.
     pub(crate) fn maintained(&self, workers: Vec<std::thread::JoinHandle<()>>) {
-        let mut held = self.maintenance.lock().unwrap_or_else(|e| e.into_inner());
+        let mut held = self.maintenance.lock().held();
         held.extend(workers);
         if self.stopping() {
             self.end_maintenance(&mut held);
@@ -262,10 +260,7 @@ impl Shared {
     /// with the list held.
     #[cfg(test)]
     pub(crate) fn maintaining(&self) -> usize {
-        self.maintenance
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .len()
+        self.maintenance.lock().held().len()
     }
 
     /// Join every worker of `held`, the maintenance list, held so a second stop meanwhile waits
@@ -317,7 +312,7 @@ impl Shared {
     /// descriptor (a process's end, [`sys::until_ends`]) waits on this beside it.
     pub(crate) fn stop_pipe(&self) -> std::io::Result<std::io::PipeReader> {
         let (read, write) = symphony_board::sys::pipe()?;
-        let mut held = self.stop_pipes.lock().unwrap_or_else(|e| e.into_inner());
+        let mut held = self.stop_pipes.lock().held();
         if !self.stopping() {
             held.push(write);
         }
@@ -355,11 +350,7 @@ impl Shared {
             root: self.root.display().to_string(),
             ready: self.api.get().is_some(),
             app: None,
-            tailnet: self
-                .tailnet
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone(),
+            tailnet: self.tailnet.lock().held().clone(),
             orphans: 0,
         }
     }
@@ -1051,8 +1042,7 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     {
         let shared = shared.clone();
         background.workers.push(worker(TAILNET_WORKER, move || {
-            *shared.tailnet.lock().unwrap_or_else(|e| e.into_inner()) =
-                crate::gate::magicdns_name();
+            *shared.tailnet.lock().held() = crate::gate::magicdns_name();
         }));
     }
     if serve.home.is_none() {

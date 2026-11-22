@@ -1,6 +1,7 @@
 use super::{Retry, RunningImage, Setup, source_event, stamp_install, watch_with};
 use crate::backstop::{self, Backstop};
 use crate::front::{Shared, told};
+use crate::lock::Held as _;
 use crate::testing::handing::{Handing, tell_at, watching};
 use crate::testing::{Tree, git, joined, repository};
 use sha2::{Digest, Sha256};
@@ -1679,15 +1680,13 @@ static SEEN: Mutex<Vec<(bool, PathBuf)>> = Mutex::new(Vec::new());
 
 fn seen(watched: bool, path: &Path) -> bool {
     SEEN.lock()
-        .unwrap_or_else(|e| e.into_inner())
+        .held()
         .iter()
         .any(|seen| *seen == (watched, path.to_path_buf()))
 }
 
 fn see(watched: bool, path: &Path) -> notify::Result<()> {
-    SEEN.lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .push((watched, path.into()));
+    SEEN.lock().held().push((watched, path.into()));
     Ok(())
 }
 

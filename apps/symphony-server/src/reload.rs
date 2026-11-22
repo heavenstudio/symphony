@@ -9,6 +9,7 @@ use crate::backstop::{self, Backstop, Wake, Waker};
 use crate::cli::Serve;
 use crate::front::Shared;
 use crate::home::{Home, Running};
+use crate::lock::Held as _;
 use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -513,13 +514,10 @@ fn watch_with<W: Watcher + Send + 'static>(
             let relevant = event.as_ref().map_or(true, |event| {
                 event.need_rescan()
                     || (!matches!(event.kind, notify::EventKind::Access(_))
-                        && event.paths.iter().any(|p| {
-                            source_event(
-                                &root,
-                                &checked.lock().unwrap_or_else(|e| e.into_inner()),
-                                p,
-                            )
-                        }))
+                        && event
+                            .paths
+                            .iter()
+                            .any(|p| source_event(&root, &checked.lock().held(), p)))
             });
             if relevant {
                 changed.wake();
@@ -1065,7 +1063,7 @@ fn watch_sources(
     ] {
         paths.push((root.join(group), RecursiveMode::Recursive));
     }
-    *directories.lock().unwrap_or_else(|e| e.into_inner()) = sources;
+    *directories.lock().held() = sources;
     watched.retain(|path| {
         if path.is_dir() {
             true

@@ -33,10 +33,11 @@
 //! starter's checkout is maintained by the server's own workers, under whatever id it is
 //! registered with.
 
+use crate::lock::Held as _;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use axum::Router;
@@ -248,7 +249,7 @@ impl Projects {
     /// Start the maintenance of each other project served now, once: none once the server stopped
     /// them or its starter is stopping, as nothing would join it.
     fn go_live(&self) {
-        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut held = self.held.lock().held();
         if held.live || held.stopped || self.starter.stopping() {
             return;
         }
@@ -277,7 +278,7 @@ impl Projects {
     fn read(&self) -> std::sync::MutexGuard<'_, Held> {
         // A panic while reading leaves the list before it whole: the new one is stored last, in
         // one assignment with the stamp it was read at.
-        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut held = self.held.lock().held();
         let stamp = fs::metadata(self.machine.join(PROJECTS)).ok().map(|meta| {
             (
                 meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
@@ -774,7 +775,7 @@ fn listed(project: &Served) -> symphony_api::ListedProject {
     listed.unwell = hub.standing().unwell();
     listed.writes = hub.writes();
     // A writer's panic leaves at worst a page between two of its regions' updates, as the list's.
-    let pages = hub.pages.read().unwrap_or_else(PoisonError::into_inner);
+    let pages = hub.pages.read().held();
     if let Some(page) = pages.get("") {
         listed.version = Some(page.board.version);
         listed.waiting = Some(page.board.counts.waiting);
@@ -817,7 +818,7 @@ fn list(served: &[Served]) -> String {
             let counts = hub.and_then(|hub| {
                 // A writer's panic leaves at worst a page between two of its regions' updates:
                 // these counts are shown, and the project's next delta corrects them.
-                let pages = hub.pages.read().unwrap_or_else(PoisonError::into_inner);
+                let pages = hub.pages.read().held();
                 pages.get("").map(|page| page.board.counts.clone())
             });
             let standing = hub.map(|hub| hub.standing());

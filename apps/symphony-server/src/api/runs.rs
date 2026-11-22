@@ -26,6 +26,7 @@
 //! is reading waits for it and takes what it kept, so each byte appended is parsed once however
 //! many answers ask. It keeps the days of the window alone.
 
+use crate::lock::Held as _;
 use axum::http::StatusCode;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{File, OpenOptions};
@@ -33,7 +34,7 @@ use std::hash::{DefaultHasher, Hasher as _};
 use std::io::{Read as _, Seek as _, SeekFrom};
 use std::os::unix::fs::{FileExt as _, MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use symphony_api::{
     End, RUNS_DAYS, RUNS_FILE_BYTES, RUNS_PAGE, RUNS_READ_BYTES, RunLine, RunPage, RunsPage,
     run_day, run_name,
@@ -169,7 +170,7 @@ impl Index {
     fn days(&self) -> std::sync::MutexGuard<'_, HashMap<PathBuf, Kept>> {
         #[cfg(test)]
         tests::before_day_lock();
-        self.days.lock().unwrap_or_else(PoisonError::into_inner)
+        self.days.lock().held()
     }
 
     fn forget(&self, path: &Path) {

@@ -9,6 +9,7 @@
 //! `symphony/agents/YYYY-MM-DD.jsonl` in the git common dir ([`folder`]). Only the machine's one
 //! server keeps a recorder (`startup.rs`); a private server keeps none and writes nothing.
 
+use crate::lock::Held as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write as _};
@@ -974,10 +975,7 @@ impl super::Hub {
         let Some(gate) = self.recording_gate.get() else {
             return;
         };
-        let mut recorder = self
-            .agent_activity
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut recorder = self.agent_activity.lock().held();
         if let Some(recorder) = recorder.as_mut() {
             super::measured("agent activity", || {
                 gated_record(gate, recorder, board, || self.now());
@@ -990,10 +988,7 @@ impl super::Hub {
         let Some(gate) = self.recording_gate.get() else {
             return;
         };
-        let mut recorder = self
-            .agent_activity
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut recorder = self.agent_activity.lock().held();
         if let Some(recorder) = recorder.as_mut() {
             gated_stop(gate, recorder, || self.now());
         }
