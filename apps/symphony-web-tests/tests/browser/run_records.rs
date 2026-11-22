@@ -111,19 +111,11 @@ fn columns(chrome: &mut Chrome) -> Value {
         .eval("[...document.querySelectorAll('.waiting-columns .column')].map(e=>e.dataset.status)")
 }
 
-fn desktop() -> Value {
-    json!({"width":1600,"height":900,"deviceScaleFactor":1,"mobile":false})
-}
-
-fn phone() -> Value {
-    json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true})
-}
-
 #[test]
 fn a_recorded_test_run_moves_its_task_to_test_and_back_and_a_reviewers_stays_in_review() {
     let Some(mut chrome) = chrome() else { return };
     let fixture = Fixture::start();
-    chrome.call("Emulation.setDeviceMetricsOverride", desktop());
+    chrome.viewport(1600, 900, false);
     chrome.open(&fixture.site.url("/tasks"));
     // Build and Test remain columns before this project records its first run.
     assert!(chrome.wait_for(&format!("document.querySelector('.column[data-status=in_progress] .taskcard[data-slug=\"{WORKING}\"]') !== null && document.querySelector('main')?.dataset.feed==='live'"), SHOWN), "{}", chrome.eval("document.body.innerText"));
@@ -143,14 +135,14 @@ fn a_recorded_test_run_moves_its_task_to_test_and_back_and_a_reviewers_stays_in_
         chrome.eval("fetch('/api/task-board?counts=1&activity=1').then(r=>r.json()).then(j=>JSON.stringify(j.machine_work))")
     );
     screenshot(&mut chrome, "after-none");
-    chrome.call("Emulation.setDeviceMetricsOverride", phone());
+    chrome.viewport(390, 844, true);
     assert!(chrome.wait_for("document.querySelectorAll('.waiting-columns .column').length === 1 && document.querySelector('.column[data-status=review]') !== null",SHOWN));
     assert_eq!(
         chrome.eval("document.documentElement.scrollWidth <= innerWidth"),
         json!(true)
     );
     screenshot(&mut chrome, "after-none-phone");
-    chrome.call("Emulation.setDeviceMetricsOverride", desktop());
+    chrome.viewport(1600, 900, false);
     let mut working = Run::start(&fixture, "working", &fixture.executor);
     let mut reviewing = Run::start(&fixture, "reviewing", &fixture.reviewer);
     let mut slicing = Run::start(&fixture, "slicing", &fixture.slicer);

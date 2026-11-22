@@ -45,7 +45,7 @@ fn listing() -> Value {
 }
 
 pub(super) fn screenshot(chrome: &mut crate::Chrome, name: &str) {
-    chrome.eval("new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))");
+    chrome.frames();
     let shot = chrome.call("Page.captureScreenshot", json!({"format":"png"}));
     let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../artifacts/app/board-at-a-glance");
@@ -89,10 +89,7 @@ fn machine_columns_show_observations_once_a_machine_reports() {
     let silent = look_parity::responses().remove("/api/task-board").unwrap();
     site.set_json("/api/task-board", &silent);
     let Some(mut chrome) = chrome() else { return };
-    chrome.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    chrome.viewport(1440, 900, false);
     chrome.open(&site.url("/tasks"));
     ready(&mut chrome);
     assert_eq!(chrome.eval("document.querySelector('.column[data-status=build] .work-empty').textContent === 'No build observations reported.' && document.querySelector('.column[data-status=test] .work-empty').textContent === 'No test observations reported.'"), json!(true));
@@ -127,10 +124,7 @@ fn opened_machine_activity_keeps_complete_counts_paging_and_disconnect_fallback(
     site.set_json("/api/task-board", &listing);
     site.set_json("/api/machine-work", &listing["machine_work"]);
     let Some(mut chrome) = chrome() else { return };
-    chrome.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1440,"height":1000,"deviceScaleFactor":1,"mobile":false}),
-    );
+    chrome.viewport(1440, 1000, false);
     chrome.open(&site.url("/tasks"));
     ready(&mut chrome);
     reveal(&mut chrome, "build");
@@ -178,10 +172,7 @@ fn opened_machine_activity_keeps_complete_counts_paging_and_disconnect_fallback(
         chrome.eval("document.querySelector('[data-status=build] .count').textContent"),
         json!("33")
     );
-    chrome.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true}),
-    );
+    chrome.viewport(390, 844, true);
     assert!(chrome.wait_for(
         "document.querySelector('.stage-tabs')?.checkVisibility() === true",
         SHOWN
