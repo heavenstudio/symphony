@@ -8,7 +8,8 @@
 #[path = "../common/owner_words.rs"]
 mod words;
 
-use std::path::{Path, PathBuf};
+use crate::support::repo as workspace;
+use std::path::Path;
 use std::process::Command;
 
 /// What a guide is called, at the root or in a package.
@@ -16,13 +17,6 @@ const GUIDES: [&str; 3] = ["AGENTS.md", "README.md", "RULES.md"];
 
 /// The records under `docs/` that keep the owner's words: the decision register and the history.
 const RECORDS: [&str; 2] = ["docs/DECISIONS.md", "docs/history/"];
-
-fn workspace() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
-}
 
 /// Whether the tracked file `path` is a guide or a document the rule holds: a guide anywhere, or
 /// Markdown under `docs/`, the records aside, whatever their files are called.

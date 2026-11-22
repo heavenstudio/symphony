@@ -1,16 +1,6 @@
 //! `reserve`: a task held for a session until the reservation lapses.
 
-use crate::common::{Backend, Fixture, GONE, NOW, Seed, amber_back_meanwhile, refused};
-
-fn two_and_a_task(backend: Backend, status: &str) -> Fixture {
-    Fixture::on(
-        backend,
-        Seed::default()
-            .session("amber-heron")
-            .session("brisk-finch")
-            .task("sim/jump", status),
-    )
-}
+use crate::common::{Backend, GONE, NOW, amber_back_meanwhile, refused, two_and_a_task};
 
 on_both! {
     fn a_reservation_is_held_until_it_lapses_and_said_on_the_record(backend: Backend) {
