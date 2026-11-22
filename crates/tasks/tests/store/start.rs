@@ -266,12 +266,12 @@ fn a_board_server_holds_its_store_in_a_folder_of_its_own_that_goes_with_it() {
     let engine = |folder: &Path| format!("surrealkv://{}", folder.join("data").display());
     assert_eq!(store_held_in(&engine(&folder)), Ok(()));
     assert_eq!(store_held_in(&engine(two.folder())), Ok(()));
-    let (a, b) = (one.database(), one.database());
+    let (a, b) = (one.client(), one.client());
     assert_ne!(a.database(), b.database(), "a database each");
     assert_eq!(a.addr(), b.addr());
     assert_ne!(
         a.addr(),
-        two.database().addr(),
+        two.client().addr(),
         "each server on a port of its own"
     );
     drop(one);

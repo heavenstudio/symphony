@@ -423,10 +423,11 @@ impl BoardServer {
         &self.dir
     }
 
-    /// A database of its own on this server.
-    pub fn database(&self) -> Database {
+    /// A client of a database of its own on this server, which waits for each answer as any
+    /// board's client does until told otherwise ([`Client::waiting`]).
+    pub fn client(&self) -> Client {
         let db = format!("t{}", DATABASES.fetch_add(1, Ordering::SeqCst));
-        Client::new(&self.addr, "sf", &db).into()
+        Client::new(&self.addr, "sf", &db)
     }
 }
 
