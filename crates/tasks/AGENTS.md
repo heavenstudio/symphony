@@ -211,7 +211,7 @@ letters use deunicode's exceptions before decomposition, including letters outsi
 Words in another script (including Arabic) differ: SurrealDB spells them in Latin letters and
 PostgreSQL keeps them. Letters newer than PostgreSQL's Unicode version are not letters there.
 The board had a search by meaning, deleted
-([its card](../../docs/DECISIONS.md#board-search-by-meaning)): the tables it wrote (`task_chunk`,
+([its card](../../docs/engineering/analysis/code-review-2026-11.md#board-search-by-meaning)): the tables it wrote (`task_chunk`,
 `task_embedding_source`, `task_embedding_checkpoint`) keep their definitions in `schema.rs`, since
 removing one is a schema move, and nothing here writes or reads them but the whole-board copy, which
 empties them. A board that holds their rows opens and searches as any other

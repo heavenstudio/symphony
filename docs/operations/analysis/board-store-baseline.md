@@ -302,7 +302,7 @@ the load averages are the one-minute ones.
 
 `Store::copy` takes the fixture in one request. The server gives it 270 s, thirty short of the
 300 s its client waits, and ends it there with the board as it was
-([TASKS](../../workflow/TASKS.md#a-board-that-was-copied-or-restored)).
+([BOARD_OPERATIONS](../BOARD_OPERATIONS.md#a-board-that-was-copied-or-restored)).
 
 | copy | load before → after | seconds |
 |---|---|---|
@@ -439,7 +439,7 @@ probes' output. SHA-256: tasks
 
 The paired runs above left PostgreSQL's server at 1,752 MiB with thirty sessions and 14.8 GiB on
 the board ten times the size, against the 512 MiB the store was approved with
-([its card](../../DECISIONS.md#board-pg-cutover)). The cause is one, and the store's reads no longer
+([its card](board-pg-cutover.md#board-pg-cutover)). The cause is one, and the store's reads no longer
 have it.
 
 **The cause.** A command is one connection, and its backend lives as long. A read of a whole
@@ -536,6 +536,12 @@ task's artifacts (`perf/board-pg-memory-peak/`). SHA-256: the export
 `012bf5135d47a0e1d2a4535c5d921767114c5f0772eb2496f24d7f1deb818254`, the change's `tasks`
 `82eee538fbe990b204bc92cc6a40f93acdd2e7e20deaef46740a62d31113163a` and `board_load`
 `45efde74aa929d0a547c7d9ead1d80da146664e2fb15c8c6eea68aa418812549`.
+
+- [r] **board-pg-memory-at-ten-times** — You approved moving the live boards to PostgreSQL only after its memory peak was found and brought under 512 MiB, or shown it cannot be ([[analysis/board-pg-cutover#board-pg-cutover]], B). It is found and fixed for a board of today's size: with thirty sessions writing at once the server now peaks at 377 to 419 MiB over three runs (1,590 to 1,846 before), and at 161 to 165 with ten. On a board ten times today's size it is not under: 1.7 to 1.8 GiB over two runs, down from 14.9. That larger board is a copy of today's made ten times, measured on scratch boards on a busy machine. The 512 MiB target is unchanged and was not met there. May the live boards move at today's size? A: no, the move stays held until more work brings the ten-times peak down. B: yes, the move may go ahead once its other conditions are met, with the ten-times result left open as known. Approve and say A or B in the note, or comment. [[analysis/board-store-baseline#PostgreSQL's memory peak, measured 2026-11-18]]
+  [2026-11-19 01:47] agent — Posted for the board task `perf/board-pg-memory-peak`. Nothing live moves before you answer.
+  [2026-11-19 02:40] owner · approved — B
+  [2026-11-19 02:48] agent — B recorded: the live move may proceed at today’s board size once the other cutover conditions are met. The ten-times peak of 1.7–1.8 GiB remains an open limitation; the 512 MiB target is unchanged. This lifts the memory-decision hold, and I have routed it to the cutover work. No live board was moved by this reply.
+  [2026-11-19 02:48] agent · resolved
 
 ## PostgreSQL's replacement for the plan checks
 

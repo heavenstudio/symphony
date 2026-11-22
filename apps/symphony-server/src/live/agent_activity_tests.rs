@@ -1775,7 +1775,7 @@ fn the_hubs_a_server_starts_hold_its_generations_one_gate_whatever_project_they_
         repository(&tree),
         crate::testing::repository_at(&tree, "beside"),
     );
-    let requests = crate::gate::Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now));
+    let requests = crate::testing::open_gate();
     let shared = crate::front::Shared::new(1, 1, &root, None, requests);
     let other = shared.beside(&beside, "/beside");
     let runtime = tokio::runtime::Builder::new_multi_thread()

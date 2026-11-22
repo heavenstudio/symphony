@@ -8,6 +8,9 @@ Setting the Symphony up and running it: a first project, the commands, the proje
   explained.
 - [The project file](PROJECT_FILE.md) — `symphony.toml`: every table and key a project can set,
   with its default.
+- [Operating the board](BOARD_OPERATIONS.md) — the board's store and the schema contract between
+  its builds, which build moves a live board, who writes it, its server, snapshots and holds, what
+  the command may write, stuck servers, a board that went back or was copied, and board health.
 - [PostgreSQL board lifecycle](POSTGRESQL.md) — a board on PostgreSQL: scratch engine identity,
   server selection, holds, snapshots, recovery and space reclamation; the hosted board, which no
   command reaches yet.

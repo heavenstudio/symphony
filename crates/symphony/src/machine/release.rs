@@ -1,5 +1,5 @@
 //! A release installed on the machine (docs/workflow/RELEASES.md, "The install"): a folder of its own in the
-//! machine folder, `releases/NAME/`, holding the four binaries every project runs (`bin/`), one
+//! machine folder, `releases/NAME/`, holding the four binaries every project runs and the one that moves a board's store (`bin/`), one
 //! build of the client (`client/HASH/`, which a server built the release's way serves from beside
 //! it) and `manifest.json` ([`Manifest`]): the release and its commit, the board schema, the plugin
 //! protocol and the `tasks api` version its binaries said they serve, and each artifact's path and
@@ -30,8 +30,12 @@ pub const MANIFEST: &str = "manifest.json";
 /// `## release-NAME` heading a release ([`noted`]).
 pub const NOTES: &str = "notes.md";
 /// The binaries a release holds, in `bin/`: the server, the board's commands, the messages between
-/// agents and the document command line.
-pub const BINARIES: [&str; 4] = [SERVER, "tasks", "agent-send", "symphony"];
+/// agents and the document command line, which every project runs by its recipes, and the move of
+/// a board's store to the other engine (`tasks-move`), a program apart from `tasks` that a project
+/// on the release runs by its path there, as no recipe reaches it.
+pub const BINARIES: [&str; 5] = [SERVER, "tasks", "agent-send", "symphony", MOVE];
+/// The move of a board's store, the one of its [`BINARIES`] no recipe runs.
+pub const MOVE: &str = "tasks-move";
 /// A release's server, the first of its [`BINARIES`].
 pub const SERVER: &str = "symphony-server";
 /// What a client build must hold to be one.

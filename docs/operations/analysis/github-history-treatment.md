@@ -4,7 +4,7 @@ This is the scratch-only evidence for deciding how to treat the historical path 
 [public-readiness audit](public-readiness.md). It grants no publication clearance and changes no
 real repository ref, release tag, board, credential, setting or consuming checkout.
 
-The [recorded decision](../../DECISIONS.md#github-historical-path-treatment) is **A: retain existing
+The [recorded decision](#github-historical-path-treatment) is **A: retain existing
 public history and clean current assumptions/future outputs**. The scratch rewrite below is
 comparison evidence, not an operation to apply. Existing release targets, consumer pins and
 evidence identities remain intact; the historical paths alone do not require a rewrite to
@@ -92,7 +92,7 @@ frozen tip.
 
 ## The decision and compatibility cost
 
-The [history-treatment card](../../DECISIONS.md#github-historical-path-treatment) records A,
+The [history-treatment card](#github-historical-path-treatment) records A,
 separately from outbound PR delivery. The comparison retains the unselected option's concrete
 cost for reference.
 
@@ -113,10 +113,10 @@ copies](https://docs.github.com/en/authentication/keeping-your-account-and-data-
 Its support policy does not promise purging ordinary non-sensitive paths. No choice can claim
 that all previously public copies have been erased.
 
-Earlier decisions checked: the [accepted client distribution timing](../../DECISIONS.md#client-in-the-crate)
-keeps Git distribution available until consumers migrate; [consumer versioning](../../DECISIONS.md#consumer-contract-versioning)
-and [delivery](../../DECISIONS.md#release-delivery) retain existing pin contracts; the
-[picture-storage split](../../DECISIONS.md#pictures-in-every-clone) keeps card pictures and owner
+Earlier decisions checked: the [accepted client distribution timing](../../engineering/analysis/client-off-git.md#client-in-the-crate)
+keeps Git distribution available until consumers migrate; [consumer versioning](../../engineering/analysis/consumer-contract.md#consumer-contract-versioning)
+and [delivery](../../engineering/analysis/plugin-delivery.md#release-delivery) retain existing pin contracts; the
+[picture-storage split](../../workflow/analysis/attached-artifacts.md#pictures-in-every-clone) keeps card pictures and owner
 history. They did not themselves settle this personal-path scope; the recorded A decision does.
 Optional integration and MIT licensing remain settled and are not asked again.
 
@@ -126,3 +126,12 @@ derivatives can repair their current presentation without rewriting public histo
 an edited capture as an original. That task owns exact image hashes, regions and replacements;
 this historical-path decision does not turn unconfirmed media concerns into credentials or grant
 general permission to erase historical evidence.
+
+- [r] **github-historical-path-treatment** — Older published binaries and one retired guide contain personal home/source-folder paths. No credential is confirmed. Should removing those paths also rewrite existing public Git history? A: retain existing history, clean current machine assumptions and prevent paths in future outputs; the old non-credential paths remain public. B: coordinate targeted history cleanup, removing the identified binary versions and redacting the retired text. Recommended: A on the present evidence, because B changes release and consumer identities without recovering copies already public. Approve and say A or B in the note, or comment. [[analysis/github-history-treatment#The decision and compatibility cost]]
+  [2026-11-17 18:59] agent — The isolated scratch proof removes all thirteen identified blobs and the personal prefix while retaining all 198 register-history blobs and the current main/ten release trees. It changes 3,338 commit IDs, every advertised release target and the known consumer pin; two older branch trees also lose compiled client assets. B requires coordinated refs, consumer manifest/lock updates through its own gate, worktree recovery and a disposition for evidence linked to old SHAs. No real ref, visibility, credential or setting changed.
+
+    **Earlier verdicts checked.** **client-in-the-crate** (A) retains Git distribution until consumers migrate; **consumer-contract-versioning** (B) and **release-delivery** retain the consumer contract. **pictures-in-every-clone** (F) keeps document/card pictures and their history. None decides whether these personal paths justify changing the repository's existing identities. The task requests a sensitive/local-path audit and removal; this card makes the historical scope and its compatibility cost explicit, without treating generic paths as credentials. Containment coordination stays with the orchestrator; B is not a claim that forks, caches or clones can be recalled.
+  [2026-11-17 19:14] owner · approved — A
+  [2026-11-17 19:19] agent — A recorded. Existing Git history, release tags and consumer commit identities stay intact; the identified old non-credential paths remain historical. We will clean current machine-specific assumptions and prevent personal paths in future outputs through the staffed portability, media and publication-readiness work. No history rewrite or renewed vote is needed.
+  [2026-11-17 19:19] agent · resolved
+  [2026-11-17 19:21] agent — Recorded A: retain the existing public history and its release/pin identities, while cleaning current machine assumptions and future outputs. The scratch rewrite remains comparison evidence and will not be applied. Setup portability and ordinary current-media privacy fixes proceed in their separately staffed tasks; retaining history does not waive those fixes or grant publication clearance. The historical-path analysis and readiness disposition will reflect this decision without asking it again.

@@ -51,6 +51,17 @@ lower-case label (its plugin's `tools/symphony/src/lib.rs`), so its header would
 Docs Board Agents" and then that label in lower case until it is capitalised, a one-line change in
 that project.
 
+- [r] **header-page-names** — The header names each page once, in words alone (the ⌂ ☰ ▦ ◉ icons go), and every link to a page uses the same word: Projects (the list of every project on this computer, today "Change board"), then Home (today "⌂ board": the word Board moves to the task columns), Queue (new: the queue has no link today), Docs, Board (the task columns, today "▦ tasks") and Agents. The grey word after the links that only repeated the lit page ("tasks" in the first picture) goes; a document keeps its path there. Approve, or comment with the names or order to change. [[analysis/header-names#Names]]
+  [2026-11-11 20:30] agent — Posted for the board task `app/header-names`. The pictures are this repository's board, dark, today then proposed; the proposed phone picture also shows the ◑ Appearance button (third card) and the two rows (second card).
+
+    At 1440 wide (the left half, where the names are), today then proposed: ![The header today, on the board, at 1440 wide](header-names/names-before-wide.png) ![The header proposed, on the board, at 1440 wide](header-names/names-after-wide.png)
+
+    On a phone, today then proposed: ![The header today, on the board, on a phone](header-names/names-before-phone.png) ![The header proposed, on the board, on a phone](header-names/names-after-phone.png)
+
+    The same words follow wherever pages link to each other: the board's heading says Board (above), and a document's "Board" link says Home (second card's pictures). Not pictured: the queue's "← board" says Home, and a missing page offers Home, Docs and Projects. A project's own page keeps its plugin's label: the consuming project's lower-case one until its plugin capitalises it.
+  [2026-11-11 21:59] owner · approved
+  [2026-11-12 06:45] agent · resolved
+
 ## On a phone
 
 Two rows, and never more: the project switch and the two buttons (Appearance, Activity) on the
@@ -61,6 +72,15 @@ their path or slug at the top of the page. The server's own pages draw the same 
 
 A theme that picks the compact header (`[theme.layouts] header = "compact"`) keeps one row at
 every width, as it does today.
+
+- [r] **header-on-a-phone** — On a phone the header is two rows and never more: Projects, the ◑ Appearance button (third card) and Activity on the first, the five pages spread across the second, all in view at 390 wide. The grey path row (docs / TASKS.md) is dropped on a phone, since the page shows docs/workflow/TASKS.md just under the header. Today the header wraps into three rows. Approve, or comment. [[analysis/header-names#On a phone]]
+  [2026-11-11 20:30] agent — Posted for the board task `app/header-names`. A document on a phone, today then proposed: ![A document on a phone today: three rows](header-names/phone-before.png) ![A document on a phone, proposed: two rows](header-names/phone-after.png)
+
+    At 1440 wide nothing moves: one row, the path kept; only the names differ (first card). The left half, today then proposed: ![A document at 1440 wide today](header-names/phone-before-wide.png) ![A document at 1440 wide, proposed](header-names/phone-after-wide.png)
+
+    Not pictured: six pages, as many as the consuming project has, still fit at 390 wide; a project with more scrolls the second row sideways, shaded at the edge it continues past. The server's own pages (the Projects list, a missing page) draw the same two rows, where today they scroll sideways with "agents" cut off.
+  [2026-11-11 21:59] owner · approved
+  [2026-11-12 06:45] agent · resolved
 
 ## Appearance
 
@@ -73,6 +93,15 @@ the chat and the new task alone.
 
 The panel is part of the deferred module the chat and Activity already load on first use, so a
 first visit pays only for the button.
+
+- [r] **header-appearance** — Appearance moves out of the chat sheet into the header: a round ◑ button, left of Activity, opens a small panel with the same two actions as today, import a shadcn theme or go back to the default theme, for this project on this device. The chat sheet then holds the chat and the new task alone. Approve, or comment. [[analysis/header-names#Appearance]]
+  [2026-11-11 20:30] agent — Posted for the board task `app/header-names`. The wide pictures are the right half of a 1440-wide page. Today, Appearance tops the chat sheet; here its menu is open (it shows through to the tabs under it, which `app/ui-polish-1` repairs): ![Today: the chat sheet's Appearance menu, at 1440 wide](header-names/appearance-before-wide.png) ![Today: the chat sheet's Appearance menu, on a phone](header-names/appearance-before-phone.png)
+
+    Proposed, the header's ◑ button and its panel. On a phone the open panel covers the row of pages until it is closed: ![Proposed: the Appearance panel at 1440 wide](header-names/appearance-after-wide.png) ![Proposed: the Appearance panel on a phone](header-names/appearance-after-phone.png)
+
+    Proposed, the chat sheet without it: ![Proposed: the chat sheet at 1440 wide](header-names/sheet-after-wide.png) ![Proposed: the chat sheet on a phone](header-names/sheet-after-phone.png)
+  [2026-11-11 22:00] owner · approved
+  [2026-11-12 06:45] agent · resolved
 
 ## What the branch changes
 

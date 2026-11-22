@@ -323,7 +323,7 @@ plugin of 0.3 does not write and a host reads as none: no authority is asked of 
   (`Card`, `Picture`, `TaskOffer`, `Submission`, `Theme`, `Image`, `Viewer`…) and a variant's own
   fields are not marked, as a plugin and its tests build them by their fields: a field added to one
   is a new major of the kit, whichever minor of the protocol carries it.
-- **The vocabulary grows in a minor** ([its card](../DECISIONS.md#kit-new-block-version)). A new
+- **The vocabulary grows in a minor** ([its card](../workflow/RELEASES.md#kit-new-block-version)). A new
   kind of block, text span or media is a minor of the kit (1.1.0), never a new major: a plugin
   makes blocks and never has to list them, so one written for 1.0.0 keeps building. `Block`, `Span` and `Media` are `#[non_exhaustive]`,
   and so is every other list of the kit a minor may add to: the words a block carries

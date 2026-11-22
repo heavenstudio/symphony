@@ -3,7 +3,7 @@
 The board's store is moving from SurrealDB to PostgreSQL, and a machine that runs a board needs a
 PostgreSQL to start. This page says what each place it could come from publishes, what that costs
 here and in a consuming project, and which is recommended. The choice is the owner's, on
-[its card](../../DECISIONS.md#postgresql-binary-source). Every fact below was looked up at its
+[its card](#postgresql-binary-source). Every fact below was looked up at its
 source on 2026-11-15 ([sources](#sources)) or measured that day on this machine (an Apple M3 Max,
 16 cores, macOS 26.6.2, at a one-minute load of 50 to 75); [what was not
 verified](#not-verified) is listed apart. Sizes are in MB of a million bytes.
@@ -138,6 +138,29 @@ archive is `theseus-rs/postgresql-binaries` on GitHub.
 | The official Docker image | Linux only, and needs a container runtime on every machine |
 | MacPorts and Fink | listed by the PostgreSQL project; not examined, as each is a package manager like Homebrew and this machine has neither |
 | A bundle Symphony builds and publishes itself | needs a builder for each of four platforms at every release; this repository has none but this Mac |
+
+- [r] **postgresql-binary-source** — The board is moving from SurrealDB to PostgreSQL, so every machine that runs a board needs the PostgreSQL program. SurrealDB's makers publish a ready program, which Symphony downloads once and checks. The PostgreSQL project publishes only source code: for a Mac it points to other people's installers, and for Linux to the system's packages. Nothing on the board's pages changes under any option. Where should the program come from? A: a ready-made build from a community project on GitHub, downloaded once and checked, as SurrealDB is today. B: PostgreSQL's own source code from postgresql.org, downloaded, checked and compiled once on each machine. C: whatever PostgreSQL is installed on the machine (Homebrew on a Mac, the system's packages on Linux), which a person installs. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/postgresql-binary-source#The options]]
+  [2026-11-15 12:05] agent — Posted for the board task `docs/postgresql-binary-source-card`. Each source was read today, and B was tried on this Mac; the pages read are listed in the analysis.
+
+    **What each costs.**
+    - **A:** the least work, and it installs in seconds: today's download with other names. The build is made by a project that is one person in practice (96 of its 100 listed contributions) and calls itself community-maintained, not a vendor. For this Mac it is an 89 MB download and 283 MB on disk, most of it libraries the board never uses. It has followed each PostgreSQL release within four days, the two times checked. It needs macOS 15, or a Linux as new as Debian 12.
+    - **B:** nobody's build but PostgreSQL's own source, checked against the checksum PostgreSQL publishes. Tried here: about 6 minutes of CPU (4 and a half on the clock), once per machine and again for each new version, a few times a year. The result is 35 MB from a 23 MB download, and it started, answered a text search and stopped. It needs a compiler and four build tools on every machine: a Mac with the developer tools has them, a Linux machine needs them installed. A compile can fail where a download cannot, after a system update say. It is more to write than A, and a consuming project needs it as an installed command where today the board prints one line.
+    - **C:** nothing for Symphony to download or build. You install PostgreSQL once on this Mac (`brew install postgresql@18`), and so does whoever sets up each other machine; on Linux that takes the administrator's password. The version is then the machine's and not Symphony's: it moves when Homebrew or the system updates, two machines can differ, and tests fail on a machine where nobody installed it.
+
+    **Not verified.** B was not tried on Linux or on an Intel Mac: no such machine was at hand. A's build was downloaded and measured, not run. Whether the board will need a library the trial left out (ICU, for sorting text by language) is not known until its PostgreSQL schema is written; if it does, B grows a second thing to compile.
+
+    **Why B.** It is the only option that keeps what you have today: the program comes from the people who write it, at a version Symphony names, checked before use. It is also the smallest, an eighth of A on disk. Its price is minutes once per machine and a build step to keep working. A is the fallback if that build proves a burden. C gives up knowing that a test, a consuming project and this machine run the same database.
+
+    **Earlier verdicts checked.** Your approval of PostgreSQL for the board (2026-11-09, recorded on the board task `tools/board-postgresql`) chose the database and that Symphony's server starts it; it does not say whose build of it a machine runs. No card in this register speaks of where a database program comes from.
+  [2026-11-15 12:32] owner · approved — C. This project should only depend on it being available, not manage it's installation for now. In the future, some build based aspect can be added, including:
+    1. Devcontainer - user by the maestro project
+    2. Dockefile - very commonly used. Should ideally be the same of the devcontainer since it supports docker anyway
+    3. Nix based - interesting for microvm post start install
+
+    And those can be documented to be further explored later. For now however, a computer based install using whatever is available should be setup, by having an agent do it and add settings to connect to the symphony.toml settings
+  [2026-11-15 12:33] owner · approved — Ah, and do use the latest version locally in homebrew, update it if needed.
+  [2026-11-18 18:12] agent — C is built. The board takes the PostgreSQL the machine has and installs none: it finds `postgres` on `PATH`, or in the folder `[board] postgresql` names in `symphony.toml`, and asks for 18 or later, the Homebrew version on this Mac (`tools/board-pg-server`, `tools/postgresql-setup-portable`). The setup line is in [PROJECT_FILE](../PROJECT_FILE.md#board). A devcontainer, a Dockerfile and Nix are not built and no task is filed for them.
+  [2026-11-19 01:15] agent · resolved
 
 ## Side by side
 

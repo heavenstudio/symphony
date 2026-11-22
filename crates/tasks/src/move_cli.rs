@@ -43,7 +43,7 @@ nothing starts or reads the store and the hold is not released: its holder's
 next tasks-move finishes what committed and undoes what did not.
 
 Afterwards the board holds a new recovery generation and is bound to none:
-`just tasks recovery rebind` binds it again (docs/workflow/TASKS.md). Under
+`just tasks recovery rebind` binds it again (docs/operations/BOARD_OPERATIONS.md). Under
 SYMPHONY_UNASKED, which the board recipes set, a board outside a scratch
 place is refused: a guard against accident, which grants nothing by its
 absence.

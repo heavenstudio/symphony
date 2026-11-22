@@ -35,17 +35,20 @@ fn re_escape(text: &str) -> String {
     out
 }
 
-/// The lines of a document outside its code fences and its register region, numbered from 1. A
-/// region marker inside a fence still counts.
+/// The lines of a document outside its code fences, its register region and its cards' own lines
+/// wherever they sit ([`crate::register::carded`]), numbered from 1. A region marker inside a fence
+/// still counts.
 fn prose(text: &str) -> Vec<(usize, &str)> {
     let (mut in_register, mut in_fence) = (false, false);
     let mut found = Vec::new();
-    for (index, line) in splitlines(text).into_iter().enumerate() {
+    let lines = splitlines(text);
+    let carded = crate::register::carded(&lines);
+    for (index, line) in lines.into_iter().enumerate() {
         if is_fence(line) {
             in_fence = !in_fence;
         } else if strip(line) == REGION_START || strip(line) == REGION_END {
             in_register = strip(line) == REGION_START;
-        } else if !in_fence && !in_register {
+        } else if !in_fence && !in_register && !carded[index] {
             found.push((index + 1, line));
         }
     }
@@ -87,7 +90,7 @@ fn named_in<'a>(line: &str, slugs: &HashMap<char, Vec<&'a str>>) -> Vec<&'a str>
     found
 }
 
-/// Every card slug named in a document's prose. Registers, code blocks, `docs/history/` and a top
+/// Every card slug named in a document's prose. Registers, a card's own lines, code blocks, `docs/history/` and a top
 /// `docs/analysis/` are exempt: documents describe the design as it is now; why and when it was
 /// decided live on the cards and in the ledger.
 pub fn history_in_prose(root: &Path) -> Result<Vec<Finding>, ReviewError> {
@@ -129,6 +132,24 @@ pub fn history_in_prose(root: &Path) -> Result<Vec<Finding>, ReviewError> {
         }
     }
     Ok(found)
+}
+
+/// Each card slug more than one card of the project's documents carries, with where each is
+/// (`path:line`), sorted by slug. One name is one card: a verdict saved on a page goes to the first
+/// card of that name there, a task waiting on `decision:NAME` ends on either's answer, and a card
+/// named in bold opens the first.
+pub fn repeated_slugs(root: &Path) -> Result<Vec<(String, Vec<String>)>, ReviewError> {
+    let mut places: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for doc in scan(root)? {
+        for card in &doc.decisions {
+            places
+                .entry(card.slug.clone())
+                .or_default()
+                .push(format!("{}:{}", doc.path, card.line));
+        }
+    }
+    places.retain(|_, held| held.len() > 1);
+    Ok(places.into_iter().collect())
 }
 
 /// What the project's plugins' prose rules find in its documents: (path, line, what), with the
@@ -255,8 +276,8 @@ pub fn settings(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i3
     0
 }
 
-/// `symphony status --lint`: the project file, card slugs in prose, the plugins' prose rules and
-/// their document checks, each finding named on `err`; exit 1 on any, 2 when the docs cannot be
+/// `symphony status --lint`: the project file, card slugs in prose, a card name more than one card
+/// carries, the plugins' prose rules and their document checks, each finding named on `err`; exit 1 on any, 2 when the docs cannot be
 /// read.
 pub fn main(root: &Path, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let project = project_problems(root);
@@ -277,6 +298,18 @@ pub fn main(root: &Path, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             return 2;
         }
     };
+    // `history_in_prose` read these documents a moment ago: they read.
+    let repeated = repeated_slugs(root).unwrap_or_default();
+    for (slug, places) in &repeated {
+        let _ = writeln!(err, "{}: card {slug} again", places.join(", "));
+    }
+    if !repeated.is_empty() {
+        let _ = writeln!(
+            err,
+            "✖ {} card name(s) used by more than one card. One name is one card, wherever it sits: rename the newer.",
+            repeated.len()
+        );
+    }
     let (verdicts, rules) = rule_findings(root);
     let (problems, checks) = check_findings(root);
     for (path, line, word) in slugs.iter().chain(&verdicts) {
@@ -310,12 +343,12 @@ pub fn main(root: &Path, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             checks.join(", ")
         );
     }
-    if !slugs.is_empty() || !verdicts.is_empty() || !problems.is_empty() {
+    if !slugs.is_empty() || !repeated.is_empty() || !verdicts.is_empty() || !problems.is_empty() {
         return 1;
     }
     let _ = writeln!(
         out,
-        "✅ docs describe the current design (no card slugs in prose, nothing the plugins' rules and checks refuse)"
+        "✅ docs describe the current design (no card slugs in prose, each card name one card, nothing the plugins' rules and checks refuse)"
     );
     0
 }

@@ -14,11 +14,11 @@ use serde_json::{Map, Value, json};
 use symphony_api::AHEAD_BYTES;
 
 use crate::cache_documents::{self as documents, prose};
-use crate::cache_pages::{LIVE, keeps, shows, store_opened};
+use crate::cache_pages::{self, LIVE, hold, keeps, shows, since, store_opened};
 use crate::cache_tasks;
 use crate::chrome::Chrome;
 use crate::site::{Site, asked_keys, first_of};
-use crate::{SHOWN, common, look_parity};
+use crate::{SHOWN, look_parity};
 
 /// The look-parity fixture's task, which the stand-in serves whatever the slug asked.
 const TASK: &str = "visual/in-progress";
@@ -127,7 +127,7 @@ const CONTENTS_WHOLE: &str = "document.querySelectorAll('main nav.doc-toc .toc-l
 
 /// The stand-in, serving the fixture task's page and thread for any slug, and no landing offer.
 fn site() -> Site {
-    let site = Site::start(crate::dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let content = look_parity::responses();
     for path in ["/api/task-page", "/api/task-history"] {
         site.set_json(path, &content[path]);
@@ -386,8 +386,8 @@ fn the_first_eight_links_on_the_screen_are_read_once_after_the_pages_own_reads_a
     assert_eq!(items.get("document:docs/d7.md"), None, "{items:#?}");
 
     // The task opened: drawn from the device before any answer, then checked, unchanged.
-    let before = cache_tasks::answered(&site);
-    cache_tasks::hold(&site, &cache_tasks::READS, true);
+    let before = cache_pages::answered(&site, &cache_tasks::READS);
+    hold(&site, &cache_tasks::READS, true);
     chrome.open("about:blank");
     chrome.open(&site.url(&format!("/task/{TASK}")));
     cache_tasks::draws(&mut chrome, TASK, "Task brief", "Owner message");
@@ -397,24 +397,24 @@ fn the_first_eight_links_on_the_screen_are_read_once_after_the_pages_own_reads_a
         "the task from this device",
     );
     assert_eq!(
-        cache_tasks::answered(&site),
+        cache_pages::answered(&site, &cache_tasks::READS),
         before,
         "drawn before any read was answered"
     );
-    cache_tasks::hold(&site, &cache_tasks::READS, false);
+    hold(&site, &cache_tasks::READS, false);
     shows(&mut chrome, LIVE, "the task, once checked");
     cache_tasks::unchanged_once(
-        &cache_tasks::since(&site, &before, "/api/task-page"),
+        &since(&site, &cache_tasks::READS, &before, "/api/task-page"),
         "the task's page read ahead",
     );
     cache_tasks::unchanged_once(
-        &cache_tasks::since(&site, &before, "/api/task-history"),
+        &since(&site, &cache_tasks::READS, &before, "/api/task-history"),
         "its thread read ahead",
     );
 
     // A document opened: drawn whole from its first part, then its outline read, and no section.
-    let before = documents::answered(&site);
-    documents::hold(&site, true);
+    let before = cache_pages::answered(&site, &documents::READS);
+    hold(&site, &documents::READS, true);
     chrome.open("about:blank");
     chrome.open(&site.url("/docs/near.md"));
     documents::draws(
@@ -427,16 +427,19 @@ fn the_first_eight_links_on_the_screen_are_read_once_after_the_pages_own_reads_a
         "the document from this device",
     );
     assert_eq!(
-        documents::answered(&site),
+        cache_pages::answered(&site, &documents::READS),
         before,
         "drawn before any read was answered"
     );
-    documents::hold(&site, false);
+    hold(&site, &documents::READS, false);
     shows(&mut chrome, documents::LIVE, "the document, once checked");
     documents::retitled(&mut chrome, &site, "docs/near.md", 4183, "Near, retitled");
-    documents::outline_once(&documents::since(&site, &before, "/api/document"), 200);
+    documents::outline_once(
+        &since(&site, &documents::READS, &before, "/api/document"),
+        200,
+    );
     assert_eq!(
-        documents::since(&site, &before, "/api/section"),
+        since(&site, &documents::READS, &before, "/api/section"),
         [],
         "every section came with the read ahead and is current"
     );
@@ -593,8 +596,8 @@ fn a_large_document_is_read_ahead_in_its_first_part_within_the_cap_on_the_wire_a
 
     // Opened: its first sections drawn from the device before any answer; then its outline is
     // read, and only the sections its first part left out.
-    let before = documents::answered(&site);
-    documents::hold(&site, true);
+    let before = cache_pages::answered(&site, &documents::READS);
+    hold(&site, &documents::READS, true);
     chrome.open("about:blank");
     chrome.open(&site.url("/docs/large.md"));
     shows(
@@ -615,11 +618,11 @@ fn a_large_document_is_read_ahead_in_its_first_part_within_the_cap_on_the_wire_a
         "every heading in the contents, from the device",
     );
     assert_eq!(
-        documents::answered(&site),
+        cache_pages::answered(&site, &documents::READS),
         before,
         "drawn before any read was answered"
     );
-    documents::hold(&site, false);
+    hold(&site, &documents::READS, false);
     shows(&mut chrome, documents::LIVE, "the document, once checked");
     assert_eq!(
         chrome.eval(CONTENTS_WHOLE),
@@ -628,8 +631,11 @@ fn a_large_document_is_read_ahead_in_its_first_part_within_the_cap_on_the_wire_a
     );
     documents::draws(&mut chrome, &["Part 60: "]);
     documents::retitled(&mut chrome, &site, "docs/large.md", 4183, "Large, retitled");
-    documents::outline_once(&documents::since(&site, &before, "/api/document"), 200);
-    let asked: Vec<String> = documents::since(&site, &before, "/api/section")
+    documents::outline_once(
+        &since(&site, &documents::READS, &before, "/api/document"),
+        200,
+    );
+    let asked: Vec<String> = since(&site, &documents::READS, &before, "/api/section")
         .iter()
         .flat_map(|answer| asked_keys(&answer.target))
         .collect();

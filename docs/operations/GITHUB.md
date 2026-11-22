@@ -11,7 +11,7 @@ GitHub Apps and rulesets a delivery needs, each step in order, and how to check 
 page is the reference those steps link to.
 
 It is a program of its own (`crates/symphony-github`). It reaches the board through
-[`tasks api`](../workflow/TASKS.md#the-tasks-api) and nothing else, GitHub through `curl`, and keeps what it
+[`tasks api`](../engineering/BOARD_API.md#the-tasks-api) and nothing else, GitHub through `curl`, and keeps what it
 must remember in the folder the board names for it. No other package of the workspace builds with
 it, which `crates/symphony-github/tests/boundary.rs` holds. Nothing starts it but an operator,
 a land where the project's `[land] delivery` names it, and a release run where its `[releases]
@@ -259,7 +259,7 @@ two again.
 ## What is kept
 
 The state folder is `symphony/integrations/github` in the git common dir
-([what a program outside the board keeps](../workflow/TASKS.md#what-a-program-outside-the-board-keeps)): in
+([what a program outside the board keeps](../engineering/BOARD_API.md#what-a-program-outside-the-board-keeps)): in
 no worktree and no commit, and backed up with the repository's common dir or not at all.
 
 - `state.json`: the repository bound by its number, a mapping for each task exchanged (the
@@ -311,7 +311,7 @@ A reconcile is safe to run again and to interrupt.
 | An issue answers 404 | its mapping is flagged; the task is not touched and the issue is not created again |
 | The rate limit (429, or 403 with `Retry-After` or no quota left) | nothing is sent before the time GitHub gave; the same preview goes on after it |
 | The board was restored or rebound, or the slug names another task | the mapping is suspended until `resolve`; no task is written by a mapping kept for another |
-| The board has no recovery binding | no mapping is written or made: [bind the board](../workflow/TASKS.md#a-board-that-was-copied-or-restored) first |
+| The board has no recovery binding | no mapping is written or made: [bind the board](BOARD_OPERATIONS.md#a-board-that-was-copied-or-restored) first |
 | The state folder was lost | the next preview maps again what both sides still show (a proposal by its slug and issue line) and imports none of it twice; a publication is named with its issue and mapped again once `publish` opts its task in, found by its marker and not published twice |
 | Issues moved between pages while they were listed | what was read is used and the cursor stays, so the next preview lists from it again |
 

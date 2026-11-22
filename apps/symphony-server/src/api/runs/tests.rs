@@ -871,31 +871,10 @@ async fn the_routes_refuse_a_bad_ask_before_any_hub_and_answer_through_one() {
     use axum::http::StatusCode;
     let tree = Tree::new();
     let root = crate::testing::repository(&tree);
-    let shared = crate::front::Shared::new(
-        1,
-        1234,
-        &root,
-        None,
-        crate::gate::Gate::new(Arc::new(|_| Ok(None)), Arc::new(std::time::Instant::now)),
-    );
+    let shared = crate::front::Shared::new(1, 1234, &root, None, crate::testing::open_gate());
     let ask = |uri: String| {
         let shared = shared.clone();
-        let request = axum::http::Request::builder()
-            .uri(uri)
-            .header("Host", "localhost:1234")
-            .body(())
-            .unwrap();
-        async move {
-            let response = crate::api::answer(&shared, request).await.unwrap();
-            let status = response.status();
-            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-                .await
-                .unwrap();
-            (
-                status,
-                serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
-            )
-        }
+        async move { crate::testing::get_json(&shared, &uri).await }
     };
     let (status, said) = ask("/api/runs?end=running".into()).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{said}");

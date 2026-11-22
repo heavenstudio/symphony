@@ -262,3 +262,50 @@ fn the_owner_can_overturn_it() {
         "{out}"
     );
 }
+
+// A card inline in its document: a verdict is written where the card sits, and the register
+// region the document also holds is regrouped without it.
+
+#[test]
+fn a_verdict_on_an_inline_card_is_written_in_place_and_leaves_the_prose_around_it() {
+    let text = "# Lamps\n\n## How many\n\nThere are 141.\n\n- [ ] **lamp-count** — 141 lamps.\n  [2026-11-21 10:00] agent — Posted.\n\nThree sizes.\n\n## Finishes\n\nBrass.\n";
+    let out = set_decision(
+        text,
+        "lamp-count",
+        "approved",
+        "B",
+        "2026-11-21 11:00",
+        &plain(),
+    )
+    .unwrap();
+    assert_eq!(
+        out,
+        text.replace("- [ ] **lamp-count**", "- [x] **lamp-count**")
+            .replace(
+                "agent — Posted.\n",
+                "agent — Posted.\n  [2026-11-21 11:00] owner · approved — B\n"
+            )
+    );
+}
+
+#[test]
+fn a_verdict_on_an_inline_card_keeps_it_out_of_the_documents_register_region() {
+    let text = "# M\n\n- [ ] **inline** — Above.\n\nWords.\n\n<!-- register:start -->\n### T\n\n- [ ] **held** — In the region.\n<!-- register:end -->\n";
+    let out = set_decision(
+        text,
+        "inline",
+        "rejected",
+        "no",
+        "2026-11-21 11:00",
+        &plain(),
+    )
+    .unwrap();
+    assert!(
+        out.starts_with("# M\n\n- [-] **inline** — Above.\n  [2026-11-21 11:00] owner · rejected — no\n\nWords.\n\n<!-- register:start -->\n## Needs your decision\n"),
+        "{out}"
+    );
+    assert_eq!(out.matches("**inline**").count(), 1);
+    let cards = parse_decisions(&lines(&out));
+    assert_eq!(cards[0].group(&plain()), Group::Agent);
+    assert_eq!(cards[1].group(&plain()), Group::Decide);
+}

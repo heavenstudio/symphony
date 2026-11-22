@@ -1139,8 +1139,8 @@ outside the database. A live board that reads below it went back: its store
 lost what was written since, and every command that opens it refuses it,
 `tasks migrate` included (exit 1 here). The owner, and only the owner,
 accepts a board older on purpose (a fresh store, a restore they chose) with
---accept, naming the schema it holds: docs/workflow/TASKS.md, A board that went back,
-says how to recover one first.
+--accept, naming the schema it holds: docs/operations/BOARD_OPERATIONS.md, A board that
+went back, says how to recover one first.
 
 options:
   -h, --help         show this help message and exit
@@ -1169,7 +1169,7 @@ after an unclean end, before a replay, or of a store that went back) is kept
 until the owner removes it (rm -rf its folder); of the others the newest 3 are
 kept. Each grows towards the whole store's size as the store moves on, and the
 room a reclaim frees comes back only once the snapshots of the old store are
-removed: docs/workflow/TASKS.md, Snapshots.
+removed: docs/operations/BOARD_OPERATIONS.md, The store and its server.
 
 options:
   -h, --help  show this help message and exit

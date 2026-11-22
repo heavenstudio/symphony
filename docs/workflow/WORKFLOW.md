@@ -21,7 +21,7 @@ immutable built-in v1 definition.
 
 The selected activation contract is automatic activation of a valid committed definition when
 the board reads it, with complete mappings and prerequisites required, as decided by
-[the activation card](../DECISIONS.md#configurable-workflow-activation). The board activates
+[the activation card](analysis/configurable-delivery-workflow.md#configurable-workflow-activation). The board activates
 ([below](#activation-and-mappings)), admits each operation ([admission](#admission)), answers a
 holder's exit ([recovery](#recovery)) and an execution attempt's ending ([attempts](#attempts)),
 and keeps its records behind fences on every writer ([records](#records-on-the-board)). A candidate's
@@ -341,7 +341,7 @@ A guard is a decision the project keeps in its own approval ledger, which an edg
 is taken: a person's approval of a design, say. The board never holds the ledger and never decides
 a guard. The project's approval authority signs what its ledger decided, and the board verifies
 that signature by the key the project commits and admits the edge only on that word
-([the decision](../DECISIONS.md#revision-bound-project-guards),
+([the decision](analysis/revision-bound-transition-guards.md#revision-bound-project-guards),
 [the analysis](analysis/revision-bound-transition-guards.md)). What it asks of a project, in
 plain words:
 

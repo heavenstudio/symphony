@@ -355,6 +355,22 @@ fn swipe(chrome: &mut Chrome, x: u32, from: u32, by: u32) {
     touch("touchEnd", 0.66, json!([]));
 }
 
+/// The wire's samples (`wire.cases.json`'s `samples`).
+fn samples() -> serde_json::Value {
+    let cases: serde_json::Value =
+        serde_json::from_str(include_str!("../../../symphony-web/src/wire.cases.json"))
+            .expect("the wire's cases");
+    cases["samples"].clone()
+}
+
+/// A page of `width` (a phone's at 760 px or under, 844 px high; else 900), over the stand-in's
+/// `path`.
+fn open(chrome: &mut Chrome, site: &Site, path: &str, width: u32) {
+    let phone = width <= 760;
+    chrome.viewport(width, if phone { 844 } else { 900 }, phone);
+    chrome.open(&site.url(path));
+}
+
 /// The text of every element `selector` matches, in document order.
 fn texts(chrome: &mut Chrome, selector: &str) -> Vec<String> {
     let value = chrome.eval(&format!(
@@ -426,10 +442,7 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         if kind == "board" {
             // The fixture is Ready; the phone now mounts only its selected Review stage.
             // Measure the same loaded lifecycle board as the established byte baseline.
-            chrome.call(
-                "Emulation.setDeviceMetricsOverride",
-                json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
-            );
+            chrome.viewport(1440, 900, false);
         }
         chrome.open(&site.url(path));
         assert!(
@@ -643,7 +656,7 @@ fn superseded_navigation_preserves_the_new_page_scroll_until_ready() {
     "#}));
     chrome.open(&site.url("/"));
     assert!(chrome.wait_for(
-        "location.pathname === '/tasks' && document.documentElement.dataset.navigation === 'ready' && document.querySelector('.kanban') !== null",
+        &format!("location.pathname === '/tasks' && {READY} && document.querySelector('.kanban') !== null"),
         SHOWN
     ));
     assert_eq!(chrome.eval("window.navigationEvents"), json!(2));
@@ -677,10 +690,7 @@ fn assert_navigation_scroll(when: &str) {
     );
     chrome.open(&site.url("/"));
     wait_for_board(&mut chrome);
-    assert!(chrome.wait_for(
-        "document.documentElement.dataset.navigation === 'ready'",
-        SHOWN
-    ));
+    assert!(chrome.wait_for(READY, SHOWN));
     assert_eq!(
         chrome.eval("window.earlyScroll"),
         json!(1200),
@@ -707,7 +717,7 @@ fn assert_navigation_scroll(when: &str) {
     assert_eq!(chrome.eval("scrollY"), json!(5000));
     chrome.eval("document.querySelector('header a[href=\"/tasks\"]').click()");
     assert!(chrome.wait_for(
-            "location.pathname === '/tasks' && document.documentElement.dataset.navigation === 'ready' && document.querySelector('.kanban') !== null",
+            &format!("location.pathname === '/tasks' && {READY} && document.querySelector('.kanban') !== null"),
             SHOWN
         ));
     assert_eq!(
@@ -749,7 +759,9 @@ fn same_kind_navigation_resets_scroll_clamped_by_the_new_page() {
     );
     chrome.open(&site.url("/task/tools/example"));
     assert!(chrome.wait_for(
-        "document.documentElement.dataset.navigation === 'ready' && document.querySelector('.task[data-slug=\"tools/example\"]') !== null",
+        &format!(
+            "{READY} && document.querySelector('.task[data-slug=\"tools/example\"]') !== null"
+        ),
         SHOWN
     ));
     chrome.eval(
@@ -769,10 +781,7 @@ fn same_kind_navigation_resets_scroll_clamped_by_the_new_page() {
         "const next = document.createElement('a'); next.href = {}; document.body.append(next); next.click(); next.remove()",
         json!(destination)
     ));
-    assert!(chrome.wait_for(
-        "document.documentElement.dataset.navigation === 'ready'",
-        SHOWN
-    ));
+    assert!(chrome.wait_for(READY, SHOWN));
     assert_eq!(chrome.eval("window.beforeClamp"), json!(5000));
     assert_eq!(
         chrome.eval("afterClamp > 0 && afterClamp < beforeClamp"),
@@ -858,10 +867,14 @@ fn document_and_queue_loads_preserve_a_scroll_made_on_the_mounted_page() {
         "#}),
         );
         chrome.open(&site.url(path));
-        assert!(chrome.wait_for(
-            &format!("document.documentElement.dataset.navigation === 'ready' && document.querySelector('[data-ready={ready}]') !== null"),
-            SHOWN
-        ), "{path}: {}", chrome.eval("document.body.innerText"));
+        assert!(
+            chrome.wait_for(
+                &format!("{READY} && document.querySelector('[data-ready={ready}]') !== null"),
+                SHOWN
+            ),
+            "{path}: {}",
+            chrome.eval("document.body.innerText")
+        );
         assert_eq!(chrome.eval("window.dataAfterMount"), json!(true), "{path}");
         assert_eq!(chrome.eval("window.earlyScroll"), json!(400), "{path}");
         assert_eq!(
@@ -878,17 +891,14 @@ fn old_page_scrolling_during_navigation_does_not_keep_the_new_page_offset() {
     let Some(mut chrome) = chrome() else { return };
     chrome.open(&site.url("/"));
     wait_for_board(&mut chrome);
-    assert!(chrome.wait_for(
-        "document.documentElement.dataset.navigation === 'ready'",
-        SHOWN
-    ));
+    assert!(chrome.wait_for(READY, SHOWN));
     chrome.eval("document.body.style.minHeight = '30000px'; scrollTo(0,5000)");
     assert_eq!(chrome.eval("scrollY"), json!(5000));
     chrome.eval("document.querySelector('header a[href=\"/tasks\"]').click(); window.oldPageShown = !document.getElementById('review-root-review').hidden; scrollTo(0,4000); window.oldPageScroll = scrollY");
     assert_eq!(chrome.eval("window.oldPageShown"), json!(true));
     assert_eq!(chrome.eval("window.oldPageScroll"), json!(4000));
     assert!(chrome.wait_for(
-        "location.pathname === '/tasks' && document.documentElement.dataset.navigation === 'ready' && document.querySelector('.kanban') !== null",
+        &format!("location.pathname === '/tasks' && {READY} && document.querySelector('.kanban') !== null"),
         SHOWN
     ));
     assert_eq!(chrome.eval("scrollY"), json!(0));
@@ -896,7 +906,9 @@ fn old_page_scrolling_during_navigation_does_not_keep_the_new_page_offset() {
     assert_eq!(chrome.eval("scrollY"), json!(5000));
     chrome.eval("history.back()");
     assert!(chrome.wait_for(
-        "location.pathname === '/' && document.documentElement.dataset.navigation === 'ready' && document.querySelector('.hero-title') !== null",
+        &format!(
+            "location.pathname === '/' && {READY} && document.querySelector('.hero-title') !== null"
+        ),
         SHOWN
     ));
     assert_eq!(chrome.eval("scrollY"), json!(0));
@@ -908,10 +920,7 @@ fn a_failed_navigation_reports_failed_with_the_page_error() {
     let Some(mut chrome) = chrome() else { return };
     chrome.open(&site.url("/"));
     wait_for_board(&mut chrome);
-    assert!(chrome.wait_for(
-        "document.documentElement.dataset.navigation === 'ready'",
-        SHOWN
-    ));
+    assert!(chrome.wait_for(READY, SHOWN));
     chrome.call(
         "Network.setBlockedURLs",
         json!({"urls":["*/assets/board-*.js"]}),
@@ -934,10 +943,7 @@ fn a_page_whose_build_is_gone_loads_again_once_and_one_still_served_says_the_fai
     let Some(mut chrome) = chrome() else { return };
     chrome.open(&site.url("/"));
     wait_for_board(&mut chrome);
-    assert!(chrome.wait_for(
-        "document.documentElement.dataset.navigation === 'ready'",
-        SHOWN
-    ));
+    assert!(chrome.wait_for(READY, SHOWN));
     chrome.eval("window.__kept = true");
     let shell = chrome.eval(
         "document.querySelector(\"script[src*='/assets/symphony-shell-']\").getAttribute('src')",
@@ -1026,10 +1032,7 @@ fn task_controls_read_the_board_again_for_the_window_already_chosen() {
     let site = site();
     site.set_json("/api/task-board", &site::example_listing("ready"));
     let Some(mut chrome) = chrome() else { return };
-    chrome.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    chrome.viewport(1440, 900, false);
     chrome.open(&site.url("/tasks"));
     let shown = "document.querySelector('[data-slug=\"tools/example\"]') !== null && document.querySelector('.column[aria-busy=true]') === null";
     assert!(
@@ -1069,19 +1072,13 @@ fn task_controls_keep_their_values_and_revealed_rows_after_scrolling() {
     let site = site();
     site.set_json("/api/task-board", &site::example_listing("ready"));
     let Some(mut chrome) = chrome() else { return };
-    chrome.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    chrome.viewport(1440, 900, false);
     chrome.call("Page.addScriptToEvaluateOnNewDocument", json!({"source":
         "const observer = new MutationObserver(() => { if (document.head) { const style = document.createElement('style'); style.textContent = '.column { margin-top: 20000px }'; document.head.append(style); observer.disconnect(); } }); observer.observe(document, {childList: true, subtree: true});"
     }));
     chrome.open(&site.url("/tasks"));
     assert!(chrome.wait_for("document.querySelector('.kanban') !== null", SHOWN));
-    assert!(chrome.wait_for(
-        "document.documentElement.dataset.navigation === 'ready'",
-        SHOWN
-    ));
+    assert!(chrome.wait_for(READY, SHOWN));
     assert_eq!(
         chrome.eval("document.querySelector('[data-slug]') === null"),
         json!(true)
@@ -1164,15 +1161,15 @@ fn a_revealed_column_keeps_its_rows_look_ahead_before_it_reaches_the_screen() {
         }),
     );
     let Some(mut chrome) = chrome() else { return };
-    chrome.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1280,"height":800,"deviceScaleFactor":1,"mobile":false}),
-    );
+    chrome.viewport(1280, 800, false);
     chrome.call("Page.addScriptToEvaluateOnNewDocument", json!({"source":
         "const observer = new MutationObserver(() => { if (document.head) { const style = document.createElement('style'); style.textContent = '.column[data-status=ready] { margin-top: 20000px }'; document.head.append(style); observer.disconnect(); } }); observer.observe(document, {childList: true, subtree: true});"
     }));
     chrome.open(&site.url("/tasks"));
-    assert!(chrome.wait_for("document.documentElement.dataset.navigation === 'ready' && document.querySelector('#column-ready') !== null", SHOWN));
+    assert!(chrome.wait_for(
+        &format!("{READY} && document.querySelector('#column-ready') !== null"),
+        SHOWN
+    ));
     assert!(
         !site
             .targets()

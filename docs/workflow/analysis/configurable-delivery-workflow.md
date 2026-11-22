@@ -5,10 +5,10 @@ advancing work uses the same server admission rules. A task can therefore be in 
 awaiting review, or in Build while blocked, without renaming a column or losing its phase.
 
 This is the implementation contract proposed for the C direction on
-[the workflow card](../../DECISIONS.md#project-workflow-shape). It is not implemented. The earlier
+[the workflow card](project-workflow.md#project-workflow-shape). It is not implemented. The earlier
 [options analysis](project-workflow.md) explains the alternatives; its B recommendation does not
 govern this contract. The one additional product choice is
-[how a changed graph becomes active](../../DECISIONS.md#configurable-workflow-activation).
+[how a changed graph becomes active](#configurable-workflow-activation).
 Project artifact approval semantics remain the separate design task
 `design/revision-bound-transition-guards`; execution providers and immutable attempts remain
 `tools/remote-execution-attempts`. Neither dependency is claimed available here.
@@ -289,7 +289,7 @@ completion/landing and retained owner lines, never a custom terminal-looking sta
 ## Version changes, migration and rollback
 
 The proposed activation policy is pending on
-[its own card](../../DECISIONS.md#configurable-workflow-activation). Reading a committed definition
+[its own card](#configurable-workflow-activation). Reading a committed definition
 and making it authoritative are distinct operations. A task branch cannot grant itself authority.
 The candidate must come from the project's committed default branch; an adapter records its
 capabilities/version before any custom graph activates.
@@ -336,6 +336,22 @@ capabilities/version before any custom graph activates.
 
 The existing live-board/main-only migration and writer rules still apply. No live migration,
 shared-service restart, consumer checkout edit or deployment is authorized by this design.
+
+- [r] **configurable-workflow-activation** — When a project commits a changed workflow, should its board start using it at once, or wait for a deliberate activation? A: preview the affected tasks and explicitly activate that committed version, applying all required mappings together. B: automatically activate a valid committed version when the board next reads it, stopping if a mapping or prerequisite is missing. Recommended: A. Approve and say A or B, or comment. [[analysis/configurable-delivery-workflow#Version changes, migration and rollback]]
+  [2026-11-17 19:30] agent — Proposed for `tools/configurable-delivery-workflow`. Both options preserve the approved C graph, task and evidence history, reject stale requests, fence old writers and require complete mappings for removed IDs. This asks only when an otherwise valid change takes effect; it authorizes no live migration now.
+
+    **A** keeps the current workflow running until a project administrator accepts a preview against the current board revision. It adds one operational action per change, including a rollback, and the interface must show committed versus active versions. A task changing during the preview makes activation stale and requires another preview.
+
+    **B** needs no separate action for a compatible change. A commit can change routing or staffing for live work as soon as it is observed; incompatible changes still stop for mappings. Operators must treat every workflow commit as an activation and use another committed change to roll it back.
+
+    **Required under either option:** unknown or removed IDs stop activation until every affected task and blocked resume target has a valid mapping. Active attempts must drain or be explicitly invalidated. Concurrent writers and stale requests are fenced; failure leaves the previous version active, with no partial mapping. Rollback is a new audited activation with mappings and retained history, not a schema downgrade. Neither option decides project artifact-guard semantics.
+
+    **Why A.** A workflow change can move existing blocked resume targets, replace who gets staffed and affect pending delivery. The preview makes those consequences reviewable before the board changes them. Activation remains one audited transaction; reverting Git alone cannot downgrade stored history.
+
+    **Earlier verdicts checked.** **project-workflow-shape** approved C, including configurable staffing, recovery and completion with unchanged defaults. It does not choose automatic versus explicit activation. **needed-stamps** keeps evidence in the existing catalogue and project landing policy; neither option changes that. The separate artifact-guard design owns approval enforcement, not this activation choice.
+  [2026-11-17 20:42] owner · approved — B
+  [2026-11-17 20:45] agent — Your “B” selects automatic activation of a valid committed workflow when the board reads it. Missing mappings or prerequisites must stop activation; stale writers and active attempts remain fenced, failures keep the previous version, and rollback is a new audited activation with history retained. Implementation will follow this choice rather than require a separate activation action.
+  [2026-11-17 20:45] agent · resolved
 
 ## Client and agent contract
 

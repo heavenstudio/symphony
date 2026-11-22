@@ -4,11 +4,11 @@ A concept, not a design to build from: what a Settings page that turns a project
 and tools on and off would be, questioned against the settings the Symphony has now. Nothing in
 the product changes with it. Its choices went to the owner as cards over two rounds, and all five
 are answered: [the page shows everything in force and writes the preferences
-alone](../../DECISIONS.md#settings-page-shape), [a project-wide change is committed straight to the
-default branch](../../DECISIONS.md#settings-page-project-save), [each thing on the page describes
-itself](../../DECISIONS.md#settings-page-entries), [every preference the page changes is kept in
-the board first](../../DECISIONS.md#settings-board-store), and [an agent that is off is refused at
-launch and not offered](../../DECISIONS.md#settings-agent-off). Nothing is left to choose.
+alone](#settings-page-shape), [a project-wide change is committed straight to the
+default branch](#settings-page-project-save), [each thing on the page describes
+itself](#settings-page-entries), [every preference the page changes is kept in
+the board first](#settings-board-store), and [an agent that is off is refused at
+launch and not offered](#settings-agent-off). Nothing is left to choose.
 [What is built, and when](#what-is-built-and-when) names the tasks.
 
 It is one of three concepts filed together, with blueprints (the board task `app/blueprints`) and
@@ -115,11 +115,26 @@ machine_agents, line 6`), and a value no file writes says it is the default.
 
 ![Option B on a phone](settings-page/proposed-phone.webp)
 
-[Its card](../../DECISIONS.md#settings-page-shape) chose this page, B, over reading alone (A) and a
+[Its card](#settings-page-shape) chose this page, B, over reading alone (A) and a
 form over every key (C).
 
 ![Option A, reading alone](settings-page/proposed-a-wide.webp)
 ![Option C, a form over every key](settings-page/proposed-c-wide.webp)
+
+- [r] **settings-page-shape** — You asked for a Settings page that turns things on and off. Today no page shows or changes a setting: they are in three files, changed by hand or by a command. How far should the page go? A: it shows everything in force and where each value comes from, and changes nothing. B: as A, with switches and values for the preferences (the agents, Herdr panes, models, limits), each saved for the project or for this machine; a setting that runs a command or decides what lands is shown and never written there. C: a form over every key of every file. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/settings-page#The page]]
+  [2026-11-20 06:55] agent — Posted for the board task `app/settings-page`, the first of several rounds. Base: there is no page today, so nothing to picture. Each option drawn by hand with this repository's values, nothing built: ![The page under A](settings-page/proposed-a-wide.webp) ![The page under B](settings-page/proposed-b-wide.webp) ![The page under C](settings-page/proposed-c-wide.webp)
+
+    **What "on and off" covers.** Your four examples are three kinds of change. Herdr is a switch already (`panes`). Claude Code and Codex are not: one setting picks which a launch starts, and both are always installed. GitHub off is one line, and on is a setup with tokens and GitHub Apps no page can do. B gives the first two a switch and the third a row that says why it is off and opens its guide.
+
+    **Why not C.** Whoever reaches the server from this machine or your tailnet is you. That is enough for a verdict. It is not enough for `[board] on_land`, a command this machine runs after every land. Two rules already sort every key this way: the local file refuses those keys, and a landing that changes one needs a reviewer. B takes that line as it is.
+
+    **What each costs.** A: one page and one read. B: A, two writers (the local file's exists in the model command) and a control per kind of value. C: a control for every shape in the file, the workflow and the landing's generators among them, and the comments a project wrote beside its values to keep.
+
+    **Earlier verdicts checked.** **hosted-ingress-boundary** (B) says where a hosted server checks who visits, not what a page may write. **project-workflow-shape** and **configurable-workflow-activation** decide the workflow's settings, which B only shows. None decides a Settings page.
+  [2026-11-20 06:56] agent — B on a phone, and the page the three pictures are of: ![Option B on a phone](settings-page/proposed-phone.webp) [Open the mockup](settings-page/mockup.html).
+  [2026-11-20 06:40] owner · approved — B
+  [2026-11-21 10:20] agent — Recorded: B. Settled by it without a card: GitHub's settings decide what lands, so its row shows the state and why and files a task for on and for off; the page is at `settings` under the project, in the header after Reports. [[analysis/settings-page#Settled by the answered cards]]
+  [2026-11-21 18:13] agent · resolved
 
 ## What a save writes
 
@@ -152,7 +167,7 @@ A change of the committed file could reach the default branch three ways.
    any work.
 3. **Not at all.** The page writes nothing committed and shows the command or the line to change.
 
-[Its card](../../DECISIONS.md#settings-page-project-save) chose the first. Its gate is the one a
+[Its card](#settings-page-project-save) chose the first. Its gate is the one a
 settings landing has now, the settings check, so no change lands with less than it does today;
 what it drops is the task around it, and the commit itself is the record. It also means one
 committer for everything the pages write, with the delivery case solved once. The answer adds a
@@ -161,6 +176,22 @@ place of its own, [the board's store](#what-the-board-keeps).
 One thing holds under any of them and is worth saying on the page: the board reads the limits,
 the launch agent and the models from the main checkout's file on disk, so they hold from the
 write, while the stamps and the GitHub settings are read from what the default branch commits.
+
+- [r] **settings-page-project-save** — If the Settings page may change a preference for the whole project (a model, a limit, Herdr on or off), the change is to a committed file. How does it reach main? A: as your answers on cards do: the page commits it straight to main, after the settings check passes on the result; where a project lands by pull request it is kept and delivered as a document save is. B: always a task: the page files one with the change, and it lands on the settings check when its orchestrator lands it. C: the page writes nothing committed and shows the command to run. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/settings-page#What a save writes]]
+  [2026-11-20 06:55] agent — Posted for the board task `app/settings-page`. Base: today such a change is an edit or `just symphony-cli model`, then a task that lands on `just settings-check` green with no reviewer.
+
+    **The gate is the same under A and B:** the settings check. A drops the task around it, and the commit is the record. Under A a switch holds when you flip it; under B when someone lands it.
+
+    **What A may write** is only what lands without a reviewer today. A setting that runs a command or decides what lands is not written by the page under any option (**settings-page-shape**).
+
+    **A change for this machine alone** is not asked here: it goes in `symphony.local.toml` and lands nothing, as now.
+
+    **What each costs.** A: the committer your saves use, with one more kind of edit. B: a task, an assessor's read and a land for each flip. C: nothing.
+
+    **Earlier verdicts checked.** **github-outbound-pr-delivery** and **github-delivery-proof-setup** decide that a land may be delivered by pull request; A follows what document saves do there and changes none of it. None decides how a settings change lands from a page.
+  [2026-11-20 06:39] owner · approved — A, but some things could also just be in symphony's DB too. And a fallback mechanism could exist where when missing db entries, the settings file are used.
+  [2026-11-21 10:20] agent — Recorded: A, a project-wide change is committed straight to main after the settings check. Your note is taken as you wrote it: the board's database is a place of its own, read before the settings file, and the file is used where it has no entry. It never holds a setting that runs a command or decides what lands. Which preferences go there is not said by the note, so it is asked on **settings-board-store**. [[analysis/settings-page#What the board keeps]]
+  [2026-11-21 18:13] agent · resolved
 
 ## What makes an entry
 
@@ -187,7 +218,21 @@ components.
 
 The class of a setting is not the describer's to lower: a plugin may mark its own setting
 reviewed, and anything it names that the Symphony would run or that decides what lands is
-reviewed whatever it says. [Its card](../../DECISIONS.md#settings-page-entries) chose descriptions.
+reviewed whatever it says. [Its card](#settings-page-entries) chose descriptions.
+
+- [r] **settings-page-entries** — You expect more things to turn on and off than the four you named. Where does the page's list come from? A: the Symphony holds it: the page knows GitHub, the agents, Herdr and the plugins by name, and a new one is new page code. B: each thing describes itself in one small shape (its name, its state and why, what it needs, its settings and whether each is a preference or reviewed), and the page draws whatever is described; the Symphony's own first, then programs like the GitHub exchange and a project's plugins. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/settings-page#What makes an entry]]
+  [2026-11-20 06:55] agent — Posted for the board task `app/settings-page`. Base: today nothing lists these; GitHub says its state in `symphony-github status`, the agents and Herdr in `just tasks limits` and the agents page.
+
+    **Under B a plugin can add a row** (a calendar, an identity provider) with no change to the page, and a blueprint can name the entries it turns on. Under A neither can.
+
+    **What B costs.** A shape to agree on and keep stable for plugins, under the kit's version rules, as a block is. It is built in two steps: the Symphony's own entries in that shape, then the seam for programs and plugins. The first step costs about what A does.
+
+    **A description runs nothing.** It cannot lower a setting's class: whatever would run a command or decide what lands is reviewed, whatever its plugin says.
+
+    **Earlier verdicts checked.** **kit-new-block-version** decides how the kit takes a new block, which B's seam would follow. **plugin-delivery-choice** decides how a plugin is delivered, not what it may describe. None decides this.
+  [2026-11-20 06:38] owner · approved — B
+  [2026-11-21 10:20] agent — Recorded: B. The Symphony's own entries are built in that shape first, with the page's reading half, filed as `app/settings-page-reads`; programs and plugins follow once it has held.
+  [2026-11-21 18:13] agent · resolved
 
 ## What the board keeps
 
@@ -240,7 +285,7 @@ landing passes over it.
 
 The second is the one that behaves the same on a local board, under delivery by pull request and
 on a hosted board, and it keeps the commit for the moment a person means the whole project.
-[Its card](../../DECISIONS.md#settings-board-store) chose it. What follows from the choice:
+[Its card](#settings-board-store) chose it. What follows from the choice:
 
 - **What is stored** is every preference the page has a control for: the launch agent, its model
   and effort, the role models, the limits, the panes setting and [an agent
@@ -258,6 +303,22 @@ on a hosted board, and it keeps the commit for the moment a person means the who
   agree, and each names the store as a source.
 - **A hosted board's page writes nothing yet.** Its visitors are not the owner, and who may write
   there is the identity concept's to say. The store is built so that it can.
+
+- [r] **settings-board-store** — Your note on **settings-page-project-save** adds a place for settings: the board's database, read first, with the settings file used where it has no entry. Which preferences should the Settings page keep there? A: only those with no key in a file (whether a plugin's entry is on, a person's own choices later); a model, a limit or Herdr on or off is committed, as you approved. B: every preference the page changes is kept in the board first and holds at once; beside it a "make it the project's" control commits it, as you approved, and clears the board's entry. C: none. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/settings-page#What the board keeps]]
+  [2026-11-21 10:20] agent — Posted for the board task `app/settings-page`, round two. Base: today the board's database holds no setting; a value comes from the default, `symphony.toml` or `symphony.local.toml`.
+
+    **The order a value is read in:** the default, the committed file, the board, then the local file by hand. A board never told anything has no entries, so a fresh clone and a project that never opens the page behave as now.
+
+    **Never there:** a setting that runs a command or decides what lands, by the line you approved on **settings-page-shape**.
+
+    **Why B.** It behaves the same in three cases A does not: where lands go by pull request (a committed change waits for its delivery, a stored one holds at once), on a hosted board (no checkout to commit from), and for a change you mean to try before making it the project's. Each stored change keeps a record of what, from what and when. Under B the page stops writing `symphony.local.toml`; that file stays the override by hand.
+
+    **What B costs.** A new table, so a move of the board's layout with its release run. And a stored value is not in a clone: two machines of one project can differ until it is made the project's, as with a local file today. The page says where each value comes from.
+
+    **Earlier verdicts checked.** **settings-page-project-save** (A, with your note) decides the commit's route and that the database is a place; it does not say which preferences go there. **schema-landing-then-release** and **live-board-schema-moves** decide how a layout move lands, which B follows. None decides this.
+  [2026-11-21 17:33] owner · approved — B
+  [2026-11-21 17:40] agent — Recorded: B. Every preference the page changes is kept in the board first and holds at once, with a control beside it that commits it for the project and clears the board's entry, and one that removes the entry and goes back to the file's value. The page does not write `symphony.local.toml`. Filed in two tasks: `app/settings-store` (the table and the order a value is read in) and `app/settings-page-writes` (the switches, the values and the commit). Nothing of this concept is left to choose. [[analysis/settings-page#What the board keeps]]
+  [2026-11-21 18:13] agent · resolved
 
 ## Turning an agent off
 
@@ -277,7 +338,7 @@ default first. Whether the program is on this machine is shown beside the switch
 says, and a launch of an agent the machine lacks is refused with that reason. Off is a
 preference, so it can hold for the project or for one machine.
 
-[Its card](../../DECISIONS.md#settings-agent-off) chose the first. What follows from it and from
+[Its card](#settings-agent-off) chose the first. What follows from it and from
 the store:
 
 - **The setting** is one more key of `[agents.launch]`, the agents that are off, none written
@@ -292,6 +353,20 @@ the store:
   closed pane. An agent already running is not stopped, and the page says how many are.
 - **Not offered** means the agents page and the board's launch controls leave it out, and the
   Settings page is the one place that still names it, with its switch.
+
+- [r] **settings-agent-off** — The page you approved has a switch for Claude Code and one for Codex, and today neither can be off: one setting picks which a launch starts, a launch may still name either, and both agents' files are installed in every project. What should off mean? A: the board refuses to launch it and the pages stop offering it; its files stay installed, so on again is the switch alone. B: as A, and `symphony init` takes its files out of the project (rules, hooks, skill links), which is a landed change. C: the pages stop offering it, and a launch that names it still starts it. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/settings-page#Turning an agent off]]
+  [2026-11-21 10:20] agent — Posted for the board task `app/settings-page`, round two. Base: today `[agents.launch] default` is `"codex"` or `"claude"`, and nothing refuses the other.
+
+    **Under every option** the launch default cannot be turned off (the switch says to pick another first), the page says whether the program is on this machine, and off can hold for the project or for one machine.
+
+    **Why A.** Off should stop agents being started, which C does not. B makes on and off a change of committed files, so a switch becomes a landing, to remove files that do nothing while the agent is never launched.
+
+    **What each costs.** A: one setting, one refusal in the launch, the switch. B: A, and init learning to leave out and take out one agent's files. C: the switch alone.
+
+    **Earlier verdicts checked.** **settings-page-shape** (B) gives the agents a switch and does not say what off does. None decides this.
+  [2026-11-21 17:34] owner · approved — A
+  [2026-11-21 17:40] agent — Recorded: A. An agent that is off is refused at launch, with where it was turned off, and no page offers it; its files stay installed. Settled by it and **settings-board-store** without a card: off is a preference like the others, so the switch is kept in the board first and holds at once, and "make it the project's" commits it. Filed as `app/agent-off`. [[analysis/settings-page#Turning an agent off]]
+  [2026-11-21 18:13] agent · resolved
 
 ## Who may change what
 
@@ -345,7 +420,7 @@ agent off is in their own sections above.
   only the last, and the page shows a row's changes.
 - **The description's shape** for programs and plugins is the one the reading page's own entries
   take, kept stable under the kit's version rules as a block is
-  ([its card](../../DECISIONS.md#kit-new-block-version)). A stored switch for an entry a plugin
+  ([its card](../../workflow/RELEASES.md#kit-new-block-version)). A stored switch for an entry a plugin
   describes comes with that task.
 - **Who may change the project's preferences** once there are several people is the identity
   concept's to say, at the four places [above](#who-may-change-what).

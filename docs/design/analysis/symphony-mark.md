@@ -1,7 +1,7 @@
 # Symphony's mark
 
 Four options for the mark and the wordmark Symphony's default look carries. The mark is C, the
-fermata, with its serif wordmark ([its card](../../DECISIONS.md#symphony-mark)); the board task
+fermata, with its serif wordmark ([its card](#symphony-mark)); the board task
 `app/symphony-mark-is-the-fermata` builds it. Each option was two files: an icon, the tab's
 and the home screen's, a tile in the default theme's primary colour with the mark on it, its
 light and dark colours chosen inside the file; and the bare mark, which the header
@@ -64,6 +64,32 @@ another option's mark.
 The header keeps its two rows on a phone with every option: the mark and the wordmark sit first,
 a step smaller, then Projects, Appearance and Activity (measured at 390 wide: Activity's top at 8
 px, the header 97 px tall, as it is today).
+
+- [r] **symphony-mark** — Symphony would get a mark and a name of its own, at the start of the header, on the browser's tab and on a phone's home screen. They show on the machine's own pages (the project list and the pages the server draws) and on every project with no theme name or icon of its own; a project's own theme name and icon take their place on its pages. Today the header shows neither, the tab shows no icon or a generic ♫, and the icon the browser asks the server for by itself is the consuming project's star. Which mark and wordmark should Symphony's own look carry? A: the note-card, a note whose head is a task card. B: the podium, the orchestra's seats round two maestros. C: the fermata, the sign where the music holds for the maestro. D: the two-stroke S, one stroke for you and one for the orchestrator agents. Recommended: D. Approve and say A, B, C or D in the note, or comment. [[analysis/symphony-mark#The options]]
+  [2026-11-15 05:12] agent — Posted for the board task `app/symphony-mark-and-name-options`. Your words on its inbox item: "A proper "themed" design of Symphony could be develop that is closer to the concept of "a symphony that is executed by maestros" where maestro are the human + orchestrator agents. I would like to view different options to select."
+  [2026-11-15 05:12] agent — Base: today, wide and on a phone, no mark and no name in the header. ![Today: the header wide, then on a phone](symphony-mark/today.png)
+  [2026-11-15 05:12] agent — Each option in the header wide (light, then dark), on a phone (light, dark) and in the tab (light, dark), drawn on a private server with the option set as a scratch project's look; nothing in the app has changed. A headless browser shows no tab strip, so the tab is a stand-in drawn around the real icon file, and the Projects link the machine's server draws is added to the private server's header. ![The note-card, A](symphony-mark/a.png) ![The podium, B](symphony-mark/b.png) ![The fermata, C](symphony-mark/c.png) ![The two-stroke S, D](symphony-mark/d.png)
+
+    **A, the note-card.** A note whose head is a task card: the board's work is the symphony's music. Wordmark: "Symphony" in the app's own sans.
+
+    **B, the podium.** The orchestra seen from above: its seats in an arc round two maestros, you and the orchestrator agent. Wordmark: "symphony" in lower case. At 16 px it reads as a fan of dots; the seats show from 32 px.
+
+    **C, the fermata.** The sign where the orchestra holds until the maestro moves on, as a card holds until you answer it. Wordmark: "Symphony" in a serif.
+
+    **D, the two-stroke S.** Symphony's S in two strokes, one full and one lighter: you and the orchestrator agents, two maestros conducting one work. Wordmark: "SYMPHONY" in spaced capitals.
+
+    Any wordmark can go with another mark: say which in the note.
+  [2026-11-15 05:12] agent — The four icons at 180, 32 and 16 px, light then dark: ![The icons at three sizes, light and dark](symphony-mark/sizes.png)
+
+    **Why D.** It is the only one that says the name at every size, down to the 16 px tab, and its two strokes are the two maestros you named. Its cost: a letter says nothing of music, and the two maestros show only once explained; the lighter stroke loses contrast at 16 px, most on the light tile; and it is close in kind to other music products' S marks. C is as clear at 16 px and the simplest, but it shows one maestro's hold, not two maestros. B tells the most and blurs the most when small. A is the closest to today's ♫ and says the least about the maestros.
+
+    **What it changes.** The machine's own pages and every project with no theme name or icon of its own show the chosen mark and wordmark in the header and the icon in the tab; a project's own theme name and icon take their place on its pages, as the project file's reference already says, so the consuming project keeps its own name and star. The icon the browser asks the server for by itself becomes Symphony's where no project's own answers it; the header stays two rows on a phone (measured at 390 wide for all four); a phone's home screen gets the icon. A follow-up task builds it after your answer.
+
+    **Earlier verdicts checked.** **header-page-names**, **header-on-a-phone** and **header-appearance** set the header's words, its two rows on a phone and its ◑ button; every option keeps them. **symphony-own-names** took the consuming project's names out of Symphony's code and says nothing of a mark. **pictures-in-every-clone** decides that these pictures are committed beside this card. None of them chooses a mark or a wordmark: that is this card.
+  [2026-11-15 05:52] agent — Corrected after the task's review, before any answer: the first lines say where the mark and the wordmark show (not on every page), Why D gives D's own cost, and the pictures' line says the tab is a stand-in.
+  [2026-11-15 06:40] owner · approved — C
+  [2026-11-15 11:13] agent — Recorded: C, the fermata, with its serif wordmark. The board task `app/symphony-mark-is-the-fermata` builds it: the header, the tab's icon and a phone's home screen, on the machine's own pages and on every project with no theme name or icon of its own. [[analysis/symphony-mark#What applying the choice touches]]
+  [2026-11-15 11:14] agent · resolved
 
 ## What applying the choice touches
 

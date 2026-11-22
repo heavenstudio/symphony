@@ -49,12 +49,13 @@ impl Tree {
     }
 }
 
-/// A register card a branch's worktree holds that the owner is to read.
+/// A card a branch's worktree holds, inline in a document or in a register, that the owner is to
+/// read.
 #[derive(Clone, Debug)]
 pub struct BranchCard {
     pub tree: Tree,
-    /// The page's document name, `docs/DECISIONS.md`, whatever the project's documents folder is
-    /// called: [`Project::file`] is the file under the worktree.
+    /// The page's document name, as `docs/workflow/RELEASES.md`, whatever the project's documents folder
+    /// is called: [`Project::file`] is the file under the worktree.
     pub doc: String,
     /// On a live branch, the card as the branch's HEAD commit holds it, with the owner's lines its
     /// worktree holds uncommitted laid on top. A card the owner spoke on that only a draft or a
@@ -241,11 +242,25 @@ fn merged(root: &Path, main: &str) -> HashSet<String> {
     .collect()
 }
 
-/// The document pages of the project's entrypoints at `rev` that hold a register (cards): where a
-/// branch's cards can be. None when git could not say.
+/// A card's line as `git grep -E` finds it, the one [`crate::register::card_line`] reads: `- [m]
+/// **`, the mark one of the seven.
+const CARD_LINE: &str = r"^-[[:space:]]+\[[ xX?r~a-]\][[:space:]]+\*\*";
+
+/// The document pages of the project's entrypoints at `rev` that hold cards, in a register region
+/// or inline at the place they decide: where a branch's cards can be. None when git could not say.
 fn registers(at: &Path, rev: &str, project: &Project) -> Option<Vec<String>> {
     let folders = project.pathspecs();
-    let mut args = vec!["grep", "-l", "-e", REGION_START, rev, "--"];
+    let mut args = vec![
+        "grep",
+        "-l",
+        "-E",
+        "-e",
+        REGION_START,
+        "-e",
+        CARD_LINE,
+        rev,
+        "--",
+    ];
     args.extend(folders.iter().map(String::as_str));
     Some(
         git_grep(at, &args)?
@@ -523,8 +538,9 @@ fn tree_scan(tree: &Tree, main_shapes: &Shapes, project: &Project, standing: Sta
         ..Scan::default()
     };
     let mut out = Scan::default();
+    // Where the branch forked from main: a merged branch has no fork, and posts nothing.
     let base = if standing == Standing::Merged {
-        String::new()
+        None
     } else {
         let base = git(&tree.path, &["merge-base", &project.default_branch, "HEAD"])
             .unwrap_or_default()
@@ -533,12 +549,11 @@ fn tree_scan(tree: &Tree, main_shapes: &Shapes, project: &Project, standing: Sta
         if base.is_empty() {
             return failed();
         }
-        base
+        Some(base)
     };
-    let posted = if base.is_empty() {
-        Some(BTreeSet::new())
-    } else {
-        pages(tree, project, &["diff", "--name-only", &base, "HEAD", "--"])
+    let posted = match &base {
+        None => Some(BTreeSet::new()),
+        Some(base) => pages(tree, project, &["diff", "--name-only", base, "HEAD", "--"]),
     };
     let (Some(posted), Some(unsaved)) = (posted, unsaved(tree, project)) else {
         return failed();
@@ -546,18 +561,17 @@ fn tree_scan(tree: &Tree, main_shapes: &Shapes, project: &Project, standing: Sta
     if posted.is_empty() && unsaved.is_empty() {
         return out;
     }
-    let forked = if base.is_empty() {
-        Some(Vec::new())
-    } else {
-        registers(&tree.path, &base, project)
+    let forked = match &base {
+        None => Some(Vec::new()),
+        Some(base) => registers(&tree.path, base, project),
     };
     let Some(forked) = forked else {
         return failed();
     };
     let docs: Vec<&String> = posted.union(&unsaved).collect();
-    let specs: Vec<String> = forked
+    let specs: Vec<String> = base
         .iter()
-        .map(|n| format!("{base}:{n}"))
+        .flat_map(|base| forked.iter().map(move |n| format!("{base}:{n}")))
         .chain(docs.iter().map(|n| format!("HEAD:{n}")))
         .collect();
     let Some(texts) = blobs(&tree.path, &specs) else {
@@ -609,15 +623,10 @@ fn tree_scan(tree: &Tree, main_shapes: &Shapes, project: &Project, standing: Sta
             }
             marks.own.insert(posted.slug.clone());
             if standing == Standing::Finished {
-                let revises_main = main.is_some_and(|copies| {
-                    copies
-                        .iter()
-                        .all(|copy| one::rewrites(posted, &copy.text, &copy.lines))
-                }) && forked.get(&posted.slug).is_none_or(|copies| {
-                    copies
-                        .iter()
-                        .all(|copy| one::rewrites(posted, &copy.text, &copy.lines))
-                });
+                let revises_main = main.is_some_and(|copies| rewrites_all(posted, copies))
+                    && forked
+                        .get(&posted.slug)
+                        .is_none_or(|copies| rewrites_all(posted, copies));
                 if !revises_main {
                     // New cards and replies on the same proposal keep only the owner's thread.
                     // Rewritten headings or body content stay the branch's until it lands.
@@ -683,6 +692,14 @@ fn tree_scan(tree: &Tree, main_shapes: &Shapes, project: &Project, standing: Sta
         }
     }
     out
+}
+
+/// Whether `posted` rewrites every one of `copies`, the copies of its card somewhere else
+/// ([`one::rewrites`]): true of no copies at all.
+fn rewrites_all(posted: &Decision, copies: &HashSet<Shape>) -> bool {
+    copies
+        .iter()
+        .all(|copy| one::rewrites(posted, &copy.text, &copy.lines))
 }
 
 /// The lines of the copies `copies` of a card.
@@ -1054,9 +1071,9 @@ pub fn page_cards(
 
 #[cfg(test)]
 mod tests {
-    use super::{listed, scan_listed, shapes};
+    use super::{cards, listed, rewrites_all, scan_listed, shape, shapes};
     use crate::test_tree::Tree;
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeSet, HashSet};
     use std::path::Path;
 
     /// `git` in `at`, which must succeed.
@@ -1079,6 +1096,19 @@ mod tests {
 
     const REGISTER: &str = "# A\n\n<!-- register:start -->\n\n- [ ] **lamp-a** — Lamp A.\n  \
                             [2026-11-11 09:00] agent — Posted.\n<!-- register:end -->\n";
+
+    #[test]
+    fn a_card_rewrites_all_its_copies_only_when_it_rewrites_each() {
+        let posted = &cards(REGISTER)[0];
+        let same = shape(posted);
+        let reworded = shape(&cards(&REGISTER.replace("Lamp A.", "Lamp B."))[0]);
+        // No copy anywhere: nothing it leaves as it was.
+        assert!(rewrites_all(posted, &HashSet::new()));
+        assert!(rewrites_all(posted, &HashSet::from([reworded.clone()])));
+        assert!(!rewrites_all(posted, &HashSet::from([same.clone()])));
+        // One copy it only repeats is enough: it does not rewrite them all.
+        assert!(!rewrites_all(posted, &HashSet::from([same, reworded])));
+    }
 
     #[test]
     fn a_listed_worktree_git_cannot_read_lists_no_card_and_says_it_failed() {

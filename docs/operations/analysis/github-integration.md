@@ -10,7 +10,7 @@ Recommend one optional GitHub adapter with independently enabled issue and PR ca
 runs outside the board through the versioned JSON API. A process plugin can present status and
 explicit actions. Disabling it leaves local tasks, reviews and landing available.
 
-The [delivery decision](../../DECISIONS.md#github-outbound-pr-delivery) directs enabled PR mode to
+The [delivery decision](#github-outbound-pr-delivery) directs enabled PR mode to
 the requirements in [[task:inbox/change-just-land-and-review-commands-to]]: stamped/code work
 lands through `gh` PR squash merge, with the required local evidence represented and enforced
 on GitHub. GitHub performs the merge and local state reconciles afterward, with no local merge
@@ -25,7 +25,7 @@ not changes to today's production landing command.
 
 | Boundary | What exists | Relevant limit |
 | --- | --- | --- |
-| Board access | [Tasks API](../../workflow/TASKS.md#the-tasks-api) 2.1: `version`, `tasks`, `get`, `create`, `amend`, `thread`, keyed `say`, guarded lifecycle operations, `bound`, `edit_bound`, `integration_state` | Creation enforces unique slugs. A brief is rewritten conditionally by `edit_bound`, with the token `bound` gives under the board's recovery generation; `amend` updates title/links, not the brief. |
+| Board access | [Tasks API](../../engineering/BOARD_API.md#the-tasks-api) 2.1: `version`, `tasks`, `get`, `create`, `amend`, `thread`, keyed `say`, guarded lifecycle operations, `bound`, `edit_bound`, `integration_state` | Creation enforces unique slugs. A brief is rewritten conditionally by `edit_bound`, with the token `bound` gives under the board's recovery generation; `amend` updates title/links, not the brief. |
 | Presentation | [Process plugins](../../engineering/PLUGIN_PROTOCOL.md): commands, components, routes, board actions, watches | A watch warms/forgets state; it is not a durable task-event feed. Process plugins cannot supply board fields or gates. |
 | Delivery here | [Default land](../../workflow/TASKS.md#the-default-landing): required stamps at the reviewed tip, local merge, then main push | This remains the implemented path. Enabled PR delivery needs the separately scoped squash-merge/evidence enforcement implementation and selected branch publication before activation. |
 | GitHub | Issue and PR REST endpoints | Issue listings include PRs. Separate them by `pull_request`; use PR endpoints for PR identity/head information. [GitHub documents the distinction](https://docs.github.com/en/rest/issues/issues). |
@@ -200,6 +200,15 @@ concept decides that boundary, retries, branch protection and reconciliation. Di
 retains local landing. The adapter never merges autonomously, enables auto-merge, publishes tags
 or changes visibility/protections. Importing an external PR never checks out or executes its code.
 
+- [r] **github-outbound-pr-delivery** — Symphony can show local work on GitHub either as delivery updates linking the landed commit, or as pull requests opened before the local merge. Which should the first optional integration deliver? A: issue exchange and incoming PR tracking first; local deliveries post merge links, with outbound PR creation deferred. B: also publish a draft PR from a selected task branch before local land, naming its reviewed commit. This explicitly permits those branch pushes when enabled; local stamps still decide readiness and the local land alone merges/pushes main. Recommended: B, because it delivers outbound PRs as requested. Approve and say A or B in the note, or comment. [[analysis/github-integration#Pull requests and local land]]
+  [2026-11-17 18:59] agent — The current policy pushes only main through land. A keeps that policy but does not create outbound PRs. B exposes selected task branches and needs a publisher, scoped credentials and recovery; a PR or GitHub review grants no local approval. Neither option enables integration now or lets GitHub merge main.
+
+    **Earlier verdicts checked.** **needed-stamps** governs local evidence and stays in force under both choices. **release-delivery** governs installed releases, not task branches. Your task asks for optional GitHub integration and PR delivery; it does not choose the publication step or authorize implementation during this design phase. Optionality and MIT are already settled and are not asked again.
+  [2026-11-17 19:13] owner · approved — answered in another ticket just written.
+  [2026-11-17 19:18] agent — Recorded against your new task, inbox/change-just-land-and-review-commands-to: when PR mode is enabled, stamped changes use GitHub squash merges with assessed evidence enforced on GitHub; checks still run locally, and simple document-only changes may retain local delivery. That task is staffed for the integration design. This supersedes the local-merge-only assumption above; we will align the GitHub proposal without asking this choice again.
+  [2026-11-17 19:18] agent · resolved
+  [2026-11-17 19:21] agent — Located the owner-created ticket inbox/change-just-land-and-review-commands-to. Its direction is settled: once the GitHub plugin lands and PR mode is enabled, stamped/code delivery uses gh PR squash merge, required or explicitly waived local stamp evidence is represented and enforced on GitHub, and checks remain local without per-PR hosted CI. Simple document-only local delivery is an optional constrained boundary for that concept to specify. This supersedes my proposed local-only merge assumption; I will update the integration analysis and coordinate with that ticket without asking another A/B question or enabling anything here.
+
 ## Implementation and decision handoff
 
 1. Complete [readiness remediation](public-readiness.md#remediation-order) independently.
@@ -217,7 +226,7 @@ or changes visibility/protections. Importing an external PR never checks out or 
    missing/waived stamps, squash provenance, import topology and wrong-method merges, constrained document delivery and crash recovery
    after remote success but before acknowledgment.
 
-The [delivery card](../../DECISIONS.md#github-outbound-pr-delivery) records the referral to the
+The [delivery card](#github-outbound-pr-delivery) records the referral to the
 owner-created PR landing task; its requirements replace an assumption that every mode merges
 locally. No second A/B answer is needed. Optionality and MIT are settled too. Separate packages
 can wait for a real deployment need. Existing register content and owner history remain intact;

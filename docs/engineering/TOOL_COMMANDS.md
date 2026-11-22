@@ -1,7 +1,7 @@
 # Commands for a project's tools
 
 A project's art and landing tools call the installed `symphony` rather than link its library
-([the command route](../DECISIONS.md#contract-tool-route)). They run with `--root ROOT`, or with the
+([the command route](analysis/consumer-contract.md#contract-tool-route)). They run with `--root ROOT`, or with the
 project root as their current directory. Card rendering, status and triage start the project's
 selected plugins through `[plugins.process]`, just as the server does.
 

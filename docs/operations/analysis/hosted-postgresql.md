@@ -3,8 +3,8 @@
 A hosted board needs a database that survives its application process. The proposal is an
 explicit external connection to a pre-created, dedicated PostgreSQL database, beside the local
 socket path. The application never starts a replacement database when that connection fails.
-The [database boundary](../../DECISIONS.md#hosted-postgresql-database-boundary) and the independent
-[server-version choice](../../DECISIONS.md#hosted-postgresql-versions) are decided: a dedicated
+The [database boundary](#hosted-postgresql-database-boundary) and the independent
+[server-version choice](#hosted-postgresql-versions) are decided: a dedicated
 database for each project, and external PostgreSQL 16 and 18. The connection adapter is built
 behind the board's `hosted-postgresql` feature ([what a hosted board is](../POSTGRESQL.md#a-hosted-board),
 [the adapter as built](#the-adapter-as-built)); nothing here gives permission to move data.
@@ -24,7 +24,7 @@ through their own integration and landing. A pin to main is not evidence of host
 
 Local startup retains `[board] postgresql`, the machine-installed programs, the PostgreSQL 18
 minimum and the socket behavior chosen in the
-[installation card](../../DECISIONS.md#postgresql-binary-source). Remote mode skips local program
+[installation card](postgresql-binary-source.md#postgresql-binary-source). Remote mode skips local program
 discovery, `initdb`, server supervision and database creation altogether. It does not weaken
 their checks. Local activation, snapshots and version fixes belong to `tools/board-pg-lifecycle`;
 live cutover and its permission belong to `docs/board-pg-cutover-card`.
@@ -237,6 +237,14 @@ The existing local maker remains unchanged. This cleanly bypasses database-creat
 without changing local semantics. The implementation must assert the call sequence with a
 restricted real role, not just a mock successful connection.
 
+- [r] **hosted-postgresql-database-boundary** — Each hosted Symphony project needs a database boundary that keeps another project's data and migrations out. The platform may currently supply only the application's existing database, so a separate board database could require provisioning work. Which boundary should the first hosted adapter require? A: a pre-created database dedicated to each Symphony project, owned by its restricted project login; sharing another application's tables is unsupported. B: defer hosted activation until a separate design proves safe sharing of an application database through schemas and permissions. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/hosted-postgresql#Database and privileges]]
+  [2026-11-17 19:42] agent — Proposed by `tools/hosted-postgresql`. A reuses the store's database-wide namespace and migration lock, but needs the platform to provision a database per project and deny cross-project connections. The application has no CREATE DATABASE/ROLE privilege. B may fit existing provisioning but needs schema ownership, qualified SQL, migration locks, export/restore and isolation designed before activation; prefixes or a project-id column alone are insufficient. Additional provisioning cost and availability are unverified. Both preserve the requested managed connection and unchanged local socket behavior. Neither authorizes a live migration, cutover, restore or shared-server restart.
+
+    **Earlier verdicts checked.** **postgresql-binary-source** (C) chooses machine-installed local PostgreSQL and the latest local Homebrew version; it does not decide managed database tenancy. **board-schema-at-update** (C) preserves recent-writer checks before migration, and **consumer-api-break-release** preserves old public calls for a release; both options keep them. Neither chooses a database boundary. The live cutover remains `docs/board-pg-cutover-card`'s separate decision.
+  [2026-11-17 20:43] owner · approved — A
+  [2026-11-17 20:48] agent — Your “A” requires a pre-created database dedicated to each hosted Symphony project, owned by its restricted project login. Sharing application tables is unsupported, and the application gains no database or role creation privileges. Implementation can now target this boundary and the approved external PostgreSQL 16/18 matrix; live provisioning, migration and cutover remain separate operations.
+  [2026-11-17 20:48] agent · resolved
+
 ## Migration and stale writers
 
 Reuse the landed schema/store/copy and lifecycle contracts. The lifecycle task owns the local
@@ -332,7 +340,7 @@ where applicable, but its checkout file cannot serve as this record in an epheme
 The future hosted implementation includes this small control-record interface and scratch
 recovery tests. A provider restore alone is not a safe automatic rollback. The board's side of
 that interface is its recovery authority
-([TASKS](../../workflow/TASKS.md#a-board-that-was-copied-or-restored)): a store is handed the generation
+([BOARD_OPERATIONS](../BOARD_OPERATIONS.md#a-board-that-was-copied-or-restored)): a store is handed the generation
 the control record names and refuses every bound write where the database holds another or the
 record names none. The generation it names is the database's own text, replaced at each copy and
 rebind, and a board home's file of it on one machine is not this record.
@@ -378,6 +386,15 @@ differ from [18's](https://www.postgresql.org/docs/18/app-initdb.html). Provisio
 behavior must meet the same semantic assertions or receive a bounded SQL fix; otherwise 16
 stays unsupported and the platform upgrade alternative returns to its card. No relaxed local
 minimum, test assertion or performance budget establishes compatibility.
+
+- [r] **hosted-postgresql-versions** — The proposed hosted connection needs a declared PostgreSQL server target. The consuming deployment reports PostgreSQL 16; Symphony's local launcher requires 18 and uses a locale setup unavailable on 16. Which target should the hosted implementation prove? A: external 16 and 18, with the same SQL/privilege, search, failure and recovery assertions on both; local startup stays at 18 or later. B: external 18 only; the platform must separately approve and complete an upgrade before hosting this board. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/hosted-postgresql#PostgreSQL 16 and 18 validation matrix]]
+  [2026-11-17 19:42] agent — Proposed by `tools/hosted-postgresql`, independently of **hosted-postgresql-database-boundary**. A adds a supported-major validation lane and possible bounded SQL/locale work; B avoids that compatibility lane but requires platform work whose cost and timing are unverified. Neither major has been tested by this design task. Documented SQL availability is not a compatibility pass. A failure is fixed in the code or keeps that major unsupported; local requirements and assertions are not relaxed. No platform upgrade is authorized here.
+
+    **Earlier verdicts checked.** **postgresql-binary-source**'s latest-local-version choice does not say which managed server majors Symphony supports. **symphony-update-command** (B) has consumers take release tags; a released SurrealDB/schema-18 build and inspected main's socket PostgreSQL/schema-20 build do not provide hosted support under either option. This choice authorizes a future validation target, not deployment acceptance.
+  [2026-11-17 20:37] owner · approved — A
+  [2026-11-17 20:59] agent — Your “A” sets external PostgreSQL 16 and 18 as implementation and validation targets, with the same SQL, privilege, search, failure and recovery assertions on both. Local startup remains PostgreSQL 18 or later. A failing compatibility case must be fixed or remain unsupported; this is not yet a runtime compatibility result.
+  [2026-11-17 20:59] agent — Recovered the exact callback reply supplied by its writer after a concurrent save omitted it; original owner verdict retained.
+  [2026-11-17 20:59] agent · resolved
 
 ## Implementation and release gates
 
@@ -426,7 +443,7 @@ Not built, each still this design's and none claimed by the adapter:
   the server still reach the machine's own board;
 - the project's identity bound into the board's record, and a hosted deployment's durable
   place for the recovery authority: the board's recovery generation and the writes bound to it
-  ([TASKS](../../workflow/TASKS.md#a-board-that-was-copied-or-restored)) are the board's own and a hosted
+  ([BOARD_OPERATIONS](../BOARD_OPERATIONS.md#a-board-that-was-copied-or-restored)) are the board's own and a hosted
   board has them as any, but the authority that says which generation a board is bound to is
   handed to a store by its caller, and nothing here keeps one outside a container;
 - a refusal of a schema whose definitions differ at the same version (a digest);

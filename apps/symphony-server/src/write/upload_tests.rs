@@ -2,7 +2,6 @@
 //! is refused before anything is written, and the one way each stored kind is served back.
 
 use crate::front::{Shared, router};
-use crate::gate::Gate;
 use axum::body::Body;
 use axum::extract::connect_info::MockConnectInfo;
 use axum::http::{Request, StatusCode, header};
@@ -11,7 +10,6 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
 use tower::ServiceExt;
 
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x02\0\0\0\x03";
@@ -34,7 +32,7 @@ impl Fixture {
         ));
         std::fs::create_dir_all(root.join("docs")).unwrap();
         let root = root.canonicalize().unwrap();
-        let gate = Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now));
+        let gate = crate::testing::open_gate();
         let shared = Shared::new(1, 8123, &root, None, gate);
         let app = router(shared).layer(MockConnectInfo(
             "127.0.0.1:5000".parse::<SocketAddr>().unwrap(),

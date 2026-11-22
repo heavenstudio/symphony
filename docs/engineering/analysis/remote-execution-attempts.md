@@ -5,7 +5,7 @@ terminal or CLI. Symphony should own the durable record of each execution attemp
 for accepting its results. The project should own the provider adapter, credentials, runtime
 identity and artifact storage. The local hc launcher remains a valid execution provider.
 
-This is a proposal, awaiting [its decision card](../../DECISIONS.md#execution-provider-attempts).
+This is a proposal, awaiting [its decision card](#execution-provider-attempts).
 The operations, records and capabilities below are proposed, not existing APIs or settings.
 Approval of this document's landing does not approve implementation, a paid session, deployment,
 shared-service restart, consumer edit or live-board migration.
@@ -53,7 +53,7 @@ Keep these responsibilities separate:
 | A bounded, versioned adapter contract and the hc adapter | Any hosted provider implementation and the service that runs its worker |
 
 Execution state is separate from configured task/delivery phases. The approved
-[workflow direction](../../DECISIONS.md#project-workflow-shape) permits a project-defined lifecycle;
+[workflow direction](../../workflow/analysis/project-workflow.md#project-workflow-shape) permits a project-defined lifecycle;
 execution must not freeze it to today's phases. A workflow can authorize an execution intent or
 consume its evidence, while its own revision-bound transition and landing rules decide progress.
 An environment becoming ready or a turn ending does not mean delivery is complete.
@@ -64,6 +64,15 @@ provider/account/environment scope, without exposing secrets. A runtime's board 
 scoped to its project, attempt and existing role; it is not the adapter's provider credential.
 The initial role set remains executor/reviewer, with existing independent-review and admission
 rules. This design grants no new role, landing authority or automatic staffing policy.
+
+- [r] **execution-provider-attempts** — A project could run an executor or reviewer on its own cloud service while Symphony keeps the history, recovery and results of each attempt. Local terminals would keep working. Should Symphony own this common execution boundary and attempt record, with provider clients, credentials and file storage left to each project? Recommended: yes. This adds durable start/control intent, recovery after uncertain responses and authorized historical session links; it does not choose or operate a cloud provider. The cost is a versioned adapter contract, additive board records and recovery logic, then task API/client support. Approve this direction, or comment. [[analysis/remote-execution-attempts#The smallest boundary]]
+  [2026-11-17 19:25] agent — Proposed for `tools/remote-execution-attempts`, from source revision `3b460adb62827f674669e8e99f3090561107264f`. This is design only. The analysis separates existing launch/delivery/link support from proposed attempts, failure recovery and actor checks, and lists the tests future implementation must prove. No provider session, deployment, consumer edit, live migration or implementation is authorized by landing this proposal. Follow-up implementation briefs are proposed only after this direction is approved.
+
+    **Earlier verdicts checked.** **consumer-contract-versioning** (B) places the reusable contract in the kit and leaves project code outside the library; **consumer-api-break-release** keeps old public APIs working for a release. Both are preserved. **project-workflow-shape** (C) permits a configurable task lifecycle; execution observations here supply evidence rather than deciding workflow progress. **desktop-client** reserves hosted login and mentions future people; it does not supply authenticated human context to plugin calls. None decides whether Symphony owns the execution boundary and durable attempts, so that direction remains this card's question.
+  [2026-11-17 20:35] owner · approved — Yes
+  [2026-11-17 20:59] agent — Your “Yes” approves the common execution boundary and durable attempt record. I will schedule its implementation while preserving local terminals and leaving provider clients, credentials and file storage with each project. This does not authorize live provider sessions or deployment.
+  [2026-11-17 20:59] agent — Recovered the exact callback reply supplied by its writer after a concurrent save omitted it; original owner verdict retained.
+  [2026-11-17 20:59] agent · resolved
 
 ## Adapter operations
 
@@ -285,7 +294,7 @@ controlled clock and scratch databases/workspaces; no paid sessions or live migr
 
 ## Delivery after approval
 
-First resolve [the boundary decision](../../DECISIONS.md#execution-provider-attempts). Only then
+First resolve [the boundary decision](#execution-provider-attempts). Only then
 propose narrowly scoped tasks in this order; these are work boundaries, not implementation
 authorization or filed dependencies:
 

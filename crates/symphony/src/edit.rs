@@ -133,7 +133,9 @@ pub fn split_message(message: &str) -> Result<(String, String), EditError> {
 /// A callout of `kind` after line `after_line` (1-based), blank lines around it. Refused inside a
 /// decision register (after its start marker, or after any line before its end marker): a register
 /// holds cards only, and a callout there would leave it text that is not a card, so every later
-/// verdict on its cards would be refused ([`register::sort_register`]).
+/// verdict on its cards would be refused ([`register::sort_register`]). Refused too between the
+/// lines of a card that sits inline in its document, which it would cut from the card; after the
+/// card's last line it is a comment on the document like any other.
 pub fn insert_comment(
     text: &str,
     after_line: i64,
@@ -166,6 +168,25 @@ pub fn insert_comment(
             "line {at} is inside the decision register (lines {} to {}), which holds cards only: a comment there would stop every later verdict on its cards. Say it on the card itself (its Verdict / message), or comment on a block outside the register",
             start + 1,
             end + 1
+        )));
+    }
+    // The line commented on and the one after it are one card's: the callout would part them.
+    let carded = register::carded(&lines);
+    let within = carded[at - 1]
+        && lines
+            .get(at)
+            .is_some_and(|next| carded[at] && card_line(next).is_none());
+    if within {
+        let first = (0..at)
+            .rev()
+            .find(|index| card_line(lines[*index]).is_some())
+            .unwrap_or(at - 1);
+        let slug = card_line(lines[first]).map_or("", |card| card.slug);
+        return Err(EditError(format!(
+            "line {at} is inside the card {} (lines {} to {}): a comment there would cut the lines under it from the card. Say it on the card itself (its Verdict / message), or comment on a block outside the card",
+            repr(slug),
+            first + 1,
+            card_end(&lines, first)
         )));
     }
     let title = format!("> [!{kind}] {}", strip(title));

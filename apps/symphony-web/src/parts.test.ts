@@ -4,20 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FRESH, opened, shown as shownFromDevice, taskItem, waits } from "./cache";
 import { KEPT_EVENTS, type Part, Parts, PartsContext, type Shown, usePart } from "./parts";
 import { field } from "./shared";
-import { VERSION_HEADER } from "./wire";
-
-/** A response as a read takes one: its status, its JSON body, its tag and the cursor it names. */
-function answer(status: number, body: unknown = null, etag = "", version?: number): Response {
-  const headers: Record<string, string> = {};
-  if (etag !== "") headers.ETag = etag;
-  if (version !== undefined) headers[VERSION_HEADER] = `${version}`;
-  return {
-    status,
-    ok: status >= 200 && status < 300,
-    headers: { get: (name: string) => headers[name] ?? null },
-    json: async () => body,
-  } as unknown as Response;
-}
+import { fakeAnswer as answer } from "./testing";
 
 /** A count the tests' server answers, and what the tests' feed says of one. */
 interface Count {
@@ -248,6 +235,69 @@ describe("a part's read that fails", () => {
     await vi.runAllTimersAsync();
     expect(asked).toHaveLength(3);
     expect(host.answered).toHaveBeenCalledTimes(1);
+  });
+
+  it("with nothing drawn, looks on this device again, and its next try names the copy's tag", async () => {
+    // The device's store went on without a database slow to open: the first lookup misses.
+    const copy: Kept = { value: { n: 4 }, etag: '"k"', saved: 1_000 };
+    let fails = 2;
+    const { parts, asked, device } = page(() =>
+      fails-- > 0 ? answer(503) : answer(304, null, "", 9),
+    );
+    device.read.mockResolvedValueOnce(undefined).mockResolvedValue(copy);
+    const part = keptCount();
+    parts.open(part);
+    await pass();
+    expect(asked).toEqual([["/api/count", ""]]);
+    const failed = parts.shown(part);
+    expect(failed.error?.message).toBe("The server answered 503");
+    expect(failed).toEqual({ ...NOTHING, value: { n: 4 }, stale: true, error: failed.error });
+    expect(shownFromDevice(parts.fresh)).toEqual([1_000, true]);
+    expect(device.read).toHaveBeenCalledTimes(2);
+    // A try that fails over the copy drawn looks for none.
+    await pass(1_000);
+    expect(asked).toEqual([
+      ["/api/count", ""],
+      ["/api/count", '"k"'],
+    ]);
+    expect(device.read).toHaveBeenCalledTimes(2);
+    expect(parts.shown(part).value).toEqual({ n: 4 });
+    await pass(2_000);
+    expect(parts.shown(part)).toEqual(drawnAs(4));
+    expect(waits(parts.fresh, "count")).toBe(false);
+    expect(parts.fresh.failing).toEqual([]);
+  });
+
+  it("with nothing drawn and nothing kept, draws nothing, and looks at each try that fails", async () => {
+    const { parts, device } = page(() => answer(503));
+    const part = keptCount();
+    parts.open(part);
+    await pass();
+    expect(device.read).toHaveBeenCalledTimes(2);
+    expect(parts.shown(part).value).toBeUndefined();
+    await pass(1_000);
+    expect(device.read).toHaveBeenCalledTimes(3);
+    expect(parts.shown(part).value).toBeUndefined();
+    expect(shownFromDevice(parts.fresh)).toBeNull();
+  });
+
+  it("draws no copy the device gives once the server answered, nor one after the part went", async () => {
+    const found = later<Kept | undefined>();
+    let fails = 1;
+    const { parts, device } = page(() =>
+      fails-- > 0 ? answer(503) : answer(200, { n: 1 }, "", 1),
+    );
+    device.read.mockResolvedValueOnce(undefined).mockReturnValue(found.promise);
+    const part = keptCount();
+    parts.open(part);
+    await pass();
+    expect(parts.shown(part).error).not.toBeNull();
+    await pass(1_000);
+    expect(parts.shown(part)).toEqual(drawnAs(1));
+    found.settle({ value: { n: 4 }, etag: '"k"', saved: 1_000 });
+    await pass();
+    expect(parts.shown(part)).toEqual(drawnAs(1));
+    expect(shownFromDevice(parts.fresh)).toBeNull();
   });
 
   it("says a read is out after it, the store's own or a reader's, until that answers or fails", async () => {

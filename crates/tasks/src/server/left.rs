@@ -404,7 +404,7 @@ impl Home {
              the server it names has ended and `ps` lists no server on the data. The next command \
              asks again, and settles the record once `ps` can tell. Should it never, remove the \
              record by hand once `ps -ww -axo pid,command` lists no `surreal start` on {} \
-             (docs/workflow/TASKS.md, Stuck servers)",
+             (docs/operations/BOARD_OPERATIONS.md, Stuck servers)",
             self.dir.join(RECORD).display(),
             self.data()
         )

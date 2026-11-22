@@ -1149,12 +1149,6 @@ pub struct ItemChange<T> {
     pub removed: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OrderChange {
-    pub key: String,
-    pub after: Option<String>,
-}
-
 /// A task's body is fetched in the initial snapshot. A task status/role update carries its changed
 /// fields only; this type lists every mutable field and lets a client merge it into its record.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

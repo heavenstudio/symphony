@@ -142,7 +142,7 @@ and a half hours on 2026-11-17. A branch's runs are of its tip, which merged mai
 (RULES.md `workflow/never-chase-main`); by its land main has moved, the merge's tree is a tree
 nothing ran, and a run on the prospective merge is stale as soon as the next task lands. Binding
 evidence to the merge tree needs either a queue or a run again at each land, and
-[the land's card](../../DECISIONS.md#land-tests-changed-packages) rejected both: nothing automatic
+[the land's card](../CHECKS.md#land-tests-changed-packages) rejected both: nothing automatic
 waits on a land.
 
 Every deterministic red of the day was of this kind. The 16 browser fixtures, the two query
@@ -238,7 +238,7 @@ rerun's time is, so this, with the one scheduler and the time per test
 
 ### B. The run reruns each failure alone
 
-Chosen on [its card](../../DECISIONS.md#release-run-reruns-alone), and built
+Chosen on [its card](#release-run-reruns-alone), and built
 ([RELEASES](../RELEASES.md#the-release-run), step 5, `crates/symphony-build/src/release/alone.rs`).
 The run knew the command that reruns each failure alone, and wrote it into the red it filed; it
 runs them itself: once the tests have ended, each test the run named failed is run again alone,
@@ -272,6 +272,31 @@ strength of one run alone.
 The candidate's bounds follow from it: a rerun counts as red only when something in it fails
 alone ([the bounds](#the-candidates-bounds)).
 
+- [r] **release-run-reruns-alone** — Since last night the release run was red eight times and released nothing. Two of those runs were red only in tests that pass when run by themselves, and 11 such tests were deleted to get past them, each costing a round of about an hour. Should the run itself run each failed test again alone before it calls the release red? A: as today; the run is red, an agent reruns the test, deletes it if it passes alone, and the run starts again. B: the run reruns each failed test alone, up to 12. One that fails again is red, as today. One that passes alone does not hold the release: the run says both results, and files one task to find out why and then fix, rewrite or delete the test. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/release-pipeline#B. The run reruns each failure alone]]
+  [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
+
+    **What B would have done.** A release at about 22:40 last night (run 2026-11-17T2211-98626, red in one test that passed alone), and that candidate never dropped. Failing that, one at about 10:00 today (run 2026-11-18T0931-12491, two such tests).
+
+    **What B changes.** Today a test that fails beside the others and passes alone is deleted before the release. Under B the release is tagged with that test still there, and its task follows. Nothing is run less: the test runs twice.
+
+    **Why B.** Passing alone does not prove load. Three of the 11 deleted tests failed on one line (`idle=1` for `idle=0`) that turned out the next morning to be the tests reading this machine's own terminals, which was fixed with nothing deleted. Under B they would have been looked at, not removed.
+
+    **It also settles the candidate's limit of three red reruns:** a rerun red only in tests that pass alone would no longer count, so neither of yesterday's candidates would have been dropped.
+
+    **Earlier verdicts checked.** **release-candidate-process** (A) holds a commit and reruns what was red; it does not say what makes a rerun red. Your rule that a test red on load is discarded says what happens to the test, and B keeps it; it does not say whether the run or an agent makes the run alone.
+  [2026-11-18 12:47] owner · approved — B
+  [2026-11-18 18:12] agent — B is the design now, and the work is handed on: the orchestrator files one board task for it, from the paragraph posted on the board task `docs/apply-owner-verdicts-2026-11-18`. Your answer reached no agent until 18:05: the machine's server was one board schema behind and delivered nothing.
+
+    **What gets built.** The release run reruns each failed test alone, up to 12, in the same checkout and build. One that fails again is red, as today. One that passes alone does not hold the release: the run records both results and the load at each, and files one task to find out why, then fix, rewrite or delete the test. More than 12 failures is a red with no reruns. A candidate's rerun counts against its limit of three only when something in it fails alone.
+
+    **Until it lands** the run behaves as today, and [[RELEASES#The release run]] says so. That task rewrites it, and the rule that a test passing alone is deleted in the red's own fix.
+
+    **It waits for** `tools/release-steps-carry-by-inputs`, in progress, which edits the same files of the run.
+
+    [[analysis/release-pipeline#B. The run reruns each failure alone]] now reads as chosen.
+  [2026-11-18 18:12] agent · resolved
+  [2026-11-18 18:16] agent — Filed: tools/release-reruns-failures-alone, which starts once tools/release-steps-carry-by-inputs lands (same files).
+
 ### C. Main judged in smaller steps
 
 A run judges main once 20 tasks have landed, and nothing judges main while a candidate is open
@@ -279,7 +304,7 @@ A run judges main once 20 tasks have landed, and nothing judges main while a can
 36 and 55 landings wide: run 2031 found 20 deterministic failures together, and the size overrun
 of run 2318 took 8 hours 46 minutes to trace through 257 commits.
 
-**Proposed and refused** ([its card](../../DECISIONS.md#release-main-judged-in-steps)): a round
+**Proposed and refused** ([its card](#release-main-judged-in-steps)): a round
 after each land, in the background, of the steps and lanes the landed changes can reach. At 12
 landings an hour that is a round running most of the time, and rounds without end.
 
@@ -300,8 +325,27 @@ tasks land:
   green run, fewer than today's because the runs are closer.
 
 Whether a hosted run of main goes on while a candidate is open is not decided here:
-[the approved choice](../../DECISIONS.md#release-main-while-candidate-open) is that none does, and
+[the approved choice](release-candidate.md#release-main-while-candidate-open) is that none does, and
 changing it is a card of its own.
+
+- [-] **release-main-judged-in-steps** — The full run looks at main once every 20 landed tasks, and not at all while a release candidate is being fixed. Yesterday's two first runs covered 36 and 55 landed tasks each: one found 20 real failures at once, the other a size overrun that took 8 hours 46 minutes to trace through 257 commits. Should main also be checked in small steps, after each land and never holding one? A: as today. B: after a land, in the background, a round checks main's newest tip, running only the checks the landed changes can reach; ten lands during a round are one next round; a red is a task naming the one to five lands it can come from; it also runs while a candidate is open. The full run before a release stays. Recommended: B, built once the release can run on GitHub, since on this machine it adds load. Approve and say A or B in the note, or comment. [[analysis/release-pipeline#C. Main judged in smaller steps]]
+  [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
+
+    **Nothing waits on it.** No land is held and nothing queues: the round starts after the land, as the client's rebuild does today.
+
+    **Its cost** is machine time: at yesterday evening's 12 lands an hour a round would run most of the time. On a hosted runner that costs this machine nothing; here it would make the load worse, hence the order.
+
+    **Earlier verdicts checked.** **release-main-while-candidate-open** (A) says no run of main's tip while a candidate is open; B here changes that, so this is a new card and not a question on that one. Its option C was the full run taking turns with the candidate's reruns in one checkout; B here is a partial round apart from them. **land-tests-changed-packages** (rejected) refuses anything a land waits on or queues behind; B runs after the land and holds none.
+  [2026-11-18 12:49] owner · rejected — No. This will lead to the issue of having a million running ones. It should run one based somewhat on how long it takes to run it anyway. If takes one hour to run, maybe one running every say 30 minutes could be reasonable (in Github) but not locally due to load. The current approach based on number of tasks is mostly a control for that, so the machine isn't always under load.
+  [2026-11-18 18:12] agent — Applied as you wrote it; no new card, since your note gives the direction.
+
+    - **No round after each land.** Removed from the design.
+    - **On this machine nothing changes:** a run starts once 20 tasks have landed, which keeps the machine from being always under a run.
+    - **On GitHub, later:** once the hosted run exists (**release-run-on-github**, approved) and its trial has measured a run, a whole run of main may start on a clock set from that length, by your example a run of an hour about every half hour, so at most two at once. It is one more task, handed to the orchestrator to file after the trial; the interval is a setting taken from the measurement, not a card.
+
+    **Left as you approved it:** no run of main while a release candidate is open (**release-main-while-candidate-open**, A). If the hosted clock should run through a candidate, that is a new card then, not assumed.
+
+    [[analysis/release-pipeline#C. Main judged in smaller steps]] is rewritten to this.
 
 ### D. The run away from the agents' load
 
@@ -336,7 +380,7 @@ The pasted shape, placed where it fits. Three candidates for a green accepted wi
   whose lint inputs are the candidate's could spare the release that step. It would spare the
   lint, the docs audit and the client check, one to four minutes of a run of 21 to 54; the tests
   step, the long one, is never a task's run. And it lets an executor's run stand for the
-  release's. Refused ([its card](../../DECISIONS.md#release-accepts-task-runs)): one to four minutes
+  release's. Refused ([its card](#release-accepts-task-runs)): one to four minutes
   of 21 to 54 is no saving worth the trade.
 - **At a release, the release run's own greens, wherever they ran.** A step green in a release
   run, here or hosted, on the same inputs, is accepted by the next: A within a candidate, and F
@@ -353,11 +397,31 @@ fix left alone is not run again within a candidate (A, `tools/release-steps-carr
 and each test now has a time and a timeout of its own under one scheduler
 (`tools/nextest-runs-the-tests`). Nothing further is proposed.
 
+- [-] **release-accepts-task-runs** — A pasted proposal (Buildmark) suggests accepting a signed record of a run already made in place of running it again. A task already records its lint, docs check and tests at its tip. Should the release run skip a step when a task's recorded run of that same step, on the same inputs, was green? A: no; the release accepts only a green of a release run, its own or a hosted one. B: yes, for the lint, the docs check and the client check. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/release-pipeline#E. Runs accepted in place of running again]]
+  [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
+
+    **B saves** one to four minutes of a run of 21 to 54: the long step, the tests, is never one task's run. **B costs** letting the run of a task's own executor stand for the release's.
+
+    **The rest of the proposal** is answered in the analysis: tasks here already land on recorded runs with no server running them again, and its signature and outside verifier only matter once a second machine runs, which the hosted run brings with GitHub's own.
+
+    **Earlier verdicts checked.** **needed-stamps** decides what a land needs, not what a release accepts. **release-candidate-process** (A) carries a green of the release run's own across commits; it says nothing of a task's runs.
+  [2026-11-18 12:51] owner · rejected — If it doesn't save enough time there's not much purpose to it. 1 to 4 against 21 to 54 saves nothing. Unless this could be applied to the more demanding aspects like the tests in a way that more drastically reduces load.
+  [2026-11-18 18:12] agent — Dropped: the release accepts no task's recorded run, and no replacement card is proposed.
+
+    **On the tests, where you say it could pay.** No task ever runs the release's tests step, so there is no task's run to accept for it. The saving there comes from the release run's own greens, and two tasks hold it:
+
+    - `tools/release-steps-carry-by-inputs`, in progress: a candidate's rerun does not run again a step or a group of tests whose inputs the fix left alone. A fix of the browser tests alone would have rerun about 12 minutes of a 22-minute tests step.
+    - `tools/nextest-runs-the-tests`, landed: one scheduler over every test, with a time and a timeout for each, so the slow ones are named and the run stops loading itself.
+
+    A candidate's first run stays whole. Running it off this machine is **release-run-on-github**, approved.
+
+    [[analysis/release-pipeline#E. Runs accepted in place of running again]] says this now.
+
 ## The hosted run on GitHub
 
 Once the GitHub plugin is in, a release's checks run on GitHub's CI, and a project without the
 plugin keeps the local run exactly as it is. The design, approved on
-[its card](../../DECISIONS.md#release-run-on-github). Its workflow is in the tree, and `just
+[its card](#release-run-on-github). Its workflow is in the tree, and `just
 release` starts it where a project turns it on, which this repository has not
 ([RELEASES](../RELEASES.md#on-githubs-runners), which says what was built and what was left for
 later: a rerun of named steps and the rerun of a failure alone stay on this machine):
@@ -453,6 +517,29 @@ measured a run. From then a run of main's tip may follow a clock set from a run'
 `just release` starting it uses the credential and repository binding of the GitHub plugin
 (`tools/github-pr-delivery`), and waits for the trial: the workflow started by hand on one
 commit, and measured.
+
+- [r] **release-run-on-github** — As you asked, the release's checks could run on GitHub's machines once the GitHub plugin is in, so a busy or sleeping laptop no longer decides a release. A project without the plugin keeps today's local run unchanged. Is this the design? One workflow, started only by `just release` for one commit, runs that commit's own checks on GitHub's macOS runners. `just release` waits, reads the result, files any red here, and on green tags and refreshes from this machine as today. No secret goes to GitHub. If GitHub does not answer, the run checks locally and says so. Approve, or comment with what to change. [[analysis/release-pipeline#The hosted run on GitHub]]
+  [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
+
+    **Cost.** No money while the repository is public: GitHub's standard runners are free there. Time is an estimate until tried: 45 to 90 minutes for a whole run on 3-core runners, against 21 to 54 here under load, and 10 to 20 for a rerun of what a fix touched.
+
+    **First step once approved:** a trial of the workflow on one commit, by hand, to measure it and to see that the browser and store tests fit a runner's 7 GB.
+
+    **It waits for** `tools/github-pr-delivery`, whose GitHub credential it uses.
+
+    **Earlier verdicts checked.** **github-outbound-pr-delivery** and the landing design keep a task's checks local with no hosted job per pull request; this runs the release's checks only, never a task's. No earlier card decides where the release run runs.
+  [2026-11-18 12:54] owner · approved — Yes, correct
+  [2026-11-18 18:12] agent — The design stands as written, and the work is handed on: the orchestrator files its board tasks from the paragraphs posted on the board task `docs/apply-owner-verdicts-2026-11-18`. Your answer reached no agent until 18:05: the machine's server was one board schema behind and delivered nothing.
+
+    1. **The trial.** The workflow file, started by hand for one commit, measured: how long a run takes, and whether the browser and store tests fit a runner's 7 GB. It tags nothing and starts on no push or pull request.
+    2. **The hosted run in `just release`.** It starts the workflow, waits, believes the result only for the bound repository, main's workflow file and the exact commit, files reds here, tags and refreshes here, and checks locally when GitHub does not answer. Off unless a project turns it on.
+    3. **Its clock,** from your note on **release-main-judged-in-steps**: once a run is measured, a run of main on GitHub at an interval set from its length. Never on this machine.
+
+    **They wait for** `tools/github-pr-delivery`, in progress, for its GitHub credential and repository binding. `tools/github-pr-verified-activation` turns on pull-request landing only and covers none of this.
+
+    Turning the hosted run on for this repository is a `[releases]` setting, and stays your word.
+  [2026-11-18 18:12] agent · resolved
+  [2026-11-18 18:16] agent — Filed: tools/release-hosted-trial (the hand-dispatched trial, after tools/github-pr-delivery), then tools/release-runs-hosted, then tools/release-hosted-clock for the interval you described on release-main-judged-in-steps.
 
 ## The candidate's bounds
 

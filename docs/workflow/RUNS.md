@@ -293,7 +293,8 @@ suites shown:
 ## The Runs page
 
 `/runs` (the web client's `runs` kind, `apps/symphony-web/src/runs.tsx`) shows a
-project's runs on the server that serves it:
+project's runs on the server that serves it; what it is for and how it behaves, with its
+pictures, is [its spec](../product/RUNS.md). What it reads:
 
 - **Now:** each machine's word (its freshness and how long ago it came), then each
   operation running or queued, with its recipe, task, who started it and since when.
@@ -330,8 +331,9 @@ each day file not read, by its name, and why. Its query names `pipeline`, `end` 
 or `started`), `task`, `branch` and `before` (seconds: only runs asked for at or before
 it, so the page after one holds its last run again and none asked for in the same
 second is lost between them; the client shows each run once).
-It reads the day files newest first, back 14 days (`RUNS_DAYS`), and stops after the
-day that filled the page. A day file over 16 MiB (`RUNS_FILE_BYTES`) is not read, nor
+It reads the day files newest first, back 14 days (`RUNS_DAYS`) from the moment
+`TASKS_NOW` holds the board's clock at when the server's environment sets it, else
+from the server's clock, and stops after the day that filled the page. A day file over 16 MiB (`RUNS_FILE_BYTES`) is not read, nor
 is any once 64 MiB were read for the one answer (`RUNS_READ_BYTES`); each is named in
 `unread`. `GET /api/run?run=ID` (`symphony_api::RUN_PATH`) answers a
 `symphony_api::RunPage`: the run, and every step under it, depth first, each after

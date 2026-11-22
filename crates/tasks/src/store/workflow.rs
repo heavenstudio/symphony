@@ -333,7 +333,8 @@ pub(crate) fn retired(
 
 impl Store {
     /// The workflow `committed` sets made active on this board, as automatic activation B runs
-    /// it (docs/DECISIONS.md#configurable-workflow-activation): a file with no `[workflow]` on a
+    /// it (docs/workflow/analysis/configurable-delivery-workflow.md#configurable-workflow-activation): a
+    /// file with no `[workflow]` on a
     /// board with none active writes nothing; one that drops the workflow a board activated
     /// returns the board to its own writers ([`Store::return_to_default`]); a custom definition
     /// is activated unless it is the active one ([`Store::activate_workflow`]).

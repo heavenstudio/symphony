@@ -24,13 +24,6 @@ use serde_json::{Map, Value, json};
 use std::io::{BufRead, Read, Write};
 
 mod assessment;
-#[path = "api/assessment/context.rs"]
-mod context;
-#[cfg_attr(
-    not(test),
-    expect(unused_imports, reason = "preserve connect-only compatibility entries")
-)]
-pub use context::{run, serve};
 
 /// The api's major: version 2 refuses the retired `create.fast_fix` argument.
 pub const MAJOR: i64 = 2;
@@ -130,6 +123,8 @@ impl Args {
     }
 }
 
+/// Read calls from `input`, answer each on `out`; exit 2 if the input is not a call at all.
+/// `context` is the native CLI's effective context; without one a call that needs it is refused.
 pub(super) fn run_in<F: FnOnce() -> Result<Store, String>>(
     input: &mut dyn Read,
     out: &mut dyn Write,
@@ -169,6 +164,7 @@ pub(super) fn run_in<F: FnOnce() -> Result<Store, String>>(
     code
 }
 
+/// Answer one call or list per nonblank input line, flushing each answer over one lazy connection.
 pub(super) fn serve_in<F: FnOnce() -> Result<Store, String>>(
     input: &mut dyn BufRead,
     out: &mut dyn Write,

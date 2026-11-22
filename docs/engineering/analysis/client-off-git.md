@@ -2,7 +2,7 @@
 
 What it would take for git to hold no built web client, the client travelling only inside a
 package on crates.io, and when the commits could stop. The choice is the owner's, on
-[its card](../../DECISIONS.md#client-in-the-crate). Read at main `4397600b` on 2026-11-15; nothing
+[its card](#client-in-the-crate). Read at main `4397600b` on 2026-11-15; nothing
 here was built or tried, and [what is not known](#not-yet-known) says what a trial would have to
 show.
 
@@ -88,6 +88,27 @@ to a commit of main waits for the next release, and a land's break of the client
 the documents is found as under A.
 
 None of them shrinks the history already there: that takes rewriting it, a choice of its own.
+
+- [r] **client-in-the-crate** — Replaces: client-distribution-on-main. Git would stop holding the built web client: a release builds it, and it travels only inside a package on crates.io. Nothing on the pages changes. That works for a server taken from crates.io, and not for one built from a Git tag, as the consuming project builds it today: that build would find no client. So when do the commits stop? A: once nothing builds the server from Git: after the first publication and after the consuming project takes Symphony from crates.io; until then the client is committed as today. B: now, by giving the built client a package of its own, which even a server built from Git takes from crates.io; it needs a trial first. C: A, and until then the client is committed once a release instead of after every land. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/client-off-git#The options]]
+  [2026-11-15 11:12] agent — Posted for the board task `docs/owner-answers-applied`, from your rejection of **client-distribution-on-main**: "we should push those releases as crates to crates.io and not commit then at all if possible."
+
+    **What is possible today.** The server's package for crates.io already carries the built client, so a server installed from crates.io needs none from git. Nothing is published yet: the first publication waits on your word and on the repository line, asked on the board task `tools/publish-to-crates-io`. The consuming project builds the server from a release's Git tag, and can move to crates.io only for every Symphony package in one edit.
+
+    **What each costs.**
+    - **A:** nothing is built for the wait. The client is committed after each land that changes it, about 27 MiB a day, until three things are done: the first publication, with `[releases] publish` on; the consuming project's edit from Git tags to versions, with the refresh moving a version where it moves a tag today (not built); then the folder leaves git. From then a project on a Git pin gets a server that does not build. A checkout that needs pages builds the client first, minutes while the Dioxus client remains. The release run builds the client, tags a commit with none in it and publishes the server's package before the refresh, which then waits for that upload. `just client-check` has no committed client to compare with, and checks only that two builds agree. The regenerator goes (1,674 lines, 1,962 of tests), and with it main's only build of the client and audit of the documents between releases.
+    - **B:** the commits stop as soon as it works, and the consuming project stays on its Git pin. The release run publishes the client's package before it tags, an upload that cannot be taken back, so the first publication is at the next release and needs your word and the repository answer now. Main between releases builds with the last published client, older than its sources, unless a checkout uses one it built; how a worktree's tests get theirs is not designed. None of it has been tried.
+    - **C:** A's end, plus a task now: the release run starts the commit a land starts today, so main gains one client a release, about three tenths of today's growth. Between releases main's client is older than its sources, a pin to a commit of main waits for the next release, and no land is followed by a build of the client or an audit of the documents.
+
+    None of them shrinks the 132 MiB of client already in main's history: that takes rewriting it, a choice of its own.
+
+    **Not yet known.** How long A waits: the time to your two answers on publication and to the consuming project's edit. Whether cargo packages a folder git ignores when the package's own list names it, which A and B both need; not tried. What a worktree pays to build the client before its tests; not measured. Whether B works at all.
+
+    **Why A.** It is what you asked for, and every step of it is one the move to crates.io needs anyway, so nothing is built to be thrown away. B could stop the commits sooner, but it rests on things nobody has tried and puts an upload that cannot be undone before every release is cut. C is worth its task only if the wait runs to weeks.
+
+    **Earlier verdicts checked.** **consumer-contract-versioning** (B) and your words under it, "I would like to publish crates (MIT license) to crates.io as the pacakge manager", put the packages on crates.io; they do not say whether git also holds the client. **release-delivery** (C) ships a release's client beside the server once `symphony update` installs releases; it does not say what git holds before then. **symphony-update-command** (B) has projects follow releases, which every option keeps. **pin-waits-for-current-client** (A) keeps a pin to a commit of main off a client older than its sources: A and B leave such a pin no client and C makes it wait for a release, so none changes that choice. None of them answers this card.
+  [2026-11-15 11:38] owner · approved — A
+  [2026-11-18 18:12] agent — A stands: the built client is committed as today. The first publication on crates.io is made (`inbox/submit-crates`). The commits stop once the consuming project takes Symphony from crates.io, which it has not yet; no task is filed for the stop until then.
+  [2026-11-19 01:15] agent · resolved
 
 ## Not yet known
 

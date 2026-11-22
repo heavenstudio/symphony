@@ -7,6 +7,7 @@
 //! and a repeat of an observation, move nothing more.
 
 use super::*;
+use crate::common::pair;
 use std::collections::BTreeMap;
 use symphony_api::workflow::{
     Definition, Dependency, OperationRequest, Pair, RecoveryAction, Slot, Source,
@@ -135,13 +136,6 @@ fn unanswered(f: &Fixture, slug: &str, id: &str) -> Vec<String> {
     (recoveries(f, slug).into_iter())
         .filter(|line| line.contains(&format!("attempt {id} ")) && line.contains("nothing answers"))
         .collect()
-}
-
-fn pair(phase: &str, state: &str) -> Pair {
-    Pair {
-        phase: phase.into(),
-        state: state.into(),
-    }
 }
 
 fn at(f: &Fixture, slug: &str) -> Pair {

@@ -72,14 +72,15 @@ impl Folders {
     }
 }
 
-/// The answer of a window of `days` by `grain` of the project `hub` serves, at its clock: its day
+/// The answer of a window of `days` by `grain` of the project `hub` serves, at the time its
+/// records are read at ([`crate::live::Hub::recorded_now`]): its day
 /// files, from the folders found at the first read ([`crate::live::Hub::report_folders`]), and
 /// the marks from its default branch; the one the hub kept while none of them moved
 /// ([`Kept::answer`]).
 pub(crate) fn answer(hub: &crate::live::Hub, grain: Grain, days: u32) -> Answer {
     let folders = hub.report_folders.get_or_init(|| Folders::of(&hub.root));
     hub.reports_kept
-        .answer(folders, &hub.root, grain, days, hub.now())
+        .answer(folders, &hub.root, grain, days, hub.recorded_now())
 }
 
 /// The marks of `branch`, the default branch of the project at `root`, since `since`, oldest

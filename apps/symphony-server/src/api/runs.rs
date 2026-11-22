@@ -712,15 +712,21 @@ fn folder(hub: &crate::live::Hub) -> Result<std::path::PathBuf, (StatusCode, Str
         })
 }
 
-/// The page of runs `filters` take, of the project `hub` serves, at its clock.
+/// The page of runs `filters` take, of the project `hub` serves, at the time its records
+/// are read at ([`crate::live::Hub::recorded_now`]).
 pub(crate) fn answer(
     hub: &crate::live::Hub,
     filters: &Filters,
 ) -> Result<RunsPage, (StatusCode, String)> {
-    Ok(page(&hub.runs_index, &folder(hub)?, filters, hub.now()))
+    Ok(page(
+        &hub.runs_index,
+        &folder(hub)?,
+        filters,
+        hub.recorded_now(),
+    ))
 }
 
-/// The run `id` of the project `hub` serves and its steps, at its clock, or the status and why
+/// The run `id` of the project `hub` serves and its steps, at that time, or the status and why
 /// not: refused for an id that is no run's, none for a run no day file read holds.
 pub(crate) fn answer_run(
     hub: &crate::live::Hub,
@@ -732,7 +738,8 @@ pub(crate) fn answer_run(
             format!("run is a run's id, 32 lower-case hex digits, not {id:?}"),
         ));
     }
-    run(&hub.runs_index, &folder(hub)?, id, hub.now()).map_err(|why| (StatusCode::NOT_FOUND, why))
+    run(&hub.runs_index, &folder(hub)?, id, hub.recorded_now())
+        .map_err(|why| (StatusCode::NOT_FOUND, why))
 }
 
 #[cfg(test)]

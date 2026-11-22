@@ -86,8 +86,11 @@ fn recovered_outputs_keep_journal_order_with_an_existing_poisoned_queue_item() {
     let job = OutputJob::recover_opened(&tree.root, &path, file)
         .unwrap()
         .unwrap();
-    let waiting: Waiting = Arc::new(Mutex::new(BTreeMap::from([(job.job.0, job.job.1.clone())])));
-    let ahead: Ahead = Arc::new(Mutex::new(BTreeMap::from([(job.job.1.rel.clone(), 1)])));
+    let waiting: Waiting = Arc::new(Mutex::new(BTreeMap::from([(
+        job.job.id,
+        job.job.edit.clone(),
+    )])));
+    let ahead: Ahead = Arc::new(Mutex::new(BTreeMap::from([(job.job.edit.rel.clone(), 1)])));
     let job = Arc::new(Mutex::new(job));
     let poison = job.clone();
     assert!(
@@ -122,4 +125,44 @@ fn recovered_outputs_keep_journal_order_with_an_existing_poisoned_queue_item() {
     );
     recover_outputs(&tree.root, &mut queued, &waiting, &ahead);
     assert_eq!(queued.len(), 3, "held journals are not adopted twice");
+}
+
+/// Whether another descriptor could take the server's lock `name` of `root` right now.
+fn lock_is_free(root: &Path, name: &str) -> bool {
+    let file = OpenOptions::new()
+        .append(true)
+        .open(home(root).unwrap().join(name))
+        .unwrap();
+    file.try_lock().is_ok()
+}
+
+#[test]
+fn publication_locks_hold_all_three_until_dropped() {
+    let tree = crate::test_tree::Tree::new();
+    let done = symphony_board::sys::output(
+        symphony_board::sys::Command::new("git")
+            .args(["init", "-q", "-b", "main"])
+            .current_dir(&tree.root),
+    )
+    .unwrap();
+    assert!(done.status.success(), "{done:?}");
+    let writes = Mutex::new(());
+    let locks = PublicationLocks::take(&tree.root, &writes).unwrap();
+    assert!(writes.try_lock().is_err());
+    assert!(!lock_is_free(&tree.root, "verdict-commits.lock"));
+    assert!(!lock_is_free(&tree.root, "verdict-writes.lock"));
+    drop(locks);
+    assert!(writes.try_lock().is_ok());
+    assert!(lock_is_free(&tree.root, "verdict-commits.lock"));
+    assert!(lock_is_free(&tree.root, "verdict-writes.lock"));
+    // Taken again once released: nothing of the first take is left held.
+    drop(PublicationLocks::take(&tree.root, &writes).unwrap());
+}
+
+#[test]
+fn publication_locks_refused_outside_a_repository_leave_the_saves_free() {
+    let tree = crate::test_tree::Tree::new();
+    let writes = Mutex::new(());
+    assert!(PublicationLocks::take(&tree.root, &writes).is_err());
+    assert!(writes.try_lock().is_ok());
 }

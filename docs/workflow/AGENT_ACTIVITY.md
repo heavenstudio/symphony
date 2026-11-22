@@ -70,7 +70,7 @@ built and started (`apps/symphony-server/src/reload.rs`): the replacement reads 
 and says it is ready, the serving server commits the hand-off, and only then stops. Both
 are alive and reading the board for that time, so each server generation has one gate,
 shared by every project it serves and by both its recorders, the agents' and the board's
-health hours ([TASKS](TASKS.md#board-health); `crates/tasks/src/recording.rs`, held in
+health hours ([BOARD_OPERATIONS](../operations/BOARD_OPERATIONS.md#board-health); `crates/tasks/src/recording.rs`, held in
 `front::Shared`), and only one generation records at a time:
 
 - The replacement records nothing until the hand-off commits. Its first snapshot after
@@ -94,7 +94,7 @@ of Symphony's state there, as the runs' ([RUNS](RUNS.md#the-day-files));
 `symphony/agents.<database>/` for a board database other than the live one.
 `SYMPHONY_AGENT_ACTIVITY` names another folder (a test's); a board `TASKS_SERVER`
 names keeps none without it. Only the shared server, the one that writes the board's
-`health.json`, writes them ([TASKS](TASKS.md#board-health)): a private server keeps no
+`health.json`, writes them ([BOARD_OPERATIONS](../operations/BOARD_OPERATIONS.md#board-health)): a private server keeps no
 recorder and writes nothing.
 
 A line is one JSON object and its newline. An hour's line goes to the file of the UTC

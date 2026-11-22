@@ -4,7 +4,7 @@ A project should be able to use its own steps without giving every project a dif
 implementation. The remaining choice is how much of the workflow it can replace: names alone,
 steps within the existing lifecycle, or the lifecycle itself. This is a design proposal; none
 of the workflow settings below is implemented. The choice is on
-[its card](../../DECISIONS.md#project-workflow-shape).
+[its card](#project-workflow-shape).
 
 The recommended scope is **B: project steps over the existing lifecycle**. A project could use
 `Specification → Ready → Implement → Validate → Review → Done`; Implement and Validate would both
@@ -140,9 +140,25 @@ would motivate C.
   close within their parent. A project's own land remains its own enforcement and must consume
   the workflow contract before that project activates custom steps.
 
+- [r] **project-workflow-shape** — A project could give its board extra steps, such as Implement then Validate, while a project with no settings keeps today's flow. How much can it replace? A: names and column order only; the steps and permissions stay fixed. B: extra preparation and work steps, each tied to today's lifecycle, with rules for who moves between them; one ready stage, one review and the existing completion rules remain. C: any state graph, including several review or delivery stages, with new rules for staffing, recovery and completion. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/project-workflow#The workflow choice]]
+  [2026-11-17 10:34] agent — Posted for `tools/studio/project-workflow`. This is a design only; no project changes its flow before implementation.
+
+    **A costs least:** a presentation setting and client labels, with no task migration or change to landing. It cannot add Validate as a real step.
+
+    **B:** one workflow definition in `symphony.toml`, a step stored beside each task's current status, and one permission check used by every move. The board's staffing and recovery keep their current meanings. Columns, phone tabs, filters, timeline and agent instructions read that definition. The default land checks that the task reached review, then reads the same evidence as today; a project's own land adopts the step contract before custom steps activate. Both database backends need migration and tests.
+
+    **C costs most:** a workflow engine replaces the fixed lifecycle in the board, settings, client, skills and every landing adapter. Each project must specify what claiming, losing an agent, a verdict and completion do. It is warranted by a project whose real process B cannot express; this task names none.
+
+    **Gates and migration under every option:** existing configurable stamps and the project's own landing policy keep deciding the evidence. Its checks, tiers and nightly remain its own. A project with no workflow setting keeps today's operations; the consuming project's flow and gates must give the same decisions before and after. Neither a live migration nor a consumer edit is authorized by this card.
+
+    **Earlier verdicts checked:** **needed-stamps**, approved as "it's exactly what I had asked for", already decides the generic catalogue and project replacement, so no new gate engine is offered. **board-at-a-glance** (B) keeps blocked work in the step it stopped in; all options preserve that. Neither decides whether projects can add steps or replace the lifecycle, which is this card's choice.
+  [2026-11-17 12:16] owner · approved — C
+  [2026-11-17 12:28] agent — C is the chosen direction: projects can define their own states and transitions, including multiple review or delivery stages, with explicit rules for staffing, recovery and completion. The board, Agents page, timeline and agent guidance must read that configured workflow. Projects without a workflow setting retain today’s behavior, and existing stamps and project landing policies continue to decide the required evidence. This supersedes the recommendation for B in the design analysis; the workflow implementation remains to be built.
+  [2026-11-17 12:28] agent · resolved
+
 ## Gates: use the existing boundary
 
-The [approved catalogue design](../../DECISIONS.md#needed-stamps) already settles the generic
+The [approved catalogue design](needed-stamps.md#needed-stamps) already settles the generic
 default and replacement rule. The default catalogue has tests, independent review, pictures and
 owner approval; only review is required for a task with no assessment. An assessment may select
 none. Configuring the catalogue changes guidelines and defaults, not how a stamp is read. The
