@@ -21,8 +21,7 @@
 
 use super::postgres as pg;
 use super::surreal::{self, cap as sql_cap, workflow as sql};
-use super::{Error, Failure, Opens, Store, Which, statement::both};
-use crate::Health;
+use super::{Error, Failure, Opens, Store, Which, executors_or, statement::both};
 use crate::workflow::admit::{self, Context, Facts, Prerequisite, Refusal};
 use crate::workflow::guard::{Accepted, Attester, Checked, Guarding};
 use crate::workflow::{Active, Host, Recorded, TaskPosition, Transition};
@@ -524,10 +523,9 @@ impl Store {
                 continue;
             }
             let session = sessions.iter().find(|s| s.row.handle == pair.0);
-            let expired = role.expires.is_some_and(|expires| expires < now);
-            let gone = session.is_none_or(|s| matches!(s.health, Health::Lost | Health::Left));
-            if expired || gone {
-                if !expired && let Some(session) = session {
+            let (drop, fence) = super::lapsed(role.expires, session.map(|s| s.health), now);
+            if drop {
+                if fence && let Some(session) = session {
                     seen.push(json!({"handle": pair.0, "last_seen": session.row.last_seen}));
                 }
                 lapsed.push(pair);
@@ -571,16 +569,10 @@ impl Store {
         }
         let slug = &decided.task.slug;
         let view = self.view(&Which::Starting(slug))?;
-        let mut by: Vec<String> = (taking.add.iter())
+        let adds = (taking.add.iter())
             .filter(|(_, role)| role == "executor")
-            .map(|(handle, _)| handle.clone())
-            .chain(view.holders("executor").map(|r| r.handle.clone()))
-            .collect();
-        if by.is_empty()
-            && let Some(handle) = agent(principal)
-        {
-            by.push(handle.to_string());
-        }
+            .map(|(handle, _)| handle.clone());
+        let by = executors_or(adds.chain(view.executors()), agent(principal));
         let opens = Opens {
             status: Some(status.to_string()),
             by,

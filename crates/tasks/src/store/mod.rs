@@ -773,37 +773,8 @@ impl Store {
                 None
             };
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
-            let (reason, needs, gates, unlanded, blocked, moved, holds) = (
-                change.reason.is_some(),
-                change.needs.is_some(),
-                change.gates.is_some(),
-                change.unlanded.is_some(),
-                change.blocked.is_some(),
-                (change.status.as_deref()).map(|status| status == "cancelled"),
-                !ruled.slots.is_empty(),
-            );
-            let placed = placing.is_some();
-            let body = both(
-                surreal::rule(
-                    reason,
-                    (needs, gates),
-                    unlanded,
-                    blocked,
-                    moved,
-                    holds,
-                    placed,
-                ),
-                pg::rule(
-                    reason,
-                    (needs, gates),
-                    unlanded,
-                    blocked,
-                    moved,
-                    holds,
-                    placed,
-                ),
-            )
-            .posting();
+            let parts = change.parts(&ruled.slots, placing.as_ref());
+            let body = both(surreal::rule(parts), pg::rule(parts)).posting();
             let mut vars = change.vars(slug, actor, version, view.now);
             vars["slots"] = Value::Array(ruled.slots);
             if let Some(placing) = placing {
@@ -1189,14 +1160,23 @@ impl View {
         self.holders(role).any(|r| r.handle == handle)
     }
 
+    /// The handles of the task's executors, as read.
+    fn executors(&self) -> impl Iterator<Item = String> + '_ {
+        self.holders("executor").map(|r| r.handle.clone())
+    }
+
     /// The reservations that still count; those past their time or held by a session gone are dropped
     /// in `change`.
     fn lapse_reservations(&self, change: &mut Change) -> Vec<&RoleRow> {
         let mut kept = Vec::new();
         for held in self.holders("reserved") {
-            let lapsed = held.expires.is_some_and(|expires| expires < self.now);
-            if lapsed || matches!(self.health(&held.handle), Health::Lost | Health::Left) {
-                if !lapsed {
+            let health = self
+                .sessions
+                .get(held.handle.as_str())
+                .map(|&(_, health)| health);
+            let (drop, fence) = lapsed(held.expires, health, self.now);
+            if drop {
+                if fence {
                     change.saw(self, &held.handle);
                 }
                 change.drop(&held.handle, "reserved");
@@ -1247,10 +1227,7 @@ impl View {
                     .get(row.slug.as_str())
                     .into_iter()
                     .flatten()
-                    .filter(|r| {
-                        !(r.role == "reserved"
-                            && r.expires.is_some_and(|expires| expires < self.now))
-                    })
+                    .filter(|r| !(r.role == "reserved" && expired(r.expires, self.now)))
                     .map(|r| Role {
                         handle: r.handle.clone(),
                         role: r.role.clone(),
@@ -1301,7 +1278,45 @@ struct Change {
     unlanded: Option<Value>,
 }
 
+/// What a rule's write adds to the write every rule makes ([`surreal::rule`], [`pg::rule`]),
+/// each part by its name ([`Change::parts`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct RuleParts {
+    /// The task, reopened under a custom workflow, placed first (`workflow::REOPEN_PLACED`).
+    placed: bool,
+    /// The move's reason posted after its line.
+    reason: bool,
+    /// What the block it makes waits on written.
+    blocked: bool,
+    /// The task's needs written.
+    needs: bool,
+    /// The task's gate decisions written.
+    gates: bool,
+    /// Its mark of an approve not landed set or lifted.
+    unlanded: bool,
+    /// A change of status, and whether to cancelled: what a block waited on removed, its hold
+    /// and its dependants settled.
+    moved: Option<bool>,
+    /// The slot counters it holds guarded.
+    holds: bool,
+}
+
 impl Change {
+    /// What its write adds ([`RuleParts`]), `slots` the slot counters it holds and `placing` the
+    /// placement of a task it reopens under a custom workflow.
+    fn parts(&self, slots: &[Value], placing: Option<&workflow::Transition>) -> RuleParts {
+        RuleParts {
+            placed: placing.is_some(),
+            reason: self.reason.is_some(),
+            blocked: self.blocked.is_some(),
+            needs: self.needs.is_some(),
+            gates: self.gates.is_some(),
+            unlanded: self.unlanded.is_some(),
+            moved: (self.status.as_deref()).map(|status| status == "cancelled"),
+            holds: !slots.is_empty(),
+        }
+    }
+
     /// Whether it moves the task, blocks it, or adds or drops an executor or a reviewer: what a
     /// custom workflow's edges alone do to a task it holds. The orchestrator's role and a
     /// reservation are the board's coordination, which its writers keep: a launch reserves the
@@ -1337,6 +1352,18 @@ struct Opens {
     /// For a task a custom workflow holds, whether the position it moves to holds a slot by its
     /// slot policy ([`crate::slots::Entry::slot`]).
     slot: Option<bool>,
+}
+
+/// Whose parents a start counts against the cap ([`Opens::by`]): `executors`, else `mover`, the
+/// session that makes the start, where one does.
+fn executors_or(executors: impl IntoIterator<Item = String>, mover: Option<&str>) -> Vec<String> {
+    let mut by: Vec<String> = executors.into_iter().collect();
+    if by.is_empty()
+        && let Some(mover) = mover
+    {
+        by.push(mover.into());
+    }
+    by
 }
 
 struct Say {
@@ -1454,6 +1481,21 @@ fn message(row: MessageRow) -> Message {
 fn read_of(which: &Which, sessions: Sessions) -> (Statement<'static>, Value) {
     let (read, vars) = (reading(which, sessions), reading::vars(which));
     (both(read, pg::reading::reading(which, sessions)), vars)
+}
+
+/// Whether a reservation that `expires` at a time (none: never) is past it at `now`.
+fn expired(expires: Option<f64>, now: f64) -> bool {
+    expires.is_some_and(|expires| expires < now)
+}
+
+/// What a reservation's lapse does at `now`, `health` its holder's (none: no session holds the
+/// handle): whether the board drops it, past its expiry or held by a session lost, left or gone,
+/// and whether that drop is fenced at the holder's last beat as read, which only a session read
+/// gone before the reservation's time is up gives.
+fn lapsed(expires: Option<f64>, health: Option<Health>, now: f64) -> (bool, bool) {
+    let expired = expired(expires, now);
+    let gone = health.is_none_or(|health| matches!(health, Health::Lost | Health::Left));
+    (expired || gone, !expired && gone && health.is_some())
 }
 
 fn values<T: serde::Serialize>(rows: &[T]) -> Vec<Value> {

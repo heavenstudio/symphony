@@ -6,8 +6,8 @@ use super::postgres::{Pg, work as pg};
 use super::statement::both;
 use super::surreal::work as sql;
 use super::{
-    Change, Error, Failure, Message, Opens, REFUSED, Say, Store, Task, Which, left_actor, refused,
-    repr, unknown_actor,
+    Change, Error, Failure, Message, Opens, REFUSED, Say, Store, Task, Which, executors_or,
+    left_actor, refused, repr, unknown_actor,
 };
 use crate::alarm::{NOTHING, UNDER, WAS};
 use crate::health::Health;
@@ -837,19 +837,11 @@ impl Store {
             // executor's parent (the mover's when it has none) where no orchestrator holds it.
             // Blocked work a hold kept open holds its slot already, which the cap reads.
             let starting = OPEN.contains(&status) && !OPEN.contains(&current);
-            let opens = starting.then(|| {
-                let executors: Vec<String> =
-                    view.holders("executor").map(|r| r.handle.clone()).collect();
-                Opens {
-                    status: Some(status.into()),
-                    by: if executors.is_empty() {
-                        vec![handle.into()]
-                    } else {
-                        executors
-                    },
-                    what: format!("{slug} cannot go from {current} to {status}"),
-                    ..Opens::default()
-                }
+            let opens = starting.then(|| Opens {
+                status: Some(status.into()),
+                by: executors_or(view.executors(), Some(handle)),
+                what: format!("{slug} cannot go from {current} to {status}"),
+                ..Opens::default()
             });
             Ok(Change {
                 status: Some(status.into()),

@@ -3,9 +3,71 @@
 //! role go.
 
 use crate::orchestration;
-use crate::rows::RoleRow;
+use crate::rows::{RoleRow, TaskRow};
 use crate::stages::{EVERY_ROLE, JOINED, RELEASED};
-use crate::store::{Change, Error, Held, Opens, Say, Store, Task, refused, repr};
+use crate::store::{Change, Error, Held, Opens, Say, Store, Task, View, refused, repr};
+
+/// The reviewer's part of `handle`'s join of `task` ([`Store::take_role`]), `held` who
+/// orchestrated and requested it, `beside` why it joins beside another reviewer: refused to its
+/// executor and to a session whose verdict the board would not take, told who gives it instead.
+/// A new reviewer, not one joining again or a red's filer, is refused beside those still there
+/// whose verdict the board takes, naming them, unless it says why it joins beside them, which
+/// its join posts; one lost or left is no bar, its last beat fencing the join.
+fn reviewer_join(
+    view: &View,
+    task: &TaskRow,
+    handle: &str,
+    held: &Held,
+    beside: Option<&str>,
+    board: &str,
+    change: &mut Change,
+) -> Result<(), Error> {
+    let slug = &task.slug;
+    if view.holds(handle, "executor") {
+        return Err(refused(format!(
+            "{handle} executes {slug} and cannot review its own work"
+        )));
+    }
+    let orchestrates = view.holds(handle, "orchestrator");
+    if let Some(why) = held.requested(handle, &task.created_by, orchestrates) {
+        return Err(refused(super::unfresh_refusal(
+            board, slug, handle, why, true,
+        )));
+    }
+    // A new reviewer, not one joining again or a red's filer, beside those still there whose
+    // verdict the board takes: a holder that executed or requested the work reviews nothing.
+    let filer = view
+        .session(handle)
+        .is_some_and(|s| s.kind == crate::red::FILER);
+    let mut there = Vec::new();
+    for other in view
+        .holders("reviewer")
+        .filter(|_| !filer && !view.holds(handle, "reviewer"))
+    {
+        let (who, health) = (&other.handle, view.health(&other.handle));
+        let theirs = view.holds(who, "orchestrator");
+        if held.unfresh(who, &task.created_by, theirs).is_some() {
+            continue;
+        }
+        if health.holds() {
+            there.push(format!("{who} ({})", health.as_str()));
+        } else {
+            change.saw(view, who);
+        }
+    }
+    if !there.is_empty() {
+        let named = there.join(", ");
+        let Some(why) = beside else {
+            return Err(refused(format!(
+                "{slug} is reviewed by {named}: a later round resumes it, never another \
+                 reviewer; it lets the role go with: {board} release {slug} --role reviewer, or \
+                 one joins beside it with: {board} role {slug} reviewer --beside WHY"
+            )));
+        };
+        change.reason = Some(format!("reviewer beside {named}: {why}"));
+    }
+    Ok(())
+}
 
 impl Store {
     /// The orchestrator role on `slug`, a task `handle` just filed, when `handle` is an
@@ -66,8 +128,9 @@ impl Store {
                 repr(role)
             )));
         }
+        let reviewing = role == "reviewer";
         let beside = match beside.map(str::trim) {
-            Some(_) if role != "reviewer" => {
+            Some(_) if !reviewing => {
                 return Err(refused(format!(
                     "only a reviewer joins beside another, not {}",
                     repr(role)
@@ -80,95 +143,27 @@ impl Store {
             }
             given => given,
         };
-        let starts = role == "orchestrator";
         // The board the commands a refusal names reach: this one.
         let board = self.board_command();
         // Who orchestrated the task, read from its thread as the verdict reads it.
-        let held = if role == "reviewer" {
+        let held = if reviewing {
             self.ever_held(slug)?
         } else {
             Held::default()
         };
-        self.ruling(slug, handle, starts, |view| {
+        // The orchestrator's take starts the open work it takes on.
+        self.ruling(slug, handle, !reviewing, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
             // A finished task takes no role, but an approved one no landing has closed its
             // orchestrator's: its land is still somebody's to make.
-            let lands = role == "orchestrator" && crate::orchestration::marked_unlanded(&task.status, &task.fields).is_some();
+            let lands = !reviewing
+                && crate::orchestration::marked_unlanded(&task.status, &task.fields).is_some();
             if (task.status == "done" || task.status == "cancelled") && !lands {
                 return Err(refused(format!("{slug} is {}", task.status)));
             }
-            if role == "reviewer" && view.holds(handle, "executor") {
-                return Err(refused(format!(
-                    "{handle} executes {slug} and cannot review its own work"
-                )));
-            }
-            let mut change = Change::default();
-            if role == "reviewer" {
-                let orchestrates = view.holds(handle, "orchestrator");
-                if let Some(why) = held.requested(handle, &task.created_by, orchestrates) {
-                    return Err(refused(super::unfresh_refusal(
-                        &board, slug, handle, why, true,
-                    )));
-                }
-                // A new reviewer, not one joining again or a red's filer, beside those still there
-                // whose verdict the board takes: a holder that executed or requested the work
-                // reviews nothing.
-                let filer = view.session(handle).is_some_and(|s| s.kind == crate::red::FILER);
-                let mut there = Vec::new();
-                for other in view.holders(role).filter(|_| !filer && !view.holds(handle, role)) {
-                    let (who, health) = (&other.handle, view.health(&other.handle));
-                    let theirs = view.holds(who, "orchestrator");
-                    if held.unfresh(who, &task.created_by, theirs).is_some() {
-                        continue;
-                    }
-                    if health.holds() {
-                        there.push(format!("{who} ({})", health.as_str()));
-                    } else {
-                        change.saw(view, who);
-                    }
-                }
-                if !there.is_empty() {
-                    let named = there.join(", ");
-                    let Some(why) = beside else {
-                        return Err(refused(format!(
-                            "{slug} is reviewed by {named}: a later round resumes it, never \
-                             another reviewer; it lets the role go with: {board} release {slug} \
-                             --role reviewer, or one joins beside it with: {board} role {slug} \
-                             reviewer --beside WHY"
-                        )));
-                    };
-                    change.reason = Some(format!("reviewer beside {named}: {why}"));
-                }
-            }
             let holding = view.holds(handle, role);
-            // One orchestrator a task: a holder still there refuses, one lost or left is dropped.
-            let mut took = Vec::new();
-            let single = role == "orchestrator";
-            let others = view.holders(role).filter(|r| single && r.handle != handle);
-            for other in others {
-                let health = view.health(&other.handle);
-                if health.holds() {
-                    if holding {
-                        continue; // a double both still hold: settled by handover or release
-                    }
-                    // A hand-over is capped as this take is: it is no way round the cap.
-                    let capped = if self.slots().is_some() {
-                        format!(", which {handle}'s cap decides as it does a take")
-                    } else {
-                        String::new()
-                    };
-                    return Err(refused(format!(
-                        "{slug} is orchestrated by {} ({}); {} hands it over with: {board} handover {slug} {handle}{capped}",
-                        other.handle,
-                        health.as_str(),
-                        other.handle
-                    )));
-                }
-                change.saw(view, &other.handle);
-                change.drop(&other.handle, role);
-                took.push((other.handle.clone(), health.as_str()));
-            }
+            let mut change = Change::default();
             if !holding {
                 change.add = Some(RoleRow {
                     slug: slug.into(),
@@ -178,29 +173,76 @@ impl Store {
                     expires: None,
                 });
                 change.say = Say::system(format!("{handle}{JOINED}{role}"));
-                // The open work it takes on, the task's and the work below it nobody else
-                // orchestrates: the new orchestrator's slots. And the task itself, one more of the
-                // open tasks it holds the role on, at most the limit of them but for a red.
-                if single {
-                    change.opens = Some(Opens {
-                        orchestrator: Some(handle.into()),
-                        what: format!(
-                            "{handle} cannot take orchestrator on {slug}, which is {}",
-                            task.status
-                        ),
-                        ..Opens::default()
-                    });
-                    if !crate::red::marked(&task.fields) {
-                        let what = format!("{handle} cannot take orchestrator on {slug}");
-                        change.gains = Some((handle.into(), what));
-                    }
-                }
             }
-            if !took.is_empty() {
-                change.say = Say::system(orchestration::took_line(handle, &took));
+            if reviewing {
+                reviewer_join(view, task, handle, &held, beside, &board, &mut change)?;
+            } else {
+                self.orchestrator_join(view, task, handle, holding, &board, &mut change)?;
             }
             Ok(change)
         })
+    }
+
+    /// The orchestrator's part of `handle`'s join of `task` ([`Store::take_role`]), `holding`
+    /// whether it holds the role already: one orchestrator a task, so a holder still there
+    /// refuses it, naming the hand-over, unless `handle` holds the role beside it, and one lost or
+    /// left is dropped, the join line then naming whom it took the role from. A new orchestrator
+    /// takes the open work it takes on, the task's and the work below it nobody else
+    /// orchestrates, as its slots, and the task itself as one more of the open tasks it holds the
+    /// role on, at most the limit of them but for a red.
+    fn orchestrator_join(
+        &self,
+        view: &View,
+        task: &TaskRow,
+        handle: &str,
+        holding: bool,
+        board: &str,
+        change: &mut Change,
+    ) -> Result<(), Error> {
+        let slug = &task.slug;
+        let mut took = Vec::new();
+        let others = view.holders("orchestrator").filter(|r| r.handle != handle);
+        for other in others {
+            let health = view.health(&other.handle);
+            if health.holds() {
+                if holding {
+                    continue; // a double both still hold: settled by handover or release
+                }
+                // A hand-over is capped as this take is: it is no way round the cap.
+                let capped = if self.slots().is_some() {
+                    format!(", which {handle}'s cap decides as it does a take")
+                } else {
+                    String::new()
+                };
+                return Err(refused(format!(
+                    "{slug} is orchestrated by {} ({}); {} hands it over with: {board} handover {slug} {handle}{capped}",
+                    other.handle,
+                    health.as_str(),
+                    other.handle
+                )));
+            }
+            change.saw(view, &other.handle);
+            change.drop(&other.handle, "orchestrator");
+            took.push((other.handle.clone(), health.as_str()));
+        }
+        if !holding {
+            change.opens = Some(Opens {
+                orchestrator: Some(handle.into()),
+                what: format!(
+                    "{handle} cannot take orchestrator on {slug}, which is {}",
+                    task.status
+                ),
+                ..Opens::default()
+            });
+            if !crate::red::marked(&task.fields) {
+                let what = format!("{handle} cannot take orchestrator on {slug}");
+                change.gains = Some((handle.into(), what));
+            }
+        }
+        if !took.is_empty() {
+            change.say = Say::system(orchestration::took_line(handle, &took));
+        }
+        Ok(())
     }
 
     /// Move the orchestrator role on `slug` from `from`, who holds it, to `to`, in one write: the
