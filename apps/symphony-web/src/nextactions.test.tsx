@@ -405,7 +405,7 @@ describe("taking an action", () => {
 
   it("keeps the guard a refusal names beside its words, and says it short", async () => {
     const asked = server();
-    const taken = take("", "w/b", "symphony", GUARDED, HELD, {}, null);
+    const taken = take("", "w/b", BOARD, GUARDED, HELD, {}, null);
     await asking(asked, 1);
     const error = "guard_unavailable: release_signoff refused it";
     asked[0]?.answer(reply(400, { error, guard: CASES.samples.guardRefusal }));
@@ -418,7 +418,7 @@ describe("taking an action", () => {
       guard: { refusal: REFUSAL, said: error },
     });
     // A guard the page cannot read is no guard: the refusal's own words are said.
-    const unread = take("", "w/b", "symphony", GUARDED, HELD, {}, null);
+    const unread = take("", "w/b", BOARD, GUARDED, HELD, {}, null);
     await asking(asked, 2);
     asked[1]?.answer(reply(400, { error, guard: { guard: 7 } }));
     expect(await unread).toMatchObject({
