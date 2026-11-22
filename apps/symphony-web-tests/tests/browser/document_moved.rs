@@ -2,11 +2,13 @@
 //! moved (`/api/moved`, `docview::moved`): a task's link filed before its document moved folders
 //! opens the document from the task's page, its heading kept, and Back leaves the route that had
 //! none; a name documents share is offered to choose under Document not found; a name no document
-//! has says Document not found alone.
+//! has says Document not found alone. A heading such a link names by its text, as a task's link
+//! stores it (`#The order`), is landed on by the id the renderer gives it, as is one a link in the
+//! document names so once the page is drawn (the shell's landing).
 
 use serde_json::{Value, json};
 
-use super::{SHOWN, chrome, site::Site};
+use super::{READY, SHOWN, chrome, site::Site};
 
 /// The route a task's link was filed with, and the one its document has now.
 const OLD: &str = "docs/MOVED.md";
@@ -28,6 +30,88 @@ fn document(path: &str, title: &str) -> Value {
                 {"type": "paragraph", "spans": [text(&format!("The document at {path}."))]},
             ]}],
     })
+}
+
+/// The heading a task's link names by its text, as `--link` stores it, and the id the renderer
+/// gives it.
+const BY_TEXT: &str = "#The order";
+const ANCHOR: &str = "the-order";
+
+/// The document at `path`, taller than a window: lines of words, the heading `The order`, and more
+/// lines under it, so the heading can be scrolled to the top; a link at its start names the heading
+/// by its text. Its outline names the heading's id, as the server's does.
+fn tall(path: &str) -> Value {
+    let text = |words: &str| json!({"type": "text", "text": words});
+    let lines = |from: usize| {
+        (from..from + 60)
+            .map(|n| json!({"type": "paragraph", "spans": [text(&format!("Line {n} of {path}."))]}))
+    };
+    let link = json!({"type": "link", "href": format!("/{path}{BY_TEXT}"), "target": null,
+        "title": "", "spans": [text("the order")]});
+    let intro: Vec<Value> = std::iter::once(json!({"type": "paragraph", "spans": [text("Read "), link]}))
+        .chain(lines(2))
+        .collect();
+    let order: Vec<Value> = std::iter::once(
+        json!({"type": "heading", "level": 2, "anchor": ANCHOR, "spans": [text("The order")]}),
+    )
+    .chain(lines(100))
+    .collect();
+    json!({
+        "version": 3, "path": path, "title": "Tall", "waiting": [], "crumbs": [], "tasks": [],
+        "cards": [], "threads": {},
+        "headings": [{"level": 2, "anchor": ANCHOR, "text": "The order"}],
+        "anchors": {"the-order": [ANCHOR]},
+        "sections": [
+            {"start": 1, "end": 62, "key": "intro", "hash": "intro", "part": 0, "blocks": intro},
+            {"start": 100, "end": 161, "key": ANCHOR, "hash": ANCHOR, "part": 0, "blocks": order},
+        ],
+    })
+}
+
+/// True once the page at `path` is scrolled down to its drawn heading `The order`, at the page's
+/// scroll padding.
+fn at_the_heading(path: &str) -> String {
+    format!(
+        "(() => {{ const heading = document.getElementById('{ANCHOR}');
+            return location.pathname === '/{path}' && heading?.tagName === 'H2' && scrollY > 0
+                && Math.abs(heading.getBoundingClientRect().top - parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop)) < 1; }})()"
+    )
+}
+
+/// Where the page is: its address, its scroll, and the top of the element with the heading's id.
+const PLACE: &str = "JSON.stringify({href: location.href, y: scrollY,
+    heading: document.getElementById('the-order')?.getBoundingClientRect().top ?? null})";
+
+/// The site serving the task `SLUG`'s page, its one link `link`.
+fn task_linking(site: &Site, link: &str) {
+    let task = json!({"slug": SLUG, "title": "Filed before the move", "body": "",
+        "status": "ready", "priority": 1, "parent": null, "created_by": "owner", "created": 1.0,
+        "updated": 1.0, "links": [link], "depends": [], "roles": [],
+        "instruction": false});
+    site.set_json(
+        "/api/task-page",
+        &json!({"task": task, "blocks": [], "children": [], "children_count": 0,
+            "gates": {"count": 0, "waiting": 0, "unsigned": 0}}),
+    );
+    site.set_json(
+        "/api/task-history",
+        &json!({"entries": [], "before": null, "after": 0}),
+    );
+}
+
+/// Open the task `SLUG`'s page and click its link, drawn as `link` was filed.
+fn follow_the_task_link(page: &mut crate::chrome::Chrome, site: &Site, link: &str) {
+    page.open(&site.url(&format!("/task/{SLUG}")));
+    let selector = format!(".task .facts a[href='/{link}']");
+    assert!(
+        page.wait_for(
+            &format!("document.querySelector(\"{selector}\")?.textContent === '{link}'"),
+            SHOWN
+        ),
+        "the task's link as filed: {}",
+        page.eval("document.body.innerText")
+    );
+    page.eval(&format!("document.querySelector(\"{selector}\").click()"));
 }
 
 /// The site, its answer to where a document no file has may be `moved`.
@@ -69,32 +153,11 @@ fn missing(page: &mut crate::chrome::Chrome) -> Value {
 fn a_task_pages_link_to_a_document_that_moved_opens_it_by_its_name_its_heading_kept() {
     let site = site_moving_to(json!([NEW]));
     site.set_document(&document(NEW, "Moved"));
-    let task = json!({"slug": SLUG, "title": "Filed before the move", "body": "",
-        "status": "ready", "priority": 1, "parent": null, "created_by": "owner", "created": 1.0,
-        "updated": 1.0, "links": [format!("{OLD}{HEADING}")], "depends": [], "roles": [],
-        "instruction": false});
-    site.set_json(
-        "/api/task-page",
-        &json!({"task": task, "blocks": [], "children": [], "children_count": 0,
-            "gates": {"count": 0, "waiting": 0, "unsigned": 0}}),
-    );
-    site.set_json(
-        "/api/task-history",
-        &json!({"entries": [], "before": null, "after": 0}),
-    );
+    task_linking(&site, &format!("{OLD}{HEADING}"));
     let Some(mut page) = chrome() else { return };
-    page.open(&site.url(&format!("/task/{SLUG}")));
     // The task's page draws its link as it was filed.
+    follow_the_task_link(&mut page, &site, &format!("{OLD}{HEADING}"));
     let link = format!(".task .facts a[href='/{OLD}{HEADING}']");
-    assert!(
-        page.wait_for(
-            &format!("document.querySelector(\"{link}\")?.textContent === '{OLD}{HEADING}'"),
-            SHOWN
-        ),
-        "the task's link as filed: {}",
-        page.eval("document.body.innerText")
-    );
-    page.eval(&format!("document.querySelector(\"{link}\").click()"));
     assert!(
         page.wait_for(&drawn(NEW), SHOWN),
         "the moved document, opened by its name: {} at {}",
@@ -163,5 +226,60 @@ fn a_document_route_whose_name_no_document_has_says_it_is_not_found() {
         missing(&mut page),
         json!({"title": "Document not found", "path": "/docs/GONE.md", "busy": "false",
             "choices": []}),
+    );
+}
+
+#[test]
+fn a_document_opened_at_a_headings_text_lands_on_it_as_does_a_link_to_it_once_drawn() {
+    let site = site_moving_to(json!([]));
+    site.set_document(&tall(NEW));
+    let Some(mut page) = chrome() else { return };
+    page.open(&site.url(&format!("/{NEW}#The%20order")));
+    assert!(
+        page.wait_for(&at_the_heading(NEW), SHOWN),
+        "opened at its heading's text, the page lands on the heading: {}",
+        page.eval(PLACE)
+    );
+    // Opened at its top, then a link in it to the heading by its text: the page is drawn, so the
+    // shell's landing alone brings the heading to the top.
+    page.open(&site.url(&format!("/{NEW}")));
+    let link = format!("a[href='/{NEW}{BY_TEXT}']");
+    assert!(
+        page.wait_for(
+            &format!("{READY} && scrollY === 0 && {}", crate::visible(&link)),
+            SHOWN
+        ),
+        "opened at its top, the link drawn: {}",
+        page.eval(PLACE)
+    );
+    page.eval(&format!("document.querySelector(\"{link}\").click()"));
+    assert!(
+        page.wait_for(&at_the_heading(NEW), SHOWN),
+        "a link to the heading's text lands on the heading: {}",
+        page.eval(PLACE)
+    );
+    assert_eq!(
+        page.eval("location.hash"),
+        json!("#The%20order"),
+        "the address as the link names it"
+    );
+}
+
+#[test]
+fn a_task_link_to_a_moved_document_lands_on_the_heading_it_names_by_its_text() {
+    let site = site_moving_to(json!([NEW]));
+    site.set_document(&tall(NEW));
+    task_linking(&site, &format!("{OLD}{BY_TEXT}"));
+    let Some(mut page) = chrome() else { return };
+    follow_the_task_link(&mut page, &site, &format!("{OLD}{BY_TEXT}"));
+    assert!(
+        page.wait_for(&at_the_heading(NEW), SHOWN),
+        "the moved document, landed on the heading the link names by its text: {}",
+        page.eval(PLACE)
+    );
+    assert_eq!(
+        page.eval("location.hash"),
+        json!("#The%20order"),
+        "the heading as filed"
     );
 }
