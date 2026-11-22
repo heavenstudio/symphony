@@ -66,8 +66,9 @@ impl Board {
 
     /// The table as written, each path checked to stay inside the project.
     pub(super) fn from_file(file: FileBoard) -> Result<Board, String> {
-        let inside =
-            |key: &str, path: Option<String>| path.map(|path| super::inside(key, path)).transpose();
+        let inside = |key: &str, path: Option<String>| {
+            path.map(|path| super::inside(key, &path)).transpose()
+        };
         if file.orchestrator_slots == Some(0) {
             return Err(
                 "[board] orchestrator_slots is 0; an orchestrator needs at least one slot".into(),

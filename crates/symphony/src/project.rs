@@ -20,7 +20,7 @@
 //! which this load takes too.
 
 use std::collections::BTreeMap;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -35,6 +35,7 @@ use crate::entrypoint::{SYMPHONY_ROUTES, below, join};
 pub use board::{Board, WipGuidance};
 use file::{File, FileEntrypoint};
 pub(crate) use model_warnings::warn as warn_models;
+use symphony_board::project::{inside, path_in};
 pub use theme::Theme;
 
 /// The project file at a project's root.
@@ -361,10 +362,8 @@ fn checked_generators(table: &str, generators: &mut [Generator]) -> Result<(), S
         } else {
             ""
         };
-        generator.outputs = inside(
-            &format!("{table} generators outputs"),
-            generator.outputs.clone(),
-        )? + slash;
+        generator.outputs =
+            inside(&format!("{table} generators outputs"), &generator.outputs)? + slash;
         if generator.command.is_empty() {
             return Err(format!(
                 "{table} generator {} has no command",
@@ -726,14 +725,14 @@ impl Project {
         }
         let artifacts = inside(
             "[project] artifacts",
-            p.artifacts.unwrap_or_else(|| "artifacts".into()),
+            &p.artifacts.unwrap_or_else(|| "artifacts".into()),
         )?;
         let plugin_processes =
             plugin_processes(root, &artifacts, &file.plugins.crates, file.plugins.process)?;
         let entrypoints = entrypoints(file.entrypoints, &file.plugins.crates, &plugin_processes)?;
         let register = inside(
             "[project] register",
-            p.register
+            &p.register
                 .unwrap_or_else(|| join(&entrypoints[0].folder, "DECISIONS.md")),
         )?;
         let default_branch = p.default_branch.unwrap_or_else(|| "main".into());
@@ -827,7 +826,7 @@ impl Project {
             generators: v.generators,
             record: v
                 .record
-                .map(|path| inside("[verdicts] record", path))
+                .map(|path| inside("[verdicts] record", &path))
                 .transpose()?,
         };
         let board = Board::from_file(file.board)?;
@@ -1493,13 +1492,13 @@ fn entrypoints(
         let label = entry.label();
         entry.folder = path_in(
             &format!("[[entrypoints]] {label} folder"),
-            table.folder,
+            &table.folder,
             true,
         )?;
         let history = table
             .history
             .into_iter()
-            .map(|folder| path_in(&format!("[[entrypoints]] {label} history"), folder, false))
+            .map(|folder| path_in(&format!("[[entrypoints]] {label} history"), &folder, false))
             .collect::<Result<_, _>>()?;
         if entry.include.is_empty() {
             return Err(format!(
@@ -1594,30 +1593,6 @@ impl Bounds {
                 .is_ok_and(|resolved| resolved.starts_with(uploads))
         })
     }
-}
-
-/// `path` when it is relative and names something inside the project, spelled as the repository
-/// names its files (`./docs/` is `docs`), so every comparison with a listed file holds; else an
-/// error naming `key`.
-fn inside(key: &str, path: String) -> Result<String, String> {
-    path_in(key, path, false)
-}
-
-/// [`inside`], the project's root itself (`.`, written as the empty path) allowed when `root` is.
-fn path_in(key: &str, path: String, root: bool) -> Result<String, String> {
-    let refused = || format!("{key} {path:?} must be a path inside the project");
-    let mut parts = Vec::new();
-    for part in Path::new(&path).components() {
-        match part {
-            Component::Normal(name) => parts.push(name.to_string_lossy()),
-            Component::CurDir => {}
-            _ => return Err(refused()),
-        }
-    }
-    if parts.is_empty() && (!root || path.is_empty()) {
-        return Err(refused());
-    }
-    Ok(parts.join("/"))
 }
 
 /// A name as an id: lowercase letters and digits, each other run a single dash.
