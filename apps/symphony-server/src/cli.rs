@@ -229,9 +229,9 @@ fn scratch(exe: &Path, args: &[String], database: &str, asks: &Path) -> i32 {
 const SERVES: &str = "--serves";
 
 /// What this build serves, as one line of JSON: the plugin protocol it speaks
-/// (docs/PLUGIN_PROTOCOL.md), the board schema it reads and writes with its additive steps on it
+/// (docs/engineering/PLUGIN_PROTOCOL.md), the board schema it reads and writes with its additive steps on it
 /// (`symphony_board::schema::ADDITIONS`) and its Symphony pin (`symphony::machine::PIN`). A release's install asks the server it built, never the sources,
-/// and writes the answer in the release's manifest (docs/RELEASES.md, "The install").
+/// and writes the answer in the release's manifest (docs/workflow/RELEASES.md, "The install").
 pub fn serves() -> String {
     let protocol = symphony_plugin::protocol::PROTOCOL;
     serde_json::json!({
@@ -261,7 +261,7 @@ pub fn main(args: &[String]) -> i32 {
     // after threads exist. The child serves normally against its own board and asks file.
     if args.first().is_some_and(|arg| arg == "--scratch") {
         let Some(database) = args.get(1).filter(|database| {
-            symphony_board::rpc::plain(database) && database.as_str() != symphony_board::DATABASE
+            symphony_board::db::plain(database) && database.as_str() != symphony_board::DATABASE
         }) else {
             eprintln!("--scratch needs a database name other than tasks");
             return 2;

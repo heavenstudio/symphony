@@ -1,4 +1,4 @@
-//! The release cadence counted in landings (docs/RELEASES.md): a run on main's tip is due once
+//! The release cadence counted in landings (docs/workflow/RELEASES.md): a run on main's tip is due once
 //! `[releases] every_landings` tasks (20 unless the project says) have landed on the default
 //! branch since the last release, or since a later run that checked something, so a red run is
 //! counted from as a release is and never asked for again on every landing after it. A landing is
@@ -526,7 +526,6 @@ pub(crate) fn of(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::release::record::Board;
     use crate::test_tree::Tree;
     use std::path::PathBuf;
     use symphony_board::land::delivery::Receipt;
@@ -623,11 +622,7 @@ mod tests {
             kind: "release".into(),
             commit: commit.into(),
             tip: commit.into(),
-            started_at: 0.0,
-            ended_at: 0.0,
             result: result.into(),
-            error: None,
-            previous: None,
             checks: if checked {
                 vec![super::super::checks::Ran {
                     name: "verify".into(),
@@ -646,19 +641,8 @@ mod tests {
             } else {
                 Vec::new()
             },
-            tag: None,
-            pushed: false,
-            board: Board::default(),
             remote: "origin".into(),
-            unpushed: None,
-            cause: None,
-            refreshed: None,
-            published: None,
-            rerun: None,
-            slept: 0.0,
-            inputs: None,
-            environment: None,
-            hosted: Vec::new(),
+            ..Run::default()
         }
     }
 

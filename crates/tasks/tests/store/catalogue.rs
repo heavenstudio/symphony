@@ -10,7 +10,7 @@
 //! changed, or a database-wide line removed or changed, fails it, naming the table.
 //!
 //! What no catalogue shows is the reviewer's: a rule held in code that writes to an older table,
-//! and a step that rewrites rows (docs/CHECKS.md, a schema step that keeps the Symphony writing).
+//! and a step that rewrites rows (docs/workflow/CHECKS.md, a schema step that keeps the Symphony writing).
 //!
 //! An additive step on a contract ([`ADDED`]) has a file of its own,
 //! `ENGINE-VERSION.STEPS.txt`, the contract with that many steps, and is held to more than a

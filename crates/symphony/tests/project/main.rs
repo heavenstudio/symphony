@@ -10,6 +10,7 @@ mod common;
 mod board;
 
 mod board_table;
+mod both_readers;
 mod entrypoints;
 mod fields;
 mod folders;

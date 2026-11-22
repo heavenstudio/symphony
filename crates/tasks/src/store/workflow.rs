@@ -1,4 +1,4 @@
-//! A custom delivery workflow's records on the board (docs/WORKFLOW.md), from schema 24: the
+//! A custom delivery workflow's records on the board (docs/workflow/WORKFLOW.md), from schema 24: the
 //! active generation, the immutable definitions, activations, transitions and receipts in the
 //! `workflow` table, and the position of each task the workflow holds in its
 //! `fields._board.workflow`.
@@ -44,7 +44,7 @@ pub struct TaskPosition {
     pub manual: Option<Recovered>,
 }
 
-/// What a recovery answered (docs/WORKFLOW.md, "Recovery"): a holder's exit
+/// What a recovery answered (docs/workflow/WORKFLOW.md, "Recovery"): a holder's exit
 /// (`Store::recover_holder`), an agent's own release of its role or a holder lost, or an execution
 /// attempt's ending (`Store::observe_attempt`), each by the position's configured action; or the
 /// automatic edge the board took on an attempt's failure. A transition answering an attempt is
@@ -188,7 +188,7 @@ pub struct Transition {
     /// The holder's exit it answered, for a recovery's move or stay.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery: Option<Recovered>,
-    /// The task's accepted output standing after it (docs/WORKFLOW.md, "Accepted outputs"): this
+    /// The task's accepted output standing after it (docs/workflow/WORKFLOW.md, "Accepted outputs"): this
     /// transition's own id where its edge accepted the output, the one before it carried by a move
     /// between two positions that satisfy dependants, none once the task stands where none does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -333,7 +333,8 @@ pub(crate) fn retired(
 
 impl Store {
     /// The workflow `committed` sets made active on this board, as automatic activation B runs
-    /// it (docs/DECISIONS.md#configurable-workflow-activation): a file with no `[workflow]` on a
+    /// it (docs/workflow/analysis/configurable-delivery-workflow.md#configurable-workflow-activation): a
+    /// file with no `[workflow]` on a
     /// board with none active writes nothing; one that drops the workflow a board activated
     /// returns the board to its own writers ([`Store::return_to_default`]); a custom definition
     /// is activated unless it is the active one ([`Store::activate_workflow`]).
@@ -465,7 +466,7 @@ impl Store {
         // The versions first, the holders after: a claim between the two is seen by the
         // second, or fences the write by the version it moved.
         let mut read: Standings =
-            self.retrying(|| self.transact(both(sql::STANDINGS, pg::standings()), json!({})))?;
+            self.retrying(|| self.read_together(both(sql::STANDINGS, pg::standings()), json!({})))?;
         let board = self.board()?;
         let read_slug = |slug: &str| read.tasks.iter().any(|t| t.slug == slug);
         let seen: Vec<Value> = (board.tasks.iter())
@@ -517,7 +518,7 @@ impl Store {
     /// was.
     fn moved_since(&self, tasks: &[crate::workflow::activate::Standing]) -> Result<bool, Error> {
         let now: Standings =
-            self.retrying(|| self.transact(both(sql::STANDINGS, pg::standings()), json!({})))?;
+            self.retrying(|| self.read_together(both(sql::STANDINGS, pg::standings()), json!({})))?;
         Ok(now.tasks.len() != tasks.len()
             || (now.tasks.iter().zip(tasks))
                 .any(|(now, then)| now.slug != then.slug || now.version != then.version))
@@ -826,7 +827,7 @@ impl Store {
 
     /// The accepted output standing for each of `tasks`, a slug with the workflow revision its
     /// position stands at: the `accepted` the transition that made that revision left
-    /// (docs/WORKFLOW.md, "Accepted outputs"), with its slug and revision, in the order the tasks
+    /// (docs/workflow/WORKFLOW.md, "Accepted outputs"), with its slug and revision, in the order the tasks
     /// are given, none for a task whose transition left none, each read by its id.
     pub fn accepted_standing(
         &self,
@@ -868,7 +869,7 @@ impl Store {
     /// a task that is not there.
     pub fn workflow_position(&self, slug: &str) -> Result<Option<TaskPosition>, Error> {
         let body: Value = self.retrying(|| {
-            self.transact(both(sql::POSITION, pg::position()), json!({"slug": slug}))
+            self.read_together(both(sql::POSITION, pg::position()), json!({"slug": slug}))
         })?;
         decoded(body, "workflow position")
     }

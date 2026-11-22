@@ -7,6 +7,7 @@ use super::surreal::sessions as sql;
 use super::work::Pass;
 use super::{Beside, Error, Failure, Found, REFUSED, Session, Store, refused, repr};
 use crate::health::{self, EXECUTING};
+use crate::lock::Recovered as _;
 use crate::maps::Collect as _;
 use crate::orchestration;
 use crate::rows::SessionRow;
@@ -17,7 +18,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
 use std::hash::{BuildHasher, RandomState};
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 
 /// What a session is; a `filer` is a tool's session that files reds ([`crate::red::FILER`]).
 pub const KINDS: [&str; 6] = [
@@ -172,7 +173,7 @@ impl Store {
             .map(|parent| format!("{REFUSED}no parent session {}", repr(parent)));
         let (handle, found) = self.retrying(|| {
             let handles = both(sql::HANDLES, pg::HANDLES);
-            let taken: Vec<String> = self.transact(handles, json!({}))?;
+            let taken: Vec<String> = self.read_together(handles, json!({}))?;
             let handle = self
                 .new_handle(&taken.into_iter().collect())
                 .map_err(Failure::Stop)?;
@@ -200,7 +201,7 @@ impl Store {
     }
 
     fn new_handle(&self, taken: &HashSet<String>) -> Result<String, Error> {
-        let mut pick = self.pick.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut pick = self.pick.lock().recover();
         for attempt in 0..200 {
             let adjective = ADJECTIVES[pick.index(ADJECTIVES.len()) % ADJECTIVES.len()];
             let mut handle = format!(
@@ -226,6 +227,18 @@ impl Store {
             .map(|_| ())
     }
 
+    /// The session is seen, as [`Store::touch`] says it, by one try alone: what the recorder of a
+    /// run says of the session its record names while the run goes on (`cli/recorder.rs`). A board
+    /// moving under it is not waited for: the recorder says it again at its next time.
+    pub(crate) fn seen_once(&self, handle: &str) -> Result<(), Error> {
+        let vars = self.acting(handle, (self.clock)(), json!({}));
+        match self.transact::<Value>(both(sql::touch(), pg::touch()), vars) {
+            Ok(_) => Ok(()),
+            Err(Failure::Again) => Err(Error::Db("the board moved under it".into())),
+            Err(Failure::Stop(error)) => Err(error),
+        }
+    }
+
     /// Let the tool calls of Claude Code agent `agent` beat for `handle` (`agent_beat`). One agent
     /// beats for one handle, the last it named. Never a session that left, nor one with a monitor of
     /// its own (an orchestrator, a main session): its monitor already beats for it, and a subagent
@@ -248,7 +261,7 @@ impl Store {
             native: bool,
         }
         self.retrying(|| {
-            let found: Found = self.transact(
+            let found: Found = self.read_together(
                 both(sql::BINDING, pg::binding()),
                 json!({"agent": agent, "handle": handle}),
             )?;
@@ -391,7 +404,7 @@ impl Store {
     /// person to recover and never moves the task to a pair it does not name.
     pub fn leave(&self, handle: &str) -> Result<(), Error> {
         // What it staffs on a task a custom workflow holds goes first, by each position's
-        // lost-holder recovery (docs/WORKFLOW.md, "Recovery").
+        // lost-holder recovery (docs/workflow/WORKFLOW.md, "Recovery").
         self.recover_leaving(handle)?;
         let body = sql::leave();
         let pg = pg::leave();
@@ -414,7 +427,7 @@ impl Store {
                 pass.guard(&counted);
             }
             let vars = self.acting(handle, (self.clock)(), json!({"held": held}));
-            self.transact::<Value>(both(&body, pg.clone()), pass.vars(handle, vars))
+            self.transact::<Value>(both(&body, pg.clone()).posting(), pass.vars(handle, vars))
         })
         .map(|_| ())
     }
@@ -428,7 +441,7 @@ impl Store {
         }
         let read = sql::sessions();
         let found: Found = self.retrying(|| {
-            self.transact(both(&read, pg::sessions()), json!({"executing": EXECUTING}))
+            self.read_together(both(&read, pg::sessions()), json!({"executing": EXECUTING}))
         })?;
         let now = (self.clock)();
         let held: HashSet<&str> = found.held.iter().map(String::as_str).collect();
@@ -451,7 +464,7 @@ impl Store {
     /// The session whose tool calls beat through Claude Code session or agent id `agent`.
     pub fn handle_for_agent(&self, agent: &str) -> Result<Option<String>, Error> {
         self.retrying(|| {
-            self.transact(
+            self.read_together(
                 both(sql::HANDLE_FOR_AGENT, pg::handle_for_agent()),
                 json!({"agent": agent}),
             )
@@ -466,8 +479,9 @@ impl Store {
             handle: String,
             agent: String,
         }
-        let bound: Vec<Bound> = self
-            .retrying(|| self.transact(both(sql::BOUND_AGENTS, pg::bound_agents()), json!({})))?;
+        let bound: Vec<Bound> = self.retrying(|| {
+            self.read_together(both(sql::BOUND_AGENTS, pg::bound_agents()), json!({}))
+        })?;
         Ok(bound.into_iter().map(|b| (b.handle, b.agent)).collect_map())
     }
 
@@ -476,7 +490,7 @@ impl Store {
     /// not left: what [`Store::bound_agents`] reads, in the same one request.
     pub fn agent_bindings(&self) -> Result<BTreeMap<String, Binding>, Error> {
         let bound: Vec<BoundAgent> = self.retrying(|| {
-            self.transact(both(sql::AGENT_BINDINGS, pg::agent_bindings()), json!({}))
+            self.read_together(both(sql::AGENT_BINDINGS, pg::agent_bindings()), json!({}))
         })?;
         Ok(bound
             .into_iter()

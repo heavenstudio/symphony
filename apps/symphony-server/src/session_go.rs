@@ -1,4 +1,4 @@
-//! Go to session (docs/TASKS.md, "Going to a session"). Each agent's way into its session is
+//! Go to session (docs/workflow/TASKS.md, "Going to a session"). Each agent's way into its session is
 //! resolved on the board's tick ([`symphony_api::resolve_sessions`]); a page links a web address
 //! itself. What reaches a pane comes here: from this machine, `POST /api/agent-focus` has the
 //! Herdr app show it ([`symphony_board::launch::go::focus`]); from any machine the gate admits
@@ -7,17 +7,19 @@
 //! (`[agents] panes = "hc"`), each within one deadline for all its calls
 //! ([`symphony_board::launch::go::DEADLINE`]), and one at a time for a session.
 
+use crate::api::error;
 use crate::front::Shared;
 use crate::live::Hub;
 use axum::body::to_bytes;
 use axum::extract::{ConnectInfo, Request};
-use axum::http::{StatusCode, header};
-use axum::response::{IntoResponse, Json, Response};
-use serde_json::{Value, json};
+use axum::http::StatusCode;
+use axum::response::{Json, Response};
+use serde_json::Value;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use symphony_api::{AgentFocus, AgentScreen, SessionGo};
 use symphony_board::launch::go as herdr;
+use symphony_board::lock::Recovered as _;
 
 /// The largest focus request read: a handle in a JSON object.
 const FOCUS_BYTES: usize = 4096;
@@ -25,15 +27,6 @@ const FOCUS_BYTES: usize = 4096;
 /// What a request from another machine is told when it asks for a focus.
 pub(crate) const NOT_HERE: &str = "a pane is shown in the Herdr app only for a page on the \
      machine its panes run on; from this one, Go to session shows the pane's screen";
-
-fn error(code: StatusCode, why: impl AsRef<str>) -> Response {
-    (
-        code,
-        [(header::CACHE_CONTROL, "no-store")],
-        Json(json!({"error": why.as_ref()})),
-    )
-        .into_response()
-}
 
 /// The address `request` came from, as its connection gave it.
 fn peer<B>(request: &axum::http::Request<B>) -> Option<IpAddr> {
@@ -118,11 +111,7 @@ impl Going<'_> {
         go: &SessionGo,
     ) -> Result<Going<'a>, (StatusCode, String)> {
         let key = format!("{what} {}", go.handle);
-        let fresh = hub
-            .going
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(key.clone());
+        let fresh = hub.going.lock().recover().insert(key.clone());
         if fresh {
             Ok(Going { hub, key })
         } else {
@@ -140,11 +129,7 @@ impl Going<'_> {
 
 impl Drop for Going<'_> {
     fn drop(&mut self) {
-        self.hub
-            .going
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&self.key);
+        self.hub.going.lock().recover().remove(&self.key);
     }
 }
 
@@ -190,15 +175,10 @@ pub(crate) async fn answer_focus(shared: &Arc<Shared>, request: Request) -> Resp
     if handle.is_empty() {
         return error(StatusCode::BAD_REQUEST, "handle is required");
     }
-    let Some(hub) = shared.api.get().cloned() else {
-        return error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "the Symphony server is starting",
-        );
+    let hub = match shared.hub() {
+        Ok(hub) => hub,
+        Err(starting) => return *starting,
     };
-    match crate::spawn::blocking(move || focus(&hub, &handle)).await {
-        Ok(Ok(focused)) => ([(header::CACHE_CONTROL, "no-store")], Json(focused)).into_response(),
-        Ok(Err((code, why))) => error(code, why),
-        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-    }
+    let focused = crate::spawn::blocking(move || focus(&hub, &handle).map(Json)).await;
+    crate::api::answered(focused, "")
 }

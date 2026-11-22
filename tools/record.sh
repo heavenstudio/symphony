@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # [--pipeline NAME] [--step NAME] PHASE LABEL COMMAND [ARGS...]: COMMAND through the board's
 # recorder (`tasks run`), so the board's Build or Test column and its machine panel show it while it
-# runs and its work folder keeps how it ended (docs/MACHINE_WORK.md); its arguments, streams, status
+# runs and its work folder keeps how it ended (docs/workflow/MACHINE_WORK.md); its arguments, streams, status
 # and limits are its own either way. At top level, `--pipeline` makes it a run of that pipeline, of
-# which the day files keep a line (docs/RUNS.md). Inside a recorded run, only a command `--step`
+# which the day files keep a line (docs/workflow/RUNS.md). Inside a recorded run, only a command `--step`
 # names is recorded again, as a step of that run; any other command recorded inside a recorded
 # command is exec'd as it is, as is every one with TASKS_RECORDER=off or with no recorder that
 # answers `run --probe` with `run 1` within two seconds (none built yet, one older than the command,

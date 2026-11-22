@@ -190,7 +190,7 @@ fn base(root: &Path, wt_base: &Path) -> PathBuf {
 ///
 /// One line naming the thread and whose a callback registers.
 pub fn own_thread(env: &Env, address: &str) -> Result<(), String> {
-    let Some(thread) = address.strip_prefix("codex:") else {
+    let Some(thread) = address.strip_prefix(crate::launch::CODEX) else {
         return Ok(());
     };
     if env.var(confine::MARKER).is_none() || env.var("CODEX_THREAD_ID") == Some(thread) {

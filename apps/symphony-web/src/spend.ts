@@ -46,6 +46,14 @@ export function dollars(amount: number): string {
   return `$${Math.floor(cents / 100)}.${`${cents % 100}`.padStart(2, "0")}`;
 }
 
+/** A dollar figure beside a time, on a card or a timeline: `$1.23`, a `+` after it where some
+ * tokens had no price, and `unpriced` where none had one (`tasks show`'s "no API list price"),
+ * never a `$0.00+` that reads as a cost. */
+export function figure(amount: number, unpriced: boolean): string {
+  if (unpriced && amount === 0) return "unpriced";
+  return `${dollars(amount)}${unpriced ? "+" : ""}`;
+}
+
 /** The figure a line says: the dollars, `+ unpriced` after them where some tokens had no price,
  * `unpriced` alone where none had one (Rust's `Cost::said`). */
 export function costSaid(cost: AgentCost): string {

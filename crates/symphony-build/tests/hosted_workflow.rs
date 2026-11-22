@@ -1,4 +1,4 @@
-//! The release's hosted workflow (`.github/workflows/release-verify.yml`, docs/RELEASES.md, "On
+//! The release's hosted workflow (`.github/workflows/release-verify.yml`, docs/workflow/RELEASES.md, "On
 //! GitHub's runners") held to its bounds: started by hand alone; its token given no permission but
 //! reading the repository, no job giving it more, and left in no checkout; no secret or token handed
 //! to a step; each action pinned by a commit; every checkout of the input commit, and no job run

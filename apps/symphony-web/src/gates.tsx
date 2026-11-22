@@ -1,6 +1,6 @@
 // The task page's gates: every stamp or check the task needs to land, each met, missing, waived,
 // held or unknown, with who, when and why, drawn the same way for every project from
-// `GET /api/task-gates` (docs/TASKS.md#gates), as the Dioxus client drew them (its
+// `GET /api/task-gates` (docs/workflow/TASKS.md#gates), as the Dioxus client drew them (its
 // `task_gates.rs`, gone with its task page).
 //
 // The section is a part of its page (task-live.ts's `gatesPart`, in the page's store): its answer

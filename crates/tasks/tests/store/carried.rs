@@ -41,6 +41,13 @@ fn seeded(f: &Fixture) {
     raw.row("counter", json!(["hold", "tools/one"]))
         .create(json!({"last": 0, "ts": 1_800_000_002.5}))
         .unwrap();
+    // A stored preference with its record: a project's own word, which no file holds.
+    raw.row("setting", "limits.low_volume")
+        .create(json!({
+            "key": "limits.low_volume", "value": 2, "revision": 1,
+            "changes": [{"after": 2, "at": 1_800_000_003.5, "by": "amber-heron"}],
+        }))
+        .unwrap();
     // A dispatcher's lease, carried as a row like any other: a move ends it first.
     raw.row("callback_lease", "amber-heron")
         .create(json!({"until": 1_900_000_000.0, "revision": 12}))

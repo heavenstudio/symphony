@@ -227,3 +227,93 @@ fn the_projects_git_pushes_a_head_to_its_branch_and_never_over_another_history()
     assert_eq!(git(&bare, &["rev-parse", "refs/heads/sim/jump"]), one);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A merge is asked by the method its request names for its kind of head: a task's squashed, an
+/// import's by a merge commit. The other method, none, and a head that is no whole commit are
+/// refused in the same words.
+#[test]
+fn a_merges_method_is_its_kinds_own_and_its_head_one_whole_commit() {
+    let head = "a".repeat(40);
+    let asked = |method: &str| json!({"method": method});
+    assert_eq!(merge_method(&asked("squash"), &head, false), Ok("squash"));
+    assert_eq!(merge_method(&asked("merge"), &head, true), Ok("merge"));
+    let refusal =
+        refused("a merge is of one whole commit: a task's squashed, an import's by a merge commit");
+    for (request, head, imported) in [
+        (asked("merge"), head.as_str(), false),
+        (asked("squash"), head.as_str(), true),
+        (asked("rebase"), head.as_str(), false),
+        (json!({}), head.as_str(), false),
+        (json!({"method": null}), head.as_str(), true),
+        (asked("squash"), "a".repeat(39).as_str(), false),
+        (asked("squash"), "main", false),
+        (asked("merge"), "", true),
+        (asked("squash"), "g".repeat(40).as_str(), false),
+    ] {
+        assert_eq!(
+            merge_method(&request, head, imported),
+            Err(refusal.clone()),
+            "{request} at {head:?}, imported {imported}"
+        );
+    }
+}
+
+/// A transport that answers every request `status` with `headers`.
+struct Answers(u16, Vec<(&'static str, &'static str)>);
+
+impl Transport for Answers {
+    fn send(&self, _: &Request) -> Result<crate::transport::Response, Failure> {
+        Ok(crate::transport::Response {
+            status: self.0,
+            headers: (self.1.iter())
+                .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+                .collect(),
+            body: r#"{"message":"said"}"#.into(),
+        })
+    }
+}
+
+#[test]
+fn a_rate_limit_stops_a_request_and_any_other_403_is_handed_to_its_verb() {
+    let sent = |status, headers: &[(&'static str, &'static str)]| {
+        let transport = Answers(status, headers.to_vec());
+        let host = Host {
+            transport: &transport,
+            repository: repository(),
+        };
+        assert_eq!(host.path("/pulls/1"), "/repos/Owner/a.name/pulls/1");
+        host.send("PUT", host.path("/pulls/1/merge"), None)
+            .map(|answer| answer.map_err(|Lost(why)| why))
+    };
+    let limit = unavailable("GitHub's rate limit: nothing more is sent now");
+    for (status, headers) in [
+        // The primary limit, with no `retry-after`: no refusal of the verb's.
+        (
+            403,
+            vec![("x-ratelimit-remaining", "0"), ("x-ratelimit-reset", "900")],
+        ),
+        (403, vec![("x-ratelimit-remaining", "0")]),
+        (403, vec![("retry-after", "30")]),
+        (429, vec![]),
+        (429, vec![("retry-after", "30")]),
+    ] {
+        assert_eq!(
+            sent(status, &headers),
+            Err(limit.clone()),
+            "{status} {headers:?}"
+        );
+    }
+    for (status, headers) in [
+        (403, vec![]),
+        (403, vec![("x-ratelimit-remaining", "12")]),
+        (422, vec![("x-ratelimit-remaining", "0")]),
+        (422, vec![("retry-after", "30")]),
+        (200, vec![("x-ratelimit-remaining", "0")]),
+    ] {
+        assert_eq!(
+            sent(status, &headers),
+            Ok(Ok((status, json!({"message": "said"})))),
+            "{status} {headers:?}"
+        );
+    }
+}

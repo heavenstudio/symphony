@@ -300,7 +300,7 @@ mod tests {
                     socket after 4 completed requests: Resource temporarily unavailable (os error 35); \
                     the request may have run there, so it was not sent again";
         assert!(slow(late), "{late}");
-        let wrapped = format!("SurrealDB: {late}");
+        let wrapped = format!("the board's database: {late}");
         assert!(slow(&wrapped), "{wrapped}");
         for other in [
             "the server at 127.0.0.1:1 did not answer: connect failed on a freshly opened socket after 0 completed requests: Connection refused (os error 61); the request was not sent",

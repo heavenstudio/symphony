@@ -3,7 +3,7 @@
 //! goes on while it sleeps. What a record says a check or a run took is the wall clock's, as a log's
 //! times and a step's own seconds are; what the wall clock counted past the awake one is how long
 //! the machine slept under it, which the run's record, `--status` and each red it files say
-//! (docs/RELEASES.md). No power log is read.
+//! (docs/workflow/RELEASES.md). No power log is read.
 //!
 //! While it runs, a run on macOS holds an assertion against idle sleep ([`awake`]); a closed lid
 //! on battery sleeps all the same.

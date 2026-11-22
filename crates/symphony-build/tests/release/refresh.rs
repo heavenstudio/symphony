@@ -75,7 +75,7 @@ pub(super) fn executable(path: &Path, text: &str) {
 
 /// A stand-in for cargo in the fixture's folder, building releases at board `schema` until the
 /// fixture's `schema` file says another: it counts its runs in `builds`, exits 101 while
-/// `build-red` is there, and otherwise writes the four binaries into the build folder it is given.
+/// `build-red` is there, and otherwise writes the five binaries into the build folder it is given.
 /// Its server and its board answer what the install asks at that schema, and its `tasks migrate`
 /// logs to `migrated.log` where it ran and how many snapshots every project there held then,
 /// fails while `migrate-red` is there, or `migrate-red-ID` for the project in the folder `ID`, and
@@ -115,6 +115,7 @@ pub(super) fn builder(fixture: &Fixture, schema: i64) -> String {
     );
     executable(&stand_in.join("agent-send"), "#!/bin/sh\n");
     executable(&stand_in.join("symphony"), "#!/bin/sh\n");
+    executable(&stand_in.join("tasks-move"), "#!/bin/sh\n");
     let path = fixture.root.join("cargo-stand-in");
     executable(
         &path,
@@ -123,7 +124,7 @@ pub(super) fn builder(fixture: &Fixture, schema: i64) -> String {
              [ ! -e '{root}/build-red' ] || {{ echo 'error: could not compile'; exit 101; }}\n\
              out=\"$CARGO_TARGET_DIR/release\"\nmkdir -p \"$out\"\n\
              schema=$(cat '{root}/schema')\n\
-             for b in symphony-server tasks agent-send symphony; do\n\
+             for b in symphony-server tasks agent-send symphony tasks-move; do\n\
              sed \"s/@SCHEMA@/$schema/g\" '{root}/stand-in/'\"$b\" > \"$out/$b\"; chmod +x \"$out/$b\"\n\
              done\n"
         ),
@@ -1119,7 +1120,7 @@ fn a_project_naming_a_linked_plugin_holds_the_switch_the_release_installed_and_c
     let held = format!(
         "shelf names the linked plugin shelf-plugin, and a release's server serves a plugin only \
          from its process: a [plugins.process] command for it in {} lets the release serve every \
-         project (docs/PLUGIN_PROTOCOL.md)",
+         project (docs/engineering/PLUGIN_PROTOCOL.md)",
         shelf.join("symphony.toml").display()
     );
 

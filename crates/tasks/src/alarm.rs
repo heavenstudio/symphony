@@ -120,11 +120,9 @@ pub enum Step<'a> {
     Covered,
 }
 
-/// The line a move writes: `HANDLE moved it FROM → TO`.
-pub const MOVED: &str = " moved it ";
-pub const ARROW: &str = " → ";
-/// The line a claim writes: `HANDLE claimed it`, perhaps `, handed over from …`.
-pub const CLAIMED: &str = " claimed it";
+/// The line a move writes, `HANDLE moved it FROM → TO`, and the line a claim writes, `HANDLE
+/// claimed it`, perhaps `, handed over from …`: the replay's own words, named here as before.
+pub use crate::stages::{ARROW, CLAIMED, MOVED};
 /// What a landing that closes work taken back to in progress says.
 pub const TAKEN_BACK: &str = " was taken back to in_progress";
 

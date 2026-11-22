@@ -8,7 +8,7 @@ test-threads = 6
 status-level = "pass"
 final-status-level = "fail"
 # Stall backstop: 3 * ceil(131.95s), the slowest loaded ordinary binary upper bound.
-# The measurements and loads are in docs/CHECKS.md, "The tests side by side".
+# The measurements and loads are in docs/workflow/CHECKS.md, "The tests side by side".
 slow-timeout = { period = "132s", terminate-after = 3, grace-period = "10s" }
 
 [test-groups.chrome]

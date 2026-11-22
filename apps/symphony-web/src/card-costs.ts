@@ -1,10 +1,11 @@
-// The estimated cost each card of the task board shows (docs/TASKS.md, "What the tokens cost"): one
-// read apart from the board's listings, which carry none of it, of the cards drawn. A card names
-// its task once it has painted, as it comes near the screen (its own effect), and the cards named
-// in one draw are asked for together (`TASK_COSTS_PATH`, at most TASK_COSTS_MOST a read), so the
-// board's first paint waits on none of it and a column scrolled into view is one read. A task is
-// asked again only when its record changes (a move, a post), never at each heartbeat that adds
-// tokens. A read that fails leaves its cards without a figure, asked again once they change.
+// The estimated cost each card of the task board shows before its time (docs/workflow/TASKS.md, "What the
+// tokens cost"): one read apart from the board's listings, which carry none of it, of the cards
+// drawn. A card names its task once it has painted, as it comes near the screen (its own effect),
+// and the cards named in one draw are asked for together (`TASK_COSTS_PATH`, at most
+// TASK_COSTS_MOST a read), so the board's first paint waits on none of it and a column scrolled
+// into view is one read. A task is asked again only when its record changes (a move, a post),
+// never at each heartbeat that adds tokens. A read that fails leaves its cards without a figure,
+// asked again once they change.
 
 import {
   createContext,
@@ -19,7 +20,7 @@ import { useMount } from "./mount";
 import { scoped } from "./project";
 import { getJson } from "./request";
 import { field } from "./shared";
-import { dollars } from "./spend";
+import { figure } from "./spend";
 import { TASK_COSTS_MOST, TASK_COSTS_PATH, type TaskCost, type TaskCosts } from "./wire";
 
 /** A card's figure: what it says, and what its title says of it. */
@@ -43,16 +44,12 @@ export function readCosts(value: unknown): TaskCosts | null {
     : null;
 }
 
-/** A card's figure for `cost`, estimated at the prices read on `prices`: `$1.23`, a `+` after it
- * where some tokens had no price, and `unpriced` where none had one (`tasks show`'s "no API list
- * price"), never a `$0.00+` that reads as a cost. */
+/** A card's figure for `cost`, estimated at the prices read on `prices` (`figure`, spend.ts), and
+ * what its title says of it. */
 export function cardCost(cost: TaskCost, prices: string): CardCost {
   const unpriced = cost.unpriced === true;
   return {
-    said:
-      unpriced && cost.dollars === 0
-        ? "unpriced"
-        : `${dollars(cost.dollars)}${unpriced ? "+" : ""}`,
+    said: figure(cost.dollars, unpriced),
     title:
       `Its tokens and its subtasks', estimated at API list prices read ${prices}, not money spent` +
       (unpriced ? "; + some of a model with no price, in no figure" : ""),

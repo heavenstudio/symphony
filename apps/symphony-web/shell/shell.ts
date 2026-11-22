@@ -486,8 +486,9 @@ addEventListener("touchcancel", releaseTouch, { capture: true, passive: true });
 addEventListener(
   "scrollend",
   (event) => {
-    if (!touchScroll) return;
-    touchScroll.scrollers.delete(event.target as Node);
+    // Only the end of one of the touch's own scrollers ends it: another box's, the page's own
+    // after a script scrolled it, can come between a release and the touch's first scroll event.
+    if (!touchScroll?.scrollers.delete(event.target as Node)) return;
     if (!touchScroll.down && touchScroll.scrollers.size === 0) clearTouchScroll();
   },
   { capture: true, passive: true },
@@ -778,7 +779,7 @@ function warm() {
   );
 }
 
-// Read ahead (docs/analysis/client-cache.md, "Read ahead"): once a page has drawn its data, its
+// Read ahead (docs/engineering/analysis/client-cache.md, "Read ahead"): once a page has drawn its data, its
 // feed is open and the browser is idle, the first AHEAD task and document links it shows on the
 // screen are read into the client cache one after another, at the lowest priority and outside the
 // page's own reads (cache.ts, `ahead`), so opening one draws at once: a task's page and its
@@ -969,6 +970,27 @@ function route(path: string): string | null {
   return clean === "" ? "review" : null;
 }
 
+// The id the renderer gives a heading of `text`: src/route.ts's `headingAnchor` word for word (a
+// test keeps them equal), so a fragment that names a heading by its text lands it here too.
+function headingAnchor(text: string): string {
+  const space = (c: string) =>
+    (c >= "\t" && c <= "\r") || c === " " || (c >= "\x1c" && c <= "\x1f");
+  const kept = [...text.normalize("NFKD")].filter((c) => /^[A-Za-z0-9_-]$/.test(c) || space(c));
+  while (space(kept[0] ?? "")) kept.shift();
+  while (space(kept[kept.length - 1] ?? "")) kept.pop();
+  let anchor = "";
+  let joining = false;
+  for (const c of kept) {
+    const joins = c === "-" || space(c);
+    if (!joins) anchor += c.toLowerCase();
+    else if (!joining) anchor += "-";
+    joining = joins;
+  }
+  return anchor;
+}
+
+// Land the element the address's fragment names: its id, or, read as a heading's text, that
+// heading's (src/route.ts's `anchorIds`).
 function scrollAnchor(preserveScroll: boolean) {
   const id = addressed();
   if (id === null) return;
@@ -976,7 +998,7 @@ function scrollAnchor(preserveScroll: boolean) {
     if (!preserveScroll) scrollTo(0, 0);
     return;
   }
-  const target = document.getElementById(id);
+  const target = document.getElementById(id) ?? document.getElementById(headingAnchor(id));
   if (target) land(target);
 }
 

@@ -22,6 +22,8 @@ export const RUN_LOG_MOST = 1048576;
 export const RUNS_DAYS = 14;
 export const SCHEMA_UPDATES_PATH = "/api/schema-updates";
 export const VERSION_HEADER = "symphony-version";
+export const GETTING_STARTED =
+  "https://github.com/heavenstudio/symphony/blob/main/docs/operations/GETTING_STARTED.md";
 export const VERDICT_TASKS = "verdicts/";
 export const UPLOAD_PATH = "/api/upload";
 export const UPLOAD_MAX_BYTES = 10485760;
@@ -91,7 +93,7 @@ export type ProjectView = {
    */
   register: string;
   /**
-   * The review guide as a link names it, by its route (`docs/REVIEW.md`); empty when the
+   * The review guide as a link names it, by its route (`docs/workflow/REVIEW.md`); empty when the
    * project has none, and the home then offers no link to one.
    */
   guide?: string;
@@ -693,7 +695,7 @@ export type RunLine = {
   cpu_s: number | null;
   /**
    * Beside `cpu_s`, whether its recorder knows it leaves out CPU the command's processes took
-   * (`true`), saw no such loss (`false`), or could not watch for one (absent): docs/RUNS.md.
+   * (`true`), saw no such loss (`false`), or could not watch for one (absent): docs/workflow/RUNS.md.
    */
   cpu_partial?: boolean | null;
   /**
@@ -920,7 +922,7 @@ export type WaitingBoard = {
   /**
    * The active custom workflow's activation generation: absent on a board whose own writers keep
    * its tasks, so a page draws a workflow's phases and states only where one is active, and
-   * reads its definition again when it changes (docs/WORKFLOW.md, "The app").
+   * reads its definition again when it changes (docs/workflow/WORKFLOW.md, "The app").
    */
   workflow?: number | null;
 };
@@ -965,7 +967,7 @@ export type Task = {
   /**
    * The status a task the board holds blocked was blocked from, where it is known. A block that
    * names nothing is not blocked on the wire: the task is sent in that status, `from` beside it,
-   * and its [`WaitsOn`] says no reason is recorded (docs/TASKS.md, what a task waits on).
+   * and its [`WaitsOn`] says no reason is recorded (docs/workflow/TASKS.md, what a task waits on).
    */
   from?: string | null;
   /**
@@ -1272,11 +1274,43 @@ export type TaskTokens = {
    * calls of a session that worked no task.
    */
   by_round: Array<RoundTokens>;
+  /**
+   * The rows the sums are of, which a task's timeline puts each on the stretch its calls were
+   * made for; none from a server that sends none.
+   */
+  rows: Array<TokenRow>;
 };
 
 export type RoleTokens = { role: string; tokens: AgentTokens; cost: AgentCost };
 
 export type RoundTokens = { round: number; tokens: AgentTokens; cost: AgentCost };
+
+export type TokenRow = {
+  handle: string;
+  /**
+   * The task its calls were made on: the page's task, or one of its subtasks.
+   */
+  slug: string;
+  /**
+   * Its role on the task (`executor`, `reviewer`, `reserved` while it held the task reserved
+   * before its claim), else the session's kind.
+   */
+  role: string;
+  model: string;
+  speed: string;
+  /**
+   * 1 and the moves into review its task's thread held when the calls were made, so round 1 is
+   * the work up to the first review; 0 for a session that worked no task.
+   */
+  round: number;
+  tokens: AgentTokens;
+  cost: AgentCost;
+  /**
+   * When the first and the last of its calls were recorded, server seconds.
+   */
+  first: number;
+  last: number;
+};
 
 export type TaskCosts = {
   /**
@@ -1564,7 +1598,7 @@ export type DocumentOutline = {
   /**
    * The hash of each card's thread, by the card's slug, as a section's `hash` is taken. A thread
    * is no part of its card section's `hash`, so a client that keeps a card's body and thread on
-   * the device tells by this whether the thread changed since (docs/analysis/client-cache.md,
+   * the device tells by this whether the thread changed since (docs/engineering/analysis/client-cache.md,
    * "What is kept").
    */
   thread_hashes?: { [key in string]: string };

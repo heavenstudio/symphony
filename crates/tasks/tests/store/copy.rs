@@ -433,7 +433,10 @@ fn the_copy_command_refuses_in_one_line() {
     );
     let (code, said) = refusal(&["127.0.0.1:1".into()], b"{}");
     assert_eq!(code, 2);
-    assert!(said.starts_with("❌ tasks-copy: SurrealDB: "), "{said}");
+    assert!(
+        said.starts_with("❌ tasks-copy: the board's database: "),
+        "{said}"
+    );
     assert_eq!(said.lines().count(), 1);
 }
 
@@ -725,7 +728,7 @@ fn tables(f: &Fixture) -> Vec<String> {
     names
 }
 
-const BOARD_TABLES: [&str; 32] = [
+const BOARD_TABLES: [&str; 33] = [
     "artifact_ledger",
     "ask",
     "barred_key",
@@ -749,6 +752,7 @@ const BOARD_TABLES: [&str; 32] = [
     "said",
     "session",
     "session_revision",
+    "setting",
     "task",
     "task_chunk",
     "task_embedding_checkpoint",

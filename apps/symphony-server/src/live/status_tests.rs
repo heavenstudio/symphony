@@ -15,7 +15,8 @@ use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 /// A board's failure on a server that refused the connection.
-const REFUSED: &str = "SurrealDB: cannot connect to 127.0.0.1:1: Connection refused (os error 61)";
+const REFUSED: &str =
+    "the board's database: cannot connect to 127.0.0.1:1: Connection refused (os error 61)";
 
 /// What a page hears of a board that took the request and answered too late.
 fn slow_board(error: &str) -> Value {
@@ -124,12 +125,12 @@ impl Worker {
                 .map_err(|_| "the test gives no more connections".to_string())?
         };
         // A private hub leaves the chat journal to the shared server.
-        let drain_chat = false;
+        let one_server = false;
         let hub = Hub::start_watching::<notify::NullWatcher>(
             &root,
             &root.join("build/client"),
             false,
-            drain_chat,
+            one_server,
             crate::backstop::PERIOD,
             connect,
         )

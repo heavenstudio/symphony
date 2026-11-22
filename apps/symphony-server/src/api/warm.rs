@@ -1,6 +1,7 @@
 //! The read hub behind the data routes: published once per server, its first board read awaited.
 
 use std::sync::Arc;
+use symphony_board::lock::Recovered as _;
 
 use crate::front::Shared;
 use crate::live::Hub;
@@ -14,7 +15,7 @@ pub(crate) async fn start(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
     }
     let shared = shared.clone();
     crate::spawn::blocking(move || {
-        let _held = shared.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+        let _held = shared.lifecycle.lock().recover();
         if shared.stopping() {
             return Err("the Symphony server is stopping".into());
         }
@@ -27,7 +28,7 @@ pub(crate) async fn start(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
             &shared.root,
             &shared.ui_dist,
             shared.embedded_ui,
-            shared.installed_ui,
+            shared.one_server(),
         )?;
         hub.serve_at(&shared.base);
         hub.gate_recorders(shared.recording.clone());

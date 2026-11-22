@@ -604,7 +604,7 @@ fn a_definition_that_fails_leaves_no_board_taken_for_made() {
         "the database made without meeting another test's definition",
         test_time::FLOOR,
         || match client.define_then("RETURN NONE;", serde_json::json!({})) {
-            Err(rpc::DbError::Conflict) => None,
+            Err(symphony_board::db::DbError::Conflict) => None,
             made => Some(made),
         },
     )

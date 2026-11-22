@@ -7,7 +7,8 @@ use std::hash::{BuildHasher, RandomState};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::OnceLock;
-use symphony_board::rpc::{self, Client, DbError};
+use symphony_board::db::DbError;
+use symphony_board::rpc::{self, Client};
 use symphony_board::sys::{self, Command};
 
 struct Scratch(PathBuf);

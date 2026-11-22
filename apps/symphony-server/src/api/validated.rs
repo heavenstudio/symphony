@@ -1,5 +1,5 @@
 //! A JSON read's validator: a weak `ETag` naming its body, and `304` with no body for a request
-//! that already holds that body (docs/analysis/client-cache.md, "How freshness is checked").
+//! that already holds that body (docs/engineering/analysis/client-cache.md, "How freshness is checked").
 //!
 //! The answer keeps `Cache-Control: no-store`, so the browser holds no copy of its own: the
 //! client keeps the body and its tag and sends the tag back itself.
@@ -36,7 +36,7 @@ pub(super) struct Tagged {
 /// which moves with every change on the board, an agent's health included. So a document answers
 /// `304` until its own content changes, and the cursor goes in a header of its own
 /// ([`symphony_api::VERSION_HEADER`]), which a page drawing its kept copy on a `304` opens the
-/// feed from (docs/analysis/client-cache.md, "A return visit, step by step"). `value` (a document,
+/// feed from (docs/engineering/analysis/client-cache.md, "A return visit, step by step"). `value` (a document,
 /// its outline, sections' bodies, or a folder, whose intro is a document read at the cursor too) is
 /// sent as it came, serialized once: the validator is the checksum of those bytes with the cursor
 /// `null`, and the cursor is written into them after.

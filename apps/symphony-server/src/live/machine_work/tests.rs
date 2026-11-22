@@ -665,7 +665,7 @@ fn native_guidance_map_keeps_optional_zero_and_maximum_values_and_lexical_keys()
     let f = Fixture::new(Seed::default());
     let mut hub = Hub::new(&root, &root.join("build/client"));
     let board = f.other_client();
-    hub.connect_reader = Box::new(move |_| Ok(crate::live::read_paths_tests::store_on(&board)));
+    hub.connect_reader = Box::new(move |_| Ok(crate::testing::store_on(&board)));
     hub.refresh_page("", &root).unwrap();
     hub.board_read(&f.store).unwrap();
     let expected = std::collections::BTreeMap::from([

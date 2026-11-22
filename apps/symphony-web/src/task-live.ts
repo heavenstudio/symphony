@@ -3,7 +3,7 @@
 // offers and its timeline. Each is asked as the page mounts, behind nothing: the page and the
 // thread are drawn at once from what this device kept of them (`taskItem`), marked stale, and
 // checked with their copy's tag; every part is asked again until it answers, and none waits for
-// another's read (docs/analysis/components-draw-when-their-data-arrives.md).
+// another's read (docs/design/analysis/components-draw-when-their-data-arrives.md).
 //
 // The board's feed (live.tsx's `keepBoard`, which reads the board, follows its feed and starts
 // again when the stream is lost) is heard one event at a time, with the page as it stood when it
@@ -456,9 +456,9 @@ export function timelinePart(scope: string, slug: string): Part<unknown, TaskEve
 }
 
 /**
- * The tokens of the task `slug` and what they cost, as the server sent them: the chunk of the
- * page's disclosure of them (task-tokens.tsx), which a first visit does not carry, reads them as it
- * draws them. Asked once the disclosure opens.
+ * The tokens of the task `slug` and what they cost, as the server sent them: the timeline's chunk
+ * (timeline-cost.ts), which a first visit does not carry, reads them as it says their cost after
+ * each time. Asked as the timeline's box mounts, beside the timeline.
  */
 export function tokensPart(scope: string, slug: string): Part<unknown, TaskEvent> {
   return {

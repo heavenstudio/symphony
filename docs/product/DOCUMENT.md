@@ -9,10 +9,11 @@ another documents address.
 ## What the owner does here
 
 - **Reads and finds a section.** Follow **On this page**, a heading link or a link from another
-  document. **All docs** returns to the document list.
+  document, which may name the heading by its text, as a task's link does (`#The order`).
+  **All docs** returns to the document list.
 - **Comments on a block.** Press **+ comment** beside the paragraph, heading or table. Choose
   comment, question or decision, write the first line as its title, then **Save comment**.
-- **Asks a question.** The document's [ask conversation](../REVIEW.md#asking) is a chat;
+- **Asks a question.** The document's [ask conversation](../workflow/REVIEW.md#asking) is a chat;
   a comment requests a lasting change.
 - **Opens the evidence.** Tap a picture for its original, or a mockup's **full size** link.
 - **Looks back.** Open **Versions and diffs**, then choose a dated commit to read what changed.
@@ -50,8 +51,8 @@ to the column, with a caption and **full size** link. Its scripts are isolated f
 Document and card pictures must be committed beside them so a clone shows the evidence.
 Working evidence can be local to this machine. Valid uploads named by a verdict or document
 comment are committed with that save. Appearing in the page alone does not make an original
-durable; see the [picture](../REVIEW.md#writing-a-card) and
-[attachment rules](../REVIEW.md#attaching-files). Media show the supplied version, not proof
+durable; see the [picture](../workflow/REVIEW.md#writing-a-card) and
+[attachment rules](../workflow/REVIEW.md#attaching-files). Media show the supplied version, not proof
 that proposed behavior is implemented.
 
 ## Versions and branch pages
@@ -74,7 +75,8 @@ explains answers shared across main and a branch.
 | Return visit | the copy this browser kept, identified as a device copy, while freshness is checked; saves wait |
 | Connection lost | the document stays visible with a warning that it may be out of date; it reconnects by itself |
 | Read fails | an explanation and Retry; content already drawn stays visible |
-| Document missing | Document not found, with All documents and Retry; a document removed while open gets a notice |
+| Document moved | a route no file has opens the one document of its file name in its place, the heading kept, as a wikilink to that name finds it; Back skips the old route |
+| Document missing | Document not found, with All documents and Retry, and each document of the route's name when more than one has it; a document removed while open gets a notice |
 | Empty body | the document head with no body sections |
 | Save refused or fails | an error beside the editor, with the draft retained |
 | Markdown outside the document folders | a read-only page in the project's look, with heading links; no block comments, card editor or Versions and diffs |
@@ -100,6 +102,6 @@ Related tasks move below the document. Tables and diffs scroll within their boxe
 ## Related
 
 - [Cards and verdicts](CARDS.md): deciding, notes, Later and settled cards.
-- [Concept review](../REVIEW.md#commenting-in-place): comment format, review authority and saves.
-- [The project file](../PROJECT_FILE.md#entrypoints): which files are documents and their addresses.
+- [Concept review](../workflow/REVIEW.md#commenting-in-place): comment format, review authority and saves.
+- [The project file](../operations/PROJECT_FILE.md#entrypoints): which files are documents and their addresses.
 - [Product pictures](README.md#pictures): how these fictional examples are captured and retaken.

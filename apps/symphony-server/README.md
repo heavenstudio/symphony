@@ -6,7 +6,7 @@ the client, reads, saves and media, under each project's `/<id>/` on the one ser
 at `/` on a server of its own.
 
 The public Rust items a consumer calls follow the
-[two-release rule](../../docs/CHECKS.md#consumer-api-changes), held here by
+[two-release rule](../../docs/workflow/CHECKS.md#consumer-api-changes), held here by
 `tests/consumer_api.rs`: keep the working old item without `#[deprecated]` alongside its
 replacement for a release, then remove it in a separate later task with consumer migration
 evidence and the guard list updated.
@@ -53,7 +53,7 @@ and storage integration need their own actor-aware adapter; a local upload URL i
 Redirects stay relative or on the configured origin, with no login redirects for refusals.
 
 This seam and its fake-host tests do not constitute hosted deployment acceptance. The
-[hosted ingress contract](../../docs/analysis/hosted-ingress.md) requires real consumer
+[hosted ingress contract](../../docs/operations/analysis/hosted-ingress.md) requires real consumer
 transport and membership proof; provider credentials, token/key/session implementations,
 foreground lifecycle/readiness, managed database and artifact durability remain separate work.
 No production host adapter or CLI switch is supplied here.
@@ -94,17 +94,19 @@ A board behind the running host needs a compatible project board command linked 
 `just tasks migrate` in that project's main checkout under its migration policy. Registration,
 init and the reader never migrate it or replace the shared host. Failed board operations retry
 after 1, 2, 4, 8, 16, 32, then at most 60 seconds; requests and filesystem changes keep that
-deadline. After an external migration, the worker or page reader recovers on its next due
+deadline. The one exception is a board held stopped (`just tasks database hold`, a move, a
+snapshot): an attempt refused by the hold is made again at the first tick or page request after
+its release, whatever was left of its deadline. After an external migration, the worker or page reader recovers on its next due
 attempt without a server restart (`src/live/retry.rs`). The worker's next board tick publishes
 the recovered JSON; page-reader success alone does not refresh that snapshot.
 
 A start judges the running server by the host rule (`symphony::machine::host`). A build serves a
 project's plugin when the plugin answers from a process of its own (`[plugins.process]`,
-[PLUGIN_PROTOCOL](../../docs/PLUGIN_PROTOCOL.md#the-host)), or when it compiles the plugin. The
+[PLUGIN_PROTOCOL](../../docs/engineering/PLUGIN_PROTOCOL.md#the-host)), or when it compiles the plugin. The
 server of a release installed on the machine compiles none: it serves every project whose plugins
 all answer from a process, at its pin and board schema or older, and a project one board schema
 ahead, whose board it reads and writes nothing to, unless the step that moved it is declared to
-keep the Symphony writing ([CHECKS](../../docs/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)).
+keep the Symphony writing ([CHECKS](../../docs/workflow/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)).
 A start that finds no server running starts
 the server of the release `current` names, by its own folder's path
 (`releases/NAME/bin/symphony-server`), when that release serves every registered project, and its
@@ -127,7 +129,7 @@ whose build holds every registered linked plugin replaces it by hand-off: it wri
 `SIGUSR1`; the server hands its sockets to that build as a reload does. While a release is
 installed, every project naming a linked plugin says on its pages that it holds the machine's
 server on a project's build, naming the command that lets it go, and `just release --status` says
-the same ([RELEASES](../../docs/RELEASES.md#status)); a stop and a start then make the release
+the same ([RELEASES](../../docs/workflow/RELEASES.md#status)); a stop and a start then make the release
 the machine's server once nothing holds it.
 
 A release's server builds nothing and watches no source: it watches the machine folder for its
@@ -147,7 +149,7 @@ server: one that ends before, a bug, is said in the log and on the notice and st
 its supervisor has waited for the next wake or period, so no release waits on a restart by hand
 and a follow that dies at every start costs one line a wait. The refresh of a release quotes the
 last of those lines when the server did not follow `current` within its wait
-([RELEASES](../../docs/RELEASES.md#the-refresh)). The reload writes its lines without
+([RELEASES](../../docs/workflow/RELEASES.md#the-refresh)). The reload writes its lines without
 `eprintln!`, which panics its thread once stderr cannot be written.
 
 The log dates each line of the server's two streams, and of the children that inherit them,
@@ -219,15 +221,15 @@ cannot keep installing after `--stop` returns.
 | `/api/task-page?slug=…` | Task, shared typed brief blocks and child count; `gates`, once the server has answered the task's gates since it started, says how many there were, how many the task waited on and how many had no who and when (`GatesSeen`), the room the page holds while it reads them again |
 | `/api/task-diff?slug=…` | Changed paths and added/removed counts, from the branch's merge base or the recorded landing merge's first parent; at most 500 paths and 256 KiB of Git output. Binary counts are null; missing branches or history are said explicitly (`TaskDiff`) |
 | `/api/task-diff-file?slug=…&path=…&base=…&head=…` | One file's patch, at most 256 KiB; the comparison must still match the summary's commit ids, otherwise 409. All Git calls in either read share five seconds, and cancellation ends the child (`src/api/task_diff.rs`) |
-| `/api/task-gates?slug=…` | The task's gates at its recorded branch's tip (`TaskGates`): the Symphony's review, check and owner gates and the project's plugins' own, each met, missing, waived, held or unknown, what the task waits on first; a plugin that errs or is slow is an unknown gate, a task not on the board 404 ([TASKS](../../docs/TASKS.md#gates)) |
+| `/api/task-gates?slug=…` | The task's gates at its recorded branch's tip (`TaskGates`): the Symphony's review, check and owner gates and the project's plugins' own, each met, missing, waived, held or unknown, what the task waits on first; a plugin that errs or is slow is an unknown gate, a task not on the board 404 ([TASKS](../../docs/workflow/TASKS.md#gates)) |
 | `/api/task-offer?slug=…` | Resolved branch and the first offer of the project's board actions that has a payload, on work of any status (each action decides which it offers on); fetched near the controls |
 | `/api/task-history?slug=…&before=…` | Thirty structured messages with timestamps and typed blocks; `after=…` catches up a loaded thread after a lost feed |
 | `/api/agent-page?cursor=…` | Twenty connected agents and their current work and five latest finished tasks; `health=lost` pages lost agents |
 | `/api/task-thread?slug=…` | Alias for the typed paged task history |
 | `/api/agents` | The board's agents view, including probe availability |
-| `/api/reports?grain=…&days=…` | The Reports page's window (`ReportsPage`): its periods by the hour, day or week, each summed from the project's roll-up, agents and board-health day files, a period no file recorded none of; the commits in the window that changed the settings file, the rules or a skill, each with what it changed (`ReportMark`); what was not read. It reads files only, never the board, and at most 64 MiB of them (`src/api/reports.rs`). The answer is kept between reads with what it was read from (the hour, each day file by its stat, the default branch's tip), so a read that finds none of it moved opens no file and starts no git (`src/api/reports/kept.rs`) |
+| `/api/reports?grain=…&days=…` | The Reports page's window (`ReportsPage`): its periods by the hour, day or week, each summed from the project's roll-up, agents and board-health day files, a period no file recorded none of; the commits in the window that changed the settings file, the rules or a skill, each with what it changed (`ReportMark`); what was not read. It reads files only, never the board, and at most 64 MiB of them (`src/api/reports.rs`). The answer is kept between reads with what it was read from (the hour, each day file by its stat, the default branch's tip), so a read that finds none of it moved opens no file and starts no git (`src/api/reports/kept.rs`). Its window ends at the moment `TASKS_NOW` holds the board's clock at, when the server's environment sets it, else at the server's clock (`Hub::recorded_now`), so a server over records written at a held moment reads them, as the product specs' pictures do |
 | `/api/settings` | The Settings page's one read (`SettingsPage`): the files read, what does not load, and every entry in one shape with each setting's value in force, source, scopes and class (`crates/symphony/src/settings.rs`). It reads the project's files, this machine's `PATH` and the committed `symphony-github.toml`, runs no program, and writes nothing; no route saves a setting. A hosted visitor is refused it, as it says what this machine has |
-| `/api/run-log?run=…&tail=…` | Part of a run's log (`RunLog`): its last 64 KiB by default, its last `tail` bytes, or `from=…&to=…` a range, at most 1 MiB; only a regular file in a day folder of the project's `logs/`, never the board (`src/api/run_log.rs`, [RUNS](../../docs/RUNS.md#logs)) |
+| `/api/run-log?run=…&tail=…` | Part of a run's log (`RunLog`): its last 64 KiB by default, its last `tail` bytes, or `from=…&to=…` a range, at most 1 MiB; only a regular file in a day folder of the project's `logs/`, never the board (`src/api/run_log.rs`, [RUNS](../../docs/workflow/RUNS.md#logs)) |
 | `/api/activity` | Latest forty document and owner-addressed task entries |
 | `/api/pending` | Pending cards in document navigation order, then branch cards |
 | `/api/feed?since=…` | The feed after the snapshot's version: a WebSocket to a request that asks to upgrade, Server-Sent Events to any other (`src/api/feed_socket.rs`; both forms are `symphony_api`'s feed contract) |
@@ -259,7 +261,7 @@ the feed's cursor it was read at in a header (`symphony_api::VERSION_HEADER`), o
 `304` alike: the server takes the cursor before it reads the answer, so every event at or before it
 is in the answer, and a page drops what its feed says of a read at or before the read's cursor
 (`api::cursor`). The browser keeps no copy of its own: the client's cache keeps
-the body and sends the tag back (docs/analysis/client-cache.md). An error carries no tag, and the
+the body and sends the tag back (docs/engineering/analysis/client-cache.md). An error carries no tag, and the
 feed's stream is never read whole.
 
 The read routes also work under `/@<branch with / replaced by ~>/`. Done and
@@ -307,7 +309,7 @@ bundle keeps its strict errors. A release's build of the server (`SYMPHONY_CLIEN
 embeds no client: run from the release's folder in the machine folder
 (`releases/NAME/bin/symphony-server`, through `current` or not), it serves that release's
 `client/HASH/` from beside it, whatever else is named
-([RELEASES](../../docs/RELEASES.md#the-install)). `symphony-server --serves` prints, as one line
+([RELEASES](../../docs/workflow/RELEASES.md#the-install)). `symphony-server --serves` prints, as one line
 of JSON, the plugin protocol, the board schema and the Symphony pin the build serves.
 `just client-update` in the Symphony workspace refreshes the real distribution before committing
 client changes. Its default root is the checkout's top level even when the command starts in a
@@ -341,7 +343,7 @@ Server-Sent Event it has an increasing `id` too, and on the WebSocket none (how 
 form says an event: `symphony_api`'s feed contract). The existing board regions are
 `card`, `queue` (only the five visible cards), `counts`, `progress` and `client`. Additional list
 regions use keyed upserts/removals (`ItemChange<T>`); their `-order` events
-move one key after another (`OrderChange`). They are `queue-item`,
+move one key after another (`key` and `after`). They are `queue-item`,
 `spot-check`, `agent-queue`, `pending`, `activity`, `task`,
 `session` and `agent`. A `task` upsert is a new task; an existing task that
 changed is sent once, as `task-fields`, its changed mutable fields alone,
@@ -482,7 +484,7 @@ three-way merge, marking the commit as the owner's verdict in the folder the pro
 generated content take a private branch with their outputs through landing. A separate worker
 handles these branches so ordinary verdicts can proceed. Each generated branch runs the project's
 `[verdicts] check` (this repository's: `just symphony-cli docs-audit --check`,
-[CHECKS](../../docs/CHECKS.md#checks-with-no-reviewer)), then its `[verdicts] land`
+[CHECKS](../../docs/workflow/CHECKS.md#checks-with-no-reviewer)), then its `[verdicts] land`
 command with the branch, in its private checkout as the same app actor, regardless
 of the legacy migration key. Land handles a moving main through its ordinary
 candidate verification and reuse. A bounded land retry keeps the immutable edit,
@@ -507,7 +509,7 @@ shared server calls the board's locked `reap` every five minutes for each projec
 serves that has a board, each on its own schedule (`front::maintenance`). While it is the
 installed release `current` names, each round first tries that project's held schema update
 again, each command of that within the same 240 s, and logs what it did (`· held update of ID:
-…`; `held`, [RELEASES](../../docs/RELEASES.md#a-held-update-tried-again)). After a sleep, that
+…`; `held`, [RELEASES](../../docs/workflow/RELEASES.md#a-held-update-tried-again)). After a sleep, that
 project's clock tick holds its callback dispatch and its give until a round begun after the wake
 has ended, or a round's timeout and the slack it may start late within (240 + 30 s) of awake
 time have passed (`live::presence`). Private foreground

@@ -1055,13 +1055,7 @@ async fn real_upload_conditional_and_head_reads_are_private_and_revocation_prece
     tree.write("symphony.toml", "[project]\nid = \"fixture\"\n");
     let upload = symphony::uploads::store(&tree.root, "evidence.txt", b"project evidence").unwrap();
     let path = format!("/artifacts/uploads/{}.txt", upload.sha);
-    let shared = Shared::new(
-        1,
-        1,
-        &tree.root,
-        None,
-        crate::gate::Gate::new(Arc::new(|_| Ok(None)), Arc::new(std::time::Instant::now)),
-    );
+    let shared = Shared::new(1, 1, &tree.root, None, crate::testing::open_gate());
     let fake = Fake::new();
     let app = router(shared.clone(), config(), fake.clone())
         .unwrap()
@@ -1136,13 +1130,7 @@ fn feed_fixture(fake: &Arc<Fake>) -> (crate::testing::Tree, Arc<crate::live::Hub
     }
     hub.server_notice
         .send_replace("secret diagnostic /private/path".into());
-    let shared = Shared::new(
-        1,
-        1,
-        &tree.root,
-        None,
-        crate::gate::Gate::new(Arc::new(|_| Ok(None)), Arc::new(std::time::Instant::now)),
-    );
+    let shared = Shared::new(1, 1, &tree.root, None, crate::testing::open_gate());
     assert!(shared.api.set(hub.clone()).is_ok());
     let app = router(shared, config(), fake.clone()).unwrap().layer(
         axum::extract::connect_info::MockConnectInfo(

@@ -1,6 +1,6 @@
-//! The release candidate (docs/RELEASES.md, "The release candidate"): the commit a release run of
+//! The release candidate (docs/workflow/RELEASES.md, "The release candidate"): the commit a release run of
 //! main's tip found red in a check, held while its reds are fixed, so the release that comes is that
-//! commit and its fixes alone however fast main moves (docs/analysis/release-candidate.md, A).
+//! commit and its fixes alone however fast main moves (docs/workflow/analysis/release-candidate.md, A).
 //!
 //! Its record is `candidate.json` in the run's record folder ([`FILE`]), written whole while the
 //! run's lock is held: the commit it holds now (its tip), the commit first judged and by which run,

@@ -33,6 +33,7 @@ import {
   waitKind,
 } from "./boardwait";
 import { Button } from "./button";
+import { FirstSteps, noTasks } from "./first";
 import type { Flow } from "./flow";
 import { href } from "./project";
 import { said } from "./request";
@@ -170,6 +171,7 @@ export function GhostBoard({ shape }: { shape: [string, number][] }) {
           <span className="ghost-field" style={{ width: "8.125rem" }} />
         </div>
       </div>
+      {phone && <div className="under-way" />}
       <nav className="wait-strip" aria-hidden="true">
         <span className="open-count">0 open</span>
         {WAIT_KINDS.map((kind, index) => (
@@ -234,6 +236,41 @@ export function BoardContext({ work, connected }: { work: MachineWork; connected
       </p>
       <a href={href("/agents#machine-context")}>Machine details and advisory targets</a>
     </details>
+  );
+}
+
+/** What the phone's row of work under way is given. */
+export interface UnderWayProps {
+  /** The tasks in progress that no machine builds or tests, the blocked ones left out. */
+  working: number;
+  /** The tasks a machine builds and those one tests; none while no machine reports its work. */
+  machines: [building: number, testing: number] | null;
+  /** Show a stage's lane. */
+  onStage: (stage: string) => void;
+}
+
+/**
+ * How much work is under way, on a phone, where one stage is mounted and the Build and Test tabs
+ * are past the row's edge: every task in progress, a machine's builds and tests among them and
+ * named as such, each count a button to its lane. Four equal cells in one fixed row, so a count
+ * that changes, or a machine's first report, moves nothing.
+ */
+export function UnderWay({ working, machines, onStage }: UnderWayProps) {
+  const [building, testing] = machines ?? [0, 0];
+  const lane = (stage: string, count: number, label: string) => (
+    <button type="button" data-stage={stage} onClick={() => onStage(stage)}>
+      <b>{count}</b> {label}
+    </button>
+  );
+  return (
+    <nav className="under-way" aria-label="Work under way">
+      <span className="under-way-all">
+        <b>{working + building + testing}</b> under way
+      </span>
+      {lane("in_progress", working, "working")}
+      {machines !== null && lane("build", building, "building")}
+      {machines !== null && lane("test", testing, "testing")}
+    </nav>
   );
 }
 
@@ -714,6 +751,14 @@ export function TaskBoard({
     onFilter(search, days, next);
   };
   const machine = work.machines.length > 0;
+  // Show a stage on a phone: one of the tabs chosen and kept, or a machine's stage opened.
+  const show = (stage: string) => {
+    if (tabs.includes(stage)) {
+      setSelected(stage);
+      save(STAGE_KEY, stage);
+      setOpened("");
+    } else setOpened(stage);
+  };
   // A phone's two rows of choices scroll across: each keeps its chosen one whole in view.
   const waits = useScrollRow(wait);
   const tabRow = useScrollRow(`${opened}:${tab}`);
@@ -780,6 +825,20 @@ export function TaskBoard({
           wait === "" && search === "" ? (meta("ready")?.ordinary ?? count("ready")) : undefined
         }
       />
+      {/* Under a wait filter, whose counts are the filter's, the row keeps its room, so the strip
+          under it stays where the chip was pressed. A custom workflow's lanes are phases: its
+          board draws none, from the listing that names it, before its lanes are read. */}
+      {phone &&
+        !generation &&
+        (wait === "" ? (
+          <UnderWay
+            working={meta("in_progress")?.ordinary ?? count("in_progress")}
+            machines={machine ? [count("build"), count("test")] : null}
+            onStage={show}
+          />
+        ) : (
+          <div className="under-way" />
+        ))}
       <nav
         ref={waits}
         className="wait-strip scroll-row"
@@ -809,6 +868,13 @@ export function TaskBoard({
           </button>
         ))}
       </nav>
+      {wait === "" && search === "" && noTasks(counts) && (
+        <FirstSteps>
+          No task is open on this board, and none finished {days === 1 ? "today" : "this week"}. Add
+          one with the + button, or have an agent file it with the create-task skill or{" "}
+          <code>just tasks create</code>:
+        </FirstSteps>
+      )}
       {flow?.strip({ waiting, wait, choose: chooseWait, open: setOpened, opened, phone })}
       {wait === "" && (
         <nav ref={tabRow} className="stage-tabs scroll-row" aria-label="Task stages">
@@ -821,11 +887,7 @@ export function TaskBoard({
                   ? "page"
                   : undefined
               }
-              onClick={() => {
-                setSelected(stage);
-                save(STAGE_KEY, stage);
-                setOpened("");
-              }}
+              onClick={() => show(stage)}
             >
               {name(stage)} <i>{meta(stage)?.ordinary ?? count(stage)}</i>
               {(meta(stage)?.blocked ?? 0) > 0 && <b>+{meta(stage)?.blocked}</b>}
@@ -837,7 +899,7 @@ export function TaskBoard({
                 key={stage}
                 type="button"
                 aria-current={opened === stage ? "page" : undefined}
-                onClick={() => setOpened(stage)}
+                onClick={() => show(stage)}
               >
                 {statusLabel(stage)} {count(stage)}
               </button>

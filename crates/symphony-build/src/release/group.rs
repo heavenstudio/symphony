@@ -613,7 +613,7 @@ const WORKING_IN: &str = "working in ";
 /// How long what a look finds in a folder has to leave it before it counts: what a check's killed
 /// group still runs leaves within it. The board's recorder of a check is never among what a look
 /// finds, however long it takes to write down how the check ended: it works at the root, out of
-/// the checkout, and holds no file of it open (docs/MACHINE_WORK.md).
+/// the checkout, and holds no file of it open (docs/workflow/MACHINE_WORK.md).
 pub(crate) const SETTLE: Duration = Duration::from_secs(5);
 /// How long a look waits before it lists again what it found.
 const AGAIN: Duration = Duration::from_secs(1);

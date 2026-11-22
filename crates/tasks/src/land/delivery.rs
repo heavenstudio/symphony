@@ -395,7 +395,7 @@ pub(super) fn left(folder: &Path, slug: &str, default: &str) -> Result<(), Strin
     Err(format!(
         "{slug} has a delivery by pull request under way ({}), and [land] delivery is no longer \
          set on {default}: nothing is merged here over it. Set it again and run the land, which \
-         reads the pull request; with the host gone for good, see docs/TASKS.md, \"A delivery \
+         reads the pull request; with the host gone for good, see docs/workflow/TASKS.md, \"A delivery \
          whose host is gone\" (its journal is {})",
         journal.said(),
         Journal::path(folder, slug).display()
@@ -948,9 +948,17 @@ impl Landing<'_> {
             });
             let answer = (self.ask("publish", &delivering(request, &journal)))
                 .map_err(|why| self.refuse(Refusal::here(format!("nothing merged: {why}"))))?;
-            let binding = self
-                .bound(&answer, &journal, tip)
-                .map_err(|line| self.refuse(Refusal::here(line)))?;
+            let binding = self.bound(&answer, &journal, tip).map_err(|line| {
+                // Refused, as the host merged this head since the dispatch read it: no stop to
+                // say. A host away, or one that did not answer, is said as it is.
+                let merged = (state(&answer).0 == "refused")
+                    .then(|| self.merged_meanwhile(&journal, tip))
+                    .flatten();
+                match merged {
+                    Some(landed) => Stop::Refused(landed),
+                    None => self.refuse(Refusal::here(line)),
+                }
+            })?;
             if let Some(import) = &mut journal.import {
                 import.repository =
                     pinned(&answer, import).map_err(|line| self.refuse(Refusal::here(line)))?;

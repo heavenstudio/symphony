@@ -10,20 +10,12 @@
 
 use crate::common::{Backend, HOST, NOW, client, refused};
 use serde_json::json;
-use std::time::{SystemTime, UNIX_EPOCH};
 use symphony_board::Database;
+use symphony_board::sweep::trigger::now;
 use symphony_board::{Error, NewTask, Opening, Program, Raw, Schema, Store, Writer};
 
 const HOUR: f64 = 3600.0;
 const DAY: f64 = 24.0 * HOUR;
-
-/// The machine's clock, as a line's `seen` reads it.
-fn now() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs_f64()
-}
 
 /// The store `how` opens on a new client of `client`'s database, on `host`.
 fn opened(client: &Database, how: &Opening, host: &str) -> Result<Store, Error> {

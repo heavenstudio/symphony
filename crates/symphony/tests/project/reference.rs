@@ -1,4 +1,4 @@
-//! docs/PROJECT_FILE.md, the reference of `symphony.toml`, names every key the Symphony reads and
+//! docs/operations/PROJECT_FILE.md, the reference of `symphony.toml`, names every key the Symphony reads and
 //! no other. The keys are the fields of the structs the file is read into, as their source writes
 //! them: `Project::parse` refuses any other key by name, and the strict tables' (an entrypoint's, a
 //! generator's, a machine's advice) refuse it where they are read, so those fields are the whole set.
@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use super::common::repo;
 
 /// The reference, from the workspace's root.
-pub(super) const REFERENCE: &str = "docs/PROJECT_FILE.md";
+pub(super) const REFERENCE: &str = "docs/operations/PROJECT_FILE.md";
 
 /// The source of the struct the whole file is read into, whose fields are its tables, and of the
 /// project's own tables'.

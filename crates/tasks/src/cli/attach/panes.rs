@@ -293,7 +293,7 @@ fn pane_of<'panes>(
     let pane = find_pane(panes, Some(record), bound, who)?;
     let conversation = record
         .claude_session
-        .strip_prefix("codex:")
+        .strip_prefix(crate::launch::CODEX)
         .unwrap_or(&record.claude_session);
     let matches_conversation = |pane: &&Pane| {
         pane.session

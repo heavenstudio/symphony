@@ -67,7 +67,7 @@ fn every_snapshot_read_is_a_read_and_binds_its_bounds() {
         Which::Pullable("someone"),
     ] {
         for sessions in [Sessions::Whole, Sessions::Shown] {
-            let (read, vars) = reading(&which, sessions);
+            let (read, vars) = (reading(&which, sessions), super::reading::vars(&which));
             assert_eq!(
                 crate::rpc::Kind::of(&read),
                 crate::rpc::Kind::Read,
@@ -78,6 +78,64 @@ fn every_snapshot_read_is_a_read_and_binds_its_bounds() {
                 (Some("codex:"), Some("codex;")),
                 "{vars}"
             );
+        }
+    }
+}
+
+/// A read's variables are the store's own, the same for each database: what it picks its tasks
+/// by, the cap's only where it reads an orchestrator's slots, and always the executing statuses
+/// and the presence bounds.
+#[test]
+fn a_reads_variables_are_what_it_picks_by_and_the_caps_only_where_slots_are_read() {
+    let slugs = ["p/a".to_string(), "p/b".to_string()];
+    let own = |which: Which| {
+        let vars = super::reading::vars(&which);
+        assert_eq!(vars["executing"], json!(EXECUTING), "{vars}");
+        assert_eq!(vars["codex"], "codex:", "{vars}");
+        assert_eq!(vars["codex_after"], "codex;", "{vars}");
+        let shared: Vec<String> = ["executing", "codex", "codex_after"]
+            .into_iter()
+            .chain(cap::vars().as_object().unwrap().keys().map(String::as_str))
+            .map(str::to_string)
+            .collect();
+        let mut own = vars.as_object().unwrap().clone();
+        own.retain(|name, _| !shared.contains(name));
+        Value::Object(own)
+    };
+    assert_eq!(own(Which::All), json!({}));
+    assert_eq!(own(Which::SlotHoldings), json!({}));
+    assert_eq!(own(Which::Status("ready")), json!({"status": "ready"}));
+    assert_eq!(own(Which::Slug("p/a")), json!({"slug": "p/a"}));
+    assert_eq!(own(Which::Starting("p/a")), json!({"slug": "p/a"}));
+    assert_eq!(own(Which::Children("p/a")), json!({"slug": "p/a"}));
+    assert_eq!(own(Which::Slugs(&slugs)), json!({"wanted": ["p/a", "p/b"]}));
+    assert_eq!(own(Which::Slugs(&[])), json!({"wanted": []}));
+    assert_eq!(own(Which::Linked("docs/x.md")), json!({"doc": "docs/x.md"}));
+    assert_eq!(
+        own(Which::Pullable("someone")),
+        json!({"handle": "someone", "pullable": PULLABLE})
+    );
+    // The cap's variables ride only the reads that count an orchestrator's slots.
+    let cap_vars = cap::vars();
+    let caps: Vec<&String> = cap_vars.as_object().unwrap().keys().collect();
+    assert!(!caps.is_empty());
+    for (which, slots) in [
+        (Which::Starting("p/a"), true),
+        (Which::SlotHoldings, true),
+        (Which::All, false),
+        (Which::Status("ready"), false),
+        (Which::Slug("p/a"), false),
+        (Which::Slugs(&slugs), false),
+        (Which::Children("p/a"), false),
+        (Which::Linked("docs/x.md"), false),
+        (Which::Pullable("someone"), false),
+    ] {
+        let vars = super::reading::vars(&which);
+        for name in &caps {
+            assert_eq!(vars.get(name.as_str()).is_some(), slots, "{name}: {vars}");
+            if slots {
+                assert_eq!(vars[name.as_str()], cap_vars[name.as_str()], "{name}");
+            }
         }
     }
 }
@@ -100,9 +158,9 @@ fn a_read_of_the_sessions_shown_reads_them_by_id_and_never_the_table() {
         Which::Linked("docs/x.md"),
         Which::Pullable("someone"),
     ] {
-        let (whole, _) = reading(&which, Sessions::Whole);
+        let whole = reading(&which, Sessions::Whole);
         assert!(whole.contains(TABLE) && !whole.contains(BY_ID), "{whole}");
-        let (shown, _) = reading(&which, Sessions::Shown);
+        let shown = reading(&which, Sessions::Shown);
         assert!(!shown.contains(TABLE) && shown.contains(BY_ID), "{shown}");
         let asker = "array::concat($view_roles.handle, [$handle])";
         assert_eq!(
@@ -212,7 +270,7 @@ fn a_refusal_is_its_words_and_a_database_failure_says_so() {
     );
     assert_eq!(
         Error::Db("cannot reach it".into()).to_string(),
-        "SurrealDB: cannot reach it"
+        "the board's database: cannot reach it"
     );
 }
 
@@ -333,4 +391,184 @@ fn retrying_keeps_callback_capture_and_result_drop_order_through_success_refusal
             _ => panic!("unexpected result for {case}"),
         }
     }
+}
+
+#[test]
+fn a_reservation_expires_only_once_its_time_is_past_and_one_with_none_never_does() {
+    assert!(!expired(None, 1e12));
+    assert!(!expired(Some(100.0), 99.0));
+    assert!(!expired(Some(100.0), 100.0));
+    assert!(expired(Some(100.0), 100.5));
+}
+
+#[test]
+fn a_reservation_lapses_past_its_time_or_with_its_holder_gone_fenced_only_by_a_session_read_gone() {
+    let (live, time, past) = (Some(200.0), 100.0, 300.0);
+    // Kept: in its time, or with no expiry, while its holder may still act.
+    for health in [Health::Live, Health::Stale, Health::Unknown] {
+        assert_eq!(
+            lapsed(live, Some(health), time),
+            (false, false),
+            "{health:?}"
+        );
+        assert_eq!(
+            lapsed(None, Some(health), time),
+            (false, false),
+            "{health:?}"
+        );
+        // Past its time it lapses on the clock alone: no beat fences that.
+        assert_eq!(
+            lapsed(live, Some(health), past),
+            (true, false),
+            "{health:?}"
+        );
+    }
+    // A holder lost or left lets it go before its time, fenced at the beat it was read at, and
+    // after its time on the clock alone.
+    for health in [Health::Lost, Health::Left] {
+        assert_eq!(lapsed(live, Some(health), time), (true, true), "{health:?}");
+        assert_eq!(lapsed(None, Some(health), time), (true, true), "{health:?}");
+        assert_eq!(
+            lapsed(live, Some(health), past),
+            (true, false),
+            "{health:?}"
+        );
+    }
+    // No session holds the handle: dropped, with no beat to fence.
+    assert_eq!(lapsed(live, None, time), (true, false));
+    assert_eq!(lapsed(None, None, time), (true, false));
+}
+
+#[test]
+fn a_start_counts_against_its_executors_and_only_with_none_against_its_mover() {
+    let handles = |names: &[&str]| names.iter().map(|n| (*n).to_string()).collect::<Vec<_>>();
+    assert_eq!(
+        executors_or(handles(&["amber-heron", "teal-owl"]), Some("mover")),
+        handles(&["amber-heron", "teal-owl"])
+    );
+    assert_eq!(
+        executors_or(handles(&["amber-heron"]), None),
+        handles(&["amber-heron"])
+    );
+    assert_eq!(executors_or(Vec::new(), Some("mover")), handles(&["mover"]));
+    assert_eq!(executors_or(Vec::new(), None), Vec::<String>::new());
+}
+
+#[test]
+fn a_rules_write_is_each_part_its_change_holds_and_a_move_says_whether_it_cancels() {
+    assert_eq!(Change::default().parts(&[], None), RuleParts::default());
+    let some = || Some(json!({}));
+    let change = Change {
+        reason: Some("why".into()),
+        needs: some(),
+        gates: some(),
+        blocked: some(),
+        unlanded: some(),
+        status: Some("cancelled".into()),
+        ..Change::default()
+    };
+    let placing = workflow::Transition {
+        id: workflow::Transition::id_of("sim/a", 2),
+        slug: "sim/a".into(),
+        revision: 2,
+        generation: 1,
+        digest: "d1".into(),
+        edge: None,
+        operation: None,
+        activation: None,
+        from: None,
+        to: symphony_api::workflow::Pair {
+            phase: "build".into(),
+            state: "working".into(),
+        },
+        resume: None,
+        status: "in_progress".into(),
+        principal: symphony_plugin::execution::Principal::new(
+            symphony_plugin::execution::PrincipalKind::Human,
+            "local".into(),
+            "owner".into(),
+        ),
+        effects: vec![],
+        key: None,
+        recovery: None,
+        accepted: None,
+        at: 1.0,
+    };
+    assert_eq!(
+        change.parts(&[json!({"slot": 1})], Some(&placing)),
+        RuleParts {
+            placed: true,
+            reason: true,
+            blocked: true,
+            needs: true,
+            gates: true,
+            unlanded: true,
+            moved: Some(true),
+            holds: true,
+        }
+    );
+    // Each field alone sets its own part and no other.
+    let only = |change: Change, part: RuleParts| assert_eq!(change.parts(&[], None), part);
+    let none = RuleParts::default();
+    only(
+        Change {
+            reason: Some("why".into()),
+            ..Change::default()
+        },
+        RuleParts {
+            reason: true,
+            ..none
+        },
+    );
+    only(
+        Change {
+            needs: some(),
+            ..Change::default()
+        },
+        RuleParts {
+            needs: true,
+            ..none
+        },
+    );
+    only(
+        Change {
+            gates: some(),
+            ..Change::default()
+        },
+        RuleParts {
+            gates: true,
+            ..none
+        },
+    );
+    only(
+        Change {
+            blocked: some(),
+            ..Change::default()
+        },
+        RuleParts {
+            blocked: true,
+            ..none
+        },
+    );
+    // A mark lifted (null) is written as one set.
+    only(
+        Change {
+            unlanded: Some(Value::Null),
+            ..Change::default()
+        },
+        RuleParts {
+            unlanded: true,
+            ..none
+        },
+    );
+    only(
+        Change {
+            status: Some("ready".into()),
+            ..Change::default()
+        },
+        RuleParts {
+            moved: Some(false),
+            ..none
+        },
+    );
 }

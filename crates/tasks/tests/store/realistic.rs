@@ -148,7 +148,7 @@ const PIECES: [&str; 36] = [
     "\n```rust\nfn x() -> u8 { 1 }\n```\n",
     "\t",
     "50%",
-    "(see docs/TASKS.md#needed-stamps)",
+    "(see docs/workflow/TASKS.md#needed-stamps)",
     "[a link](docs/X.md)",
     "<b>markup</b>",
     "'single'",

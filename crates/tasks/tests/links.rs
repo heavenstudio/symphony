@@ -1,6 +1,6 @@
 //! What the board's shipped binaries, `tasks` and `agent-send`, link of what they never run: on
 //! macOS no symbol is exported, as no other code loads them. The size it would add is their
-//! budgets' to hold (docs/CHECKS.md, "Size budgets").
+//! budgets' to hold (docs/workflow/CHECKS.md, "Size budgets").
 
 // The symbols a Mach-O binary exports, read from its export trie.
 #[cfg(target_os = "macos")]

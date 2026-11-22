@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
 use serde::Serialize;
+use symphony_board::lock::Recovered as _;
 
 use crate::callouts::{Comment, archive_callouts, ledger_entry, parse_comments};
 use crate::clock::now_stamp;
@@ -87,7 +88,7 @@ pub fn documents(root: &Path) -> Result<Vec<Doc>, ReviewError> {
             .map_err(|e| ReviewError(os_error(&e, &path)))?;
         let stamp = FileStamp::read(&path).map_err(|e| ReviewError(os_error(&e, &path)))?;
         {
-            let parsed = PARSED.lock().unwrap_or_else(|e| e.into_inner());
+            let parsed = PARSED.lock().recover();
             if let Some((before, doc)) = parsed.get(&key)
                 && *before == stamp
             {
@@ -105,7 +106,7 @@ pub fn documents(root: &Path) -> Result<Vec<Doc>, ReviewError> {
             decisions: parse_decisions(&lines),
         };
         if FileStamp::read(&path).ok().as_ref() == Some(&stamp) {
-            let mut parsed = PARSED.lock().unwrap_or_else(|e| e.into_inner());
+            let mut parsed = PARSED.lock().recover();
             if parsed.len() >= 2048 && !parsed.contains_key(&key) {
                 parsed.clear();
             }
@@ -365,8 +366,8 @@ pub fn register_files(root: &Path) -> Vec<PathBuf> {
     found
 }
 
-/// `--tidy`: supersede, resolve and regroup every register, then move answered callouts to the
-/// ledger. Its exit code.
+/// `--tidy`: supersede and resolve the cards of every document, a register's and those inline
+/// alike, regroup every register, then move answered callouts to the ledger. Its exit code.
 pub fn tidy(root: &Path, now: Option<&str>, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     tidy_with(root, now, crate::register::sort_register, out, err)
 }
@@ -390,6 +391,50 @@ fn tidy_text(
     Ok((text, changed, superseded))
 }
 
+/// One register tidied and written.
+fn tidy_file(
+    path: &Path,
+    stamp: &str,
+    sort: Sort,
+    plugins: &Plugins,
+) -> Result<(String, Vec<String>, Vec<String>), ReviewError> {
+    let tidied = tidy_text(path, stamp, sort, plugins)?;
+    write_whole(path, &tidied.0).map_err(|e| ReviewError(os_error(&e, path)))?;
+    Ok(tidied)
+}
+
+/// What a tidy says of one file: the cards it resolved, and those it superseded when any.
+fn said(out: &mut dyn Write, changed: &[String], superseded: &[String]) {
+    let _ = writeln!(
+        out,
+        "resolved: {}",
+        if changed.is_empty() {
+            "(none)".to_string()
+        } else {
+            changed.join(", ")
+        }
+    );
+    if !superseded.is_empty() {
+        let _ = writeln!(out, "superseded: {}", superseded.join(", "));
+    }
+}
+
+/// Every document of the project at `root` that holds a card and no register region, `regions`
+/// being those that hold one ([`register_files`]): its cards sit inline, each at the place the
+/// document says what it decides.
+pub fn inline_files(root: &Path, regions: &[PathBuf]) -> Vec<PathBuf> {
+    let project = Project::of(root);
+    let mut found: Vec<PathBuf> = document_files(root, &project)
+        .into_iter()
+        .filter(|path| !regions.contains(path))
+        .filter(|path| {
+            read_text(path).is_ok_and(|text| !parse_decisions(&splitlines(&text)).is_empty())
+        })
+        .collect();
+    symphony_board::order::sort_by_key(&mut found, &|path| path.to_string_lossy().to_string());
+    found
+}
+
 /// [`tidy`] with the regroup given, so a test can hand it one that drops a line.
 pub fn tidy_with(
     root: &Path,
@@ -411,33 +456,38 @@ pub fn tidy_with(
     let stamp = now
         .filter(|now| !now.is_empty())
         .map_or_else(now_stamp, str::to_string);
-    for path in register_files(root) {
-        let rel = relative(&path, root);
-        let written = tidy_text(&path, &stamp, sort, &plugins).and_then(|tidied| {
-            write_whole(&path, &tidied.0)
-                .map(|()| tidied)
-                .map_err(|e| ReviewError(os_error(&e, &path)))
-        });
-        let (_, changed, superseded) = match written {
+    let regions = register_files(root);
+    for path in &regions {
+        let rel = relative(path, root);
+        let (_, changed, superseded) = match tidy_file(path, &stamp, sort, &plugins) {
             Ok(tidied) => tidied,
             Err(problem) => {
                 let _ = writeln!(err, "✖ {rel} not tidied: {problem}");
                 return 1;
             }
         };
-        let _ = writeln!(
-            out,
-            "resolved: {}",
-            if changed.is_empty() {
-                "(none)".to_string()
-            } else {
-                changed.join(", ")
-            }
-        );
-        if !superseded.is_empty() {
-            let _ = writeln!(out, "superseded: {}", superseded.join(", "));
-        }
+        said(out, &changed, &superseded);
         let _ = writeln!(out, "regrouped {rel}");
+    }
+    // A document whose cards all sit inline has nothing to regroup: its cards are resolved and
+    // superseded where they are, and it is named only when one was.
+    for path in inline_files(root, &regions) {
+        let rel = relative(&path, root);
+        match tidy_text(&path, &stamp, sort, &plugins) {
+            Ok((_, changed, superseded)) if changed.is_empty() && superseded.is_empty() => {}
+            Ok((text, changed, superseded)) => {
+                if let Err(e) = write_whole(&path, &text) {
+                    let _ = writeln!(err, "✖ {rel} not tidied: {}", os_error(&e, &path));
+                    return 1;
+                }
+                said(out, &changed, &superseded);
+                let _ = writeln!(out, "tidied {rel}");
+            }
+            Err(problem) => {
+                let _ = writeln!(err, "✖ {rel} not tidied: {problem}");
+                return 1;
+            }
+        }
     }
     match archive(root, &stamp, out) {
         Ok(()) => 0,

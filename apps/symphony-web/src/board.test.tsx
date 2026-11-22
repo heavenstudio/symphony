@@ -18,6 +18,7 @@ import {
   TaskBoard,
   type TaskBoardProps,
   TaskColumn,
+  UnderWay,
   UnreadBoard,
   windowChosen,
   windowOf,
@@ -49,6 +50,35 @@ const board = (props: Partial<TaskBoardProps> = {}) =>
   );
 const columns = (html: string) => [...html.matchAll(/data-status="([^"]*)"/g)].map((m) => m[1]);
 const rows = (html: string) => [...html.matchAll(/id="row-([^"]*)"/g)].map((m) => m[1]);
+
+describe("a board with no task", () => {
+  const empty: [string, number][] = [
+    ["ready", 0],
+    ["done", 0],
+  ];
+  it("says in one line how the first is filed, with the guide's link", () => {
+    const html = board({ counts: empty });
+    expect(html).toContain(
+      '<p class="first-steps">No task is open on this board, and none finished today. Add one with the + button, or have an agent file it with the create-task skill or <code>just tasks create</code>: <a href="',
+    );
+    expect(html).toContain('/docs/operations/GETTING_STARTED.md" target="_blank"');
+    expect(html.match(/first-steps/g)).toHaveLength(1);
+  });
+  it("says it of a new board, which counts no stage at all", () => {
+    expect(board({ counts: [] }).match(/first-steps/g)).toHaveLength(1);
+  });
+  it("says nothing of it once a task is there, open or finished", () => {
+    for (const counts of [
+      [["ready", 1]],
+      [
+        ["ready", 0],
+        ["done", 2],
+      ],
+    ] as [string, number][][]) {
+      expect(board({ counts })).not.toContain("first-steps");
+    }
+  });
+});
 
 describe("the approved B board", () => {
   it("shows lifecycle and machine columns, with Backlog in the toolbar and no Blocked or signoff column", () => {
@@ -194,6 +224,58 @@ describe("the approved B board", () => {
     expect(html).toContain(">Concept <i>0</i></button>");
     expect(html.match(/aria-pressed="true"/g)).toHaveLength(1);
     expect(html).toContain('class="open-count" aria-pressed="true">30 open</button>');
+  });
+  // A phone opens on Review, with In progress next and the Build and Test tabs past the row's
+  // edge: the row over them says how much is under way, a build or a test among it.
+  it("says on a phone how many tasks are under way, the builds and tests among them", () => {
+    vi.stubGlobal("innerWidth", 390);
+    const html = board({
+      work: aWork([aMachine("desk", [])]),
+      counts: [
+        ["in_progress", 3],
+        ["build", 9],
+        ["test", 14],
+        ["review", 2],
+      ],
+      waiting: {
+        kinds: [],
+        columns: [{ status: "in_progress", ordinary: 1, blocked: 2, oldest: null }],
+      },
+    });
+    expect(html).toContain('<nav class="under-way" aria-label="Work under way">');
+    expect(html).toContain('<span class="under-way-all"><b>24</b> under way</span>');
+    expect(html).toContain('data-stage="in_progress"><b>1</b> working</button>');
+    expect(html).toContain('data-stage="build"><b>9</b> building</button>');
+    expect(html).toContain('data-stage="test"><b>14</b> testing</button>');
+    expect(html.indexOf("under-way")).toBeLessThan(html.indexOf("wait-strip"));
+  });
+  it("counts the tasks in progress alone while no machine reports its work", () => {
+    vi.stubGlobal("innerWidth", 390);
+    const html = board({ counts: [["in_progress", 5]] });
+    expect(html).toContain("<b>5</b> under way");
+    expect(html).toContain("<b>5</b> working");
+    expect(html).not.toContain("building");
+    expect(html).not.toContain("testing");
+    expect(board()).toContain("<b>0</b> under way");
+  });
+  it("draws the row of work under way on a phone alone, its room kept in the ghost there", () => {
+    expect(board({ counts: [["in_progress", 5]] })).not.toContain("under-way");
+    expect(render(<GhostBoard shape={[]} />)).not.toContain("under-way");
+    vi.stubGlobal("innerWidth", 390);
+    expect(render(<GhostBoard shape={[]} />)).toContain('<div class="under-way"></div>');
+  });
+  it("draws no row of work under way on a board whose listing names a custom workflow", () => {
+    vi.stubGlobal("innerWidth", 390);
+    const waiting = { kinds: [], columns: [], workflow: 3 };
+    const held = board({ counts: [["in_progress", 5]], waiting });
+    expect(held).not.toContain("under-way");
+    expect(held).toContain("wait-strip");
+  });
+  it("gives each count of the work under way its lane", () => {
+    const shown: string[] = [];
+    const row = UnderWay({ working: 1, machines: [2, 3], onStage: (stage) => shown.push(stage) });
+    for (const cell of [row.props.children].flat(2)) cell?.props?.onClick?.();
+    expect(shown).toEqual(["in_progress", "build", "test"]);
   });
   it("opens the linked row's original stage before a saved phone tab", () => {
     vi.stubGlobal("innerWidth", 390);

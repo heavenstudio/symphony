@@ -1,5 +1,5 @@
 //! The board as the exchange reaches it: a [`Board`], five things it reads or writes, and
-//! [`Api`], which does each through the board's JSON calls (`tasks api`, docs/TASKS.md) and
+//! [`Api`], which does each through the board's JSON calls (`tasks api`, `docs/engineering/BOARD_API.md`) and
 //! nothing else. It reads no database and links no board library; another board answers the same
 //! trait.
 

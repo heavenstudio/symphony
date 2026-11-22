@@ -1,5 +1,5 @@
 //! A task's execution attempts on the wire
-//! ([`docs/EXECUTION_ATTEMPTS.md`](../../../docs/EXECUTION_ATTEMPTS.md#on-a-tasks-page)): its history as [`TASK_ATTEMPTS_PATH`] answers it, every attempt kept after its handle left, with
+//! ([`docs/engineering/EXECUTION_ATTEMPTS.md`](../../../docs/engineering/EXECUTION_ATTEMPTS.md#on-a-tasks-page)): its history as [`TASK_ATTEMPTS_PATH`] answers it, every attempt kept after its handle left, with
 //! the resource and conversation bound to it as references, never as links; the controls a page
 //! posts to [`ATTEMPT_CONTROL_ROUTE`]; and a view of an attempt's resource, resolved on demand at
 //! [`ATTEMPT_VIEW_ROUTE`] for the one who asks and kept nowhere.

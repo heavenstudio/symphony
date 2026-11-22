@@ -162,6 +162,13 @@ pub const FEED_PATH: &str = "/api/feed";
 /// kept on a `304`, which has no body, opens the feed from it, and a page whose feed is open
 /// drops what the feed says of a read at or before the read's cursor.
 pub const VERSION_HEADER: &str = "symphony-version";
+/// The guide a new project starts from, `docs/operations/GETTING_STARTED.md`, where a project that has no
+/// Symphony checkout reads it: in the Symphony's repository. An empty board and an empty folder
+/// of documents link it.
+pub const GETTING_STARTED: &str = concat!(
+    env!("CARGO_PKG_REPOSITORY"),
+    "/blob/main/docs/operations/GETTING_STARTED.md"
+);
 /// A server-update failure, a JSON string (empty clears it). It does not advance the document
 /// cursor. A retiring server finishes its feed normally; reconnects fetch a fresh snapshot.
 pub const SERVER_EVENT: &str = "server";
@@ -174,7 +181,7 @@ pub const PING_EVENT: &str = "ping";
 /// change: at 5 s a client gives such a stream up within 12.5 s, and on localhost the pings cost
 /// nothing.
 pub const PING_MAX_MS: u32 = 5_000;
-/// The client cache's format (docs/analysis/client-cache.md, "Across versions"): what a page keeps
+/// The client cache's format (docs/engineering/analysis/client-cache.md, "Across versions"): what a page keeps
 /// on the device is written under it, and a client built with another number clears what it
 /// finds. It moves when a kept type's shape does, which the wire test ties it to; a server update
 /// needs nothing, since a changed body has a new tag. 2: documents and an entrypoint's folder page
@@ -558,7 +565,7 @@ pub struct Task {
     pub waits_on: Option<WaitsOn>,
     /// The status a task the board holds blocked was blocked from, where it is known. A block that
     /// names nothing is not blocked on the wire: the task is sent in that status, `from` beside it,
-    /// and its [`WaitsOn`] says no reason is recorded (docs/TASKS.md, what a task waits on).
+    /// and its [`WaitsOn`] says no reason is recorded (docs/workflow/TASKS.md, what a task waits on).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
     /// Where a custom workflow holds it ([`workflow::TaskPlace`]): none for a task the board's own
@@ -774,7 +781,7 @@ pub struct DocumentOutline {
     pub anchors: std::collections::BTreeMap<String, Vec<String>>,
     /// The hash of each card's thread, by the card's slug, as a section's `hash` is taken. A thread
     /// is no part of its card section's `hash`, so a client that keeps a card's body and thread on
-    /// the device tells by this whether the thread changed since (docs/analysis/client-cache.md,
+    /// the device tells by this whether the thread changed since (docs/engineering/analysis/client-cache.md,
     /// "What is kept").
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub thread_hashes: std::collections::BTreeMap<String, String>,
@@ -784,7 +791,7 @@ pub struct DocumentOutline {
 /// (`/api/document?view=first`, [`DocumentOutline::first`]): a screen of the document or a bit more.
 /// Measured on this repository's documents, the leading sections within it, beside the headings,
 /// hold 990 to 7,300 characters of text (`docs/DECISIONS.md` 990 in its first 6 sections, its next
-/// a 12 KB card, `docs/TASKS.md` 6,627 in 10), where a phone's screen shows about 1,200 and a
+/// a 12 KB card, `docs/workflow/TASKS.md` 6,627 in 10), where a phone's screen shows about 1,200 and a
 /// desktop's about 2,700; their whole
 /// outlines are 9 to 27 KB, and the consuming project's register's 56 KB.
 pub const AHEAD_BYTES: usize = 16_000;
@@ -1145,12 +1152,6 @@ pub struct ItemChange<T> {
     pub value: Option<T>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub removed: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OrderChange {
-    pub key: String,
-    pub after: Option<String>,
 }
 
 /// A task's body is fetched in the initial snapshot. A task status/role update carries its changed

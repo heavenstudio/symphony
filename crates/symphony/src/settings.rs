@@ -34,7 +34,7 @@ use toml::Value;
 use crate::project::{FILE, LOCAL_FILE, PANES, Project, Releases};
 
 /// The GitHub exchange's settings file, at the root of the tree the default branch commits
-/// (docs/GITHUB.md), and its program.
+/// (docs/operations/GITHUB.md), and its program.
 pub const GITHUB_FILE: &str = "symphony-github.toml";
 const GITHUB_PROGRAM: &str = "symphony-github";
 
@@ -540,7 +540,7 @@ fn github(machine: &Machine, main: &Path) -> SettingsEntry {
                 Exchange::Written(format!(
                     "{on_branch} writes enabled = true; {writes}. Whether the exchange runs is \
                      its program's to say: a file it refuses, or a token it lacks, leaves it \
-                     off (docs/GITHUB_SETUP.md)."
+                     off (docs/operations/GITHUB_SETUP.md)."
                 ))
             } else {
                 Exchange::Off(format!("Off: {on_branch} does not enable it; {writes}."))

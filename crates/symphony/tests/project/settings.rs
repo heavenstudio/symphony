@@ -439,7 +439,7 @@ fn github_is_read_from_what_the_default_branch_commits_never_the_working_file() 
         state.why,
         "symphony-github.toml on main writes enabled = true; repository lamp/shop, issues import, \
          pull requests off, releases off. Whether the exchange runs is its program's to say: a \
-         file it refuses, or a token it lacks, leaves it off (docs/GITHUB_SETUP.md)."
+         file it refuses, or a token it lacks, leaves it off (docs/operations/GITHUB_SETUP.md)."
     );
     assert!(!state.why.contains("On"), "{state:?}");
     assert_eq!(github.needs.len(), 1, "the page claims no token or App");

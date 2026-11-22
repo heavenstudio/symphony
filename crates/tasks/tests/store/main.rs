@@ -65,7 +65,7 @@ mod fields;
 #[path = "../../../../tools/test-support/script_board.rs"]
 #[expect(
     clippy::disallowed_methods,
-    reason = "the fixture scripts every crate's tests share start their children as a test likes, and wait by no timer"
+    reason = "the fixture scripts every crate's tests share start their children as a test likes, wait by no timer, and recover machine_copy.rs's poisoned lock by std's PoisonError::into_inner, as a crate without the board's lock::Recovered must"
 )]
 mod fixture_script;
 mod gate;
@@ -119,6 +119,7 @@ mod slots;
 mod slow_builds;
 mod stamp;
 mod start;
+mod stored_settings;
 mod subtask_roles;
 mod thread_window;
 mod tree;
