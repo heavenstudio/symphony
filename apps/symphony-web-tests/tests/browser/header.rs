@@ -1,7 +1,7 @@
 //! The header: one name for each of the Symphony's pages, the shown page lit and never named again
 //! by a crumb, Appearance opened from it rather than from the chat sheet, and on a phone two rows
 //! that keep the Symphony's seven pages in view at 390 wide and scroll a project's more across.
-use super::{SHOWN, chrome, chrome::Chrome, look_parity, site, site::Site, texts};
+use super::{READY, SHOWN, chrome, chrome::Chrome, look_parity, site, site::Site, texts};
 use serde_json::json;
 
 /// The Symphony's seven pages, then the stand-in project's own page under its plugin's label:
@@ -38,7 +38,7 @@ fn open(page: &mut Chrome, site: &Site, path: &str, ready: &str) {
     assert!(
         page.wait_for(
             &format!(
-                "document.documentElement.dataset.navigation === 'ready' && document.querySelector({}) !== null && document.querySelector('#appearance') !== null",
+                "{READY} && document.querySelector({}) !== null && document.querySelector('#appearance') !== null",
                 json!(ready)
             ),
             SHOWN

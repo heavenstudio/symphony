@@ -6,7 +6,7 @@
 //! file sets a token and a layout; `pantry` names the shelf plugin and the theme package it
 //! provides; `gamma`, in the one case that registers it, serves its documents at its root.
 use super::{
-    HOME_FIRST_VISIT_BYTES, PAGE_WIDTH, SHOWN, TASKS_FIRST_VISIT_BYTES, binaries, chrome,
+    HOME_FIRST_VISIT_BYTES, PAGE_WIDTH, READY, SHOWN, TASKS_FIRST_VISIT_BYTES, binaries, chrome,
     chrome::Chrome, completed_requests, dist, needed_bytes, owner_controls::ScratchBoard,
     ping_bytes,
 };
@@ -366,7 +366,14 @@ fn the_top_left_switch_and_picker_work_by_keyboard_on_a_compact_nested_page() {
     let Some(mut browser) = chrome() else { return };
     browser.viewport(390, 844, true);
     browser.open(&server.url("/alpha/tasks"));
-    assert!(browser.wait_for("document.documentElement.dataset.navigation === 'ready' && document.querySelector('header a.project-switch') !== null", SHOWN), "nested page missing: {}", observed_page(&mut browser));
+    assert!(
+        browser.wait_for(
+            &format!("{READY} && document.querySelector('header a.project-switch') !== null"),
+            SHOWN
+        ),
+        "nested page missing: {}",
+        observed_page(&mut browser)
+    );
     key(&mut browser, "Tab", "Tab", 9);
     assert_eq!(
         focused(&mut browser),
@@ -404,7 +411,14 @@ fn the_top_left_switch_and_picker_work_by_keyboard_on_a_compact_nested_page() {
         observed_page(&mut browser)
     );
     browser.eval("document.querySelector('header a[href=\"/pantry/tasks\"]').click()");
-    assert!(browser.wait_for("location.pathname === '/pantry/tasks' && document.documentElement.dataset.navigation === 'ready'", SHOWN), "project tasks missing: {}", observed_page(&mut browser));
+    assert!(
+        browser.wait_for(
+            &format!("location.pathname === '/pantry/tasks' && {READY}"),
+            SHOWN
+        ),
+        "project tasks missing: {}",
+        observed_page(&mut browser)
+    );
     // The Home link stays separate from the machine picker, even in the compact theme.
     browser.eval("document.querySelector('header a[href=\"/pantry/\"]').click()");
     assert!(
@@ -658,7 +672,7 @@ fn addresses(browser: &mut Chrome, base: &str) -> (Vec<String>, Vec<String>) {
 /// The page has finished its navigation and drawn `drawn`.
 fn ready(drawn: &str) -> String {
     format!(
-        "document.documentElement.dataset.navigation === 'ready' && document.querySelector({}) !== null",
+        "{READY} && document.querySelector({}) !== null",
         json!(drawn)
     )
 }
@@ -985,7 +999,7 @@ fn a_click_on_another_projects_link_from_one_served_at_its_root_loads_that_proje
     );
     assert!(
         browser.wait_for(
-            "location.pathname === '/pantry/tasks' && document.documentElement.dataset.navigation === 'ready'",
+            &format!("location.pathname === '/pantry/tasks' && {READY}"),
             SHOWN
         ),
         "{}",
@@ -1063,7 +1077,7 @@ fn the_header_and_the_icons_are_the_symphonys_until_a_theme_has_its_own() {
         "drawn":true,"inPrimary":false,"name":"Lantern Works","named":"app-name","serif":false,
         "fermata":false,"touch":null,"touchType":null
     });
-    let client = "document.documentElement.dataset.navigation === 'ready' && document.querySelector('.hero-title') !== null";
+    let client = &format!("{READY} && document.querySelector('.hero-title') !== null");
     let served = "document.querySelector('main.server-page') !== null";
     for (page, ready, want) in [
         // The machine's own pages: the list, and what no project answers.
@@ -1191,7 +1205,7 @@ fn a_phone_keeps_its_selected_board_stage_only_for_that_project() {
         ("pantry", "design", "Design"),
     ] {
         browser.open(&server.url(&format!("/{project}/tasks")));
-        assert!(browser.wait_for(&format!("document.querySelector('.waiting-columns .column[data-status={expected}]') !== null && document.documentElement.dataset.navigation === 'ready'"),SHOWN),"{project} did not restore {expected}: {}", observed_page(&mut browser));
+        assert!(browser.wait_for(&format!("document.querySelector('.waiting-columns .column[data-status={expected}]') !== null && {READY}"),SHOWN),"{project} did not restore {expected}: {}", observed_page(&mut browser));
         browser.eval(&format!("[...document.querySelectorAll('.stage-tabs button')].find(button=>button.textContent.startsWith({})).click()",json!(choose)));
     }
     assert_eq!(browser.eval("[localStorage.getItem('alpha:board-waiting-stage'),localStorage.getItem('pantry:board-waiting-stage'),localStorage.getItem('board-waiting-stage')]"),json!(["ready","design",null]));

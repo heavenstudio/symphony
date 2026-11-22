@@ -4,7 +4,7 @@
 //! panel pushes the header and the page aside;
 //! the chat sheet is one surface from the top of the window, beside the header's controls.
 use super::components::{open_panel, site};
-use super::{SHOWN, at_page_width, chrome, chrome::Chrome, wait_for_board};
+use super::{READY, SHOWN, at_page_width, chrome, chrome::Chrome, wait_for_board};
 use serde_json::{Value, json};
 
 /// Three cards waiting on the owner, so the pending bar shows on every page.
@@ -101,7 +101,7 @@ fn with_nothing_pending_no_dock_draws_and_the_chat_button_sits_alone_in_the_corn
     // The stand-in answers /api/pending with no items.
     let site = site();
     let Some(mut page) = chrome() else { return };
-    let ready = "document.querySelector('#quick-open') !== null && document.documentElement.dataset.navigation === 'ready'";
+    let ready = &format!("document.querySelector('#quick-open') !== null && {READY}");
     for width in [390, 1280] {
         page.viewport(width, 900, width < 600);
         page.open(&site.url("/tasks"));
@@ -143,7 +143,7 @@ fn with_nothing_pending_no_dock_draws_and_the_chat_button_sits_alone_in_the_corn
     }
     // A document draws the dock only while it holds the folded contents pill, on a desktop.
     let document = site.url("/docs/look-parity.md");
-    let toc = "document.querySelector('.doc-toc details') !== null && document.documentElement.dataset.navigation === 'ready'";
+    let toc = &format!("document.querySelector('.doc-toc details') !== null && {READY}");
     page.viewport(1280, 800, false);
     page.open(&document);
     assert!(page.wait_for(toc, SHOWN));
@@ -186,7 +186,7 @@ fn the_dock_holds_the_floating_controls_and_a_focused_or_last_control_sits_above
         page.open(&site.url("/"));
         wait_for_board(&mut page);
         assert!(page.wait_for(
-            "document.querySelector('.frame-pending') !== null && document.querySelector('#quick-open') !== null && document.documentElement.dataset.navigation === 'ready'",
+            &format!("document.querySelector('.frame-pending') !== null && document.querySelector('#quick-open') !== null && {READY}"),
             SHOWN
         ));
         page.frames();
@@ -234,7 +234,10 @@ fn the_task_boards_last_card_scrolls_clear_of_the_dock_and_chat_button() {
         for (width, height) in [(390, 844), (1280, 900), (1500, 1700)] {
             page.viewport(width, height, width < 600);
             page.open(&site.url("/tasks"));
-            assert!(page.wait_for("document.querySelector('.waiting-columns') !== null && document.documentElement.dataset.navigation === 'ready'",SHOWN));
+            assert!(page.wait_for(
+                &format!("document.querySelector('.waiting-columns') !== null && {READY}"),
+                SHOWN
+            ));
             if width <= 760 {
                 assert!(page.wait_for(
                     "document.querySelector('.stage-tabs button') !== null",
@@ -273,7 +276,9 @@ fn a_documents_contents_pill_sits_in_the_dock_and_in_the_page_on_a_phone() {
     site.set_json("/api/pending", &pending());
     let Some(mut page) = chrome() else { return };
     let document = site.url("/docs/look-parity.md");
-    let ready = "document.querySelector('.doc-toc details') !== null && document.querySelector('.frame-pending') !== null && document.documentElement.dataset.navigation === 'ready'";
+    let ready = &format!(
+        "document.querySelector('.doc-toc details') !== null && document.querySelector('.frame-pending') !== null && {READY}"
+    );
     // A wide window opens the contents beside the page; folded, the pill sits in the dock.
     page.viewport(1280, 800, false);
     page.open(&document);

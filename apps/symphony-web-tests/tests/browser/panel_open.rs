@@ -7,7 +7,7 @@
 //! and on the queue, Reports and Runs, which have none either, it scales the chat's mockup.
 
 use super::{
-    SHOWN, assets::module, chrome, chrome::Chrome, completed_requests, dist, needed_bytes,
+    READY, SHOWN, assets::module, chrome, chrome::Chrome, completed_requests, dist, needed_bytes,
     prefetched_bytes, site, wait_for_board, wait_for_feed,
 };
 use serde_json::{Value, json};
@@ -368,10 +368,7 @@ fn a_click_before_the_idle_warm_up_holds_the_menus_until_the_chat_is_up() {
     site.hold_route(&panel.script, true);
     browser.open(&site.url("/"));
     wait_for_board(&mut browser);
-    assert!(browser.wait_for(
-        "document.documentElement.dataset.navigation === 'ready' && idle.length > 0",
-        SHOWN
-    ));
+    assert!(browser.wait_for(&format!("{READY} && idle.length > 0"), SHOWN));
     browser.eval("document.querySelector('#quick-open').click(); idle.splice(0).forEach(callback => callback())");
     browser.pump(Duration::from_millis(500));
     assert_eq!(
@@ -423,7 +420,7 @@ fn a_page_warms_on_a_fast_link_and_never_when_it_saves_data_or_is_on_2g() {
         browser.open(&site.url("/"));
         wait_for_board(&mut browser);
         assert!(
-            browser.wait_for(super::READY, SHOWN),
+            browser.wait_for(READY, SHOWN),
             "saveData {save_data} on {link}: the page is ready"
         );
         let idle = browser.eval("idle.length").as_u64().unwrap_or(u64::MAX);
@@ -466,10 +463,7 @@ fn a_page_warms_on_a_fast_link_and_never_when_it_saves_data_or_is_on_2g() {
 /// Open /tasks and wait for its page to be up and its board's columns, read last, asked for.
 fn tasks_reading_columns(browser: &mut Chrome, site: &super::Site) {
     browser.open(&site.url("/tasks"));
-    assert!(browser.wait_for(
-        "document.documentElement.dataset.navigation === 'ready'",
-        SHOWN
-    ));
+    assert!(browser.wait_for(READY, SHOWN));
     asked(browser, site, "/api/task-board", 1);
 }
 
@@ -533,10 +527,7 @@ fn the_warm_up_waits_for_the_page_s_lookups_in_the_device_s_cache() {
         json!({ "source": SLOW_STORE }),
     );
     browser.open(&site.url("/tasks"));
-    assert!(browser.wait_for(
-        "document.documentElement.dataset.navigation === 'ready' && window.__lookups > 0",
-        SHOWN
-    ));
+    assert!(browser.wait_for(&format!("{READY} && window.__lookups > 0"), SHOWN));
     asked(&mut browser, &site, "/api/board", 1);
     browser.pump(Duration::from_secs(2));
     assert_eq!(
@@ -989,7 +980,7 @@ fn the_chat_s_mockup_is_scaled_on_the_pages_with_no_media_layer_of_their_own() {
         browser.open(&site.url(route));
         assert!(
             browser.wait_for(
-                "document.documentElement.dataset.navigation === 'ready' && document.querySelector('#quick-open') !== null",
+                &format!("{READY} && document.querySelector('#quick-open') !== null"),
                 SHOWN
             ),
             "{route}: the page is never drawn"

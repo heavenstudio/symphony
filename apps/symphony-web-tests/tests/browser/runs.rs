@@ -4,7 +4,7 @@
 //! line a run within the screen's width, a run opened from its line on its steps, the tests it
 //! failed and its log's tail with the output before it on demand, and back; a filter chosen asked
 //! for, kept for the next visit, and Load more asking for the runs before the last shown.
-use super::{SHOWN, chrome, chrome::Chrome, site, site::Site, texts};
+use super::{READY, SHOWN, chrome, chrome::Chrome, site, site::Site, texts};
 use serde_json::{Value, json};
 
 /// Sunday 2026-11-15, 00:00 UTC.
@@ -136,7 +136,7 @@ fn drawn(chrome: &mut Chrome, drawn: &str) {
     assert!(
         chrome.wait_for(
             &format!(
-                "document.documentElement.dataset.navigation === 'ready' && document.querySelector({}) !== null",
+                "{READY} && document.querySelector({}) !== null",
                 json!(drawn)
             ),
             SHOWN

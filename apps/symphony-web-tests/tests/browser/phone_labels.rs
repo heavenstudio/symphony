@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::chrome::Chrome;
 use crate::site::Site;
-use crate::{SHOWN, chrome, dist, look_parity};
+use crate::{READY, SHOWN, chrome, look_parity};
 
 /// The lifecycle stages with the ordinary and the blocked tasks each counts: a stage with none
 /// of either kind among them, and counts of two digits.
@@ -83,7 +83,7 @@ fn listing() -> Value {
 }
 
 fn site() -> Site {
-    let site = Site::start(dist(), &crate::common::fixture("board.json"));
+    let site = crate::site();
     let listing = listing();
     site.set_json("/api/task-board", &listing);
     site.set_json("/api/machine-work", &listing["machine_work"]);
@@ -105,7 +105,7 @@ fn open(page: &mut Chrome, site: &Site, path: &str, ready: &str) {
     assert!(
         page.wait_for(
             &format!(
-                "document.documentElement.dataset.navigation === 'ready' && document.querySelector({}) !== null && document.querySelector('.app-pages[data-overflow]') !== null",
+                "{READY} && document.querySelector({}) !== null && document.querySelector('.app-pages[data-overflow]') !== null",
                 json!(ready)
             ),
             SHOWN

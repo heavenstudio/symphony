@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use crate::chrome::Chrome;
 use crate::site::Site;
-use crate::{SHOWN, chrome, dist, wait_for_feed};
+use crate::{READY, SHOWN, chrome, wait_for_feed};
 
 /// The lifecycle columns with as many tasks as `columns` gives each.
 fn listing_of(columns: &[(&str, usize)]) -> Value {
@@ -41,7 +41,7 @@ fn listing() -> Value {
 }
 
 fn site_of(listing: &Value) -> Site {
-    let site = Site::start(dist(), &crate::common::fixture("board.json"));
+    let site = crate::site();
     site.set_json("/api/task-board", listing);
     site
 }
@@ -64,7 +64,7 @@ fn open_on_screen(page: &mut Chrome, site: &Site, width: u32, height: u32) {
     page.open(&site.url("/tasks"));
     assert!(
         page.wait_for(
-            "document.querySelector('main[data-feed=live] .waiting-board .taskcard') !== null && document.documentElement.dataset.navigation === 'ready'",
+            &format!("document.querySelector('main[data-feed=live] .waiting-board .taskcard') !== null && {READY}"),
             SHOWN
         ),
         "the board never drew live: {}",
@@ -120,7 +120,7 @@ fn a_phones_chosen_stage_survives_a_full_load() {
         SHOWN
     ));
     page.open(&site.url("/tasks"));
-    assert!(page.wait_for("document.querySelector('.waiting-columns .column[data-status=ready] .taskcard') !== null && document.documentElement.dataset.navigation === 'ready'", SHOWN));
+    assert!(page.wait_for(&format!("document.querySelector('.waiting-columns .column[data-status=ready] .taskcard') !== null && {READY}"), SHOWN));
     assert_eq!(page.eval(MOUNTED), json!(["ready"]));
     fits(&mut page);
 }

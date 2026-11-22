@@ -16,8 +16,8 @@ use crate::cache_pages::{
     store_opened,
 };
 use crate::chrome::Chrome;
+use crate::look_parity;
 use crate::site::{Answered, Site};
-use crate::{common, look_parity};
 
 /// The look-parity fixture's task.
 const SLUG: &str = "visual/in-progress";
@@ -53,7 +53,7 @@ fn target(path: &str, slug: &str) -> String {
 
 /// The fixture task's page and its thread, and no landing offer.
 fn site() -> Site {
-    let site = Site::start(crate::dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let content = look_parity::responses();
     for path in ["/api/task-page", "/api/task-history"] {
         site.set_json(path, &content[path]);

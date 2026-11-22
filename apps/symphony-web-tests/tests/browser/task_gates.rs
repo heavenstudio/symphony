@@ -8,9 +8,7 @@
 //! look-parity fixture's, in review; its gates are the A pictures' task
 //! (crates/symphony-api/fixtures/task-gates.json). That a gate's link names its page under the
 //! project's base is the one server's to show (projects.rs).
-use super::{
-    SHOWN, STALL, chrome, chrome::Chrome, common, dist, look_parity, site::Site, wait_for_feed,
-};
+use super::{SHOWN, STALL, chrome, chrome::Chrome, common, look_parity, site::Site, wait_for_feed};
 use serde_json::{Value, json};
 
 const GATES: &str = "/api/task-gates";
@@ -30,7 +28,7 @@ fn task_page(edit: impl FnOnce(&mut Value)) -> Value {
 
 /// A server with the fixture task's page (`task_page`) and thread, and `gates` as its gates.
 fn site(gates: &Value) -> Site {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     site.set_json("/api/task-page", &task_page(|_| {}));
     site.set_json(
         "/api/task-history",
@@ -465,7 +463,7 @@ fn task_page_gates_are_absent_when_nothing_gates_the_task_or_the_board_has_no_an
             None => {
                 // The stand-in answers 404 for a route it has no reply for, as the server does
                 // for a task not on its board.
-                let site = Site::start(dist(), &common::fixture("board.json"));
+                let site = crate::site();
                 let content = look_parity::responses();
                 for path in ["/api/task-page", "/api/task-history"] {
                     site.set_json(path, &content[path]);

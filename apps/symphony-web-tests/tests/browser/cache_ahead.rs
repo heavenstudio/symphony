@@ -18,7 +18,7 @@ use crate::cache_pages::{self, LIVE, hold, keeps, shows, since, store_opened};
 use crate::cache_tasks;
 use crate::chrome::Chrome;
 use crate::site::{Site, asked_keys, first_of};
-use crate::{SHOWN, common, look_parity};
+use crate::{SHOWN, look_parity};
 
 /// The look-parity fixture's task, which the stand-in serves whatever the slug asked.
 const TASK: &str = "visual/in-progress";
@@ -127,7 +127,7 @@ const CONTENTS_WHOLE: &str = "document.querySelectorAll('main nav.doc-toc .toc-l
 
 /// The stand-in, serving the fixture task's page and thread for any slug, and no landing offer.
 fn site() -> Site {
-    let site = Site::start(crate::dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let content = look_parity::responses();
     for path in ["/api/task-page", "/api/task-history"] {
         site.set_json(path, &content[path]);

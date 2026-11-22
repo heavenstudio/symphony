@@ -8,8 +8,7 @@
 //! marks as following input too: its phone emulation marks a load's own shifts so, and a measured
 //! panel is scored from after its opening, so no shift the click itself caused is in its score.
 use super::{
-    SHOWN, chrome, chrome::Chrome, common, dist, document_landing::TWO_FRAMES, look_parity,
-    site::Site,
+    READY, SHOWN, chrome, chrome::Chrome, document_landing::TWO_FRAMES, look_parity, site::Site,
 };
 use serde_json::{Value, json};
 
@@ -218,10 +217,7 @@ fn load(
 ) -> Vec<Shift> {
     browser.open(&site.url(path));
     assert!(
-        browser.wait_for(
-            &format!("document.documentElement.dataset.navigation === 'ready' && ({ready})"),
-            SHOWN
-        ),
+        browser.wait_for(&format!("{READY} && ({ready})"), SHOWN),
         "{path} never showed {ready}: {:?}",
         browser.eval("document.body.innerText.slice(0, 2000)")
     );
@@ -327,7 +323,7 @@ fn paragraph(text: &str) -> Value {
 /// conversation, and a document at `path` whose `sections` arrive as the server sends them: an
 /// outline without their bodies, then the bodies a later read asks for.
 pub(super) fn site(path: &str, sections: &[Value], cards: Value) -> Site {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let mut responses = look_parity::responses();
     // The task's gates as the server answers them, short enough for a line each on a phone, and
     // with its page what the server answered last (`GatesSeen`), the room they hold until then.
@@ -639,10 +635,7 @@ fn first_visit(
         browser.eval("document.body.innerText.slice(0, 2000)")
     );
     assert!(
-        browser.wait_for(
-            &format!("document.documentElement.dataset.navigation === 'ready' && ({TASK_READY})"),
-            SHOWN
-        ),
+        browser.wait_for(&format!("{READY} && ({TASK_READY})"), SHOWN),
         "{page}, {}: the task never showed its thread",
         order.name
     );

@@ -7,13 +7,13 @@
 //! and the board does not jump while it loads. A select's popup grows from the edge nearest its
 //! trigger, leaves drawn and easing out, and under reduced motion only fades.
 use super::components::{appearance, key, open_panel, popup_ready, site, task_tab, theme_action};
-use super::{SHOWN, STALL, chrome, chrome::Chrome, dist, site::Site};
+use super::{READY, SHOWN, STALL, chrome, chrome::Chrome, dist, site::Site};
 use serde_json::{Value, json};
 
 /// The board and nothing else: every other read answers 404, as a server without the task or
 /// document a page names does.
 fn bare_site() -> Site {
-    Site::start(dist(), &super::common::fixture("board.json"))
+    crate::site()
 }
 
 /// The page's breadcrumbs, as `[text, href]`, `href` null for the page itself.
@@ -796,7 +796,7 @@ fn a_task_read_with_no_answer_in_time_says_it_is_trying_again_and_draws_with_no_
 const NOTICES: &str = "[...document.querySelectorAll('.page-notices:not([hidden]) > p:not(.server-notice)')].map(p => p.textContent).join(' | ')";
 
 /// The page's regions that say how far they got, as `[data-ready]` values in document order.
-const READY: &str = "[...document.querySelectorAll('[data-ready]')].map(e => e.dataset.ready)";
+const REGIONS: &str = "[...document.querySelectorAll('[data-ready]')].map(e => e.dataset.ready)";
 
 /// Waits until a region says `state`, then reads every region's state: none is still loading.
 fn settles_as(page: &mut Chrome, route: &str, state: &str) -> Value {
@@ -806,10 +806,10 @@ fn settles_as(page: &mut Chrome, route: &str, state: &str) -> Value {
             SHOWN
         ),
         "{route}: no region says {state}: {} {}",
-        page.eval(READY),
+        page.eval(REGIONS),
         page.eval("document.body.innerText")
     );
-    page.eval(READY)
+    page.eval(REGIONS)
 }
 
 #[test]
@@ -1646,7 +1646,7 @@ fn a_link_to_a_card_far_down_a_column_lands_under_the_header_and_stays() {
         let named = named_card(row);
         assert!(
             page.wait_for(
-                &format!("(() => {{const at = {named}; return at.top !== null && at.below && document.documentElement.dataset.navigation === 'ready';}})()"),
+                &format!("(() => {{const at = {named}; return at.top !== null && at.below && {READY};}})()"),
                 SHOWN
             ),
             "{width}px: the named card or the rows below it never drew: {}",

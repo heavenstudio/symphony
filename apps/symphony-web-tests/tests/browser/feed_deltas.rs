@@ -5,12 +5,12 @@
 //! the look-parity fixture's, each executed by `example`. A changed task is sent as its changed
 //! fields alone, so the agents page reads a task it lists no record of when it now shows it, and
 //! merges that read into what it drew.
-use super::{SHOWN, chrome, chrome::Chrome, common, dist, look_parity, site::Site, wait_for_feed};
+use super::{SHOWN, chrome, chrome::Chrome, look_parity, site::Site, wait_for_feed};
 use serde_json::{Value, json};
 
 /// The board fixture at its version, with the look-parity tasks, task page and thread.
 fn site() -> Site {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let content = look_parity::responses();
     for path in ["/api/task-board", "/api/task-page", "/api/task-history"] {
         site.set_json(path, &content[path]);
@@ -354,7 +354,7 @@ const LOST_SHOWN: &str =
 /// is drawn, as the feed waits on each read it starts.
 #[test]
 fn the_agents_page_merges_what_the_feed_brings_in_and_keeps_its_lost_list() {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let agents = [agent("orch-agent", "live"), agent("work-agent", "live")];
     site.set_json("/api/agent-page", &agent_page(&agents, &[]));
     site.set_json(

@@ -5,7 +5,7 @@
 //! button and fills even opened below a short window's fold, callouts are as wide as cards, a
 //! comment's colour its own, and a folded card opened by a click draws the picture in its history.
 use super::components::key;
-use super::{SHOWN, chrome, chrome::Chrome, common, dist, focus_on, site::Site};
+use super::{SHOWN, chrome, chrome::Chrome, focus_on, site::Site};
 use serde_json::{Value, json};
 
 const DOC: &str = "docs/PROBE.md";
@@ -52,7 +52,7 @@ const COMMENT_TITLE: &str = "141 lamps: the count includes the two prototype lam
 /// its history and a link to its own section, and an approved card waiting for the owner to
 /// confirm it.
 fn probe_site() -> Site {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let link = json!({"type":"link","href":"/docs/PROBE.md#lamps","target":{"path":DOC,"anchor":"lamps"},"title":"","spans":[text("Lamps")]});
     let (alpha, pending) = card(
         "alpha",
@@ -863,7 +863,7 @@ const FOLDED: &str = "docs/FOLDED.md";
 const FOLDED_PICTURE: &str = "/docs/analysis/split.svg";
 
 fn folded_card_site() -> (Site, Value) {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let question = "Where do the pictures a card shows live? A: the ignored folder. F: committed beside the card. Recommended: F.";
     let code = |words: &str| json!({"type":"code","text":words});
     let list = |items: Vec<Vec<Value>>| {

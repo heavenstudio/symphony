@@ -5,7 +5,7 @@ mod machine_work;
 mod regressions;
 
 pub(super) fn site() -> Site {
-    let site = Site::start(dist(), &super::common::fixture("board.json"));
+    let site = crate::site();
     for (path, value) in look_parity::responses() {
         if path != "/api/board" {
             site.set_json(&path, &value);

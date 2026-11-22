@@ -10,7 +10,7 @@
 //! refusals, are proved on a private board (`apps/symphony-server/src/attempts_tests.rs`). With
 //! `SYMPHONY_ATTEMPT_SHOTS` naming a folder, the page saves its pictures there.
 
-use super::{SHOWN, chrome::Chrome, common, dist, look_parity, open, samples, site::Site, texts};
+use super::{SHOWN, chrome::Chrome, look_parity, open, samples, site::Site, texts};
 use serde_json::{Value, json};
 use symphony_api::{ATTEMPT_CONTROL_ROUTE, ATTEMPT_VIEW_ROUTE, TASK_ATTEMPTS_PATH};
 
@@ -21,7 +21,7 @@ const SLUG: &str = "w/a";
 /// three), a control answered with them after a cancel was asked of the running one, and a view.
 fn site(attempts: usize) -> (Site, Value) {
     let samples = samples();
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let task = super::site::example_listing("in_progress")["tasks"][0].clone();
     let mut page = json!({"task": task, "blocks": [{"type": "paragraph", "spans": [{"type": "text",
         "text": "Run it on the provider."}]}], "children": [], "children_count": 0});

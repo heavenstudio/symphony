@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 
 use crate::chrome::Chrome;
 use crate::site::Site;
-use crate::{LATE_TASKS, LATE_TASKS_TAKEN, SHOWN, STALL, chrome, dist, wait_for_feed};
+use crate::{LATE_TASKS, LATE_TASKS_TAKEN, READY, SHOWN, STALL, chrome, wait_for_feed};
 
 /// The board's version, from which the page follows the feed: the fixture's.
 fn version() -> u64 {
@@ -82,7 +82,7 @@ fn listing(tasks: &[Value]) -> Value {
 }
 
 fn site(tasks: &[Value]) -> Site {
-    let site = Site::start(dist(), &crate::common::fixture("board.json"));
+    let site = crate::site();
     site.set_json("/api/task-board", &listing(tasks));
     site
 }
@@ -102,7 +102,7 @@ fn open(page: &mut Chrome, site: &Site, width: u32, height: u32) {
     page.open(&site.url("/tasks"));
     assert!(
         page.wait_for(
-            "document.querySelector('main[data-feed=live] .waiting-columns .taskcard') !== null && document.documentElement.dataset.navigation === 'ready'",
+            &format!("document.querySelector('main[data-feed=live] .waiting-columns .taskcard') !== null && {READY}"),
             SHOWN
         ),
         "{width}px: the board never drew live: {}",
@@ -354,7 +354,7 @@ fn a_refresh_keeps_every_row_of_a_column_loaded_to_its_end_and_the_reader_on_the
     let mut board: Vec<Value> = (1..=100)
         .map(|n| short(&format!("deep/ready-{n:03}"), 2, &format!("Ready {n:03}")))
         .collect();
-    let site = Site::start(dist(), &crate::common::fixture("board.json"));
+    let site = crate::site();
     serve_ready(&site, &board);
     let Some(mut page) = chrome() else { return };
     open(&mut page, &site, 1280, 800);
@@ -526,7 +526,7 @@ fn a_refresh_that_changed_nothing_in_a_deep_column_transfers_no_body() {
     let mut board: Vec<Value> = (1..=60)
         .map(|n| short(&format!("deep/ready-{n:03}"), 2, &format!("Ready {n:03}")))
         .collect();
-    let site = Site::start(dist(), &crate::common::fixture("board.json"));
+    let site = crate::site();
     serve_ready(&site, &board);
     let Some(mut page) = chrome() else { return };
     open(&mut page, &site, 1280, 800);
@@ -808,10 +808,7 @@ fn open_a_ready_task(page: &mut Chrome, width: u32) {
     }
     let opened = &link[0];
     assert!(
-        page.wait_for(
-            &format!("location.pathname === {opened} && document.documentElement.dataset.navigation === 'ready'"),
-            SHOWN
-        ),
+        page.wait_for(&format!("location.pathname === {opened} && {READY}"), SHOWN),
         "{width}px: {opened} never opened"
     );
 }
@@ -839,7 +836,7 @@ fn back_from_a_task_draws_the_board_where_the_reader_left_it() {
         page.eval("history.back()");
         let back = format!(
             "(() => {{ const now = {place}, was = {before}; return location.pathname === '/tasks'
-                && document.documentElement.dataset.navigation === 'ready' && now !== null
+                && {READY} && now !== null
                 && now[0] === was[0] && now[1] === was[1] && now[2] !== null && now[2][0] === was[2][0]
                 && Math.abs(now[2][1] - was[2][1]) <= 1; }})()"
         );
@@ -923,8 +920,10 @@ fn back_to_a_board_whose_kept_card_left_its_column_returns_to_the_windows_place(
         if late {
             assert!(
                 page.wait_for(
-                    "location.pathname === '/tasks' && document.documentElement.dataset.navigation === 'ready'
-                        && document.querySelector('.ghost-kanban') !== null",
+                    &format!(
+                        "location.pathname === '/tasks' && {READY}
+                        && document.querySelector('.ghost-kanban') !== null"
+                    ),
                     SHOWN
                 ),
                 "{case}: Back never drew the board's ghost while the device's reads were held"
@@ -932,7 +931,7 @@ fn back_to_a_board_whose_kept_card_left_its_column_returns_to_the_windows_place(
             page.eval("window.letCache()");
         }
         let there = format!(
-            "location.pathname === '/tasks' && document.documentElement.dataset.navigation === 'ready'
+            "location.pathname === '/tasks' && {READY}
                 && document.querySelector('main[data-feed=live]') !== null
                 && (() => {{ const ready = document.querySelector('.kanban.waiting-columns .column[data-status=ready]');
                     return ready !== null && ready.getAttribute('aria-busy') !== 'true'

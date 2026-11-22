@@ -13,7 +13,7 @@
 //! (`apps/symphony-server/src/live/workflow_tests.rs`). With `SYMPHONY_WORKFLOW_SHOTS` naming a
 //! folder, the flow saves its pictures there.
 
-use super::{SHOWN, chrome::Chrome, common, dist, look_parity, open, samples, site::Site, texts};
+use super::{SHOWN, chrome::Chrome, look_parity, open, samples, site::Site, texts};
 use serde_json::{Value, json};
 use std::time::{SystemTime, UNIX_EPOCH};
 use symphony_api::TASK_TIMELINE_PATH;
@@ -110,7 +110,7 @@ fn timeline() -> Value {
 /// and its next actions, an edge taken answered with the sample's result.
 fn site() -> (Site, Value) {
     let samples = samples();
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let listing = listing(&samples);
     site.set_json("/api/task-board", &listing);
     site.set_json(WORKFLOW_PATH, &samples["workflow"]);

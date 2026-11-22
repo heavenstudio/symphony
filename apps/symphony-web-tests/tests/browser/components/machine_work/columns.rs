@@ -1,7 +1,7 @@
 //! Machine activity appears in full waiting board columns, preserving complete counts, paging and
 //! disconnected lifecycle fallback.
 
-use crate::{SHOWN, chrome, look_parity, site, wait_for_feed};
+use crate::{READY, SHOWN, chrome, look_parity, site, wait_for_feed};
 use serde_json::{Value, json};
 
 fn listing() -> Value {
@@ -58,7 +58,10 @@ pub(super) fn screenshot(chrome: &mut crate::Chrome, name: &str) {
 }
 
 fn ready(chrome: &mut crate::Chrome) {
-    assert!(chrome.wait_for("document.querySelector('.waiting-columns .taskcard') !== null && document.documentElement.dataset.navigation === 'ready'", SHOWN));
+    assert!(chrome.wait_for(
+        &format!("document.querySelector('.waiting-columns .taskcard') !== null && {READY}"),
+        SHOWN
+    ));
 }
 
 pub(super) fn reveal(chrome: &mut crate::Chrome, status: &str) {

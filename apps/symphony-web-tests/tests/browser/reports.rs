@@ -19,7 +19,9 @@
 //! above it.
 use super::cache_pages::{PARTS, keeps, kept, notice, shows, store_opened};
 use super::document_landing::{COUNT_SCROLLS, TWO_FRAMES};
-use super::{SHOWN, chrome, chrome::Chrome, common, components::key, site, site::Site, texts};
+use super::{
+    READY, SHOWN, chrome, chrome::Chrome, common, components::key, site, site::Site, texts,
+};
 use serde_json::{Value, json};
 
 const DAY: f64 = 86_400.0;
@@ -104,7 +106,7 @@ fn open(chrome: &mut Chrome, site: &Site, drawn: &str) {
     assert!(
         chrome.wait_for(
             &format!(
-                "document.documentElement.dataset.navigation === 'ready' && document.querySelector({}) !== null",
+                "{READY} && document.querySelector({}) !== null",
                 json!(drawn)
             ),
             SHOWN
@@ -642,7 +644,7 @@ fn arrive(site: &Site, width: u32, height: u32, in_place: bool) -> Option<[Value
         assert!(
             chrome.wait_for(
                 &format!(
-                    "document.documentElement.dataset.navigation === 'ready' && document.querySelector({}) !== null",
+                    "{READY} && document.querySelector({}) !== null",
                     json!(format!(".reports[aria-busy=false] {link}"))
                 ),
                 SHOWN
@@ -658,7 +660,7 @@ fn arrive(site: &Site, width: u32, height: u32, in_place: bool) -> Option<[Value
         // shows its ghost: its charts come after.
         assert!(
             chrome.wait_for(
-                "document.documentElement.dataset.navigation === 'ready' && document.querySelector('.reports[aria-busy=true] .ghost-chart') !== null",
+                &format!("{READY} && document.querySelector('.reports[aria-busy=true] .ghost-chart') !== null"),
                 SHOWN
             ),
             "{width}px {way}: the shell is ready over the page's ghost: {}",
@@ -795,7 +797,7 @@ fn a_chart_s_address_lands_nothing_once_the_reader_chose_a_window_before_any_cha
         assert!(
             chrome.wait_for(
                 &format!(
-                    "document.documentElement.dataset.navigation === 'ready' && document.querySelector({}) !== null && document.querySelector('.chart-slot') === null",
+                    "{READY} && document.querySelector({}) !== null && document.querySelector('.chart-slot') === null",
                     json!(first)
                 ),
                 SHOWN

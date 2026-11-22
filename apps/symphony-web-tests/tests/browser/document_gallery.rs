@@ -4,7 +4,7 @@
 //! card, and a picture opened by the keyboard or a touch shows whole under its name, offers
 //! itself at full size, and gives the focus back to the picture it was opened on.
 use super::components::key;
-use super::{SHOWN, chrome, chrome::Chrome, common, dist, focus_on, site::Site};
+use super::{SHOWN, chrome, chrome::Chrome, focus_on, site::Site};
 use serde_json::{Value, json};
 
 const DOC: &str = "docs/GALLERY.md";
@@ -56,7 +56,7 @@ fn card(slug: &str, start: usize, figures: Vec<Value>) -> (Value, Value) {
 /// The document `docs/GALLERY.md`: the card `evidence` over ten named pictures, four of them a
 /// phone's shape, and the card `choice` over a base and two lettered candidates.
 fn gallery_site() -> Site {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     for n in 0..NAMES.len() {
         let (width, height) = if (4..8).contains(&n) {
             (390, 844)

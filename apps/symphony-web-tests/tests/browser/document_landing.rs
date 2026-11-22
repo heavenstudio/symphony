@@ -19,7 +19,7 @@ use serde_json::{Map, Value, json};
 
 use crate::chrome::Chrome;
 use crate::site::Site;
-use crate::{NO_STORE, SHOWN, STALL, common, dist};
+use crate::{NO_STORE, READY, SHOWN, STALL};
 
 const LANDING: &str = "docs/landing.md";
 const FROM: &str = "docs/from.md";
@@ -136,7 +136,7 @@ fn grown() -> (Value, Value) {
 }
 
 fn site() -> Site {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     site.set_document(&landing());
     site.set_document(&from());
     site.set_json("/api/asks", &json!({"asks": [], "recipient": null}));
@@ -151,9 +151,13 @@ fn site() -> Site {
 
 /// True once the page has moved to the link's address and scrolled the fifth card's id (its ghost's,
 /// while its section is read) to the page's scroll padding.
-const LANDED: &str = "(() => { const line = document.getElementById('five');
-    return location.pathname === '/docs/landing.md' && document.documentElement.dataset.navigation === 'ready'
-        && line !== null && Math.abs(line.getBoundingClientRect().top - parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop)) < 1; })()";
+fn landed() -> String {
+    format!(
+        "(() => {{ const line = document.getElementById('five');
+    return location.pathname === '/docs/landing.md' && {READY}
+        && line !== null && Math.abs(line.getBoundingClientRect().top - parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop)) < 1; }})()"
+    )
+}
 
 /// True once the fifth card is drawn and has held still for ten frames with nothing near the
 /// screen still to draw (a reserved box within its sentinel's 600 px) and nothing busy; false
@@ -187,7 +191,8 @@ const PLACE: &str = "(() => { const line = document.getElementById('five'), card
 /// are held) and the card's ghost is at the scroll padding again.
 fn lifted() -> String {
     format!(
-        "document.getElementById('five')?.closest('.settle')?.dataset.settled === 'true' && {LANDED}"
+        "document.getElementById('five')?.closest('.settle')?.dataset.settled === 'true' && {}",
+        landed()
     )
 }
 
@@ -222,13 +227,7 @@ fn arrive(site: &Site, width: u32, height: u32, in_place: bool) -> Option<[Value
         page.open(&site.url(&format!("/{FROM}")));
         let link = format!("a[href=\"{LINK}\"]");
         assert!(
-            page.wait_for(
-                &format!(
-                    "document.documentElement.dataset.navigation === 'ready' && {}",
-                    crate::visible(&link)
-                ),
-                SHOWN
-            ),
+            page.wait_for(&format!("{READY} && {}", crate::visible(&link)), SHOWN),
             "{width}px: the link to the card is drawn"
         );
         site.hold_route("/api/section", true);
@@ -239,7 +238,7 @@ fn arrive(site: &Site, width: u32, height: u32, in_place: bool) -> Option<[Value
     }
     let way = if in_place { "in place" } else { "opened" };
     assert!(
-        page.wait_for(LANDED, SHOWN),
+        page.wait_for(&landed(), SHOWN),
         "{width}px {way}: the page scrolls to the card's ghost first: {}",
         page.eval(PLACE)
     );
@@ -437,7 +436,10 @@ fn once_a_landing_went_quiet_a_change_above_the_card_after_a_script_s_scroll_lan
     // Ten frames still with nothing waiting or busy near: the hold (four such frames) has ended.
     assert!(
         page.wait_for(
-            &format!("{LANDED} && document.querySelector('[data-feed=live]') !== null"),
+            &format!(
+                "{} && document.querySelector('[data-feed=live]') !== null",
+                landed()
+            ),
             SHOWN
         ) && page.wait_for(STILL, SHOWN),
         "the page lands on the card, follows its feed and holds still: {}",
@@ -596,13 +598,7 @@ fn a_root_overflow_anchor_set_before_a_landing_is_there_after_it() {
         page.open(&site.url(&format!("/{FROM}")));
         let link = format!("a[href=\"{LINK}\"]");
         assert!(
-            page.wait_for(
-                &format!(
-                    "document.documentElement.dataset.navigation === 'ready' && {}",
-                    crate::visible(&link)
-                ),
-                SHOWN
-            ),
+            page.wait_for(&format!("{READY} && {}", crate::visible(&link)), SHOWN),
             "{own}: the link to the card is drawn"
         );
         page.eval(&format!(
@@ -807,7 +803,7 @@ fn reader(reading: Reading) -> Option<Chrome> {
 pub(crate) fn landed_on(path: &str, id: &str) -> String {
     format!(
         "(() => {{ const line = document.getElementById({id});
-        return location.pathname === {path} && document.documentElement.dataset.navigation === 'ready'
+        return location.pathname === {path} && {READY}
             && line !== null && Math.abs(line.getBoundingClientRect().top - parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop)) < 1; }})()",
         id = json!(id),
         path = json!(format!("/{path}")),

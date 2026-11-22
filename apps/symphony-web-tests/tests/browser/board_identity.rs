@@ -5,7 +5,7 @@
 //! as placeholders under the cards that open.
 use serde_json::{Value, json};
 
-use crate::{SHOWN, chrome, components::key, dist, site::Site};
+use crate::{READY, SHOWN, chrome, components::key, site::Site};
 
 const STAGES: [&str; 8] = [
     "concept",
@@ -116,7 +116,7 @@ fn open(page: &mut crate::Chrome, site: &Site, width: u32, scheme: &str) {
     }
     assert!(page.wait_for(
         &format!(
-            "document.querySelector('{}') !== null && document.documentElement.dataset.navigation === 'ready'",
+            "document.querySelector('{}') !== null && {READY}",
             card("gamma")
         ),
         SHOWN
@@ -150,7 +150,7 @@ const ROWS_ALIGNED: &str = "(() => {
 
 #[test]
 fn closed_cards_alike_but_for_their_last_word_keep_that_word_in_view() {
-    let site = Site::start(dist(), &crate::common::fixture("board.json"));
+    let site = crate::site();
     site.set_json("/api/task-board", &listing());
     let Some(mut page) = chrome() else { return };
     for width in [1440, 390] {
@@ -206,7 +206,7 @@ const WRITTEN: &str =
 
 #[test]
 fn a_reason_on_several_lines_is_folded_onto_the_closed_cards_line_and_opened_as_written() {
-    let site = Site::start(dist(), &crate::common::fixture("board.json"));
+    let site = crate::site();
     let mut answer = listing();
     answer["tasks"][0]["waits_on"]["why"] = json!(WRITTEN);
     site.set_json("/api/task-board", &answer);
@@ -267,7 +267,7 @@ fn a_reason_on_several_lines_is_folded_onto_the_closed_cards_line_and_opened_as_
 
 #[test]
 fn a_card_opens_in_place_by_key_and_by_touch_and_the_rows_under_it_stay_aligned() {
-    let site = Site::start(dist(), &crate::common::fixture("board.json"));
+    let site = crate::site();
     site.set_json("/api/task-board", &listing());
     let Some(mut page) = chrome() else { return };
     open(&mut page, &site, 1440, "light");
@@ -407,7 +407,7 @@ fn a_card_opens_in_place_by_key_and_by_touch_and_the_rows_under_it_stay_aligned(
 
 #[test]
 fn every_stage_is_named_over_the_lanes_and_the_last_is_reached_whole_from_the_first() {
-    let site = Site::start(dist(), &crate::common::fixture("board.json"));
+    let site = crate::site();
     site.set_json("/api/task-board", &listing());
     let Some(mut page) = chrome() else { return };
     open(&mut page, &site, 1440, "light");
@@ -531,7 +531,7 @@ fn every_stage_is_named_over_the_lanes_and_the_last_is_reached_whole_from_the_fi
 
 #[test]
 fn the_ghost_keeps_the_stage_rows_room_so_the_lanes_do_not_move_when_they_load() {
-    let site = Site::start(dist(), &crate::common::fixture("board.json"));
+    let site = crate::site();
     site.set_json("/api/task-board", &listing());
     site.hold_route("/api/task-board", true);
     let Some(mut page) = chrome() else { return };

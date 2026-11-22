@@ -1,12 +1,12 @@
 //! A task's file list and explicitly opened patch, in the real client on desktop and phone.
-use super::{SHOWN, chrome, common, dist, look_parity, site::Site};
+use super::{SHOWN, chrome, look_parity, site::Site};
 use serde_json::{Value, json};
 use symphony_api::{TASK_DIFF_FILE_PATH, TASK_DIFF_PATH};
 
 const PAGE: &str = "/task/visual/in-progress";
 
 fn site() -> Site {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let content = look_parity::responses();
     for path in ["/api/task-page", "/api/task-history"] {
         site.set_json(path, &content[path]);

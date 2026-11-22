@@ -20,7 +20,6 @@ use crate::cache_pages::{
     store_opened,
 };
 use crate::chrome::{Chrome, WEB_SOCKET};
-use crate::common;
 use crate::site::{Answered, Site, asked_keys, query};
 
 const DOC: &str = "docs/kept.md";
@@ -78,7 +77,7 @@ pub(super) fn document(path: &str, title: &str, version: u64) -> Value {
 
 /// The stand-in, serving the fixture document.
 fn site() -> Site {
-    let site = Site::start(crate::dist(), &common::fixture("board.json"));
+    let site = crate::site();
     site.set_document(&document(DOC, "Kept", 4182));
     site.set_json("/api/asks", &json!({"asks": [], "recipient": null}));
     site.set_json("/api/postponed", &json!([]));
