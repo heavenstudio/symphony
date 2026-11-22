@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="440" viewBox="0 0 760 440" role="img" aria-labelledby="title desc">
+<title id="title">Who changes a preference in the board's store and makes it the project's</title>
+<desc id="desc">Three options for who may change a preference on the Settings page with several people. Under A the Settings page is a place, the board's map gives it a group, and any member of that group changes a stored value and makes it the project's: deciding covers it and no power is added. Under B the board's admins change every stored value, so configuration goes to whoever manages people. Under C a sixth power, to configure, is given apart from deciding. Under every option a commit names who asked, authored by their git handle, a reviewed setting stays a task and a reviewer, and this machine's file stays the terminal's. Recommended: A.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--question:#946a00;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--question:#e0b84c;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.inner{fill:var(--muted);stroke:var(--border)}
+.new{fill:none;stroke:var(--primary);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.h{font-size:15px;font-weight:600}
+.t{font-size:17px;font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+.red{fill:var(--dislike)}
+</style>
+<rect class="page" width="760" height="440"/>
+<text class="t" x="24" y="34">Who changes a preference in the board's store and makes it the project's</text>
+<rect class="card" x="24" y="60" width="232" height="276" rx="8"/>
+<text class="h" x="38" y="86">A: the page's group</text>
+<text class="m" x="38" y="106">recommended</text>
+<rect class="inner" x="38" y="122" width="204" height="50" rx="5"/>
+<text class="mono" x="48" y="142">settings → design</text>
+<text class="m" x="48" y="161">the board's map of places</text>
+<rect class="new" x="38" y="182" width="204" height="69" rx="5"/>
+<text x="48" y="202">Any member changes a</text>
+<text x="48" y="221">value and makes it the</text>
+<text x="48" y="240">project's.</text>
+<text class="m" x="48" y="285">Deciding covers it;</text>
+<text class="m" x="48" y="304">no power is added.</text>
+<rect class="card" x="264" y="60" width="232" height="276" rx="8"/>
+<text class="h" x="278" y="86">B: the board's admins</text>
+<text class="m" x="278" y="106">as who is on the board</text>
+<rect class="inner" x="278" y="122" width="204" height="50" rx="5"/>
+<text class="mono" x="288" y="142">admin: ana</text>
+<text class="m" x="288" y="161">set on the People page</text>
+<rect class="inner" x="278" y="182" width="204" height="50" rx="5"/>
+<text x="288" y="202">Admins change every</text>
+<text x="288" y="221">stored value.</text>
+<text class="red" x="288" y="285">Configuration goes to</text>
+<text class="red" x="288" y="304">whoever manages people.</text>
+<rect class="card" x="504" y="60" width="232" height="276" rx="8"/>
+<text class="h" x="518" y="86">C: a power of its own</text>
+<text class="m" x="518" y="106">to configure</text>
+<rect class="inner" x="518" y="122" width="204" height="50" rx="5"/>
+<text class="mono" x="528" y="142">configure: ana, li</text>
+<text class="m" x="528" y="161">given apart from deciding</text>
+<rect class="inner" x="518" y="182" width="204" height="50" rx="5"/>
+<text x="528" y="202">Whoever holds it</text>
+<text x="528" y="221">changes every value.</text>
+<text class="red" x="528" y="285">A sixth power to give.</text>
+<rect class="card" x="24" y="352" width="712" height="64" rx="8"/>
+<text x="40" y="378">Under every option a commit names who asked, authored by their git handle;</text>
+<text x="40" y="398">a reviewed setting stays a task and a reviewer; this machine's file stays the terminal's.</text>
+</svg>

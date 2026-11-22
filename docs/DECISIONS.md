@@ -5,6 +5,66 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
+## Needs your decision
+
+### People and sign-in
+
+- [ ] **settings-who-changes** — Today you change every setting the Settings page offers. Its concept, now on main, keeps a change in the board's store, where it holds at once, and a control beside it makes the value the project's, a commit. It left to this concept who may do that once there are several people. A: the group the Settings page maps to; the page is a place like a folder of documents, so any member of its group changes a stored value and makes it the project's, and no power is added. B: the board's admins, as with who is on the board. C: a power of its own, to configure, given apart from deciding. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Who changes settings]]
+  [2026-11-22 20:13] agent — Posted for the board task `app/users-and-identity`, the question the settings concept (`app/settings-page`) left to this one. A concept: nothing is built by this card.
+
+    ![Who changes a preference in the board's store and makes it the project's](analysis/users-and-identity/settings-who.svg)
+
+    **Base (today).** You change every setting the page offers. A change goes to the board's store and holds at once; beside it a control makes the value the project's, committed on a green settings check. A setting that holds a command the server runs is reviewed, and never changed from the page.
+
+    **What is not asked.** One device's choices are each person's. `symphony.local.toml` stays whoever runs the machine's server, in a terminal. A reviewed setting stays a task and a reviewer.
+
+    **A, the page's group.**
+    - The Settings page is a place, as a folder of documents is. The board's map gives it a group: the default group, unless an admin maps it to another.
+    - Any member of that group changes a stored value and makes it the project's. Deciding covers it.
+
+    **B, the board's admins.** Settings are administered, as who is on the board is.
+
+    **C, a power of its own.** A sixth power, to configure, given to a group or a person apart from deciding.
+
+    **Under every option** a commit the page makes names who asked and is authored by their git handle. A person a board has not added sees no Settings page of it.
+
+    **Why A.** A model, a limit or an agent switched off is a decision about how the board's work is done, and the group that owns the work makes it. B gives configuration to whoever manages people, who on a company's board is often not who runs the work. C costs a sixth power to give.
+
+    **What it costs, under every option.** A costlier model for the board's shared agents runs on their host's credits; what a host may limit is a later round. Making a value the project's changes the file every board of the project reads; several boards for one project is a concept of its own.
+
+    **Earlier verdicts checked.**
+    - **task-acts-who** (A) makes a task's acts part of deciding, with no power added. It was asked of tasks, not settings.
+    - **owning-group-how-named** (C) lets a place give the group. It does not say the Settings page is a place.
+    - **people-kept-where** (B) has an admin change a board's people, groups and powers. It says nothing of settings.
+    - **settings-board-store** (B) and **settings-page-project-save** (A), on main, say where a change goes and how it is committed, not who may make it.
+
+    None decides this.
+- [ ] **plugin-told-who** — A project's plugin is told nothing of who asked today: a board action's answer is taken as yours. With several people the core admits every call before a plugin is asked, so who may do what is settled before the plugin runs. What is left is what the plugin is told. A: nothing; the board's own line names the person, and the plugin's own commit is authored as the machine. B: on every call made for a person, their public part (short name, display name, git handles) and their groups and powers there. C: the public part on a write alone, a board action's answer; reads carry nobody, and no call carries powers. Recommended: C. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#What a plugin is told of who asked]]
+  [2026-11-22 20:13] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
+
+    ![What a project's plugin is told of the person who asked](analysis/users-and-identity/plugin-told.svg)
+
+    **Base (today).** A plugin's call carries no person. A board action's answer is yours, and the line the board says for it on the task is said as you. The one call already told who asked is an approval authority's, which signs what was decided. Reads (a card's drawing, a home region, a route) are alike for everyone, and kept until the board changes.
+
+    **Under every option** the core says whether a call is allowed before it is made: a person a board has not added never reaches its plugins, and one who may only read reaches none of its actions. A plugin is handed no email and no chat username.
+
+    **A, nothing.** The core admits the call and writes the board's line under the person's name. The plugin never knows who it was, and a commit of its own is authored as the machine.
+
+    **B, name and powers, on every call for a person.** Short name, display name and git handles, with the person's groups and powers on the board. A plugin can draw or refuse by them.
+
+    **C, name, on a write alone.** A board action's answer carries the short name, display name and git handles of who sent it. Reads carry nobody, and no call carries powers.
+
+    **Why C.** What a plugin writes for a person (a commit, a file, a record of its own) can name them and be authored as them, as the board's own saves are. Who may do what stays the core's alone, on your line between signing in and what a person may do. Reads stay alike for everyone, so they stay kept. B makes each plugin a second place deciding who may do what, and every read one per person. A leaves a plugin's commits authored as the machine.
+
+    **What it costs.** Under B or C the kit's types gain a field, shipped beside what they hold today under the kit's version rules, so a plugin built against an older kit keeps working.
+
+    **Earlier verdicts checked.**
+    - **person-profile-where** (B) keeps a profile with the server and its public part on lines. It does not say what of it a plugin is told.
+    - **identity-provider-how-added** (B) and **sign-in-service-shipped** (B) are about the server's sign-in plugin, not a project's plugins.
+    - Your note on **group-card-who-decides**, "Feels this is mixing authentication with authorization", keeps who may do what the Symphony's own. It leaves open what a plugin is told once the Symphony has decided.
+
+    None decides this.
+
 ## Auto-approved: spot-check
 
 ### Releases
@@ -26,31 +86,6 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
 
 ## Waiting on an agent
-
-### People and sign-in
-
-- [x] **verdict-note-reach** — You decided that the words of someone who may not direct agents are held until passed on. A person may still be allowed to decide. Their verdict is written on the card, where agents read it. What is left to choose is the note they write beside it. A: the note is held like their other words, so an agent sees a rejection and not its reason. B: the note is written with the verdict; deciding carries the right to say why, on that card only. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#The note beside a verdict]]
-  [2026-11-21 17:41] agent — Posted for the board task `app/users-and-identity`, a question your A on **words-without-agent-reach** does not answer. A concept: nothing is built by this card.
-
-    ![The note beside a verdict, from someone who may not direct agents](analysis/users-and-identity/verdict-note.svg)
-
-    **Base (today).** Your verdict and its note are written on the card together, and an agent is handed both at once.
-
-    **A, the note is held.**
-    - The verdict is written on the card. The note is kept by the board until someone who may direct agents passes it on.
-    - An agent sees a rejection and not its reason.
-
-    **B, written with the verdict.**
-    - The note is part of the decision and is written with it.
-    - Deciding carries the right to say why, on that card and nowhere else. Their words anywhere else stay held.
-
-    **Why B.** A verdict without its reason gives an agent nothing to act on, and a rejection read alone is acted on wrongly. The person was given the power to decide that card, which already moves agents.
-
-    **Earlier verdicts checked.**
-    - **words-without-agent-reach** (A) holds such a person's words. It was asked of comments and messages. Under it a verdict's note could be read either way, which is why this is asked.
-
-    It does not decide this.
-  [2026-11-22 19:55] owner · approved — B
 
 ### Task timeline
 
@@ -485,6 +520,30 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### People and sign-in
 
+- [r] **verdict-note-reach** — You decided that the words of someone who may not direct agents are held until passed on. A person may still be allowed to decide. Their verdict is written on the card, where agents read it. What is left to choose is the note they write beside it. A: the note is held like their other words, so an agent sees a rejection and not its reason. B: the note is written with the verdict; deciding carries the right to say why, on that card only. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#The note beside a verdict]]
+  [2026-11-21 17:41] agent — Posted for the board task `app/users-and-identity`, a question your A on **words-without-agent-reach** does not answer. A concept: nothing is built by this card.
+
+    ![The note beside a verdict, from someone who may not direct agents](analysis/users-and-identity/verdict-note.svg)
+
+    **Base (today).** Your verdict and its note are written on the card together, and an agent is handed both at once.
+
+    **A, the note is held.**
+    - The verdict is written on the card. The note is kept by the board until someone who may direct agents passes it on.
+    - An agent sees a rejection and not its reason.
+
+    **B, written with the verdict.**
+    - The note is part of the decision and is written with it.
+    - Deciding carries the right to say why, on that card and nowhere else. Their words anywhere else stay held.
+
+    **Why B.** A verdict without its reason gives an agent nothing to act on, and a rejection read alone is acted on wrongly. The person was given the power to decide that card, which already moves agents.
+
+    **Earlier verdicts checked.**
+    - **words-without-agent-reach** (A) holds such a person's words. It was asked of comments and messages. Under it a verdict's note could be read either way, which is why this is asked.
+
+    It does not decide this.
+  [2026-11-22 19:55] owner · approved — B
+  [2026-11-22 20:10] agent — Recorded, B: the note beside a verdict is part of the decision and is written with it, on the card, where agents read it. A person who may decide and may not direct agents says why on the cards their group owns; their words anywhere else stay held until passed on. Written in [[analysis/users-and-identity#The note beside a verdict]]. What follows from B: the note opens an ask on that card, as your notes do today, so an agent answers it there; work it asks for beyond what the card decides is the card's to file and not to start, which still needs someone who may direct agents.
+  [2026-11-22 20:13] agent · resolved
 - [r] **task-acts-who** — You file, move, rank and cancel tasks today. With several people, something must say who does. A: it is part of deciding; the members of the group that owns a task move, rank and cancel it, and anyone who may speak files one. B: it is a power of its own, to manage tasks, given apart from deciding. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Who acts on a task]]
   [2026-11-21 17:41] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
 

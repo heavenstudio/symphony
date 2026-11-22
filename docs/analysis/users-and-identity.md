@@ -7,7 +7,8 @@ a concept: it questions the idea against what the Symphony has, says the shape t
 puts its choices to the owner a few at a time ([this round](#this-round)). Nothing here is built,
 and nothing is built from it but by a task filed from an approved card.
 
-Read at `59538b83e`. The links name the modules and documents read.
+Read at `59538b83e`, and the settings concept as it landed on main at `b31695d8d`. The links name
+the modules and documents read.
 
 ## The answer in short
 
@@ -19,7 +20,8 @@ Read at `59538b83e`. The links name the modules and documents read.
   ([its card](../DECISIONS.md#people-kept-where)). What a document carries of a person is a short
   public name.
 - **Signing in and what a person may do are two things, kept apart.** Authentication is a service
-  outside the core. Authorization is the board's ([the picture](#the-shape-proposed)).
+  outside the core. Authorization is the board's ([the picture](#the-shape-proposed)), and no
+  group a sign-in service knows of is read as one of a board's.
 - **A group owns what waits to be decided.** A card or a task belongs to a group, or to one
   person. Its members are told, and any one of them settles it
   ([decided](#who-in-a-group-decides)). They also move, prioritize and cancel the group's tasks,
@@ -27,7 +29,8 @@ Read at `59538b83e`. The links name the modules and documents read.
 - **Three things one owner does today come apart.** Speaking to people, deciding, and directing
   agents are held separately. Anyone on a board speaks to anyone, anywhere. The words of someone
   who may not direct agents reach no agent until someone who may passes them on
-  ([decided](#words-without-agent-reach)).
+  ([decided](#words-without-agent-reach)), but for the note beside a verdict, which is written with
+  it ([decided](#the-note-beside-a-verdict)).
 - **Agents are personal or shared.** A personal agent runs on its person's machine and credits
   and answers only them. A shared agent is the board's, and works for whoever may direct agents.
 - **The core signs nobody in.** A sign-in service, a plugin of the server and never of a project,
@@ -189,8 +192,10 @@ core, since the core then runs and waits on nothing.
   server is started, for [the reasons above](#an-identity-provider-as-a-plugin). A project's
   `symphony.toml` names neither.
 - **Nothing in the signed data gives a power.** A group or a role a company's sign-in knows of
-  is not read as one of the board's. Whether a board may ever fill its groups from such data is
-  a [later round's](#later-rounds).
+  is not read as one of the board's, and a board never fills its groups from such data: they are
+  its own rows, set by its admins. That is [its card](../DECISIONS.md#people-kept-where)'s B over
+  its C, which had a provider's groups read as roles, and the owner's line between signing in and
+  what a person may do: "Feels this is mixing authentication with authorization."
 - **On a machine, Tailscale is the service.** It signed the person in to the tailnet, and the
   machine's own daemon says whose node an address is. That word comes from the daemon on the
   same machine and not as a signed header: the one place the core asks instead of verifying, as
@@ -475,32 +480,119 @@ What follows:
   to no agent, on a page, a thread or a callback.
 - **Deciding is not speaking.** A verdict is the record itself: it is written on its card in the
   file, where every agent reads it. So a person who decides and may not direct agents still
-  moves agents by what they decide. Whether such a person's note beside a verdict is held like
-  their other words is [asked](#the-note-beside-a-verdict).
-
-## This round
-
-One choice is still open, a card about what deciding covers.
+  moves agents by what they decide, and the note beside their verdict is written with it
+  ([below](#the-note-beside-a-verdict)).
 
 ### The note beside a verdict
 
-**Base.** The owner's verdict and its note are written on the card together, and an agent is
-handed both at once.
-
-A person may decide and not direct agents. Their verdict is written on the card in the file,
-where agents read it. [Their other words are held](#words-without-agent-reach). The choice is
-what happens to the note they write beside the verdict.
+Written with the verdict ([its card](../DECISIONS.md#verdict-note-reach), B). This is about a
+person who may decide and may not direct agents.
 
 ![The note beside a verdict, from someone who may not direct agents](users-and-identity/verdict-note.svg)
 
-- **A, the note is held.** The verdict is written; the note is kept by the board until someone
-  who may direct agents passes it on. An agent sees a rejection and not its reason.
-- **B, written with the verdict.** The note is part of the decision and is written with it.
-  Deciding carries the right to say why, on that card and nowhere else.
+- **The note is part of the decision.** It is written on the card with the verdict, where every
+  agent reads it, and opens an ask an agent answers there, as the owner's note does today.
+- **On what they decide, and nowhere else.** Deciding carries the right to say why on the things
+  their group owns. Their comments and messages anywhere else stay held until passed on.
 
-**Recommended: B.** A verdict without its reason gives an agent nothing to act on, and a
-rejection read alone is acted on wrongly. The person was given the power to decide that card,
-which already moves agents. Their words anywhere else stay held.
+What follows:
+
+- **A note can set an agent to work on what its card decides.** A rejection that asks for a
+  picture has an agent draw it. Work a note asks for beyond its card is filed from it as a task,
+  which waits for someone who may direct agents to start it ([above](#who-acts-on-a-task)).
+- **A task's approve is deciding too** ([its card](../DECISIONS.md#task-acts-who), A), so the
+  note beside the approve that is a task's `owner` stamp, or beside its changes, is written with
+  it on the task's thread, on that task only.
+- **A reason is never cut from its verdict**, so an agent never acts on a rejection it cannot
+  read the why of.
+
+## This round
+
+Two choices are open, each about what a power covers outside a card or a task: the Settings page,
+and a project's plugins.
+
+### Who changes settings
+
+**Base.** Today the owner changes every setting the Settings page offers. The settings concept
+(`app/settings-page`, landed on main) keeps a change from the page in the board's store, where it
+holds at once, and offers beside it a control that makes it the project's: a commit straight to
+the default branch, on a green settings check. A setting that holds a command the server runs is
+reviewed, a task and a reviewer, and never changed from the page.
+
+It left to this concept who may change the project's preferences once there are several people,
+and named the places a permission attaches:
+
+| Where a value is changed | Who changes it, with people |
+| --- | --- |
+| this device | each person, with no power |
+| this machine (`symphony.local.toml`) | whoever runs that machine's server, in a terminal |
+| the board's store, and making a value the project's | **this card** |
+| a reviewed setting | a task and a reviewer, as today |
+
+![Who changes a preference in the board's store and makes it the project's](users-and-identity/settings-who.svg)
+
+- **A, the group the Settings page maps to.** The Settings page is a place, as a folder of
+  documents is, so the board's map gives it a group: the default group, unless an admin maps it
+  to another. Its members change a stored value and make it the project's. Deciding covers it,
+  and no power is added.
+- **B, the board's admins.** Settings are administered, as who is on the board is.
+- **C, a power of its own**, to configure, given to a group or a person apart from deciding.
+
+Under every option a commit the page makes names who asked and is authored by their git handle,
+a reviewed setting stays a task and a reviewer, and a person a board has not added sees no
+Settings page of it.
+
+**Recommended: A.** A model, a limit or an agent switched off is a decision about how the board's
+work is done, and the group that owns the work makes it. A uses what is decided already: a task's
+acts are deciding and add no power ([its card](../DECISIONS.md#task-acts-who)), the place gives
+the group ([its card](../DECISIONS.md#owning-group-how-named)), and any one member settles
+([its card](../DECISIONS.md#group-answer-settles)). B gives configuration to whoever manages
+people, who on a company's board is often not who runs the work. C costs a sixth power to give.
+
+Two costs under every option, A's as much as the others':
+
+- **A preference spends someone's credits.** A costlier model for the board's shared agents runs
+  on their host's credits. What a host may limit is a [later round's](#later-rounds).
+- **Making a value the project's reaches beyond the board.** It changes the committed file every
+  clone and every board of the project reads. With one board for a project, that board's say is
+  the whole of it; several boards for one project is a concept of its own.
+
+### What a plugin is told of who asked
+
+**Base.** A plugin's call carries no person. A board action's submission is the owner's answer
+(`symphony_plugin::Submission`, its payload and note), and the line the board says for it on the
+task is said as the owner. An approval authority is the one call already handed who asked (the
+principal in `symphony_plugin::authority::Operation`), to sign what was decided. Reads, a card's
+renderers, a home region, a route, are drawn alike for everyone and kept until the board's inputs
+change ([PLUGIN_PROTOCOL](../PLUGIN_PROTOCOL.md)).
+
+With people, the core admits every call before a plugin is asked: a person a board has not added
+never reaches its plugins, and one who may only read reaches none of its actions. What is left
+is what the plugin is told.
+
+![What a project's plugin is told of the person who asked](users-and-identity/plugin-told.svg)
+
+- **A, nothing.** The core admits the call and writes the board's line under the person's name,
+  and the plugin never knows who it was.
+- **B, the person's public part and what they hold, on every call made for a person.** Their
+  short name, display name and git handles, with their groups and powers on the board. A plugin
+  can draw or refuse by them.
+- **C, the public part on a write alone.** A board action's submission carries the short name,
+  display name and git handles of who sent it, and an authority's call keeps its principal. Reads
+  carry nobody, and no call carries powers.
+
+Under every option a plugin is handed no email and no chat username
+([a person's profile](#a-persons-profile)), and whether a call is allowed is the core's to say
+before it is made.
+
+**Recommended: C.** What a plugin writes for a person (a commit, a file, a record of its own) can
+name them and be authored as them, as the board's own saves are. Who may do what stays the core's
+alone, on the owner's line between signing in and what a person may do. Reads stay alike for
+everyone, so they stay kept. B makes each plugin a second place deciding who may do what, and
+every read one per person. A leaves a plugin's commits authored as the machine.
+
+Under B or C the kit's types gain a field, shipped beside what they hold today under the kit's
+version rules, so a plugin built against an older kit keeps working.
 
 ## Sessions
 
@@ -554,6 +646,7 @@ Each step can ship alone, and a machine with one person sees none of them.
    group owns. Its members move, prioritize and cancel its tasks.
 5. **Speaking apart from directing agents.** A person's words reach people always. The board
    holds the words of someone who may not direct agents, and passing them on makes them an ask.
+   The note beside a verdict is written with it.
 6. **The signed word verified.** The core's check of a sign-in service's signed data, and hosted
    saves through the same writes as local ones. Then the Symphony's own sign-in service, a
    separate program in front.
@@ -564,12 +657,16 @@ admin. The first person named is the first moment anything differs.
 
 ## The other two concepts
 
-- **A settings page** (`app/settings-page`). A saved change to the project file is a landing
-  today, filed as the owner's task. With people it is filed as the task of the person who saved,
-  and needs what any change of that file needs. A board's people, groups and powers are that
-  page's neighbour: a People page of the board, for its admins, which changes rows of the board
-  and no file. A setting that holds a command the server runs should not be anyone's to set from
-  another machine at all: that would be running programs on the machine from a browser.
+- **A settings page** (`app/settings-page`, landed on main). A change from the page goes to the
+  board's store and holds at once, and a control beside it makes it the project's, a commit on a
+  green settings check; a setting that holds a command the server runs is reviewed and never
+  changed from the page. It left to this concept who may change the project's preferences with
+  several people, [asked this round](#who-changes-settings). Three things it hands back are the
+  shape here already: an identity provider's settings decide who gets in, so the page never
+  writes them (here they are the server's, named where it is started); a commit the page makes
+  names who asked; and "this machine" is a local server's alone, as a hosted board has no
+  checkout beside it. A board's people, groups and powers are that page's neighbour: a People
+  page of the board, for its admins, which changes rows of the board and no file.
 - **Blueprints** (`app/blueprints`). A blueprint may carry a workflow that names capabilities (a
   design lead, an art director) and the groups a kind of project expects (engineering, design).
   It carries no person and no sign-in service: people are a board's, and a project taken from a
@@ -590,9 +687,7 @@ Not carded yet.
 - Shared agents: whose machine and credits host them, what a host may limit, and how an agent on
   another machine proves its handle to a board.
 - Whether a review must come from an agent another person directed.
-- What a plugin is told about the person who asked.
-- Whether a board may fill a group from what a sign-in service says of a person (a company's
-  own groups), and who says which of them counts.
 - Removing a person: their open asks, their unanswered cards, their agents' sessions.
 - Several boards for one project: nothing proposed here ties people to a project, and what else
-  a second board needs is a concept of its own.
+  a second board needs, among it who makes a value the project's for every board, is a concept
+  of its own.
