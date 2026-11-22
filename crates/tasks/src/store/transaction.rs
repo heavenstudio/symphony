@@ -468,6 +468,8 @@ mod tests {
         let posting = || both(format!("{line} {unparsed}"), Pg::script(unparsed));
         for backend in [Backend::SurrealDb, Backend::PostgreSql] {
             let f = Fixture::on(backend, Seed::default());
+            // Each send on a line of its own, the line its refusal names.
+            let store = &f.store;
             let refused = |sent: Result<Value, Failure>, at: u32, why: &str| match sent {
                 Err(Failure::Stop(error)) => {
                     let said = error.to_string();
@@ -477,25 +479,23 @@ mod tests {
                 other => panic!("{backend:?}: {other:?}"),
             };
             let at = line!() + 1;
-            let sent = f.store.transact::<Value>(read(), json!({}));
+            let sent = store.transact::<Value>(read(), json!({}));
             refused(
                 sent,
                 at,
                 "is sent as a write, and its SurrealQL changes nothing",
             );
             let at = line!() + 1;
-            let sent = f.store.read_together::<Value>(write(), json!({}));
+            let sent = store.read_together::<Value>(write(), json!({}));
             refused(sent, at, "is sent as a read, and its SurrealQL writes");
             let at = line!() + 1;
-            let sent = f
-                .store
-                .transact_dispatch::<Value>(posting(), json!({}), false);
+            let sent = store.transact_dispatch::<Value>(posting(), json!({}), false);
             refused(
                 sent,
                 at,
                 "says it posts no line, and its SurrealQL posts one",
             );
-            let answer: i64 = f.store.read_together(read(), json!({})).unwrap();
+            let answer: i64 = store.read_together(read(), json!({})).unwrap();
             assert_eq!(answer, 1, "{backend:?}");
         }
     }
