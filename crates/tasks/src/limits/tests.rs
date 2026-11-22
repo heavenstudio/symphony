@@ -121,6 +121,62 @@ fn a_cap_written_in_both_tables_is_the_limits_one_and_two_values_are_said() {
 }
 
 #[test]
+fn every_limit_is_a_whole_number_from_its_least_and_the_cap_at_most_u32() {
+    let most = i64::from(u32::MAX);
+    let size = |n: i64| usize::try_from(n).unwrap();
+    for (key, least, below) in LEAST {
+        assert_eq!(
+            judged(key, &Value::Integer(least)),
+            Ok(size(least)),
+            "{key}"
+        );
+        assert_eq!(judged(key, &Value::Integer(least - 1)), Err(below), "{key}");
+        assert_eq!(judged(key, &Value::Integer(most)), Ok(size(most)), "{key}");
+        for value in [
+            Value::Float(2.0),
+            Value::String("8".into()),
+            Value::Boolean(true),
+        ] {
+            assert_eq!(judged(key, &value), Err("not a whole number"), "{key}");
+        }
+    }
+    // The cap alone is held to what the Symphony's project holds it in; the others are as before.
+    assert_eq!(
+        judged(SLOTS, &Value::Integer(most + 1)),
+        Err("past what it can be")
+    );
+    for key in [TASKS, LOW, MACHINE_AGENTS] {
+        assert_eq!(
+            judged(key, &Value::Integer(most + 1)),
+            Ok(size(most + 1)),
+            "{key}"
+        );
+    }
+}
+
+#[test]
+fn a_cap_past_u32_is_said_in_either_table_and_caps_nothing() {
+    for (table, line) in [("limits", 2), ("board", 2)] {
+        let read = parsed(&format!("[{table}]\norchestrator_slots = 4294967296\n"));
+        assert_eq!(read.limits.orchestrator_slots, None, "{table}");
+        assert_eq!(
+            read.problems,
+            [format!(
+                "{PATH}: [{table}] orchestrator_slots (line {line}) is 4294967296; past what it \
+                 can be; no cap on an orchestrator's open tasks applies"
+            )]
+        );
+        let read = parsed(&format!("[{table}]\norchestrator_slots = 4294967295\n"));
+        assert_eq!(
+            read.limits.orchestrator_slots,
+            Some(4_294_967_295),
+            "{table}"
+        );
+        assert_eq!(read.problems, Vec::<String>::new(), "{table}");
+    }
+}
+
+#[test]
 fn a_bad_value_is_said_with_its_line_and_takes_its_default_alone() {
     for (text, problem, kept) in [
         (

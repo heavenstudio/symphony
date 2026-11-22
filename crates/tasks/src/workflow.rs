@@ -243,10 +243,11 @@ pub fn attested_project(text: &str) -> Option<String> {
     project_id(&table(text).ok()?)
 }
 
-/// `file`'s `[project] id`, where it is text that is not blank.
+/// `file`'s `[project] id`, where it is text the project file's rule takes ([`crate::project::id`]):
+/// one it refuses (blank, or no slug) is none, as the board's lookup of the project reads it.
 fn project_id(file: &toml::Table) -> Option<String> {
     let id = file.get("project")?.get("id")?.as_str()?;
-    (!id.trim().is_empty()).then(|| id.to_string())
+    crate::project::id(id).ok().map(str::to_string)
 }
 
 /// The workflow a commit's project file sets: a custom definition with its revision, mappings
