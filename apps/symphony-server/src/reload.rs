@@ -347,9 +347,9 @@ fn replace(
         command.arg("--host").arg(host);
     }
     command.arg("--install").arg(&install);
-    let handed = serde_json::to_string(&transfer).map_err(|e| e.to_string())?;
+    let transfer_json = serde_json::to_string(&transfer).map_err(|e| e.to_string())?;
     command.current_dir(&serve.root).stdin(Stdio::null());
-    command.env(INHERITED.name, &handed);
+    command.env(INHERITED.name, &transfer_json);
     if let Some((stdout, stderr)) =
         crate::log::output_for_reload().map_err(|e| format!("cannot inherit server output: {e}"))?
     {
