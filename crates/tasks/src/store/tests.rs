@@ -388,3 +388,33 @@ fn retrying_keeps_callback_capture_and_result_drop_order_through_success_refusal
         }
     }
 }
+
+#[test]
+fn a_reservation_expires_only_once_its_time_is_past_and_one_with_none_never_does() {
+    assert!(!expired(None, 1e12));
+    assert!(!expired(Some(100.0), 99.0));
+    assert!(!expired(Some(100.0), 100.0));
+    assert!(expired(Some(100.0), 100.5));
+}
+
+#[test]
+fn a_reservation_lapses_past_its_time_or_with_its_holder_gone_fenced_only_by_a_session_read_gone() {
+    let (live, time, past) = (Some(200.0), 100.0, 300.0);
+    // Kept: in its time, or with no expiry, while its holder may still act.
+    for health in [Health::Live, Health::Stale, Health::Unknown] {
+        assert_eq!(lapsed(live, Some(health), time), (false, false), "{health:?}");
+        assert_eq!(lapsed(None, Some(health), time), (false, false), "{health:?}");
+        // Past its time it lapses on the clock alone: no beat fences that.
+        assert_eq!(lapsed(live, Some(health), past), (true, false), "{health:?}");
+    }
+    // A holder lost or left lets it go before its time, fenced at the beat it was read at, and
+    // after its time on the clock alone.
+    for health in [Health::Lost, Health::Left] {
+        assert_eq!(lapsed(live, Some(health), time), (true, true), "{health:?}");
+        assert_eq!(lapsed(None, Some(health), time), (true, true), "{health:?}");
+        assert_eq!(lapsed(live, Some(health), past), (true, false), "{health:?}");
+    }
+    // No session holds the handle: dropped, with no beat to fence.
+    assert_eq!(lapsed(live, None, time), (true, false));
+    assert_eq!(lapsed(None, None, time), (true, false));
+}

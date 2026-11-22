@@ -1190,9 +1190,10 @@ impl View {
     fn lapse_reservations(&self, change: &mut Change) -> Vec<&RoleRow> {
         let mut kept = Vec::new();
         for held in self.holders("reserved") {
-            let lapsed = held.expires.is_some_and(|expires| expires < self.now);
-            if lapsed || matches!(self.health(&held.handle), Health::Lost | Health::Left) {
-                if !lapsed {
+            let health = self.sessions.get(held.handle.as_str()).map(|&(_, health)| health);
+            let (drop, fence) = lapsed(held.expires, health, self.now);
+            if drop {
+                if fence {
                     change.saw(self, &held.handle);
                 }
                 change.drop(&held.handle, "reserved");
@@ -1243,10 +1244,7 @@ impl View {
                     .get(row.slug.as_str())
                     .into_iter()
                     .flatten()
-                    .filter(|r| {
-                        !(r.role == "reserved"
-                            && r.expires.is_some_and(|expires| expires < self.now))
-                    })
+                    .filter(|r| !(r.role == "reserved" && expired(r.expires, self.now)))
                     .map(|r| Role {
                         handle: r.handle.clone(),
                         role: r.role.clone(),
@@ -1454,6 +1452,21 @@ fn read_of(which: &Which, sessions: Sessions) -> (Statement<'static>, Value) {
         postgres: Some(pg::reading::reading(which, sessions)),
     };
     (statement, vars)
+}
+
+/// Whether a reservation that `expires` at a time (none: never) is past it at `now`.
+fn expired(expires: Option<f64>, now: f64) -> bool {
+    expires.is_some_and(|expires| expires < now)
+}
+
+/// What a reservation's lapse does at `now`, `health` its holder's (none: no session holds the
+/// handle): whether the board drops it, past its expiry or held by a session lost, left or gone,
+/// and whether that drop is fenced at the holder's last beat as read, which only a session read
+/// gone before the reservation's time is up gives.
+fn lapsed(expires: Option<f64>, health: Option<Health>, now: f64) -> (bool, bool) {
+    let expired = expired(expires, now);
+    let gone = health.is_none_or(|health| matches!(health, Health::Lost | Health::Left));
+    (expired || gone, !expired && gone && health.is_some())
 }
 
 fn values<T: serde::Serialize>(rows: &[T]) -> Vec<Value> {

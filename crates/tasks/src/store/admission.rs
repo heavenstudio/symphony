@@ -22,7 +22,6 @@
 use super::postgres as pg;
 use super::surreal::{self, cap as sql_cap, workflow as sql};
 use super::{Error, Failure, Opens, Store, Which, statement::both};
-use crate::Health;
 use crate::workflow::admit::{self, Context, Facts, Prerequisite, Refusal};
 use crate::workflow::guard::{Accepted, Attester, Checked, Guarding};
 use crate::workflow::{Active, Host, Recorded, TaskPosition, Transition};
@@ -522,10 +521,9 @@ impl Store {
                 continue;
             }
             let session = sessions.iter().find(|s| s.row.handle == pair.0);
-            let expired = role.expires.is_some_and(|expires| expires < now);
-            let gone = session.is_none_or(|s| matches!(s.health, Health::Lost | Health::Left));
-            if expired || gone {
-                if !expired && let Some(session) = session {
+            let (drop, fence) = super::lapsed(role.expires, session.map(|s| s.health), now);
+            if drop {
+                if fence && let Some(session) = session {
                     seen.push(json!({"handle": pair.0, "last_seen": session.row.last_seen}));
                 }
                 lapsed.push(pair);
