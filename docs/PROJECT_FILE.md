@@ -10,7 +10,9 @@ until it loads. Three keys nothing acted on are gone (`[agents] transports`, `[b
 `[board] disposable`), each refused as any unknown key is. The board reads its own keys (`[board]`'s
 commands and thresholds, `[limits]`, `[agents] launch`, `[agents.models]` and `[stamps]`) from the
 main checkout's copy, so a branch cannot change its own. A path is relative to the project's root
-and stays inside it, unless its key says otherwise.
+and stays inside it, unless its key says otherwise. The board judges the paths it reads itself
+(`[board] guide`, `slot_locks` and `assessments`) by the same rule, and reads one that leads out
+of the project, or is empty, as unwritten.
 
 ```toml
 [project]
