@@ -273,8 +273,10 @@ mod tests {
         SIGNALS.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// The open gate answers this machine and nobody else: its whois finds no peer on the
-    /// tailnet, and an address outside the tailnet is never asked about.
+    /// The open gate answers this machine and nobody else: loopback, in each form, is admitted,
+    /// and a tailnet address and one outside the tailnet are refused. That an address outside the
+    /// tailnet is refused without asking whois is gate.rs's
+    /// (`an_address_outside_the_tailnet_is_refused_without_asking`).
     #[test]
     fn the_open_gate_admits_this_machine_and_no_peer() {
         let gate = open_gate();
