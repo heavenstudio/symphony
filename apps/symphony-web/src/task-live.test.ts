@@ -23,12 +23,16 @@ import {
   withEntries,
 } from "./task-live";
 import {
+  aListing,
   aMachine,
   anOperation,
+  fakeAnswer as answer,
   aRole,
   aTask,
+  aTaskPage,
   aWork,
   CASES,
+  feedEvent as event,
   feeds,
   memoryStorage,
   say,
@@ -41,9 +45,7 @@ import {
   type TaskChange,
   type TaskEntry,
   type TaskPage,
-  VERSION_HEADER,
 } from "./wire";
-import { NO_WORK } from "./work";
 
 // React's `flushSync` stood in for, as no DOM runs here: whether a draw comes within it.
 const react = vi.hoisted(() => ({ flushing: false }));
@@ -60,40 +62,13 @@ vi.mock("react-dom", async (original) => ({
   },
 }));
 
-/** A response as the page reads one: its status, its JSON body, its tag and the feed's cursor it
- * was read at (`version`; a server that names none otherwise). */
-function answer(status: number, body: unknown = null, etag = "", version?: number): Response {
-  const headers: Record<string, string> = {};
-  if (etag !== "") headers.ETag = etag;
-  if (version !== undefined) headers[VERSION_HEADER] = `${version}`;
-  return {
-    status,
-    ok: status >= 200 && status < 300,
-    headers: { get: (name: string) => headers[name] ?? null },
-    json: async () => body,
-  } as unknown as Response;
-}
-
 /** The page of `task`, listing `children` of `count`, and whatever else `more` says. */
 function aPage(
   task: Task = aTask("w/a"),
   children: Task[] = [],
   more: Partial<TaskPage> = {},
 ): TaskPage {
-  return {
-    machine_work: NO_WORK,
-    task,
-    blocks: [],
-    children,
-    children_count: children.length,
-    brief_omitted: 0,
-    brief_next: 0,
-    brief_revision: "",
-    sessions: {},
-    local: false,
-    gates: null,
-    ...more,
-  };
+  return aTaskPage(task, { children, children_count: children.length, ...more });
 }
 
 /** Message `id` of `slug`'s thread, by `sender`, of `kind`. */
@@ -112,23 +87,10 @@ const history = (entries: TaskEntry[], before: number | null = null, after: numb
   ({ entries, before, after }) as const;
 
 /** A listing of `tasks`, counted as `counts`, its next page at `next`. */
-const listing = (tasks: Task[], counts: [string, number][], next: string | null = null) => ({
-  machine_work: NO_WORK,
-  tasks,
-  statuses: [],
-  signoff: [],
-  counts,
-  lifecycle_counts: [],
-  next,
-});
+const listing = (tasks: Task[], counts: [string, number][], next: string | null = null) =>
+  aListing(tasks, counts, { next });
 
 const change = (key: string, fields: TaskChange["fields"]): TaskChange => ({ key, fields });
-
-/** A feed event of `changes`, each a region and its data. */
-const event = (...changes: [string, unknown][]) => ({
-  version: 1,
-  changes: changes.map(([region, data]) => ({ region, data })),
-});
 
 const PAGE_URL = "/api/task-page?slug=w%2Fa";
 const THREAD_URL = "/api/task-history?slug=w%2Fa";

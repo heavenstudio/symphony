@@ -87,6 +87,8 @@ pub struct Block {
 }
 
 /// Blank-line-separated blocks with their source lines; fences stay whole, and a card keeps its thread.
+/// A card line outside a fence opens a block of its own whatever stands above it, a blank line or
+/// not, so every card the register's readers count ([`parse_decisions`]) is drawn as a card.
 pub fn split_blocks(text: &str) -> Vec<Block> {
     let lines = splitlines(text);
     let mut blocks = Vec::new();
@@ -95,7 +97,14 @@ pub fn split_blocks(text: &str) -> Vec<Block> {
     let mut index = frontmatter_end(&lines).map_or(0, |end| end + 1);
     while index < lines.len() {
         let line = lines[index];
-        if start.is_none() && !in_fence && card_line(line).is_some() {
+        if !in_fence && card_line(line).is_some() {
+            if let Some(from) = start.take() {
+                blocks.push(Block {
+                    start: from + 1,
+                    end: index,
+                    text: lines[from..index].join("\n"),
+                });
+            }
             let end = card_end(&lines, index);
             blocks.push(Block {
                 start: index + 1,
@@ -370,12 +379,6 @@ impl Render {
     /// file at most once per call.
     pub fn sections(&self, text: &str, doc_path: &str) -> Vec<Section> {
         self.section_fragments(text, doc_path, false, false)
-    }
-
-    /// The native client draws card threads separately and derives source lines from section.start
-    /// plus data-line-offset. Moving a block therefore leaves its content hash unchanged.
-    pub fn client_sections(&self, text: &str, doc_path: &str) -> Vec<Section> {
-        self.section_fragments(text, doc_path, true, false)
     }
 
     /// The same pipeline with semantic component/wiki markers retained for `blocks::parse`.

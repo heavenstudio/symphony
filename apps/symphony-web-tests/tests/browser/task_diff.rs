@@ -1,12 +1,12 @@
 //! A task's file list and explicitly opened patch, in the real client on desktop and phone.
-use super::{SHOWN, chrome, common, dist, look_parity, site::Site};
+use super::{SHOWN, chrome, look_parity, site::Site};
 use serde_json::{Value, json};
 use symphony_api::{TASK_DIFF_FILE_PATH, TASK_DIFF_PATH};
 
 const PAGE: &str = "/task/visual/in-progress";
 
 fn site() -> Site {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let content = look_parity::responses();
     for path in ["/api/task-page", "/api/task-history"] {
         site.set_json(path, &content[path]);
@@ -48,10 +48,7 @@ fn files_load_before_hunks_and_only_the_opened_file_is_read_on_desktop_and_phone
         let Some(mut page) = chrome() else {
             panic!("Chrome is required for task diff acceptance")
         };
-        page.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":width < 400}),
-        );
+        page.viewport(width, 900, width < 400);
         open(&mut page, &site);
 
         assert!(

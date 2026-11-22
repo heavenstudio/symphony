@@ -5,24 +5,9 @@
 
 use std::collections::BTreeSet;
 
-use crate::common::{Backend, Fixture, NOW, Seed, refused};
+use crate::common::{Backend, Fixture, NOW, Seed, in_review, refused};
 use symphony_board::NewTask;
 use symphony_board::health::LIVE_SECONDS;
-
-/// `sim/jump` in review: `ochre-owl` orchestrates, `amber-heron` executed it, `brisk-finch` reviews it.
-fn in_review(backend: Backend) -> Fixture {
-    Fixture::on(
-        backend,
-        Seed::default()
-            .session("ochre-owl")
-            .session("amber-heron")
-            .session("brisk-finch")
-            .task("sim/jump", "review")
-            .role("sim/jump", "ochre-owl", "orchestrator")
-            .role("sim/jump", "amber-heron", "executor")
-            .role("sim/jump", "brisk-finch", "reviewer"),
-    )
-}
 
 on_both! {
     fn three_sessions_hold_one_task_at_once(backend: Backend) {

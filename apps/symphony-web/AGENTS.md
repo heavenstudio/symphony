@@ -493,7 +493,9 @@ the page and the thread are kept on this device (`taskItem`) and drawn at once o
 marked stale, then checked with their copy's tag. The store reads a key once however many
 components name it (an ask while its read is out joins it), tries a failed read again on the
 feed's waits (`tryAgain`) while the other parts draw, and ends a part's reads when the route
-leaves its task (`drop`) or the page goes.
+leaves its task (`drop`) or the page goes. A part whose read failed with nothing drawn looks on
+this device again, so a database that opened after the store's deadline still gives the copy
+when the server does not answer.
 
 Every JSON read's answer names the feed's cursor it was read at (`VERSION_HEADER`, read with
 `request.ts`'s `getAt`): every event at or before it is in the answer. So the reads and the feed
@@ -555,23 +557,22 @@ history it answers; a view opens a blank window within the click, cuts its opene
 address `/api/attempt-view` resolved, which the page keeps nowhere
 ([EXECUTION_ATTEMPTS](../../docs/EXECUTION_ATTEMPTS.md#on-a-tasks-page)).
 
-Last, under the thread's composer, _Tokens and estimated cost_ (`TokensPart`, `src/task-page.tsx`)
-is a closed disclosure, last so it moves nothing that loads (above the thread it pushed the
-thread's region, which mounts as it comes into view, off the first screen it began on): its
-heading is all a first visit draws, and opening it asks for its part from
-`/api/task-tokens` (`src/task-live.ts`'s `tokensPart`, read again on a change of the task) and
-imports its chunk (`src/task-tokens.tsx`, its style `src/task-tokens.css` inline, put in the page
-as it first draws, as the timeline's is: the build links no chunk's own sheet), which guards the
-answer as it draws it: the total with its kinds, the tables by role and by review round, the
-models no price was found for, and _No tokens recorded for this task._ where there are none, with
-no table. As the timeline's, the chunk imports nothing of the kind's own (the part, the store, the
-live task): one that did made the build split the kind's entry in two, a file more on every first
-visit. It is a disclosure, not a part near the screen, because the page's first visit had no room
-for its chunk and its read: mounted near the screen, they came with the first visit and passed
-`TASK_FIRST_VISIT_BYTES`. A chunk that fails to load offers its Retry, unless the shell is going
-for a new build. Every figure
-is an estimate at API list prices with the day they were read (`src/spend.ts`, which says them as
-`just tasks show` does).
+What the task's tokens cost follows its time on its timeline, and nothing is at the page's foot.
+The box asks for the tokens' part beside the timeline's (`/api/task-tokens`, `src/task-live.ts`'s
+`tokensPart`, read again on a change of the task) and hands the timeline what it answers, which
+the timeline guards (`readTaskTokens`) and draws without until it comes: the total after the
+task's time on the first line (`.tl-cost`), its words (that it is an estimate and of what day's
+prices, its split by role and by kind, the tokens and the calls) said in the legend's place while
+it is pointed at or focused, and under the totals on a phone, where the rounds and bounces move to
+the second line; and each stage stretch's cost after its time, the fitter trying the word, the
+time and the cost, then the time and the cost, then the time alone, a phone's row ending with the
+time and the cost. `src/timeline-cost.ts` puts each of the record's rows on exactly one stretch,
+by its role and review round and never by a share of time (its header says the rule and where a
+row the rule places nowhere goes), so the stretches add up to the total, and a stretch's words
+say whose calls it carries, when they ran and how many. As the layout, it imports nothing of the
+kind's own. A task with no tokens draws as one with no cost. Every figure is an estimate at API
+list prices with the day they were read (`src/spend.ts`, which says them as `just tasks show`
+does).
 
 ## The panel
 
@@ -659,7 +660,10 @@ What holds on every page, and each page's contract where its section above names
   the page cannot read is forgotten (`readKept`). Without IndexedDB, or in the development
   runtime, which has no shell, every read misses and nothing is kept. A database that does not
   open within 500 ms leaves the calls until it opens without the cache; the pages after it,
-  which the shell changes without a reload, use it once it opens. A page that goes away
+  which the shell changes without a reload, use it once it opens, and so does a part whose read
+  failed with nothing drawn (`src/parts.ts`). A page's `symphonyCacheOpenMs` names another
+  wait, for a browser test of a page with its cache, which a loaded machine's slow open would
+  otherwise run without it. A page that goes away
   (`pagehide`, `freeze`) aborts the store's open transactions and starts none until it is back
   (`pageshow`, `resume`), as it closes its feed's stream: a page kept for back and forward runs
   none of its callbacks, so a transaction left between two of them would hold its locks, and
@@ -865,10 +869,9 @@ What holds on every page, and each page's contract where its section above names
   adds one `1 review` / `N reviews` mark before the title, on open and finished cards; zero or
   unavailable summaries show no mark. Live fields update known counts; a full replacement clears
   an unavailable summary. No task detail read or subtask count supplies the mark. A card whose
-  task and subtasks took tokens shows their estimated cost before its priority (`$1.23`, `$1.23+`
-  where some had no price, `unpriced` where none had; its title says it is an estimate and of what
-  day's prices), the slug
-  giving way before it. The listings carry none of it: each card names its task as it mounts
+  task and subtasks took tokens shows their estimated cost before its time, on the time's line
+  (`$1.23 · 1 h`; `$1.23+` where some had no price, `unpriced` where none had; its title says it
+  is an estimate and of what day's prices). The listings carry none of it: each card names its task as it mounts
   (`useCardCost`, `src/card-costs.ts`), and the board asks for the cards named in one turn in one
   read of `/api/task-costs` apart (`CardCosts`, at most `TASK_COSTS_MOST` slugs a read, under the
   mount's signal), each once until its record's `updated` moves, so a heartbeat that adds tokens

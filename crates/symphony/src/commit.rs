@@ -1635,7 +1635,39 @@ fn prepared(
 }
 
 type Waiting = Arc<Mutex<BTreeMap<u64, Edit>>>;
-type Job = (u64, Edit, Arc<Backlog>);
+
+/// One queued save: the edit, the number it waits under ([`Waiting`]) and its place in the
+/// backlog, held until the job is done.
+#[derive(Clone)]
+struct Job {
+    id: u64,
+    edit: Edit,
+    backlog: Arc<Backlog>,
+}
+
+/// The three locks a publication writes main's checkout under, taken in the one order that keeps
+/// it deadlock-free: the commits lock, this server's saves, then the write lock a save and the
+/// lander share (a save takes the last two in that order too). Released in reverse, the fields
+/// being declared last-taken first.
+struct PublicationLocks<'a> {
+    _file: Option<File>,
+    _held: std::sync::MutexGuard<'a, ()>,
+    _commits: File,
+}
+
+impl<'a> PublicationLocks<'a> {
+    fn take(root: &Path, writes: &'a Mutex<()>) -> Result<Self, String> {
+        let commits = shared_lock(root, "verdict-commits.lock")?;
+        let held = writes.lock().unwrap_or_else(|e| e.into_inner());
+        let file = write_lock(root)?;
+        Ok(Self {
+            _file: file,
+            _held: held,
+            _commits: commits,
+        })
+    }
+}
+
 type QueuedJob = Arc<Mutex<OutputJob>>;
 
 fn report(root: &Path, message: &str) {
@@ -1941,9 +1973,7 @@ fn publish(
         ));
     };
     let released = {
-        let _commits = shared_lock(root, "verdict-commits.lock")?;
-        let _held = writes.lock().unwrap_or_else(|e| e.into_inner());
-        let _file = write_lock(root)?;
+        let _locks = PublicationLocks::take(root, writes)?;
         release(root, &publication.branch, edit, waiting, ahead, id)?
     };
     // Land may verify a moving-main candidate. Neither that work nor the branch's initial
@@ -1957,9 +1987,7 @@ fn publish(
     );
     let landed = done.as_ref().is_ok_and(|done| done.status.success());
     {
-        let _commits = shared_lock(root, "verdict-commits.lock")?;
-        let _held = writes.lock().unwrap_or_else(|e| e.into_inner());
-        let _file = write_lock(root)?;
+        let _locks = PublicationLocks::take(root, writes)?;
         restore(root, released, landed)?;
     }
     let done =
@@ -2033,9 +2061,9 @@ impl OutputJob {
     }
 
     fn new(root: &Path, job: Job) -> Result<Self, String> {
-        let path = Self::folder(root)?.join(format!("{:020}.json", job.2.sequence));
+        let path = Self::folder(root)?.join(format!("{:020}.json", job.backlog.sequence));
         let saved = QueuedPublication {
-            edit: job.1.clone(),
+            edit: job.edit.clone(),
             publication: None,
             dirty_retry: false,
             dirty_reported: false,
@@ -2179,7 +2207,11 @@ impl OutputJob {
         let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let backlog = Arc::new(Backlog::new(root)?);
         Ok(Some(Self {
-            job: (id, saved.edit.clone(), backlog),
+            job: Job {
+                id,
+                edit: saved.edit.clone(),
+                backlog,
+            },
             path: path.to_path_buf(),
             held,
             saved,
@@ -2202,8 +2234,8 @@ impl OutputJob {
             return Ok(true);
         }
         if self.saved.publication.is_none() {
-            let branch = retry_conflicts(root, self.job.2.sequence, || {
-                output_branch(root, &self.job.1, self.job.0)
+            let branch = retry_conflicts(root, self.job.backlog.sequence, || {
+                output_branch(root, &self.job.edit, self.job.id)
             })?;
             if let Some((publication, mut checkout)) = branch {
                 self.saved.publication = Some(publication);
@@ -2211,17 +2243,15 @@ impl OutputJob {
                 checkout.retain();
                 self.checkout = Some(checkout);
             } else {
-                let outcome = retry_conflicts(root, self.job.2.sequence, || {
-                    let _commits = shared_lock(root, "verdict-commits.lock")?;
-                    let _held = writes.lock().unwrap_or_else(|e| e.into_inner());
-                    let _file = write_lock(root)?;
+                let outcome = retry_conflicts(root, self.job.backlog.sequence, || {
+                    let _locks = PublicationLocks::take(root, writes)?;
                     // A recovered draft may have been temporarily released by a publisher
                     // before the process stopped. Restore a clean source before the normal
                     // private-index commit, without replacing later uncommitted work.
-                    let current = std::fs::read_to_string(root.join(&self.job.1.rel)).ok();
+                    let current = std::fs::read_to_string(root.join(&self.job.edit.rel)).ok();
                     let head = run(
                         root,
-                        &["show", &format!("HEAD:{}", self.job.1.rel)],
+                        &["show", &format!("HEAD:{}", self.job.edit.rel)],
                         None,
                         None,
                     )?;
@@ -2231,15 +2261,15 @@ impl OutputJob {
                         None
                     };
                     if on_main(root) && current == head {
-                        let path = root.join(&self.job.1.rel);
+                        let path = root.join(&self.job.edit.rel);
                         if let Some(parent) = path.parent() {
                             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                         }
-                        std::fs::write(path, &self.job.1.new).map_err(|e| e.to_string())?;
+                        std::fs::write(path, &self.job.edit.new).map_err(|e| e.to_string())?;
                     }
                     commit_inner(
                         root,
-                        std::slice::from_ref(&self.job.1),
+                        std::slice::from_ref(&self.job.edit),
                         "docs: owner verdicts",
                     )
                 })?;
@@ -2255,10 +2285,10 @@ impl OutputJob {
                 .publication
                 .as_ref()
                 .expect("publication prepared"),
-            &self.job.1,
+            &self.job.edit,
             waiting,
             ahead,
-            self.job.0,
+            self.job.id,
             writes,
         )?;
         match result {
@@ -2390,11 +2420,11 @@ fn recover_outputs(
                 waiting
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
-                    .insert(job.job.0, job.job.1.clone());
+                    .insert(job.job.id, job.job.edit.clone());
                 *ahead
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
-                    .entry(job.job.1.rel.clone())
+                    .entry(job.job.edit.rel.clone())
                     .or_default() += 1;
                 queued.push_back(Arc::new(Mutex::new(job)));
             }
@@ -2415,12 +2445,12 @@ fn finish_output(job: &Job, waiting: &Waiting, ahead: &Ahead) {
     waiting
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .remove(&job.0);
+        .remove(&job.id);
     let mut ahead = ahead.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(n) = ahead.get_mut(&job.1.rel) {
+    if let Some(n) = ahead.get_mut(&job.edit.rel) {
         *n -= 1;
         if *n == 0 {
-            ahead.remove(&job.1.rel);
+            ahead.remove(&job.edit.rel);
         }
     }
 }
@@ -2544,7 +2574,7 @@ impl Committer {
         let worker_waiting = waiting.clone();
         let commit_worker = std::thread::spawn(move || {
             for queued_job in recv {
-                let (id, edit, backlog) = queued_job
+                let Job { id, edit, backlog } = queued_job
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .job
@@ -2576,9 +2606,7 @@ impl Committer {
                     }
                     Ok(false) => {
                         let outcome = retry_conflicts(&root, backlog.sequence, || {
-                            let _commits = shared_lock(&root, "verdict-commits.lock")?;
-                            let _held = writes.lock().unwrap_or_else(|e| e.into_inner());
-                            let _file = write_lock(&root)?;
+                            let _locks = PublicationLocks::take(&root, &writes)?;
                             commit_inner(&root, std::slice::from_ref(&edit), "docs: owner verdicts")
                         });
                         match outcome {
@@ -2633,7 +2661,11 @@ impl Committer {
         // may temporarily release. A crash can then recover even a not-yet-generated save.
         let job = Arc::new(Mutex::new(OutputJob::new(
             &self.root,
-            (id, edit.clone(), backlog),
+            Job {
+                id,
+                edit: edit.clone(),
+                backlog,
+            },
         )?));
         self.waiting
             .lock()

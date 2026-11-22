@@ -2,17 +2,11 @@
 //! what an admitted operation writes.
 
 use super::*;
-use crate::workflow::activate::tests::{TWO, custom};
+use crate::store_fixture::pair;
+use crate::workflow::activate::tests::{TWO, context, custom};
 use crate::workflow::{Custom, agent_session, board_service, local_owner};
 use std::collections::BTreeMap;
 use symphony_api::workflow::{InputValue, Operation};
-
-fn pair(phase: &str, state: &str) -> Pair {
-    Pair {
-        phase: phase.into(),
-        state: state.into(),
-    }
-}
 
 fn two() -> Custom {
     custom(TWO)
@@ -45,14 +39,6 @@ pub(crate) fn outputs() -> String {
         &format!(r#"  {EDGES}{{ id = "accept","#),
     )
     .replace(claim, &claim.replace("\"none\"", "\"accepted_output\""))
-}
-
-fn context(custom: &Custom) -> Context<'_> {
-    Context {
-        definition: custom.definition.definition(),
-        revision: &custom.revision,
-        generation: 2,
-    }
 }
 
 /// A task at `phase/state`, workflow revision 4, filed by the owner, with no roles.

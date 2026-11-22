@@ -17,10 +17,8 @@ use regex::Regex;
 
 use crate::cli::{Flag, parse, refuse};
 use crate::markup::{dirname, join, normpath};
-use crate::register::{
-    CALLOUT, Decision, KINDS, RESOLVED, Who, card_line, is_fence, parse_decisions,
-};
-use crate::render::{Render, doc_paths, split_blocks};
+use crate::register::{CALLOUT, Decision, Who, is_fence, parse_decisions};
+use crate::render::{Render, doc_paths};
 use crate::text::{read_text, splitlines};
 
 mod pictures;
@@ -112,30 +110,6 @@ fn picture_cards(text: &str, rel: &str, result: &mut Result) {
                 .collect::<Vec<_>>()
                 .join(", ");
             result.errors.push(format!("{rel}:{}: picture card **{}** asks for {} but the Symphony shows {}: put one picture per letter on one agent line, each alt ending in its letter", card.line, card.slug, wanted.join(", "), if shown.is_empty() { "no lettered row" } else { &shown }));
-        }
-    }
-}
-
-fn undrawn_cards(text: &str, rel: &str, result: &mut Result) {
-    for block in split_blocks(text) {
-        let lines = splitlines(&block.text);
-        let first = lines.first().copied().unwrap_or("");
-        if card_line(first).is_some()
-            || CALLOUT.captures(first).is_some_and(|c| {
-                let kind = c["kind"].to_lowercase();
-                KINDS.contains(&kind.as_str()) || kind == RESOLVED
-            })
-        {
-            continue;
-        }
-        let mut fenced = false;
-        for (offset, line) in lines.iter().enumerate() {
-            if is_fence(line) {
-                fenced = !fenced;
-            }
-            if !fenced && let Some(card) = card_line(line) {
-                result.errors.push(format!("{rel}:{}: card **{}** is not drawn as a card: its block starts with another line; put a blank line above it", block.start + offset, card.slug.trim()));
-            }
         }
     }
 }
@@ -779,7 +753,6 @@ pub fn audit(root: &Path) -> Result {
         card_pictures(&judging, rel, &text, &definitions, &mut result);
         document_pictures(&judging, rel, &text, &definitions, &mut result);
         picture_cards(&text, rel, &mut result);
-        undrawn_cards(&text, rel, &mut result);
         let file = project.file(rel);
         if symphony && recipes::audited(&file) {
             naming.push((file, 1, text));

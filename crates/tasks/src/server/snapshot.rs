@@ -659,8 +659,14 @@ fn civil(days: i64) -> (i64, i64, i64) {
     (year, month, date)
 }
 
+/// A child caught between its fork and its exec, as the release run's tests catch one.
+#[cfg(test)]
+#[path = "../../../../tools/test-support/mid_spawn.rs"]
+mod mid_spawn;
+
 #[cfg(test)]
 mod tests {
+    use super::mid_spawn::MidSpawn;
     use super::{
         Before, CLONE_FAILS, FOLDER, KEPT, Kept, STORE_LOCK, TAKING, civil, clones, free_name,
         hold_store, holds_log, named, order, stamp,
@@ -815,74 +821,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&data);
     }
 
-    /// A child another thread spawns, caught between its fork and its exec: it holds a copy of
-    /// every descriptor this process had open when it forked, as each child std forks does until
-    /// its exec, and with it the lock of each that is a locked file. It execs, and is waited for,
-    /// once this drops.
-    struct MidSpawn {
-        go: std::io::PipeWriter,
-        spawner: Option<std::thread::JoinHandle<()>>,
-    }
-
-    impl MidSpawn {
-        /// Another thread's spawn of `true`, returned once its child has forked, before it execs.
-        fn caught() -> MidSpawn {
-            use crate::sys::Spawning;
-            use std::io::Read;
-            use std::os::fd::AsRawFd;
-            use std::os::unix::process::CommandExt;
-            let (mut forked, forked_by) = std::io::pipe().unwrap();
-            let (go_on, go) = std::io::pipe().unwrap();
-            let fds = (forked_by.as_raw_fd(), go_on.as_raw_fd(), go.as_raw_fd());
-            let spawner = std::thread::spawn(move || {
-                let (forked_fd, go_on_fd, go_fd) = fds;
-                let mut command = std::process::Command::of("true");
-                // SAFETY: close, write and read are async-signal-safe and touch only the child's
-                // copies of three pipe ends, which stay open in this process until the spawn
-                // returns. Its copy of the writer closed, the child goes on at a byte or at the
-                // reader's end, once this process lets go of the writer however it ends.
-                unsafe {
-                    command.pre_exec(move || {
-                        let mut byte = [0u8];
-                        libc::close(go_fd);
-                        retried(|| libc::write(forked_fd, byte.as_ptr().cast(), 1));
-                        retried(|| libc::read(go_on_fd, byte.as_mut_ptr().cast(), 1));
-                        Ok(())
-                    });
-                }
-                let child = command.spawn_locked();
-                drop((forked_by, go_on));
-                child.unwrap().wait().unwrap();
-            });
-            let mut byte = [0];
-            forked
-                .read_exact(&mut byte)
-                .expect("the child forked and said so");
-            MidSpawn {
-                go,
-                spawner: Some(spawner),
-            }
-        }
-    }
-
-    /// `call`, made again while it fails interrupted by a signal; it allocates nothing, so a forked
-    /// child may make it before its exec.
-    fn retried(mut call: impl FnMut() -> isize) {
-        while call() < 0
-            && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
-        {}
-    }
-
-    impl Drop for MidSpawn {
-        fn drop(&mut self) {
-            use std::io::Write;
-            let _ = self.go.write_all(b"x");
-            if let Some(spawner) = self.spawner.take() {
-                let _ = spawner.join();
-            }
-        }
-    }
-
     /// A child another thread forks while a lock is held keeps a copy of the lock's file until its
     /// exec, and a lock let go by closing its file alone stays held by that copy, which a parallel
     /// run of the test above can meet. The store's hold lets go of its lock itself, so the lock is
@@ -898,7 +836,10 @@ mod tests {
         let held = hold_store(&data).unwrap().unwrap();
         let bare = fs::File::create(closed.join(STORE_LOCK)).unwrap();
         bare.try_lock().unwrap();
-        let child = MidSpawn::caught();
+        let child = MidSpawn::caught(
+            std::process::Command::of("true"),
+            crate::sys::Spawning::spawn_locked,
+        );
         drop((held, bare));
         assert!(
             hold_store(&closed).unwrap().is_err(),

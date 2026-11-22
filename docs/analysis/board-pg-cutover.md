@@ -70,7 +70,7 @@ Each is needed before a live board moves. None is built by this page.
 |---|---|
 | The live-board guard covers PostgreSQL's tables and finds a PostgreSQL board | landed with the lifecycle |
 | Holds, stopped-cluster snapshots, reclaim and the schema fence on PostgreSQL | landed, proved on scratch boards |
-| A copy does not let an old task number or version be taken for a new one | landed with `tools/board-recovery-generation`, board schema 22: every copy of a whole board replaces its [recovery generation](../TASKS.md#a-board-that-was-copied-or-restored), and a write naming a task read before the copy is refused. The cutover is itself such a copy |
+| A copy does not let an old task number or version be taken for a new one | landed with `tools/board-recovery-generation`, board schema 22: every copy of a whole board replaces its [recovery generation](../BOARD_OPERATIONS.md#a-board-that-was-copied-or-restored), and a write naming a task read before the copy is refused. The cutover is itself such a copy |
 | PostgreSQL starting for a board that is not a scratch one | landed with `tools/board-pg-cutover-pieces`: PostgreSQL serves any board whose home names it (`backend.json`), and a board outside a scratch place gets that name only by the move below; there its server outlives the command that started it, as SurrealDB's does |
 | The cutover command: hold, export, copy, compare, switch, with each failure leaving the board as it was | landed with the same task, proved on scratch boards: `tasks-move ENGINE`, [one board's move](#one-boards-move) |
 | Restoring a PostgreSQL snapshot over the board it was taken from | landed with the same task: `tasks-move --restore SNAPSHOT`, under the move's journal; the cluster it replaces is kept ([POSTGRESQL](../POSTGRESQL.md#holds-snapshots-and-recovery)) |
@@ -112,6 +112,21 @@ of its own, and each board moves by itself.
 the other way (`Home::move_to`, `crates/tasks/src/server/moving.rs`). It is a program of its
 own, the owner's to run from the main checkout as `tasks-reclaim` is, and no board command: the
 `tasks` every session runs links none of it.
+
+A release installs it beside its `tasks` ([the install](../RELEASES.md#the-install)), so a
+project with no build of its own moves its board with what the release holds, at the schema
+its `tasks` writes. Its orchestrator or owner runs it from the project's main checkout by its
+path in the machine folder, since no recipe reaches it and `just tasks` would refuse a live
+board's move ([where it lives](../TASKS.md#where-it-lives)):
+
+```sh
+"$HOME/Library/Application Support/Symphony/current/bin/tasks-move" postgresql --as HANDLE
+```
+
+Elsewhere than macOS the machine folder is `$XDG_DATA_HOME/symphony`, else
+`~/.local/share/symphony`, and `SYMPHONY_MACHINE_DIR` names another. A release before the
+one that first installed it holds none: the project waits for `current` to name one that does.
+No refresh runs it: a board moves when its project says so, after its pin (step 4 above).
 
 1. **Hold.** The board is held as for any maintenance: its database is stopped, and every board
    command is refused and says why. Agents' work in progress is untouched; their board commands
@@ -185,10 +200,11 @@ absence grants nothing, and a live board's move is the owner's call.
 repository's board, and 42 s back ([the rehearsal](#the-rehearsal-2026-11-19)), and 74 s for the
 board itself on a machine loaded far past its cores
 ([its move](#this-repositorys-board-moved-2026-11-21)). The Symphony's pages say it is held for
-a while longer: a page's reader that found the board held tries it again only after a wait that
-doubles from 1 s to 60 s (`apps/symphony-server/src/live/retry.rs`), so they went on saying so for
-about 100 s past the board's own release. The copy into PostgreSQL is ended at 270 s by its server, thirty
-short of the 300 s its caller waits ([TASKS](../TASKS.md#a-board-that-was-copied-or-restored)).
+a while longer: a page's reader that found the board held then tried it again only after a wait
+that doubled from 1 s to 60 s (`apps/symphony-server/src/live/retry.rs`), so they went on saying so
+for about 100 s past the board's own release. Since, a reader refused by a hold tries again at its
+first tick or page request after the release. The copy into PostgreSQL is ended at 270 s by its server, thirty
+short of the 300 s its caller waits ([BOARD_OPERATIONS](../BOARD_OPERATIONS.md#a-board-that-was-copied-or-restored)).
 
 ## The rehearsal, 2026-11-19
 

@@ -7,7 +7,9 @@ one only by a move of its store, `tasks-move postgresql`
 PostgreSQL makes and starts nothing there. The machine server and the board commands use the same
 home selection. This repository's board is on PostgreSQL since 2026-11-21
 ([its move](analysis/board-pg-cutover.md#this-repositorys-board-moved-2026-11-21)); each other
-project's board moves after its own pin.
+project's board moves after its own pin, by the `tasks-move` the release installs beside its
+`tasks`, run by its path in the machine folder (`current/bin/tasks-move postgresql --as HANDLE`,
+[the command a project runs](analysis/board-pg-cutover.md#one-boards-move)).
 
 ## The board home owns its engine
 
@@ -80,7 +82,7 @@ The next start writes the target's own socket settings and lets PostgreSQL recov
 snapshot is unchanged. This is rehearsal and inspection, not an in-place rollback or acceptance
 of an older live schema; the highest-seen schema record remains outside the database.
 The identity selects an engine only. The copied cluster holds the
-[recovery generation](TASKS.md#a-board-that-was-copied-or-restored) its source had, so the
+[recovery generation](BOARD_OPERATIONS.md#a-board-that-was-copied-or-restored) its source had, so the
 restore revokes every recovery binding of the target home before the data is in place, and
 publishes no data when that fails: the restored board refuses every bound write until `just tasks
 recovery rebind` gives it a generation of its own, and then takes no token read on its source.
