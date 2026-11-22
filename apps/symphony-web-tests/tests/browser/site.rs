@@ -245,8 +245,8 @@ struct Shared {
     failing_feeds: usize,
     failing_routes: BTreeSet<String>,
     /// Paths or targets answered 404, as the server answers a read of what it does not have, or 400,
-    /// as it refuses a write, each with its status and the server's error.
-    missing_routes: BTreeMap<String, (u16, String)>,
+    /// as it refuses a write, each with its status and the body the server answers it with.
+    missing_routes: BTreeMap<String, (u16, serde_json::Value)>,
     held_routes: BTreeSet<String>,
     /// Paths whose next request alone is held, and the requests so held, by number.
     hold_next: BTreeSet<String>,
@@ -616,9 +616,10 @@ impl Site {
     pub fn miss_route(&self, path: &str, error: Option<&str>) {
         let mut shared = self.shared.lock().unwrap();
         match error {
-            Some(error) => shared
-                .missing_routes
-                .insert(path.to_owned(), (404, error.to_owned())),
+            Some(error) => shared.missing_routes.insert(
+                path.to_owned(),
+                (404, serde_json::json!({ "error": error })),
+            ),
             None => shared.missing_routes.remove(path),
         };
     }
@@ -627,13 +628,22 @@ impl Site {
     /// write it read and would not take (an operation a workflow refuses, its code first); none
     /// answers it again. `path` is a route (every query of it) or one target, its query included.
     pub fn refuse_route(&self, path: &str, error: Option<&str>) {
-        let mut shared = self.shared.lock().unwrap();
         match error {
-            Some(error) => shared
-                .missing_routes
-                .insert(path.to_owned(), (400, error.to_owned())),
-            None => shared.missing_routes.remove(path),
-        };
+            Some(error) => self.refuse_with(path, &serde_json::json!({ "error": error })),
+            None => {
+                self.shared.lock().unwrap().missing_routes.remove(path);
+            }
+        }
+    }
+
+    /// Answer a route 400 with `body`, a refusal that says more than its error, as the server
+    /// names the guard that refused a workflow's edge beside its words
+    /// (`{"error": …, "guard": …}`), until [`Site::refuse_route`] with none answers it again.
+    pub fn refuse_with(&self, path: &str, body: &serde_json::Value) {
+        let mut shared = self.shared.lock().unwrap();
+        shared
+            .missing_routes
+            .insert(path.to_owned(), (400, body.clone()));
     }
 
     /// Hold a real request until the test releases it, without a timing sleep. `path` is a route
@@ -1353,7 +1363,7 @@ fn serve(
             } else {
                 "Not Found"
             };
-            let error = serde_json::json!({ "error": error }).to_string();
+            let error = error.to_string();
             let _ = write!(
                 out,
                 "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{error}",

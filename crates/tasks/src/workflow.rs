@@ -217,7 +217,18 @@ pub fn authorities_from(
     project: Option<&str>,
     definition: Option<&Validated>,
 ) -> Result<Vec<Attester>, String> {
-    let mut attesters: Vec<Attester> = taken(value, "workflow_authorities")?.unwrap_or_default();
+    let written: Vec<WrittenAuthority> = taken(value, "workflow_authorities")?.unwrap_or_default();
+    for authority in &written {
+        authority.check_page()?;
+    }
+    let mut attesters: Vec<Attester> = (written.into_iter())
+        .map(|authority| Attester {
+            adapter: authority.adapter,
+            issuer: authority.issuer,
+            contract: authority.contract,
+            key: authority.key,
+        })
+        .collect();
     let Some(definition) = definition else {
         if !attesters.is_empty() {
             return Err("workflow_authorities: no [workflow] to guard".into());
@@ -235,6 +246,64 @@ pub fn authorities_from(
     // Each adapter is named once (`check_attesters`), so its name orders them.
     ordered(&mut attesters, |attester| attester.adapter.clone());
     Ok(attesters)
+}
+
+/// An authority as the file writes it: what the board records of it ([`Attester`]), and `page`,
+/// where its ledger shows a guard of a task, which a task's page links and the board never
+/// records or decides on.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WrittenAuthority {
+    adapter: String,
+    issuer: String,
+    contract: u32,
+    key: String,
+    #[serde(default)]
+    page: Option<String>,
+}
+
+/// What a `page` names the task by, and the guard: each filled in for the link a page draws.
+const PAGE_TASK: &str = "{task}";
+const PAGE_GUARD: &str = "{guard}";
+
+impl WrittenAuthority {
+    /// Refused unless `page`, filled in, is an address a page may link
+    /// ([`symphony_api::linkable`]): a path of the app or a web address.
+    fn check_page(&self) -> Result<(), String> {
+        let Some(page) = &self.page else {
+            return Ok(());
+        };
+        if symphony_api::linkable(&page_for(page, "area/task", "guard")) {
+            return Ok(());
+        }
+        Err(format!(
+            "workflow_authorities: {}'s page is neither a path of the app nor a web address: \
+             {page}",
+            self.adapter
+        ))
+    }
+}
+
+/// `page`, an authority's as the file writes it, for `guard` of `task`: each `{task}` and
+/// `{guard}` in it filled in.
+pub fn page_for(page: &str, task: &str, guard: &str) -> String {
+    page.replace(PAGE_TASK, task).replace(PAGE_GUARD, guard)
+}
+
+/// The page each authority of the project file `text` names, by its adapter: none for a file
+/// that does not read, or an authority that names none. It is read for a link alone, so what the
+/// file's own reading refuses ([`authorities_from`]) is no page here.
+pub fn authority_pages(text: &str) -> std::collections::BTreeMap<String, String> {
+    let written = table(text)
+        .ok()
+        .and_then(|mut file| file.remove("workflow_authorities"))
+        .and_then(|value| taken::<Vec<WrittenAuthority>>(Some(value), "workflow_authorities").ok())
+        .flatten()
+        .unwrap_or_default();
+    (written.into_iter())
+        .filter(|authority| authority.check_page().is_ok())
+        .filter_map(|authority| Some((authority.adapter, authority.page?)))
+        .collect()
 }
 
 /// The `[project] id` the file commits, which every attestation names as the project it is for:

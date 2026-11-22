@@ -153,6 +153,10 @@ fn constants() -> String {
             "WORKFLOW_APPLY_ROUTE",
             text(api::workflow::WORKFLOW_APPLY_ROUTE),
         ),
+        (
+            "WORKFLOW_GUARDS_PATH",
+            text(api::workflow::WORKFLOW_GUARDS_PATH),
+        ),
     ];
     for (name, value) in constants {
         let _ = writeln!(out, "export const {name} = {value};");
@@ -376,6 +380,19 @@ fn task_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::workflow::Completion>(cfg),
         declared::<api::workflow::Operation>(cfg),
         declared::<api::workflow::LegacyStatus>(cfg),
+        // A task's guards as the board's records have them, and the guard that refused a take.
+        declared::<api::workflow::TaskGuards>(cfg),
+        declared::<api::workflow::GuardAuthority>(cfg),
+        declared::<api::workflow::GuardNeed>(cfg),
+        declared::<api::workflow::GuardedEdge>(cfg),
+        declared::<api::workflow::GuardEntry>(cfg),
+        declared::<api::workflow::GuardMet>(cfg),
+        declared::<api::workflow::GuardRecord>(cfg),
+        declared::<api::workflow::GuardRefusal>(cfg),
+        declared::<api::workflow::GuardWhy>(cfg),
+        declared::<api::workflow::GuardStanding>(cfg),
+        declared::<api::workflow::Attested>(cfg),
+        declared::<api::workflow::Attestee>(cfg),
         // A task's page: its brief, thread, landing offer and gates (its holders' sessions are the
         // agents page's types).
         declared::<api::TaskPage>(cfg),
@@ -1633,16 +1650,121 @@ fn workflow_samples() -> Vec<(String, Value)> {
         effects: vec![api::workflow::Effect::ClearBlock],
     };
     let held = held_listing();
+    let (guards, refused) = guard_samples();
     [
         ("workflow", json!(read)),
         ("noWorkflow", json!(none)),
         ("nextActions", json!(next)),
         ("applied", json!(applied)),
         ("heldListing", json!(held)),
+        ("taskGuards", json!(guards)),
+        ("guardRefusal", json!(refused)),
     ]
     .into_iter()
     .map(|(name, value)| (name.to_owned(), value))
     .collect()
+}
+
+/// A task's guards and a guard's refusal, as [`workflow_samples`] holds them: at review/awaiting,
+/// which the task entered by an edge `design signoff` guards, met at a generation its authority
+/// has moved on from, with Pass review held by `release signoff`, whose authority this host asks
+/// and whose ledger has a page; and the ledger's refusal of that guard, with its two reasons.
+fn guard_samples() -> (api::workflow::TaskGuards, api::workflow::GuardRefusal) {
+    use api::workflow::{
+        Attested, Attestee, GuardAuthority, GuardEntry, GuardMet, GuardNeed, GuardRecord,
+        GuardRefusal, GuardStanding, GuardWhy, GuardedEdge, Pair, TaskGuards,
+    };
+    let record = |result, facts: &[&str], reasons: &[&str], generation| GuardRecord {
+        result,
+        facts: facts.iter().map(|fact| (*fact).to_owned()).collect(),
+        reasons: reasons.iter().map(|reason| (*reason).to_owned()).collect(),
+        epoch: "2026".into(),
+        generation,
+        issued_at: 1_795_000_000.0,
+        expires_at: 1_795_000_600.0,
+        task_revision: 7,
+        at: Pair {
+            phase: "review".into(),
+            state: "awaiting".into(),
+        },
+        input_revisions: [("design".to_owned(), "r4".to_owned())].into(),
+        principal: Attestee {
+            kind: "human".into(),
+            issuer: "local".into(),
+            subject: "owner".into(),
+        },
+    };
+    let authority = |adapter: &str, generation, asked_here| GuardAuthority {
+        adapter: adapter.into(),
+        issuer: "ledger".into(),
+        epoch: Some("2026".into()),
+        generation: Some(generation),
+        conflicted: false,
+        admitted: 3,
+        asked_here,
+    };
+    let guards = TaskGuards {
+        authorities: vec![
+            authority("design", 12, false),
+            authority("release", 41, true),
+        ],
+        guards: vec![
+            GuardNeed {
+                guard: "design_signoff".into(),
+                adapter: "design".into(),
+                page: None,
+            },
+            GuardNeed {
+                guard: "release_signoff".into(),
+                adapter: "release".into(),
+                page: Some("/docs/LEDGER.md#w/a:release_signoff".into()),
+            },
+        ],
+        edges: vec![GuardedEdge {
+            edge: "pass".into(),
+            guards: vec!["release_signoff".into()],
+        }],
+        entry: Some(GuardEntry {
+            edge: "submit".into(),
+            label: "Submit".into(),
+            revision: 7,
+            principal: Attestee {
+                kind: "agent".into(),
+                issuer: "board".into(),
+                subject: "amber-wren".into(),
+            },
+            at: 1_794_990_000.0,
+            guards: vec![GuardMet {
+                guard: "design_signoff".into(),
+                adapter: "design".into(),
+                issuer: "ledger".into(),
+                epoch: "2026".into(),
+                generation: 11,
+                standing: GuardStanding::DecidedAgain,
+                record: Some(record(
+                    Attested::Pass,
+                    &["the design was approved /docs/DECISIONS.md#design-signoff"],
+                    &[],
+                    11,
+                )),
+            }],
+        }),
+    };
+    let refused = GuardRefusal {
+        guard: "release_signoff".into(),
+        adapter: "release".into(),
+        why: GuardWhy::Refused,
+        record: Some(record(
+            Attested::Refuse,
+            &[],
+            &[
+                "a blocker is still open /task/w/a",
+                "the release check failed https://ci.example/runs/7",
+            ],
+            41,
+        )),
+    };
+    (guards, refused)
 }
 
 /// A listing that holds its tasks in their phases: one built, one awaiting review after its

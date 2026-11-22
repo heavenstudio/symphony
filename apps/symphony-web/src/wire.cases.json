@@ -3463,6 +3463,88 @@
         "workflow": 2
       }
     },
+    "taskGuards": {
+      "authorities": [
+        {
+          "adapter": "design",
+          "issuer": "ledger",
+          "epoch": "2026",
+          "generation": 12,
+          "conflicted": false,
+          "admitted": 3,
+          "asked_here": false
+        },
+        {
+          "adapter": "release",
+          "issuer": "ledger",
+          "epoch": "2026",
+          "generation": 41,
+          "conflicted": false,
+          "admitted": 3,
+          "asked_here": true
+        }
+      ],
+      "guards": [
+        { "guard": "design_signoff", "adapter": "design" },
+        {
+          "guard": "release_signoff",
+          "adapter": "release",
+          "page": "/docs/LEDGER.md#w/a:release_signoff"
+        }
+      ],
+      "edges": [{ "edge": "pass", "guards": ["release_signoff"] }],
+      "entry": {
+        "edge": "submit",
+        "label": "Submit",
+        "revision": 7,
+        "principal": { "kind": "agent", "issuer": "board", "subject": "amber-wren" },
+        "at": 1794990000.0,
+        "guards": [
+          {
+            "guard": "design_signoff",
+            "adapter": "design",
+            "issuer": "ledger",
+            "epoch": "2026",
+            "generation": 11,
+            "standing": "decided_again",
+            "record": {
+              "result": "pass",
+              "facts": ["the design was approved /docs/DECISIONS.md#design-signoff"],
+              "reasons": [],
+              "epoch": "2026",
+              "generation": 11,
+              "issued_at": 1795000000.0,
+              "expires_at": 1795000600.0,
+              "task_revision": 7,
+              "at": { "phase": "review", "state": "awaiting" },
+              "input_revisions": { "design": "r4" },
+              "principal": { "kind": "human", "issuer": "local", "subject": "owner" }
+            }
+          }
+        ]
+      }
+    },
+    "guardRefusal": {
+      "guard": "release_signoff",
+      "adapter": "release",
+      "why": "refused",
+      "record": {
+        "result": "refuse",
+        "facts": [],
+        "reasons": [
+          "a blocker is still open /task/w/a",
+          "the release check failed https://ci.example/runs/7"
+        ],
+        "epoch": "2026",
+        "generation": 41,
+        "issued_at": 1795000000.0,
+        "expires_at": 1795000600.0,
+        "task_revision": 7,
+        "at": { "phase": "review", "state": "awaiting" },
+        "input_revisions": { "design": "r4" },
+        "principal": { "kind": "human", "issuer": "local", "subject": "owner" }
+      }
+    },
     "attempts": {
       "attempts": [
         {

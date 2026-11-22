@@ -77,6 +77,7 @@ pub(crate) const READS: &[&str] = &[
     symphony_api::SETTINGS_PATH,
     symphony_api::workflow::WORKFLOW_PATH,
     symphony_api::workflow::WORKFLOW_ACTIONS_PATH,
+    symphony_api::workflow::WORKFLOW_GUARDS_PATH,
     symphony_api::TASK_ATTEMPTS_PATH,
 ];
 
@@ -339,6 +340,7 @@ fn arguments(asked: &Asked, request: &Request) -> Result<(), Box<Response>> {
             | symphony_api::TASK_DIFF_PATH
             | symphony_api::TASK_DIFF_FILE_PATH
             | symphony_api::workflow::WORKFLOW_ACTIONS_PATH
+            | symphony_api::workflow::WORKFLOW_GUARDS_PATH
             | symphony_api::TASK_ATTEMPTS_PATH
     ) {
         argument(request, "slug").map_err(bad)?;
@@ -349,6 +351,13 @@ fn arguments(asked: &Asked, request: &Request) -> Result<(), Box<Response>> {
         return Err(refused(
             StatusCode::FORBIDDEN,
             "Forbidden: next actions are the local owner's, never a hosted visitor's",
+        ));
+    }
+    // A task's guards are read with its actions, and are the local owner's as they are.
+    if asked.hosted && path == symphony_api::workflow::WORKFLOW_GUARDS_PATH {
+        return Err(refused(
+            StatusCode::FORBIDDEN,
+            "Forbidden: a task's guards are the local owner's, never a hosted visitor's",
         ));
     }
     if path == symphony_api::AGENT_SCREEN_PATH {
@@ -562,6 +571,7 @@ async fn over_hub(shared: &Arc<Shared>, hub: Arc<Hub>, asked: Asked, request: Re
         }
         "/api/feed" => feed(hub, scope, request).await,
         symphony_api::TASK_ATTEMPTS_PATH => attempts(hub, &request).await,
+        symphony_api::workflow::WORKFLOW_GUARDS_PATH => guards(hub, &request).await,
         symphony_api::workflow::WORKFLOW_PATH | symphony_api::workflow::WORKFLOW_ACTIONS_PATH => {
             workflow(hub, path, &request).await
         }
@@ -594,6 +604,21 @@ async fn attempts(hub: Arc<Hub>, request: &Request) -> Response {
             crate::attempts::Asker::hosted(&context.actor, &context.policy_revision)
         });
     let read = crate::spawn::blocking(move || crate::attempts::read(&hub, &slug, &asker).map(Json));
+    answered(read.await, "")
+}
+
+/// The guards of one task a custom workflow holds, as the board's records have them, with each
+/// authority's page and whether this host asks it (`symphony::guards`): the same for every branch,
+/// the project file's pages the main checkout's.
+async fn guards(hub: Arc<Hub>, request: &Request) -> Response {
+    let slug = query(request, "slug").unwrap_or_default();
+    let read = crate::spawn::blocking(move || {
+        let store = hub.reader().map_err(|e| unavailable(&e, ""))?;
+        let read = symphony::guards::of(&hub.root, &store, &slug)
+            .map(Json)
+            .map_err(task_failure);
+        hub.read_on(&store, read)
+    });
     answered(read.await, "")
 }
 

@@ -122,6 +122,8 @@ export const CASES = cases as unknown as {
     applied: unknown;
     /** A waiting listing of tasks the workflow holds, one blocked in Build. */
     heldListing: unknown;
+    taskGuards: unknown;
+    guardRefusal: unknown;
     /** A task's attempts: one stopped, its resume running, one of a provider not held; a view. */
     attempts: unknown;
     attemptLink: unknown;

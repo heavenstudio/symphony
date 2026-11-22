@@ -74,3 +74,187 @@
   flex: 1;
   min-width: 0;
 }
+
+/* A task's guards (guards.tsx): a box under the action a guard holds, and one over the actions for
+   the guards that let the task in. A row is a gate's row in shape: the name with its dot, the
+   state, why, and the authority with what the board accepted from it; wide, one line, on a phone
+   three. The name opens the board's record of it under the row. */
+.guard-box {
+  flex: 1 1 100%;
+  margin: 2px 0 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--card);
+}
+.guard-box .guard-head {
+  margin: 0;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.guard-box .guards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: fit-content(14em) max-content minmax(10em, 1fr) fit-content(18em);
+  column-gap: 16px;
+}
+.guards .guard {
+  --c: var(--muted-foreground);
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: baseline;
+  gap: 4px 16px;
+  padding: 8px 0;
+}
+.guards .guard + .guard {
+  border-top: 1px solid var(--border);
+}
+.guards .guard-amber {
+  --c: var(--question);
+}
+.guards .guard-red {
+  --c: var(--dislike);
+}
+.guards .guard-green {
+  --c: var(--like);
+}
+.guard-name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.guard-name::before {
+  content: "";
+  flex: none;
+  align-self: center;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--c);
+}
+.guard-open {
+  font: inherit;
+  font-weight: 600;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--primary);
+  text-align: start;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.guard-open:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+.guard-state {
+  --c: inherit;
+  justify-self: start;
+}
+.guard-why,
+.guard-by,
+.guard-record dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.guard-why code,
+.guard-record code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+.guard-host {
+  color: var(--muted-foreground);
+  font-size: 0.9em;
+}
+.guard-out::after {
+  content: " \2197";
+}
+.guard-by {
+  display: grid;
+  justify-items: end;
+  color: var(--muted-foreground);
+  font-size: 0.93em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.guard-record {
+  grid-column: 3 / -1;
+  padding: 8px 12px;
+  border-inline-start: 3px solid var(--c);
+  border-radius: 0 var(--r-md) var(--r-md) 0;
+  background: color-mix(in srgb, var(--muted-foreground) 8%, transparent);
+}
+.guard-record .guard-record-title {
+  margin: 0 0 4px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.guard-record dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 14px;
+}
+.guard-record dl > div {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+}
+.guard-record dt {
+  color: var(--muted-foreground);
+}
+.guard-record dd {
+  margin: 0;
+}
+.guard-box .guard-foot {
+  margin: 6px 0 0;
+  color: var(--muted-foreground);
+  font-size: var(--fs-xs);
+}
+
+@media (max-width: 760px) {
+  .guard-box .guards {
+    display: block;
+  }
+  .guards .guard {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "name state" "why why" "by by" "record record";
+    column-gap: 12px;
+  }
+  .guard-name {
+    grid-area: name;
+  }
+  .guard-state {
+    grid-area: state;
+    justify-self: end;
+  }
+  .guard-why {
+    grid-area: why;
+  }
+  .guard-by {
+    grid-area: by;
+    display: block;
+    text-align: left;
+    font-size: var(--fs-xs);
+  }
+  .guard-by .guard-accepted::before {
+    content: " · ";
+  }
+  .guard-record {
+    grid-area: record;
+  }
+  .guard-record dl {
+    display: block;
+  }
+  .guard-record dl > div {
+    display: block;
+    margin-top: 4px;
+  }
+}
