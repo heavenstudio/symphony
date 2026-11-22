@@ -350,15 +350,19 @@ pub fn document_marked(
             crate::blocks::parse(&fragment.html, &fragment.media, &scoped_path(rel, scope));
     }
     comparison::apply(render, rel, scope, &text, &mut doc);
-    if merging {
-        // After the comparison, which reads the sections as the text's blocks in order.
-        let mut notice: Vec<symphony_api::Section> = wire(render.typed_sections(MERGING, rel));
+    // A notice's sections are put before the document's, keyed `key`, at no place in its text.
+    let mut notice = |text: &str, key: &str| {
+        let mut notice: Vec<symphony_api::Section> = wire(render.typed_sections(text, rel));
         for section in &mut notice {
-            section.key = "merging".into();
+            section.key = key.into();
             (section.start, section.end, section.part) = (0, 0, None);
             finish(section, render.root(), rel, scope);
         }
         doc.sections.splice(0..0, notice);
+    };
+    if merging {
+        // After the comparison, which reads the sections as the text's blocks in order.
+        notice(MERGING, "merging");
     }
     if scope.is_empty()
         && let Some(note) = crate::commit::pending::note(
@@ -366,13 +370,7 @@ pub fn document_marked(
             &crate::project::Project::of(render.root()).file(rel),
         )
     {
-        let mut notice: Vec<symphony_api::Section> = wire(render.typed_sections(&note, rel));
-        for section in &mut notice {
-            section.key = crate::commit::pending::NOTE.into();
-            (section.start, section.end, section.part) = (0, 0, None);
-            finish(section, render.root(), rel, scope);
-        }
-        doc.sections.splice(0..0, notice);
+        notice(&note, crate::commit::pending::NOTE);
     }
     for section in &mut doc.sections {
         section.ends = symphony_api::Section::ends_of(&section.blocks);
