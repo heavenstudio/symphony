@@ -281,7 +281,7 @@ describe("a part's read that fails", () => {
     expect(shownFromDevice(parts.fresh)).toBeNull();
   });
 
-  it("draws no copy the device gives once the server answered, nor one after the part went", async () => {
+  it("draws no copy the device gives after a failure once the server answered", async () => {
     const found = later<Kept | undefined>();
     let fails = 1;
     const { parts, device } = page(() =>
