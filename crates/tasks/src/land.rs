@@ -2052,18 +2052,7 @@ impl Landing<'_> {
             match self.store.move_to(slug, "review", self.actor) {
                 Ok(task) => {
                     said.push_str(&format!("; {slug} is back in review"));
-                    // As a move to review on the command line does: the project's `on_review`.
-                    if on_review::delivery_task(task.parent.as_deref(), task.instruction) {
-                        match on_review::trigger(self.env, &self.main, slug, self.recorder) {
-                            Started::Command(args) => {
-                                said.push_str(&format!(", its verify started ({})", args.join(" ")))
-                            }
-                            Started::Refused(why) => {
-                                said.push_str(&format!(", its verify did not start ({why})"));
-                            }
-                            Started::None => {}
-                        }
-                    }
+                    said.push_str(&self.verifying(&task));
                 }
                 Err(error) => said.push_str(&format!(
                     "; it stays done, the land could not send it back to review ({error}): \
@@ -2076,6 +2065,19 @@ impl Landing<'_> {
         }
         self.post(&said, refusal.to);
         Stop::Refused(refusal.line)
+    }
+
+    /// What a move of `task` back to review by a land starts, as one on the command line does:
+    /// the project's `on_review`. What its line adds, nothing where none starts.
+    fn verifying(&self, task: &Task) -> String {
+        if !on_review::delivery_task(task.parent.as_deref(), task.instruction) {
+            return String::new();
+        }
+        match on_review::trigger(self.env, &self.main, self.slug, self.recorder) {
+            Started::Command(args) => format!(", its verify started ({})", args.join(" ")),
+            Started::Refused(why) => format!(", its verify did not start ({why})"),
+            Started::None => String::new(),
+        }
     }
 
     fn post(&self, text: &str, to: Option<&str>) {

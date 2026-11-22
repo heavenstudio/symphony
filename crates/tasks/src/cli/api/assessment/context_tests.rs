@@ -61,7 +61,7 @@ fn connect_only_valid_v2_calls_remain_pending_before_any_connection_in_every_inp
 }
 
 #[test]
-fn legacy_wrappers_keep_one_lazy_connection_for_lists_and_lines() {
+fn run_in_and_serve_in_with_no_context_keep_one_lazy_connection_for_lists_and_lines() {
     let call = json!({"method": "assessment_state", "args": {"slug": "task"}});
     for streaming in [false, true] {
         let input = if streaming {

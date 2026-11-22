@@ -1,6 +1,6 @@
 ---
 name: apply-review
-description: Apply the owner's review verdicts to the design docs. Use after the owner has reviewed in the Symphony (`just symphony`) — answers every open note in docs/DECISIONS.md, turns rejections into new proposal cards, and rewrites documents that disagree with a verdict under the project's workflow. Trigger on "apply my review", "I made decisions", "I left comments", or /apply-review.
+description: Apply the owner's review verdicts to the design docs. Use after the owner has reviewed in the Symphony (`just symphony`) — answers every open note on a card, turns rejections into new proposal cards, and rewrites documents that disagree with a verdict under the project's workflow. Trigger on "apply my review", "I made decisions", "I left comments", or /apply-review.
 ---
 
 # Apply the owner's review
@@ -36,8 +36,11 @@ do not treat it as approval, and change documents only when it asks for that.
    plain approvals resolved (dated) and regroups every register owner-first
    (the project register and its per-topic pages).
    Then `just symphony-status --open` and
-   `just symphony-status --json`. Read `docs/DECISIONS.md` in
-   full. Note every owner note, including those on approved cards, and every
+   `just symphony-status --json`, which names each card's file and line. A
+   card sits at the place in its document where the thing it decides is said,
+   so read each open card in its document, with the prose around it; the
+   project's register holds only the cards no document says the subject of.
+   Note every owner note, including those on approved cards, and every
    owner callout in other documents.
 
 2. **List every owner comment that has no agent reply after it, whatever the
@@ -48,7 +51,7 @@ do not treat it as approval, and change documents only when it asks for that.
    each comment on an approved card as a change request for the documents in
    step 4, not only as something to reply to.
 
-3. **Answer every open item in the register** with one dated line appended
+3. **Answer every open item** with one dated line appended
    under the card, `  [YYYY-MM-DD HH:MM] agent — <reply>` (continuation lines
    indented four spaces). Never edit the owner's words
    or marker, and never rewrite an earlier line: history is append-only. Plain words; explain jargon the owner asked about. A reply may use
@@ -66,10 +69,14 @@ do not treat it as approval, and change documents only when it asks for that.
    hand closes it credited to no one.
 
 4. **Turn rejections into proposals.** Where a rejection or note needs a
-   replacement the owner did not fully write, add a new `[ ]` card in a new
-   `###` topic inside the register region (between `register:start` and
-   `register:end`), naming the card it replaces or extends. The tidy pass
-   moves it into "Needs your decision". **Where the owner's note already states
+   replacement the owner did not fully write, add a new `[ ]` card at the place
+   it decides: in the document that says the thing, directly under the
+   paragraph or heading that says it, its line at the left margin with a blank
+   line above and below, never in a section at the document's end. That is the
+   rejected card's own place unless it decides something said elsewhere. On a
+   page that is a register of cards it goes inside the register region (between
+   `register:start` and `register:end`), which the tidy pass regroups. Name the
+   card it replaces or extends, and give it a name no other card has. **Where the owner's note already states
    the direction, make no card**: apply it to the documents and say so in the
    reply on the original card. The owner called cards that only restate their
    own words pointless: a card must ask for a real choice (a proposal they did
@@ -104,11 +111,11 @@ do not treat it as approval, and change documents only when it asks for that.
    content rules, together with the destination project's instructions. If the
    project permits delegation, assign disjoint file groups with their relevant
    verdicts and linked headings. Follow its launch, model and concurrency policy.
-   Keep register updates with the integrating session so replies remain ordered.
+   Keep card updates with the integrating session so replies remain ordered.
    Give each assignment an explicit scope, validation and commit boundary.
 
-7. **Integrate.** From the reports: fix any `[[FILE#Heading]]` link in
-   `DECISIONS.md` whose heading was renamed; check `just symphony-status --open`
+7. **Integrate.** From the reports: fix any `[[FILE#Heading]]` link on a
+   card, in whichever document holds it, whose heading was renamed; check `just symphony-status --open`
    shows nothing but what is waiting on the owner; check word counts went down;
    skim each rewritten file for anything presented as decided that is only a
    pending proposal. Run `just symphony-status --tidy` so the register ends

@@ -1,7 +1,8 @@
 //! The board's PostgreSQL, beside its SurrealDB ([`Postgres`]): the machine's own, installed by its
 //! package manager, from the folder of programs the project file names (`[board] postgresql`)
 //! or found on `PATH` ([`discover_programs`];
-//! [its card](../../../../docs/DECISIONS.md#postgresql-binary-source)). It serves the board whose
+//! [its card](../../../../docs/analysis/postgresql-binary-source.md#postgresql-binary-source)).
+//! It serves the board whose
 //! home's durable engine identity names it ([`Home::board_server`]): a scratch home's by
 //! [`Home::initialize_backend`], any other's by the move alone ([`super::moving`]).
 //!

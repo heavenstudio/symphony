@@ -1548,3 +1548,22 @@ fn a_held_clock_is_a_finite_number_of_seconds_and_nothing_else() {
     assert_eq!(held(Some("inf")), None);
     assert_eq!(held(Some("NaN")), None);
 }
+
+/// What the machine's records are read at: the moment `TASKS_NOW` holds, else the hub's own clock
+/// as it moves, for no value as for one that holds no moment. The env read itself is
+/// `recorded_now`'s one line and is not tested: setting the process's env would reach every test
+/// of this binary that reads records while it runs (`api::reports`, `api::runs`).
+#[test]
+fn records_are_read_at_the_held_moment_else_at_the_hubs_clock() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let clock = Clock::at(now());
+    let hub = hub(&root, &tree.path("health.json"), &clock);
+    assert_eq!(hub.recorded_at(Some("1772443800.5")), 1_772_443_800.5);
+    for text in [None, Some(""), Some("soon"), Some("inf")] {
+        assert_eq!(hub.recorded_at(text), clock.now(), "{text:?}");
+    }
+    clock.pass(60.0);
+    assert_eq!(hub.recorded_at(None), clock.now());
+    assert_eq!(hub.recorded_at(Some("1772443800.5")), 1_772_443_800.5);
+}

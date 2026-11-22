@@ -49,12 +49,13 @@ impl Tree {
     }
 }
 
-/// A register card a branch's worktree holds that the owner is to read.
+/// A card a branch's worktree holds, inline in a document or in a register, that the owner is to
+/// read.
 #[derive(Clone, Debug)]
 pub struct BranchCard {
     pub tree: Tree,
-    /// The page's document name, `docs/DECISIONS.md`, whatever the project's documents folder is
-    /// called: [`Project::file`] is the file under the worktree.
+    /// The page's document name, as `docs/RELEASES.md`, whatever the project's documents folder
+    /// is called: [`Project::file`] is the file under the worktree.
     pub doc: String,
     /// On a live branch, the card as the branch's HEAD commit holds it, with the owner's lines its
     /// worktree holds uncommitted laid on top. A card the owner spoke on that only a draft or a
@@ -241,11 +242,25 @@ fn merged(root: &Path, main: &str) -> HashSet<String> {
     .collect()
 }
 
-/// The document pages of the project's entrypoints at `rev` that hold a register (cards): where a
-/// branch's cards can be. None when git could not say.
+/// A card's line as `git grep -E` finds it, the one [`crate::register::card_line`] reads: `- [m]
+/// **`, the mark one of the seven.
+const CARD_LINE: &str = r"^-[[:space:]]+\[[ xX?r~a-]\][[:space:]]+\*\*";
+
+/// The document pages of the project's entrypoints at `rev` that hold cards, in a register region
+/// or inline at the place they decide: where a branch's cards can be. None when git could not say.
 fn registers(at: &Path, rev: &str, project: &Project) -> Option<Vec<String>> {
     let folders = project.pathspecs();
-    let mut args = vec!["grep", "-l", "-e", REGION_START, rev, "--"];
+    let mut args = vec![
+        "grep",
+        "-l",
+        "-E",
+        "-e",
+        REGION_START,
+        "-e",
+        CARD_LINE,
+        rev,
+        "--",
+    ];
     args.extend(folders.iter().map(String::as_str));
     Some(
         git_grep(at, &args)?

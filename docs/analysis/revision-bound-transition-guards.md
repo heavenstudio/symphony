@@ -7,14 +7,14 @@ later candidate cannot inherit it merely because the task is still in the same c
 This is the design contract for the artifact-guard extension to the
 [configurable workflow contract](configurable-delivery-workflow.md#Admission and authority),
 using the project-owned approval authority selected on
-[its enforcement card](../DECISIONS.md#revision-bound-project-guards). Symphony supplies atomic
+[its enforcement card](#revision-bound-project-guards). Symphony supplies atomic
 admission and refusal; the project supplies authoritative human approval records and exact,
 versioned attestations. This is not a check runner, risk engine or replacement stamp catalogue.
 No API, ledger adapter, human identity integration or enforcement is implemented by this document.
 
-The [activation choice](../DECISIONS.md#configurable-workflow-activation) selects automatic
+The [activation choice](configurable-delivery-workflow.md#configurable-workflow-activation) selects automatic
 activation of a valid committed workflow, with complete mappings and prerequisite checks.
-The [ingress choice](../DECISIONS.md#hosted-ingress-boundary) selects the server adapter for
+The [ingress choice](hosted-ingress.md#hosted-ingress-boundary) selects the server adapter for
 trusted visitor/project context. Those directions are decided; their implementations and the
 project's approval-authority integration must exist before protected operations can activate.
 
@@ -86,11 +86,24 @@ The [external-effect boundary](#The external effect boundary) therefore retains 
 last-validated-dispatch limit. These are adapter eligibility conditions, not permission to
 ignore known stale authority.
 
-The [workflow direction](../DECISIONS.md#project-workflow-shape) still chooses the graph and the
-[stamp decision](../DECISIONS.md#needed-stamps) still preserves generic readers and project
+The [workflow direction](project-workflow.md#project-workflow-shape) still chooses the graph and the
+[stamp decision](needed-stamps.md#needed-stamps) still preserves generic readers and project
 landing ownership. No stamp kind or assessment waiver is added. Projects without guards retain
 their existing behavior. Historical alternatives and the approval-record ownership decision
-remain on [the enforcement card](../DECISIONS.md#revision-bound-project-guards).
+remain on [the enforcement card](#revision-bound-project-guards).
+
+- [r] **revision-bound-project-guards** — A project could require a person's approval of exact requirements, a candidate or a package and destination before a delivery handoff. Where should the authoritative approval record live? A: Symphony stores the common human request/decision records; the project supplies criteria and gate membership. B: each project owns its approval ledger and supplies exact, versioned attestations to Symphony's transition service. Both check current inputs and authorized people at admission and before an adapter sends a merge or deployment. Recommended: A. Approve and say A or B, or comment. [[analysis/revision-bound-transition-guards#Where approval authority lives]]
+  [2026-11-17 20:14] agent — Proposed for `design/revision-bound-transition-guards`. This is design only: no runtime enforcement, human identity service, consumer edit or live migration is claimed or authorized here.
+
+    **A:** Symphony implements the record lifecycle, authenticated decision methods and audit once, beside its paired-store admission checks. Projects adopt those common facts and fresh-approval rules. **B:** projects choose or build their own ledger and preserve its decision semantics, but must supply bounded availability, history and versioned revocation/freshness integration. Today's cached Gates answer and custom landing command are not that contract. Both preserve existing stamps, project landing ownership and unchanged projects with no guards.
+
+    **Shared limit.** A changed bound input, policy or workflow activation requires a fresh approval; the recommended contract has no carry-forward. External effects are authorized at their last validated dispatch snapshot: a later withdrawal cannot recall an already sent request. A project requiring stronger remote revocation needs a cooperating adapter before that edge can activate. A supplies no human login or membership service by itself; B cannot authorize advancement from an unavailable or outdated ledger.
+
+    **Earlier verdicts checked.** **project-workflow-shape** approved C and its unchanged defaults; it does not decide the artifact/approval authority or external-effect guarantee. **needed-stamps** keeps its four generic readers and project replacement policy: this extension adds no stamp kind, check runner or assessor waiver. **configurable-workflow-activation** remains a separate pending choice about when a graph becomes active. **hosted-ingress-boundary** also remains pending; its visitor context alone would not establish project gate membership. None approves this concrete guard/principal/record contract. Gate placements in the linked delivery requirements do not assign project approvers or deployment targets.
+  [2026-11-17 20:28] agent — Clarified the source-backed alternatives: the delivery requirements prescribe human decisions on exact artifacts, while the existing gate/landing seams retain project evidence policy; neither chooses approval-record custody. The analysis details A and B's required authority adapter. This asks only the new guard policy, separately from workflow activation and durable byte storage.
+  [2026-11-17 20:44] owner · approved — B
+  [2026-11-17 20:54] agent — Your “B” selects project-owned approval ledgers supplying exact, versioned attestations to Symphony. Admission must refuse unavailable, stale or revoked authority and recheck current inputs and authorized people before dispatch. Symphony will not own the human approval ledger; the analysis and implementation handoff will be aligned to B while preserving the existing stamps and project landing policy.
+  [2026-11-17 20:54] agent · resolved
 
 ## Identities and records
 
