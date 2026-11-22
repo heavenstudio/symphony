@@ -1460,8 +1460,8 @@ fn a_release_servers_follow_reads_current_when_its_watcher_hears_the_link_move()
         server.home.join(release::CURRENT).display().to_string(),
     );
     let over = Modify(ModifyKind::Name(RenameMode::Both));
-    tell_at(&server.home, event(Create(CreateKind::Any), &[&made]));
-    tell_at(&server.home, event(over, &[&made, &current]));
+    tell_at(&server.home, event(Create(CreateKind::Any), [&made]));
+    tell_at(&server.home, event(over, [&made, &current]));
     assert_eq!(
         server.notice_after(""),
         format!(
@@ -1772,29 +1772,29 @@ fn current_moves_at_a_change_naming_its_link_a_rescan_or_the_watchers_error() {
     // `point`'s new link renamed over the old, as each backend says it.
     assert!(super::moves_current(&event(
         over,
-        &["/m/.current.7", "/m/current"]
+        ["/m/.current.7", "/m/current"]
     )));
     assert!(super::moves_current(&event(
         Create(CreateKind::Any),
-        &["/m/current"]
+        ["/m/current"]
     )));
     assert!(super::moves_current(&event(
         Remove(RemoveKind::Any),
-        &["/m/current"]
+        ["/m/current"]
     )));
     // The new link made beside it, the registry written, a release installed, or the link read.
     assert!(!super::moves_current(&event(
         Create(CreateKind::Any),
-        &["/m/.current.7"]
+        ["/m/.current.7"]
     )));
-    assert!(!super::moves_current(&event(over, &["/m/projects.json"])));
+    assert!(!super::moves_current(&event(over, ["/m/projects.json"])));
     assert!(!super::moves_current(&event(
         Create(CreateKind::Folder),
-        &["/m/releases/current-2"]
+        ["/m/releases/current-2"]
     )));
     assert!(!super::moves_current(&event(
         Access(AccessKind::Any),
-        &["/m/current"]
+        ["/m/current"]
     )));
     // What a lost or failing stream says: read it again.
     assert!(super::moves_current(&Ok(notify::Event::new(Modify(
