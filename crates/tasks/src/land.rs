@@ -197,6 +197,23 @@ pub struct Generator {
     pub when_changed: bool,
 }
 
+/// `generator`'s `command`, in the table `table` (`[land]` or `[verdicts]`), as every reader of the
+/// project file takes it, the land's and the Symphony's load: refused when it names no program (no
+/// word, or an empty first one), as a key's command is ([`keyed`]).
+///
+/// # Errors
+///
+/// For a command that names no program, naming the table and the generator.
+pub fn commanded(table: &str, generator: &Generator) -> Result<(), String> {
+    if generator.command.first().is_none_or(String::is_empty) {
+        return Err(format!(
+            "{table} generator {} has no command",
+            generator.name
+        ));
+    }
+    Ok(())
+}
+
 /// `keys` (`[land] keys`, a generator's name to its key's command) checked against `generators`:
 /// a name no generator has, or a key with no command, is refused by its name. A generator is named
 /// by its name alone, in its key and in what the regenerator says, so two of one name are refused
@@ -408,18 +425,13 @@ impl Settings {
         }
         let file: Manifest = toml::from_str(text)
             .map_err(|error| format!("{MANIFEST}: {}", error.to_string().trim_end()))?;
-        let default_branch = file.project.default_branch.unwrap_or_else(|| "main".into());
-        if default_branch.trim().is_empty() {
-            return Err(format!("{MANIFEST}: [project] default_branch is empty"));
-        }
+        let default_branch = crate::project::default_branch(file.project.default_branch.as_deref())
+            .map_err(|why| format!("{MANIFEST}: {why}"))?
+            .unwrap_or(crate::live::MAIN)
+            .to_string();
         let mut generators = file.land.generators;
         for generator in &mut generators {
-            if generator.command.first().is_none_or(String::is_empty) {
-                return Err(format!(
-                    "{MANIFEST}: [land] generator {} has no command",
-                    generator.name
-                ));
-            }
+            commanded("[land]", generator).map_err(|why| format!("{MANIFEST}: {why}"))?;
             generator.outputs = inside(&generator.outputs).ok_or_else(|| {
                 format!(
                     "{MANIFEST}: [land] generator {} writes {:?}, not a path inside the project",
