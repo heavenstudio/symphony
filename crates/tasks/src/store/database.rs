@@ -3,8 +3,9 @@
 //! statement names its text in each database's language ([`super::statement`]), and the store's one
 //! sender ([`super::transaction`]) hands it to the database the board is in.
 
+use crate::db::DbError;
 use crate::pg;
-use crate::rpc::{self, DbError};
+use crate::rpc;
 use serde_json::Value;
 use std::time::Duration;
 
