@@ -53,35 +53,6 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ## Waiting on an agent
 
-### People and sign-in
-
-- [x] **task-acts-who** — You file, move, rank and cancel tasks today. With several people, something must say who does. A: it is part of deciding; the members of the group that owns a task move, rank and cancel it, and anyone who may speak files one. B: it is a power of its own, to manage tasks, given apart from deciding. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Who acts on a task]]
-  [2026-11-21 17:41] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
-
-    ![Who may file, move, rank and cancel a task](analysis/users-and-identity/task-acts.svg)
-
-    **Base (today).** You file a task from the page, move it, rank it and cancel it. Agents act on tasks by the roles they hold there.
-
-    **A, part of deciding.**
-    - The members of the group that owns a task move, rank and cancel it, as they approve it.
-    - Anyone who may speak files a task. It goes to the group its place gives.
-
-    **B, a power of its own.**
-    - A sixth power, to manage tasks. Whoever holds it files, moves, ranks and cancels any task on the board.
-    - The owning group still decides its cards and approves its tasks.
-    - A person can run a board's tasks without deciding anything on it.
-
-    **Under both** starting an agent on a task needs the power to direct agents, and approving a task is deciding.
-
-    **Why A.** A task's order and its end are decisions about the work, and the group that owns the work makes them. B fits a team with someone who plans and does not decide. It costs a sixth power to give, and two people who can each say what is next.
-
-    **Earlier verdicts checked.**
-    - **group-answer-settles** (A) says any one member settles what their group owns. It was asked of a card's answer, not of moving or cancelling a task.
-    - **owning-group-how-named** (C) says which group a task belongs to, not what its members may do to it.
-
-    Neither decides this.
-  [2026-11-22 12:44] owner · approved — A
-
 ### Task timeline
 
 - [x] **timeline-navigation** — A task's wide timeline would still open on the whole task, and gain zoom and sideways movement. Builds and tests would sit on one or two rows at their recorded times, not in a pile, and messages would be small ticks under the bars, not rings on them. One choice is open: what to do with a long stretch in which the task's records hold nothing. The 10 h 54 m after `tools/workflow-revision-guards` closed takes 40% of its width today. A: always the true clock, with zoom alone to get past such a stretch. B: such stretches skipped by default, each a narrow band that says its length, a click or a switch showing true time. C: as B, but off until switched on. Time the records do not cover is never skipped. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/timeline-navigation#The choice]]
@@ -515,6 +486,34 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### People and sign-in
 
+- [r] **task-acts-who** — You file, move, rank and cancel tasks today. With several people, something must say who does. A: it is part of deciding; the members of the group that owns a task move, rank and cancel it, and anyone who may speak files one. B: it is a power of its own, to manage tasks, given apart from deciding. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Who acts on a task]]
+  [2026-11-21 17:41] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
+
+    ![Who may file, move, rank and cancel a task](analysis/users-and-identity/task-acts.svg)
+
+    **Base (today).** You file a task from the page, move it, rank it and cancel it. Agents act on tasks by the roles they hold there.
+
+    **A, part of deciding.**
+    - The members of the group that owns a task move, rank and cancel it, as they approve it.
+    - Anyone who may speak files a task. It goes to the group its place gives.
+
+    **B, a power of its own.**
+    - A sixth power, to manage tasks. Whoever holds it files, moves, ranks and cancels any task on the board.
+    - The owning group still decides its cards and approves its tasks.
+    - A person can run a board's tasks without deciding anything on it.
+
+    **Under both** starting an agent on a task needs the power to direct agents, and approving a task is deciding.
+
+    **Why A.** A task's order and its end are decisions about the work, and the group that owns the work makes them. B fits a team with someone who plans and does not decide. It costs a sixth power to give, and two people who can each say what is next.
+
+    **Earlier verdicts checked.**
+    - **group-answer-settles** (A) says any one member settles what their group owns. It was asked of a card's answer, not of moving or cancelling a task.
+    - **owning-group-how-named** (C) says which group a task belongs to, not what its members may do to it.
+
+    Neither decides this.
+  [2026-11-22 12:44] owner · approved — A
+  [2026-11-22 12:49] agent — Recorded, A: a task's acts are part of deciding. The members of the group that owns a task move it, set its priority and cancel it. Anyone who may speak files one, into the group its place gives. Starting an agent on it still needs the power to direct agents. Written in [[analysis/users-and-identity#Who acts on a task]]. What follows from A: whoever files a task outside its group cannot move or cancel it afterwards. Priority stays one p0 to p4 scale for the whole board, so two groups' p0 tasks are equal. Whether a board weighs one group's work over another's is listed for a later round.
+  [2026-11-22 12:49] agent · resolved
 - [r] **person-profile-where** — Replaces: public-name-where-declared. Your words are the base now: a person has a profile (names, emails, git handles, chat usernames such as Slack, preferences), of which the short name on their lines is one field. What is left to choose is where that profile is kept and who writes it. A: with each board, beside what the person may do there; its admin writes it. B: once, with the server, written by the person; each board keeps only their groups and what they may do. C: as B, and the part that is public anyway (short name, display name, git handles) is also a committed file of the project. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#A person's profile]]
   [2026-11-21 17:39] agent — Posted for the board task `app/users-and-identity`, from your note on **public-name-where-declared**: "We will probably have a mapping of names / emails / git handles / communication usernames and preferences (for example slack user)." A concept: nothing is built by this card.
 

@@ -22,7 +22,8 @@ Read at `59538b83e`. The links name the modules and documents read.
   outside the core. Authorization is the board's ([the picture](#the-shape-proposed)).
 - **A group owns what waits to be decided.** A card or a task belongs to a group, or to one
   person. Its members are told, and any one of them settles it
-  ([decided](#who-in-a-group-decides)).
+  ([decided](#who-in-a-group-decides)). They also move, prioritize and cancel the group's tasks,
+  and anyone who may speak files one ([decided](#who-acts-on-a-task)).
 - **Three things one owner does today come apart.** Speaking to people, deciding, and directing
   agents are held separately. Anyone on a board speaks to anyone, anywhere. The words of someone
   who may not direct agents reach no agent until someone who may passes them on
@@ -343,8 +344,8 @@ it, and every rule reads as it does now.
 | Power | What it lets a person do | Who has it today |
 | --- | --- | --- |
 | read | see the board, its documents and its threads | everyone the gate admits |
-| speak | write to people anywhere: a comment in a document, a message on a card, a message on a task's thread | the owner |
-| decide | resolve what their group owns: a card's verdict, the approve that is the `owner` stamp | the owner |
+| speak | write to people anywhere: a comment in a document, a message on a card, a message on a task's thread; file a task | the owner |
+| decide | resolve what their group owns: a card's verdict, the approve that is the `owner` stamp, a task's move, priority and cancel | the owner |
 | direct agents | have their words reach the board's shared agents and start work, though those agents are not theirs | the owner |
 | administer | say who is on the board, in which groups and with what powers | whoever holds the machine |
 
@@ -413,6 +414,38 @@ What follows:
 - **An agent posting a card writes nothing** in the usual case, and names a group only when the
   question is not its document's.
 
+### Who acts on a task
+
+It is part of deciding ([its card](../DECISIONS.md#task-acts-who), A).
+
+![Who may file, move, rank and cancel a task](users-and-identity/task-acts.svg)
+
+- **The members of the group that owns a task** move it, set its priority and cancel it, as they
+  approve it. Any one of them does it, and a later word from another overrides it, as with a card
+  ([above](#who-in-a-group-decides)).
+- **Anyone who may speak files a task.** It belongs to the group its place maps to, or to the one
+  written on it ([above](#which-group-a-thing-belongs-to)). Filing starts no agent.
+- **Starting an agent on a task** needs the power to direct agents, whoever owns the task.
+- **Agents keep their roles.** What an agent does by its role (a claim, a request for review, a
+  land on its stamps) is not a person's act and stays as it is. What an agent does on a person's
+  word, it does only where that person may.
+
+What follows:
+
+- **There is no sixth power.** The five of [What the owner becomes](#what-the-owner-becomes)
+  cover a task: speaking files it, deciding moves, prioritizes, cancels and approves it, and
+  directing agents starts work on it.
+- **A move, a priority or a cancel is a record agents read**, as a verdict is. A member who may
+  not direct agents moves agents by it, as they do by deciding
+  ([above](#words-without-agent-reach)).
+- **Who files a task and is not in its group** cannot move or cancel it after. They speak on its
+  thread as anyone does.
+- **Priority is one scale for the board**, p0 to p4 as today. Each group sets its own tasks' on
+  it, so two groups' p0 tasks are equal, and agents take them as they do now. Whether a board
+  weighs one group's work over another's is [left for later](#later-rounds).
+- **On a board with nobody named**, the person at the machine is its one group and acts on every
+  task, as today.
+
 ### Words without agent reach
 
 Nothing reaches an agent until someone passes it on
@@ -447,30 +480,7 @@ What follows:
 
 ## This round
 
-Two choices, each a card. Both are about what the powers cover.
-
-### Who acts on a task
-
-**Base.** The owner files a task from the page, moves it, ranks it and cancels it. Agents act on
-tasks by the roles they hold there.
-
-[What the owner becomes](#what-the-owner-becomes) gives five powers and does not say which of
-them covers a task's acts.
-
-![Who may file, move, rank and cancel a task](users-and-identity/task-acts.svg)
-
-- **A, part of deciding.** The members of the group that owns a task move, rank and cancel it,
-  as they approve it. Anyone who may speak files one, which goes to the group its place gives.
-- **B, a power of its own.** A sixth power, to manage tasks: whoever holds it files, moves, ranks
-  and cancels any task on the board. The owning group still decides its cards and approves its
-  tasks. A person can then run a board's tasks without deciding anything on it.
-
-Under both, starting an agent on a task needs the power to direct agents, approving a task is
-deciding, and agents keep their own roles.
-
-**Recommended: A.** A task's order and its end are decisions about the work, and the group that
-owns the work makes them. B fits a team with someone who plans and does not decide; it costs a
-sixth power to give, and two people who can each say what is next.
+One choice is still open, a card about what deciding covers.
 
 ### The note beside a verdict
 
@@ -541,7 +551,7 @@ Each step can ship alone, and a machine with one person sees none of them.
 3. **People, groups and powers on a board.** The rows, the People page, names on lines.
 4. **Ownership.** A card and a task have their group, from the board's map of places or a name
    written on them; queues and notices follow it, and any member's answer settles what the
-   group owns.
+   group owns. Its members move, prioritize and cancel its tasks.
 5. **Speaking apart from directing agents.** A person's words reach people always. The board
    holds the words of someone who may not direct agents, and passing them on makes them an ask.
 6. **The signed word verified.** The core's check of a sign-in service's signed data, and hosted
@@ -571,6 +581,8 @@ Not carded yet.
 
 - What each power covers beyond a task's acts: who changes a board's map of places, who hands a
   thing to another group.
+- Whether a board weighs one group's tasks over another's, where both are staffed from one
+  priority scale.
 - How a person's line reads in a document and on a thread.
 - A profile's notices: which a person gets, by which way (mail, Slack), and what a chat plugin
   is handed to send one.
