@@ -34,8 +34,6 @@ pub use crate::entrypoint::Entrypoint;
 use crate::entrypoint::{SYMPHONY_ROUTES, below, join};
 pub use board::{Board, WipGuidance};
 use file::{File, FileEntrypoint};
-// The project file's one rule for a path inside the project, which the board's own reads of the
-// file take too.
 pub(crate) use model_warnings::warn as warn_models;
 use symphony_board::project::{inside, path_in};
 pub use theme::Theme;
