@@ -2666,7 +2666,15 @@ such as `just land` run under someone's `TASKS_SESSION`) binds nothing. From
 then on each of its tool calls beats for that handle, until a later board
 command names another. A full session with no agent id (one started in an hc terminal, or a
 `claude -p` run) is bound and beats the same way, keyed by its session id, but keeps the first handle
-it names: naming another (registering or relaying for a child) moves nothing. A handle
+it names: naming another (registering or relaying for a child) moves nothing. A launched
+Claude session's beat also registers the channel its agent did not: before a board command of
+the handle bound to it, where an open launch of that handle records the session's conversation,
+the hook registers the session's own inbox socket (`CLAUDE_CODE_MESSAGING_SOCKET`, which Claude
+Code gives a session's hooks) as `just tasks callback --as HANDLE` would have, so an agent that
+skips that command still hears its messages. It does so once for each socket: a channel the
+session turns off stays off, and a restored conversation, a new process on a new socket, is
+connected again. A session no launch records, a subagent, a registration holding the chat seat and
+a Codex thread are left as they are (`crates/tasks/src/cli/beat.rs`, `connect`). A handle
 with a monitor of its own (an orchestrator) is never bound: its monitor beats for it,
 and a session that names such a handle is barred from binding at all, so the calls of
 an orchestrator never keep a child it registered alive. The hook looks at the board
