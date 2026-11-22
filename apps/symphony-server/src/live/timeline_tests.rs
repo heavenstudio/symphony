@@ -6,11 +6,10 @@
 use super::Hub;
 use super::read_paths_tests::{observe, served_with};
 use crate::shelf;
-use crate::testing::store_on;
 use crate::testing::{
     Tree,
     board::{Fixture, NOW, Seed},
-    git, repository,
+    git, repository, store_on,
 };
 use axum::http::StatusCode;
 use serde_json::{Value, json};
