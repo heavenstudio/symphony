@@ -5,7 +5,6 @@
 //! checkout in a temporary folder registered in a temporary machine folder, its board a scratch one
 //! and its `tasks` a stand-in: nothing here reaches the shared server or a live board.
 
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -15,7 +14,7 @@ use super::{Maintain, Projects, Warming};
 use crate::backstop::NO_PERIOD;
 use crate::front::Shared;
 use crate::front::test_clock::TestClock;
-use crate::testing::handing::{Handing, tell_at, watching};
+use crate::testing::handing::{Handing, event, renamed, tell_at, watching};
 use crate::testing::{Tree, joined};
 
 /// The backstop of every wait here: rounds that take milliseconds on a quiet machine.
@@ -137,14 +136,6 @@ fn says(said: &Said, line: &str) -> bool {
     said.lock().unwrap().iter().any(|said| said == line)
 }
 
-/// A watcher event of the registry renamed into place at `path`, as a backend says it.
-fn renamed(path: impl Into<PathBuf>) -> notify::Result<notify::Event> {
-    let kind = notify::EventKind::Modify(notify::event::ModifyKind::Name(
-        notify::event::RenameMode::Any,
-    ));
-    Ok(notify::Event::new(kind).add_path(path.into()))
-}
-
 /// A project registered while the server runs has its maintenance started, and one removed has it
 /// stopped, by the server's own look at the registry, with no request, woken by its watcher of the
 /// machine folder (its backstop's period is past the test); the starter's checkout is never
@@ -212,26 +203,28 @@ fn registering_or_removing_a_project_starts_or_stops_its_maintenance_with_no_req
 fn the_look_is_woken_by_a_change_of_the_registry_or_current_alone() {
     use notify::EventKind::{Access, Create, Modify, Remove};
     use notify::event::{AccessKind, CreateKind, ModifyKind, RemoveKind, RenameMode};
-    let event = |kind, path: &str| Ok(notify::Event::new(kind).add_path(PathBuf::from(path)));
-    let renamed = Modify(ModifyKind::Name(RenameMode::To));
+    let into_place = Modify(ModifyKind::Name(RenameMode::To));
     // The registry written beside itself and renamed into place, and `current` moved.
     for path in ["/m/projects.json", "/m/current"] {
         for kind in [
             Create(CreateKind::File),
             Modify(ModifyKind::Any),
-            renamed,
+            into_place,
             Remove(RemoveKind::Any),
         ] {
-            assert!(super::registry_event(&event(kind, path)), "{kind:?} {path}");
+            assert!(
+                super::registry_event(&event(kind, [path])),
+                "{kind:?} {path}"
+            );
         }
         assert!(!super::registry_event(&event(
             Access(AccessKind::Any),
-            path
+            [path]
         )));
     }
     // The registry's lock, its write under way and a release folder say nothing yet.
     for path in ["/m/projects.lock", "/m/projects.json.4242", "/m/releases"] {
-        assert!(!super::registry_event(&event(renamed, path)), "{path}");
+        assert!(!super::registry_event(&event(into_place, [path])), "{path}");
     }
     // What a lost or failing stream says: read it again.
     assert!(super::registry_event(&Ok(notify::Event::new(Modify(
@@ -245,7 +238,8 @@ fn the_look_is_woken_by_a_change_of_the_registry_or_current_alone() {
 
 #[test]
 fn the_registry_watch_wakes_the_look_once_a_burst_and_one_that_cannot_watch_wakes_nothing() {
-    let machine = std::path::Path::new("/m");
+    // A folder no other test watches (`testing::handing`).
+    let machine = std::path::Path::new("/registry-watch");
     let wakes = crate::backstop::Wakes::new();
     let watcher = super::watch_registry::<Handing<false>>(machine, wakes.waker())
         .expect("the machine folder watched");
@@ -253,11 +247,11 @@ fn the_registry_watch_wakes_the_look_once_a_burst_and_one_that_cannot_watch_wake
         watcher.watched,
         vec![(machine.to_path_buf(), notify::RecursiveMode::NonRecursive)]
     );
-    let tell = |path: &str| watcher.tell(renamed(path));
-    tell("/m/projects.json.4242");
+    let tell = |name: &str| watcher.tell(renamed(machine.join(name)));
+    tell("projects.json.4242");
     assert!(!wakes.wait(Some(Duration::ZERO)), "a write under way");
-    tell("/m/projects.json");
-    tell("/m/projects.json");
+    tell("projects.json");
+    tell("projects.json");
     assert!(
         wakes.wait(Some(Duration::ZERO)),
         "the registry renamed into place"

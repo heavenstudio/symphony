@@ -98,6 +98,17 @@ pub struct Shared {
 }
 
 impl Shared {
+    /// The project's hub, or the answer a request gets before the server has started one, boxed
+    /// as a response is large to carry in a `Result`.
+    pub(crate) fn hub(&self) -> Result<Arc<crate::live::Hub>, Box<Response>> {
+        self.api.get().cloned().ok_or_else(|| {
+            Box::new(crate::api::error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the Symphony server is starting",
+            ))
+        })
+    }
+
     /// A server's one project, at `/`. `install` is the one server's install folder, whose client
     /// it serves; none for a server of its own.
     pub fn new(
