@@ -357,11 +357,13 @@ pub fn armed(folder: &Path) -> Vec<Journal> {
     armed
 }
 
-/// Who a round of the watcher acts as for `task`: its orchestrator, who holds a role on it and
-/// may move it; else who dispatched it.
-fn acting(task: Option<&Task>, journal: &Journal) -> String {
+/// Who the delivery moves `task` as: its orchestrator, who holds a role on it and may move it;
+/// else `by`, who dispatched it. A round of the watcher acts so throughout, and a dispatch so for
+/// its move back to review ([`Landing::reviewed_again`]), whoever's write started it.
+fn acting(task: Option<&Task>, by: &str) -> String {
     (task.and_then(|task| task.holders("orchestrator").first().copied()))
-        .map_or_else(|| journal.by.clone(), str::to_string)
+        .unwrap_or(by)
+        .to_string()
 }
 
 /// What the watcher's last round said of each armed task: a round that comes to the same says
@@ -477,7 +479,7 @@ pub fn watch(
         told.keep(&slugs);
         for journal in journals {
             let task = store.get(&journal.slug).ok();
-            let actor = acting(task.as_ref(), &journal);
+            let actor = acting(task.as_ref(), &journal.by);
             let mut said = Vec::new();
             let ended = super::watch_round(
                 store,
@@ -662,8 +664,10 @@ impl Landing<'_> {
     /// delivery takes an approve naming the head alone ([`super::evidence`]), so a head moved
     /// under an approved task (a merge of the default branch that settles a conflict, a fix)
     /// waits on a fresh one, which only a task in review is given: said once to its orchestrator,
-    /// which starts its assessor and resumes its reviewer as at any move to review. Any other task as it
-    /// is. One that does not go back is refused, naming the move that does.
+    /// which starts its assessor and resumes its reviewer as at any move to review. The move is
+    /// its orchestrator's ([`acting`]), whoever's write started the dispatch: an assessor's holds
+    /// no role that may send it back. Any other task as it is. One that does not go back (no
+    /// orchestrator, and who dispatched it may not move it) is refused, naming the move that does.
     fn reviewed_again(&mut self, task: Task, tip: &str) -> Result<Task, Stop> {
         let slug = self.slug;
         if crate::orchestration::unlanded(&task).is_none() {
@@ -688,7 +692,8 @@ impl Landing<'_> {
                 |sha| format!("it names {}", short(sha))
             )
         );
-        match self.store.move_to(slug, "review", self.actor) {
+        let mover = acting(Some(&task), self.actor);
+        match self.store.move_to(slug, "review", &mover) {
             Ok(task) => {
                 let verify = self.verifying(&task);
                 self.post(

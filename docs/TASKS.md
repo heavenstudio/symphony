@@ -1093,19 +1093,20 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
   review, blocked or done: a task moved back to work (a changes verdict) has its merge turned off
   first and its checks said again after, so no check published meanwhile lets the host merge it,
   and stays so until it moves to review.
-- **A head moved under an approve.** A delivery takes an approve naming the head alone, so a
-  task approved and not landed whose branch is at a commit its approve does not name (a merge
-  of the default branch that settles a conflict, a fix, or an approve that named no commit)
-  waits on a fresh one, which only a task in review is given. The dispatch that finds it, a
-  write's or the watcher's round, moves it back to review itself, by the board's own move from
-  done ([Tasks and roles](#tasks-and-roles)), and says so once to `@orchestrator`, naming the
-  head and the commit the approve named: its orchestrator starts its assessor and resumes its reviewer as
-  at any move to review, and nobody moves it by hand. Then it is published as any head: the
-  pull request shows the new head with `symphony/eligible` pending, its merge armed across the
-  push, until an assessment and an approve name it. An approve that comes before the
-  assessment leaves the task done, and the assessment is written all the same ([Needed
-  stamps](#needed-stamps)). One that does not go back is refused, naming `just tasks move SLUG
-  review`.
+- **A head moved under an approve.** A delivery takes an approve naming the head alone, so a task
+  approved and not landed whose branch is at a commit its approve does not name (a merge of the
+  default branch that settles a conflict, a fix, or an approve that named no commit) waits on a
+  fresh one, which only a task in review is given. The dispatch that finds it, a write's or the
+  watcher's round, moves it back to review itself, by the board's own move from done ([Tasks and
+  roles](#tasks-and-roles)) made as its orchestrator, whoever's write started the dispatch (an
+  assessor's holds no role that may make it), and says so once to `@orchestrator`, naming the head
+  and the commit the approve named: its orchestrator starts its assessor and resumes its reviewer as
+  at any move to review, and nobody moves it by hand. Then it is published as any head: the pull
+  request shows the new head with `symphony/eligible` pending, its merge armed across the push,
+  until an assessment and an approve name it. An approve that comes before the assessment leaves the
+  task done, and the assessment is written all the same ([Needed stamps](#needed-stamps)). One that
+  does not go back (a task with no orchestrator, whose dispatch moves as who started it, may be one)
+  is refused, naming `just tasks move SLUG review`.
 - **Who watches.** One watcher per project, `tasks land --watch` (`watch.lock` in the lands'
   folder, `watch.log` its lines), started by each arming where none runs, which reads each armed
   task every `[land] watch_seconds` (30) and ends once none is left. A round writes a task's line
