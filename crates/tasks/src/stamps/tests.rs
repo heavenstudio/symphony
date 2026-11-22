@@ -279,3 +279,13 @@ fn the_threads_line_says_the_stamps_the_tip_read_what_it_needed_before_and_who()
     );
     assert_eq!(short("abc"), "abc");
 }
+
+#[test]
+fn a_commit_is_named_by_its_first_seven_characters_and_other_text_is_never_cut_inside_one() {
+    assert_eq!(short("0123456789abcdef"), "0123456");
+    assert_eq!(short("0123456"), "0123456");
+    assert_eq!(short(""), "");
+    // Byte 7 falls inside the `é`: the text whole, where a slice by index would panic.
+    assert_eq!(short("abcdefé"), "abcdefé");
+    assert_eq!(short("abcdeéf"), "abcdeé");
+}
