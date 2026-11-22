@@ -12,6 +12,7 @@ import {
   waitAge,
   waitingOrder,
   waitingStage,
+  waitingToStart,
   waitKind,
   waitLabel,
   waitSince,
@@ -336,6 +337,17 @@ it("does not compare the global queued count with a filtered ready total", () =>
   const html = render(<OrchestratorBanner orchestrators={[]} unstarted={8} />);
   expect(html).toContain("8 ready tasks wait to start");
   expect(html).not.toContain("of the");
+});
+
+it("says how many wait to start of the ready ones, never of fewer ready than wait", () => {
+  expect(waitingToStart(2, 5)).toBe("2 of the 5");
+  expect(waitingToStart(5, 5)).toBe("5 of the 5");
+  expect(waitingToStart(0, 0)).toBe("0 of the 0");
+  expect(waitingToStart(8, undefined)).toBe("8");
+  // A total read before a live change moved more tasks to start.
+  expect(waitingToStart(3, 2)).toBe("3");
+  const html = render(<OrchestratorBanner orchestrators={[]} unstarted={3} ready={2} />);
+  expect(html).toContain("· 3 ready tasks wait to start");
 });
 
 it("does not attach a stale author to a decision's own wait reason", () => {

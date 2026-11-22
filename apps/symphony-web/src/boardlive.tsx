@@ -12,7 +12,7 @@ import {
   keepShape,
   type OnLoad,
   PAGE,
-  recallShape,
+  recallGhost,
   SHAPE,
   TaskBoard,
   UnreadBoard,
@@ -558,7 +558,7 @@ export class LiveBoard {
       return;
     }
     const shape = boardShape(d.counts);
-    save(SHAPE, keepShape(shape));
+    save(SHAPE, keepShape(shape, Boolean(d.projection?.workflow)));
   }
 
   /**
@@ -1140,7 +1140,7 @@ export function TasksView({ scope, board, stale, freshness, refreshed }: TasksVi
           onLoad={board.load}
         />
       ) : (
-        <GhostBoard shape={recallShape(load(SHAPE))} />
+        <GhostBoard {...recallGhost(load(SHAPE))} />
       )}
       <PageNotices reconnecting={stale} error={unread ? "" : error} device={device} />
     </main>
