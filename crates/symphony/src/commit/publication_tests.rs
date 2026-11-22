@@ -174,7 +174,10 @@ fn publication_locks_refused_at_the_write_lock_release_the_saves_and_the_commits
         panic!("a folder for the write lock was taken as its file");
     };
     assert!(refused.contains("verdict-writes.lock"), "{refused}");
-    assert!(home.join("verdict-commits.lock").is_file(), "the commits lock was taken first");
+    assert!(
+        home.join("verdict-commits.lock").is_file(),
+        "the commits lock was taken first"
+    );
     assert!(lock_is_free(&tree.root, "verdict-commits.lock"));
     assert!(writes.try_lock().is_ok());
 }
