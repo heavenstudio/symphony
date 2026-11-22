@@ -27,6 +27,7 @@ mod sweep;
 pub(crate) mod text;
 mod usage;
 
+use crate::lock::Recovered as _;
 use crate::maps::Collect as _;
 use crate::rpc::Client;
 use crate::server::Home;
@@ -435,7 +436,7 @@ impl Clock {
     /// The time now, in seconds since the epoch.
     fn now(&self) -> f64 {
         match self {
-            Clock::Pinned(now) => *now.lock().unwrap_or_else(|held| held.into_inner()),
+            Clock::Pinned(now) => *now.lock().recover(),
             Clock::Machine => crate::store::now(),
         }
     }
@@ -458,7 +459,7 @@ impl Clock {
             Clock::Machine => std::thread::sleep(Clock::span(seconds)),
             Clock::Pinned(now) => {
                 let at = {
-                    let mut now = now.lock().unwrap_or_else(|held| held.into_inner());
+                    let mut now = now.lock().recover();
                     *now += seconds;
                     *now
                 };
@@ -861,7 +862,7 @@ fn parts(clock: &Clock) -> (Box<dyn Fn() -> f64 + Send + Sync>, Probe, String) {
     let read: Box<dyn Fn() -> f64 + Send + Sync> = match clock {
         Clock::Pinned(now) => {
             let now = Arc::clone(now);
-            Box::new(move || *now.lock().unwrap_or_else(|held| held.into_inner()))
+            Box::new(move || *now.lock().recover())
         }
         Clock::Machine => Box::new(crate::store::now),
     };

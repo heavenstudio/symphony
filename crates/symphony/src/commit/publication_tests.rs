@@ -107,7 +107,7 @@ fn recovered_outputs_keep_journal_order_with_an_existing_poisoned_queue_item() {
             .iter()
             .map(|job| {
                 job.lock()
-                    .unwrap_or_else(|e| e.into_inner())
+                    .recover()
                     .path
                     .file_name()
                     .unwrap()

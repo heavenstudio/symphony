@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::{Value, json};
 use symphony_board::NewAsk;
+use symphony_board::lock::Recovered as _;
 
 use crate::{Who, asks, branches, clock, commit, edit, register, taskview};
 
@@ -90,7 +91,7 @@ impl Saves {
     pub fn close_saying(&self, stage: impl Fn(&str)) {
         stage("the save in flight");
         let committer = {
-            let _held = self.writes.lock().unwrap_or_else(|e| e.into_inner());
+            let _held = self.writes.lock().recover();
             self.closed.store(true, Ordering::Release);
             self.committer.get()
         };
@@ -291,7 +292,7 @@ impl Saves {
             return Err("slug is required".to_string().into());
         }
         let request = json!([scope, route, payload]).to_string();
-        let mut unpublished = self.unpublished.lock().unwrap_or_else(|e| e.into_inner());
+        let mut unpublished = self.unpublished.lock().recover();
         if let Some((text, value, ask)) = unpublished.get(&request).cloned() {
             crate::callbacks::publish_asking(&self.root, &text, ask.as_ref())
                 .map_err(Failure::from)?;
@@ -563,7 +564,7 @@ impl Saves {
         value: &Value,
         ask: Option<NewAsk>,
     ) -> Result<(), Failure> {
-        let mut unpublished = self.unpublished.lock().unwrap_or_else(|e| e.into_inner());
+        let mut unpublished = self.unpublished.lock().recover();
         unpublished.insert(
             request.to_string(),
             (text.clone(), value.clone(), ask.clone()),
@@ -644,7 +645,7 @@ impl Saves {
         } else {
             String::new()
         };
-        let _held = self.writes.lock().unwrap_or_else(|e| e.into_inner());
+        let _held = self.writes.lock().recover();
         let _file = commit::write_lock(&root)?;
         if self.closed.load(Ordering::Acquire) {
             return Err(Failure {
@@ -652,7 +653,7 @@ impl Saves {
                 error: "document saves are closing".into(),
             });
         }
-        let mut taps = self.taps.lock().unwrap_or_else(|e| e.into_inner());
+        let mut taps = self.taps.lock().recover();
         if !tap.is_empty()
             && let Some((_, state, note)) = taps.iter().find(|(held, ..)| *held == tap)
         {

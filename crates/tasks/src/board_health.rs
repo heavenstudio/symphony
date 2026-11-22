@@ -13,6 +13,7 @@
 //! of its own.
 
 use crate::cli::Env;
+use crate::lock::Recovered as _;
 use crate::recording::Gate;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -20,7 +21,7 @@ use std::ops::RangeInclusive;
 use std::panic::Location;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 
 /// How far back the counters reach, in seconds: the last sixty minutes, this one included.
 pub const WINDOW: f64 = 3600.0;
@@ -469,25 +470,16 @@ pub struct QueryLog(Mutex<Queries>);
 
 impl QueryLog {
     pub fn record(&self, query: Query) {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .record(query);
+        self.0.lock().recover().record(query);
     }
 
     pub fn report(&self, now: f64) -> (QueryReport, WriteReport) {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .report(now)
+        self.0.lock().recover().report(now)
     }
 
     /// What `minutes` hold ([`Queries::within`]).
     pub fn within(&self, minutes: &RangeInclusive<i64>) -> (QueryReport, WriteReport) {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .within(minutes)
+        self.0.lock().recover().within(minutes)
     }
 
     /// What `minutes` hold, when every minute from their first on is still held
@@ -497,7 +489,7 @@ impl QueryLog {
         &self,
         minutes: &RangeInclusive<i64>,
     ) -> Option<(QueryReport, WriteReport)> {
-        let queries = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let queries = self.0.lock().recover();
         queries
             .holds(*minutes.start())
             .then(|| queries.within(minutes))
@@ -510,7 +502,7 @@ static BOARDS: LazyLock<Mutex<HashMap<String, Arc<QueryLog>>>> = LazyLock::new(M
 /// The log of the board at `addr`, in namespace `ns` and database `db`, which every client of it
 /// in this process counts its requests in.
 pub fn queries_of(addr: &str, ns: &str, db: &str) -> Arc<QueryLog> {
-    let mut boards = BOARDS.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut boards = BOARDS.lock().recover();
     Arc::clone(boards.entry(format!("{addr}/{ns}/{db}")).or_default())
 }
 
@@ -747,16 +739,12 @@ impl Recorder {
     }
 
     fn held(&self) -> MutexGuard<'_, Recording> {
-        self.recording
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+        self.recording.lock().recover()
     }
 
     fn writer(&self) -> MutexGuard<'_, Persisting> {
         // A panic while writing leaves at worst a partial file of its own beside the record.
-        self.persisting
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+        self.persisting.lock().recover()
     }
 
     /// The file it writes, if it writes one.

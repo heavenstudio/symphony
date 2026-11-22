@@ -5,8 +5,8 @@
 //! one server's project list (`/api/projects`, [`Hub::task_asks`]) and sends them on the feed, in
 //! a region of their own, each time they change.
 
-use crate::lock::Held as _;
 use std::collections::BTreeMap;
+use symphony_board::lock::Recovered as _;
 
 use serde_json::Value;
 use symphony::taskview;
@@ -50,7 +50,7 @@ impl Hub {
     ) -> Result<Read, String> {
         let open = taskview::open(tasks);
         let (counted, followed) = {
-            let asked = self.task_asks.lock().held();
+            let asked = self.task_asks.lock().recover();
             let counted = asked
                 .counted
                 .as_ref()
@@ -83,7 +83,7 @@ impl Hub {
         read: Read,
         lines: &[symphony_board::Message],
     ) -> Option<Value> {
-        let mut asked = self.task_asks.lock().held();
+        let mut asked = self.task_asks.lock().recover();
         if let Some(newest) = read.newest {
             asked.verdict = newest;
             asked.followed = true;
@@ -107,7 +107,7 @@ impl Hub {
     /// which reads it with the pages held, names beside it the feed's version of that event or of
     /// the one before, and a feed opened there hears it again.
     pub(crate) fn task_asks(&self) -> Option<TaskAsks> {
-        let asked = self.task_asks.lock().held();
+        let asked = self.task_asks.lock().recover();
         asked.sent.clone()
     }
 

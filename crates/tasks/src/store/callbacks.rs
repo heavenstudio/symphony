@@ -17,6 +17,7 @@ use super::surreal::callbacks as sql;
 use super::{Error, Store, refused};
 use crate::cli::agents::{Answer, Pane};
 use crate::cli::{attach, probes, pull};
+use crate::lock::Recovered as _;
 use crate::maps::Collect as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -666,18 +667,18 @@ impl Store {
             live_orchestrator: false,
         };
         // Each look reads the messages afresh, as each pass does.
-        *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.inbox_pool.lock().recover() = None;
         let (mut board, mut sequence) = self.callback_board()?;
         // Each look gives what no orchestrator holds, when one that stays could take it (the
         // reader among them, on the waiting list now), and then reads the board the give left.
         if self.give_if_due(&board) {
-            *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            *self.inbox_pool.lock().recover() = None;
             (board, sequence) = self.callback_board()?;
         }
         // Then what the tasks a workflow holds need of the board itself, as a PULL's reader settles
         // it ([`Store::settle_held_if_due`]): a look is `tasks wait`'s, never `agent-send`'s.
         if self.settle_held_if_due(&board) {
-            *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            *self.inbox_pool.lock().recover() = None;
             (board, sequence) = self.callback_board()?;
         }
         let holdings = (callback.session.kind == "orchestrator")
@@ -809,7 +810,7 @@ impl Store {
     /// clock's agents view after it ([`Store::clock_panes`]).
     pub fn dispatch_callbacks_snapshot(&self) -> Result<Option<super::Board>, Error> {
         self.resume_task_blocks()?;
-        *self.clock_panes.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.clock_panes.lock().recover() = None;
         let callbacks = self.callbacks()?;
         if callbacks.is_empty() {
             return Ok(None);
@@ -822,10 +823,7 @@ impl Store {
 
     /// The hc terminals this tick of the server clock sampled, when its pane watch took a sample.
     pub(crate) fn clock_panes(&self) -> Option<Answer<Vec<Pane>>> {
-        self.clock_panes
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
+        self.clock_panes.lock().recover().clone()
     }
 
     /// The board as the pass read it, and whether the pass reached every recipient on this host: one
@@ -837,13 +835,13 @@ impl Store {
     ) -> Result<(super::Board, bool), Error> {
         // Each pass reads the messages afresh, once for every recipient ([`super::pool::Pool`]).
         // The pool is plain data, whole or none, so a panic elsewhere leaves nothing half-made in it.
-        *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.inbox_pool.lock().recover() = None;
         let (mut board, mut sequence) = self.callback_board()?;
         // A giving store's delivering pass (a write's detached dispatcher) gives what no
         // orchestrator holds first, so its recipients hear the give; an observing one keeps the
         // board as its write left it.
         if pass == Pass::Deliver && self.giving && self.give_if_due(&board) {
-            *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            *self.inbox_pool.lock().recover() = None;
             (board, sequence) = self.callback_board()?;
         }
         // Then what the tasks a workflow holds need of the board itself ([`Store::giving`]).
@@ -851,7 +849,7 @@ impl Store {
             && let Some(settle) = self.settling
             && settle(self, &board)
         {
-            *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            *self.inbox_pool.lock().recover() = None;
             (board, sequence) = self.callback_board()?;
         }
         let holdings = callbacks
@@ -873,7 +871,7 @@ impl Store {
         let idle = self
             .callback_idle
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .recover()
             .as_ref()
             .is_some_and(|idle| {
                 idle.marker == sequence
@@ -904,8 +902,8 @@ impl Store {
             observed &= handled;
             pull_at = pull_at.min(due);
         }
-        *self.callback_idle.lock().unwrap_or_else(|e| e.into_inner()) =
-            (observed && initial_sequence == sequence).then_some(Idle {
+        *self.callback_idle.lock().recover() = (observed && initial_sequence == sequence)
+            .then_some(Idle {
                 marker: sequence,
                 health,
                 pull_at,
@@ -1427,10 +1425,7 @@ impl Store {
     /// alone, not the whole board again. The cached snapshot is plain data, whole or none, so a
     /// panic that poisoned its lock left nothing half-made in it.
     fn adopt(&self, moved: &Moved) {
-        let mut cached = self
-            .callback_snapshot
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut cached = self.callback_snapshot.lock().recover();
         if let Some(snapshot) = cached.as_mut()
             && snapshot.callback_sequence == moved.before
         {

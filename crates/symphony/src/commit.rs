@@ -11,6 +11,7 @@ use std::process::Output;
 use std::sync::{Arc, Mutex, mpsc};
 
 use serde::{Deserialize, Serialize};
+use symphony_board::lock::Recovered as _;
 
 use crate::children::command;
 use crate::landing::{PrivateWorktree, generators};
@@ -1197,9 +1198,7 @@ fn apply(root: &Path, parent: &str, edits: &[Edit]) -> Result<(Blobs, Blobs), Co
 
 fn main_worktrees(root: &Path) -> Result<Vec<PathBuf>, String> {
     let _stage = PublicationStage::start(format_args!("main worktree mutex and listing"));
-    let _held = crate::landing::WORKTREES
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let _held = crate::landing::WORKTREES.lock().recover();
     let listing = git(root, &["worktree", "list", "--porcelain"])?;
     let main = main_ref(root);
     let mut path = None;
@@ -1658,7 +1657,7 @@ struct PublicationLocks<'a> {
 impl<'a> PublicationLocks<'a> {
     fn take(root: &Path, writes: &'a Mutex<()>) -> Result<Self, String> {
         let commits = shared_lock(root, "verdict-commits.lock")?;
-        let held = writes.lock().unwrap_or_else(|e| e.into_inner());
+        let held = writes.lock().recover();
         let file = write_lock(root)?;
         Ok(Self {
             _file: file,
@@ -1737,8 +1736,8 @@ fn release(
         .filter(|name| project.is_page(name))
         .map(str::to_owned)
         .collect();
-    let pending = waiting.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let output_pages = ahead.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let pending = waiting.lock().recover().clone();
+    let output_pages = ahead.lock().recover().clone();
     let mut pages = branch_pages.clone();
     pages.extend(
         pending
@@ -2297,7 +2296,7 @@ impl OutputJob {
             PublicationAttempt::Dirty(why) => {
                 let outside = {
                     let _file = write_lock(root)?;
-                    let pending = waiting.lock().unwrap_or_else(|e| e.into_inner());
+                    let pending = waiting.lock().recover();
                     let pages: std::collections::BTreeSet<_> =
                         pending.values().map(|edit| edit.rel.as_str()).collect();
                     let mut outside = std::collections::BTreeSet::new();
@@ -2366,7 +2365,7 @@ fn journal_reports() -> &'static Mutex<std::collections::BTreeSet<PathBuf>> {
 fn report_journal_error(root: &Path, path: &Path, error: &str) {
     if !journal_reports()
         .lock()
-        .unwrap_or_else(|e| e.into_inner())
+        .recover()
         .insert(path.to_path_buf())
     {
         return;
@@ -2397,10 +2396,7 @@ fn report_journal_error(root: &Path, path: &Path, error: &str) {
 
 fn clear_journal_error(path: &Path) {
     let _ = std::fs::remove_file(path.with_extension("reported"));
-    journal_reports()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(path);
+    journal_reports().lock().recover().remove(path);
 }
 
 fn recover_outputs(
@@ -2419,17 +2415,17 @@ fn recover_outputs(
             for job in jobs {
                 waiting
                     .lock()
-                    .unwrap_or_else(|e| e.into_inner())
+                    .recover()
                     .insert(job.job.id, job.job.edit.clone());
                 *ahead
                     .lock()
-                    .unwrap_or_else(|e| e.into_inner())
+                    .recover()
                     .entry(job.job.edit.rel.clone())
                     .or_default() += 1;
                 queued.push_back(Arc::new(Mutex::new(job)));
             }
             symphony_board::order::sort_by_key(queued.make_contiguous(), &|job| {
-                job.lock().unwrap_or_else(|e| e.into_inner()).path.clone()
+                job.lock().recover().path.clone()
             });
         }
         Err(error) => {
@@ -2442,11 +2438,8 @@ fn recover_outputs(
 }
 
 fn finish_output(job: &Job, waiting: &Waiting, ahead: &Ahead) {
-    waiting
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(&job.id);
-    let mut ahead = ahead.lock().unwrap_or_else(|e| e.into_inner());
+    waiting.lock().recover().remove(&job.id);
+    let mut ahead = ahead.lock().recover();
     if let Some(n) = ahead.get_mut(&job.edit.rel) {
         *n -= 1;
         if *n == 0 {
@@ -2493,7 +2486,7 @@ fn publication_pass(
     writes: &Mutex<()>,
 ) {
     while let Some(queued_job) = queued.pop_front() {
-        let mut job = queued_job.lock().unwrap_or_else(|e| e.into_inner());
+        let mut job = queued_job.lock().recover();
         match job.attempt(root, waiting, ahead, writes) {
             Ok(false) => {
                 drop(job);
@@ -2574,15 +2567,8 @@ impl Committer {
         let worker_waiting = waiting.clone();
         let commit_worker = std::thread::spawn(move || {
             for queued_job in recv {
-                let Job { id, edit, backlog } = queued_job
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .job
-                    .clone();
-                let deferred = ahead
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .contains_key(&edit.rel);
+                let Job { id, edit, backlog } = queued_job.lock().recover().job.clone();
+                let deferred = ahead.lock().recover().contains_key(&edit.rel);
                 // Delivered by the host: the output worker commits it on a branch of its own.
                 let prepared = if deferred || delivers(&root) {
                     Ok(true)
@@ -2594,11 +2580,7 @@ impl Committer {
                 };
                 let outcome = match prepared {
                     Ok(true) => {
-                        *ahead
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .entry(edit.rel.clone())
-                            .or_default() += 1;
+                        *ahead.lock().recover().entry(edit.rel.clone()).or_default() += 1;
                         if let Err(e) = jobs.send(Some(queued_job)) {
                             report(&root, &e.to_string());
                         }
@@ -2621,15 +2603,8 @@ impl Committer {
                     }
                     Err(e) => Err(e),
                 };
-                finish_job(
-                    &root,
-                    &mut queued_job.lock().unwrap_or_else(|e| e.into_inner()),
-                    outcome,
-                );
-                worker_waiting
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .remove(&id);
+                finish_job(&root, &mut queued_job.lock().recover(), outcome);
+                worker_waiting.lock().recover().remove(&id);
                 // A plain save supplies its pass after checkout synchronization. Waking
                 // before that commit lets land observe the save's temporary tracked dirt.
                 let _ = jobs.send(None);
@@ -2649,7 +2624,7 @@ impl Committer {
     /// wait on may have moved. Wakes asked while a pass is pending or running ask for that one
     /// more pass together ([`passes`]). Nothing once the committer is closing.
     pub fn wake(&self) {
-        if let Some(wake) = &*self.wake.lock().unwrap_or_else(|e| e.into_inner()) {
+        if let Some(wake) = &*self.wake.lock().recover() {
             let _ = wake.send(None);
         }
     }
@@ -2667,13 +2642,10 @@ impl Committer {
                 backlog,
             },
         )?));
-        self.waiting
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(id, edit.clone());
+        self.waiting.lock().recover().insert(id, edit.clone());
         self.send
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .recover()
             .as_ref()
             .ok_or("verdict committer is closing")?
             .send(job)
@@ -2682,14 +2654,9 @@ impl Committer {
 
     /// Drain both paths before the server exits. A successful save must survive a graceful stop.
     pub fn close(&self) {
-        self.send.lock().unwrap_or_else(|e| e.into_inner()).take();
-        self.wake.lock().unwrap_or_else(|e| e.into_inner()).take();
-        for worker in self
-            .workers
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .drain(..)
-        {
+        self.send.lock().recover().take();
+        self.wake.lock().recover().take();
+        for worker in self.workers.lock().recover().drain(..) {
             if worker.join().is_err() {
                 let _ = writeln!(
                     std::io::stderr(),

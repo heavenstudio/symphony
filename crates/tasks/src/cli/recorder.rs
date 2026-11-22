@@ -92,14 +92,15 @@
 
 use super::Env;
 use super::machine_work::recorded::{self, Phase, Record, Run, Step};
+use crate::lock::Recovered as _;
 use crate::sys::{self, FileLock};
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 /// The command's name.
@@ -871,7 +872,7 @@ impl Session {
     /// A time it is told is the last one, whether or not the board answers: a board that does not
     /// is asked again at the next, never at every beat.
     fn due(&self, now: std::time::Instant, ended: bool) -> bool {
-        let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut last = self.last.lock().recover();
         if !ended && now.saturating_duration_since(*last) < SEEN {
             return false;
         }
@@ -1229,7 +1230,7 @@ impl Recording {
     }
 
     fn held(&self) -> std::sync::MutexGuard<'_, Record> {
-        self.record.lock().unwrap_or_else(PoisonError::into_inner)
+        self.record.lock().recover()
     }
 
     /// Its record changed by `change`, said now, and written.
@@ -1364,13 +1365,14 @@ mod supervised {
     };
     use crate::cli::Env;
     use crate::cli::machine_work::recorded;
+    use crate::lock::Recovered as _;
     use crate::run_logs::{Copying, Files, Source, Stream};
     use std::ffi::CString;
     use std::io::{self, Write};
     use std::os::fd::{AsRawFd, FromRawFd as _, OwnedFd};
     use std::os::unix::ffi::OsStrExt as _;
     use std::sync::mpsc::{self, RecvTimeoutError};
-    use std::sync::{Arc, Mutex, PoisonError};
+    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
     /// What the recorder's watch saw of its command, when it saw it, and the most CPU it read the
@@ -1705,7 +1707,7 @@ mod supervised {
             let read = tree.read(at);
             most = most.max(read);
             if let Some(reading) = read.and(most).and_then(|ticks| reading(&tree, ticks)) {
-                *latest.lock().unwrap_or_else(PoisonError::into_inner) = Some(reading);
+                *latest.lock().recover() = Some(reading);
             }
             match next {
                 Ok(Some(seen)) => {
@@ -1826,7 +1828,7 @@ mod supervised {
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     if started {
-                        recording.beat(*latest.lock().unwrap_or_else(PoisonError::into_inner));
+                        recording.beat(*latest.lock().recover());
                     }
                 }
                 Ok(Err(error)) => {

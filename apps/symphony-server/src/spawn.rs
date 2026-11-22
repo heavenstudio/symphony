@@ -9,11 +9,11 @@
 //! is then its own closure or future and that answer's hand-over alone (docs/CHECKS.md, "Size
 //! budgets").
 
-use crate::lock::Held as _;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, ready};
+use symphony_board::lock::Recovered as _;
 use tokio::task::{JoinError, JoinHandle};
 
 /// `work` run on tokio's blocking pool, as [`tokio::task::spawn_blocking`] runs it: its answer
@@ -26,7 +26,7 @@ pub(crate) fn blocking<T: Send + 'static>(
     let put = Arc::clone(&answer);
     let work: Box<dyn FnOnce() + Send> = Box::new(move || {
         let made = work();
-        *put.lock().held() = Some(made);
+        *put.lock().recover() = Some(made);
     });
     Blocking {
         task: tokio::task::spawn_blocking(work),
@@ -48,7 +48,7 @@ impl<T> Future for Blocking<T> {
         Poll::Ready(ended.map(|()| {
             self.answer
                 .lock()
-                .held()
+                .recover()
                 .take()
                 .expect("a blocking task that returned left its answer")
         }))

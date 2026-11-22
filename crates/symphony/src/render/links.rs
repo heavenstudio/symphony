@@ -3,10 +3,11 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, LazyLock, PoisonError};
+use std::sync::{Arc, LazyLock};
 
 use fancy_regex::Regex as Fancy;
 use regex::{Captures, Regex};
+use symphony_board::lock::Recovered as _;
 
 use crate::edit::heading_anchor;
 use crate::markup::{dirname, join, normpath};
@@ -210,7 +211,7 @@ pub(crate) fn card_docs(
             )
         })
         .collect();
-    let mut cache = cache.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut cache = cache.lock().recover();
     if let Some((had, found)) = cache.as_ref()
         && *had == stamp
     {
