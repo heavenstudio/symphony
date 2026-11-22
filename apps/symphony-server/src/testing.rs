@@ -13,6 +13,8 @@ pub mod layouts;
 mod tree;
 pub use crate::shelf;
 pub use tree::Tree;
+/// A watcher whose events the test tells.
+pub mod handing;
 
 pub fn git(root: &std::path::Path, args: &[&str]) {
     let done = symphony_board::sys::output(
