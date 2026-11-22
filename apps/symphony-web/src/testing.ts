@@ -120,6 +120,8 @@ export const CASES = cases as unknown as {
     /** The owner's next actions on a task in review, one unavailable; an apply's answer. */
     nextActions: unknown;
     applied: unknown;
+    /** The owner's actions at Verify, Accept taking the accepted output of the task it depends on. */
+    takingActions: unknown;
     /** A waiting listing of tasks the workflow holds, one blocked in Build. */
     heldListing: unknown;
     taskGuards: unknown;

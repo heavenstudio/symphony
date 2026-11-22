@@ -112,8 +112,13 @@ decides which finished and cancelled tasks are shown and counted.
 An orchestrator is the agent that staffs the ready tasks and lands the approved ones. While at
 least one ready task waits to start and no orchestrator is live, a banner above the strip says
 **No live orchestrator.**, who holds the role and in what health, and how many of the ready tasks
-wait to start. It is amber while a holder has only gone quiet, red otherwise (no holder, one
-gone, or one whose health is not known), and absent while one is live or nothing waits to start.
+wait to start: *1 of the 3 ready tasks wait to start*. It is amber while a holder has only gone
+quiet, red otherwise (no holder, one gone, or one whose health is not known), and absent while one
+is live or nothing waits to start.
+
+The ready tasks it counts are the whole board's. A wait chosen in the strip or a search counts
+only its own tasks, so under one the banner says the total it last read without one: its words,
+and the strip under it, stay still when a chip is pressed or words are typed.
 
 ## States
 
@@ -135,10 +140,30 @@ gone, or one whose health is not known), and absent while one is live or nothing
 One stage at a time. A row of tabs under the strip names the stages, **Review** first, then
 **In progress**, **Ready**, **Done**, **Design**, **Concept** and **Backlog**, each with its count
 and, after a **+**, how many more are blocked there; **Build** and **Test** join the row while any
-machine reports to the board, with work going on or none. The stage chosen is kept on this device, for this project. The strip and the
-tabs each scroll sideways, and a choice that does not fit whole is drawn as an empty shape rather
-than cut. There is no **Backlog** button and no **Back to stages**: the backlog is a tab, and the
-cancelled tasks open from **Done** as on a wide screen.
+machine reports to the board, with work going on or none. The stage chosen is kept on this
+device, for this project. The strip and the tabs each scroll sideways, and a choice that does not
+fit whole is drawn as an empty shape rather than cut. There is no **Backlog** button and no
+**Back to stages**: the backlog is a tab, and the cancelled tasks open from **Done** as on a wide
+screen.
+
+### The work under way
+
+Above the strip, a row of four cells says how much work is under way, whichever tab is chosen.
+
+| Cell | Counts |
+| --- | --- |
+| **under way** | the three after it together |
+| **in progress** | the tasks in **in progress** that are not blocked, as the **In progress** tab counts them |
+| **building** | the tasks in **build**, as the **Build** tab counts them |
+| **testing** | the tasks in **test**, as the **Test** tab counts them |
+
+A press on one of the last three opens its tab. **in progress** is not the strip's **Working**,
+which counts the tasks an agent is at work on, in any stage. **building** and **testing** are
+there while a machine reports to the board, as their tabs are, and the row keeps their room
+either way, so a count that changes or a machine's first report moves nothing. Under a wait
+chosen in the strip the row stands empty in its place, and the banner keeps its words
+([above](#no-live-orchestrator)), so the strip stays where the chip was pressed. A project that
+runs a workflow of its own has no such row.
 
 ## Edges
 

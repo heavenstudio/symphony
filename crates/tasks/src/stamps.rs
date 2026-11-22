@@ -83,9 +83,10 @@ const OWN: [Own; 4] = [
                   agent follows; a setting the Symphony does not read yet or reads another way, \
                   which is code; a value of the project file that is a command or a program the \
                   Symphony runs or that decides what lands ([project] cargo and default_branch, \
-                  [plugins] crates and process, [verdicts], [land], [releases], [stamps], [board] \
-                  on_review, on_land, machine_work_reader, postgresql, external_postgresql and \
-                  assessments); a change \
+                  [plugins] crates and process, [verdicts], [land], [releases], [stamps], the \
+                  workflow's [workflow], [[workflow_mappings]] and [[workflow_authorities]], \
+                  [board] on_review, on_land, machine_work_reader, postgresql, \
+                  external_postgresql and assessments); a change \
                   that does \
                   more than one thing, or one the assessor cannot place",
         skips: "documents alone (a design, a reference page, a record); the values the project \

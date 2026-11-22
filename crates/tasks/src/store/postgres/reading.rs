@@ -40,6 +40,11 @@ const CLAIM_STATUSES: &str = "WHERE t.status IN (SELECT jsonb_array_elements_tex
             WHERE e -> 'from' = p -> 'at' AND coalesce((e ->> 'automatic')::boolean, false) = false \
             AND e -> 'effects' @> '[{\"kind\": \"acquire_role\", \"role\": \"executor\"}]'::jsonb))";
 
+/// Twin of `super::super::surreal::reading::ACTIVE_GENERATION`: the active workflow's
+/// generation, or JSON null on a board that never activated one.
+const ACTIVE_GENERATION: &str =
+    "(SELECT body -> 'generation' FROM workflow WHERE id = '[\"active\"]'::jsonb)";
+
 /// The read of `which` with the sessions `sessions` asks for.
 pub(in crate::store) fn reading(which: &Which, sessions: Sessions) -> Pg<'static> {
     reading_with(which, sessions, NOTHING_BESIDE)
@@ -129,6 +134,11 @@ fn listed(which: &Which, sessions: Sessions, beside: Beside) -> Listed {
         _ => (String::new(), String::new(), "picked"),
     };
     let branches = of_tasks(&format!("b.slug IN (SELECT slug FROM {wanted})"));
+    // The whole board's read carries the active workflow's generation, read by its id.
+    let generation = match which {
+        Which::All => ACTIVE_GENERATION,
+        _ => "'null'::jsonb",
+    };
     let Beside {
         callback_sequence,
         has_callbacks,
@@ -172,6 +182,7 @@ fn listed(which: &Which, sessions: Sessions, beside: Beside) -> Listed {
         "'branches', {branches}, \
     'held', coalesce((SELECT jsonb_agg(handle) FROM held), '[]'), \
     'latest', coalesce((SELECT to_jsonb(last) FROM counter WHERE id = '\"message\"'), '0'::jsonb), \
+    'workflow_generation', {generation}, \
     'callback_sequence', {callback_sequence}, \
     'has_callbacks', {has_callbacks}, \
     'native_presence', coalesce((SELECT jsonb_agg(jsonb_build_object('handle', c.doc -> 'handle', \

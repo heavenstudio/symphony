@@ -82,6 +82,8 @@ pub(in crate::store) fn standings() -> Pg<'static> {
     )
 }
 
+/// Twin of `super::super::surreal::workflow::ACTIVATE`, the board's marker moved by
+/// `board_bump`, once in its transaction as every trigger's.
 pub(in crate::store) fn activate() -> Pg<'static> {
     Pg::script(
         "
@@ -146,12 +148,14 @@ BEGIN
     INSERT INTO workflow (id, kind, body, at) VALUES ('[\"active\"]', 'active',
         jsonb_build_object('generation', v -> 'generation', 'digest', v ->> 'digest'), at_)
         ON CONFLICT (id) DO UPDATE SET body = EXCLUDED.body, at = EXCLUDED.at;
+    PERFORM board_bump();
 END;
 ",
     )
 }
 
-/// Twin of `super::super::surreal::workflow::RETURN_DEFAULT`.
+/// Twin of `super::super::surreal::workflow::RETURN_DEFAULT`, the board's marker moved by
+/// `board_bump`, once in its transaction as every trigger's.
 pub(in crate::store) fn return_default() -> Pg<'static> {
     Pg::script(
         "
@@ -210,6 +214,7 @@ BEGIN
         RAISE EXCEPTION '%', 'refused: stale_task: ' || stale_ || ' was filed or reopened while its workflow returned';
     END IF;
     DELETE FROM workflow WHERE id = '[\"active\"]'::jsonb;
+    PERFORM board_bump();
 END;
 ",
     )
