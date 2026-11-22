@@ -28,9 +28,11 @@ impl Store {
     /// `catalogue` ([`Catalogue::needs`]: [`crate::stamps::NONE`] alone for none), with a line on its
     /// thread saying them, the tip read and what it needed before: its last assessment's stamps,
     /// else the catalogue's defaults ([`Needs::line`]). Refused: an empty reason, a stamp the
-    /// catalogue lacks, an import named with no tip or not as a whole commit, a task done or
-    /// cancelled, and a writer that executed the task or work under it, orchestrates or
-    /// orchestrated it, or filed it ([`Held::unfresh`]).
+    /// catalogue lacks, an import named with no tip or not as a whole commit, a task cancelled or
+    /// done, and a writer that executed the task or work under it, orchestrates or orchestrated
+    /// it, or filed it ([`Held::unfresh`]). A task its reviewer approved and no landing has closed
+    /// ([`crate::orchestration::unlanded`]) is assessed as open work is: it reads done, and its
+    /// land is still to make, of a head an assessor may not have read yet.
     pub fn set_needs(
         &self,
         slug: &str,
@@ -80,9 +82,11 @@ impl Store {
         self.rule(slug, handle, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
-            if task.status == "done" || task.status == "cancelled" {
+            let unlanded =
+                crate::orchestration::marked_unlanded(&task.status, &task.fields).is_some();
+            if task.status == "cancelled" || (task.status == "done" && !unlanded) {
                 return Err(refused(format!(
-                    "{slug} is {}: only an open task is assessed",
+                    "{slug} is {}: only an open task, or one approved and not landed, is assessed",
                     task.status
                 )));
             }
