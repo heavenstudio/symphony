@@ -78,6 +78,8 @@ targets are the folders of `tests/` with a `main.rs` that says what each holds (
 - **Search**: `store/search.rs`, `cli/search.rs`, `store/postgres/search.rs`: by words alone, the
   same on either engine (`tests/store/search.rs`).
 - **Children**: `sys.rs` and `sys/`, over the leaf `crates/process-cwd`.
+- **A poisoned lock**: `lock.rs`'s `Recovered`, the one recovery the library and the server take
+  too.
 
 ## Invariants a change keeps
 
