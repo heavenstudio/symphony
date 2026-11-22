@@ -25,7 +25,7 @@ not changes to today's production landing command.
 
 | Boundary | What exists | Relevant limit |
 | --- | --- | --- |
-| Board access | [Tasks API](../TASKS.md#the-tasks-api) 2.1: `version`, `tasks`, `get`, `create`, `amend`, `thread`, keyed `say`, guarded lifecycle operations, `bound`, `edit_bound`, `integration_state` | Creation enforces unique slugs. A brief is rewritten conditionally by `edit_bound`, with the token `bound` gives under the board's recovery generation; `amend` updates title/links, not the brief. |
+| Board access | [Tasks API](../BOARD_API.md#the-tasks-api) 2.1: `version`, `tasks`, `get`, `create`, `amend`, `thread`, keyed `say`, guarded lifecycle operations, `bound`, `edit_bound`, `integration_state` | Creation enforces unique slugs. A brief is rewritten conditionally by `edit_bound`, with the token `bound` gives under the board's recovery generation; `amend` updates title/links, not the brief. |
 | Presentation | [Process plugins](../PLUGIN_PROTOCOL.md): commands, components, routes, board actions, watches | A watch warms/forgets state; it is not a durable task-event feed. Process plugins cannot supply board fields or gates. |
 | Delivery here | [Default land](../TASKS.md#the-default-landing): required stamps at the reviewed tip, local merge, then main push | This remains the implemented path. Enabled PR delivery needs the separately scoped squash-merge/evidence enforcement implementation and selected branch publication before activation. |
 | GitHub | Issue and PR REST endpoints | Issue listings include PRs. Separate them by `pull_request`; use PR endpoints for PR identity/head information. [GitHub documents the distinction](https://docs.github.com/en/rest/issues/issues). |

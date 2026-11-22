@@ -46,12 +46,7 @@ A small *postponed* mark offers **Undo Later**. Its ordinary place returns when 
 the rest of its computed owner group, or after three days (72 hours). Answering or deleting a card clears its entry;
 a new owner line clears it even when the card stays in the same group.
 
-The server stores this per-owner order in its root's `artifacts/review-order/postponed.json`, shared by
-the phone and laptop and retained across restarts. Main and branch decisions share that order and the
-next card; their document writes still go to the selected worktree. `POST /api/postpone` takes `path`, `slug` and an `action` of
-`later`, `undo` or `seen`; a visit records progress without rescanning documents or refreshing an unchanged
-queue. A corrupt or unreadable preference file is preserved and logged, and reads serve the mixed order
-without postponements.
+Where the order is kept, and its route: [storage and routes](#storage-and-routes).
 
 ### One app, every worktree
 
@@ -150,10 +145,6 @@ main copy in the queue; distinct proposals from different branches each remain a
 including after another proposal is answered. Identical stacked copies still appear once,
 and the document counts once. The header board link, decision counts
 and previous/next navigation keep the same global view while a branch document is open.
-
-The scan is kept, never run per request: a watcher refreshes it when a worktree's HEAD log or a register file
-moves (and every minute, for a register file only a branch has), and an owner's write refreshes it at once.
-About 160 worktrees take ~3 s to scan on a busy machine; a check that nothing moved is stat calls.
 
 **A worktree with an owner line no commit has is never removed.** The worktree sweep (`just tasks sweep`) and
 `land`'s cleanup keep it and say so: the board reads the owner's dated lines under a card, in the documents of the
@@ -476,7 +467,7 @@ shows a refusal. After a reload, open the sheet and use **Check save** to
 resolve that same submission. A refusal keeps the text editable for another
 try; a confirmed save clears it and links to the task. The server retains
 pending task text until confirmation, then keeps only a small receipt.
-Routes: `POST /api/quick-chat`, `POST /api/quick-task`.
+Its routes: [storage and routes](#storage-and-routes).
 
 ## Attaching files
 
@@ -501,10 +492,6 @@ checkout, and a chat callback names the full paths.
   that opens with a tag or a `#!` line, or holds a tag such as `<script>` or
   `<svg>`), an empty file `400`, a larger one `413`, and none of them is
   stored.
-- **Where they live.** `artifacts/uploads/` of the checkout the shared server
-  serves, the main checkout, named by the SHA-256 of their bytes: the same
-  file sent twice is stored once, and a file posted from a branch page shows
-  on every branch. The folder is gitignored, like every image in `artifacts/`.
 - **A verdict's uploads are committed with it.** When the server commits what
   the owner saved on main, a card's line or note or a document's callout, each
   upload that line names goes into the same commit, at the path its link names
@@ -516,27 +503,13 @@ checkout, and a chat callback names the full paths.
   without it. Uploads on an ask, a thread message or a new task are working
   evidence and stay in the store alone. The docs audit warns, "not in a clone",
   of a line naming an upload git does not track.
-- **How they are served.** `GET /artifacts/uploads/<sha256>.<ext>`, also under
-  `/@<tree>/`, answers a stored name only, with its fixed type, `nosniff` and
-  a script-free sandboxing `Content-Security-Policy`; pictures and text open
-  in the browser, PDF and Office files download. Nothing is ever served as
-  HTML or script. `POST /api/upload?name=<file name>` takes the raw bytes
-  and keeps the Host and Origin checks of every other save.
+- **Where they live and how they are served**: [storage and routes](#storage-and-routes).
 
 ## On a phone
 
 The product references show the [document](product/DOCUMENT.md#on-a-phone) and
-[card editor](product/CARDS.md#on-a-phone) on a phone. The app limits the cost of pictures over a
-mobile link (`symphony::images` and `apps/symphony-web`).
-
-- **A picture reserves its space.** Every local PNG the app draws carries its real `width` and
-  `height`, so its space is reserved before it arrives.
-- **Pictures are drawn from small copies.** A PNG over 120 KB is shown from a cached JPEG at
-  `/thumb/<width>/<token>/<path>.jpg`, made once into `artifacts/docs-thumbs/` (a cache the app
-  writes, named by the picture's path, time and size, so it is never stale) with the system's `sips`;
-  where there is none the original is drawn. The viewer opens the original. Pictures load as they near
-  the screen, the first of a page first.
-- **Text is gzipped, pictures revalidate** (`ETag`, `304`), models load as they near the screen.
+[card editor](product/CARDS.md#on-a-phone) on a phone. What the app does
+about the cost of pictures over a mobile link: [storage and routes](#storage-and-routes).
 
 ## Limits, honestly
 
@@ -572,12 +545,53 @@ its lines) uses the same embedding for an `.html` candidate.
 - **Source.** Compose a screen from one shared CSS file of tokens and one file per component, assembled per page; a
   PNG is only a snapshot for a thumbnail. Tracked sources beat `artifacts/`, which is gitignored.
 
-The client renders media in `apps/symphony-web/src/media.tsx`; its layer over a drawn page is
+## Cards link each other
+
+In the app, a card slug named in a card (after *Replaces:*, or in bold in an agent line such as "Answered by **x**") links to that card, in any doc.
+
+## Storage and routes
+
+Where the app keeps what the sections above describe, and the routes its pages save by.
+
+**The Later order.** The server stores the Later order, one for each owner, in its root's `artifacts/review-order/postponed.json`, shared by
+the phone and laptop and retained across restarts. Main and branch decisions share that order and the
+next card; their document writes still go to the selected worktree. `POST /api/postpone` takes `path`, `slug` and an `action` of
+`later`, `undo` or `seen`; a visit records progress without rescanning documents or refreshing an unchanged
+queue. A corrupt or unreadable preference file is preserved and logged, and reads serve the mixed order
+without postponements.
+
+**The scan of the branches' cards** ([one app, every worktree](#one-app-every-worktree)). The scan is kept, never run per request: a watcher refreshes it when a worktree's HEAD log or a register file
+moves (and every minute, for a register file only a branch has), and an owner's write refreshes it at once.
+About 160 worktrees take ~3 s to scan on a busy machine; a check that nothing moved is stat calls.
+
+**The `+` sheet** ([asking](#asking)). Routes: `POST /api/quick-chat`, `POST /api/quick-task`.
+
+**Uploads** ([attaching files](#attaching-files)).
+
+- **Where they live.** `artifacts/uploads/` of the checkout the shared server
+  serves, the main checkout, named by the SHA-256 of their bytes: the same
+  file sent twice is stored once, and a file posted from a branch page shows
+  on every branch. The folder is gitignored, like every image in `artifacts/`.
+- **How they are served.** `GET /artifacts/uploads/<sha256>.<ext>`, also under
+  `/@<tree>/`, answers a stored name only, with its fixed type, `nosniff` and
+  a script-free sandboxing `Content-Security-Policy`; pictures and text open
+  in the browser, PDF and Office files download. Nothing is ever served as
+  HTML or script. `POST /api/upload?name=<file name>` takes the raw bytes
+  and keeps the Host and Origin checks of every other save.
+
+**Pictures over a mobile link** ([on a phone](#on-a-phone)). The app limits their cost (`symphony::images` and `apps/symphony-web`).
+
+- **A picture reserves its space.** Every local PNG the app draws carries its real `width` and
+  `height`, so its space is reserved before it arrives.
+- **Pictures are drawn from small copies.** A PNG over 120 KB is shown from a cached JPEG at
+  `/thumb/<width>/<token>/<path>.jpg`, made once into `artifacts/docs-thumbs/` (a cache the app
+  writes, named by the picture's path, time and size, so it is never stale) with the system's `sips`;
+  where there is none the original is drawn. The viewer opens the original. Pictures load as they near
+  the screen, the first of a page first.
+- **Text is gzipped, pictures revalidate** (`ETag`, `304`), models load as they near the screen.
+
+**Media and mockups** ([HTML mockups in cards](#html-mockups-in-cards)). The client renders media in `apps/symphony-web/src/media.tsx`; its layer over a drawn page is
 `media-layer.ts`, and the native server confines raw media to the selected
 checkout in `apps/symphony-server/src/media_files.rs`. Browser coverage returns after
 the Rust migration, including attempts to read, write or navigate the parent
 from a mockup.
-
-## Cards link each other
-
-In the app, a card slug named in a card (after *Replaces:*, or in bold in an agent line such as "Answered by **x**") links to that card, in any doc.

@@ -29,7 +29,7 @@ Nothing moves a project to a newer Symphony but the project. In order:
    is current.
 4. **Move the board when the notes say its schema moved:** `just tasks migrate` in the main
    checkout, once no session still runs the older commands
-   ([who writes a board](TASKS.md#who-writes-a-board)). An older command refuses a newer board
+   ([who writes a board](BOARD_OPERATIONS.md#who-writes-a-board)). An older command refuses a newer board
    before it writes, naming what to rebuild.
 5. **Start the newer server:** `just symphony --stop`, then `just symphony`.
 
@@ -76,7 +76,7 @@ nothing, and who writes each:
 | Section | Derived from git at the two releases' commits | Said by a landing |
 | --- | --- | --- |
 | Cargo.toml and Cargo.lock | the line that names the release, as a tag or as the full commit for a project that pins one, the lock following it, and each workspace package whose version moves in `Cargo.lock` | `manifest`: any other line a project's manifest changes |
-| Board | the schema's move (`crates/tasks/src/schema.rs`) with the steps the [writer rule](TASKS.md#who-writes-a-board) asks (the project's own build at the new schema first, each writer rebuilt and run, `just tasks migrate`, whose refusal is the one list of the writers, `--leave-behind` for a writer that cannot be rebuilt where it was, and a server's writes refused until it runs the new schema), and the pin's | `board`: what the move changes for a project |
+| Board | the schema's move (`crates/tasks/src/schema.rs`) with the steps the [writer rule](BOARD_OPERATIONS.md#who-writes-a-board) asks (the project's own build at the new schema first, each writer rebuilt and run, `just tasks migrate`, whose refusal is the one list of the writers, `--leave-behind` for a writer that cannot be rebuilt where it was, and a server's writes refused until it runs the new schema), and the pin's | `board`: what the move changes for a project |
 | Public Rust items a consumer calls | the [consumer-API guards](CHECKS.md#consumer-api-changes) that changed | `api`: `OLD => NEW` for a replacement shipped beside the old item, `removed OLD => NEW` for a removal |
 | symphony.toml | the keys [PROJECT_FILE](PROJECT_FILE.md)'s tables list anew, and those they list no more | `settings`: what a project writes instead, a file or a command's arguments |
 | Installed recipes, skills, hooks and rules | the files under `crates/symphony/shipped/` that changed, which `symphony init` rewrites | `init` |
@@ -1218,7 +1218,7 @@ verification of one commit ([its card](DECISIONS.md#release-main-judged-in-steps
   [CHECKS](CHECKS.md#what-a-landing-tells-a-consumer)) is followed at once by a release run,
   whatever the count ([the owner's A](DECISIONS.md#schema-landing-then-release), 2026-11-19).
   Main's build moves this repository's board at its first command after the landing
-  ([TASKS](TASKS.md#where-it-lives)), and the machine's server, a release's, then writes nothing
+  ([BOARD_OPERATIONS](BOARD_OPERATIONS.md#which-build-moves-a-live-board)), and the machine's server, a release's, then writes nothing
   to it until a release at the new schema serves it ([the switch](#the-switch)), unless the step is
   declared to keep the Symphony writing and that server's release reads the record the declaration
   writes ([CHECKS](CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). A declared step
@@ -1341,7 +1341,7 @@ Once a release's tag is pushed, the run does this, in order:
   - A project with no board folder, a board not made yet, and one at the release's schema or past
     it have nothing to move.
   - **The writer rule.** A board moves only when every writer seen there in the last week (its
-    writer record, [who writes a board](TASKS.md#who-writes-a-board)) is a release's own, was built
+    writer record, [who writes a board](BOARD_OPERATIONS.md#who-writes-a-board)) is a release's own, was built
     at the release's schema, or is not counted (below). A release's own is a binary of a release
     installed in this machine folder (`releases/NAME/bin/`) on this host, which pointing `current`
     takes on. A board with any other writer behind stays where it is, and the step names each
@@ -1363,7 +1363,7 @@ Once a release's tag is pushed, the run does this, in order:
     and a build put there since that is itself behind and has not run. Each that runs before the
     move writes its line and holds the board; after it, each is refused the board ahead of it,
     naming itself as the program to rebuild, before any write
-    ([who writes a board](TASKS.md#who-writes-a-board)): a refused write, never a corrupt one. A
+    ([who writes a board](BOARD_OPERATIONS.md#who-writes-a-board)): a refused write, never a corrupt one. A
     file restored with its old time still counts.
   - **A build the project no longer runs.** A line behind on this host whose program is still at
     its path is not counted either when it is no build the project runs now and was last seen
@@ -1426,7 +1426,7 @@ Once a release's tag is pushed, the run does this, in order:
   unless the step keeps it writing ([CHECKS](CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)),
   and two ahead it refuses it ([the switch](#the-switch)); that release's `tasks` and `agent-send`
   refuse it either way, naming themselves as the program to rebuild ([who writes a
-  board](TASKS.md#who-writes-a-board)).
+  board](BOARD_OPERATIONS.md#who-writes-a-board)).
 - **The machine's server.** Last, the run says which server answered on the machine's record
   before `current` moved. Nothing here starts, stops, signals or restarts it. A release's server
   follows `current` by its own reload ([the install](#the-install)): the run waits, 5 minutes at
@@ -1536,7 +1536,7 @@ updates up to it (`updates.json` in the machine folder,
   that update, served or not, its task closed, and its next arrival at `N` is a new generation,
   `ID@N.2`, `tests/release-red-update-ID-N-g2`, an entry of its own beside the old, which keeps its
   history; so is an arrival the board's `schema-seen.log` dates after a served one's (the record
-  starts again from an accepted rollback, [TASKS](TASKS.md#a-board-that-went-back)). An open
+  starts again from an accepted rollback, [BOARD_OPERATIONS](BOARD_OPERATIONS.md#a-board-that-went-back)). An open
   update a higher goal supersedes is served when the server writes the board at its schema, else
   ended with its task; so is an open update of a project no longer registered. What the ledger
   cannot tell apart: a board's database recreated at the same schema with no rollback in its
@@ -1711,7 +1711,7 @@ the newer release moved stays at that release's schema, which the older release'
 and writes nothing to ([the switch](#the-switch)) and the older release's `tasks` refuses. Its
 store as it was before the move is the snapshot the refresh took
 (`before-schema-N-RELEASE.surql`, or `.sql` of a board on PostgreSQL), and a board put back to it is one that went back, which the
-owner accepts ([TASKS](TASKS.md#a-board-that-went-back)). Pointing `current` back on the machine whose
+owner accepts ([BOARD_OPERATIONS](BOARD_OPERATIONS.md#a-board-that-went-back)). Pointing `current` back on the machine whose
 server is the shared one is the owner's word. Pointing it forward is not: while this
 repository's board is at a schema the release `current` names does not serve, an orchestrator
 points `current` at the newest green release that serves it, at once and without asking, and

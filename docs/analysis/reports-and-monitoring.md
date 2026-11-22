@@ -456,7 +456,7 @@ work is `tools/agent-cost-estimate` ([TASKS](../TASKS.md#what-the-tokens-cost)),
 The server appends, once an hour, the hour it already holds in memory (the minutes `Recorder`
 keeps) to a day file in `symphony/health/` in the git common dir: dispatch and sweep passes and
 failures, request counts, slow and unanswered requests, the slowest caller, write p50 and p90. No
-board request. Kept 90 days ([TASKS](../TASKS.md#board-health)).
+board request. Kept 90 days ([BOARD_OPERATIONS](../BOARD_OPERATIONS.md#board-health)).
 
 ### How the figures are computed
 

@@ -70,7 +70,7 @@ Each is needed before a live board moves. None is built by this page.
 |---|---|
 | The live-board guard covers PostgreSQL's tables and finds a PostgreSQL board | landed with the lifecycle |
 | Holds, stopped-cluster snapshots, reclaim and the schema fence on PostgreSQL | landed, proved on scratch boards |
-| A copy does not let an old task number or version be taken for a new one | landed with `tools/board-recovery-generation`, board schema 22: every copy of a whole board replaces its [recovery generation](../TASKS.md#a-board-that-was-copied-or-restored), and a write naming a task read before the copy is refused. The cutover is itself such a copy |
+| A copy does not let an old task number or version be taken for a new one | landed with `tools/board-recovery-generation`, board schema 22: every copy of a whole board replaces its [recovery generation](../BOARD_OPERATIONS.md#a-board-that-was-copied-or-restored), and a write naming a task read before the copy is refused. The cutover is itself such a copy |
 | PostgreSQL starting for a board that is not a scratch one | landed with `tools/board-pg-cutover-pieces`: PostgreSQL serves any board whose home names it (`backend.json`), and a board outside a scratch place gets that name only by the move below; there its server outlives the command that started it, as SurrealDB's does |
 | The cutover command: hold, export, copy, compare, switch, with each failure leaving the board as it was | landed with the same task, proved on scratch boards: `tasks-move ENGINE`, [one board's move](#one-boards-move) |
 | Restoring a PostgreSQL snapshot over the board it was taken from | landed with the same task: `tasks-move --restore SNAPSHOT`, under the move's journal; the cluster it replaces is kept ([POSTGRESQL](../POSTGRESQL.md#holds-snapshots-and-recovery)) |
@@ -204,7 +204,7 @@ a while longer: a page's reader that found the board held then tried it again on
 that doubled from 1 s to 60 s (`apps/symphony-server/src/live/retry.rs`), so they went on saying so
 for about 100 s past the board's own release. Since, a reader refused by a hold tries again at its
 first tick or page request after the release. The copy into PostgreSQL is ended at 270 s by its server, thirty
-short of the 300 s its caller waits ([TASKS](../TASKS.md#a-board-that-was-copied-or-restored)).
+short of the 300 s its caller waits ([BOARD_OPERATIONS](../BOARD_OPERATIONS.md#a-board-that-was-copied-or-restored)).
 
 ## The rehearsal, 2026-11-19
 

@@ -37,7 +37,7 @@ project's own landing recipe remains its own integration, and must explicitly su
 before activation.
 
 The board owns task identity, assessments, recorded runs and verdicts. The GitHub adapter owns
-issue/PR publication and reconciliation through the [versioned tasks API](../TASKS.md#the-tasks-api).
+issue/PR publication and reconciliation through the [versioned tasks API](../BOARD_API.md#the-tasks-api).
 The landing policy/tool reads the authoritative assessment and stamp readers, controls GitHub
 evidence enforcement and check publication, and owns merge execution and its durable receipt.
 A transport helper may deliver an authorized snapshot's check writes with the publisher App
