@@ -95,7 +95,11 @@ impl Store {
                 "doc": serde_json::to_value(&written).expect("an entry is JSON"),
             });
             let wrote: bool = self.retrying(|| {
-                self.transact_dispatch(both(sql::WRITE, pg::write()), vars.clone(), false)
+                self.transact_dispatch(
+                    both(sql::WRITE, pg::write()).naming(&[TABLE]),
+                    vars.clone(),
+                    false,
+                )
             })?;
             if wrote {
                 return Ok((written, true));
