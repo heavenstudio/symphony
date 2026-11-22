@@ -78,6 +78,20 @@ fn registers_code_blocks_history_and_analysis_are_exempt() {
     assert!(!found.iter().any(|(_, line, _)| *line == 5));
 }
 
+#[test]
+fn a_document_named_as_an_exempt_folder_is_judged() {
+    let tree = prose_tree();
+    tree.write("docs/kappa/analysis.md", "# A\n\nquiet-roads here.\n");
+    tree.write("docs/kappa/history.md", "# H\n\nquiet-roads here.\n");
+    let found = history_in_prose(&tree.root).unwrap();
+    for path in ["docs/kappa/analysis.md", "docs/kappa/history.md"] {
+        assert!(
+            found.contains(&finding(path, 3, "quiet-roads")),
+            "{path}: {found:?}"
+        );
+    }
+}
+
 /// One prose line per boundary, each with what the lint finds on it. A mention follows `(`, `[`, `*`, a
 /// quote, a space or the line's start, and ends at `)`, `,`, `.`, `;`, `:` or the line's end; it never
 /// follows `/`, `#`, `-` or a word character, nor runs on into `-` or a word character. Of two slugs

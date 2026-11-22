@@ -234,8 +234,8 @@ pub fn beside_documents(file: &str) -> bool {
 
 /// Whether the docs audit judges the names in `file`, a path from the root of the Symphony's own
 /// checkout, and keeps the lists' entries for it current: Markdown under `docs/` but the records
-/// (`RECORDS`, `ANALYSIS`), and what [`beside_documents`] names. The hooks test keeps the entries for every
-/// other file current.
+/// (`RECORDS`, `ANALYSIS`), and what [`beside_documents`] names. The hooks test keeps the entries
+/// for every other file current.
 pub fn audited(file: &str) -> bool {
     let record = |record: &&str| {
         if record.ends_with('/') {
