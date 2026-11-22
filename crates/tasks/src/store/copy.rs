@@ -824,21 +824,24 @@ const LEFT: [(&str, &str); 6] = [
 mod placed {
     use super::*;
 
-    /// The tables a move takes by the dump ([`Store::dump`], [`Store::copy`]): those the copy of
-    /// a dump that holds a workflow writes.
-    fn dumped() -> Vec<&'static str> {
+    /// A dump of no rows but a workflow's one record: every table the dump names.
+    fn with_workflow() -> Dump {
         let workflow = crate::rows::WorkflowRow {
             key: json!("definition"),
             kind: "definition".into(),
             body: serde_json::Map::new(),
             at: 0.0,
         };
-        let dump = Dump {
+        Dump {
             workflow: vec![workflow],
             ..Dump::default()
-        };
-        copied_tables(&dump)
-            .into_iter()
+        }
+    }
+
+    /// The tables a move takes by the dump ([`Store::dump`], [`Store::copy`]): those the copy of
+    /// a dump that holds a workflow writes.
+    fn dumped() -> Vec<&'static str> {
+        (copied_tables(&with_workflow()).into_iter())
             .map(|(table, _)| table)
             .collect()
     }
@@ -913,6 +916,25 @@ mod placed {
         read.sort_unstable();
         written.sort_unstable();
         assert_eq!(read, written);
+    }
+
+    #[test]
+    fn a_dump_holds_each_table_its_read_names_and_its_text_reads_back_whole() {
+        let dump = with_workflow();
+        let text = serde_json::to_value(&dump).unwrap();
+        let mut held: Vec<&str> = text
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let mut read: Vec<&str> = (postgres::copy::DUMPED.iter())
+            .map(|(name, _, _)| *name)
+            .collect();
+        held.sort_unstable();
+        read.sort_unstable();
+        assert_eq!(held, read);
+        assert_eq!(Dump::from_json(&text.to_string()), Ok(dump));
     }
 
     #[test]
