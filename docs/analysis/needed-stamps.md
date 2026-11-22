@@ -51,7 +51,7 @@ assessed needs, is `review`, which is today's rule.
   fixture, a shipped skill whose install is tested). The tests closest to a change are what proves
   it works. A change of the values the project file gives its settings, which the settings check
   proves alone (`symphony settings-check`, recorded as a test run: every table and key known, each
-  value of its type, no name judged against a list), with no other suite.
+  value of its type, no model or recipe judged against a list), with no other suite.
 - **Skips:** documents and guides alone; pictures and other files nothing tests; a hotfix whose
   break no test shows in the time it has, its tests coming with its postmortem.
 

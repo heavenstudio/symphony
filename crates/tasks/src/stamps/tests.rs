@@ -44,7 +44,9 @@ fn a_change_of_settings_values_skips_review_for_the_settings_check_as_tests() {
         tests.applies
     );
     assert!(
-        tests.applies.contains("no name judged against a list"),
+        tests
+            .applies
+            .contains("no model or recipe judged against a list"),
         "{}",
         tests.applies
     );

@@ -278,31 +278,33 @@ pub fn parse(path: &str, text: &str) -> Read {
         .filter(|key| !KEYS.contains(&key.as_str()))
         .map(|key| setting(TABLE, key).named())
         .collect();
-    // The cap: `[limits]`'s, else `[board]`'s, where an older build reads it.
+    // The cap: `[limits]`'s, else `[board]`'s, where an older build reads it. A value the rule
+    // refuses is said in its table's words, with what holds instead.
+    let no_cap = "no cap on an orchestrator's open tasks applies";
     let slots = |table: &str, value: &Value| {
         let at = setting(table, SLOTS);
         judged(SLOTS, value)
             .map(|cap| (cap, at.clone()))
-            .map_err(|why| {
-                format!(
-                    "{path}: {} is {}; {why}; no cap on an orchestrator's open tasks applies",
-                    at.named(),
-                    shown(value)
-                )
-            })
+            .map_err(|why| format!("{path}: {} is {}; {why}", at.named(), shown(value)))
     };
+    // What is said of `[board]`'s cap written beside `[limits]`', after what is said of that one.
+    let mut beside = None;
     let cap = match (limits.get(SLOTS), board.get(SLOTS)) {
         (Some(ours), Some(older)) => {
             let held = slots(TABLE, ours);
-            if let (Ok((cap, at)), Ok((other, _))) = (&held, slots("board", older))
-                && cap != &other
-            {
-                read.problems.push(format!(
+            beside = match (&held, slots("board", older)) {
+                (Ok((cap, at)), Ok((other, _))) if cap != &other => Some(format!(
                     "{path}: {} is {other}, left out: {} is {cap}, which holds",
                     setting("board", SLOTS).named(),
                     at.named()
-                ));
-            }
+                )),
+                (Ok((cap, at)), Err(refused)) => Some(format!(
+                    "{refused}; left out: {} is {cap}, which holds",
+                    at.named()
+                )),
+                (Err(_), Err(refused)) => Some(format!("{refused}; {no_cap}")),
+                _ => None,
+            };
             Some(held)
         }
         (Some(ours), None) => Some(slots(TABLE, ours)),
@@ -314,9 +316,10 @@ pub fn parse(path: &str, text: &str) -> Read {
             read.limits.orchestrator_slots = Some(cap);
             read.written.insert(SLOTS, at);
         }
-        Some(Err(problem)) => read.problems.push(problem),
+        Some(Err(problem)) => read.problems.push(format!("{problem}; {no_cap}")),
         None => {}
     }
+    read.problems.extend(beside);
     // The three limits that are one whole number each, and what a value that is none leaves.
     let whole_limits = [
         (TASKS, format!("it takes its default, {ORCHESTRATOR_TASKS}")),

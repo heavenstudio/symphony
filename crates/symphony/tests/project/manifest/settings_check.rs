@@ -1,6 +1,7 @@
 //! `symphony settings-check`, the settings check a change of settings is held to in a reviewer's
 //! place: the project file's shape alone (a table or key the Symphony knows, each value of its
-//! type, each required value there), and never a name against a list.
+//! type and one its key's rule takes, each required value there), and never a model or a recipe
+//! against a list.
 
 use super::folder;
 use crate::Tree;

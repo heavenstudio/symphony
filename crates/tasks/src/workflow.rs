@@ -209,8 +209,9 @@ pub fn authorities(text: &str, definition: Option<&Validated>) -> Result<Vec<Att
 }
 
 /// [`authorities`] of a file already read as TOML: the value of its `workflow_authorities` and its
-/// `[project] id`, none where it has none, so a reader of the whole file reads it once, as
-/// [`written_from`] does. A blank id is none.
+/// `[project] id`, none where it has none or one the project file's rule refuses
+/// ([`crate::project::id`]), so a reader of the whole file reads it once, as [`written_from`] does.
+/// A blank id given is none.
 pub fn authorities_from(
     value: Option<toml::Value>,
     project: Option<&str>,
@@ -226,7 +227,7 @@ pub fn authorities_from(
     if !attesters.is_empty() && project.is_none_or(|id| id.trim().is_empty()) {
         return Err(
             "workflow_authorities: an attestation names the project it is for, and [project] \
-             id names none"
+             id names none (it is unwritten, blank, or no slug)"
                 .into(),
         );
     }

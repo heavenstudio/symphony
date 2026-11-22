@@ -180,4 +180,21 @@ fn a_cap_on_an_orchestrators_slots_is_one_rule_in_either_table_for_both() {
             }
         }
     }
+    // Written in both tables, `[limits]`' holds for both, and a `[board]` one the rule refuses is
+    // refused by the load as the board says it.
+    for value in ["0", "-1", "\"8\"", "4294967296"] {
+        let text =
+            format!("[board]\norchestrator_slots = {value}\n[limits]\norchestrator_slots = 5\n");
+        let (_tree, loaded) = checkout(&text);
+        let board = limits::parse(FILE, &text);
+        assert_eq!(board.limits.orchestrator_slots, Some(5), "{text}");
+        assert_eq!(board.problems.len(), 1, "{text}: {:?}", board.problems);
+        assert_eq!(loaded.unwrap_err(), board.problems[0], "{text}");
+        assert!(
+            board.problems[0].starts_with(&format!(
+                "{FILE}: [board] orchestrator_slots (line 2) is {value}; "
+            )),
+            "{text}"
+        );
+    }
 }
