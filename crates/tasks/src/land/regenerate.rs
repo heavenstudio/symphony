@@ -1126,6 +1126,11 @@ impl Regenerator<'_, '_> {
             }
             return Ok(());
         }
+        // A task past ready is left as it is. A cancelled one is here only by a faked record, or
+        // by a cancel since `waiting` read it: `waiting` files none it read cancelled, and no round
+        // makes a cancelled task's commit, and so its slug, again, since a changed generator moves
+        // the tip (`Settings::of` reads the main checkout's committed project file) or the
+        // message, which names the generators.
         if !matches!(status.as_deref(), None | Some("ready")) {
             return Ok(());
         }

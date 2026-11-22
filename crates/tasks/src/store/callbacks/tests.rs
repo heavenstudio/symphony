@@ -302,13 +302,8 @@ fn a_due_pull_is_queued_first_and_upgraded_for_a_legacy_observer() {
     let observed = store.slot_holdings().unwrap();
     let env = crate::cli::Env::of_process();
     let visit = Visit::new(Pass::Deliver, &env, store, Some(&observed));
-    let agents = Agents {
-        view: None,
-        idle: Vec::new(),
-        busy: Vec::new(),
-    };
-    let plan = |state: &mut State, visit: &Visit<'_>| {
-        store.plan_pull(&handle, &board, visit, state, &[], &agents)
+    let plan = |state: State, visit: &Visit<'_>| {
+        store.plan_pull(&handle, &board, visit, &mut look_over(state))
     };
     let entry = |list: &str, name: &str| (list.to_string(), name.to_string());
     let (volume, ready) = (
@@ -320,7 +315,7 @@ fn a_due_pull_is_queued_first_and_upgraded_for_a_legacy_observer() {
          low_volume {handle} open=0 threshold=4 cap=none — pick disjoint ready work or resolve owned blockers using actual resources and ownership\n\
          ready_unstaffed p2 p/ready — Task p/ready"
     );
-    let first = plan(&mut State::default(), &visit).unwrap();
+    let first = plan(State::default(), &visit).unwrap();
     assert_eq!(
         first.entries,
         BTreeSet::from([volume.clone(), ready.clone()])
@@ -340,17 +335,17 @@ fn a_due_pull_is_queued_first_and_upgraded_for_a_legacy_observer() {
     // An older dispatcher's look: what it recorded counts as told, but the condition it never
     // knew, the orchestrator's low volume, which the upgrade queues alone.
     let looked = json!({"roles":[], "statuses":{}, "ready":{}, "children":{}});
-    let mut legacy = State {
+    let legacy = State {
         seen: Some(serde_json::from_value(looked).unwrap()),
         ..State::default()
     };
-    let upgraded = plan(&mut legacy, &visit).unwrap();
+    let upgraded = plan(legacy, &visit).unwrap();
     assert_eq!(upgraded.text, whole);
     assert_eq!(upgraded.account.plan, PullPlan::Queued);
     assert_eq!(upgraded.account.recorded, Some(BTreeSet::from([ready])));
     assert_eq!(upgraded.account.untold, BTreeSet::from([volume]));
     let none = Visit::new(Pass::Deliver, &env, store, None);
-    let refused = plan(&mut State::default(), &none).map(|_| ()).unwrap_err();
+    let refused = plan(State::default(), &none).map(|_| ()).unwrap_err();
     assert!(
         refused.to_string().contains("no holdings observation"),
         "{refused}"
@@ -420,11 +415,13 @@ fn nothing_seen() -> attach::Seen {
     serde_json::from_value(json!({"roles":[], "statuses":{}, "ready":{}, "children":{}})).unwrap()
 }
 
-/// A worker's look at an empty board, with no PULL due, over the recorded `state`.
+/// A worker's look at an empty board, with no PULL due, over the recorded `state`: one upgraded
+/// from a legacy observer where `state` is one, as [`Store::look`] reads it ([`upgrades_legacy`]).
 fn look_over(state: State) -> Look {
     let seen = nothing_seen();
     Look {
         narrowing: attach::Narrowing::between(&seen, &seen),
+        legacy_upgrade: upgrades_legacy(&state),
         state,
         queued: Vec::new(),
         seen: seen.clone(),
@@ -432,7 +429,6 @@ fn look_over(state: State) -> Look {
         legacy: seen,
         before: None,
         initializing: false,
-        legacy_upgrade: false,
         first_observation: false,
         message_floor: 0,
         statuses: BTreeMap::new(),
@@ -574,6 +570,58 @@ fn a_looks_lines_are_keyed_in_order_under_the_lease_and_name_the_recipients_task
     let elsewhere = line_events("zinc-otter", &board, lines, 4);
     assert!(elsewhere.iter().all(|event| event.slug.is_none()));
     assert!(line_events("amber-wren", &board, Vec::new(), 4).is_empty());
+}
+
+/// What a look hears changed: nothing on its first look, nor for an observer it upgrades from a
+/// legacy one, which is baselined, nor while what it hears is what it was told, however the whole
+/// look moved. Once what it hears moved, each line of the whole look's change, a finished task's
+/// move among them, its whitespace run together.
+#[test]
+fn a_looks_changed_lines_are_none_until_what_it_hears_moves_and_then_the_whole_looks() {
+    let fixture = crate::store_fixture::Fixture::empty();
+    let board = crate::Board {
+        tasks: Vec::new(),
+        sessions: Vec::new(),
+        latest_message: 0,
+    };
+    let me = "amber-wren";
+    // A look at the tasks of `statuses`, each `me`'s to execute, and the ready ones of `ready`.
+    let seen = |statuses: &[(&str, &str)], ready: &[(&str, &str)]| {
+        let mut seen = nothing_seen();
+        for &(slug, status) in statuses {
+            seen.statuses.insert(slug.into(), status.into());
+            seen.roles
+                .insert((slug.into(), me.into(), "executor".into()));
+        }
+        seen.ready = (ready.iter())
+            .map(|&(slug, title)| (slug.into(), title.into()))
+            .collect();
+        seen
+    };
+    let title = [("p/n", "Two  spaced   words")];
+    let told = seen(&[("p/a", "ready"), ("p/b", "in_progress")], &[]);
+    let whole = seen(&[("p/a", "in_progress"), ("p/b", "done")], &title);
+    // What it hears of the whole look: the open tasks alone, as `Store::look` compacts it.
+    let heard = seen(&[("p/a", "in_progress")], &title);
+    let lines = |before: Option<&attach::Seen>, heard: &attach::Seen, upgrade: bool| {
+        let mut look = look_over(recorded());
+        look.before = before.cloned();
+        (look.seen, look.heard) = (whole.clone(), heard.clone());
+        look.legacy_upgrade = upgrade;
+        fixture.store.changed_lines(me, &board, &look).unwrap()
+    };
+    let none: [&str; 0] = [];
+    assert_eq!(lines(None, &heard, false), none, "its first look");
+    assert_eq!(lines(Some(&told), &heard, true), none, "upgraded");
+    assert_eq!(lines(Some(&told), &told, false), none, "it hears no move");
+    assert_eq!(
+        lines(Some(&told), &heard, false),
+        [
+            "STATUS p/a ready → in_progress",
+            "STATUS p/b in_progress → done",
+            "NEW p/n ready — Two spaced words",
+        ]
+    );
 }
 
 /// A planned PULL is an event only when its account queues a new one, keyed by the lease's
