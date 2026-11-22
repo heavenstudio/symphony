@@ -28,8 +28,8 @@ moves between the pages with it and hears from the agents without leaving the pa
 
 ### The header
 
-- **The mark and the name** are the Symphony's, or the project's own where its theme has them.
-  They are not a link.
+- **The mark and the name** are the Symphony's, or the project's own where [its
+  theme](THEMES.md#a-projects-theme) has them. They are not a link.
 - **Projects** opens [the project picker](PROJECTS.md). It is there only where one Symphony
   serves several projects.
 - **The pages**, always in this order: **Home**, **Queue**, **Docs**, **Board**, **Reports**,
@@ -37,8 +37,8 @@ moves between the pages with it and hears from the agents without leaving the pa
   task's page lights **Board**, and a document or a folder lights **Docs**.
 - **The crumbs** say what the lit page does not: a document's folders and its name, each folder a
   link, or a task's slug.
-- **Appearance** (the half-filled circle) opens a small panel that changes the project's look
-  on this device, from a theme file, or puts back the project's own.
+- **Appearance** (the half-filled circle) opens [a small panel](THEMES.md#appearance) that
+  changes the project's look on this device, from a theme file, or puts back the project's own.
 - **Activity** opens the list of recent activity, and closes it again.
 
 The header stays at the top of the window while the page scrolls.
@@ -160,13 +160,16 @@ panels over the page as a phone does, rather than pushing it aside.
   left with the page.
 - With a panel open the header is narrower, and what does not fit its row, **Activity** first,
   goes to a second.
-- A project's theme can keep the header to one row at every width, scrolling sideways where it
-  does not fit.
+- [A project's theme](THEMES.md#a-projects-theme) can keep the header to one row at every
+  width, scrolling sideways where it does not fit.
 
 ## Related
 
 - [Home](HOME.md): where **Home** leads.
-- [The review queue](QUEUE.md), [reading a document](DOCUMENT.md), [the task board](BOARD.md)
-  and [the agents page](AGENTS.md): the other pages of the header.
+- [The review queue](QUEUE.md), [reading a document](DOCUMENT.md), [the task board](BOARD.md),
+  [Reports](REPORTS.md), [Runs](RUNS.md) and [the agents page](AGENTS.md): the other pages of the
+  header.
+- [Themes and appearance](THEMES.md): a project's own name, mark and look, and what
+  **Appearance** imports.
 - [Review](../REVIEW.md): the cards the bar steps through, and attaching files.
 - [Project file](../PROJECT_FILE.md): a project's own name, mark, theme and pages.

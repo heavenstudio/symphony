@@ -121,8 +121,8 @@ row.
 - An age is from the card's first dated line, so a card the owner commented on keeps its first
   age.
 - With no card after the first, **Next up** takes the whole width.
-- A project's theme can keep home to **Next up** and **Then**, without the counts and the
-  progress.
+- [A project's theme](THEMES.md#a-projects-theme) can keep home to **Next up** and **Then**,
+  without the counts and the progress.
 
 ## Related
 
