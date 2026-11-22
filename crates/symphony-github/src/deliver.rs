@@ -313,7 +313,6 @@ struct Assessed {
     import: Option<String>,
 }
 
-/// What a request says it delivers: an import of `commit` from the repository at `url`, or none.
 /// The method a merge of `request`'s `head` is asked by, which the request names itself: a task's
 /// squashed, an import's (`imported`) by a merge commit. A head that is no whole commit, or
 /// another method, is refused.
@@ -327,6 +326,7 @@ fn merge_method(request: &Value, head: &str, imported: bool) -> Result<&'static 
     Ok(method)
 }
 
+/// What a request says it delivers: an import of `commit` from the repository at `url`, or none.
 fn import(request: &Value) -> Option<(String, String)> {
     (request["operation"] == json!("import")).then(|| {
         (

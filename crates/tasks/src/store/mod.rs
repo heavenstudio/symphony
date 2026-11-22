@@ -439,7 +439,7 @@ impl Store {
             )
         })?;
         if !thread.known {
-            return Err(refused(format!("no task {}", repr(slug))));
+            return Err(work::no_task(slug));
         }
         Ok(thread.messages.into_iter().map(message).collect())
     }
@@ -455,7 +455,7 @@ impl Store {
         let read = || both(surreal::THREADS, pg::messages::threads());
         let read: Threads = self.retrying(|| self.transact(read(), json!({"slugs": slugs})))?;
         if let Some(slug) = read.unknown.first() {
-            return Err(refused(format!("no task {}", repr(slug))));
+            return Err(work::no_task(slug));
         }
         Ok(slugs
             .iter()
@@ -1171,9 +1171,7 @@ impl View {
 
     fn task(&self, slug: &str) -> Result<&TaskRow, Error> {
         let found = self.snap.tasks.iter().find(|t| t.row.slug == slug);
-        found
-            .map(|t| &t.row)
-            .ok_or_else(|| refused(format!("no task {}", repr(slug))))
+        found.map(|t| &t.row).ok_or_else(|| work::no_task(slug))
     }
 
     /// The one task read's holders of `role`.
