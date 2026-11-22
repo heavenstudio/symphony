@@ -89,6 +89,8 @@ export const CASES = cases as unknown as {
   decode: [string, [string, string][]][];
   /** `blocks` holds every kind of block, span and media, and every word they name. */
   samples: {
+    settings: unknown;
+    emptySettings: unknown;
     queue: unknown;
     emptyQueue: unknown;
     board: unknown;

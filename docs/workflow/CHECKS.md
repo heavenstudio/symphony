@@ -422,6 +422,7 @@ both kinds, to copy after `--`:
 | the agents page (`/agents`) | `machine_work` `the_agents_page` `header::` `look_parity::` `the_chat_opened_on` `polish::` `projects::` `budget` |
 | the reports page (`/reports`) | `reports::` `header::` `polish::` `projects::` `budget` |
 | the runs page (`/runs`) | `runs::` `header::` `polish::` `projects::` `preload::` `budget` |
+| the settings page (`/settings`) | `settings::` `header::` `phone_labels::` `projects::` `preload::` `budget` |
 | document and folder pages | `document` `docs_index` `owner_` `cache_ahead` `cache_pages::` `restored::` `landmarks::` `skeleton::` `layout_shift::` `look_parity::` `polish::` `projects::` `budget` |
 | the header, on every page | `header::` `floating_controls::` `panel_open::` `persistent::` `polish::` `projects::` |
 | the panel (the chat, add task, the activity list, Appearance, toasts, the pending bar) | `panel_open::` `persistent::` `header::` `floating_controls::` `components::` `look_parity::` `server_notices::` `notice_layout::` `polish::` `projects::` `budget` |

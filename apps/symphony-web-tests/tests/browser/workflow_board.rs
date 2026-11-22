@@ -13,7 +13,7 @@
 //! (`apps/symphony-server/src/live/workflow_tests.rs`). With `SYMPHONY_WORKFLOW_SHOTS` naming a
 //! folder, the flow saves its pictures there.
 
-use super::{SHOWN, chrome::Chrome, look_parity, open, samples, site::Site, texts};
+use super::{NO_STORE, SHOWN, chrome::Chrome, look_parity, open, samples, site::Site, texts};
 use serde_json::{Value, json};
 use std::time::{SystemTime, UNIX_EPOCH};
 use symphony_api::TASK_TIMELINE_PATH;
@@ -280,6 +280,35 @@ fn the_board_draws_the_workflows_phases_as_columns_and_tabs_and_filters_by_a_sta
         "a custom workflow's board draws no row of work under way"
     );
     shot(&mut page, "board-phone");
+    // Nor does the next visit's ghost reserve that row, from the board this device kept. With the
+    // store off the visit draws its ghost, the board's read held while it shows.
+    assert!(
+        page.wait_for(
+            "Object.keys(localStorage).some(key => key.endsWith('board-waiting-shape') && localStorage.getItem(key).endsWith('\\nworkflow'))",
+            SHOWN
+        ),
+        "the board this device kept is no workflow's: {}",
+        page.eval("JSON.stringify(localStorage)")
+    );
+    page.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({ "source": NO_STORE }),
+    );
+    site.hold_route("/api/task-board", true);
+    page.open(&site.url("/tasks"));
+    assert!(
+        page.wait_for(
+            "document.querySelector('.waiting-ghost .wait-strip') !== null",
+            SHOWN
+        ),
+        "no ghost of the board"
+    );
+    assert_eq!(
+        page.eval("document.querySelector('.under-way')"),
+        Value::Null,
+        "the ghost of a custom workflow's board reserves no row of work under way"
+    );
+    site.hold_route("/api/task-board", false);
 }
 
 #[test]

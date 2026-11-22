@@ -100,6 +100,7 @@ describe("the header", () => {
     expect(lit("tasks", false)).toEqual(["Board"]);
     expect(lit("task/app/x", false)).toEqual(["Board"]);
     expect(lit("reports", false)).toEqual(["Reports"]);
+    expect(lit("settings", false)).toEqual(["Settings"]);
     expect(lit("runs", false)).toEqual(["Runs"]);
     expect(lit("agents", false)).toEqual(["Agents"]);
   });
@@ -115,6 +116,7 @@ describe("the header", () => {
       "/docs/",
       "/tasks",
       "/reports",
+      "/settings",
       "/runs",
       "/agents",
       "/shelf",

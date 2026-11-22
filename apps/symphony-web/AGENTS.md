@@ -32,6 +32,8 @@ A page kind is an entry under `kinds/` that exports `run` and `stop`, named in `
   ([TASKS](../../docs/workflow/TASKS.md#the-agents-api)).
 - `reports`, `/reports`: `reports.tsx`, `chart.tsx`.
 - `runs`, `/runs`: `runs.tsx` ([RUNS](../../docs/workflow/RUNS.md#the-runs-page)).
+- `settings`, `/settings`: `settings.tsx`
+  ([PROJECT_FILE](../../docs/operations/PROJECT_FILE.md#the-settings-page)).
 - `panel`, persistent (the chat, add task, activity, toasts, the pending bar, Appearance):
   `panel.tsx`, `quick.tsx`, `panel-model.ts`, `panel-focus.ts`, `appearance.tsx`
   ([REVIEW](../../docs/workflow/REVIEW.md#chat)).

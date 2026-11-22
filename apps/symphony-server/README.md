@@ -228,6 +228,7 @@ cannot keep installing after `--stop` returns.
 | `/api/task-thread?slug=…` | Alias for the typed paged task history |
 | `/api/agents` | The board's agents view, including probe availability |
 | `/api/reports?grain=…&days=…` | The Reports page's window (`ReportsPage`): its periods by the hour, day or week, each summed from the project's roll-up, agents and board-health day files, a period no file recorded none of; the commits in the window that changed the settings file, the rules or a skill, each with what it changed (`ReportMark`); what was not read. It reads files only, never the board, and at most 64 MiB of them (`src/api/reports.rs`). The answer is kept between reads with what it was read from (the hour, each day file by its stat, the default branch's tip), so a read that finds none of it moved opens no file and starts no git (`src/api/reports/kept.rs`). Its window ends at the moment `TASKS_NOW` holds the board's clock at, when the server's environment sets it, else at the server's clock (`Hub::recorded_now`), so a server over records written at a held moment reads them, as the product specs' pictures do |
+| `/api/settings` | The Settings page's one read (`SettingsPage`): the files read, what does not load, and every entry in one shape with each setting's value in force, source, scopes and class (`crates/symphony/src/settings.rs`). It reads the project's files, this machine's `PATH` and the committed `symphony-github.toml`, runs no program, and writes nothing; no route saves a setting. A hosted visitor is refused it, as it says what this machine has |
 | `/api/run-log?run=…&tail=…` | Part of a run's log (`RunLog`): its last 64 KiB by default, its last `tail` bytes, or `from=…&to=…` a range, at most 1 MiB; only a regular file in a day folder of the project's `logs/`, never the board (`src/api/run_log.rs`, [RUNS](../../docs/workflow/RUNS.md#logs)) |
 | `/api/activity` | Latest forty document and owner-addressed task entries |
 | `/api/pending` | Pending cards in document navigation order, then branch cards |
@@ -274,7 +275,7 @@ queries keep lifecycle status and paging semantics.
 Search uses SurrealDB full-text indexes over titles, briefs, slugs and thread
 messages, ordered by BM25 relevance with an exact slug first. Matching remains
 in the database; a message-only match keeps its task in the returned results.
-Canonical `/tasks`, `/task/…`, `/reports` and `/agents` routes serve the client shell.
+Canonical `/tasks`, `/task/…`, `/reports`, `/settings` and `/agents` routes serve the client shell.
 The opaque `next` cursor follows a stable task key or agent handle, so live
 insertions and removals do not shift an integer offset past an unread record.
 
@@ -525,7 +526,7 @@ the URL without opening a browser when `TASKS_SESSION`, `CODEX_THREAD_ID` or
 enforces the same boundary even when called directly.
 
 Old `/app/...` and `/doc/...` links redirect to root routes with their query
-and branch scope intact. `/docs/...`, `/tasks`, `/task/...`, `/reports`, `/agents`, a plugin's pages
+and branch scope intact. `/docs/...`, `/tasks`, `/task/...`, `/reports`, `/settings`, `/agents`, a plugin's pages
 and scoped `/@<tree>/...` pages use the same shell. `/queue` shows the complete
 typed queue: owner decisions, spot checks, agent work and pending branch cards;
 `#you`, `#spot` and `#agent` are section anchors. The feed refreshes

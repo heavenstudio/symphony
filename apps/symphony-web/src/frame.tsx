@@ -281,7 +281,7 @@ function Brand({ view }: { view: ProjectView }) {
 }
 
 /** The Symphony's own pages, which stay the global view's on a branch's document. */
-const GLOBAL = ["/", "/queue", "/tasks", "/reports", "/runs", "/agents"];
+const GLOBAL = ["/", "/queue", "/tasks", "/reports", "/settings", "/runs", "/agents"];
 
 export interface FrameProps {
   route: Route;

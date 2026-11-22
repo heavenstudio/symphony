@@ -245,6 +245,8 @@ fn initial_preloads_choose_the_shells_kind_for_each_client_route() {
         ("/queue/", "queue"),
         ("/reports", "reports"),
         ("/runs", "runs"),
+        ("/settings", "settings"),
+        ("/settings/", "settings"),
         ("/shelf/", "docs"),
         ("/docs/", "docs"),
         ("/docs/page.md", "docs"),
