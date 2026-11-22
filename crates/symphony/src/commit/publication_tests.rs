@@ -151,6 +151,24 @@ fn publication_locks_hold_all_three_until_dropped() {
     drop(PublicationLocks::take(&tree.root, &writes).unwrap());
 }
 
+/// A copy of each lock's descriptor kept past the drop, as a child another thread spawned keeps
+/// one until its exec, holds neither lock: the drop unlocks them, where a close alone would
+/// release each only with its last copy.
+#[test]
+fn copies_of_the_locks_descriptors_kept_past_their_drop_hold_nothing() {
+    let tree = repository();
+    let writes = Mutex::new(());
+    let locks = PublicationLocks::take(&tree.root, &writes).unwrap();
+    let copies = [
+        locks._commits.0.try_clone().unwrap(),
+        locks._file.as_ref().unwrap().0.try_clone().unwrap(),
+    ];
+    drop(locks);
+    assert!(lock_is_free(&tree.root, "verdict-commits.lock"));
+    assert!(lock_is_free(&tree.root, "verdict-writes.lock"));
+    drop(copies);
+}
+
 /// Refused at the commits lock, the first taken: outside a repository no common dir holds it, so
 /// nothing is taken and the saves stay free.
 #[test]
