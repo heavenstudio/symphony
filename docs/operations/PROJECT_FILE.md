@@ -72,16 +72,17 @@ table, the key and the line, as `just tasks limits` names one, and for a local v
 one it holds over), the scopes it may be written in and its class. A setting is *reviewed* when
 the local settings file refuses its table or key by name (`PROTECTED` and `PROTECTED_KEYS` in
 `crates/tasks/src/local.rs`, the one list) and a *preference* otherwise; a reviewed table is said
-as a sentence with its file and line. Its parts are the integrations and tools (the launch agents,
-Herdr's panes, GitHub, and the plugins), the models and limits, the project's name, documents and theme,
-the reviewed settings (the landing, the board's commands, the stamps, the releases and the
-workflow) and the device's appearance. GitHub is said by what the
-`symphony-github.toml` the default branch commits writes, the branch being the one the main
-checkout's HEAD names, as that program reads it. The page runs no program and holds no copy of
-its rules, so a file that writes `enabled = true` is said as enabled in its file and never as on:
-a file the program refuses runs as off, which its own status tells. A project file that does not load is said at the top of
-the page with what holds in its place, as is a local file that is refused. The page shows a
-preference as its value alone: no control on it changes one.
+as a sentence with its file and line. Its parts are the integrations and tools (the launch
+agents, Herdr's panes, GitHub, and the plugins), the models and limits, the project's name,
+documents and theme, the reviewed settings (the landing, the board's commands, the stamps, the
+releases and the workflow, whose sentence names its mappings and approval authorities) and the
+device's appearance. GitHub is said by what the `symphony-github.toml` the default branch commits
+writes, the branch being the one the main checkout's HEAD names, as that program reads it. The
+page runs no program and holds no copy of its rules, so a file that writes `enabled = true` is
+said as enabled in its file and never as on: a file the program refuses runs as off, which its
+own status tells. A project file that does not load is said at the top of the page with what
+holds in its place, as is a local file that is refused. The page shows a preference as its value
+alone: no control on it changes one.
 
 ## The settings check
 
@@ -129,13 +130,15 @@ It holds preferences alone, in the same tables, keys and types as the project fi
 - `[limits]`: every key of it.
 
 A setting that holds a command or a program the Symphony runs, or that decides what lands, is never
-read from it and is refused there by name: `[project]`'s `cargo` and `default_branch`, and all of
-`[plugins]`, `[verdicts]`, `[land]`, `[releases]` and `[stamps]`, and `[board]`'s `on_review`,
-`on_land`, `machine_work_reader`, `postgresql`, `external_postgresql` and `assessments`. A file no commit records must
-not change the landing gate or run a command: that would be a way around review that leaves no
-trace. Every other table or key (the rest of `[project]`, `[board]` and `[agents]`, `[theme]`,
-`[[entrypoints]]`, `[workflow]`, or a name misspelt) is refused by name too, as no setting a local
-file overrides.
+read from it and is refused there by name: `[project]`'s `cargo` and `default_branch`, all of
+`[plugins]`, `[verdicts]`, `[land]`, `[releases]` and `[stamps]`, the workflow's three tables
+(`[workflow]`, `[[workflow_mappings]]` and `[[workflow_authorities]]`, the two lists refused as
+arrays all the same), and `[board]`'s `on_review`, `on_land`, `machine_work_reader`,
+`postgresql`, `external_postgresql` and `assessments`. A file no commit records must not change
+the landing gate or run a command: that would be a way around review that leaves no trace. Every
+other table or key (the rest of `[project]`, `[board]` and `[agents]`, `[theme]`,
+`[[entrypoints]]`, or a name misspelt) is refused by name too, as no setting a local file
+overrides.
 
 Whatever is wrong with it is said with the file and the line: a refused setting, a key of one of
 its three tables the Symphony does not know, a value of the wrong type or outside its range, an

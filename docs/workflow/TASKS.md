@@ -1631,7 +1631,9 @@ landing](#the-default-landing)).
   decides what lands: `[project]`'s `cargo` (the command the server rebuilds itself with) and
   `default_branch` (the branch tasks land on), `[plugins]`'s `crates` and `process` (the code
   and the command that answer for the project), `[verdicts]`, `[land]` and `[releases]`, which
-  `[land] check_paths` names, `[stamps]`, and `[board]`'s `on_review`, `on_land`,
+  `[land] check_paths` names, `[stamps]`, the workflow's three tables (`[workflow]`,
+  `[[workflow_mappings]]` and `[[workflow_authorities]]`: its stages, its guards and the
+  authorities whose word meets them), and `[board]`'s `on_review`, `on_land`,
   `machine_work_reader` (an executable the server runs), `postgresql` (the folder whose
   PostgreSQL programs the board runs), `external_postgresql` (where a hosted board is kept and
   the budget of its connections) and `assessments` (where a project's landing assessments
