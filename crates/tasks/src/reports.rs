@@ -32,7 +32,7 @@ pub const DAY: f64 = 86_400.0;
 /// How many of the open tasks longest in their status a day names.
 pub const LONGEST: usize = 10;
 /// The folder of day files in the git common dir: in the one folder of Symphony's there, beside
-/// the runs' (DECISIONS: symphony-own-names).
+/// the runs' (docs/analysis/own-names.md#symphony-own-names).
 pub const FOLDER: &str = "symphony/reports";
 /// Names the folder of day files instead, for a test or a board `TASKS_SERVER` names.
 pub const FOLDER_VAR: &str = "SYMPHONY_REPORTS";

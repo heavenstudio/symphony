@@ -30,7 +30,8 @@ use crate::sweep::git::{ancestor, blobs, git, pathspecs, rev, stdout, under};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use symphony_docs::syntax::{
-    Card, Entry, REGION_END, REGION_START, cards, entry_line, is_continuation, lines, unseen_owner,
+    CARD_LINE, Card, Entry, REGION_END, REGION_START, cards, entry_line, is_continuation, lines,
+    unseen_owner,
 };
 
 /// Who writes the owner's lines under a card.
@@ -417,11 +418,6 @@ fn names(main: &Path, args: &[&str]) -> Option<Vec<String>> {
             .collect(),
     )
 }
-
-/// A card's first line as git's extended pattern: the shape [`cards`] reads, a list item at the
-/// left margin with a mark and a name in bold. It finds the documents worth reading and decides
-/// nothing: [`cards`] reads each one found.
-const CARD_LINE: &str = r"^-[[:space:]]+\[[ xX?r~a-]\][[:space:]]+\*\*";
 
 /// The documents of `rev` under the pathspecs `specs` that may hold a card, a register's marker
 /// or a card's line anywhere in them; none where git could not say.
