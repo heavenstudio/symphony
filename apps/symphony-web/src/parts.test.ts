@@ -297,7 +297,9 @@ describe("a part's read that fails", () => {
   it("draws no copy the device gives once the server answered, nor one after the part went", async () => {
     const found = later<Kept | undefined>();
     let fails = 1;
-    const { parts, device } = page(() => (fails-- > 0 ? answer(503) : answer(200, { n: 1 }, "", 1)));
+    const { parts, device } = page(() =>
+      fails-- > 0 ? answer(503) : answer(200, { n: 1 }, "", 1),
+    );
     device.read.mockResolvedValueOnce(undefined).mockReturnValue(found.promise);
     const part = keptCount();
     parts.open(part);
