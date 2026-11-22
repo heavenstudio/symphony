@@ -41,6 +41,8 @@ fn a_command_runs_to_its_end_within_its_bound_and_none_runs_once_the_server_stop
         .current_dir(tree.path("alpha"));
     let stopped = host.run(never, Duration::from_secs(240)).unwrap_err();
     assert!(stopped.contains("cancelled"), "{stopped}");
+    // Never started, however late a loaded machine let the server look after a spawn.
+    assert!(!tree.path("alpha/ran").exists(), "it ran after the stop");
 }
 
 #[test]
