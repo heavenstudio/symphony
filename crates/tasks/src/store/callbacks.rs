@@ -148,6 +148,15 @@ struct Pulled {
     entries: BTreeSet<(String, String)>,
 }
 
+/// Where a leased pass reads its recipient's inbox from ([`Store::message_events`]): after `floor`,
+/// where its cursor stands, or, on its `first` observation, whole, keeping what came after `floor`
+/// and, of the rest, each message (`msg`) and each line addressed to it.
+#[derive(Clone, Copy)]
+struct Inbox {
+    floor: i64,
+    first: bool,
+}
+
 /// The board marker just before and just after one of a dispatcher's own writes.
 #[derive(Deserialize)]
 struct Moved {
@@ -1230,59 +1239,13 @@ impl Store {
         // copied, an unchanged observation needs only outbox retries, not another history scan.
         // A plan that would read it goes on to the lease below whatever it finds (the cursor or the
         // observation has moved), and the leased pass reads it again: the plan leaves it to that one.
-        let inbox =
-            if lease.is_none() || (state.inbox_cursor == Some(board.latest_message) && unchanged) {
-                Vec::new()
-            } else if first_observation {
-                self.inbox(handle)?
-            } else {
-                self.inbox_pooled(handle, message_floor, board.latest_message)?
-            };
-        for message in inbox.into_iter().filter(|message| {
-            message.id > message_floor
-                || (first_observation
-                    && (message.kind == "msg" || message.recipient.as_deref() == Some(handle)))
-        }) {
-            let text = format!(
-                "{} #{} {} from {} — {}",
-                crate::cli::text::event_kind(&message.kind),
-                message.id,
-                message.slug,
-                message.sender,
-                event_line(&message.text)
-            );
-            let key = format!("message-{}", message.id);
-            events.push(Event::line(
-                key,
-                handle,
-                text,
-                Some(message.slug),
-                Some(message.id),
-            ));
-        }
-        if callback.chat {
-            #[derive(Deserialize)]
-            struct Chat {
-                key: String,
-                text: String,
-            }
-            let chat: Vec<Chat> = self.retrying(|| {
-                self.read(
-                    both(sql::UNQUEUED_CHAT, pg::unqueued_chat()),
-                    json!({"handle":handle}),
-                )
-            })?;
-            for event in chat {
-                let key = format!("chat-{}", event.key);
-                events.push(Event::line(
-                    key,
-                    handle,
-                    event.text,
-                    session_task(board, handle),
-                    None,
-                ));
-            }
-        }
+        let inbox = (lease.is_some()
+            && !(state.inbox_cursor == Some(board.latest_message) && unchanged))
+            .then_some(Inbox {
+                floor: message_floor,
+                first: first_observation,
+            });
+        events.extend(self.message_events(handle, callback, board, inbox)?);
         let (stored_seen, unknown_children) = stored_seen(&legacy, |handle| {
             let Some(child) = board.sessions.iter().find(|s| s.row.handle == handle) else {
                 return crate::Health::Left;
@@ -1383,6 +1346,61 @@ impl Store {
             return Ok((held, pull_at));
         }
         Ok((true, pull_at))
+    }
+
+    /// What `handle` was sent, as events: each message of its inbox after where `inbox` says it is
+    /// read from (none when it says nothing), then, while it holds the chat seat, each of the
+    /// owner's chat events its outbox holds no line of yet.
+    fn message_events(
+        &self,
+        handle: &str,
+        callback: &Callback,
+        board: &super::Board,
+        inbox: Option<Inbox>,
+    ) -> Result<Vec<Event>, Error> {
+        let mut events = Vec::new();
+        if let Some(Inbox { floor, first }) = inbox {
+            let messages = match first {
+                true => self.inbox(handle)?,
+                false => self.inbox_pooled(handle, floor, board.latest_message)?,
+            };
+            for message in messages.into_iter().filter(|message| {
+                message.id > floor
+                    || (first
+                        && (message.kind == "msg" || message.recipient.as_deref() == Some(handle)))
+            }) {
+                let text = format!(
+                    "{} #{} {} from {} — {}",
+                    crate::cli::text::event_kind(&message.kind),
+                    message.id,
+                    message.slug,
+                    message.sender,
+                    event_line(&message.text)
+                );
+                let key = format!("message-{}", message.id);
+                let slug = Some(message.slug);
+                events.push(Event::line(key, handle, text, slug, Some(message.id)));
+            }
+        }
+        if callback.chat {
+            #[derive(Deserialize)]
+            struct Chat {
+                key: String,
+                text: String,
+            }
+            let chat: Vec<Chat> = self.retrying(|| {
+                self.read(
+                    both(sql::UNQUEUED_CHAT, pg::unqueued_chat()),
+                    json!({"handle":handle}),
+                )
+            })?;
+            for event in chat {
+                let key = format!("chat-{}", event.key);
+                let slug = session_task(board, handle);
+                events.push(Event::line(key, handle, event.text, slug, None));
+            }
+        }
+        Ok(events)
     }
 
     /// The PULL due for `handle`, built again from `board` with the agents a visit saw: what it says,

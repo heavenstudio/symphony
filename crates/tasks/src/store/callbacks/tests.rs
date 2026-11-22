@@ -356,3 +356,61 @@ fn a_due_pull_is_queued_first_and_upgraded_for_a_legacy_observer() {
         "{refused}"
     );
 }
+
+/// What a recipient was sent, as events: its inbox only where the pass reads it, after its cursor
+/// or, on its first observation, whole but for what is neither after the cursor nor addressed to
+/// it; the owner's chat only while it holds the seat, each event once its outbox holds none.
+#[test]
+fn a_recipients_messages_are_its_inbox_where_read_and_the_chat_while_it_holds_the_seat() {
+    use crate::store_fixture::{Fixture, Seed};
+    let fixture = Fixture::new(Seed::default().task("p/a", "in_progress"));
+    let store = &fixture.store;
+    let (me, other) = (fixture.session("worker"), fixture.session("worker"));
+    let to_me = store.say("p/a", &other, "for  you", Some(&me)).unwrap();
+    let to_all = store.say("p/a", &other, "for all", None).unwrap();
+    store.owner_callback("ask-1", "owner says").unwrap();
+    let (board, _) = store.callback_board().unwrap();
+    let mut callback: Callback = serde_json::from_value(json!({
+        "handle":me, "address":"", "host":crate::store_fixture::HOST,
+        "session":crate::rows::SessionRow::default()
+    }))
+    .unwrap();
+    let events = |callback: &Callback, inbox| {
+        let events = store.message_events(&me, callback, &board, inbox).unwrap();
+        (events.into_iter())
+            .map(|e| (e.key, e.text, e.slug, e.message))
+            .collect::<Vec<_>>()
+    };
+    let after = |floor, first| Some(Inbox { floor, first });
+    let message = (
+        format!("message-{}", to_me.id),
+        format!("MSG #{} p/a from {other} — for you", to_me.id),
+        Some("p/a".to_string()),
+        Some(to_me.id),
+    );
+    let chat = (
+        "chat-ask-1".to_string(),
+        "owner says".to_string(),
+        None,
+        None,
+    );
+    assert_eq!(events(&callback, None), [], "no inbox read, no seat");
+    assert_eq!(
+        events(&callback, after(0, false)),
+        std::slice::from_ref(&message)
+    );
+    assert_eq!(
+        events(&callback, after(to_me.id, false)),
+        [],
+        "none after its cursor"
+    );
+    // Read whole on its first look, what it was sent before the cursor is still its.
+    assert!(to_all.id > to_me.id);
+    assert_eq!(
+        events(&callback, after(to_all.id, true)),
+        std::slice::from_ref(&message)
+    );
+    callback.chat = true;
+    assert_eq!(events(&callback, None), std::slice::from_ref(&chat));
+    assert_eq!(events(&callback, after(0, false)), [message, chat]);
+}
