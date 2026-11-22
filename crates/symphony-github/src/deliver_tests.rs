@@ -254,6 +254,9 @@ fn a_merges_method_is_its_kinds_own_and_its_head_one_whole_commit() {
             merge_method(&request, head, imported),
             Err(refusal.clone()),
             "{request} at {head:?}, imported {imported}"
+        );
+    }
+}
 
 /// A transport that answers every request `status` with `headers`.
 struct Answers(u16, Vec<(&'static str, &'static str)>);
