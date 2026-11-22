@@ -53,6 +53,19 @@ const REGENERABLE: [&str; 11] = [
     ".codex/hooks*",
 ];
 
+/// What an operating system's file manager writes into a folder a person opens there, at any depth:
+/// nobody's work, so it goes with a worktree whether the project's ignore file names it or not. A
+/// worktree reads the ignore file of its own branch, so a line added on the default branch later
+/// reaches none that exists.
+const OS_METADATA: [&str; 6] = [
+    ".DS_Store",
+    "*/.DS_Store",
+    "Thumbs.db",
+    "*/Thumbs.db",
+    "desktop.ini",
+    "*/desktop.ini",
+];
+
 /// Whether `text` matches `pattern` as Python's `fnmatch.fnmatchcase` matches it, for the patterns
 /// above: `*` any run of characters (a `/` too), `?` any one; anything else itself.
 pub fn fnmatch(pattern: &str, text: &str) -> bool {
@@ -120,6 +133,11 @@ pub(in crate::sweep) fn regenerable(name: &str) -> bool {
     REGENERABLE.iter().any(|pattern| fnmatch(pattern, name))
 }
 
+/// Whether `name` is a file manager's metadata ([`OS_METADATA`]), untracked or ignored.
+pub(in crate::sweep) fn os_metadata(name: &str) -> bool {
+    OS_METADATA.iter().any(|pattern| fnmatch(pattern, name))
+}
+
 fn ignored_disposable(
     name: &str,
     finished: bool,
@@ -167,7 +185,7 @@ pub(in crate::sweep) fn file_status(
         let status = line.get(..2).unwrap_or(line);
         let raw = line.get(3..).unwrap_or("");
         let named = raw.trim_matches('"');
-        if (matches!(status, "!!" | "??") && regenerable(named))
+        if (matches!(status, "!!" | "??") && (regenerable(named) || os_metadata(named)))
             || (status == "!!" && ignored_disposable(named, finished, artifacts, disposable))
         {
             // Quoted or non-ASCII status paths need a lossless decoder before they can justify
@@ -191,8 +209,9 @@ pub(in crate::sweep) fn file_status(
     }
 }
 
-/// Remove only untracked regenerable output, so the non-forced worktree removal can still let
-/// Git protect every tracked edit and every other untracked file.
+/// Remove only untracked regenerable output and a file manager's metadata ([`OS_METADATA`]), so
+/// the non-forced worktree removal can still let Git protect every tracked edit and every other
+/// untracked file. A pathspec's `*` crosses `/`, so each metadata name is cleaned at any depth.
 pub(in crate::sweep) fn clean_regenerable(path: &Path) -> bool {
     succeeds(
         path,
@@ -208,6 +227,12 @@ pub(in crate::sweep) fn clean_regenerable(path: &Path) -> bool {
             "symphony/.target.clear.*",
             "symphony/build/",
             ".codex/hooks*",
+            ".DS_Store",
+            "*/.DS_Store",
+            "Thumbs.db",
+            "*/Thumbs.db",
+            "desktop.ini",
+            "*/desktop.ini",
         ],
     )
 }
@@ -300,6 +325,21 @@ mod tests {
             assert!(!ignored_disposable(name, true, None, &[]), "{name}");
         }
         assert!(ignored_disposable(".DS_Store", false, None, &[]));
+    }
+
+    #[test]
+    fn a_file_managers_metadata_is_named_at_any_depth_and_nothing_like_it_is() {
+        for name in [".DS_Store", "sim/.DS_Store", "a/b/Thumbs.db", "desktop.ini"] {
+            assert!(os_metadata(name), "{name}");
+        }
+        for name in [
+            "notes.DS_Store",
+            ".DS_Store/",
+            "sim/.DS_Store.bak",
+            "Desktop.ini.txt",
+        ] {
+            assert!(!os_metadata(name), "{name}");
+        }
     }
 
     #[test]

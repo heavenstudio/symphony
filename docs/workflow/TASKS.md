@@ -2504,7 +2504,9 @@ hold or the main checkout has not followed. Such a worktree and branch are said 
 into main as COMMIT by pull request #N` where a merged one says `merged into main`, and every
 rule below holds for them as for any other. The sweep deletes no retained head, no receipt and
 no branch of the remote.
-Nothing did not land when it has no tracked edit, no untracked file and no ignored file but
+Nothing did not land when it has no tracked edit, no untracked file but what a file manager
+writes into a folder a person opens (`.DS_Store`, `Thumbs.db`, `desktop.ini`, which go with the
+worktree whether or not its ignore file names them) and no ignored file but
 build output and caches (the board's own list, and the ignored paths the project names in
 `[board] sweep_disposable` of the main checkout's `symphony.toml`, where its stack keeps its
 dependencies and builds elsewhere, such as `node_modules/`), and holds no owner verdict no commit

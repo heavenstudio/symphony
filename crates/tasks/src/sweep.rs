@@ -49,8 +49,9 @@
 //!   nothing, nothing is removed);
 //! * nothing in it is left behind: no tracked change, no untracked file, and no ignored file beyond
 //!   caches and root verify logs. Regenerable `.target/`, `symphony/.target/` (and beside each a
-//!   seed's staging, `.target.seed.PID`, or a clear's, `.target.clear.PID`), `symphony/build/`
-//!   and `.codex/hooks*` go with it, and so does what the project itself names
+//!   seed's staging, `.target.seed.PID`, or a clear's, `.target.clear.PID`), `symphony/build/` and
+//!   `.codex/hooks*` go with it, so does a file manager's metadata, untracked or ignored
+//!   (`.DS_Store`, `Thumbs.db`, `desktop.ini`), and so does what the project itself names
 //!   (`[board] sweep_disposable` of the main checkout's manifest, [`crate::project::disposable`]:
 //!   another stack's dependency and build folders). Once its work is finished (every task tied to
 //!   it done or cancelled, or none), its other caches go too, and what git ignores under the project's

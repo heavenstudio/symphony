@@ -267,6 +267,36 @@ fn a_finished_worktree_still_keeps_a_change_or_an_untracked_file() {
     assert!(!swept(&r.root, "artifacts").exists(), "{said}");
 }
 
+#[test]
+fn a_file_managers_metadata_left_untracked_goes_with_a_merged_worktree() {
+    let r = Repo::with(
+        Seed::default()
+            .task("sim/opened", "done")
+            .task("sim/noted", "done"),
+    );
+    // A project whose ignore file names none of them: in its worktrees each is untracked.
+    let ignore = std::fs::read_to_string(r.root.join(".gitignore")).unwrap();
+    write(&r.root, ".gitignore", &ignore.replace(".DS_Store\n", ""));
+    git(
+        &r.root,
+        &["commit", "-qam", "ignore no file manager's metadata"],
+    );
+    let opened = r.merged("opened", "sim/opened");
+    for file in [".DS_Store", "sim/.DS_Store", "Thumbs.db", "sim/desktop.ini"] {
+        write(&opened, file, "written by a file manager\n");
+    }
+    assert!(git(&opened, &["status", "--porcelain"]).contains("?? .DS_Store"));
+    // Beside one, a file of somebody's own still keeps its worktree, and is the one named.
+    let noted = r.merged("noted", "sim/noted");
+    write(&noted, ".DS_Store", "written by a file manager\n");
+    write(&noted, "sim/notes.txt", "not committed\n");
+    let said = r.sweep();
+    r.assert_removed(&opened, &said);
+    r.assert_kept(&noted, &said);
+    assert!(said.contains("sim/notes.txt"), "{said}");
+    assert!(!said.contains(".DS_Store"), "{said}");
+}
+
 // -- a task just done or cancelled: its closed sessions' worktrees go at once (`--task`) -------
 
 /// sim/jump done, `handle` live and bound to its merged worktree, launched there and closed (or not).
