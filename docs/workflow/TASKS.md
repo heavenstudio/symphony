@@ -2329,7 +2329,10 @@ projects' terminals are never a destination. Once hc calls the agent ready (`idl
 `done`), its first message goes in by `hc send`, never forced, and the launch is confirmed
 only by that send's receipt (`started`): an agent waiting on a person (a folder-trust
 dialog), never ready, or not starting on the message fails the launch naming the terminal,
-which is killed and removed. It writes its handle, role, agent session
+which is killed and removed. The refusal of an agent waiting on a person carries hc's word
+for what it waits on and, where that word is not on the screen (hc names some dialogs only
+as open), the screen's last lines, since the terminal is gone by the time anyone reads it
+(`crates/tasks/src/launch/startup.rs`, `shows`). It writes its handle, role, agent session
 id, worktree, branch, terminal and start time; `just tasks show` lists them under
 `Sessions:`. No terminal the owner may be looking at is closed: one in the tab the Herdr
 app shows, the agent it shows, or held over them (`herdr-app status`, read last, right
