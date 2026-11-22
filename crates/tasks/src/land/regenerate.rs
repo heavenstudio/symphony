@@ -107,11 +107,7 @@ const KEPT: usize = 64;
 /// Whether a land in `env` starts the regenerator: `TASKS_REGENERATE=on` or `off` says; else only
 /// on the repository's own board, which no `TASKS_SERVER` names (a test's starts none).
 pub fn enabled(env: &Env) -> bool {
-    match env.var("TASKS_REGENERATE") {
-        Some("off") => false,
-        Some("on") => true,
-        _ => env.var("TASKS_SERVER").is_none(),
-    }
+    env.switch("TASKS_REGENERATE")
 }
 
 /// A generator's key and the object its outputs were at when it passed on that key: a tip with
@@ -1058,7 +1054,7 @@ impl Regenerator<'_, '_> {
     fn status(&self, slug: &str) -> Result<Option<String>, String> {
         match self.landing.store.get(slug) {
             Ok(task) => Ok(Some(task.status)),
-            Err(crate::Error::Refused(why)) if why.starts_with("no task ") => Ok(None),
+            Err(error) if error.is_no_task() => Ok(None),
             Err(error) => Err(error.to_string()),
         }
     }
@@ -1478,32 +1474,12 @@ impl Regenerator<'_, '_> {
             Move::Done => {}
             Move::Raced(_) => return Ok(None),
             Move::Not { why, restored } => {
-                let mut line = format!(
-                    "{default} could not move to {} in the main checkout: {why}",
-                    short(&commit)
-                );
-                match restored {
-                    Ok(restored) => {
-                        if let Some(said) = restored.said(&default, base) {
-                            line.push_str(&format!("; {said}"));
-                        }
-                    }
-                    Err(why) => line.push_str(&format!(
-                        "; what the move half-wrote in the main checkout could not be restored \
-                         ({why}): the next land tries again"
-                    )),
-                }
-                return Err(line);
+                return Err(super::moving::not_moved(
+                    &default, &commit, base, &why, &restored, false,
+                ));
             }
         }
-        let pushed = match landing.push(&commit) {
-            super::Pushed::Done => format!("; pushed to {}", super::REMOTE),
-            super::Pushed::Off => "; not pushed: [land] push is off".into(),
-            super::Pushed::NoRemote => format!("; not pushed: no {} remote", super::REMOTE),
-            super::Pushed::Failed(why, retry) => {
-                format!("; NOT PUSHED, landed here only: {why}. Push it with: {retry}")
-            }
-        };
+        let pushed = landing.push(&commit).said();
         Ok(Some(Round::Landed {
             tip: tip.into(),
             commit: commit.clone(),
@@ -2046,7 +2022,7 @@ fn reds(store: &Store, series: &Series) -> Result<(Option<String>, String), Stri
                     open = Some(slug);
                 }
             }
-            Err(crate::Error::Refused(why)) if why.starts_with("no task ") => {
+            Err(error) if error.is_no_task() => {
                 return Ok((open, slug));
             }
             Err(error) => return Err(error.to_string()),

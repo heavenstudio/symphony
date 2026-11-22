@@ -167,7 +167,7 @@ pub fn presence(store: &Store, live: &[Object]) -> Result<Presence, Error> {
         .into_iter()
         .filter(|s| terminals.contains(&s.pane))
         .filter_map(|s| {
-            let thread = s.claude_session.strip_prefix("codex:")?;
+            let thread = s.claude_session.strip_prefix(crate::launch::CODEX)?;
             (!thread.is_empty()).then(|| thread.to_string())
         })
         .collect();

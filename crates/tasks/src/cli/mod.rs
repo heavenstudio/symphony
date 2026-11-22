@@ -66,6 +66,18 @@ impl Env {
             .filter(|v| !v.is_empty())
     }
 
+    /// Whether what the switch `name` guards may start here: `on` or `off` says; else only on the
+    /// repository's own board, which no `TASKS_SERVER` names (a test's starts none). The one rule
+    /// of every command a board write starts detached: the review and land commands, the
+    /// dispatch, the regenerator and the sweep.
+    pub(crate) fn switch(&self, name: &str) -> bool {
+        match self.var(name) {
+            Some("off") => false,
+            Some("on") => true,
+            _ => self.var("TASKS_SERVER").is_none(),
+        }
+    }
+
     /// The deadline `name` sets in seconds (a fraction or none), else `fallback`: how a test gives
     /// a product's deadline the time a loaded machine needs, or makes it run out at once, without
     /// changing it for anyone else. A value that is no such number leaves `fallback`.
@@ -314,7 +326,7 @@ const NEAREST_SLUGS: usize = 3;
 fn with_nearest_slug(store: &Store, why: String) -> String {
     // The slug as `repr` quotes it: in single quotes, or in double ones when it holds a single one.
     let quoted = |open: char| {
-        why.strip_prefix("no task ")
+        why.strip_prefix(crate::Error::NO_TASK)
             .and_then(|rest| rest.strip_prefix(open))
             .and_then(|rest| rest.strip_suffix(open))
             .filter(|slug| !slug.contains(open) && !slug.contains('\\'))
@@ -1092,5 +1104,32 @@ mod tests {
             machine(boot_clock(&Env::default())),
             machine(sys::boot_clock())
         );
+    }
+
+    /// A switch says `on` or `off`; unset, empty or any other word leaves the rule: only the
+    /// repository's own board, which no `TASKS_SERVER` names, starts what it guards.
+    #[test]
+    fn a_switch_is_on_or_off_else_only_the_boards_own_server_starts_it() {
+        let env = |vars: &[(&str, &str)]| Env {
+            vars: vars
+                .iter()
+                .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+                .collect(),
+            cwd: PathBuf::new(),
+        };
+        let server = ("TASKS_SERVER", "127.0.0.1:1");
+        assert!(env(&[]).switch("TASKS_X"));
+        assert!(!env(&[server]).switch("TASKS_X"));
+        assert!(env(&[server, ("TASKS_X", "on")]).switch("TASKS_X"));
+        assert!(!env(&[("TASKS_X", "off")]).switch("TASKS_X"));
+        // Another switch's word, an empty one and a word that is neither decide nothing.
+        assert!(!env(&[server, ("TASKS_Y", "on")]).switch("TASKS_X"));
+        assert!(env(&[("TASKS_Y", "off")]).switch("TASKS_X"));
+        assert!(env(&[("TASKS_X", "")]).switch("TASKS_X"));
+        assert!(!env(&[server, ("TASKS_X", "")]).switch("TASKS_X"));
+        assert!(!env(&[server, ("TASKS_X", "yes")]).switch("TASKS_X"));
+        assert!(env(&[("TASKS_X", "ON")]).switch("TASKS_X"));
+        // An empty `TASKS_SERVER` names no server.
+        assert!(env(&[("TASKS_SERVER", "")]).switch("TASKS_X"));
     }
 }

@@ -6,8 +6,9 @@
 //! build migrated is refused at its next write. On either database: a newer build's steps are
 //! written in each language (`Schema::then_each`).
 
-use crate::common::{Backend, HOST, NOW, refused};
+use crate::common::{Backend, HOST, NOW, refused, retry_conflicts};
 use serde_json::json;
+use std::time::{Duration, Instant};
 use symphony_board::pg::Step;
 use symphony_board::rows::Dump;
 use symphony_board::rpc::Client;
@@ -149,10 +150,14 @@ fn fails(db: &Database) -> String {
         .expect("the request fails")
 }
 
-/// `db`'s database made on its server, and nothing in it.
+/// `db`'s database made on its server, and nothing in it; on SurrealDB again when its definition
+/// meets another test's at once in the shared namespace (`Conflict`), until the fixture's backstop.
 fn made_empty(db: &Database) {
     match db {
-        Database::SurrealDb(client) => drop(client.define_then("RETURN NONE;", json!({})).unwrap()),
+        Database::SurrealDb(client) => {
+            let until = Instant::now() + test_time::backstop(Duration::from_secs(30));
+            drop(retry_conflicts(until, || client.define_then("RETURN NONE;", json!({}))).unwrap())
+        }
         Database::PostgreSql(client) => client.make_database().unwrap(),
     }
 }
