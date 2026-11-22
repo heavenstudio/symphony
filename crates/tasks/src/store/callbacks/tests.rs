@@ -205,3 +205,46 @@ fn a_fresh_board_drops_the_inbox_pool_and_reads_the_board_as_it_stands() {
         ["p/filed"]
     );
 }
+
+/// A plan's visit made again under the recipient's lease answers with the plan's PULL time, which
+/// the leased pass does not move, and leaves the recipient unreached while it cannot take the
+/// lease: another dispatcher holds it, or the pass delivers to a channel the recipient has none of.
+#[test]
+fn a_leased_visit_keeps_the_plans_pull_time_and_is_unreached_without_the_lease() {
+    let fixture = crate::store_fixture::Fixture::empty();
+    let store = &fixture.store;
+    let handle = fixture.session("worker");
+    let callback: Callback = serde_json::from_value(json!({
+        "handle":handle, "address":"", "host":crate::store_fixture::HOST,
+        "session":crate::rows::SessionRow::default()
+    }))
+    .unwrap();
+    let env = crate::cli::Env::of_process();
+    let (mut board, mut sequence) = store.callback_board().unwrap();
+    let mut leased = |pass| {
+        let visit = Visit::new(pass, &env, store, None);
+        (store.leased(&handle, &callback, &mut board, &mut sequence, &visit, 42.0)).unwrap()
+    };
+    assert_eq!(
+        leased(Pass::Observe),
+        (false, 42.0),
+        "no channel to deliver to"
+    );
+    assert_eq!(
+        leased(Pass::Deliver),
+        (false, 42.0),
+        "no channel to deliver to"
+    );
+    // A reader with no channel collects: the lease is its, and the leased pass, which finds no
+    // state of it, reaches it and leaves the plan's time as it was.
+    assert_eq!(leased(Pass::Collect), (true, 42.0));
+    assert_eq!(leased(Pass::Collect), (true, 42.0), "the lease was let go");
+    let until = fixture.now() + 30.0;
+    let lease = store.raw().row("callback_lease", handle.as_str());
+    lease.put(json!({"until":until, "revision":9})).unwrap();
+    assert_eq!(
+        leased(Pass::Collect),
+        (false, 42.0),
+        "another holds the lease"
+    );
+}

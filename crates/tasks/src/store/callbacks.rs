@@ -1007,7 +1007,6 @@ impl Store {
         if lease.is_some() && visit.pass != Pass::Observe {
             (*board, *sequence) = self.callback_board()?;
         }
-        let collect = visit.pass == Pass::Collect;
         let Stored {
             state,
             checked_pull,
@@ -1157,12 +1156,7 @@ impl Store {
             last_pull + 600.0
         };
         if due && lease.is_none() {
-            return self
-                .with_callback_lease(handle, collect, |revision| {
-                    (self.dispatch_one(handle, callback, board, sequence, visit, Some(revision)))
-                        .map(|(handled, _)| handled)
-                })
-                .map(|handled| (handled, pull_at));
+            return self.leased(handle, callback, board, sequence, visit, pull_at);
         }
         let mut lines = Vec::new();
         if let Some(before) = &before
@@ -1380,12 +1374,7 @@ impl Store {
             }
         }
         if lease.is_none() {
-            return self
-                .with_callback_lease(handle, collect, |revision| {
-                    (self.dispatch_one(handle, callback, board, sequence, visit, Some(revision)))
-                        .map(|(handled, _)| handled)
-                })
-                .map(|handled| (handled, pull_at));
+            return self.leased(handle, callback, board, sequence, visit, pull_at);
         }
         // An inbox acknowledgement takes no lease: one of a PULL read as waiting may have come in
         // since, and what the recipient was told with it. A PULL still waits only while its event
@@ -1425,6 +1414,26 @@ impl Store {
             return Ok((held, pull_at));
         }
         Ok((true, pull_at))
+    }
+
+    /// A plan's visit made again under the recipient's lease, once no other dispatcher holds it:
+    /// whether it was reached, with `pull_at`, when its PULL is next due by the plan. A collecting
+    /// pass takes a lease for a reader with no channel ([`Store::with_callback_lease`]).
+    fn leased(
+        &self,
+        handle: &str,
+        callback: &Callback,
+        board: &mut super::Board,
+        sequence: &mut u64,
+        visit: &Visit<'_>,
+        pull_at: f64,
+    ) -> Result<(bool, f64), Error> {
+        let collect = visit.pass == Pass::Collect;
+        self.with_callback_lease(handle, collect, |revision| {
+            (self.dispatch_one(handle, callback, board, sequence, visit, Some(revision)))
+                .map(|(handled, _)| handled)
+        })
+        .map(|handled| (handled, pull_at))
     }
 
     /// The board marker as one of this dispatcher's own writes moved it. When the board stood at
