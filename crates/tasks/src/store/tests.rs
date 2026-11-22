@@ -123,7 +123,11 @@ fn a_reads_variables_are_what_it_picks_by_and_the_caps_only_where_slots_are_read
         (Which::Starting("p/a"), true),
         (Which::SlotHoldings, true),
         (Which::All, false),
+        (Which::Status("ready"), false),
         (Which::Slug("p/a"), false),
+        (Which::Slugs(&slugs), false),
+        (Which::Children("p/a"), false),
+        (Which::Linked("docs/x.md"), false),
         (Which::Pullable("someone"), false),
     ] {
         let vars = super::reading::vars(&which);

@@ -86,3 +86,11 @@ reason = "its lsof keeps the starter's session: process_cwd::process_cwds_with(s
 [[disallowed-methods]]
 path = "process_cwd::occupied"
 reason = "its lsof keeps the starter's session: process_cwd::occupied_with(sys::command(\"lsof\"), tree)"
+
+# A poisoned lock is taken through `lock::Recovered` alone (src/lock.rs), whose one use of
+# `PoisonError::into_inner` carries its `#[expect]`. Clippy refuses any other, named as a path
+# (`unwrap_or_else(PoisonError::into_inner)`) or called on the error. The workspace's clippy.toml
+# cannot say it: the crates that cannot take the board's `Recovered` read that file too.
+[[disallowed-methods]]
+path = "std::sync::PoisonError::into_inner"
+reason = "a poisoned lock is recovered through symphony_board::lock::Recovered: `.lock().recover()`"
