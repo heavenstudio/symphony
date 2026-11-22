@@ -164,6 +164,46 @@
   color: var(--foreground);
   cursor: pointer;
 }
+/* A phone's count of the work under way: four equal cells in one fixed row, so a count that
+   changes, or a machine's first report, moves nothing. The sum is plain text; each part is a
+   button to its lane. */
+.under-way {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  height: 40px;
+  margin: 0 0 8px;
+  font-size: 0.75rem;
+  line-height: 1.25;
+  color: var(--muted-foreground);
+}
+.under-way > * {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.under-way > button {
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--card);
+  cursor: pointer;
+}
+.under-way b {
+  font-size: var(--fs-sm);
+  color: var(--foreground);
+}
+.under-way-all b {
+  color: var(--like);
+}
 .k-decision {
   --k: var(--primary);
 }
@@ -266,11 +306,6 @@
   display: block;
   white-space: pre-wrap;
 }
-/* A card's estimated cost (card-costs.ts): kept whole, the slug giving way before it. */
-.waiting-slug .card-cost {
-  flex-shrink: 0;
-  font-variant-numeric: tabular-nums;
-}
 .waiting-slug .prio {
   flex-shrink: 0;
   font: inherit;
@@ -315,6 +350,16 @@
 }
 .task-wait .age.old {
   color: var(--dislike);
+}
+/* A card's estimated cost (card-costs.ts), before its time and drawn as it is, whatever the
+   time's age colours it; the dot between them is lighter. */
+.task-wait .card-cost {
+  color: var(--foreground);
+}
+.task-wait .card-cost-dot {
+  padding: 0 3px;
+  font-weight: 400;
+  color: var(--muted-foreground);
 }
 .blocked-mark,
 .review-mark {

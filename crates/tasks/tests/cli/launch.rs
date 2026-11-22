@@ -461,6 +461,40 @@ fn a_launch_takes_the_model_agents_models_names_for_its_role_and_flags_win_over_
     }
 }
 
+#[test]
+fn a_launch_takes_the_model_the_boards_store_holds_over_the_files_and_under_the_local_files() {
+    let manifest = "[agents]\nlaunch = { default = \"claude\", model = \"opus\" }\n\n\
+                    [agents.models]\nexecutor = \"sonnet\"\n";
+    for (name, local, model) in [
+        ("stored", None, "fable"),
+        (
+            "local",
+            Some("[agents.models]\nexecutor = \"haiku\"\n"),
+            "haiku",
+        ),
+    ] {
+        let p = Terminals::new(&format!("stored-model-{name}"));
+        p.manifest(manifest);
+        if let Some(local) = local {
+            fs::write(p.env.cwd.join("symphony.local.toml"), local).unwrap();
+        }
+        let orch = p.orchestrator();
+        let set = p.as_(
+            &orch,
+            &["settings", "set", "agents.models.executor", "fable"],
+        );
+        assert_eq!(set.code, 0, "{}", set.err);
+        let (_, s) = p.launch_with(&orch, &[]);
+        let (started, started_model, _) = p.started_agent();
+        assert_eq!(
+            (started.as_str(), started_model.as_str()),
+            ("claude", model),
+            "{name}"
+        );
+        assert_eq!(s.model, model, "{name}");
+    }
+}
+
 /// `count` live agent terminals of the machine, none of this board's (another project's, a
 /// session started by hand), and the Herdr app's space `lamp-works`.
 fn running_agents(p: &Terminals, count: usize) {

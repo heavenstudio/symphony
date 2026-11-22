@@ -24,13 +24,14 @@
 //! is never sent twice, a read no more than a write, so a client never repeats work the server may
 //! have done.
 
-use crate::rpc::DbError;
+use crate::db::DbError;
+use crate::lock::Recovered as _;
 use std::io::{BufRead, BufReader, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub mod external;
@@ -123,7 +124,7 @@ impl Client {
     /// `database` is a name this code chooses (letters, digits, `_`), never a caller's text.
     pub fn new(socket: &Path, database: &str) -> Client {
         assert!(
-            crate::rpc::plain(database),
+            crate::db::plain(database),
             "{database:?} is not a plain name for a database"
         );
         Client {
@@ -249,10 +250,7 @@ impl Client {
     /// error. A connection that failed is dropped.
     fn exchange(&self, out: &[u8]) -> Result<Vec<Answer>, DbError> {
         self.requests.fetch_add(1, Ordering::SeqCst);
-        let mut held = self
-            .connection
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut held = self.connection.lock().recover();
         if held.is_none() {
             *held = Some(self.connect()?);
         }
@@ -309,10 +307,7 @@ impl Client {
 impl Drop for Client {
     /// A connection held is ended as the protocol ends one, so the server's backend goes at once.
     fn drop(&mut self) {
-        let held = self
-            .connection
-            .get_mut()
-            .unwrap_or_else(PoisonError::into_inner);
+        let held = self.connection.get_mut().recover();
         if let Some(connection) = held.as_mut() {
             let mut out = Vec::new();
             wire::terminate(&mut out);

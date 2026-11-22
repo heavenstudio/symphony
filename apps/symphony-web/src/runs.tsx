@@ -1,4 +1,4 @@
-// The Runs page, `/runs` (docs/RUNS.md, *The Runs page*): what runs and waits for the project on
+// The Runs page, `/runs` (docs/workflow/RUNS.md, *The Runs page*): what runs and waits for the project on
 // this machine now, the machine's schema updates, then every run newest first with its filters, and
 // a run (`/runs?run=ID`) opened on its steps, the tests it failed and its log. Now is the machine
 // work the board reads (`/api/machine-work`); the schema updates are SCHEMA_UPDATES_PATH, the
@@ -74,7 +74,7 @@ export const RESULTS: Record<Result, [string, string]> = {
 /**
  * What `line` says of its run: its end, else running while an operation of the machine's work
  * (`running`, their ids) is it, else started: a line with no end, read from the day files alone,
- * says no more (docs/RUNS.md, *Start and end*).
+ * says no more (docs/workflow/RUNS.md, *Start and end*).
  */
 export function result(line: RunLine, running: ReadonlySet<string>): Result {
   if (line.end !== null) return line.end;
@@ -975,6 +975,49 @@ export async function followNow(
 }
 
 /**
+ * Reads `url` at once and then every `every` ms while the page is shown (through `wait`), naming
+ * the last answer's tag: an answer the same is told as none, a new one as `read` reads it, one
+ * `read` refuses (`unreadable`) or a failure as failed. It ends once `signal` ends it, the server
+ * has no such thing (a `404`), or `after`, asked after each read with the last answer read, says
+ * so.
+ */
+async function followTagged<T>(
+  url: string,
+  read: (value: unknown) => T | null,
+  unreadable: string,
+  every: number,
+  signal: AbortSignal,
+  told: Told<T>,
+  wait: Wait,
+  after?: (last: T | null) => Promise<boolean>,
+): Promise<void> {
+  let etag = "";
+  let last: T | null = null;
+  while (!signal.aborted) {
+    try {
+      const answer = await getIf(url, etag, signal);
+      if (signal.aborted) return;
+      if (answer.same) {
+        told.answered(null);
+      } else {
+        // An answer it cannot read leaves the last one it read standing.
+        const value = read(answer.value);
+        if (value === null) throw new Error(unreadable);
+        last = value;
+        etag = answer.etag;
+        told.answered(value);
+      }
+    } catch (error) {
+      if (signal.aborted) return;
+      told.failed(failure(error, !isMissing(error)), isMissing(error));
+      if (isMissing(error)) return;
+    }
+    if (await after?.(last)) return;
+    await wait(every, signal);
+  }
+}
+
+/**
  * Reads the first page of the runs `filters` take at once and then every LIST_MS while the page is
  * shown (through `wait`), naming the last answer's tag so a list no day file changed under answers
  * `304`, until `signal` ends it or the server has no such thing (a `404`).
@@ -985,27 +1028,15 @@ export async function followList(
   told: Told<RunsAnswer>,
   wait: Wait = pause,
 ): Promise<void> {
-  const url = listUrl(filters);
-  let etag = "";
-  while (!signal.aborted) {
-    try {
-      const answer = await getIf(url, etag, signal);
-      if (signal.aborted) return;
-      if (answer.same) {
-        told.answered(null);
-      } else {
-        const read = readRunsPage(answer.value);
-        if (read === null) throw new Error("The runs' answer is not a page of runs");
-        etag = answer.etag;
-        told.answered(read);
-      }
-    } catch (error) {
-      if (signal.aborted) return;
-      told.failed(failure(error, !isMissing(error)), isMissing(error));
-      if (isMissing(error)) return;
-    }
-    await wait(LIST_MS, signal);
-  }
+  return followTagged(
+    listUrl(filters),
+    readRunsPage,
+    "The runs' answer is not a page of runs",
+    LIST_MS,
+    signal,
+    told,
+    wait,
+  );
 }
 
 /**
@@ -1018,26 +1049,15 @@ export async function followUpdates(
   told: Told<SchemaUpdates>,
   wait: Wait = pause,
 ): Promise<void> {
-  let etag = "";
-  while (!signal.aborted) {
-    try {
-      const answer = await getIf(SCHEMA_UPDATES_PATH, etag, signal);
-      if (signal.aborted) return;
-      if (answer.same) {
-        told.answered(null);
-      } else {
-        const read = readSchemaUpdates(answer.value);
-        if (read === null) throw new Error("The schema updates' answer is not schema updates");
-        etag = answer.etag;
-        told.answered(read);
-      }
-    } catch (error) {
-      if (signal.aborted) return;
-      told.failed(failure(error, !isMissing(error)), isMissing(error));
-      if (isMissing(error)) return;
-    }
-    await wait(LIST_MS, signal);
-  }
+  return followTagged(
+    SCHEMA_UPDATES_PATH,
+    readSchemaUpdates,
+    "The schema updates' answer is not schema updates",
+    LIST_MS,
+    signal,
+    told,
+    wait,
+  );
 }
 
 /** The page of the runs `filters` take asked for before `before`, read under `signal`. */
@@ -1488,26 +1508,7 @@ export async function followRun(
   wait: Wait = pause,
 ): Promise<void> {
   const url = `${RUN_PATH}?run=${encodeURIComponent(id)}`;
-  let etag = "";
-  let last: RunPage | null = null;
-  while (!signal.aborted) {
-    try {
-      const answer = await getIf(url, etag, signal);
-      if (signal.aborted) return;
-      if (answer.same) {
-        told.answered(null);
-      } else {
-        const read = readRunPage(answer.value);
-        if (read === null) throw new Error("The run's answer is not a run");
-        etag = answer.etag;
-        last = read;
-        told.answered(read);
-      }
-    } catch (error) {
-      if (signal.aborted) return;
-      told.failed(failure(error, !isMissing(error)), isMissing(error));
-      if (isMissing(error)) return;
-    }
+  const readLog = async (last: RunPage | null): Promise<boolean> => {
     let logRead = true;
     if (last?.run.log != null) {
       try {
@@ -1517,11 +1518,11 @@ export async function followRun(
           log = null;
           part = readRunLog(await getJson(nextLogUrl(id, log), signal));
         }
-        if (signal.aborted) return;
+        if (signal.aborted) return true;
         if (part === null) throw new Error("The log's answer is not a log");
         told.log(appended(log, part));
       } catch (error) {
-        if (signal.aborted) return;
+        if (signal.aborted) return true;
         // A log the server keeps no more is read to its end: an ended run's follow stops on it.
         if (isMissing(error)) {
           told.logMissing();
@@ -1531,9 +1532,18 @@ export async function followRun(
         }
       }
     }
-    if (last !== null && ended(last) && logRead) return;
-    await wait(NOW_MS, signal);
-  }
+    return last !== null && ended(last) && logRead;
+  };
+  return followTagged(
+    url,
+    readRunPage,
+    "The run's answer is not a run",
+    NOW_MS,
+    signal,
+    told,
+    wait,
+    readLog,
+  );
 }
 
 /** The part of the log before what `log` shows, at most RUN_LOG_MOST bytes, read under `signal`. */

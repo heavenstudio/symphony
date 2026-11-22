@@ -171,7 +171,7 @@ pub(in crate::store) const PULL_CHECKED: &str = "UPDATE type::record('callback_l
 /// One recipient's observation written with the events it queued, while the dispatcher holds
 /// `$handle`'s lease (`$revision`) and the PULLs it read as waiting (`$waiting`) still wait: whether
 /// each held, and the board marker before and after (an `Accounted`). Its variables are the
-/// observation's (`Store::dispatch_one`).
+/// observation's (`Store::dispatch_leased`).
 pub(in crate::store) fn account() -> String {
     format!("LET $marker = {board_marker};
              LET $held = type::record('callback_lease', $handle).revision = $revision;

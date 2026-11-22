@@ -1,6 +1,6 @@
 //! The host rule: which build is the machine's one server, and which projects it serves. A build
 //! serves a project's plugin when the plugin answers from a process of its own (its
-//! `[plugins.process]`, docs/PLUGIN_PROTOCOL.md), which any host starts, or when the build compiles
+//! `[plugins.process]`, docs/engineering/PLUGIN_PROTOCOL.md), which any host starts, or when the build compiles
 //! it: so the server of a release installed on the machine ([`super::release`]), which compiles
 //! none, serves every project whose plugins all answer from a process. A host serves a project
 //! registered at its pin or an older one and at its board schema or an older one, and refuses one
@@ -208,7 +208,7 @@ pub fn judge(running: &Build, ours: &Build, entry: &Entry, registry: &Registry) 
             Lack::Plugins(names) => Verdict::Waits(format!(
                 "the running Symphony {lacks}, and no start replaces a release's server: a \
                  [plugins.process] command for {} in {} lets it serve {} \
-                 (docs/PLUGIN_PROTOCOL.md)",
+                 (docs/engineering/PLUGIN_PROTOCOL.md)",
                 names.join(", "),
                 entry.root.join(crate::project::FILE).display(),
                 entry.id

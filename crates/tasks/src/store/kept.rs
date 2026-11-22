@@ -3,6 +3,7 @@
 
 use super::Store;
 use crate::cli::agents::{Answer, PROCESS_SCAN_SECONDS, ProcessScan};
+use crate::lock::Recovered as _;
 use std::sync::Mutex;
 
 /// The machine's processes as a long-lived reader last listed them, and when that listing ended by
@@ -20,11 +21,7 @@ impl Store {
         // A panic in `scan` poisons the lock with the kept listing untouched, since it is only ever
         // replaced whole, after `scan` returns: what it holds is a listing as it was taken, safe to
         // read and to replace.
-        let mut kept = self
-            .process_scan
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut kept = self.process_scan.0.lock().recover();
         if let Some((taken, answer)) = kept.as_ref()
             && (0.0..PROCESS_SCAN_SECONDS).contains(&(self.now() - taken))
         {

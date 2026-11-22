@@ -104,8 +104,8 @@ pub struct TaskCost {
 }
 
 /// What a task's model calls took, its subtasks' with them, as its board's heartbeat recorded
-/// them, and what they cost, estimated at API list prices: `tasks show --json`'s `tokens`
-/// without its rows. A task with none recorded has zero `total` and no role or round.
+/// them, and what they cost, estimated at API list prices: `tasks show --json`'s `tokens`. A task
+/// with none recorded has zero `total` and no role, round or row.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskTokens {
@@ -118,6 +118,33 @@ pub struct TaskTokens {
     /// calls of a session that worked no task.
     #[serde(default)]
     pub by_round: Vec<RoundTokens>,
+    /// The rows the sums are of, which a task's timeline puts each on the stretch its calls were
+    /// made for; none from a server that sends none.
+    #[serde(default)]
+    pub rows: Vec<TokenRow>,
+}
+
+/// What one session's model calls took on one task, in one role, on one model at one speed, in
+/// one review round: a row of the board's record, never split, beside its estimated cost.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct TokenRow {
+    pub handle: String,
+    /// The task its calls were made on: the page's task, or one of its subtasks.
+    pub slug: String,
+    /// Its role on the task (`executor`, `reviewer`, `reserved` while it held the task reserved
+    /// before its claim), else the session's kind.
+    pub role: String,
+    pub model: String,
+    pub speed: String,
+    /// 1 and the moves into review its task's thread held when the calls were made, so round 1 is
+    /// the work up to the first review; 0 for a session that worked no task.
+    pub round: u32,
+    pub tokens: AgentTokens,
+    pub cost: AgentCost,
+    /// When the first and the last of its calls were recorded, server seconds.
+    pub first: f64,
+    pub last: f64,
 }
 
 /// A role's part of a task's tokens.
@@ -217,7 +244,7 @@ pub struct AgentSaid {
     pub text: String,
 }
 
-/// Where an agent's Go to session control goes (docs/TASKS.md, "Going to a session"): a session
+/// Where an agent's Go to session control goes (docs/workflow/TASKS.md, "Going to a session"): a session
 /// the server knows a way into, by its web address, its pane on the server's machine, or both.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]

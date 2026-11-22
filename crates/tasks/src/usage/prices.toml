@@ -1,4 +1,4 @@
-# The API list prices agents' tokens are estimated at (crates/tasks/src/usage/price.rs, docs/TASKS.md
+# The API list prices agents' tokens are estimated at (crates/tasks/src/usage/price.rs, docs/workflow/TASKS.md
 # "What the tokens cost"). Every build of `tasks` and of the Symphony embeds this file, so an edit
 # takes effect with the next build, and no installed binary reads it from disk.
 #

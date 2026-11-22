@@ -1,5 +1,5 @@
 //! `symphony-build crates-check [--branch] [ROOT]` (`just crates-check`, a step of `just verify`):
-//! each package the workspace at ROOT publishes, against crates.io (docs/RELEASES.md, "Packages on
+//! each package the workspace at ROOT publishes, against crates.io (docs/workflow/RELEASES.md, "Packages on
 //! crates.io").
 //! A version crates.io lacks has nothing to compare with; one it holds is packaged here and
 //! compared with that version's sources there, and one whose sources moved while its version did

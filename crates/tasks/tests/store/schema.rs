@@ -6,7 +6,7 @@
 //! build migrated is refused at its next write. On either database: a newer build's steps are
 //! written in each language (`Schema::then_each`).
 
-use crate::common::{Backend, HOST, NOW, refused};
+use crate::common::{Backend, HOST, NOW, conflicts_deadline, refused, retry_conflicts};
 use serde_json::json;
 use symphony_board::pg::Step;
 use symphony_board::rows::Dump;
@@ -149,10 +149,16 @@ fn fails(db: &Database) -> String {
         .expect("the request fails")
 }
 
-/// `db`'s database made on its server, and nothing in it.
+/// `db`'s database made on its server, and nothing in it; on SurrealDB again when its definition
+/// meets another test's at once in the shared namespace (`Conflict`), until the fixture's backstop.
 fn made_empty(db: &Database) {
     match db {
-        Database::SurrealDb(client) => drop(client.define_then("RETURN NONE;", json!({})).unwrap()),
+        Database::SurrealDb(client) => {
+            let defined = retry_conflicts(conflicts_deadline(), || {
+                client.define_then("RETURN NONE;", json!({}))
+            });
+            drop(defined.unwrap())
+        }
         Database::PostgreSql(client) => client.make_database().unwrap(),
     }
 }
@@ -494,7 +500,7 @@ on_both! {
 fn schema_26_gains_the_guards_kinds_and_alters_the_check_once(backend: Backend) {
     let db = board(backend);
     let six = "'active', 'definition', 'activation', 'event', 'receipt', 'intent'";
-    let authority = |db: &Database| -> Result<(), symphony_board::rpc::DbError> {
+    let authority = |db: &Database| -> Result<(), symphony_board::db::DbError> {
         match db {
             Database::SurrealDb(client) => client
                 .query(

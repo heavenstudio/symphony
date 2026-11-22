@@ -4,8 +4,8 @@
 
 use crate::common::{bounded, postgresql};
 use std::time::Duration;
+use symphony_board::db::DbError;
 use symphony_board::pg::{self, Answer, Step};
-use symphony_board::rpc::DbError;
 
 /// A client of a database of its own, made, holding the table `t` and its one row `(1, 0)`.
 fn with_a_row() -> pg::Client {

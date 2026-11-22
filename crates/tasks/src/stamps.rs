@@ -1,4 +1,4 @@
-//! The stamps a project's land can require (docs/analysis/needed-stamps.md), and what a task needs
+//! The stamps a project's land can require (docs/workflow/analysis/needed-stamps.md), and what a task needs
 //! of them.
 //!
 //! The catalogue ([`Catalogue`]) is one list: the project's `[stamps]`, a table a stamp, read as
@@ -63,7 +63,7 @@ const OWN: [Own; 4] = [
                   are what proves it works; a change of the values the project file gives its \
                   settings, which the settings check proves alone (`symphony settings-check`, \
                   recorded as a test run: every table and key known, each value of its type, no \
-                  name judged against a list), with no other suite",
+                  model or recipe judged against a list), with no other suite",
         skips: "documents and guides alone; pictures and other files nothing tests; a hotfix whose \
                 break no test shows in the time it has, its tests coming with its postmortem",
     },

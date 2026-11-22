@@ -3,17 +3,16 @@
 use super::Hub;
 use super::startup::PANICKED;
 use crate::front::{Shared, router};
-use crate::gate::Gate;
-use crate::testing::{Tree, board::Fixture, board::Seed, repository};
-use axum::body::{Body, to_bytes};
+use crate::testing::{Tree, board::Fixture, board::Seed, repository, request};
+use axum::body::to_bytes;
 use axum::extract::connect_info::MockConnectInfo;
-use axum::http::{Request, StatusCode};
+use axum::http::StatusCode;
 use std::future::{Future, poll_fn};
 use std::net::SocketAddr;
 use std::sync::{Arc, mpsc};
 use std::task::Poll;
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::oneshot::error::TryRecvError;
 use tower::ServiceExt;
 
@@ -49,7 +48,7 @@ async fn within<T>(what: &str, work: impl Future<Output = T>) -> T {
 }
 
 /// A board read's failure on a server that took the request and gave no answer within the wait.
-pub(super) const SLOW: &str = "SurrealDB: the server at 127.0.0.1:1 is slow: no answer within 3s: read failed on a freshly opened socket after 0 completed requests: Resource temporarily unavailable (os error 35); the request only reads, so it went once more, on a new connection: read failed on a freshly opened socket after 0 completed requests: Resource temporarily unavailable (os error 35); it was not sent a third time";
+pub(super) const SLOW: &str = "the board's database: the server at 127.0.0.1:1 is slow: no answer within 3s: read failed on a freshly opened socket after 0 completed requests: Resource temporarily unavailable (os error 35); the request only reads, so it went once more, on a new connection: read failed on a freshly opened socket after 0 completed requests: Resource temporarily unavailable (os error 35); it was not sent a third time";
 
 struct Held {
     hub: Arc<Hub>,
@@ -135,13 +134,7 @@ impl Held {
     }
 
     fn shared(&self) -> Arc<Shared> {
-        let shared = Shared::new(
-            1,
-            1,
-            &self.hub.root,
-            None,
-            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-        );
+        let shared = Shared::new(1, 1, &self.hub.root, None, crate::testing::open_gate());
         assert!(shared.api.set(self.hub.clone()).is_ok());
         shared
     }
@@ -182,14 +175,6 @@ async fn a_published_hub_stops_and_joins_without_opening_its_unactivated_board()
         Err(TryRecvError::Closed)
     );
     assert_eq!(held.worker_finished(), None);
-}
-
-fn request(path: &str) -> Request<Body> {
-    Request::builder()
-        .uri(path)
-        .header("Host", "127.0.0.1:1")
-        .body(Body::empty())
-        .unwrap()
 }
 
 /// `/api/tasks` asked while the held first read is inside its I/O, answered once it is released.

@@ -5,6 +5,7 @@ import FIXTURE from "../../../crates/symphony-api/fixtures/task-timeline.json";
 import { whenShown } from "./feed";
 import type { Shown } from "./parts";
 import { Failure, NO_ANSWER as POST_UNANSWERED } from "./request";
+import { CASES } from "./testing";
 import {
   drawnClass,
   isWide,
@@ -26,9 +27,10 @@ import {
   TimelineView,
   watchCrossings,
 } from "./timeline";
+import { readTaskTokens, totalWords } from "./timeline-cost";
 import { failed, lanes, nextRead, readTimeline, stops, WORDED_ROWS } from "./timeline-layout";
 import { NOT_IN_TIME } from "./trouble";
-import type { TaskTimeline } from "./wire";
+import type { TaskTimeline, TaskTokens } from "./wire";
 
 // React's effects stood in for, as no DOM runs here: each effect a hook sets is kept to be run by
 // its test, and a state a test gives (`states`, in the order the hooks ask) stands for what an
@@ -71,7 +73,7 @@ const count = (text: string, part: string) => text.split(part).length - 1;
 
 /** What the stops do, each a spy. */
 function spiedStops(active = 0): Stops {
-  return { active, focus: vi.fn(), blur: vi.fn(), key: vi.fn() };
+  return { active, focus: vi.fn(), say: vi.fn(), blur: vi.fn(), key: vi.fn() };
 }
 
 /** Every element of `node`'s tree that `test` holds for, drawing each component without hooks. */
@@ -439,6 +441,134 @@ describe("the timeline drawn", () => {
     expect(rows.filter((row) => facts(row).length > 0)).toEqual(focusable);
     // A row's focus is the style sheet's: it moves no stop and tells no detail.
     expect(focusable.every((row) => row.props.onFocus === undefined)).toBe(true);
+  });
+});
+
+describe("the timeline's cost", () => {
+  /** The wire's sample tokens as the pictures' task's own: its executor's first work, and its
+   * first review's reviewer. */
+  function tokens(): TaskTokens {
+    const read = readTaskTokens(CASES.samples.taskTokens) as TaskTokens;
+    const { slug, stages } = pictures();
+    const rows = read.rows.map((row, at) => ({
+      ...row,
+      slug,
+      first: (stages[at + 1]?.from ?? 0) + 60,
+      last: (stages[at + 1]?.from ?? 0) + 600,
+    }));
+    return { ...read, rows };
+  }
+  const drawnWith = (spent: TaskTokens | null | undefined, at = spiedStops()) =>
+    TimelineDrawn({
+      timeline: pictures(),
+      tokens: spent,
+      all: false,
+      clipped: false,
+      detail: "",
+      stops: at,
+      toggle: () => {},
+    });
+
+  it("follows the task's time on the first line, and says the rest as its words", () => {
+    const words = totalWords(tokens());
+    const drawn = renderToStaticMarkup(drawnWith(tokens()));
+    expect(drawn).toContain(
+      '<p class="tl-totals"><span>6 h 18 m so far <span class="tl-cost" role="img" tabindex="0" ' +
+        `title="${words}" aria-label="${words}">$3.00+</span><span class="tl-rest tl-wide"> · 2 ` +
+        "review rounds · 1 bounce</span></span>" +
+        // A phone's second line: the rounds and bounces the first has no room for, then the
+        // machine's time; wide, the machine's follows the rounds on the one line.
+        '<span class="tl-machine tl-narrow">2 review rounds · 1 bounce · machine 1 h 33 m</span>' +
+        '<span class="tl-machine tl-wide"> · machine 1 h 33 m, queued 26 m</span></p>',
+    );
+    const noRuns = renderToStaticMarkup(
+      TimelineDrawn({
+        timeline: { ...pictures(), runs: [] },
+        tokens: tokens(),
+        all: false,
+        clipped: false,
+        detail: "",
+        stops: spiedStops(),
+        toggle: () => {},
+      }),
+    );
+    expect(noRuns).toContain(
+      '<span class="tl-machine tl-narrow">2 review rounds · 1 bounce</span></p>',
+    );
+    expect(words).toContain("estimated at API list prices read 2026-11-16, not money spent");
+    expect(drawn).not.toContain("estimated</span>");
+    // Its words under the totals, which the style sheet shows a phone while it has the focus.
+    expect(drawn).toContain(`<p class="tl-note tl-cost-said" aria-hidden="true">${words}</p>`);
+    // The total is a tab stop beside the lanes' one.
+    expect(count(drawn, 'tabindex="0"')).toBe(2);
+  });
+
+  it("says its words as the detail while it has the focus, which leave with it", () => {
+    const at = spiedStops();
+    const [cost] = elements(drawnWith(tokens(), at), (one) => one.props.className === "tl-cost");
+    const props = cost?.props as { onFocus(): void; onBlur(): void };
+    props.onFocus();
+    expect(at.say).toHaveBeenCalledWith(totalWords(tokens()));
+    expect(at.focus).not.toHaveBeenCalled();
+    props.onBlur();
+    expect(at.blur).toHaveBeenCalledTimes(1);
+  });
+
+  it("follows each stage's time in its row and its lane, the row taking a tap's focus", () => {
+    const tree = drawnWith(tokens());
+    const drawn = renderToStaticMarkup(tree);
+    expect(drawn).toContain('<span class="tl-took">1 h 52 m $2.00+</span>');
+    expect(drawn).toContain('<span class="tl-took">52 m $1.00</span>');
+    expect(drawn).toContain('<span class="tl-took">41 m</span>');
+    expect(drawn).toContain(">in progress 1 h 52 m $2.00+</span>");
+    expect(drawn).toContain(">1 h 52 m $2.00+</span>");
+    // The two stages that carry a cost take a tap's focus as the five runs do, and say their
+    // words under their bar; no other stage does.
+    const rows = elements(tree, (one) => one.type === "li" && one.props.title !== undefined);
+    const focusable = rows.filter((row) => row.props.tabIndex === -1);
+    expect(focusable.map((row) => row.props.className)).toEqual([
+      "tl-row",
+      "tl-row tl-sub",
+      "tl-row tl-sub",
+      "tl-row",
+      "tl-row tl-sub",
+      "tl-row tl-sub",
+      "tl-row tl-sub",
+    ]);
+    expect(focusable[0]?.props.title).toBe(
+      "In progress · quiet-wren: from 09:43 to 11:35, moved there by quiet-wren: " +
+        "executor $2.00+, 09:44–09:53, in 4 calls; " +
+        "estimated at API list prices read 2026-11-16, not money spent",
+    );
+    expect(count(drawn, 'class="tl-facts"')).toBe(7);
+    expect(drawn).toContain(
+      `<span class="tl-facts" aria-hidden="true">${focusable[0]?.props.title}</span></li>`,
+    );
+  });
+
+  it("is nowhere for a task with no tokens, or whose tokens are not read: drawn as it was", () => {
+    const plain = renderToStaticMarkup(drawnWith(undefined));
+    const none = readTaskTokens(CASES.samples.emptyTaskTokens) as TaskTokens;
+    expect(renderToStaticMarkup(drawnWith(none))).toBe(plain);
+    expect(renderToStaticMarkup(drawnWith(null))).toBe(plain);
+    expect(plain).toContain("<span>6 h 18 m so far · 2 review rounds · 1 bounce</span>");
+    expect(plain).not.toContain("tl-cost");
+    expect(plain).not.toContain("$");
+  });
+
+  it("the host reads the tokens it is handed, and draws no cost of what it cannot read", () => {
+    const part = answered(JSON.parse(JSON.stringify(FIXTURE)));
+    const host = (handed: unknown) => {
+      react.effects.length = 0;
+      react.layouts.length = 0;
+      return renderToStaticMarkup(
+        <TimelineHost slug="a/b" part={part} tokens={handed} read={async () => {}} />,
+      );
+    };
+    expect(host(tokens())).toContain('class="tl-cost"');
+    expect(host(undefined)).not.toContain("tl-cost");
+    expect(host(null)).not.toContain("tl-cost");
+    expect(host({ total: "none" })).not.toContain("tl-cost");
   });
 });
 

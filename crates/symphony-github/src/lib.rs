@@ -1,4 +1,4 @@
-//! The optional exchange of selected tasks with GitHub issues (docs/GITHUB.md): turned off
+//! The optional exchange of selected tasks with GitHub issues (docs/operations/GITHUB.md): turned off
 //! unless the project's default branch commits `symphony-github.toml` and it says otherwise.
 //!
 //! It is a program of its own. It reaches the board through `tasks api` ([`board`]), GitHub

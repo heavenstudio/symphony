@@ -6,13 +6,14 @@
 //! future to [`tokio::spawn`], costs that again at every call site. [`blocking`] hands tokio one
 //! type for every call, a boxed closure that answers nothing, and keeps the work's answer beside the
 //! task until the task ends; [`task`] boxes a future that answers nothing. What each call compiles
-//! is then its own closure or future and that answer's hand-over alone (docs/CHECKS.md, "Size
+//! is then its own closure or future and that answer's hand-over alone (docs/workflow/CHECKS.md, "Size
 //! budgets").
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, ready};
+use symphony_board::lock::Recovered as _;
 use tokio::task::{JoinError, JoinHandle};
 
 /// `work` run on tokio's blocking pool, as [`tokio::task::spawn_blocking`] runs it: its answer
@@ -25,7 +26,7 @@ pub(crate) fn blocking<T: Send + 'static>(
     let put = Arc::clone(&answer);
     let work: Box<dyn FnOnce() + Send> = Box::new(move || {
         let made = work();
-        *put.lock().unwrap_or_else(PoisonError::into_inner) = Some(made);
+        *put.lock().recover() = Some(made);
     });
     Blocking {
         task: tokio::task::spawn_blocking(work),
@@ -47,7 +48,7 @@ impl<T> Future for Blocking<T> {
         Poll::Ready(ended.map(|()| {
             self.answer
                 .lock()
-                .unwrap_or_else(PoisonError::into_inner)
+                .recover()
                 .take()
                 .expect("a blocking task that returned left its answer")
         }))

@@ -4,7 +4,7 @@
 //! with no notice of unsupported content; and an element of a document the server cannot draw is
 //! named alone, what it holds drawn once after it (`crates/symphony/src/blocks.rs`). The task is
 //! the look-parity fixture's.
-use super::{SHOWN, chrome, common, dist, look_parity, site::Site};
+use super::{SHOWN, chrome, look_parity};
 use serde_json::{Value, json};
 
 const PAGE: &str = "/task/visual/in-progress";
@@ -28,7 +28,7 @@ fn paragraph(words: &str) -> Value {
 
 #[test]
 fn a_post_naming_components_draws_its_words_once_and_an_unknown_element_its_content_once() {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     site.set_json(
         "/api/task-page",
         &look_parity::responses()["/api/task-page"],
@@ -53,8 +53,10 @@ fn a_post_naming_components_draws_its_words_once_and_an_unknown_element_its_cont
     for id in [2, 3] {
         page.reveal(&format!("#message-{id}"));
     }
+    // Shown, not only mounted: the thread stays hidden under its ghost until it settles, and
+    // hidden words have no `innerText`.
     assert!(page.wait_for(
-        "document.querySelectorAll('#task-thread .entry.agent').length === 2",
+        "document.querySelectorAll('#task-thread .entry.agent').length === 2 && document.querySelector('#task-thread').closest('.settle').dataset.settled === 'true'",
         SHOWN
     ));
     let drawn = page.eval(

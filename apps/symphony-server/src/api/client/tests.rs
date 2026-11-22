@@ -5,7 +5,6 @@
 use super::gzipped::{Store, runs, takes_gzip};
 use super::*;
 use crate::front::router;
-use crate::gate::Gate;
 use crate::testing::Tree;
 use axum::Router;
 use axum::body::Body;
@@ -13,8 +12,6 @@ use axum::extract::connect_info::MockConnectInfo;
 use axum::http::Method;
 use std::io::Write;
 use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Instant;
 use symphony_board::sys::{Command, spawn_piped, wait_output};
 use tower::ServiceExt;
 
@@ -46,7 +43,7 @@ fn serving(files: &[(&str, &[u8])]) -> (Tree, Router) {
         1,
         &tree.path("repo"),
         Some(&tree.path("install")),
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+        crate::testing::open_gate(),
     );
     let loopback: SocketAddr = "127.0.0.1:5000".parse().unwrap();
     (tree, router(shared).layer(MockConnectInfo(loopback)))

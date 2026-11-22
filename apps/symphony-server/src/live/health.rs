@@ -25,11 +25,11 @@
 use super::Hub;
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::PoisonError;
 use symphony::machine::Registry;
 use symphony::machine::updates::{Ledger, Task};
 use symphony_board::board_health::disk::{self, Low};
 use symphony_board::board_health::{Report, SLOW_MS};
+use symphony_board::lock::Recovered as _;
 
 /// What the server's notice says, by where it comes from.
 #[derive(Debug, Default)]
@@ -138,10 +138,30 @@ pub(crate) fn reading(
     Box::new(move || Low::check(&root, threshold))
 }
 
+/// The time `text`, a `TASKS_NOW`, holds the clock at: none where it is absent or no finite number
+/// of seconds, as the board's own commands refuse such a one.
+pub(crate) fn held(text: Option<&str>) -> Option<f64> {
+    text?.parse::<f64>().ok().filter(|now| now.is_finite())
+}
+
 impl Hub {
     /// The time on the hub's clock, in seconds since the epoch.
     pub(crate) fn now(&self) -> f64 {
         (self.clock)()
+    }
+
+    /// The time a read of what the machine recorded is made at (the reports' window, the runs'
+    /// days): the one `TASKS_NOW` holds the board's clock at, when it does, else the hub's. A
+    /// server started over records written at a held moment, as the product specs' pictures are
+    /// taken (`tools/product-pictures.sh`), then reads the window those records are in.
+    pub(crate) fn recorded_now(&self) -> f64 {
+        self.recorded_at(std::env::var("TASKS_NOW").ok().as_deref())
+    }
+
+    /// [`Self::recorded_now`] with `tasks_now` for what `TASKS_NOW` holds: the moment it holds the
+    /// clock at, else the hub's clock.
+    pub(crate) fn recorded_at(&self, tasks_now: Option<&str>) -> f64 {
+        held(tasks_now).unwrap_or_else(|| self.now())
     }
 
     /// Tell every page, on the server's notice, whether the board went back, or its dispatch or
@@ -151,7 +171,7 @@ impl Hub {
         let disk = (self.low_disk)()
             .map(|low| low.notice())
             .unwrap_or_default();
-        let mut notices = self.notices.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut notices = self.notices.lock().recover();
         if notices.health != health || notices.disk != disk {
             notices.health = health;
             notices.disk = disk;
@@ -171,7 +191,7 @@ impl Hub {
         let said = symphony::project::Project::problem(&self.root)
             .map(|why| project(&why))
             .unwrap_or_default();
-        let mut notices = self.notices.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut notices = self.notices.lock().recover();
         let edited = std::mem::replace(&mut notices.project_file, file) != file;
         if notices.project != said {
             let loads = said.is_empty();
@@ -187,17 +207,14 @@ impl Hub {
             drop(notices);
         }
         // Its settings render its documents: the read renders them again, as after a lost event.
-        self.dirty
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(self.root.clone());
+        self.dirty.lock().recover().insert(self.root.clone());
         self.ask_rescan();
     }
 
     /// Tell every page, on the server's notice, that the server's update failed, `message`
     /// saying how, beside the board's health.
     pub(crate) fn tell_update(&self, message: String) {
-        let mut notices = self.notices.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut notices = self.notices.lock().recover();
         notices.update = message;
         self.server_notice.send_replace(notices.said());
     }
@@ -205,7 +222,7 @@ impl Hub {
     /// Tell every page, on the server's notice, what the machine's server is to this project when
     /// that changes: `said`, nothing while there is nothing to say ([`crate::projects`]).
     pub(crate) fn tell_machine(&self, said: String) {
-        let mut notices = self.notices.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut notices = self.notices.lock().recover();
         if notices.machine != said {
             notices.machine = said;
             self.server_notice.send_replace(notices.said());
@@ -222,7 +239,7 @@ impl Hub {
     /// change. A read that fails keeps what the last one found.
     pub(crate) fn read_only_ahead(&self, store: &symphony_board::Store) -> Option<i64> {
         let Ok(found) = store.board_standing() else {
-            let notices = self.notices.lock().unwrap_or_else(PoisonError::into_inner);
+            let notices = self.notices.lock().recover();
             return notices.ahead.0;
         };
         let ahead =
@@ -230,7 +247,7 @@ impl Hub {
         let said = ahead
             .map(|schema| self.ahead_notice(schema))
             .unwrap_or_default();
-        let mut notices = self.notices.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut notices = self.notices.lock().recover();
         if notices.ahead.0 != ahead || notices.ahead.1 != said {
             notices.ahead = (ahead, said);
             self.server_notice.send_replace(notices.said());
@@ -311,7 +328,7 @@ impl Hub {
     pub(crate) fn writes(&self) -> Option<bool> {
         match self.tasks_read() {
             Ok(_) => {
-                let notices = self.notices.lock().unwrap_or_else(PoisonError::into_inner);
+                let notices = self.notices.lock().recover();
                 Some(notices.ahead.0.is_none())
             }
             Err(why) if symphony_board::board_health::refused_by_schema(&why) => Some(false),
@@ -347,11 +364,7 @@ impl Hub {
         if let Some(line) = self.health.rollback() {
             return went_back(&line);
         }
-        let replaying = self
-            .replaying
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
+        let replaying = self.replaying.lock().recover().clone();
         match replaying {
             Some(line) => starting(&line),
             None => notice(self.health.failing(now)),

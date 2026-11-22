@@ -48,6 +48,7 @@ pub(in crate::store) mod snapshot;
 pub(in crate::store) mod spending;
 pub(in crate::store) mod stage_lines;
 pub(in crate::store) mod stamp;
+pub(in crate::store) mod stored_settings;
 pub(in crate::store) mod thread_window;
 pub(in crate::store) mod unanswered;
 pub(in crate::store) mod waits;
@@ -57,6 +58,7 @@ pub(in crate::store) mod workflow_events;
 pub(in crate::store) mod write;
 pub(in crate::store) mod writers;
 
+use super::RuleParts;
 use std::borrow::Cow;
 
 /// The slugs of every task, or of those in `v ->> 'status'` when `by_status`
@@ -80,16 +82,18 @@ pub(in crate::store) fn claimable() -> Pg<'static> {
 /// written (`blocked`), the move's `reason` posted after its line, the task's `needs` and its
 /// `gates` written, its mark of an approve not landed set or lifted (`unlanded`), a change of
 /// status (`moved`, whether to cancelled) settling its hold and its dependants, and the slot
-/// counters it `holds` guarded.
-pub(in crate::store) fn rule(
-    reason: bool,
-    (needs, gates): (bool, bool),
-    unlanded: bool,
-    blocked: bool,
-    moved: Option<bool>,
-    holds: bool,
-    placed: bool,
-) -> Pg<'static> {
+/// counters it `holds` guarded ([`RuleParts`]).
+pub(in crate::store) fn rule(parts: RuleParts) -> Pg<'static> {
+    let RuleParts {
+        placed,
+        reason,
+        blocked,
+        needs,
+        gates,
+        unlanded,
+        moved,
+        holds,
+    } = parts;
     // Twin of `super::surreal::rule`'s placement first.
     let mut body = if placed {
         format!("{}\n", workflow::REOPEN_PLACED)
@@ -783,7 +787,17 @@ mod tests {
 
     /// `rule`'s block, which a rule's write is.
     fn ruled(reason: bool, needs: bool, blocked: bool, moved: Option<bool>, holds: bool) -> String {
-        match rule(reason, (needs, needs), needs, blocked, moved, holds, false) {
+        let parts = RuleParts {
+            reason,
+            needs,
+            gates: needs,
+            unlanded: needs,
+            blocked,
+            moved,
+            holds,
+            placed: false,
+        };
+        match rule(parts) {
             Pg::Script(block, None) => block.into_owned(),
             other => panic!("a rule is a block answering its own: {other:?}"),
         }

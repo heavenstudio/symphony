@@ -1,6 +1,7 @@
 //! The guard a write starts with, on a board of the store's contract that lacks an additive step
-//! the store has ([`schema::Steps`]): a write naming a table of the step is refused before any of
-//! its statements, in either language and any quoting; what no word of it shows, the database
+//! the store has ([`schema::Steps`]): a write that says it names a table of the step is refused
+//! before any of its statements, on either database, its text naming the table in any quoting as a
+//! debug build holds it to ([`Statement::disagreement`]); what it does not say, the database
 //! refuses itself (a field it does not define; on SurrealDB, STRICT, a table it does not define),
 //! as the transaction's; so nothing of it is written either way. Once a build that may move the
 //! board has added the step, the same write passes.
@@ -76,7 +77,7 @@ fn a_write_needing_a_step_the_board_lacks_is_refused_whole_until_the_board_takes
             common: common.clone(),
         };
         let store = open(&Opening::write().at(ahead()).live(Some(live)));
-        assert_eq!(store.additions().unwrap(), 0);
+        assert_eq!(store.additions().unwrap(), crate::schema::ADDITIONS);
         let unchanged = |what: &str| {
             assert_eq!(
                 behind.get("sim/jump").unwrap().priority,
@@ -84,7 +85,11 @@ fn a_write_needing_a_step_the_board_lacks_is_refused_whole_until_the_board_takes
                 "{backend:?}: {what}"
             );
             assert!(!there(&behind, "fixture_tag"), "{backend:?}: {what}");
-            assert_eq!(behind.additions().unwrap(), 0, "{backend:?}: {what}");
+            assert_eq!(
+                behind.additions().unwrap(),
+                crate::schema::ADDITIONS,
+                "{backend:?}: {what}"
+            );
         };
         // Named, bare, quoted or nested: refused by the guard, before the write's first statement.
         let named = [
@@ -101,13 +106,15 @@ fn a_write_needing_a_step_the_board_lacks_is_refused_whole_until_the_board_takes
                 "PERFORM 1 FROM (SELECT count(*) FROM FIXTURE_TAG) AS n;",
             ),
         ];
-        for write in named {
+        for write in named.map(|write| write.naming(&["fixture_tag"])) {
             match store.transact::<Value>(write, json!({})) {
                 Err(Failure::Stop(Error::Refused(why))) => assert!(
                     why.contains(&format!(
-                        "has 0 of schema {}'s additive steps, and this write names `fixture_tag`, \
-                         which step 1 defines: nothing was written",
-                        crate::schema::VERSION
+                        "has {} of schema {}'s additive steps, and this write names `fixture_tag`, \
+                         which step {} defines: nothing was written",
+                        crate::schema::ADDITIONS,
+                        crate::schema::VERSION,
+                        crate::schema::ADDITIONS + 1
                     )),
                     "{backend:?}: {why}"
                 ),
@@ -140,13 +147,14 @@ fn a_write_needing_a_step_the_board_lacks_is_refused_whole_until_the_board_takes
         }
         // Once a build that may move it adds the step, the write the guard refused passes.
         open(&Opening::write().at(ahead()).migrating());
-        assert_eq!(store.additions().unwrap(), 1);
+        assert_eq!(store.additions().unwrap(), crate::schema::ADDITIONS + 1);
         store
             .transact::<Value>(
                 then(
                     "CREATE type::record('fixture_tag', 'one') SET name = 'one' RETURN NONE;",
                     "INSERT INTO fixture_tag (id, doc) VALUES ('\"one\"', '{\"name\": \"one\"}');",
-                ),
+                )
+                .naming(&["fixture_tag"]),
                 json!({}),
             )
             .unwrap();

@@ -345,7 +345,7 @@ pub enum VectorKind {
 mod tests {
     use super::*;
 
-    /// A component's answer as `docs/PLUGIN_PROTOCOL.md` shows it on the line: each block and span
+    /// A component's answer as `docs/engineering/PLUGIN_PROTOCOL.md` shows it on the line: each block and span
     /// tagged by its `type` in kebab case, an empty presentation left out of a table, and every
     /// other empty part of a presentation left out of it.
     #[test]

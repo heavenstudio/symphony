@@ -284,6 +284,18 @@ fn the_owners_approve_of_the_one_card_posted_stands_with_its_line_and_a_merge_of
 }
 
 #[test]
+fn a_default_branch_the_project_files_rule_refuses_names_no_branch_to_read_the_cards_on() {
+    let repo = Repo::new();
+    repo.posting(LAYOUT);
+    let line = repo.saved("Answered: approve again or comment", APPROVED);
+    let file = repo.0.join("symphony.toml");
+    fs::write(&file, "[project]\ndefault_branch = \"main\"\n").unwrap();
+    assert_eq!(repo.read(&line), approved(&["layout"]));
+    fs::write(&file, "[project]\ndefault_branch = \" \"\n").unwrap();
+    assert_eq!(repo.read(&line), Posted::Nothing);
+}
+
+#[test]
 fn any_other_commit_after_the_approve_keeps_it_from_standing_naming_the_commit() {
     for after in [
         ("src/lib.rs", "pub fn three() {}\n"),
@@ -404,6 +416,48 @@ fn every_card_the_branch_posted_needs_the_approve_the_newest_deciding_where_it_s
     repo.commit(&[("src/lib.rs", "pub fn three() {}\n")]);
     let both = repo.saved("Resolved", &format!("{APPROVED}{colour}"));
     assert_eq!(repo.read(&both), approved(&["layout", "colour"]));
+}
+
+/// A document with no register: `card` inline under the paragraph that says the thing.
+fn inline(card: &str, after: &str) -> String {
+    format!("# Notes\n\n## Layout\n\nThe page is 900 wide.\n\n{card}\n{after}\n")
+}
+
+#[test]
+fn an_inline_card_the_branch_posted_in_a_document_with_no_register_stands_as_a_registers_does() {
+    const NOTES: &str = "docs/NOTES.md";
+    let repo = Repo::new();
+    repo.git(&["checkout", "-qb", "task", "main"]);
+    let posted = repo.commit(&[
+        (NOTES, &inline(LAYOUT, "Margins follow.")),
+        ("src/lib.rs", "pub fn one() {}\npub fn two() {}\n"),
+    ]);
+    assert_eq!(repo.read(&posted), Posted::Nothing, "no verdict yet");
+    // The owner's approve, saved from the card's page: its line and its mark, nothing else.
+    let line = repo.commit(&[(NOTES, &inline(APPROVED, "Margins follow."))]);
+    assert_eq!(repo.read(&line), approved(&["layout"]));
+    let merged = repo.merges_main("src/main.rs", "fn main() {}\n");
+    assert_eq!(repo.read(&merged), approved(&["layout"]));
+    // Prose beside the card changed after the approve: the owner approved another page.
+    let later = repo.commit(&[(NOTES, &inline(APPROVED, "Margins follow, and gutters."))]);
+    assert_eq!(repo.read(&later), changed(&["layout"], &later));
+}
+
+#[test]
+fn an_inline_card_main_held_is_none_the_branch_posted_where_it_stays_or_where_it_moves() {
+    const NOTES: &str = "docs/NOTES.md";
+    let repo = Repo::new();
+    repo.commit(&[(NOTES, &inline(LAYOUT, "Margins follow."))]);
+    repo.git(&["checkout", "-qb", "task", "main"]);
+    // Answered where main held it.
+    let answered = repo.commit(&[(NOTES, &inline(APPROVED, "Margins follow."))]);
+    assert_eq!(repo.read(&answered), Posted::Nothing);
+    // Moved, word for word, into another document with no register.
+    let moved = repo.commit(&[
+        (NOTES, "# Notes\n\nMargins follow.\n"),
+        ("docs/LAYOUT.md", &inline(APPROVED, "")),
+    ]);
+    assert_eq!(repo.read(&moved), Posted::Nothing);
 }
 
 #[test]

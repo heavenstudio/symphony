@@ -112,6 +112,7 @@ fn constants() -> String {
         ("RUNS_DAYS", api::RUNS_DAYS.to_string()),
         ("SCHEMA_UPDATES_PATH", text(api::SCHEMA_UPDATES_PATH)),
         ("VERSION_HEADER", text(api::VERSION_HEADER)),
+        ("GETTING_STARTED", text(api::GETTING_STARTED)),
         ("VERDICT_TASKS", text(api::VERDICT_TASKS)),
         ("UPLOAD_PATH", text(api::UPLOAD_PATH)),
         ("UPLOAD_MAX_BYTES", api::UPLOAD_MAX_BYTES.to_string()),
@@ -264,6 +265,7 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::TaskTokens>(cfg),
         declared::<api::RoleTokens>(cfg),
         declared::<api::RoundTokens>(cfg),
+        declared::<api::TokenRow>(cfg),
         declared::<api::TaskCosts>(cfg),
         declared::<api::TaskCost>(cfg),
         declared::<api::SessionGo>(cfg),
@@ -2254,14 +2256,34 @@ fn task_tokens() -> api::TaskTokens {
             api::RoundTokens {
                 round: 1,
                 tokens: executor.tokens,
-                cost: executor.cost,
+                cost: executor.cost.clone(),
             },
             api::RoundTokens {
                 round: 2,
                 tokens: reviewer.tokens,
-                cost: reviewer.cost,
+                cost: reviewer.cost.clone(),
             },
         ],
+        rows: vec![
+            token_row("executor", 1, executor.clone()),
+            token_row("reviewer", 2, reviewer),
+        ],
+    }
+}
+
+/// A row of a task's tokens: `spend` in `role` and `round`.
+fn token_row(role: &str, round: u32, spend: api::report_page::Spend) -> api::TokenRow {
+    api::TokenRow {
+        handle: format!("{role}-1"),
+        slug: "w/a".into(),
+        role: role.into(),
+        model: "claude-opus-5-5".into(),
+        speed: "standard".into(),
+        round,
+        tokens: spend.tokens,
+        cost: spend.cost,
+        first: 1000.0 * f64::from(round),
+        last: 1000.0 * f64::from(round) + 600.0,
     }
 }
 

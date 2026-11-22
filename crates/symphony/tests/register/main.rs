@@ -11,6 +11,7 @@ mod decisions;
 mod gap;
 mod group;
 mod history;
+mod inline;
 mod lint;
 mod resolve;
 mod sort;

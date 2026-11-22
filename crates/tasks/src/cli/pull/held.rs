@@ -1,4 +1,4 @@
-//! Where PULL lists a task a custom workflow holds (docs/WORKFLOW.md, "Operations"): by the edges
+//! Where PULL lists a task a custom workflow holds (docs/workflow/WORKFLOW.md, "Operations"): by the edges
 //! leaving its position and the role that position staffs, never by the status it projects to.
 //!
 //! - A claim edge giving the executor's role, or the reviewer's, that nobody there holds, its

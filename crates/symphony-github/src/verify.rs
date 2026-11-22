@@ -1,5 +1,5 @@
 //! `symphony-github verify --request FILE`: what answers a release run that verifies its commit
-//! on GitHub's machines (`[releases] hosted = ["symphony-github", "verify"]`, docs/RELEASES.md,
+//! on GitHub's machines (`[releases] hosted = ["symphony-github", "verify"]`, docs/workflow/RELEASES.md,
 //! "On GitHub's runners"), one JSON object read and one printed. It serves only `enabled` settings
 //! whose `verification` is `hosted`, to the repository the state is bound to by its number.
 //!
@@ -30,8 +30,8 @@
 //! answered, never while it waits. No token is in an argument, a URL, the journal or a line said
 //! here, and a download's URL is said nowhere.
 
-use crate::config::Verification;
-use crate::deliver::{self, Host, Lost, Stopped, refused, unavailable};
+use crate::config::{Config, Verification};
+use crate::deliver::{self, Host, Lost, Serving, Stopped, refused, unavailable};
 use crate::reconcile::{Context, Outcome};
 use crate::state::{Entry, Event, Store};
 use serde_json::{Value, json};
@@ -426,16 +426,12 @@ fn asked(request: &Value) -> Result<(String, std::path::PathBuf, u64), Stopped> 
 
 /// The answer to `request`.
 fn answer(ctx: &Context<'_>, request: &Value) -> Result<Value, Stopped> {
-    let loaded = (ctx.source.load())
-        .map_err(|why| refused(format!("turned off: its settings do not read: {why}")))?;
-    let config = loaded.config;
-    let serves = config.enabled && config.verification == Verification::Hosted;
-    let Some(repository) = config.repository.clone().filter(|_| serves) else {
-        return Err(refused(
-            "turned off: the committed settings do not say enabled = true and verification = \
-             \"hosted\"",
-        ));
-    };
+    let hosted = |config: &Config| config.verification == Verification::Hosted;
+    let Serving {
+        config,
+        revision,
+        repository,
+    } = deliver::served(ctx, "verification = \"hosted\"", hosted).map_err(refused)?;
     let (commit, folder, seconds) = asked(request)?;
     let by = crate::github::clean_title(request["by"].as_str().unwrap_or_default());
     let store = (ctx.board.state_folder())
@@ -460,7 +456,7 @@ fn answer(ctx: &Context<'_>, request: &Value) -> Result<Value, Stopped> {
             target: commit.clone(),
             digest: crate::digest(&[WORKFLOW, &commit]),
             base: Value::Null,
-            config: loaded.revision.clone(),
+            config: revision.clone(),
             by: by.clone(),
             result,
         });

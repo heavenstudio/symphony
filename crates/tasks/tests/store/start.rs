@@ -1,12 +1,16 @@
 //! The tests' server start ([`launch`]): it comes up whatever is left of the folder its log goes in,
 //! a server that ends before it answers is reported with its exit status and what it and its shell
 //! said, it keeps its data on the engine it is handed ([`launch_on`], [`store_held_in`]), and it
-//! reaches this machine alone, for the gates a statement waits at.
+//! reaches this machine alone, for the gates a statement waits at. A test's own server on the
+//! board's engine ([`BoardServer`]) holds its store in a folder of its own, which goes with it, or
+//! with the next run when its process was killed.
 
-use crate::common::{client, launch, launch_on, store_held_in, surreal};
+use crate::common::{
+    BoardServer, client, launch, launch_on, remove_ended_board_folders, store_held_in, surreal,
+};
 use crate::gate::Gate;
 use serde_json::{Value, json};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use symphony_board::rpc::{self, Client};
 
 /// A folder of this test's own, empty.
@@ -254,4 +258,66 @@ fn the_tests_server_reaches_a_gate_on_this_machine_and_no_other_host() {
         elsewhere.contains("Access to network target '192.0.2.1:80' is not allowed"),
         "{elsewhere}"
     );
+}
+
+// SurrealDB alone: exercises the SurrealDB process launcher, its engine flags, locks and HTTP gates.
+#[test]
+fn a_board_server_holds_its_store_in_a_folder_of_its_own_that_goes_with_it() {
+    let (one, two) = (BoardServer::start(), BoardServer::start());
+    let folder = one.folder().to_path_buf();
+    assert_ne!(folder, two.folder(), "each server has a folder of its own");
+    let engine = |folder: &Path| format!("surrealkv://{}", folder.join("data").display());
+    assert_eq!(store_held_in(&engine(&folder)), Ok(()));
+    assert_eq!(store_held_in(&engine(two.folder())), Ok(()));
+    let (a, b) = (one.client(), one.client());
+    assert_ne!(a.database(), b.database(), "a database each");
+    assert_eq!(a.addr(), b.addr());
+    assert_ne!(
+        a.addr(),
+        two.client().addr(),
+        "each server on a port of its own"
+    );
+    drop(one);
+    assert!(!folder.exists(), "the folder went with its server");
+    assert_eq!(
+        store_held_in(&engine(two.folder())),
+        Ok(()),
+        "the other one is still up"
+    );
+}
+
+/// A folder a board server's run left, its process killed before the server dropped, goes with
+/// the next run's first server; the folders of a run still going and every other name stay.
+#[test]
+fn a_board_servers_folder_left_by_a_run_that_ended_is_removed_and_no_other() {
+    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("board-folders-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let ended = i64::from(i32::MAX); // past any system's last pid, so no process has it
+    let own = std::process::id();
+    let folder = |name: String| {
+        let folder = root.join(name);
+        std::fs::create_dir_all(folder.join("data")).unwrap();
+        std::fs::write(folder.join("data/LOCK"), "").unwrap();
+        folder
+    };
+    let left = [
+        folder(format!("board-surrealkv-{ended}-0")),
+        folder(format!("board-surrealkv-{ended}-7")),
+    ];
+    let kept = [
+        folder(format!("board-surrealkv-{own}-0")),
+        folder("board-surrealkv-notapid-0".into()),
+        folder(format!("board-surrealkv-{ended}")),
+        folder(format!("server-{ended}-0")),
+    ];
+    remove_ended_board_folders(&root);
+    for gone in &left {
+        assert!(!gone.exists(), "{} stayed", gone.display());
+    }
+    for stays in &kept {
+        assert!(stays.join("data/LOCK").exists(), "{} went", stays.display());
+    }
+    remove_ended_board_folders(&root.join("absent"));
+    std::fs::remove_dir_all(&root).unwrap();
 }

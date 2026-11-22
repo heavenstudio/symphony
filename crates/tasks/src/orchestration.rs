@@ -4,7 +4,7 @@
 //! A task is its orchestrator's when that session holds the role on it, or on the nearest task
 //! above it that has one, and is live, stale or of unknown liveness ([`crate::Health::holds`]).
 //! The board gives the role wherever a task would be left without ([`Pool`], [`unowned_tops`],
-//! [`orphaned`]; docs/TASKS.md, "Every open task has an orchestrator"), to an orchestrator holding
+//! [`orphaned`]; docs/workflow/TASKS.md, "Every open task has an orchestrator"), to an orchestrator holding
 //! fewer open tasks than the limit (`[limits] orchestrator_tasks`, [`counted`], [`at_limit`]) but
 //! for a red. A task with none on it or above it is unowned for the moment before the board gives
 //! it, or while no orchestrator that stays is under the limit, when it waits for the first to come
@@ -353,7 +353,7 @@ pub fn at_limit(handle: &str, held: usize, limit: usize) -> Option<String> {
 }
 
 /// The orchestrators the board gives a task to, each with the open tasks it holds the role on
-/// ([`counted`]): rule 4 of docs/TASKS.md, "Every open task has an orchestrator", among those that
+/// ([`counted`]): rule 4 of docs/workflow/TASKS.md, "Every open task has an orchestrator", among those that
 /// show they stay and hold fewer than the limit ([`Pool::within`]). Each pick is the one holding
 /// fewest, ties by handle, and counts the task it gave, so a pass of several spreads them and fills
 /// none past the limit.

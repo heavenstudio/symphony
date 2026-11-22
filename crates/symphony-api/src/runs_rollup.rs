@@ -1,5 +1,5 @@
 //! A project's runs rolled up by UTC day ([`RunsDay`]), from the day files of its run lines
-//! ([`crate::RunLine`], docs/RUNS.md). The machine's one server writes them once an hour, and once
+//! ([`crate::RunLine`], docs/workflow/RUNS.md). The machine's one server writes them once an hour, and once
 //! after midnight for the day that ended, as it writes the board's ([`crate::reports`]). They go in
 //! [`RUNS_ROLLUP`] beside the run lines, `symphony/runs/rollup/YYYY-MM-DD.json` in the git common
 //! dir ([`crate::report_file`] names each), and are kept for good. The Runs page reads them for its

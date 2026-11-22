@@ -1,5 +1,5 @@
 //! The machine's server trying a held update again at each round of a project's idle sweep
-//! ([`symphony::machine::held`], docs/RELEASES.md "A held update tried again"): only the one
+//! ([`symphony::machine::held`], docs/workflow/RELEASES.md "A held update tried again"): only the one
 //! server, only while it is an installed release, in that project's own maintenance worker, so no
 //! request waits on a move and one project's move holds up no other's sweep. The retry runs each
 //! command it starts as the sweep runs its reap: in a group of its own, ended at its bound or once

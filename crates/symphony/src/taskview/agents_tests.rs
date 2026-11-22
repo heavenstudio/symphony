@@ -333,13 +333,39 @@ fn a_tasks_tokens_are_its_and_its_subtasks_tally_and_one_with_none_has_none() {
     let rows = f.store.spent_on(&["sim/jump", "sim/jump/fix"]).unwrap();
     let prices = Prices::embedded();
     let tally: symphony_api::TaskTokens =
-        serde_json::from_value(Tally::at(&rows, prices).json(&[], prices)).unwrap();
+        serde_json::from_value(Tally::at(&rows, prices).json(&rows, prices)).unwrap();
     assert_eq!(tokens, tally);
     assert_eq!(tokens.total.calls, 2, "its subtask's calls with its own");
     assert_eq!(tokens.cost.unpriced.len(), 1);
+    // Its rows, each as the board recorded it: whose calls, on which task, in which role and
+    // round, from the first to the last, priced as the total is, so they add up to it.
+    let row = |slug: &str| {
+        (tokens.rows.iter())
+            .find(|row| row.slug == slug)
+            .unwrap_or_else(|| panic!("no row of {slug}: {:?}", tokens.rows))
+    };
+    assert_eq!(tokens.rows.len(), 2);
+    let (own, under) = (row("sim/jump"), row("sim/jump/fix"));
+    assert_eq!(
+        (own.handle.as_str(), own.role.as_str(), own.round),
+        (exe.as_str(), "executor", 1)
+    );
+    assert_eq!(own.model, "claude-opus-5-5");
+    assert_eq!((own.tokens.input, own.tokens.calls), (100, 1));
+    assert!(own.cost.dollars > 0.0 && own.cost.unpriced.is_empty());
+    assert!(own.first > 0.0 && own.last >= own.first);
+    assert_eq!(
+        (under.handle.as_str(), under.model.as_str()),
+        (sub.as_str(), "gpt-x")
+    );
+    assert_eq!(under.cost.unpriced.len(), 1);
+    let dollars: f64 = tokens.rows.iter().map(|row| row.cost.dollars).sum();
+    assert!((dollars - tokens.cost.dollars).abs() < 1e-9);
+    let calls: u64 = tokens.rows.iter().map(|row| row.tokens.calls).sum();
+    assert_eq!(calls, tokens.total.calls);
     let quiet = super::tokens(&f.store, "sim/quiet").unwrap();
     assert_eq!(quiet.total, symphony_api::AgentTokens::default());
-    assert!(quiet.by_role.is_empty() && quiet.by_round.is_empty());
+    assert!(quiet.by_role.is_empty() && quiet.by_round.is_empty() && quiet.rows.is_empty());
     assert_eq!(quiet.cost.prices, prices.read);
     assert!(super::tokens(&f.store, "sim/none").is_err(), "no such task");
     // A card's figure is its page's, all told; a task that took none, or none at all, has none.

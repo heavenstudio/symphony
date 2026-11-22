@@ -52,6 +52,20 @@ fn a_card_slug_in_prose_is_named_with_its_place() {
     );
 }
 
+/// A card inline in a document, under the paragraph it decides and outside any register: its own
+/// lines are its record, and the prose around it is still read.
+#[test]
+fn an_inline_cards_own_lines_may_name_cards_and_the_prose_beside_it_may_not() {
+    let page = "# X\n\nThey travel by roads.\n\n- [ ] **road-width** — How wide? See **quiet-roads**.\n  [2026-09-24] agent — Posted, after quiet-roads.\n\n    **Base.** quiet-roads as it stands.\n\nWide, as road-width has it.\n";
+    let found = lint_tree("slug-inline", &[("docs/kappa/x.md", Some(page))]);
+    has(&found, &["docs/kappa/x.md:10", "road-width"]);
+    assert_eq!(
+        found.iter().filter(|p| p.contains("card slug")).count(),
+        1,
+        "{found:#?}"
+    );
+}
+
 #[test]
 fn registers_code_blocks_history_and_analysis_may_name_a_card() {
     let found = lint_tree("slug-exempt", &[]);
@@ -59,6 +73,31 @@ fn registers_code_blocks_history_and_analysis_may_name_a_card() {
     none_holds(&found, "docs/analysis/notes.md");
     none_holds(&found, "docs/kappa/x.md:6");
     none_holds(&found, "docs/DECISIONS.md");
+}
+
+#[test]
+fn an_areas_analysis_folder_may_name_a_card_and_a_file_of_that_name_may_not() {
+    let found = lint_tree(
+        "slug-area-analysis",
+        &[
+            (
+                "docs/kappa/analysis/deep.md",
+                Some("# Deep\n\nquiet-roads evidence.\n"),
+            ),
+            (
+                "docs/kappa/analysis.md",
+                Some("# Not a folder\n\nquiet-roads again.\n"),
+            ),
+        ],
+    );
+    let slugs = |path: &str| {
+        found
+            .iter()
+            .filter(|p| p.contains("card slug") && p.contains(path))
+            .count()
+    };
+    assert_eq!(slugs("docs/kappa/analysis/deep.md"), 0, "{found:#?}");
+    assert_eq!(slugs("docs/kappa/analysis.md:3"), 1, "{found:#?}");
 }
 
 #[test]

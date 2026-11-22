@@ -1,58 +1,51 @@
-//! The snapshot a read of tasks gives ([`reading`]) and the presence reads it shares.
+//! The snapshot a read of tasks gives ([`reading`]) and the presence reads it shares. Its
+//! variables are the store's ([`crate::store::reading::vars`]), the same for each database.
 
-use super::super::{EXECUTING, PULLABLE, Sessions, Which};
+use super::super::{Sessions, Which};
 use super::cap;
-use serde_json::{Value, json};
 
-/// The statements that read `which`, ending in the `RETURN` of a `Snapshot`, and their
-/// variables, with the sessions `sessions` asks for.
-pub(in crate::store) fn reading(which: &Which, sessions: Sessions) -> (String, Value) {
+/// The statements that read `which`, ending in the `RETURN` of a `Snapshot`, with the sessions
+/// `sessions` asks for.
+pub(in crate::store) fn reading(which: &Which, sessions: Sessions) -> String {
     const SCOPED: &str = " WHERE slug IN $slugs";
     const KNOWN: &str = "record::exists(type::record('task', $slug))";
-    let (pick, scope, known, mut vars) = match which {
+    let (pick, scope, known) = match which {
         Which::All | Which::SlotHoldings => (
             "SELECT * OMIT id FROM task ORDER BY priority, sid",
             "",
             "true",
-            json!({}),
         ),
-        Which::Status(status) => (
+        Which::Status(_) => (
             "SELECT * OMIT id FROM task WHERE status = $status ORDER BY priority, sid",
             SCOPED,
             "true",
-            json!({"status": status}),
         ),
-        Which::Slug(slug) | Which::Starting(slug) => (
+        Which::Slug(_) | Which::Starting(_) => (
             "SELECT * OMIT id FROM type::record('task', $slug)",
             SCOPED,
             KNOWN,
-            json!({"slug": slug}),
         ),
-        Which::Slugs(slugs) => (
+        Which::Slugs(_) => (
             "SELECT * OMIT id FROM $wanted.map(|$slug| type::record('task', $slug)) ORDER BY priority, sid",
             SCOPED,
             "true",
-            json!({"wanted": slugs}),
         ),
-        Which::Children(slug) => (
+        Which::Children(_) => (
             "SELECT * OMIT id FROM task WHERE parent = $slug ORDER BY sid",
             SCOPED,
             KNOWN,
-            json!({"slug": slug}),
         ),
-        Which::Pullable(handle) => (
+        Which::Pullable(_) => (
             "SELECT * OMIT id FROM task WHERE status IN $pullable ORDER BY sid",
             SCOPED,
             "record::exists(type::record('session', $handle))",
-            json!({"handle": handle, "pullable": PULLABLE}),
         ),
-        Which::Linked(doc) => (
+        Which::Linked(_) => (
             "SELECT * OMIT id FROM array::distinct(SELECT VALUE slug FROM link
                      WHERE kind = 'doc' AND (target = $doc OR string::starts_with(target, $doc + '#')))
                      .map(|$s| type::record('task', $s)) ORDER BY priority, slug",
             SCOPED,
             "true",
-            json!({"doc": doc}),
         ),
     };
     let (deps, mine) = match which {
@@ -73,10 +66,6 @@ pub(in crate::store) fn reading(which: &Which, sessions: Sessions) -> (String, V
         ""
     };
     let (slot_lets, slots) = if matches!(which, Which::Starting(_) | Which::SlotHoldings) {
-        if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), super::super::cap::vars())
-        {
-            vars.extend(more);
-        }
         let wanted = if matches!(which, Which::SlotHoldings) {
             "$slugs"
         } else {
@@ -100,9 +89,7 @@ pub(in crate::store) fn reading(which: &Which, sessions: Sessions) -> (String, V
     } else {
         "NONE"
     };
-    vars["executing"] = json!(EXECUTING);
-    native_bounds(&mut vars);
-    let read = format!(
+    format!(
         "{pull_lets}
              LET $tasks = ({pick});
              LET $slugs = $tasks.slug;
@@ -128,8 +115,7 @@ pub(in crate::store) fn reading(which: &Which, sessions: Sessions) -> (String, V
                  mine: {mine},
                  {slots}
              }};", super::branches::OF_TASKS
-    );
-    (read, vars)
+    )
 }
 
 /// The active custom workflow's activation generation, or NONE on a board that never activated
@@ -159,14 +145,9 @@ LET $held = array::distinct((SELECT handle, role, slug FROM role WHERE slug IN a
     .map(|$r| $r.handle));";
 
 /// The Codex registrations' presence, through `callback_state_address`: an address starting
-/// `codex:` is one from `$codex` up to `$codex_after`, the bounds [`native_bounds`] gives. They
+/// `codex:` is one from `$codex` up to `$codex_after`, the bounds
+/// [`crate::store::reading::native_bounds`] gives. They
 /// are variables, not text: the client takes a request for a read only when no `;` but those
 /// between its statements is in it (`rpc::Kind::of` splits on every one, quoted or not), and a
 /// read it took for a write would never be sent again when late.
 pub(in crate::store) const NATIVE_PRESENCE: &str = "(SELECT handle, confirmed_until ?? 0 AS until FROM callback_state WHERE address >= $codex AND address < $codex_after)";
-
-/// `vars` with [`NATIVE_PRESENCE`]'s bounds: `codex:`, and `codex;`, the character after the colon.
-pub(in crate::store) fn native_bounds(vars: &mut Value) {
-    vars["codex"] = json!("codex:");
-    vars["codex_after"] = json!("codex;");
-}

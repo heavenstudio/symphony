@@ -1,5 +1,5 @@
 //! An approve that stands over the one merge of the default branch made on the commit it names
-//! ([TASKS](../../../../docs/TASKS.md#the-default-landing)): the merge an executor makes to
+//! ([TASKS](../../../../docs/workflow/TASKS.md#the-default-landing)): the merge an executor makes to
 //! settle a land's conflict in documents, which no reviewer reads again.
 //!
 //! It stands at the tip T when all of these hold ([`over`]):

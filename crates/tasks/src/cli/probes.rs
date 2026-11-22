@@ -282,8 +282,11 @@ impl Pane {
             .flatten()
             .find(|cwd| !cwd.is_empty())
             .unwrap_or_default();
-        let session = hc::conversation(&hc::argv(terminal))
-            .map(|id| id.strip_prefix("codex:").unwrap_or(&id).to_string());
+        let session = hc::conversation(&hc::argv(terminal)).map(|id| {
+            id.strip_prefix(crate::launch::CODEX)
+                .unwrap_or(&id)
+                .to_string()
+        });
         Some(Pane {
             id,
             agent: hc::agent(terminal).map(str::to_string),

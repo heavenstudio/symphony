@@ -55,7 +55,7 @@ pub(crate) fn hook_commands(settings: &Value, event: &str) -> Vec<(String, Strin
 }
 
 /// A fresh folder under the system's temporary one, removed when dropped.
-pub(crate) struct TempDir(pub PathBuf);
+pub(crate) struct TempDir(PathBuf);
 
 impl TempDir {
     pub(crate) fn new(tag: &str) -> Self {

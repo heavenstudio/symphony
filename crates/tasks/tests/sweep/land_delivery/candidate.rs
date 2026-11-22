@@ -1,5 +1,5 @@
 //! A release candidate's fix that changes what a generator makes, where the project delivers by
-//! pull request (docs/RELEASES.md, a red's fix): its head keeps the outputs its own sources make,
+//! pull request (docs/workflow/RELEASES.md, a red's fix): its head keeps the outputs its own sources make,
 //! which the candidate takes, so no squash delivers it, and its land says how one is: approved
 //! naming that head, the branch merges main once keeping main's side of every generated path,
 //! and that merge is delivered, its squash keeping main's outputs while the head approved before

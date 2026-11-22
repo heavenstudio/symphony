@@ -149,7 +149,10 @@ impl Store {
             "no_session": format!("{REFUSED}no session {}", repr(&launch.handle)),
         });
         let claude_session = self.retrying(|| {
-            self.transact::<String>(both(&body, pg::record_launch(launch.log)), vars.clone())
+            self.transact::<String>(
+                both(&body, pg::record_launch(launch.log)).posting_when(launch.log),
+                vars.clone(),
+            )
         })?;
         Ok(TaskSessionRow {
             claude_session,
@@ -160,7 +163,7 @@ impl Store {
     /// The sessions launched for `slug`, by when they started.
     pub fn task_sessions(&self, slug: &str) -> Result<Vec<TaskSessionRow>, Error> {
         self.retrying(|| {
-            self.transact(
+            self.read_together(
                 super::statement::both(
                     sql::sessions_of_task(),
                     super::postgres::launches::sessions_of_task(),
@@ -194,7 +197,7 @@ impl Store {
         pg: Pg<'static>,
         vars: Value,
     ) -> Result<Vec<TaskSessionRow>, Error> {
-        self.retrying(|| self.transact(both(read, pg.clone()), vars.clone()))
+        self.retrying(|| self.read_together(both(read, pg.clone()), vars.clone()))
     }
 
     /// Its pane is closed. The record stays, with the line that brings it back. A Codex record whose
@@ -282,8 +285,12 @@ impl Store {
             ]);
         }
         held(&mut vars, &launch.handle, hold);
-        let kept: Option<String> =
-            self.retrying(|| self.transact(both(&body, pg::record_found_closed()), vars.clone()))?;
+        let kept: Option<String> = self.retrying(|| {
+            self.transact(
+                both(&body, pg::record_found_closed()).posting(),
+                vars.clone(),
+            )
+        })?;
         Ok(kept.map(|claude_session| TaskSessionRow {
             claude_session,
             ..row
@@ -389,7 +396,7 @@ impl Store {
         if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
             vars.extend(more);
         }
-        self.retrying(|| self.transact(both(body, pg.clone()), vars.clone()))
+        self.retrying(|| self.transact(both(body, pg.clone()).posting(), vars.clone()))
     }
 }
 

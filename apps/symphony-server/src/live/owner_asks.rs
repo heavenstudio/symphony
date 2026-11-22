@@ -8,6 +8,7 @@
 //! each tick for the agent queue's rows ([`Hub::note_asks`]): who holds each and since when.
 
 use std::sync::atomic::Ordering;
+use symphony_board::lock::Recovered as _;
 
 use super::{Hub, measured};
 use symphony::owner_asks::{self, Due, Reading};
@@ -31,13 +32,13 @@ impl Hub {
             }
         };
         {
-            let mut kept = self.queue_asks.lock().unwrap_or_else(|e| e.into_inner());
+            let mut kept = self.queue_asks.lock().recover();
             if **kept == open {
                 return;
             }
             *kept = std::sync::Arc::new(open.clone());
         }
-        let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
+        let mut pages = self.pages.write().recover();
         for page in pages.values_mut() {
             let mut agent = page.queue.agent.clone();
             owner_asks::note(&mut agent, &open, &page.held);
@@ -55,16 +56,11 @@ impl Hub {
     }
 
     pub(super) fn keep_asks(&self, store: &symphony_board::Store) {
-        let mut kept = self.owner_asks.lock().unwrap_or_else(|e| e.into_inner());
+        let mut kept = self.owner_asks.lock().recover();
         let Some(kept) = kept.as_mut() else {
             return;
         };
-        let read_at = self
-            .pages
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .get("")
-            .map(|page| page.read_at);
+        let read_at = self.pages.read().recover().get("").map(|page| page.read_at);
         let Some(read_at) = read_at else {
             return;
         };
@@ -106,12 +102,8 @@ impl Hub {
         };
         // The queue, the cards and when they were read, together: a refresh since the check reads
         // later lines.
-        let Some((agent, held, read_at, unscanned)) = self
-            .pages
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .get("")
-            .map(|page| {
+        let Some((agent, held, read_at, unscanned)) =
+            self.pages.read().recover().get("").map(|page| {
                 (
                     page.queue.agent.clone(),
                     std::sync::Arc::clone(&page.held),
@@ -127,7 +119,7 @@ impl Hub {
             agent,
             held,
             read_at,
-            trees: self.trees.read().unwrap_or_else(|e| e.into_inner()).clone(),
+            trees: self.trees.read().recover().clone(),
             listed: self.listed.load(Ordering::SeqCst),
             unscanned,
             chats,

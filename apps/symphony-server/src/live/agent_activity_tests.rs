@@ -1174,7 +1174,7 @@ fn recording_makes_no_board_write_though_the_board_counts_writes() {
 
 /// A hub started as the shared server or a private one, on a scratch repository and board, once
 /// its first board read is through.
-fn hub_started(drain_chat: bool) -> (Tree, Arc<Hub>, PathBuf) {
+fn hub_started(one_server: bool) -> (Tree, Arc<Hub>, PathBuf) {
     let tree = Tree::new();
     let root = repository(&tree);
     let mut store = Some(executor_on_a_scratch_board().store);
@@ -1182,7 +1182,7 @@ fn hub_started(drain_chat: bool) -> (Tree, Arc<Hub>, PathBuf) {
         &root,
         &root.join("build/client"),
         false,
-        drain_chat,
+        one_server,
         crate::backstop::PERIOD,
         move |_| store.take().ok_or_else(|| "one store in this test".into()),
     )
@@ -1407,7 +1407,7 @@ fn writer(line: &Line) -> (u32, f64) {
     }
 }
 
-/// What a reader makes of `hour`'s lines, from one writer or several, as docs/AGENT_ACTIVITY.md
+/// What a reader makes of `hour`'s lines, from one writer or several, as docs/workflow/AGENT_ACTIVITY.md
 /// says: seconds, samples and changes added, peaks the largest, means weighted by `observed_s`,
 /// `started` from the line with the latest `to`; and each line's span and writer.
 #[derive(Debug, PartialEq)]
@@ -1776,7 +1776,7 @@ fn the_hubs_a_server_starts_hold_its_generations_one_gate_whatever_project_they_
         repository(&tree),
         crate::testing::repository_at(&tree, "beside"),
     );
-    let requests = crate::gate::Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now));
+    let requests = crate::testing::open_gate();
     let shared = crate::front::Shared::new(1, 1, &root, None, requests);
     let other = shared.beside(&beside, "/beside");
     let runtime = tokio::runtime::Builder::new_multi_thread()

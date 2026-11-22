@@ -37,7 +37,7 @@ pub struct FileAuthority {
 impl Home {
     /// The recovery authority of the board in `database`, a plain name, of this home.
     pub fn recovery(&self, database: &str) -> FileAuthority {
-        assert!(crate::rpc::plain(database), "a database is a plain name");
+        assert!(crate::db::plain(database), "a database is a plain name");
         FileAuthority {
             path: self.dir.join(FOLDER).join(format!("{database}.json")),
         }

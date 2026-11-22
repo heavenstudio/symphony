@@ -283,10 +283,9 @@ pub(super) async fn serve(listener: TcpListener, app: Router, shared: Arc<Shared
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gate::Gate;
     use axum::http::StatusCode;
     use std::path::Path;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     /// Each test waits on its events; only a stall reaches this wall-clock backstop.
@@ -313,7 +312,7 @@ mod tests {
             address.port(),
             Path::new("/uninitialized-connection-fixture"),
             None,
-            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+            crate::testing::open_gate(),
         );
         (Connections::new(listener, shared.clone()), address, shared)
     }

@@ -3,7 +3,7 @@
 //!
 //! That is what serde's `flatten` reads, but `flatten` holds the record in serde's own buffer first,
 //! and under `serde_json`'s `arbitrary_precision` (as the board links it: the `tasks` binary, the
-//! server and every run of the board's tests, docs/CHECKS.md) a float reaches that buffer as a
+//! server and every run of the board's tests, docs/workflow/CHECKS.md) a float reaches that buffer as a
 //! one-entry map of its text, which an `f64` refuses: every float read from JSON text, `1.5`
 //! included, and one read from a parsed [`Value`] unless its text is the float's shortest form.
 //! [`Beside`] holds the record as a [`Value`] instead, which keeps a number as the build reads it and

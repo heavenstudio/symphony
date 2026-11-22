@@ -14,6 +14,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use symphony_board::lock::Recovered as _;
 
 /// How long a whois answer, yes or no, and a status answer's names are trusted.
 pub const TTL: Duration = Duration::from_secs(30);
@@ -162,7 +163,7 @@ impl Gate {
     fn own_name(&self, name: &str) -> bool {
         let now = (self.clock)();
         // The call is made under the lock, so requests that find it due wait for one call.
-        let mut names = self.names.lock().unwrap_or_else(|e| e.into_inner());
+        let mut names = self.names.lock().recover();
         if names.due(now) {
             let listed = (self.status)()
                 .map(|text| names_in(&text))
@@ -183,14 +184,14 @@ impl Gate {
             return false;
         }
         let now = (self.clock)();
-        if let Some(peer) = self.seen.lock().unwrap_or_else(|e| e.into_inner()).get(&ip)
+        if let Some(peer) = self.seen.lock().recover().get(&ip)
             && !peer.due(now)
         {
             return peer.answer() == Some(&true);
         }
         // The lookup is made outside the lock, so one slow peer does not hold up another.
         let answer = verdict((self.whois)(&ip.to_string()));
-        let mut seen = self.seen.lock().unwrap_or_else(|e| e.into_inner());
+        let mut seen = self.seen.lock().recover();
         let peer = seen.entry(ip).or_default();
         peer.record(now, answer);
         peer.answer() == Some(&true)

@@ -3,6 +3,7 @@
 // the read did not finish: the server could not be reached, or it answered with an error of its
 // own, which the block says with its status. The page's notices leave it out while it stands.
 
+import type { ReactNode } from "react";
 import { Button } from "./button";
 import { href } from "./project";
 
@@ -59,14 +60,17 @@ export interface TroubleProps {
   back?: [string, string];
   /** Reads again at once; a page that tries again on its own still offers it. */
   retry?: () => void;
+  /** What the page offers after its sentence, before the retry and the way back. */
+  children?: ReactNode;
 }
 
 /** What a page shows when its read did not bring what it names. */
-export function Trouble({ title, text, back, retry }: TroubleProps) {
+export function Trouble({ title, text, back, retry, children }: TroubleProps) {
   return (
     <section className="trouble card" role="status">
       <h1>{title}</h1>
       <p>{text}</p>
+      {children}
       <p className="trouble-actions">
         {retry && (
           <Button type="button" onClick={retry}>

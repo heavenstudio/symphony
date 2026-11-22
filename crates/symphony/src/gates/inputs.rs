@@ -28,11 +28,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use symphony_board::cli::machine_work::recorded::{self, Record};
+use symphony_board::lock::Recovered as _;
 use symphony_board::stamps::Catalogue;
 use symphony_board::stamps::posted::{self, Posted};
 use symphony_board::{Error, Message, Store, Task, TaskStamp};
-
-use super::lock;
 
 /// How many times each part a task's gates are read from was read anew ([`super::Kept::reads`]):
 /// a read that found nothing new adds to none.
@@ -118,7 +117,7 @@ impl Inputs {
     /// What was read anew so far.
     pub fn reads(&self) -> Reads {
         let (mut histories, mut records) = (0, 0);
-        for checkout in lock(&self.checkouts).values() {
+        for checkout in self.checkouts.lock().recover().values() {
             let read = checkout.runs.reads();
             histories += read.histories;
             records += read.records;
@@ -141,7 +140,7 @@ impl Inputs {
         let stamp = store.task_stamp(slug)?;
         let key = (root.to_path_buf(), slug.to_string());
         if stamp.is_some()
-            && let Some(kept) = lock(&self.tasks).get(&key)
+            && let Some(kept) = self.tasks.lock().recover().get(&key)
             && kept.stamp == stamp
         {
             return Ok(Arc::clone(kept));
@@ -158,7 +157,7 @@ impl Inputs {
             ours: OnceLock::new(),
         });
         if read.stamp.is_some() {
-            lock(&self.tasks).insert(key, Arc::clone(&read));
+            self.tasks.lock().recover().insert(key, Arc::clone(&read));
         }
         Ok(read)
     }
@@ -167,7 +166,7 @@ impl Inputs {
     /// again only once it is another (`recorded::Kept`); none outside a repository. Reads of one
     /// checkout's runs take turns, so two at once read each file once.
     pub fn runs(&self, root: &Path) -> Arc<Vec<Record>> {
-        let mut checkouts = lock(&self.checkouts);
+        let mut checkouts = self.checkouts.lock().recover();
         let checkout = checkouts
             .entry(root.to_path_buf())
             .or_insert_with(|| Checkout {
@@ -193,7 +192,7 @@ impl Inputs {
         };
         let [head] = super::commits(&main, ["HEAD"]);
         if let Some(head) = &head
-            && let Some((at, kept)) = lock(&self.catalogues).get(&main)
+            && let Some((at, kept)) = self.catalogues.lock().recover().get(&main)
             && at == head
         {
             return Ok(kept.clone());
@@ -201,7 +200,10 @@ impl Inputs {
         self.read_catalogues.fetch_add(1, Ordering::SeqCst);
         let read = Catalogue::of(&main)?;
         if let Some(head) = head {
-            lock(&self.catalogues).insert(main, (head, read.clone()));
+            self.catalogues
+                .lock()
+                .recover()
+                .insert(main, (head, read.clone()));
         }
         Ok(read)
     }
@@ -217,7 +219,7 @@ impl Inputs {
         (default, default_tip): (&str, Option<&str>),
     ) -> bool {
         let key = (root.to_path_buf(), slug.to_string());
-        if let Some(kept) = lock(&self.own).get(&key)
+        if let Some(kept) = self.own.lock().recover().get(&key)
             && kept.tip == tip
             && kept.default_tip.as_deref() == default_tip
         {
@@ -230,7 +232,7 @@ impl Inputs {
             default_tip: default_tip.map(str::to_string),
             holds,
         };
-        lock(&self.own).insert(key, kept);
+        self.own.lock().recover().insert(key, kept);
         holds
     }
 
@@ -239,7 +241,7 @@ impl Inputs {
     /// while both tips are the ones it was read at.
     pub fn posted(&self, root: &Path, slug: &str, tip: &str, default_tip: Option<&str>) -> Posted {
         let key = (root.to_path_buf(), slug.to_string());
-        if let Some(kept) = lock(&self.cards).get(&key)
+        if let Some(kept) = self.cards.lock().recover().get(&key)
             && kept.tip == tip
             && kept.default_tip.as_deref() == default_tip
         {
@@ -252,15 +254,21 @@ impl Inputs {
             default_tip: default_tip.map(str::to_string),
             posted: read.clone(),
         };
-        lock(&self.cards).insert(key, kept);
+        self.cards.lock().recover().insert(key, kept);
         read
     }
 
     /// Forget what is kept of every task `open` does not name, in every checkout.
     pub fn keep_open(&self, open: impl Fn(&str) -> bool) {
-        lock(&self.tasks).retain(|(_, slug), _| open(slug));
-        lock(&self.own).retain(|(_, slug), _| open(slug));
-        lock(&self.cards).retain(|(_, slug), _| open(slug));
+        self.tasks
+            .lock()
+            .recover()
+            .retain(|(_, slug), _| open(slug));
+        self.own.lock().recover().retain(|(_, slug), _| open(slug));
+        self.cards
+            .lock()
+            .recover()
+            .retain(|(_, slug), _| open(slug));
     }
 }
 

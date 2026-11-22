@@ -5,6 +5,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use symphony_board::lock::Recovered as _;
+
 use crate::children::command;
 
 /// Retry diagnostics shared by the lander and the app that keeps verified verdicts queued.
@@ -82,7 +84,7 @@ impl PrivateWorktree {
             home,
             retained: false,
         };
-        let _held = WORKTREES.lock().unwrap_or_else(|e| e.into_inner());
+        let _held = WORKTREES.lock().recover();
         let done = symphony_board::sys::output(
             crate::children::git()
                 .args(["worktree", "add", "--detach"])
@@ -139,7 +141,7 @@ impl Drop for PrivateWorktree {
         if self.retained {
             return;
         }
-        let _held = WORKTREES.lock().unwrap_or_else(|e| e.into_inner());
+        let _held = WORKTREES.lock().recover();
         let _ = symphony_board::sys::output(
             crate::children::git()
                 .args(["worktree", "remove", "--force"])

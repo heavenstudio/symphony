@@ -63,7 +63,7 @@ pub(super) fn conversation_pane<'p>(
     let wanted: Vec<&str> = [
         record.map(|r| {
             r.claude_session
-                .strip_prefix("codex:")
+                .strip_prefix(crate::launch::CODEX)
                 .unwrap_or(&r.claude_session)
         }),
         bound,
@@ -87,7 +87,11 @@ pub(super) fn owned_pane<'p>(
 ) -> Option<&'p Pane> {
     conversation_pane(panes, record, bound).or_else(|| {
         let expected = bound.is_some_and(|id| !id.is_empty())
-            || record.is_some_and(|r| !r.claude_session.trim_start_matches("codex:").is_empty());
+            || record.is_some_and(|r| {
+                !r.claude_session
+                    .trim_start_matches(crate::launch::CODEX)
+                    .is_empty()
+            });
         panes.iter().find(|p| {
             (!expected || p.session.is_none())
                 && (p.title.as_deref() == Some(handle) || p.name.as_deref() == Some(handle))

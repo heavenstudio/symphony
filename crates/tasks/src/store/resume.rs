@@ -16,7 +16,7 @@
 use super::postgres::resume as pg;
 use super::statement::both;
 use super::surreal::resume as sql;
-use super::{Error, Failure, Opens, Store, Which};
+use super::{Error, Failure, Opens, Store, Which, executors_or};
 use crate::slots::OPEN;
 use crate::waits_on::{Blocked, Thing};
 use serde::Deserialize;
@@ -127,9 +127,9 @@ impl Store {
             let Some(Over { watch, why }) = over(&task, &block)? else {
                 return Ok(None);
             };
-            let executing: Vec<String> =
-                view.holders("executor").map(|r| r.handle.clone()).collect();
-            let Some(back) = back_to(&block, !executing.is_empty()) else {
+            // The board resumes it, so no mover stands in for an executor.
+            let executing = executors_or(view.executors(), None);
+            let Some(back) = back_to(block.from.as_deref(), !executing.is_empty()) else {
                 return Ok(None);
             };
             let slots = if let Some(cap) = cap.filter(|_| OPEN.contains(&back)) {
@@ -164,7 +164,7 @@ impl Store {
                 "watch": watch, "slots": slots, "said": said,
             });
             let _: serde_json::Value =
-                self.transact_dispatch(both(sql::resume(), pg::resume()), vars, false)?;
+                self.transact_dispatch(both(sql::resume(), pg::resume()).posting(), vars, false)?;
             Ok(Some(back.to_string()))
         })
     }
@@ -178,11 +178,11 @@ struct Over {
     why: Option<String>,
 }
 
-/// The status a task blocked as `block` goes back to, `executing` whether an executor holds it:
+/// The status a task blocked from `from` goes back to, `executing` whether an executor holds it:
 /// the one its record names, but work in progress with no executor goes back to ready, and a block
 /// that recorded none to in progress with one and ready without; none for any other status.
-fn back_to(block: &Blocked, executing: bool) -> Option<&'static str> {
-    Some(match block.from.as_deref() {
+pub(super) fn back_to(from: Option<&str>, executing: bool) -> Option<&'static str> {
+    Some(match from {
         Some("concept") => "concept",
         Some("design") => "design",
         Some("ready") => "ready",
@@ -191,4 +191,27 @@ fn back_to(block: &Blocked, executing: bool) -> Option<&'static str> {
         Some("in_progress") | None => "ready",
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::back_to;
+
+    #[test]
+    fn a_resume_goes_back_to_the_status_recorded_and_work_in_progress_to_ready_with_no_executor() {
+        for from in ["concept", "design", "ready", "review"] {
+            for executing in [false, true] {
+                assert_eq!(back_to(Some(from), executing), Some(from));
+            }
+        }
+        for from in [Some("in_progress"), None] {
+            assert_eq!(back_to(from, true), Some("in_progress"), "{from:?}");
+            assert_eq!(back_to(from, false), Some("ready"), "{from:?}");
+        }
+        for from in ["backlog", "done", "cancelled", "blocked", "elsewhere"] {
+            for executing in [false, true] {
+                assert_eq!(back_to(Some(from), executing), None, "{from}");
+            }
+        }
+    }
 }

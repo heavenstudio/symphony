@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::health::{LIVE_SECONDS, STALE_SECONDS};
-use crate::store_fixture::{Backend, Fixture, Seed, task};
+use crate::store_fixture::{Backend, Fixture, Seed, pair, refused, task};
 use crate::workflow::activate::tests::{BACK, MAPPED, TWO, custom};
 use crate::workflow::tests::Scratch;
 use crate::workflow::{Committed, Custom, Host, follow};
@@ -11,20 +11,6 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Barrier};
 
 const BACKENDS: [Backend; 2] = [Backend::SurrealDb, Backend::PostgreSql];
-
-fn pair(phase: &str, state: &str) -> Pair {
-    Pair {
-        phase: phase.into(),
-        state: state.into(),
-    }
-}
-
-fn refused(result: Result<impl std::fmt::Debug, Error>) -> String {
-    match result {
-        Err(Error::Refused(why)) => why,
-        other => panic!("expected a refusal, got {other:?}"),
-    }
-}
 
 /// A board of one task in each open status, a blocked one that came from in_progress, and a done
 /// and a cancelled one the activation leaves to the board's writers.

@@ -1,4 +1,4 @@
-//! The machine's schema updates (docs/RELEASES.md, "An update"): one entry for each time a
+//! The machine's schema updates (docs/workflow/RELEASES.md, "An update"): one entry for each time a
 //! registered project's board reaches a schema that the machine's server must come to write, kept
 //! in the machine folder's `updates.json` ([`FILE`]). A release's refresh writes it
 //! (`crates/symphony-build/src/release/updates.rs`, under the release run's lock). The machine's
@@ -440,7 +440,7 @@ impl TaskBoard for CliBoard {
     fn status(&self, slug: &str) -> Result<Option<String>, String> {
         match self.call("get", &json!({"slug": slug})) {
             Ok(task) => Ok(task["status"].as_str().map(str::to_string)),
-            Err(refused) if refused.0.starts_with("no task ") => Ok(None),
+            Err(refused) if refused.0.starts_with(symphony_board::Error::NO_TASK) => Ok(None),
             Err(error) => Err(error.0),
         }
     }

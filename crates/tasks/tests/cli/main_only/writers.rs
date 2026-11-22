@@ -9,19 +9,11 @@
 use super::{Held, Live, before, refused, this};
 use crate::common::NOW;
 use serde_json::json;
-use std::time::{SystemTime, UNIX_EPOCH};
 use symphony_board::rpc::Client;
+use symphony_board::sweep::trigger::now;
 use symphony_board::{Opening, Program, Raw, Schema, Store, Writer};
 
 const HOUR: f64 = 3600.0;
-
-/// The machine's clock, as a line's `seen` reads it.
-fn now() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs_f64()
-}
 
 /// The project's own gate, which opens its board to write through the board's crate.
 fn gate() -> Program {

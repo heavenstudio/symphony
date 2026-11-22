@@ -8,11 +8,12 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 use symphony_api::{
-    ActivityItem, Board, Card, Counts, Pending, PendingItem, Progress, Queue, QueueItem,
+    ActivityItem, Board, Card, Counts, Pending, PendingItem, Picture, Progress, Queue, QueueItem,
 };
 
 use crate::plugins::Plugins;
-use crate::{Decision, Doc, Group, ReviewError, Who, board, branches, clock, tree, triage};
+use crate::project::Project;
+use crate::{Decision, Doc, Entry, Group, ReviewError, Who, board, branches, clock, tree, triage};
 
 /// The register's own card markers, which a card's title and summary leave out with a plugin's.
 const MARKERS: [&str; 5] = ["Replaces", "Depends", "After", "Blocks", "Gates"];
@@ -259,10 +260,13 @@ fn owner_said(card: &Decision) -> Option<f64> {
 /// one card made of its copies ([`branches::one_card`]) rather than as its file holds them.
 pub type Pages = BTreeMap<String, Vec<Decision>>;
 
+/// Branches' proposals, each by its page and slug.
+pub(crate) type Proposals<'a> = BTreeMap<(String, &'a str), &'a branches::BranchCard>;
+
 /// What [`merge_decisions`] made of the branch cards.
 pub(crate) struct Merged<'a> {
     /// Each branch's proposal the owner is to read, by its page and slug.
-    pub proposals: BTreeMap<(String, &'a str), &'a branches::BranchCard>,
+    pub proposals: Proposals<'a>,
     /// The one card each page shows in place of its file's copy.
     pub pages: Pages,
 }
@@ -360,31 +364,22 @@ pub(crate) fn merge_decisions<'a>(
     Merged { proposals, pages }
 }
 
-pub fn snapshot(
+/// The cards waiting on the owner, in triage's order: each as its page shows it, a branch's
+/// proposal titled and pictured from its worktree and named by its task.
+fn waiting_cards(
     root: &Path,
-    branch_cards: &[branches::BranchCard],
-    build: &str,
-) -> Result<Snapshot, ReviewError> {
-    // A checkout with no documents yet still has its board, branch cards and agents.
-    let mut docs = board::documents_shown(root)?;
-    let mut progress = progress(root);
-    // Distinct proposals remain separate decisions; only main's older copy is suppressed.
-    // Branch discovery already removes identical copies carried by stacked branches.
-    let plugins = Plugins::of(root);
-    let Merged { proposals, pages } = merge_decisions(&mut docs, branch_cards, &plugins);
-    // One read of the registers: a plugin's process is asked every card at once.
-    let plugins = plugins.reading(root, &docs);
-    let held = held(&docs, &pages);
-    let said = said(&docs, &pages);
+    project: &Project,
+    plugins: &Plugins,
+    docs: &[Doc],
+    proposals: &Proposals<'_>,
+) -> Vec<Card> {
     let task_names = if proposals.is_empty() {
         BTreeMap::new()
     } else {
         branches::task_names(root)
     };
-    let project = crate::project::Project::of(root);
-    let ranked = triage::queue(&plugins, &docs, usize::MAX, "");
-    let mut queue = Queue::default();
-    for item in &ranked {
+    let mut waiting = Vec::new();
+    for item in &triage::queue(plugins, docs, usize::MAX, "") {
         let branch = proposals
             .values()
             .copied()
@@ -396,7 +391,7 @@ pub fn snapshot(
         else {
             continue;
         };
-        let text = words(&plugins, card);
+        let text = words(plugins, card);
         let summary = if plugins.slot(card).is_some() {
             text.as_str()
         } else {
@@ -404,7 +399,7 @@ pub fn snapshot(
                 .unwrap_or("")
                 .trim()
         };
-        queue.waiting.push(Card {
+        waiting.push(Card {
             postponed: false,
             slug: card.slug.clone(),
             doc: item.doc.clone(),
@@ -412,27 +407,13 @@ pub fn snapshot(
                 || root.join(project.file(&item.doc)),
                 |b| b.tree.path.join(project.file(&b.doc)),
             )),
-            title: card_title(&plugins, card),
+            title: card_title(plugins, card),
             summary: cut(summary, 260),
             why: item
                 .reason
                 .replace("design · gates nothing known", "design call"),
             posted: card.posted_at(),
-            pictures: {
-                let mut found = match branch {
-                    Some(branch) => plugins.pictures(&branch.tree.path, &branch.doc, card),
-                    None => plugins.pictures(root, &item.doc, card),
-                };
-                if let Some(branch) = branch {
-                    for src in found.iter_mut().filter_map(|p| p.src.as_mut()) {
-                        *src = crate::docview::scoped(
-                            &crate::markup::target(src, &branch.doc),
-                            &branch.tree.id(),
-                        );
-                    }
-                }
-                found
-            },
+            pictures: pictures(root, plugins, branch, &item.doc, card),
             task: branch.map(|b| {
                 task_names
                     .get(&b.tree.branch)
@@ -441,21 +422,42 @@ pub fn snapshot(
             }),
         });
     }
-    let queue_order =
-        std::sync::Arc::new(crate::postpone::View::new(&plugins, &docs, &queue.waiting));
-    match queue_order.waiting(root, crate::postpone::OWNER, crate::postpone::now()) {
-        Ok(waiting) => queue.waiting = waiting,
-        Err(error) => {
-            eprintln!(
-                "· could not apply postponed queue order; using mixed order without preferences: {error}"
-            );
-            queue.waiting = crate::postpone::mixed(queue.waiting);
-        }
+    waiting
+}
+
+/// A waiting card's pictures. A branch's proposal's are read in its worktree, each source named
+/// from its page there and scoped to that tree.
+fn pictures(
+    root: &Path,
+    plugins: &Plugins,
+    branch: Option<&branches::BranchCard>,
+    doc: &str,
+    card: &Decision,
+) -> Vec<Picture> {
+    let Some(branch) = branch else {
+        return plugins.pictures(root, doc, card);
+    };
+    let mut found = plugins.pictures(&branch.tree.path, &branch.doc, card);
+    for src in found.iter_mut().filter_map(|p| p.src.as_mut()) {
+        *src = crate::docview::scoped(&crate::markup::target(src, &branch.doc), &branch.tree.id());
     }
-    let today = clock::now_stamp();
+    found
+}
+
+/// Fills `queue.agent` and `queue.spot_check` from every document's open callouts and cards, and
+/// returns the newest things agents said, with how many cards an agent answered the owner on
+/// `today` (a stamp, whose date counts).
+fn agent_queue(
+    root: &Path,
+    project: &Project,
+    plugins: &Plugins,
+    docs: &[Doc],
+    today: &str,
+    queue: &mut Queue,
+) -> (Vec<ActivityItem>, u32) {
     let mut answered = 0;
     let mut activity = Vec::new();
-    for doc in &docs {
+    for doc in docs {
         let open: Vec<_> = doc.comments.iter().filter(|c| c.open()).collect();
         // A callout is named by its own title, its document the context it is read in.
         let doc_title = if open.is_empty() {
@@ -481,7 +483,7 @@ pub fn snapshot(
                 href: format!("/{}#{}", doc.path, card.slug),
                 path: doc.path.clone(),
                 slug: card.slug.clone(),
-                title: card_title(&plugins, card),
+                title: card_title(plugins, card),
                 kind: card.state.as_str().to_string(),
                 text: plain(
                     &entries
@@ -491,69 +493,103 @@ pub fn snapshot(
                 branch: None,
                 ask: None,
             };
-            if card.group(&plugins) == Group::Auto {
+            if card.group(plugins) == Group::Auto {
                 queue.spot_check.push(item.clone());
             }
-            if card.open(&plugins) {
+            if card.open(plugins) {
                 queue.agent.push(item);
             }
-            let mut said = false;
-            let mut answered_today = false;
-            for (index, entry) in entries.iter().enumerate() {
-                if entry.who == Who::Owner {
-                    said = true;
-                } else if said
-                    && entry.verdict.is_none()
-                    && entry
-                        .ts
-                        .as_deref()
-                        .is_some_and(|ts| ts.get(..10) == today.get(..10))
-                {
-                    answered_today = true;
-                }
-                if entry.who != Who::Agent {
-                    continue;
-                }
-                // An agent's status line with nothing said (`agent · resolved`), or nothing but
-                // markup, closes the reply above it: it is no reply of its own.
-                let said = excerpt(&entry.text);
-                if said.is_empty() {
-                    continue;
-                }
-                let Some(ts) = &entry.ts else {
-                    continue;
-                };
-                activity.push(ActivityItem {
-                    id: format!("{}#{}#{index}", doc.path, card.slug),
-                    kind: if index == 0 { "new card" } else { "reply" }.into(),
-                    path: doc.path.clone(),
-                    slug: card.slug.clone(),
-                    ts: ts.clone(),
-                    text: said,
-                    href: format!("/{}#L{}", doc.path, card.line),
-                    answered: entries[index + 1..].iter().any(|e| e.who == Who::Owner),
-                });
-            }
+            let answered_today = card_activity(&doc.path, card, &entries, today, &mut activity);
             answered += u32::from(answered_today);
         }
     }
-    let order: Vec<String> = crate::project::Project::of(root)
+    activity.sort_by(|a, b| (&b.ts, &b.id).cmp(&(&a.ts, &a.id)));
+    activity.truncate(40);
+    (activity, answered)
+}
+
+/// Adds to `activity` each thing an agent said under `card`, whose lines are `entries`, and says
+/// whether an agent answered the owner on it on the day of `today`: a dated line that is not the
+/// owner's and gives no verdict, after one of the owner's.
+fn card_activity(
+    path: &str,
+    card: &Decision,
+    entries: &[Entry],
+    today: &str,
+    activity: &mut Vec<ActivityItem>,
+) -> bool {
+    let mut said = false;
+    let mut answered_today = false;
+    for (index, entry) in entries.iter().enumerate() {
+        if entry.who == Who::Owner {
+            said = true;
+        } else if said
+            && entry.verdict.is_none()
+            && entry
+                .ts
+                .as_deref()
+                .is_some_and(|ts| ts.get(..10) == today.get(..10))
+        {
+            answered_today = true;
+        }
+        if entry.who != Who::Agent {
+            continue;
+        }
+        // An agent's status line with nothing said (`agent · resolved`), or nothing but
+        // markup, closes the reply above it: it is no reply of its own.
+        let said = excerpt(&entry.text);
+        if said.is_empty() {
+            continue;
+        }
+        let Some(ts) = &entry.ts else {
+            continue;
+        };
+        activity.push(ActivityItem {
+            id: format!("{path}#{}#{index}", card.slug),
+            kind: if index == 0 { "new card" } else { "reply" }.into(),
+            path: path.to_string(),
+            slug: card.slug.clone(),
+            ts: ts.clone(),
+            text: said,
+            href: format!("/{path}#L{}", card.line),
+            answered: entries[index + 1..].iter().any(|e| e.who == Who::Owner),
+        });
+    }
+    answered_today
+}
+
+/// The pending navigation over the cards in `waiting`: main's in the order the entrypoints'
+/// indexes give their documents, then each branch's proposal, its page added to the documents.
+fn pending(
+    root: &Path,
+    project: &Project,
+    docs: &[Doc],
+    proposals: &Proposals<'_>,
+    waiting: &[Card],
+) -> Pending {
+    let order: Vec<String> = project
         .entrypoints
         .iter()
         .flat_map(|entry| tree::index_order(root, &entry.url))
         .collect();
+    pending_in(order, docs, proposals, waiting)
+}
+
+/// [`pending`] over the documents `order` names, in that order.
+fn pending_in(
+    order: Vec<String>,
+    docs: &[Doc],
+    proposals: &Proposals<'_>,
+    waiting: &[Card],
+) -> Pending {
+    let waits = |path: &str, slug: &str| waiting.iter().any(|c| c.doc == path && c.slug == slug);
     let mut pending = Pending {
         docs: order.clone(),
         items: Vec::new(),
     };
     for path in order {
         if let Some(doc) = docs.iter().find(|doc| doc.path == path) {
-            for card in doc.decisions.iter().filter(|card| {
-                queue
-                    .waiting
-                    .iter()
-                    .any(|c| c.doc == path && c.slug == card.slug)
-            }) {
+            for card in doc.decisions.iter().filter(|card| waits(&path, &card.slug)) {
                 pending.items.push(PendingItem {
                     path: path.clone(),
                     href: format!("/{path}#{}", card.slug),
@@ -563,12 +599,11 @@ pub fn snapshot(
             }
         }
     }
-    for branch in proposals.values().copied().filter(|b| {
-        queue
-            .waiting
-            .iter()
-            .any(|c| c.doc == b.path() && c.slug == b.card.slug)
-    }) {
+    for branch in proposals
+        .values()
+        .copied()
+        .filter(|b| waits(&b.path(), &b.card.slug))
+    {
         let path = branch.path();
         let href = format!("/{path}#{}", branch.card.slug);
         if !pending.docs.contains(&path) {
@@ -581,8 +616,44 @@ pub fn snapshot(
             branch: Some(branch.tree.branch.clone()),
         });
     }
-    activity.sort_by(|a, b| (&b.ts, &b.id).cmp(&(&a.ts, &a.id)));
-    activity.truncate(40);
+    pending
+}
+
+pub fn snapshot(
+    root: &Path,
+    branch_cards: &[branches::BranchCard],
+    build: &str,
+) -> Result<Snapshot, ReviewError> {
+    // A checkout with no documents yet still has its board, branch cards and agents.
+    let mut docs = board::documents_shown(root)?;
+    let mut progress = progress(root);
+    // Distinct proposals remain separate decisions; only main's older copy is suppressed.
+    // Branch discovery already removes identical copies carried by stacked branches.
+    let plugins = Plugins::of(root);
+    let Merged { proposals, pages } = merge_decisions(&mut docs, branch_cards, &plugins);
+    // One read of the registers: a plugin's process is asked every card at once.
+    let plugins = plugins.reading(root, &docs);
+    let held = held(&docs, &pages);
+    let said = said(&docs, &pages);
+    let project = Project::of(root);
+    let mut queue = Queue {
+        waiting: waiting_cards(root, &project, &plugins, &docs, &proposals),
+        ..Queue::default()
+    };
+    let queue_order =
+        std::sync::Arc::new(crate::postpone::View::new(&plugins, &docs, &queue.waiting));
+    match queue_order.waiting(root, crate::postpone::OWNER, crate::postpone::now()) {
+        Ok(waiting) => queue.waiting = waiting,
+        Err(error) => {
+            eprintln!(
+                "· could not apply postponed queue order; using mixed order without preferences: {error}"
+            );
+            queue.waiting = crate::postpone::mixed(queue.waiting);
+        }
+    }
+    let today = clock::now_stamp();
+    let (activity, answered) = agent_queue(root, &project, &plugins, &docs, &today, &mut queue);
+    let pending = pending(root, &project, &docs, &proposals, &queue.waiting);
     let counts = Counts {
         waiting: count(queue.waiting.len()),
         docs_waiting: count(
@@ -747,5 +818,134 @@ mod tests {
         );
         assert_eq!(shown[&key("@pic~x/docs/A.md", "lamp-b")], None);
         assert_eq!(shown.len(), 3);
+    }
+
+    /// What [`card_activity`] makes of the one card in `text` on the page `docs/A.md`.
+    fn activity_of(text: &str, today: &str) -> (Vec<ActivityItem>, bool) {
+        let card = &cards(text)[0];
+        let mut activity = Vec::new();
+        let answered = card_activity("docs/A.md", card, &card.entries(), today, &mut activity);
+        (activity, answered)
+    }
+
+    #[test]
+    fn a_cards_first_line_is_a_new_card_and_a_later_one_of_an_agents_a_reply() {
+        let (posted, answered) = activity_of(LAMP_B, "2026-10-06 12:00");
+        assert!(!answered, "nothing of the owner's to answer");
+        let line = cards(LAMP_B)[0].line;
+        assert_eq!(
+            posted,
+            [ActivityItem {
+                id: "docs/A.md#lamp-b#0".into(),
+                kind: "new card".into(),
+                path: "docs/A.md".into(),
+                slug: "lamp-b".into(),
+                ts: "2026-10-06 09:00".into(),
+                text: "Posted.".into(),
+                href: format!("/docs/A.md#L{line}"),
+                answered: false,
+            }]
+        );
+        let (replied, _) = activity_of(LAMP_A, "2026-10-06 12:00");
+        assert_eq!(replied.len(), 1, "the owner's lines are no activity");
+        assert_eq!(replied[0].id, "docs/A.md#lamp-a#2");
+        assert_eq!(replied[0].kind, "reply");
+        assert_eq!(replied[0].text, "Paler now.");
+    }
+
+    #[test]
+    fn an_agent_answers_the_owner_today_only_after_them_and_on_todays_date() {
+        assert!(activity_of(LAMP_A, "2026-10-06 23:59").1);
+        assert!(!activity_of(LAMP_A, "2026-10-07 00:00").1, "another day");
+        // The agent spoke first and the owner last: nothing answered, and the owner's line
+        // under the agent's marks it answered.
+        let owner_last = format!("{LAMP_B}  [2026-10-06 09:30] owner · note — smaller.\n");
+        let (activity, answered) = activity_of(&owner_last, "2026-10-06 12:00");
+        assert!(!answered);
+        assert!(activity[0].answered);
+    }
+
+    #[test]
+    fn an_agents_line_with_no_words_or_no_date_is_no_activity() {
+        let bare = "- [ ] **lamp-c** — Lamp C.\n  [2026-10-06 09:00] agent — `x`\n  \
+                    ↳ Undated.\n  [2026-10-06 09:10] agent — **  **\n";
+        let (activity, answered) = activity_of(bare, "2026-10-06 12:00");
+        assert!(!answered);
+        let ids: Vec<_> = activity.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!(ids, ["docs/A.md#lamp-c#0"]);
+        assert_eq!(
+            activity_of("- [ ] **lamp-d** — Lamp D.\n", "2026-10-06").0,
+            []
+        );
+    }
+
+    fn waiting(doc: &str, slug: &str) -> Card {
+        Card {
+            postponed: false,
+            slug: slug.into(),
+            doc: doc.into(),
+            doc_title: String::new(),
+            title: String::new(),
+            summary: String::new(),
+            why: String::new(),
+            posted: None,
+            pictures: Vec::new(),
+            task: None,
+        }
+    }
+
+    #[test]
+    fn pending_lists_mains_waiting_cards_by_document_then_each_waiting_proposal() {
+        let doc = |path: &str, text: &str| Doc {
+            path: path.into(),
+            comments: Vec::new(),
+            decisions: cards(text),
+        };
+        let docs = [
+            doc("docs/A.md", &format!("{LAMP_A}{LAMP_B}")),
+            doc("docs/B.md", LAMP_B),
+        ];
+        let proposal = |branch: &str, text: &str| branches::BranchCard {
+            tree: branches::Tree {
+                branch: branch.into(),
+                path: "/nowhere".into(),
+            },
+            doc: "docs/A.md".into(),
+            card: cards(text).remove(0),
+            on_main: false,
+        };
+        let (shown, quiet) = (proposal("pic/x", LAMP_A), proposal("pic/y", LAMP_B));
+        let proposals = Proposals::from([
+            ((shown.path(), "lamp-a"), &shown),
+            ((quiet.path(), "lamp-b"), &quiet),
+        ]);
+        let waits = [
+            waiting("docs/B.md", "lamp-b"),
+            waiting("docs/A.md", "lamp-b"),
+            waiting("@pic~x/docs/A.md", "lamp-a"),
+            waiting("docs/Gone.md", "lamp-z"),
+        ];
+        // B before A, as the index orders them; a document no index names is not listed.
+        let order = vec!["docs/B.md".to_string(), "docs/A.md".to_string()];
+        let pending = pending_in(order, &docs, &proposals, &waits);
+        assert_eq!(pending.docs, ["docs/B.md", "docs/A.md", "@pic~x/docs/A.md"]);
+        let item = |path: &str, slug: &str, branch: Option<&str>| PendingItem {
+            path: path.into(),
+            slug: slug.into(),
+            href: format!("/{path}#{slug}"),
+            branch: branch.map(Into::into),
+        };
+        assert_eq!(
+            pending.items,
+            [
+                item("docs/B.md", "lamp-b", None),
+                item("docs/A.md", "lamp-b", None),
+                item("@pic~x/docs/A.md", "lamp-a", Some("pic/x")),
+            ]
+        );
+        // Nothing waiting: the documents still order the navigation, with no item.
+        let empty = pending_in(vec!["docs/A.md".into()], &docs, &proposals, &[]);
+        assert_eq!(empty.docs, ["docs/A.md"]);
+        assert_eq!(empty.items, []);
     }
 }

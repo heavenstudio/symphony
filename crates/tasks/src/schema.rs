@@ -80,7 +80,7 @@
 //! schemaless and with no event, as no reader caches them.
 //!
 //! `workflow:[KIND, …]` is a custom delivery workflow's record, from schema 24 (`store/workflow.rs`,
-//! docs/WORKFLOW.md): the active generation (`['active']`), an immutable definition by its digest,
+//! docs/workflow/WORKFLOW.md): the active generation (`['active']`), an immutable definition by its digest,
 //! an activation by its generation, a task's transition by its slug and workflow revision, a
 //! receipt by its principal and key, and an external intent; and, from schema 26, for its guards
 //! (`workflow/guard.rs`), the state the board accepted from each approval authority
@@ -94,11 +94,15 @@
 //! (`workflow_history`). No event reads a record's deletion: the whole-board copy replaces the
 //! table. A board with no custom workflow holds no such record and meets neither.
 //!
+//! `setting:⟨key⟩` is a stored preference, from the first additive step on schema 28
+//! ([`ADDED`], `crate::settings`): the setting's key, the value it holds, its revision and every
+//! change of it. Schemaless and with no event: its readers read it at each read of the settings.
+//!
 //! `writer:[host, path]` is a program that opens the board to write, the schema it was built at and
 //! when it was last seen (`store/writers.rs`), from schema 18: schemaless and with no event, as
 //! builds of other schemas write it and a line written moves no marker.
 //!
-//! The board is a contract between the builds that read and write it (docs/TASKS.md, where it
+//! The board is a contract between the builds that read and write it (docs/workflow/TASKS.md, where it
 //! lives). Its version, [`VERSION`], is raised by a breaking step alone; an additive step ([`ADDED`])
 //! leaves it as it is, so every build of one contract reads and writes every board of it, whatever
 //! additive steps either has. What an additive step may be is held by the store's catalogue test
@@ -159,14 +163,23 @@ pub struct Addition {
     /// The tables its step defines: a write naming one is refused on a board without the step.
     pub tables: &'static [&'static str],
     /// Why it is additive: what it adds, and how a build without it reads and writes around it,
-    /// what no catalogue shows (docs/CHECKS.md, a schema step).
+    /// what no catalogue shows (docs/workflow/CHECKS.md, a schema step).
     pub why: &'static str,
 }
 
 /// This build's additive steps on [`VERSION`], in order: a breaking step empties it, its
 /// definitions going into [`DEFINE`] and the PostgreSQL tables, as what they added is then the
 /// contract's.
-pub const ADDED: &[Addition] = &[];
+pub const ADDED: &[Addition] = &[Addition {
+    surreal: "DEFINE TABLE IF NOT EXISTS setting SCHEMALESS;",
+    postgres: "CREATE TABLE IF NOT EXISTS setting (id jsonb PRIMARY KEY, \
+               doc jsonb NOT NULL CHECK (jsonb_typeof(doc) = 'object'));",
+    tables: &["setting"],
+    why: "the table setting, the board's store of preferences (crate::settings): a build without \
+          it never reads or writes the table and reads every setting from the files alone, so a \
+          stored value holds only for builds that have the step, and no rule on a table there \
+          before reads it",
+}];
 
 /// How many additive steps this build has on its contract: [`ADDED`]'s length.
 pub const ADDITIONS: i64 = {
@@ -202,7 +215,7 @@ pub const OPEN: [&str; 11] = [
 /// store's catalogue test holds a listed version to that on the database (`tests/store/catalogue.rs`,
 /// over the committed definitions of each version); what it cannot see, a rule held in code that
 /// the older Symphony's writes would skip, is its reviewer's to read against the line
-/// ([CHECKS](../../../docs/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). The schema
+/// ([CHECKS](../../../docs/workflow/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). The schema
 /// that brought this list and the record it writes ([`WRITABLE_FROM_SINCE`]) changed `meta` and is
 /// not listed.
 pub const COMPATIBLE: &[(i64, &str)] = &[];
@@ -602,6 +615,8 @@ const MUTATING: [&str; 10] = [
 
 /// Whether `sql` can change the database: it names one of the statements that do, as a whole word in
 /// any case. The board's statements are this crate's own text, every value a variable beside it.
+/// The PostgreSQL clients count a request by it; the store says what its statements do, and a
+/// debug build holds what it says to this (the store's `Statement::disagreement`).
 pub(crate) fn mutates(sql: &str) -> bool {
     sql.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .any(|word| {

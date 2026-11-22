@@ -1,4 +1,4 @@
-//! The orchestrator role the board gives, so every open task has an orchestrator (docs/TASKS.md,
+//! The orchestrator role the board gives, so every open task has an orchestrator (docs/workflow/TASKS.md,
 //! "Every open task has an orchestrator"): to a task filed with none ([`Store::give_filed`]), to
 //! the work a leave would leave with none (`Store::leave`), to a task moved out from under its
 //! orchestrator's task, to that one ([`Store::kept_at_move`]), or reopened with none
@@ -249,7 +249,7 @@ impl Store {
         }
         let session = by.filter(|by| *by != OWNER);
         let acts = session.is_some();
-        let body = both(sql::give_pass(acts), pg::give_pass(acts));
+        let body = both(sql::give_pass(acts), pg::give_pass(acts)).posting();
         let now = (self.clock)();
         let sender = by.unwrap_or(BOARD);
         let vars = match session {

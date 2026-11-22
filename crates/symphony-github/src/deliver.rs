@@ -1,5 +1,5 @@
 //! `symphony-github deliver VERB --request FILE`: what answers a land delivered by a pull request
-//! (`[land] delivery = ["symphony-github", "deliver"]`, docs/TASKS.md), one JSON object read and
+//! (`[land] delivery = ["symphony-github", "deliver"]`, docs/workflow/TASKS.md), one JSON object read and
 //! one printed. It serves only `enabled` settings whose `pull_requests` is `publish`, and decides
 //! nothing: what a task needs and whether it stands is the evidence the land hands it, which it
 //! writes down as checks and never reads the board for.
@@ -57,8 +57,8 @@ use crate::github::clean_title;
 use crate::mint;
 use crate::preflight::{self, Operation, Wanted};
 use crate::reconcile::{Context, Outcome};
-use crate::state::{Binding, Entry, Event, Pull, State, Store};
-use crate::transport::{Failure, Request, Transport};
+use crate::state::{Binding, Entry, Event, Locked, Pull, State, Store};
+use crate::transport::{Failure, Request, Transport, rate_limited};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::io::Write;
@@ -227,10 +227,7 @@ pub(crate) struct Lost(pub(crate) String);
 
 impl Host<'_> {
     pub(crate) fn path(&self, rest: &str) -> String {
-        format!(
-            "/repos/{}/{}{rest}",
-            self.repository.owner, self.repository.name
-        )
+        crate::github::path(&self.repository, rest)
     }
 
     pub(crate) fn send(
@@ -251,8 +248,7 @@ impl Host<'_> {
             Err(Failure::Unknown(why)) if write => return Ok(Err(Lost(why))),
             Err(Failure::NotSent(why) | Failure::Unknown(why)) => return Err(unavailable(why)),
         };
-        let limited = response.status == 429
-            || (response.status == 403 && response.headers.contains_key("retry-after"));
+        let limited = rate_limited(&response).is_some();
         match response.status {
             _ if limited => Err(unavailable("GitHub's rate limit: nothing more is sent now")),
             401 => Err(unavailable("GitHub refused the credential (401)")),
@@ -311,6 +307,19 @@ struct Assessed {
     tip: Option<String>,
     #[serde(default)]
     import: Option<String>,
+}
+
+/// The method a merge of `request`'s `head` is asked by, which the request names itself: a task's
+/// squashed, an import's (`imported`) by a merge commit. A head that is no whole commit, or
+/// another method, is refused.
+fn merge_method(request: &Value, head: &str, imported: bool) -> Result<&'static str, Stopped> {
+    let method = if imported { "merge" } else { "squash" };
+    if !commit(head) || request["method"] != json!(method) {
+        return Err(refused(
+            "a merge is of one whole commit: a task's squashed, an import's by a merge commit",
+        ));
+    }
+    Ok(method)
 }
 
 /// What a request says it delivers: an import of `commit` from the repository at `url`, or none.
@@ -1086,19 +1095,37 @@ impl Run<'_> {
         }
     }
 
+    /// What a merge and an arming both read again before GitHub is asked to merge the pull
+    /// request `pull` of `request`, as GitHub shows it `now`: the base branch it names, still
+    /// protected for this delivery; an import's upstream, still the one pinned; and a draft marked
+    /// ready, the one write here.
+    fn mergeable_at(
+        &self,
+        host: &Host<'_>,
+        request: &Value,
+        pull: &Pull,
+        now: &Value,
+    ) -> Result<(), Stopped> {
+        let slug = text(request, "slug");
+        let id = request["repository"].as_i64().unwrap_or_default();
+        let base = now["base"]["ref"].as_str().unwrap_or_default().to_string();
+        if !plain(&base, "-._/") {
+            return Err(refused("the pull request names no base branch"));
+        }
+        self.protected(host, id, &base, &slug)?;
+        if import(request).is_some() {
+            self.upstream(host, request, id)?;
+        }
+        if now["draft"] == json!(true) {
+            self.ready(host, &slug, pull, now)?;
+        }
+        Ok(())
+    }
+
     fn merge(&mut self, request: &Value) -> Result<Value, Stopped> {
         let (slug, head) = (text(request, "slug"), text(request, "head"));
         let imported = import(request);
-        let method = if imported.is_some() {
-            "merge"
-        } else {
-            "squash"
-        };
-        if !commit(&head) || request["method"] != json!(method) {
-            return Err(refused(
-                "a merge is of one whole commit: a task's squashed, an import's by a merge commit",
-            ));
-        }
+        let method = merge_method(request, &head, imported.is_some())?;
         let transport = self.connect()?;
         let host = Host {
             transport: transport.as_ref(),
@@ -1127,18 +1154,7 @@ impl Run<'_> {
         }
         // Read again here: the policy that stood when the head was published may be gone, and
         // from this step on the pull request is ready and its merge asked for.
-        let id = request["repository"].as_i64().unwrap_or_default();
-        let base = now["base"]["ref"].as_str().unwrap_or_default().to_string();
-        if !plain(&base, "-._/") {
-            return Err(refused("the pull request names no base branch"));
-        }
-        self.protected(&host, id, &base, &slug)?;
-        if imported.is_some() {
-            self.upstream(&host, request, id)?;
-        }
-        if now["draft"] == json!(true) {
-            self.ready(&host, &slug, &pull, &now)?;
-        }
+        self.mergeable_at(&host, request, &pull, &now)?;
         let (title, message) = self.commit_text(&slug, &head, &pull, imported.as_ref());
         let sent = json!({
             "sha": head, "merge_method": method, "commit_title": title, "commit_message": message,
@@ -1302,16 +1318,7 @@ impl Run<'_> {
     fn arm(&mut self, request: &Value) -> Result<Value, Stopped> {
         let (slug, head) = (text(request, "slug"), text(request, "head"));
         let imported = import(request);
-        let method = if imported.is_some() {
-            "merge"
-        } else {
-            "squash"
-        };
-        if !commit(&head) || request["method"] != json!(method) {
-            return Err(refused(
-                "a merge is of one whole commit: a task's squashed, an import's by a merge commit",
-            ));
-        }
+        let method = merge_method(request, &head, imported.is_some())?;
         let transport = self.connect()?;
         let host = Host {
             transport: transport.as_ref(),
@@ -1336,18 +1343,7 @@ impl Run<'_> {
             ));
         }
         // Read as a merge reads it: from here GitHub merges by itself once the checks pass.
-        let id = request["repository"].as_i64().unwrap_or_default();
-        let base = now["base"]["ref"].as_str().unwrap_or_default().to_string();
-        if !plain(&base, "-._/") {
-            return Err(refused("the pull request names no base branch"));
-        }
-        self.protected(&host, id, &base, &slug)?;
-        if imported.is_some() {
-            self.upstream(&host, request, id)?;
-        }
-        if now["draft"] == json!(true) {
-            self.ready(&host, &slug, &pull, &now)?;
-        }
+        self.mergeable_at(&host, request, &pull, &now)?;
         let armed = json!({"state": "armed", "pull": pull.number, "head": head});
         let (title, message) = self.commit_text(&slug, &head, &pull, imported.as_ref());
         let on = &now["auto_merge"];
@@ -1567,40 +1563,72 @@ fn text(request: &Value, field: &str) -> String {
     request[field].as_str().unwrap_or_default().to_string()
 }
 
+/// The setting a delivery is turned on by, as the settings file writes it.
+pub(crate) const PUBLISHES: &str = "pull_requests = \"publish\"";
+
+/// Whether `config` has that setting.
+pub(crate) fn publishes(config: &Config) -> bool {
+    config.pull_requests == PullRequests::Publish
+}
+
+/// What a command of this program serves by: the committed settings, their revision and the
+/// repository they name.
+pub(crate) struct Serving {
+    pub(crate) config: Config,
+    pub(crate) revision: String,
+    pub(crate) repository: Repository,
+}
+
+/// The committed settings a command serves by: read, enabled, naming a repository, and with the
+/// command's own setting, which `on` reads and `setting` writes as the file does. Else why the
+/// command is turned off, the line each command says.
+pub(crate) fn served(
+    ctx: &Context<'_>,
+    setting: &str,
+    on: impl FnOnce(&Config) -> bool,
+) -> Result<Serving, String> {
+    let loaded = (ctx.source.load())
+        .map_err(|why| format!("turned off: its settings do not read: {why}"))?;
+    let config = loaded.config;
+    let serves = config.enabled && on(&config);
+    let Some(repository) = config.repository.clone().filter(|_| serves) else {
+        return Err(format!(
+            "turned off: the committed settings do not say enabled = true and {setting}"
+        ));
+    };
+    Ok(Serving {
+        config,
+        revision: loaded.revision,
+        repository,
+    })
+}
+
+/// The state kept here for a command that writes it: its store, made if it is not there, the
+/// lock held while the command runs, and the state as it reads, new where none was kept. Else why
+/// it is unavailable.
+pub(crate) fn kept(ctx: &Context<'_>) -> Result<(Store, Locked, State), String> {
+    let folder = (ctx.board.state_folder()).map_err(|error| error.said().to_string())?;
+    let store = Store::open(&folder)?;
+    let lock = store.lock()?;
+    let state = store.state()?.unwrap_or_default();
+    Ok((store, lock, state))
+}
+
 /// The answer to `verb` of `request`.
 fn answer(ctx: &Context<'_>, remote: &dyn Remote, verb: &str, request: &Value) -> Value {
-    let loaded = match ctx.source.load() {
-        Ok(loaded) => loaded,
-        Err(why) => return refused(format!("turned off: its settings do not read: {why}")),
+    let serving = match served(ctx, PUBLISHES, publishes) {
+        Ok(serving) => serving,
+        Err(why) => return refused(why),
     };
-    let config = loaded.config;
-    let serves = config.enabled && config.pull_requests == PullRequests::Publish;
-    let Some(repository) = config.repository.clone().filter(|_| serves) else {
-        return refused(
-            "turned off: the committed settings do not say enabled = true and pull_requests = \
-             \"publish\"",
-        );
-    };
-    let opened = (ctx.board.state_folder())
-        .map_err(|error| error.said().to_string())
-        .and_then(|folder| Store::open(&folder));
-    let store = match opened {
-        Ok(store) => store,
-        Err(why) => return unavailable(why),
-    };
-    let _lock = match store.lock() {
-        Ok(lock) => lock,
-        Err(why) => return unavailable(why),
-    };
-    let state = match store.state() {
-        Ok(state) => state.unwrap_or_default(),
+    let (store, _lock, state) = match kept(ctx) {
+        Ok(kept) => kept,
         Err(why) => return unavailable(why),
     };
     let mut run = Run {
         ctx,
-        config,
-        revision: loaded.revision,
-        repository,
+        config: serving.config,
+        revision: serving.revision,
+        repository: serving.repository,
         store,
         state,
         by: clean_title(&text(request, "by")),
@@ -1652,21 +1680,14 @@ pub fn preflight(ctx: &Context<'_>, base: &str, out: &mut dyn Write) -> Outcome 
         let _ = writeln!(out, "{}", text(answer, "why"));
         Ok(1)
     };
-    let config = match ctx.source.load() {
-        Ok(loaded) => loaded.config,
+    let Serving {
+        config, repository, ..
+    } = match served(ctx, PUBLISHES, publishes) {
+        Ok(serving) => serving,
         Err(why) => {
-            let _ = writeln!(out, "turned off: its settings do not read: {why}");
+            let _ = writeln!(out, "{why}");
             return Ok(1);
         }
-    };
-    let serves = config.enabled && config.pull_requests == PullRequests::Publish;
-    let Some(repository) = config.repository.clone().filter(|_| serves) else {
-        let _ = writeln!(
-            out,
-            "turned off: the committed settings do not say enabled = true and pull_requests = \
-             \"publish\""
-        );
-        return Ok(1);
     };
     if !plain(base, "-._/") {
         return Err(format!("no branch is named {base:?}"));

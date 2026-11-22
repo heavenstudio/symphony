@@ -12,7 +12,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { anchor, scrollAnchor } from "./route";
+import { anchor, anchorIds, scrollAnchor } from "./route";
 import { load, save } from "./storage";
 // biome-ignore lint/style/noRestrictedImports: no-timed-waits baseline: rememberDrawn measures what it keeps every 100 ms, where a ResizeObserver of each part is the event
 import { deadline, sleep } from "./timing";
@@ -98,10 +98,9 @@ export function NearViewport({
   eager = false,
   lands = true,
 }: NearViewportProps) {
-  const [addressed] = useState(() => {
-    const target = anchor();
-    return lands && target !== "" && (anchors.includes(target) || target === id);
-  });
+  const [addressed] = useState(
+    () => lands && anchorIds(anchor()).some((name) => anchors.includes(name) || name === id),
+  );
   const atOnce = useContext(AtOnce);
   const [latched, setShown] = useState(addressed || atOnce);
   // An eager part draws its content in the very draw that made it eager, and stays drawn after.

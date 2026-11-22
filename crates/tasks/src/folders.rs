@@ -1,7 +1,7 @@
 //! The folders this build keeps a repository's state in, in its git common dir, each named here
-//! once and every one in the one folder of Symphony's there, `symphony/` (DECISIONS:
-//! symphony-own-names). The scripts that cannot read this file (`tools/surreal.sh`,
-//! `tools/rs-bin.sh`) spell theirs alike.
+//! once and every one in the one folder of Symphony's there, `symphony/`
+//! (docs/engineering/analysis/own-names.md#symphony-own-names). The scripts that cannot read this file
+//! (`tools/surreal.sh`, `tools/rs-bin.sh`) spell theirs alike.
 
 use std::path::{Path, PathBuf};
 

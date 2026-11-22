@@ -1,4 +1,4 @@
-//! The owner's asks ([`symphony_board::Ask`], docs/analysis/owner-asks.md) closed as the Symphony
+//! The owner's asks ([`symphony_board::Ask`], docs/product/analysis/owner-asks.md) closed as the Symphony
 //! reads their answers. An ask on a card closes when the scan that sorts the cards holds the card,
 //! on the page the owner saw it on or main's, no longer waiting on an agent; one on a comment when
 //! the comment is resolved, in its document or in the review ledger it was archived to; a chat when
@@ -35,7 +35,7 @@ pub const RESCAN_SECONDS: f64 = 60.0;
 
 /// Whether `symphony verdict-asks` ([`crate::verdicts::turn`]) also opens an ask for each
 /// comment already open in main's documents ([`open_comments`]), aged from when its line was
-/// written; otherwise only comments saved from then on are asks. The design's second open question (docs/analysis/owner-asks.md,
+/// written; otherwise only comments saved from then on are asks. The design's second open question (docs/product/analysis/owner-asks.md,
 /// Open questions), not decided: built off until the owner says.
 pub const COMMENTS_OPEN_BEFORE: bool = false;
 

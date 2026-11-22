@@ -4,12 +4,12 @@
 //! a read costs: one with nothing new asks the board once and reads nothing again.
 
 use super::Hub;
-use super::read_paths_tests::{observe, requests, served, store_on};
+use super::read_paths_tests::{observe, requests, served};
 use crate::shelf;
 use crate::testing::{
     Tree,
     board::{Fixture, NOW, Seed},
-    git, repository,
+    git, repository, store_on,
 };
 use axum::http::StatusCode;
 use serde_json::{Value, json};

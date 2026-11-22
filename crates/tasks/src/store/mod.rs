@@ -7,11 +7,12 @@
 //! could make a session healthier moves its `last_seen`). A write that meets another's (SurrealDB's
 //! optimistic conflict) or finds itself stale reads and decides again.
 
+use crate::db::DbError;
 use crate::health::{self, EXECUTING, Health};
 use crate::maps::Collect as _;
 pub(crate) use crate::quote::repr;
 use crate::rows::{LinkRow, MessageRow, RoleRow, SessionRow, TaskRow};
-use crate::rpc::{Client, DbError};
+use crate::rpc::Client;
 use crate::schema;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -60,6 +61,7 @@ mod spending;
 mod stage_lines;
 mod stamp;
 mod statement;
+pub(crate) mod stored_settings;
 mod surreal;
 mod thread_window;
 mod transaction;
@@ -73,7 +75,7 @@ mod writers;
 use beside::Beside;
 use postgres::{self as pg, Pg};
 use statement::{Statement, both};
-use surreal::reading::{native_bounds, reading};
+use surreal::reading::reading;
 use surreal::session_read;
 
 pub(crate) use crate::stages::BLOCK_LINE;
@@ -87,7 +89,7 @@ pub use launches::NewLaunch;
 pub use messages::reviewer_verdict;
 pub use opening::{Opening, Standing};
 pub use raw::{Raw, Rows as RawRows};
-use reading::native_health;
+use reading::{native_bounds, native_health};
 pub use report_lines::{ReportPlace, ReportRead, ReportTask};
 pub use search::{SearchHit, SearchSource};
 pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
@@ -129,7 +131,7 @@ const REFUSED: &str = "refused: ";
 pub enum Error {
     /// The request was refused and nothing was written, in its words.
     Refused(String),
-    /// SurrealDB could not be reached or did not take the statements.
+    /// The board's database could not be reached or did not take the statements.
     Db(String),
 }
 
@@ -137,7 +139,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Refused(message) => f.write_str(message),
-            Error::Db(message) => write!(f, "SurrealDB: {message}"),
+            Error::Db(message) => write!(f, "the board's database: {message}"),
         }
     }
 }
@@ -378,7 +380,7 @@ impl Store {
     pub(crate) fn task_slugs(&self, status: Option<&str>) -> Result<Vec<String>, Error> {
         let by_status = status.is_some();
         let read = || both(surreal::task_slugs(by_status), pg::task_slugs(by_status));
-        self.retrying(|| self.transact(read(), json!({"status":status})))
+        self.retrying(|| self.read_together(read(), json!({"status":status})))
     }
 
     pub(crate) fn tasks_by_slug(&self, slugs: &[String]) -> Result<Vec<Task>, Error> {
@@ -396,7 +398,7 @@ impl Store {
 
     pub fn session(&self, handle: &str) -> Result<Session, Error> {
         let found: Found = self.retrying(|| {
-            self.transact(
+            self.read_together(
                 both(session_read(), Pg::read(pg::sessions::session_read())),
                 json!({"handle": handle, "executing": EXECUTING}),
             )
@@ -424,7 +426,7 @@ impl Store {
     pub fn claimable(&self, handle: &str) -> Result<Vec<String>, Error> {
         let read = || both(surreal::claimable(), pg::claimable());
         let mut slugs: Vec<String> = self.retrying(|| {
-            self.transact(read(), json!({"handle": handle, "executing": EXECUTING}))
+            self.read_together(read(), json!({"handle": handle, "executing": EXECUTING}))
         })?;
         slugs.sort_unstable();
         slugs.dedup();
@@ -438,13 +440,13 @@ impl Store {
             messages: Vec<MessageRow>,
         }
         let thread: Thread = self.retrying(|| {
-            self.transact(
+            self.read_together(
                 both(surreal::THREAD, pg::messages::thread()),
                 json!({"slug": slug}),
             )
         })?;
         if !thread.known {
-            return Err(refused(format!("no task {}", repr(slug))));
+            return Err(work::no_task(slug));
         }
         Ok(thread.messages.into_iter().map(message).collect())
     }
@@ -458,9 +460,10 @@ impl Store {
             threads: Vec<Vec<MessageRow>>,
         }
         let read = || both(surreal::THREADS, pg::messages::threads());
-        let read: Threads = self.retrying(|| self.transact(read(), json!({"slugs": slugs})))?;
+        let read: Threads =
+            self.retrying(|| self.read_together(read(), json!({"slugs": slugs})))?;
         if let Some(slug) = read.unknown.first() {
-            return Err(refused(format!("no task {}", repr(slug))));
+            return Err(work::no_task(slug));
         }
         Ok(slugs
             .iter()
@@ -775,36 +778,8 @@ impl Store {
                 None
             };
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
-            let (reason, needs, gates, unlanded, blocked, moved, holds) = (
-                change.reason.is_some(),
-                change.needs.is_some(),
-                change.gates.is_some(),
-                change.unlanded.is_some(),
-                change.blocked.is_some(),
-                (change.status.as_deref()).map(|status| status == "cancelled"),
-                !ruled.slots.is_empty(),
-            );
-            let placed = placing.is_some();
-            let body = both(
-                surreal::rule(
-                    reason,
-                    (needs, gates),
-                    unlanded,
-                    blocked,
-                    moved,
-                    holds,
-                    placed,
-                ),
-                pg::rule(
-                    reason,
-                    (needs, gates),
-                    unlanded,
-                    blocked,
-                    moved,
-                    holds,
-                    placed,
-                ),
-            );
+            let parts = change.parts(&ruled.slots, placing.as_ref());
+            let body = both(surreal::rule(parts), pg::rule(parts)).posting();
             let mut vars = change.vars(slug, actor, version, view.now);
             vars["slots"] = Value::Array(ruled.slots);
             if let Some(placing) = placing {
@@ -865,7 +840,7 @@ impl Store {
     #[track_caller]
     fn view(&self, which: &Which) -> Result<View, Failure> {
         let (read, vars) = read_of(which, Sessions::Whole);
-        let snap: Snapshot = self.transact(read, vars)?;
+        let snap: Snapshot = self.read_together(read, vars)?;
         Ok(View::new(self, snap))
     }
 
@@ -874,7 +849,7 @@ impl Store {
     #[track_caller]
     fn shown(&self, which: &Which) -> Result<View, Failure> {
         let (read, vars) = read_of(which, Sessions::Shown);
-        let snap: Snapshot = self.transact(read, vars)?;
+        let snap: Snapshot = self.read_together(read, vars)?;
         Ok(View::new(self, snap))
     }
 
@@ -899,7 +874,7 @@ impl Store {
         deliver: bool,
     ) -> Result<Task, Failure> {
         let which = Which::Slug(slug);
-        let (read, more) = reading(&which, Sessions::Shown);
+        let (read, more) = (reading(&which, Sessions::Shown), reading::vars(&which));
         if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
             vars.extend(more);
         }
@@ -911,8 +886,10 @@ impl Store {
             _ => None,
         };
         let written = Statement {
-            surreal: surreal::written(&body.surreal, &read).into(),
+            surreal: (body.surreal.as_deref()).map(|body| surreal::written(body, &read).into()),
             postgres,
+            posts: body.posts,
+            names: body.names,
         };
         // Include recipient presence in the write's existing result instead of a separate read.
         let snap: Snapshot = self.transact_dispatch(written, vars, false)?;
@@ -1180,9 +1157,7 @@ impl View {
 
     fn task(&self, slug: &str) -> Result<&TaskRow, Error> {
         let found = self.snap.tasks.iter().find(|t| t.row.slug == slug);
-        found
-            .map(|t| &t.row)
-            .ok_or_else(|| refused(format!("no task {}", repr(slug))))
+        found.map(|t| &t.row).ok_or_else(|| work::no_task(slug))
     }
 
     /// The one task read's holders of `role`.
@@ -1194,14 +1169,23 @@ impl View {
         self.holders(role).any(|r| r.handle == handle)
     }
 
+    /// The handles of the task's executors, as read.
+    fn executors(&self) -> impl Iterator<Item = String> + '_ {
+        self.holders("executor").map(|r| r.handle.clone())
+    }
+
     /// The reservations that still count; those past their time or held by a session gone are dropped
     /// in `change`.
     fn lapse_reservations(&self, change: &mut Change) -> Vec<&RoleRow> {
         let mut kept = Vec::new();
         for held in self.holders("reserved") {
-            let lapsed = held.expires.is_some_and(|expires| expires < self.now);
-            if lapsed || matches!(self.health(&held.handle), Health::Lost | Health::Left) {
-                if !lapsed {
+            let health = self
+                .sessions
+                .get(held.handle.as_str())
+                .map(|&(_, health)| health);
+            let (drop, fence) = lapsed(held.expires, health, self.now);
+            if drop {
+                if fence {
                     change.saw(self, &held.handle);
                 }
                 change.drop(&held.handle, "reserved");
@@ -1252,10 +1236,7 @@ impl View {
                     .get(row.slug.as_str())
                     .into_iter()
                     .flatten()
-                    .filter(|r| {
-                        !(r.role == "reserved"
-                            && r.expires.is_some_and(|expires| expires < self.now))
-                    })
+                    .filter(|r| !(r.role == "reserved" && expired(r.expires, self.now)))
                     .map(|r| Role {
                         handle: r.handle.clone(),
                         role: r.role.clone(),
@@ -1306,12 +1287,50 @@ struct Change {
     unlanded: Option<Value>,
 }
 
+/// What a rule's write adds to the write every rule makes ([`surreal::rule`], [`pg::rule`]),
+/// each part by its name ([`Change::parts`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct RuleParts {
+    /// The task, reopened under a custom workflow, placed first (`workflow::REOPEN_PLACED`).
+    placed: bool,
+    /// The move's reason posted after its line.
+    reason: bool,
+    /// What the block it makes waits on written.
+    blocked: bool,
+    /// The task's needs written.
+    needs: bool,
+    /// The task's gate decisions written.
+    gates: bool,
+    /// Its mark of an approve not landed set or lifted.
+    unlanded: bool,
+    /// A change of status, and whether to cancelled: what a block waited on removed, its hold
+    /// and its dependants settled.
+    moved: Option<bool>,
+    /// The slot counters it holds guarded.
+    holds: bool,
+}
+
 impl Change {
+    /// What its write adds ([`RuleParts`]), `slots` the slot counters it holds and `placing` the
+    /// placement of a task it reopens under a custom workflow.
+    fn parts(&self, slots: &[Value], placing: Option<&workflow::Transition>) -> RuleParts {
+        RuleParts {
+            placed: placing.is_some(),
+            reason: self.reason.is_some(),
+            blocked: self.blocked.is_some(),
+            needs: self.needs.is_some(),
+            gates: self.gates.is_some(),
+            unlanded: self.unlanded.is_some(),
+            moved: (self.status.as_deref()).map(|status| status == "cancelled"),
+            holds: !slots.is_empty(),
+        }
+    }
+
     /// Whether it moves the task, blocks it, or adds or drops an executor or a reviewer: what a
     /// custom workflow's edges alone do to a task it holds. The orchestrator's role and a
     /// reservation are the board's coordination, which its writers keep: a launch reserves the
     /// work it starts a session for, and admission honours the reservation, and consumes it, when
-    /// that session takes the edge (docs/WORKFLOW.md, "Operations").
+    /// that session takes the edge (docs/workflow/WORKFLOW.md, "Operations").
     fn moves_or_staffs(&self) -> bool {
         let staffing = |role: &str| role != "orchestrator" && role != "reserved";
         self.status.is_some()
@@ -1342,6 +1361,18 @@ struct Opens {
     /// For a task a custom workflow holds, whether the position it moves to holds a slot by its
     /// slot policy ([`crate::slots::Entry::slot`]).
     slot: Option<bool>,
+}
+
+/// Whose parents a start counts against the cap ([`Opens::by`]): `executors`, else `mover`, the
+/// session that makes the start, where one does.
+fn executors_or(executors: impl IntoIterator<Item = String>, mover: Option<&str>) -> Vec<String> {
+    let mut by: Vec<String> = executors.into_iter().collect();
+    if by.is_empty()
+        && let Some(mover) = mover
+    {
+        by.push(mover.into());
+    }
+    by
 }
 
 struct Say {
@@ -1457,12 +1488,23 @@ fn message(row: MessageRow) -> Message {
 /// The read of `which` with the sessions `sessions` asks for, in each database's language, and
 /// its variables.
 fn read_of(which: &Which, sessions: Sessions) -> (Statement<'static>, Value) {
-    let (read, vars) = reading(which, sessions);
-    let statement = Statement {
-        surreal: read.into(),
-        postgres: Some(pg::reading::reading(which, sessions)),
-    };
-    (statement, vars)
+    let (read, vars) = (reading(which, sessions), reading::vars(which));
+    (both(read, pg::reading::reading(which, sessions)), vars)
+}
+
+/// Whether a reservation that `expires` at a time (none: never) is past it at `now`.
+fn expired(expires: Option<f64>, now: f64) -> bool {
+    expires.is_some_and(|expires| expires < now)
+}
+
+/// What a reservation's lapse does at `now`, `health` its holder's (none: no session holds the
+/// handle): whether the board drops it, past its expiry or held by a session lost, left or gone,
+/// and whether that drop is fenced at the holder's last beat as read, which only a session read
+/// gone before the reservation's time is up gives.
+fn lapsed(expires: Option<f64>, health: Option<Health>, now: f64) -> (bool, bool) {
+    let expired = expired(expires, now);
+    let gone = health.is_none_or(|health| matches!(health, Health::Lost | Health::Left));
+    (expired || gone, !expired && gone && health.is_some())
 }
 
 fn values<T: serde::Serialize>(rows: &[T]) -> Vec<Value> {

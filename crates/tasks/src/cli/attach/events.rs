@@ -7,7 +7,7 @@
 use super::Seen;
 use crate::health::{Health, LIVE_SECONDS};
 use crate::orchestration::{given, given_event, moved, moved_for, told};
-use crate::stages::MOVED;
+use crate::stages::{CLAIMED, CREATED, MOVED, RELEASED};
 use crate::{Board, Error, Message, Store};
 use std::collections::BTreeSet;
 
@@ -16,10 +16,10 @@ fn latest_status_action<'a>(messages: &'a [Message], slug: &str) -> Option<&'a M
         m.slug == slug
             && (m.kind == "verdict"
                 || (m.kind == "system"
-                    && (m.text.starts_with("created by ")
-                        || m.text.contains(" moved it ")
-                        || m.text.contains(" claimed it")
-                        || m.text.contains(" released "))))
+                    && (m.text.starts_with(CREATED)
+                        || m.text.contains(MOVED)
+                        || m.text.contains(CLAIMED)
+                        || m.text.contains(RELEASED))))
     })
 }
 
@@ -95,8 +95,8 @@ pub fn diff_on(
     // anywhere else (a block the child made before it let the work go) is said.
     let staffing = |m: &Message, old: Option<&String>, status: &str| {
         let made = match old.map(String::as_str) {
-            Some("ready") => status == "in_progress" && m.text.contains(" claimed it"),
-            Some("in_progress") => status == "ready" && m.text.contains(" released "),
+            Some("ready") => status == "in_progress" && m.text.contains(CLAIMED),
+            Some("in_progress") => status == "ready" && m.text.contains(RELEASED),
             _ => false,
         };
         made && m.kind == "system" && children.contains(m.sender.as_str())

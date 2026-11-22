@@ -208,6 +208,8 @@ fn the_audit_judges_the_documents_what_the_symphony_delivers_and_its_guides() {
         "docs/CHECKS.md",
         "docs/sub/GUIDE.md",
         "docs/analysis.md",
+        "docs/workflow/analysis.md",
+        "docs/workflow/analysisx/one.md",
         "docs/historyx.md",
     ] {
         assert!(audited(file) && !beside_documents(file), "{file}");
@@ -229,6 +231,8 @@ fn the_audit_judges_the_documents_what_the_symphony_delivers_and_its_guides() {
     for file in [
         "docs/DECISIONS.md",
         "docs/analysis/one.md",
+        "docs/workflow/analysis/one.md",
+        "docs/workflow/analysis/deep/one.md",
         "docs/history/README.md",
         "docs/history/deep/old.md",
         "docs/picture.png",
@@ -553,6 +557,32 @@ fn the_symphonys_own_audit_refuses_a_recipe_its_lists_do_not_allow() {
     assert_eq!(super::audit(&tree.root).errors, judged[..3]);
     std::fs::remove_file(tree.path(LISTS)).unwrap();
     assert_eq!(super::audit(&tree.root).errors, Vec::<String>::new());
+}
+
+/// A card's own lines, inline in a document or in a region of it, are a record of what was
+/// proposed, not words that tell a project what to run: the audit judges the prose around them,
+/// each name at the line it is on.
+#[test]
+fn the_symphonys_own_audit_passes_over_a_cards_lines_and_judges_the_prose_around_them() {
+    let tree = symphony();
+    tree.write(
+        "docs/B.md",
+        "# B\n\n- [r] **gate-recipe** — `just gate` would run it.\n  [2026-11-21 10:00] agent — Ran \
+         `just gate`.\n\n    Then `just gate` again.\n\nNow `just gate`.\n\n<!-- register:start -->\n## \
+         Resolved\n\n`just gate`\n<!-- register:end -->\nAnd `just clean`.\n",
+    );
+    let errors = super::audit(&tree.root).errors;
+    let of_b: Vec<&String> = errors
+        .iter()
+        .filter(|e| e.starts_with("docs/B.md"))
+        .collect();
+    assert_eq!(
+        of_b,
+        [
+            &refused("docs/B.md", 8, "gate"),
+            &refused("docs/B.md", 15, "clean")
+        ]
+    );
 }
 
 /// Outside git the audit judges the documents alone.
