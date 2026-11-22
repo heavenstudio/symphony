@@ -283,7 +283,6 @@ pub(super) async fn serve(listener: TcpListener, app: Router, shared: Arc<Shared
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use axum::http::StatusCode;
     use std::path::Path;
     use std::time::Duration;

@@ -61,7 +61,7 @@ a measurement before and after.
 ## Consumer API changes
 
 A public Rust item a known consumer calls is replaced across at least two releases
-(RULES.md `code/consumer-api-two-releases`, [its card](DECISIONS.md#consumer-api-break-release)):
+(RULES.md `code/consumer-api-two-releases`, [its card](analysis/release-candidate.md#consumer-api-break-release)):
 
 1. Ship the replacement alongside the old item, which keeps its signature and behaviour. Do not
    mark the old item `#[deprecated]`: a consumer's lint denies warnings, so the warning itself
@@ -312,7 +312,7 @@ says.
   run the recorder keeps with its commit
   ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), so its reviewer reads it as
   recorded, like any test. A guide, or a document under
-  `docs/` but the register and `docs/history/`, also runs the check for the owner's words in the
+  `docs/` but `docs/history/`, a card's own lines and a register region aside, also runs the check for the owner's words in the
   shapes the guides gave them, dated or straight-quoted (`just test-rs -p symphony-app --test hooks
   owner_words`, RULES.md `docs/no-ledger-in-documents`), and its reviewer reads for any other
   shape. For a shipped skill,
@@ -339,7 +339,8 @@ but never a blank line. One rule, two places:
 
 - the docs audit, in the Symphony's own checkout alone (its project file names it `symphony`, and
   it holds the lists), judges its documents, the Markdown under `docs/` but the decision register
-  (`docs/DECISIONS.md`), `docs/analysis/` and `docs/history/`, which are records; and, of the files
+  (`docs/DECISIONS.md`), `docs/analysis/` and `docs/history/`, which are records, as are a card's
+  own lines wherever it sits in a document, which it passes over; and, of the files
   git's index holds (so a new one once added), every file of what it delivers, under
   `crates/symphony/shipped/` (the skills, the Codex rules and the recipes), and its guides, each
   `AGENTS.md`, `README.md` and `RULES.md` at the root or in a package under `crates/` or `apps/`.
@@ -805,6 +806,22 @@ It is a step of `just verify` (`size-check`), so [the release run](#the-release-
 main's tip. No task's gate runs it, as it costs a release build of the whole workspace, except a
 task whose change adds weight to a shipped binary ([a red at the size check](#a-red-at-the-size-check)).
 
+What every agent reads at the start of a session has lines as well, in bytes, in
+`crates/symphony/tests/hooks/size_lines.toml`: `RULES.md`, the root guide and the three package
+guides (`apps/symphony-web`, `apps/symphony-desktop`, `crates/tasks`), each file under
+`crates/symphony/shipped/skills/`, and each project page beside an installed skill
+(`.agents/skills/NAME/project.md`). The hooks test beside that file
+(`just test-rs -p symphony-app --test hooks size_lines`) is red on a file past its line, naming the
+file, its bytes and its line, on one of those files with no line, and on a line for a file that is
+none of them. A line is the file's size in the commit that sets it plus a tenth, rounded up to a
+multiple of 100 bytes, so an added rule fits and a retold mechanism does not. A red asks for a cut
+first, or for the mechanism the file retells to move to its document or module comment; a line is
+raised only as a binary's is ([a red at the size check](#a-red-at-the-size-check)), by the
+orchestrator's gate decision naming `crates/symphony/tests/hooks/size_lines.toml:KEY`, to the size
+plus a tenth and never higher. KEY is the file's path with its `.md` dropped and each `/` and `.`
+made `-` (`apps-symphony-web-AGENTS`), as a raise names no path, and the test reads each line as a
+raise does. The file of lines is under `tests/`, a check path, so a change to it keeps `review`.
+
 ### Where a line stands
 
 A binary's line is its size, as `just size-check` measures it in the commit that sets the line,
@@ -1001,3 +1018,51 @@ waits on it, and a red goes back to `@executor`
 **What evidence missed, the full run finds.** [The release run](#the-release-run) runs every target
 on main's tip every 20 landings, and each day or more often once the owner schedules it, and
 publishes a release when every check is green; each red it finds is one task, with one owner.
+
+- [-] **land-tests-changed-packages** — `just land` checks a merge with the docs audit alone and runs no test, so a red that a branch's evidence missed reaches main. Three did tonight, each already red at the approved tip: a route change whose `after_http` nobody ran; a branch that added a `symphony` command and merged main's new test that lists them, and never ran that 0.2 s test; and a board change whose `polish::` and `shot::` browser tests nobody ran. Should the land's check also run, on the merge, the fast test targets of the packages the branch changed? A: no; the executor and the reviewer run them at the tip, and the lander reruns by hand what main gained since, as CHECKS now says. B: yes, for each package that both the branch and main's newer commits changed. C: yes, for every package the branch changed, on every land. Recommended: C. Approve and say A, B or C in the note, or comment. [[CHECKS#After main moves]]
+  [2026-11-12 06:06] agent — Posted for the board task `tools/checks-name-the-tests-landings-missed`.
+
+    **What the land would have caught under each**, of tonight's three reds:
+
+    | red at the tip | A | B | C |
+    |---|---|---|---|
+    | a route change: `-p symphony-server --test after_http` | no | yes, as main had changed `symphony-server` too | yes |
+    | a new command: `-p symphony --test serve` | no | no: main had changed none of the branch's packages since its tip | yes |
+    | a board change: its `polish::` and `shot::` browser tests | no | no | no |
+
+    None of the three was made by the land's merge, so B's own case, two lines of work green alone and red together, did not occur. The tests CHECKS now names for each kind of change (a route's targets, the rule for a new command, the tasks board's row), run at the tip, catch all three: A rests on that alone, and B and C are the land's net under it.
+
+    **A land today** rebuilds the client in its own worktree to compare it with the committed one, 7 to 20 minutes (median 11, over the 17 client checks lands ran tonight), builds `symphony` for the docs audit, and runs no test.
+
+    **What a package's fast targets take**, cargo's own run times from tonight's three nightly runs, build not included, a fast target being one that took under 2.5 minutes in every run:
+
+    | package | its fast targets | run |
+    |---|---|---|
+    | `symphony` | all but `nightly` | 3 to 5 min |
+    | `symphony-board` | the library, `child_guard`, `cli`, `launch`, `store` | 4 to 6 min |
+    | `symphony-server` | the library and the `after_*` targets | 3 to 3.5 min |
+    | `symphony-ui` | all but `browser` and `wasm_build` | 10 to 30 s |
+    | each other crate | all | seconds |
+
+    First the land's worktree builds those test binaries: the whole workspace's took 4 and 5 minutes on two nights and 18 on a loaded one, and a land's packages are part of that.
+
+    **Not fast, so in neither:** the browser target first (171 s one night, 61 minutes on another when its tests timed out), the board's `perf`, `sweep` and `server` (2.5 to 15 minutes each; `perf` took 883 s in one run) and `launcher` (seconds, and 10 minutes once), the server's `standalone` (3 to 5), the client's `wasm_build` (1 to 3) and `symphony`'s `nightly` (nearly 3). They stay the nightly's: under load their timeouts would turn lands red that changed nothing they test. Where the line falls is the recipe's to set, not this card's.
+
+    **What B and C cost over tonight's lands**, each land's packages weighed by those run times (the middle of each range), the client distribution counted as `symphony-server` as CHECKS does:
+
+    | lands since | lands | B runs tests on | for, in all | C runs tests on | for, in all |
+    |---|---|---|---|---|---|
+    | 18:00 on 11-11 | 47 | 31 | 2.8 hours | 41 | 4.4 hours |
+    | 00:00 on 11-11 | 64 | 39 | 3.6 hours | 55 | 6 hours |
+
+    Main's newer commits mostly touch the same few packages a branch does, so B runs on two lands in three and costs about two thirds of what C does. A land that runs either adds 5 to 6.5 minutes on average and up to 13 (a branch through `symphony`, the board and the server), beside the client check's 11.
+
+    **A, by hand.** Nothing added to a land. Cost: a target someone leaves out reaches main red and stays there until a full run finds it.
+
+    **B, shared packages.** Catches one of the three, because main happened to have changed the same package. Cost: about two thirds of C's.
+
+    **C, every changed package.** Catches two of the three whatever main did meanwhile, and B's case as well, since every package both changed is one the branch changed. Cost: the minutes above, on 41 of the 47 lands.
+
+    **Why C.** The reds that reached main tonight were evidence that left a target out, which C catches on every land and B only where main moved in the same package; B costs two thirds of C and caught half as much. A adds nothing to a land, but rests on every executor and reviewer running what CHECKS names, which three branches tonight did not. Built as one recipe the check names, which picks the packages from the branch's diff: the mechanical half of `just check-fast`, filed as `tools/check-fast`.
+  [2026-11-12 06:42] owner · rejected — Adding 5 minutes may seem low, but the issue is that it becomes a “blocking 5 mins”. Every new PR that gets merged could invalidate the 5 min run, making it have to run it again and again and again, spiraling the 5 minute forever. A solution like a lock or queue would directly bottleneck the pipeline which isn’t acceptable either. So a nightly or more often run that then runs all tests and publishes when green is the only acceptable choice I can think of. Or the orchestrators could do a manual run of what they think is needed to ensure quality. But this cannot be an automated approach or that would wait and spiral OR add a number of tickets bottleneck to be merged and both are not acceptable.
+  [2026-11-12 06:44] agent — Done as you say, with no replacement card: the land's check stays the docs audit and runs no test, and nothing automatic waits on a land. Quality rests on three things: the evidence at the tip that CHECKS names for each kind of change, run again at the new tip after a branch merges main, for the packages the branch itself changed; an orchestrator's run by hand of what it judges a land needs, which nothing waits on; and the full run (`just nightly`), nightly or more often, which runs every test and publishes a release when green, each red it finds a task with one owner. CHECKS and RELEASES now say so. [[CHECKS#After main moves]]

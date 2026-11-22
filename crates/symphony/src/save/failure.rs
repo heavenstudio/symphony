@@ -8,7 +8,7 @@ pub struct Failure {
 }
 
 /// How the board refuses a slug no task has (`no task 'x'`), as the board's reads refuse it.
-const NO_TASK: &str = "no task ";
+const NO_TASK: &str = symphony_board::Error::NO_TASK;
 
 /// A refusal in its words: 404 when it names a task the board lacks, as a read of that task
 /// answers, else 400.

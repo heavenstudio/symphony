@@ -51,7 +51,7 @@ Where the order is kept, and its route: [storage and routes](#storage-and-routes
 ### One app, every worktree
 
 **The owner runs one app, the primary checkout's, and every card waiting on them is in it.** A card an agent
-posted on a branch (committed to its worktree's `docs/DECISIONS.md` or any register) is not in main's file until
+posted on a branch (committed in any document of its worktree) is not in main's file until
 the branch lands, so the app also reads the worktrees of live branches (`symphony::branches`): each card the
 branch's commits added or changed, and that differs from main's, is an ordinary decision in the same ranked
 queue, board counts and navigation as main's cards, with a small tag linking its task. A card identical to
@@ -154,8 +154,9 @@ commit the verdict first. A consuming project's own gate asks the Symphony with
 
 ## Start with the decision register
 
-The direction documents are far too long to review as prose. `DECISIONS.md`
-lists the proposals they rest on, one line each, as a checklist:
+The direction documents are far too long to review as prose. What the owner
+decides is a card: a proposal on one line, a checklist item with a bold name,
+written [at the place it decides](#where-a-card-is-written):
 
 ```markdown
 - [x] **lamp-count-141** — 141 original lamps ... [[LAMP_CATALOGUE#Size distribution]]
@@ -172,16 +173,18 @@ under the heading of its [group](#groups). A whole register with one new card:
 <!-- register:start -->
 ## Needs your decision
 
+### General
+
 - [ ] **lamp-count** — Sell twelve lamps at launch, or twenty? Approve and say A or B in the note, or comment.
 <!-- register:end -->
 ```
 
-A card's line starts at column 0 with its marker and its slug in bold. Without
-the two comments its slug reads as a slug in prose, which the lint refuses
-([below](#slugs-in-prose)); under no group heading the card is counted and
+A card's line starts at column 0 with its marker and its slug in bold. Between
+the two comments and under no group heading the card is counted and
 listed in the queue, but its page draws it as a list item with no verdict
 editor, until `just symphony-status --tidy` regroups the register and writes
-the headings. A topic heading (`### Releases`) under a group's heading sorts
+the headings. A card outside the two comments is inline in its document
+([below](#where-a-card-is-written)) and needs neither them nor a heading. A topic heading (`### Releases`) under a group's heading sorts
 its cards; a card under none is filed under *General*. The project's register
 is `DECISIONS.md` in its first entrypoint's folder unless
 [the project file](PROJECT_FILE.md#project) names another, and any document
@@ -195,7 +198,52 @@ may hold a register of its own.
 | `[?]` | a question |
 | `[r]` | resolved: approved with nothing left to answer (set by an agent's tidy pass, never by hand) |
 | `[a]` | auto-approved: set only by the project's triage command (`auto-approve`), with a dated `agent · auto-approved — <letter>: <basis>` line; counts as approved, and any owner verdict overrides it |
-| `[~]` | dismissed: the owner says the card is not needed (⊘ Dismiss), or a newer card names it in its *Replaces:* while it still asks the owner, pending or answered `[?]` ("superseded by …"; set by `--tidy` and on every post in the app), or the project's triage command (`dismiss --answered-by`) where the owner said so in the terminal; nothing to act on |
+| `[~]` | dismissed: the owner says the card is not needed (⊘ Dismiss), or a newer card of its document names it in its *Replaces:* while it still asks the owner, pending or answered `[?]` ("superseded by …"; set by `--tidy` and on every post in the app), or the project's triage command (`dismiss --answered-by`) where the owner said so in the terminal; nothing to act on |
+
+### Where a card is written
+
+**A card is written at the place it decides**: in the document that says, or
+will say, what its verdict changes, directly under the paragraph or the heading
+that says it. Never gathered in a section at the end of the document, and never
+in `DECISIONS.md` when a document says the thing.
+
+```markdown
+## The cadence
+
+A release run starts once 20 tasks have landed since the last one.
+
+- [ ] **release-every-20** — A release run would start every 20 landings, where today one starts every 50. ... Approve, or comment.
+  [2026-11-21 10:00] agent — Posted for the board task `tools/release-cadence`.
+
+The run that follows a landing that moves the board's schema starts at once.
+```
+
+- **Which document.** A reference document for how a thing works (`RELEASES.md`
+  for how a release is cut), a product spec for how a page behaves, the analysis
+  that proposes something not built yet, under the section that argues it.
+- **How it is written.** The card's line starts at the left margin, a blank
+  line above it and one after its last line; the lines under it are indented.
+  It needs no markers around it. The Symphony reads it wherever it sits: the
+  queue lists it and links that place, its page draws it there with its
+  verdict editor, and `just symphony-status --tidy` resolves it there.
+- **The prose around it says how things are; the card's own lines are the
+  document's record at that place.** The checks that keep history out of a
+  document pass a card's lines and nothing beside them
+  ([slugs in prose](#slugs-in-prose)).
+- **One name, one card.** A card's name is used once in the project's
+  documents, whichever holds it: `just symphony-status --lint` refuses a second.
+  A card is posted once and stays where it was posted, so a link to it stays
+  good.
+- **The decision register**, `docs/DECISIONS.md`, holds only a card no document
+  says the subject of: a rule or a guide's wording (the guides are outside
+  `docs/`, which is all the board reads) or a choice across several documents.
+  It links each document that holds cards. The list of every card is the queue,
+  and `just symphony-status --json`, which names each card's file and line.
+- **A register region** (`<!-- register:start -->` to `<!-- register:end -->`)
+  is for a page that is a list of cards, such as a project's page of picture
+  candidates, and for the decision register: the cards between its markers are
+  regrouped by [group](#groups) on every answer. A card outside one is never
+  moved.
 
 ### Card history
 
@@ -241,10 +289,11 @@ owner](#before-a-card-goes-to-the-owner)).
 
 ### Groups
 
-**Where a card sits** is computed from its marker and its last line, and the
-register regroups itself (inside its `register:start`/`register:end` markers)
-every time the owner answers. Counts are never written into the file; the page
-and the board count the cards live:
+**A card's group** is computed from its marker and its last line: it is what
+the queue, the board and its page show. A register region regroups itself
+(inside its `register:start`/`register:end` markers) every time the owner
+answers; a card inline in its document stays where it is. Counts are never
+written into the file; the page and the board count the cards live:
 
 | group | a card is here when |
 |---|---|
@@ -275,8 +324,8 @@ enough; the link at the end of each card goes to the section that argues it.
 [Settled cards](product/CARDS.md#settled-cards) keep their full history behind a fold.
 `--tidy` also resolves an approval once an agent has answered its note, and moves every
 answered `> [!comment]` into `docs/history/review-ledger.md`, word for word, so
-pages keep only what is still open. Nothing is deleted: the cards stay in their
-register and the comments in the ledger.
+pages keep only what is still open. Nothing is deleted: the cards stay where
+they are and the comments in the ledger.
 
 ### Slugs in prose
 
@@ -284,14 +333,33 @@ register and the comments in the ledger.
 document's prose ("approved in *some-card*") is history, and history belongs
 on the card. So do the owner's exact words and who decided what, and when: a
 document states intent, behaviour and options, and where the reason matters it
-links the card, `[its card](DECISIONS.md#SLUG)`, which the lint passes
+links the card, `[its card](#SLUG)` on its own page and
+`[its card](FILE.md#SLUG)` on another, which the lint passes
 (`RULES.md` `docs/no-ledger-in-documents`). `just symphony-status --lint` fails
-on a slug outside a register or code block, naming its file and line, and a
-project's checks can run it. The
+on a slug outside a card's own lines, a register or a code block, naming its
+file and line, and a project's checks can run it. The
 exceptions are `docs/history/` and `docs/analysis/`, which are records. A
 project's own checks may also refuse the verdict words themselves (approved,
 rejected, superseded, dismissed) outside the register of the pages they name: such
 a page shows the chosen pictures and traits, never a list of what else was approved.
+
+- [r] **guides-keep-owner-quotes** — The documents under `docs/` no longer quote your words or say who decided what and when: that lives in this register and on task threads, and a document links the card where the reason matters. The guides agents read first, `AGENTS.md`, `RULES.md` and the packages' `AGENTS.md`, still quote you, dated, as the basis of their rules: 23 quoted passages in 19 places. Should the guides keep those quotes? A: yes, each rule keeps the words it rests on. B: no, each guide states its rules in plain words, and the quotes move word for word to a record under `docs/history/`, so none is lost. Recommended: B. Approve and say A or B in the note, or comment. [[REVIEW#Slugs in prose]]
+  [2026-11-13 19:55] agent — Posted for the board task `docs/documents-carry-no-ledger`, from your comment on the consumer contract analysis, which names docs and not the guides.
+
+    **Where the quotes are:** `RULES.md` 14 in 11 rules; `AGENTS.md` 6 in 4 places (the land's push, the land with no prompt, the release cadence and its refresh); `apps/symphony-ui/AGENTS.md` 2, and one dated attribution (the move to Dioxus, the first-visit budget); `crates/tasks/AGENTS.md` 1 (idle sessions closed within the hour). The root `README.md` and the servers' and components' guides quote none.
+
+    **A, keep them.** An agent reading a rule sees the words it rests on beside it. The guides keep a ledger the documents no longer do, and each new rule adds a dated line.
+
+    **B, the rule alone.** Each guide says what to do, as the documents now do. The words are kept word for word in `docs/history/`, beside the review ledger, and the threads keep theirs. One task here makes the move; no rule changes meaning.
+
+    **Why B.** The reason you gave for documents holds for the guides: they are what agents read as current instruction, and `RULES.md` already says guides say how things are now. B loses nothing, since the words move to a record.
+
+    **Earlier verdicts checked.** No card says whether the guides count as documents, so none decides this one.
+
+    This card is the only change.
+  [2026-11-13 20:05] owner · approved — B
+  [2026-11-14 01:14] agent — B it is. Your approval was saved in the app on 2026-11-13 20:05, but into the worktree of the branch that posted this card, which had already landed, so the register on main never showed it. It is copied here word for word, and that fault is filed as a bug. The move is filed as the board task `docs/guides-state-rules-without-quotes`: each guide states its rules in plain words, and the quotes go word for word to a record under `docs/history/`.
+  [2026-11-14 01:16] agent · resolved
 
 An agent registers with `just tasks callback --chat --as HANDLE`. Each ask,
 follow-up, card message, verdict note and callout you save is queued by that
@@ -426,7 +494,9 @@ Anywhere but inside a decision register, which holds cards only: a callout
 between its markers would stop every later verdict on its cards, so a comment
 left on a register's group or topic heading is refused, the save saying to put
 it on the card itself (its **Verdict / message**) or on a block outside the
-register.
+register. Nor between the lines of a card that sits inline in its document,
+which it would cut from the card: after the card's last line it is a comment
+on the document like any other.
 
 The first line is the tag and a short title; the `>` lines under it are the
 body. `comment`, `question` and `decision` are open work until an agent nests
@@ -560,8 +630,8 @@ next card; their document writes still go to the selected worktree. `POST /api/p
 queue. A corrupt or unreadable preference file is preserved and logged, and reads serve the mixed order
 without postponements.
 
-**The scan of the branches' cards** ([one app, every worktree](#one-app-every-worktree)). The scan is kept, never run per request: a watcher refreshes it when a worktree's HEAD log or a register file
-moves (and every minute, for a register file only a branch has), and an owner's write refreshes it at once.
+**The scan of the branches' cards** ([one app, every worktree](#one-app-every-worktree)). The scan is kept, never run per request: a watcher refreshes it when a worktree's HEAD log or a document holding
+cards moves (and every minute, for one only a branch has), and an owner's write refreshes it at once.
 About 160 worktrees take ~3 s to scan on a busy machine; a check that nothing moved is stat calls.
 
 **The `+` sheet** ([asking](#asking)). Routes: `POST /api/quick-chat`, `POST /api/quick-task`.

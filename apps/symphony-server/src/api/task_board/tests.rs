@@ -453,3 +453,124 @@ async fn a_listing_without_work_places_tasks_by_it_and_leaves_it_out() {
 mod waiting;
 
 mod workflow;
+
+fn key(stage: &str, priority: i64, at: f64, slug: &str) -> Key {
+    Key(stage.into(), priority, at, slug.into())
+}
+
+/// A search lists the best match first whatever its stage or priority, and equal scores by slug.
+#[test]
+fn a_search_orders_by_score_then_slug() {
+    let best = key("ready", 4, 0.9, "z/last");
+    let worse = key("backlog", 0, 0.2, "a/first");
+    assert_eq!(best.compare(&worse, Order::Match), Ordering::Less);
+    assert_eq!(worse.compare(&best, Order::Match), Ordering::Greater);
+    let tied = key("done", 1, 0.9, "z/last-2");
+    assert_eq!(best.compare(&tied, Order::Match), Ordering::Less);
+    assert_eq!(best.compare(&best, Order::Match), Ordering::Equal);
+}
+
+/// A task's subtasks, the groups and a holder's tasks order by priority alone, then by slug: their
+/// stage and their time decide nothing.
+#[test]
+fn a_listing_by_priority_passes_over_stage_and_time() {
+    let urgent = key("review", 0, 1.0, "b/urgent");
+    let later = key("backlog", 2, 9.0, "a/later");
+    assert_eq!(urgent.compare(&later, Order::Priority), Ordering::Less);
+    assert_eq!(later.compare(&urgent, Order::Priority), Ordering::Greater);
+    let same = key("done", 0, 5.0, "b/urgent-10");
+    assert_eq!(urgent.compare(&same, Order::Priority), Ordering::Less);
+    let numbered = key("done", 0, 5.0, "b/urgent-9");
+    assert_eq!(numbered.compare(&same, Order::Priority), Ordering::Less);
+}
+
+/// The board orders by stage first; a finished stage's rows newest first, their priority deciding
+/// nothing, and every other stage's by priority, their time deciding nothing.
+#[test]
+fn the_board_orders_a_finished_stage_newest_first_and_any_other_by_priority() {
+    let stage = key("blocked", 4, 0.0, "z");
+    let after = key("ready", 0, 9.0, "a");
+    assert_eq!(stage.compare(&after, Order::Stage), Ordering::Less);
+    for finished in FINISHED {
+        let newer = key(finished, 4, 9.0, "z/newer");
+        let older = key(finished, 0, 1.0, "a/older");
+        assert_eq!(newer.compare(&older, Order::Stage), Ordering::Less);
+        let beside = key(finished, 2, 9.0, "z/newer-2");
+        assert_eq!(newer.compare(&beside, Order::Stage), Ordering::Less);
+    }
+    for open in [
+        "backlog",
+        "ready",
+        "in_progress",
+        "review",
+        "blocked",
+        "build",
+        "test",
+    ] {
+        let urgent = key(open, 0, 1.0, "z/urgent");
+        let later = key(open, 3, 9.0, "a/later");
+        assert_eq!(urgent.compare(&later, Order::Stage), Ordering::Less);
+        let beside = key(open, 0, 9.0, "z/urgent-2");
+        assert_eq!(urgent.compare(&beside, Order::Stage), Ordering::Less);
+    }
+}
+
+/// A cursor is the four values a page's last row is keyed by, written and read as one array, and
+/// one that is not is refused in the words the four values' own reader gives.
+#[test]
+fn a_cursor_is_written_and_read_as_its_four_values() {
+    let written = serde_json::to_string(&key("ready", 2, 10.5, "app/a")).unwrap();
+    assert_eq!(written, r#"["ready",2,10.5,"app/a"]"#);
+    let read: Key = serde_json::from_str(&written).unwrap();
+    assert_eq!(
+        read.compare(&key("ready", 2, 10.5, "app/a"), Order::Stage),
+        Ordering::Equal
+    );
+    for malformed in [
+        r#"["ready",2]"#,
+        r#"["ready","2",1.0,"a"]"#,
+        r#"{"stage":"ready"}"#,
+        "",
+    ] {
+        assert_eq!(
+            serde_json::from_str::<Key>(malformed)
+                .unwrap_err()
+                .to_string(),
+            serde_json::from_str::<(String, i64, f64, String)>(malformed)
+                .unwrap_err()
+                .to_string()
+        );
+    }
+}
+
+/// A task's subtasks page by priority: the second page starts where the first ended, repeating
+/// and skipping none, whatever stage each is at.
+#[tokio::test]
+async fn a_tasks_subtasks_page_by_priority_across_the_cursor() {
+    let mut records = vec![task("app/parent".into(), "in_progress", 2, 0.0)];
+    let statuses = ["ready", "in_progress", "review", "blocked"];
+    records.extend((1..=40).map(|n: usize| {
+        let mut child = task(
+            format!("app/parent/part-{n}"),
+            statuses[n % statuses.len()],
+            i64::try_from(n % 3).unwrap(),
+            0.0,
+        );
+        child.parent = Some("app/parent".into());
+        child
+    }));
+    let first = listing_of(&records, "parent=app/parent").await;
+    let next = listing_of(
+        &records,
+        &format!("parent=app/parent&cursor={}", cursor(&first)),
+    )
+    .await;
+    let mut expected: Vec<(usize, usize)> = (1..=40).map(|n| (n % 3, n)).collect();
+    expected.sort_unstable();
+    let expected: Vec<String> = expected
+        .into_iter()
+        .map(|(_, n)| format!("app/parent/part-{n}"))
+        .collect();
+    assert_eq!(slugs(&first), expected[..30]);
+    assert_eq!(slugs(&next), expected[30..]);
+}

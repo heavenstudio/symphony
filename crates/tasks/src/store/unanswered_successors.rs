@@ -50,7 +50,7 @@ impl Observation {
                             now,
                             address
                                 .as_deref()
-                                .filter(|a| a.starts_with("codex:"))
+                                .filter(|a| a.starts_with(crate::launch::CODEX))
                                 .map(|_| *until),
                         )
                     }

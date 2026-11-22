@@ -217,7 +217,8 @@ fn restore_one(
             )?;
         }
     }
-    let (agent, args) = if let Some(id) = session.claude_session.strip_prefix("codex:") {
+    let (agent, args) = if let Some(id) = session.claude_session.strip_prefix(crate::launch::CODEX)
+    {
         let mut args = codex_args(&session.model, None, &session.handle, machine);
         args.extend(["resume".into(), id.into()]);
         ("codex", args)
@@ -243,7 +244,7 @@ fn restore_one(
     let local = Local::new(store, hc, crate::workflow::board_service("restore"));
     let conversation = session
         .claude_session
-        .strip_prefix("codex:")
+        .strip_prefix(crate::launch::CODEX)
         .unwrap_or(&session.claude_session);
     let task = store.get(slug)?;
     let attempt = local
@@ -306,7 +307,7 @@ fn restore_one(
     if message == super::startup::Message::Working {
         let thread = session
             .claude_session
-            .strip_prefix("codex:")
+            .strip_prefix(crate::launch::CODEX)
             .expect("a resumed Codex turn");
         let delivery = match hc.queue_codex(thread, text) {
             Ok(()) => {

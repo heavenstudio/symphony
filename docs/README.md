@@ -86,8 +86,10 @@ Agents working in this repository follow the standing [Rules](../RULES.md).
 
 ## Design and history
 
-The [decision register](DECISIONS.md) holds Symphony's product and engineering decisions, one
-card each; [Analysis](analysis/) holds their proposals and evidence. An approved design can
+A decision is a card at the place in its document where the thing it decides is said
+([where a card is written](REVIEW.md#where-a-card-is-written)); the
+[decision register](DECISIONS.md) holds the cards no document says the subject of and links the
+documents that hold the others. [Analysis](analysis/) holds proposals and evidence. An approved design can
 still await implementation; its approval alone does not make it current app behavior.
 
 - [Durable project artifacts](analysis/remote-artifact-store.md) — a proposed optional storage

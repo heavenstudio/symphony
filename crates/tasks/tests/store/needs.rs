@@ -260,6 +260,80 @@ on_both! {
         );
     }
 
+    fn a_task_approved_and_not_landed_is_assessed_and_one_landed_or_closed_is_not(backend: Backend) {
+        let f = Fixture::on(backend, Seed::default());
+        let (filer, orch, exe) = (
+            f.session("worker"),
+            f.session("orchestrator"),
+            f.session("worker"),
+        );
+        worked(&f, "tools/query", &filer, &orch, &exe);
+        let own = Catalogue::symphony();
+        let (assessor, reviewer) = (f.session("worker"), f.session("reviewer"));
+        let store = &f.store;
+        // A slice closed by its executor is done with no land of its own to make.
+        f.task_with(NewTask {
+            parent: Some("tools/query".into()),
+            ..NewTask::new("tools/query/slice", "A slice", &filer)
+        });
+        store.claim("tools/query/slice", &exe).unwrap();
+        store.done("tools/query/slice", &exe, "integrated").unwrap();
+        assert_eq!(
+            refused(store.set_needs(
+                "tools/query/slice",
+                &own,
+                &needs(&assessor, &["review"], None, WHY)
+            )),
+            "tools/query/slice is done: only an open task, or one approved and not landed, is \
+             assessed"
+        );
+        // Approved: it reads done, and its land is still to make, so its assessor still writes,
+        // the task left where the approve put it.
+        store.move_to("tools/query", "review", &exe).unwrap();
+        store.take_role("tools/query", &reviewer, "reviewer").unwrap();
+        store
+            .verdict("tools/query", &reviewer, "approve", "reads well")
+            .unwrap();
+        let task = store
+            .set_needs(
+                "tools/query",
+                &own,
+                &needs(&assessor, &["tests"], Some(TIP), WHY),
+            )
+            .unwrap();
+        assert_eq!(task.status, "done");
+        assert!(symphony_board::orchestration::unlanded(&task).is_some());
+        assert_eq!(
+            task.needs(),
+            Some(needs(&assessor, &["tests"], Some(TIP), WHY))
+        );
+        // Still by a fresh session alone.
+        assert!(
+            refused(store.set_needs(
+                "tools/query",
+                &own,
+                &needs(&exe, &["tests"], Some(TIP), WHY)
+            ))
+            .starts_with(&format!("{exe} executed tools/query"))
+        );
+        // Landed, it is assessed no more.
+        store
+            .landed("tools/query", &orch, "landed tools/query on main", false, &["done"])
+            .unwrap();
+        assert_eq!(
+            refused(store.set_needs(
+                "tools/query",
+                &own,
+                &needs(&assessor, &["review"], Some(TIP), WHY)
+            )),
+            "tools/query is done: only an open task, or one approved and not landed, is assessed"
+        );
+        assert_eq!(
+            store.get("tools/query").unwrap().needs(),
+            Some(needs(&assessor, &["tests"], Some(TIP), WHY))
+        );
+    }
+
     fn a_closed_or_missing_task_takes_no_needs_and_no_session_sets_the_field_by_hand(backend: Backend) {
         let f = Fixture::on(backend, Seed::default());
         let assessor = f.session("worker");
@@ -276,7 +350,7 @@ on_both! {
                 &own,
                 &needs(&assessor, &["review"], None, WHY)
             )),
-            "tools/gone is cancelled: only an open task is assessed"
+            "tools/gone is cancelled: only an open task, or one approved and not landed, is assessed"
         );
         assert_eq!(
             refused(f.store.set_needs(

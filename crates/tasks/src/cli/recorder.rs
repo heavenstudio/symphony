@@ -39,6 +39,14 @@
 //! of its own while the board is asked; the record is written once the board answered or the wait
 //! ran out.
 //!
+//! While its command runs, the recorder of an operation whose record names a session says on the
+//! board that the session is there ([`Session`]): every [`SEEN`], and once more as the command
+//! ends. An agent waiting on its own build or test makes no tool call, and reads live by that for
+//! as long as the run goes on, then ages from its end. It is the one write a recorder makes on the
+//! board, by one try, each answer waited for [`WAIT`] at most. Its command never waits on it, and
+//! its caller only for the last where the recorder runs the command as its child: the status
+//! comes once that is said.
+//!
 //! Nothing it records reaches the command's streams: a record it cannot write leaves the command
 //! running as it would unrecorded. A run's or a step's stdout and stderr, which its lines name a
 //! log of ([`crate::run_logs`]), are the one exception, by what its caller handed it ([`keeps`]).
@@ -101,6 +109,10 @@ pub const COMMAND: &str = "run";
 pub const BEAT: Duration = Duration::from_secs(2);
 /// How long the board is asked which task the session holds.
 const WAIT: Duration = Duration::from_secs(1);
+/// How often a running operation's recorder says the session its record names is there: a
+/// monitor's heartbeat, well inside the 90 s a session reads live for after one
+/// ([`crate::health::LIVE_SECONDS`]), and never the record's own [`BEAT`].
+const SEEN: Duration = Duration::from_secs(20);
 /// How long a command waits to hear its recorder watches it before it runs unrecorded.
 #[cfg(target_os = "macos")]
 const READY: Duration = Duration::from_secs(1);
@@ -817,14 +829,70 @@ fn on_board(
     place: &crate::store::RunPlace,
     wait: Duration,
 ) -> Option<(Option<String>, Option<String>)> {
+    let (reached, clock) = reached(env, wait)?;
+    let store = super::open_unchecked(reached, &clock).ok()?;
+    store.run_for(place).ok()
+}
+
+/// The board `env` reaches, its server never started, each of its answers waited for `wait` at
+/// most, and the clock every board command reads; none when it is not there.
+fn reached(env: &Env, wait: Duration) -> Option<(super::Reached, super::Clock)> {
     let reached = super::reach(env, &env.cwd, false).ok()?;
     let reached = super::Reached {
         client: reached.client.waiting(wait),
         ..reached
     };
-    let clock = super::Clock::of(env).unwrap_or(super::Clock::Machine);
-    let store = super::open_unchecked(reached, &clock).ok()?;
-    store.run_for(place).ok()
+    Some((
+        reached,
+        super::Clock::of(env).unwrap_or(super::Clock::Machine),
+    ))
+}
+
+/// The session a run's record names, which its recorder says is there while the run goes on: an
+/// agent waiting on its own build or test makes no tool call, so nothing else beats for it, and
+/// it would read stale, then lost, with its work at the machine's mercy (docs/TASKS.md, "Health").
+/// The board is told every [`SEEN`] and once more as the run ends, so the session ages from that
+/// end as from any last sign of life. The session told of is the one the record names, however
+/// the run was attributed as it began ([`attributed`]): never looked up by where the run works
+/// again while it goes on, so no other session placed in its checkout is told of. A recorder that
+/// died says nothing more: its session ages from the last time it did.
+struct Session {
+    env: Env,
+    handle: String,
+    /// How long the board is given to answer each time.
+    wait: Duration,
+    /// When the board was last told, or the run began: its start is its session's own tool call,
+    /// which the beat hook said.
+    last: Mutex<std::time::Instant>,
+}
+
+impl Session {
+    /// Whether the board is to be told at `now`: [`SEEN`] after the last time, or the run `ended`.
+    /// A time it is told is the last one, whether or not the board answers: a board that does not
+    /// is asked again at the next, never at every beat.
+    fn due(&self, now: std::time::Instant, ended: bool) -> bool {
+        let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
+        if !ended && now.saturating_duration_since(*last) < SEEN {
+            return false;
+        }
+        *last = now;
+        true
+    }
+
+    /// The board told the session is there, when that is due ([`Session::due`]), by one try,
+    /// opened as the beat hook opens it for its one write (its schema read only past the guard): a
+    /// board that is down, slow, moving under it or that does not know the session (or knows it
+    /// left) is told nothing, and the record goes on.
+    fn seen(&self, ended: bool) {
+        if !self.due(std::time::Instant::now(), ended) {
+            return;
+        }
+        if let Some((reached, clock)) = reached(&self.env, self.wait)
+            && let Ok(store) = super::open_beating(reached, &clock)
+        {
+            let _ = store.seen_once(&self.handle);
+        }
+    }
 }
 
 /// The commit checked out at the checkout `cwd` is in, read from its `.git` files with no `git`
@@ -1011,6 +1079,9 @@ struct Recording {
     path: PathBuf,
     lease: Lease,
     record: Mutex<Record>,
+    /// The session its record names, which it says is there while it runs: none for an operation
+    /// that names none, and for one inside a recorded command, whose recorder says it.
+    session: Option<Session>,
 }
 
 impl Recording {
@@ -1115,6 +1186,14 @@ impl Recording {
             reading: None,
         };
         recorded::write(&path, &record)?;
+        let session = (record.handle.clone())
+            .filter(|_| record.parent_id.is_none())
+            .map(|handle| Session {
+                env: env.clone(),
+                handle,
+                wait: waits.board(),
+                last: Mutex::new(std::time::Instant::now()),
+            });
         let recording = Recording {
             folder,
             runs,
@@ -1126,6 +1205,7 @@ impl Recording {
             path,
             lease,
             record: Mutex::new(record),
+            session,
         };
         if started.is_some() {
             recording.line(&recording.held());
@@ -1189,13 +1269,17 @@ impl Recording {
         }
     }
 
-    /// It still runs, its processes as `reading` last read them when there is one.
+    /// It still runs, its processes as `reading` last read them when there is one; and so the
+    /// session it names is there, which the board is told when that is due ([`Session::seen`]).
     fn beat(&self, reading: Option<recorded::CpuReading>) {
         self.update(|record, _| {
             if reading.is_some() {
                 record.reading = reading;
             }
         });
+        if let Some(session) = &self.session {
+            session.seen(false);
+        }
     }
 
     /// It ended at `at` so (`exit_code` or `signal`, neither when that is not known), its command
@@ -1239,6 +1323,10 @@ impl Recording {
         let _ = recorded::write(&self.path, &record);
         drop(record);
         drop(self.lease);
+        // Its session was there until now: it ages from the run's end.
+        if let Some(session) = &self.session {
+            session.seen(true);
+        }
     }
 }
 
@@ -2255,6 +2343,35 @@ mod tests {
 
     fn args(words: &[&str]) -> Vec<OsString> {
         words.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn a_runs_session_is_said_there_every_so_often_and_once_more_as_the_run_ends() {
+        let began = std::time::Instant::now();
+        let session = Session {
+            env: Env {
+                vars: Default::default(),
+                cwd: PathBuf::new(),
+            },
+            handle: "amber-heron".into(),
+            wait: WAIT,
+            last: Mutex::new(began),
+        };
+        let short = SEEN - Duration::from_millis(1);
+        // Its start is its session's own call: nothing is said until a while after it.
+        assert!(!session.due(began, false));
+        assert!(!session.due(began + short, false));
+        assert!(session.due(began + SEEN, false));
+        // Said once: the next time is that long after, whether or not the board answered.
+        assert!(!session.due(began + SEEN, false));
+        assert!(!session.due(began + SEEN + short, false));
+        assert!(session.due(began + SEEN * 2 + BEAT, false));
+        // Its end is said whenever it comes, and a beat read late after it says nothing more.
+        assert!(session.due(began + SEEN * 2 + BEAT * 2, true));
+        assert!(!session.due(began + SEEN * 2, false));
+        assert!(session.due(began + SEEN * 2 + BEAT * 2, true));
+        // Three of its times fit inside the time a session reads live after one.
+        assert!(SEEN.as_secs_f64() * 3.0 <= crate::health::LIVE_SECONDS);
     }
 
     #[test]

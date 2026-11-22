@@ -92,6 +92,8 @@ decision you are asked to make is a *card*, one line in a *register*. The regist
 <!-- register:start -->
 ## Needs your decision
 
+### General
+
 - [ ] **lamp-count** — Sell twelve lamps at launch, or twenty? A: twelve. B: twenty. Approve and say A or B in the note, or comment.
 <!-- register:end -->
 ```

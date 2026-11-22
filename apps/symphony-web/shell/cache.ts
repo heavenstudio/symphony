@@ -109,8 +109,11 @@ window.symphonyCache = ((): Store => {
   // How long a page waits for the database to open before it goes on without the cache, unless
   // the page names another (`symphonyCacheOpenMs`, a positive number of ms a browser test's
   // script sets, so a page tested with its cache has it however long a loaded machine takes to
-  // open it), and within how long of a page's first keep its visit comes.
+  // open it; any other value is ignored), at most the longest wait a browser's timer takes,
+  // 2^31 - 1 ms, past which Chrome's fires at once; and within how long of a page's first keep
+  // its visit comes.
   const OPENING = 500,
+    LONGEST = 2 ** 31 - 1,
     VISIT = 6e4;
   let opened: Promise<IDBDatabase | null> | undefined, named: number | undefined;
   let checked = new Map<number, Promise<IDBDatabase | null>>();
@@ -157,7 +160,7 @@ window.symphonyCache = ((): Store => {
 
   const opening = () => {
     const named = window.symphonyCacheOpenMs;
-    return typeof named === "number" && named > 0 ? named : OPENING;
+    return typeof named === "number" && named > 0 ? Math.min(named, LONGEST) : OPENING;
   };
 
   function open(): Promise<IDBDatabase | null> {

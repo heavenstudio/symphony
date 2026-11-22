@@ -1,4 +1,5 @@
-//! Revision-bound guards (docs/WORKFLOW.md, "Guards"; docs/DECISIONS.md#revision-bound-project-guards
+//! Revision-bound guards (docs/WORKFLOW.md, "Guards";
+//! docs/analysis/revision-bound-transition-guards.md#revision-bound-project-guards
 //! B): a guarded edge is taken only with an attestation from the project's own approval
 //! authority, signed by the key the project commits for it, naming exactly the operation taken,
 //! and at the generation of that authority the board last accepted. The project keeps the ledger

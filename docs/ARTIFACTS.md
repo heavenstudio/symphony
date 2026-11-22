@@ -5,7 +5,7 @@ working evidence through a private byte provider and a durable metadata CAS. Con
 enables no route, settings switch, import, cleanup schedule or task transition. Document/card
 pictures remain Git-backed; existing attachment calls, paths and local defaults still apply.
 The broader [durable artifact design](analysis/remote-artifact-store.md) describes the intended
-integrations, beyond this first core, under [its card](DECISIONS.md#durable-project-artifacts).
+integrations, beyond this first core, under [its card](analysis/remote-artifact-store.md#durable-project-artifacts).
 
 ## Publication and identity
 
