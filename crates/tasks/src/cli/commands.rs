@@ -308,7 +308,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 ),
                 (status, _) => format!("{slug} is {status}"),
             });
-            finish::after_finish(store, c, &t);
+            finish::after_verdict(store, c, &t);
             finish::poke(c, &slug);
         }
         "say" => {
@@ -530,6 +530,10 @@ fn land(store: &Store, c: &mut Context) -> Result<(), Stop> {
         })?
     };
     c.say(&line);
+    // The terminals its approve left to the land close, where the land closed the task.
+    if !slug.is_empty() {
+        panes::close_landed(store, c, &slug);
+    }
     Ok(())
 }
 

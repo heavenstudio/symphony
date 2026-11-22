@@ -1,8 +1,8 @@
-//! What follows a task's move: a finished task's terminals close and its sweep starts; a task in
-//! review starts its tip's verify, the board's `on_review` command, said in one line; and, where
-//! the project delivers by pull request, its dispatch to the host
-//! ([`crate::land::dispatch`]), as each later write that can change its evidence does
-//! ([`poke`]).
+//! What follows a task's move: a finished task's terminals close and its sweep starts (an approved
+//! one's executors stay until it lands); a task in review starts its tip's verify, the board's
+//! `on_review` command, said in one line; and, where the project delivers by pull request, its
+//! dispatch to the host ([`crate::land::dispatch`]), as each later write that can change its
+//! evidence does ([`poke`]).
 
 use super::{Context, panes};
 use crate::land::dispatch;
@@ -43,6 +43,18 @@ pub(super) fn poke(c: &mut Context, slug: &str) {
     }
 }
 
+/// A verdict was given on `task`. An approve leaves it done and not landed
+/// ([`crate::orchestration::unlanded`]): its terminals close but its executors', which the land may
+/// still ask for something ([`crate::launch::approved`]) and which close once a landing closed the
+/// task ([`panes::close_landed`]). Any other task a verdict finishes is finished as by a move.
+pub(super) fn after_verdict(store: &Store, c: &mut Context, task: &Task) {
+    if crate::orchestration::unlanded(task).is_none() {
+        return after_finish(store, c, task);
+    }
+    panes::close_approved(store, c, &task.slug);
+    sweep(c, task);
+}
+
 /// A finished task's terminals close and the worktree sweep is asked for: finished by its
 /// recorded facts, so a task a custom workflow holds by its terminal position, never the status it
 /// projects to ([`Store::finished`]).
@@ -51,6 +63,11 @@ pub(super) fn after_finish(store: &Store, c: &mut Context, task: &Task) {
         return;
     }
     panes::close_finished(store, c, &task.slug);
+    sweep(c, task);
+}
+
+/// The worktree sweep is asked for, for finished `task`.
+fn sweep(c: &mut Context, task: &Task) {
     let why = format!("{} is {}", task.slug, task.status);
     trigger::trigger(c.env, &c.env.cwd, &why, Some(&task.slug));
 }
