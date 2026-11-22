@@ -79,8 +79,8 @@ project records it through its own build wrapper
 `symphony.local.toml`, beside the main checkout's `symphony.toml`, holds one machine's or one
 person's preferences. Git does not version it: `symphony init` adds it to the project's
 `.gitignore`, and the settings check and the lint refuse one git tracks. It is read after the
-project file: a key it writes holds in the committed one's place, a key it leaves out keeps the
-committed one, and with no such file the project file is read alone. A linked worktree has none of
+project file and [the board's store](#the-boards-store): a key it writes holds in the place of
+both, a key it leaves out keeps what they say, and with no such file they are read alone. A linked worktree has none of
 its own and reads the main checkout's, as it reads the main checkout's project file for these
 settings.
 
@@ -122,6 +122,66 @@ overrides, the file and the line (`symphony.local.toml [limits] machine_agents, 
 `just symphony-cli model ROLE MODEL --local` writes a role's model there instead of in the project
 file, and with `all` and `--agent` the launch agent and its model too, making the file when it is
 not there; nothing is landed for it.
+
+## The board's store
+
+The board keeps a project's preferences too, in a table of its own
+([TASKS](../workflow/TASKS.md#where-it-lives)): what the project was told on its board and no file holds. A
+setting is read in this order, each place over the one before:
+
+1. the Symphony's default;
+2. the committed project file;
+3. the board's store;
+4. [the local settings file](#the-local-settings-file).
+
+A board that was never told anything has no entry, so it reads as the files alone. A stored value
+holds at once, from the next read of the settings, and waits for no commit and no landing; it
+stands over a later commit of the same key, as it is read after the file, until its entry is
+removed. The local file stays the last word on its machine.
+
+An entry is keyed by its setting, the tables and the key the project file names it by, joined by
+dots: `limits.low_volume`, `agents.launch.model`, `agents.models.reviewer`, `agents.panes`. It
+keeps every change made to it, not only the last: the value before, the value after, when, and the
+session or page that wrote it. A removed entry holds no value and keeps its record, and the
+files' value is in force again.
+
+It holds preferences alone:
+
+- `[agents.launch]`: the agent a launch starts, its model and its effort;
+- `[agents.models]`: the model each role runs on;
+- `[agents]`'s `panes`;
+- `[limits]`: every key of it.
+
+What the local file is refused, the store is refused, by the same rules and the same two lists
+(`PROTECTED` and `PROTECTED_KEYS` in `crates/tasks/src/local.rs`): a setting that holds a command
+or a program the Symphony runs, or that decides what lands, is never kept there, as a place no
+commit records must not change the landing gate or run a command. A value is judged when it is
+written, since no landing passes over it: its type, a limit's least, an agent a launch starts,
+one of `panes`' two values. A refusal names the key and why, and nothing is written. Each entry
+is judged again when it is read, alone: one the store may not hold, however its row came to be
+in the table, is said on stderr and never read, and the others hold.
+
+```sh
+just tasks settings set limits.machine_agents 4 --as HANDLE
+just tasks settings remove limits.machine_agents --as HANDLE
+just tasks settings list
+```
+
+`list` prints each entry with its record, and `--json` the same as JSON. The store's calls are
+the board's own (`Store::store_setting`, `Store::remove_setting`, `Store::stored_entries`,
+`crates/tasks/src/store/stored_settings.rs`). The board's reader of the settings reads it where it
+reads the local file (`crates/tasks/src/settings.rs`, with `limits.rs` and
+`launch/defaults.rs`), so the limits a command is held to and the agent and model a launch starts
+agree, and `just tasks limits` names the store for each value it gives, with the committed value
+that one stands over (`the board's store [limits] machine_agents, over 12 ([limits]
+machine_agents, line 9)`). The Symphony's own load of the project file reads the files alone:
+`panes`, which only that load reads, is kept, judged and listed here and is a row of `just tasks
+limits` once stored.
+
+The table comes with an additive step of the board's schema
+([CHECKS](../workflow/CHECKS.md#the-board-is-a-contract)): a build without the step reads every setting from
+the files, so a stored value holds for the builds that have it. A move of the board to another
+engine carries the entries.
 
 ## `[project]`
 

@@ -79,6 +79,7 @@ pub mod runs;
 pub mod schema;
 pub mod server;
 pub mod session_url;
+pub mod settings;
 pub mod slots;
 pub mod stages;
 pub mod stamps;

@@ -12,7 +12,10 @@
 //! ([`Landing::arm`]). The check the default branch requires, `symphony/eligible`, is pending while
 //! a stamp is missing, so the host merges once the last one stands, seconds after the write that
 //! made it stand published it, with nobody running a land. A dispatch whose head and evidence are
-//! as it published them asks the host nothing.
+//! as it published them asks the host nothing, and neither does one that runs once the task
+//! landed at that head: it says so in its log alone. One whose publication the host refuses
+//! because it merged that head meanwhile ([`Landing::merged_meanwhile`]) stops with no word on
+//! the thread, the merge being the watcher's to settle.
 //!
 //! Whether the host merged is the one thing the board cannot see, and it is the watcher's
 //! ([`watch`]): one per project (`tasks land --watch`, detached, [`WATCH_LOCK`]), started by each
@@ -34,8 +37,8 @@
 //! the board sets on what it starts: a move is not a land, but what it starts publishes and arms
 //! only what the land would.
 
-use super::delivery::{self, Binding, Journal, Stage, Transport};
-use super::{FOLDER, GIT_VARS, Landing, RECIPE, Refusal, Stop, short};
+use super::delivery::{self, Binding, Journal, Receipt, Stage, Transport};
+use super::{FOLDER, GIT_VARS, Landing, Mode, RECIPE, Refusal, Stop, short};
 use crate::cli::Env;
 use crate::sweep::git::rev;
 use crate::sweep::trigger;
@@ -589,6 +592,20 @@ impl Landing<'_> {
                 "{slug} has no branch in the main checkout to dispatch"
             )))
         })?;
+        // Landed already at this head, by its own receipt ([`Landing::repeated`] refused any
+        // other): a write's dispatch that ran once the land of its merge had closed the task and
+        // dropped its journal. Nothing is published to a pull request merged, and nothing stopped.
+        if let Some(receipt) = Receipt::read(&self.folder, slug).filter(|kept| kept.head == tip) {
+            unmark(&self.folder, slug);
+            return Ok(format!(
+                "{slug} landed already as {} from {} by pull request #{} of {}: nothing is \
+                 dispatched",
+                short(&receipt.squash),
+                short(&receipt.head),
+                receipt.pull,
+                receipt.name
+            ));
+        }
         // A pull request bound before and merged or closed since is settled first.
         if let Some(journal) = journal.clone().filter(|journal| journal.binding.is_some())
             && let Some(done) = self.settled_before(journal)
@@ -651,6 +668,37 @@ impl Landing<'_> {
             "closed" => Some(self.undelivered(journal, Failure::Closed)),
             _ => None,
         }
+    }
+
+    /// The line a dispatch ends with, saying nothing on the thread, where the host refused its
+    /// publication because it merged the head meanwhile: the pull request `journal` binds, read
+    /// as open when the dispatch began, reads merged at `tip`, the head asked to be published,
+    /// and the watcher reads `journal` ([`Journal::watched`]), so its next round settles the
+    /// merge and closes the task. None for a land or a round, where the pull request does not
+    /// read, and where it was merged at another head or closed: the refusal stands as it is.
+    pub(super) fn merged_meanwhile(&self, journal: &Journal, tip: &str) -> Option<String> {
+        let slug = self.slug;
+        if !matches!(self.mode, Mode::Dispatch) || !journal.watched() {
+            return None;
+        }
+        let binding = journal.binding.as_ref()?;
+        let request = json!({
+            "verb": "result", "slug": slug,
+            "repository": binding.repository, "pull": binding.pull,
+        });
+        let result = self.ask("result", &request).ok()?;
+        let merged = delivery::state(&result).0 == "merged" && result["head"].as_str() == Some(tip);
+        merged.then(|| {
+            // One that ended, or that a reboot ended, is started for it.
+            let _ = watch_start(self.env, &self.main);
+            format!(
+                "{slug}: pull request #{} of {} merged {} while it was dispatched: nothing more \
+                 is published to it, and the watcher's next round closes the task",
+                binding.pull,
+                binding.name,
+                short(tip)
+            )
+        })
     }
 
     /// A round of the watcher for this task, armed at the host, at `clock` (whole seconds since

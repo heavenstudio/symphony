@@ -15,7 +15,7 @@ use crate::credential::Secret;
 use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 
 /// A request, relative to the API's base.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,6 +34,60 @@ pub struct Response {
     pub status: u16,
     pub headers: BTreeMap<String, String>,
     pub body: String,
+}
+
+/// How long a rate limit asks for, as its answer said it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Wait {
+    /// `retry-after`: this many seconds from now, never fewer than none.
+    For(i64),
+    /// `x-ratelimit-reset`: until this second since 1970.
+    Until(i64),
+    /// The answer named no time.
+    Unsaid,
+}
+
+impl Wait {
+    /// The second since 1970 it ends at, counting a `retry-after` from `now`; none where the
+    /// answer named no time.
+    #[must_use]
+    pub fn until(self, now: i64) -> Option<i64> {
+        match self {
+            Wait::For(seconds) => Some(now.saturating_add(seconds)),
+            Wait::Until(second) => Some(second),
+            Wait::Unsaid => None,
+        }
+    }
+}
+
+impl Response {
+    /// The header `name` as a whole number, where it reads as one.
+    fn number(&self, name: &str) -> Option<i64> {
+        self.headers.get(name)?.trim().parse().ok()
+    }
+}
+
+/// The wait `response` asks for where it is GitHub's rate limit, the one rule every call is
+/// judged by: a 429, or a 403 that carries `retry-after` or says no request remains
+/// (`x-ratelimit-remaining: 0`), which is what GitHub documents of its primary and secondary
+/// limits. No other status is one, whatever its headers: the last request a window allows also
+/// says none remains. A secondary limit answered 403 with neither header is told only by its
+/// message, whose words GitHub does not document, and is not read as one.
+///
+/// The wait is `retry-after` where it reads as seconds, else the window's reset, else unsaid.
+#[must_use]
+pub fn rate_limited(response: &Response) -> Option<Wait> {
+    let limited = response.status == 429
+        || (response.status == 403
+            && (response.headers.contains_key("retry-after")
+                || response.number("x-ratelimit-remaining") == Some(0)));
+    limited.then(|| {
+        (response
+            .number("retry-after")
+            .map(|seconds| Wait::For(seconds.max(0))))
+        .or_else(|| response.number("x-ratelimit-reset").map(Wait::Until))
+        .unwrap_or(Wait::Unsaid)
+    })
 }
 
 /// A request that was given no answer.
@@ -206,11 +260,29 @@ fn parse(output: &[u8]) -> Result<Response, String> {
     }
 }
 
+/// What a started `curl` printed once it was handed `config`, the whole request, on its standard
+/// input and ended.
+fn handed(mut child: Child, config: &str) -> Result<Output, Failure> {
+    let wrote = child
+        .stdin
+        .take()
+        .map(|mut stdin| stdin.write_all(config.as_bytes()));
+    let done = child
+        .wait_with_output()
+        .map_err(|error| Failure::Unknown(format!("curl was not waited for: {error}")))?;
+    if let Some(Err(error)) = wrote {
+        return Err(Failure::NotSent(format!(
+            "curl did not read the request: {error}"
+        )));
+    }
+    Ok(done)
+}
+
 impl Transport for Curl {
     fn send(&self, request: &Request) -> Result<Response, Failure> {
         let config = self.config(request)?;
         let said = |text: &str| self.token.redact(text.trim());
-        let mut child = Command::new(&self.program)
+        let child = Command::new(&self.program)
             .args([
                 "-q",
                 "--config",
@@ -240,18 +312,7 @@ impl Transport for Curl {
                     format!("{} did not start: {error}; nothing was sent", self.program)
                 })
             })?;
-        let wrote = child
-            .stdin
-            .take()
-            .map(|mut stdin| stdin.write_all(config.as_bytes()));
-        let done = child
-            .wait_with_output()
-            .map_err(|error| Failure::Unknown(format!("curl was not waited for: {error}")))?;
-        if let Some(Err(error)) = wrote {
-            return Err(Failure::NotSent(format!(
-                "curl did not read the request: {error}"
-            )));
-        }
+        let done = handed(child, &config)?;
         if !done.status.success() {
             let why = format!(
                 "curl failed ({}): {}",
@@ -281,7 +342,7 @@ impl Transport for Curl {
             )));
         }
         let config = format!("url = \"{url}\"\noutput = \"{file}\"\n");
-        let mut child = Command::new(&self.program)
+        let child = Command::new(&self.program)
             .args([
                 "-q",
                 "--config",
@@ -306,18 +367,7 @@ impl Transport for Curl {
             .map_err(|error| {
                 Failure::NotSent(format!("{} did not start: {error}", self.program))
             })?;
-        let wrote = child
-            .stdin
-            .take()
-            .map(|mut stdin| stdin.write_all(config.as_bytes()));
-        let done = child
-            .wait_with_output()
-            .map_err(|error| Failure::Unknown(format!("curl was not waited for: {error}")))?;
-        if let Some(Err(error)) = wrote {
-            return Err(Failure::NotSent(format!(
-                "curl did not read the request: {error}"
-            )));
-        }
+        let done = handed(child, &config)?;
         if !done.status.success() {
             // What curl says of a failure names the URL, whose query is the download's signature.
             let why = String::from_utf8_lossy(&done.stderr).replace(url, &named);

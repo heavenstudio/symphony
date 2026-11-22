@@ -1171,6 +1171,18 @@ enum Stop {
     InUse(String),
 }
 
+impl Stop {
+    /// `why` it stopped, as a refusal where it was `refused` what a flag asked by hand, else as
+    /// the error the board hears of.
+    fn by(refused: bool, why: String) -> Stop {
+        if refused {
+            Stop::Refused(why)
+        } else {
+            Stop::Error(why)
+        }
+    }
+}
+
 /// A release run, an out-of-cycle release or a refresh: its exit code.
 fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let lock = match record::lock(&repo.common) {
@@ -2156,13 +2168,454 @@ fn unjudged(record: &mut Run, logs: &Path, check: &str, why: &str, out: &mut dyn
     record::so_far(logs, record);
 }
 
-/// The run itself, into `record`, `within` the run's bound. With `held`, a rerun of that release
+/// The commit a run checks, on `main_line` at `tip`: the `held` release candidate's on a rerun of
+/// it, the one an out-of-cycle release names, else the tip itself. One that is not on the line is
+/// never released: an error of a candidate, by `delivered` too (the squash that delivered it
+/// there), a refusal of a commit named by hand.
+fn candidate_commit(
+    repo: &Repo,
+    options: &Options,
+    held: Option<&candidate::Candidate>,
+    delivered: &receipts::Receipts,
+    tip: &str,
+    main_line: &str,
+) -> Result<String, Stop> {
+    match (&options.out_of_cycle, held) {
+        (_, Some(held)) => {
+            // On it by its history, or by the squash that delivered it there
+            // ([`receipts::Receipts::holds`]).
+            if !(delivered.holds(&repo.root, &held.commit, tip)).map_err(Stop::Error)? {
+                return Err(Stop::Error(format!(
+                    "the release candidate {} is not on {main_line}: only a commit on it is \
+                     released",
+                    short(&held.commit)
+                )));
+            }
+            Ok(held.commit.clone())
+        }
+        (None, None) => Ok(tip.to_string()),
+        (Some(rev), None) => {
+            let named = commit(&repo.root, rev).map_err(Stop::Refused)?;
+            if !is_ancestor(&repo.root, &named, tip).map_err(Stop::Error)? {
+                return Err(Stop::Refused(format!(
+                    "{rev} ({}) is not on {main_line}: only a commit on it is released",
+                    short(&named)
+                )));
+            }
+            Ok(named)
+        }
+    }
+}
+
+/// Whether the `candidate` is one of the `releases` already, the `newest` of them or an older
+/// one: the run then has nothing new to check, and ends `unchanged` in its `record`, saying how a
+/// tag the remote lacks is delivered. Refused of an out-of-cycle release, and an error when
+/// `main_line` went back behind the newest release.
+fn released(
+    options: &Options,
+    releases: &[Known],
+    newest: Option<&Known>,
+    candidate: &str,
+    main_line: &str,
+    record: &mut Run,
+    out: &mut dyn Write,
+) -> Result<bool, Stop> {
+    let Some(released) = releases.iter().find(|known| known.commit == candidate) else {
+        return Ok(false);
+    };
+    if options.out_of_cycle.is_some() {
+        return Err(Stop::Refused(format!(
+            "{} is {} already",
+            short(candidate),
+            released.name
+        )));
+    }
+    if let Some(newest) = newest.filter(|newest| newest.name != released.name) {
+        return Err(Stop::Error(format!(
+            "{main_line} is {} ({}), behind the newest release {}: main went back, and \
+             nothing is released until it moves past {}",
+            released.name,
+            short(candidate),
+            newest.name,
+            newest.name
+        )));
+    }
+    let _ = writeln!(
+        out,
+        "release: {main_line} is {} already ({}): nothing new to check",
+        released.name,
+        short(candidate)
+    );
+    record.result = "unchanged".into();
+    let remote = options.remote.as_str();
+    if options.push && !released.on_remote {
+        record.error = Some(format!(
+            "{} is tagged here but not on {remote}: {} delivers it",
+            released.name,
+            record::push_line(remote, &released.name)
+        ));
+    }
+    Ok(true)
+}
+
+/// A release only moves forward: the `candidate` holds the `newest` release, by its history or by
+/// the squash that `delivered` it. Otherwise refused of an out-of-cycle release, and an error of
+/// `main_line`.
+fn forward(
+    repo: &Repo,
+    options: &Options,
+    delivered: &receipts::Receipts,
+    newest: Option<&Known>,
+    candidate: &str,
+    main_line: &str,
+) -> Result<(), Stop> {
+    // A release on a head a pull request delivered is behind whatever holds its squash.
+    if let Some(newest) = newest
+        && !(delivered.holds(&repo.root, &newest.commit, candidate)).map_err(Stop::Error)?
+    {
+        let named = options.out_of_cycle.as_deref().unwrap_or(main_line);
+        let why = format!(
+            "{named} ({}) is not a descendant of the newest release {} ({}): a release only \
+             moves forward",
+            short(candidate),
+            newest.name,
+            short(&newest.commit)
+        );
+        return Err(Stop::by(options.out_of_cycle.is_some(), why));
+    }
+    Ok(())
+}
+
+/// The name of the release tagged at `now` beside the `releases` known, the `newest` of them
+/// given: none, and why, when this machine's clock names one that does not sort after it.
+fn next_name(now: f64, releases: &[Known], newest: Option<&Release>) -> Result<String, String> {
+    let name = tags::next(
+        &when_day(now),
+        releases.iter().map(|known| known.name.as_str()),
+    );
+    if let Some(newest) = newest
+        && Release::parse(&name).is_none_or(|next| next <= *newest)
+    {
+        return Err(format!(
+            "this machine's clock names the release {name}, which does not sort after the newest \
+             release {}: no tag",
+            newest.name()
+        ));
+    }
+    Ok(name)
+}
+
+/// The command that verifies on GitHub's machines, where the project names one: asked for the
+/// `candidate` of the run `by`, the remote's branch at `tip`.
+fn hosting<'a>(
+    repo: &'a Repo,
+    options: &'a Options,
+    candidate: &'a str,
+    tip: &'a str,
+    by: &'a str,
+) -> Option<hosted::Hosting<'a>> {
+    (!repo.project.releases.hosted.is_empty()).then(|| hosted::Hosting {
+        root: &repo.root,
+        main: &repo.main,
+        command: &repo.project.releases.hosted,
+        commit: candidate,
+        tip,
+        remote: &options.remote,
+        branch: &options.branch,
+        by,
+    })
+}
+
+/// What the checks of one run, its notes and its tag read: the run's checkout (`place`) holding
+/// its `candidate`, its `logs`, and who answers for a check besides this machine, the `held`
+/// release candidate's standing greens against the `tip` or GitHub's runners (`hosting`).
+struct Round<'a> {
+    repo: &'a Repo,
+    options: &'a Options,
+    held: Option<&'a candidate::Candidate>,
+    place: &'a Place,
+    candidate: &'a str,
+    logs: &'a Path,
+    tip: candidate::Tip<'a>,
+    hosting: Option<hosted::Hosting<'a>>,
+    /// Whether the hosted clock started it: a run of main's tip that verifies nothing here.
+    hosted_only: bool,
+    within: Within<'a>,
+}
+
+impl<'a> Round<'a> {
+    /// The check a run the hosted clock started cannot have verified, and why: one its workflow
+    /// does not serve stops it before any check runs, as a check GitHub gives no result of does.
+    fn unserved(&self) -> Option<(&'a Step, String)> {
+        let project = &self.repo.project;
+        let rulesets =
+            |step: &Step| step.name == rulesets::NAME && !project.releases.rulesets.is_empty();
+        let step = (self.options.checks.iter())
+            .find(|step| !hosted::serves(step) && !rulesets(step))
+            .filter(|_| self.hosted_only)?;
+        let why = format!(
+            "GitHub's runners verify `{}` alone, never `{}`",
+            VERIFY.1, step.command
+        );
+        Some((step, why))
+    }
+
+    /// One check of the run, `step`, into `record`: carried green from the release candidate
+    /// (into `carried`, with what of it a partial rerun keeps), else run here or asked of GitHub's
+    /// runners, looked at, its tests' failures rerun alone, and kept. False when the run ends
+    /// there unjudged ([`unjudged`]), with no check after it.
+    fn check_one(
+        &self,
+        step: &Step,
+        record: &mut Run,
+        carried: &mut Vec<record::Carried>,
+        out: &mut dyn Write,
+    ) -> Result<bool, Stop> {
+        let (place, candidate, logs, within) = (self.place, self.candidate, self.logs, self.within);
+        let until = within.bound;
+        let log = |step: &Step| logs.join(format!("{}.log", board::key(&step.name)));
+        told_to_stop(until, &format!("before `{}` started", step.name))?;
+        let (planned, kept) = match self.held {
+            Some(held) => held.plan(&step.name, &self.tip),
+            None => (candidate::Planned::Whole, Vec::new()),
+        };
+        // How the greens it keeps are kept: all from a commit of this tree, as a rerun always
+        // carried, or some by their inputs' digest.
+        let by_tree = kept.iter().all(|kept| kept.digest.is_none());
+        carried.extend(kept);
+        let only;
+        let step = match &planned {
+            candidate::Planned::Whole => step,
+            candidate::Planned::Carried => {
+                let _ = writeln!(
+                    out,
+                    "release: `{}` carried green: {}",
+                    step.name,
+                    if by_tree {
+                        "the commit it was green on holds this tree"
+                    } else {
+                        "its inputs are as they were when it was green"
+                    }
+                );
+                return Ok(true);
+            }
+            candidate::Planned::Steps(names) => {
+                let _ = writeln!(
+                    out,
+                    "release: `{}` reruns {}, the rest carried green {}",
+                    step.name,
+                    names.join(", "),
+                    if by_tree {
+                        "from this tree"
+                    } else {
+                        "on the inputs they were green on"
+                    }
+                );
+                only = step.only(names);
+                &only
+            }
+        };
+        // What the run's time leaves out is red, never passed over: a release is checked whole.
+        let whole = matches!(planned, candidate::Planned::Whole);
+        let mut there = false;
+        let hosting = (self.hosting.as_ref()).filter(|_| whole && hosted::serves(step));
+        let ran = if Instant::now() >= until.until {
+            Ran::never(step, &log(step), NOT_STARTED.into())
+        } else if let Some(hosting) = hosting {
+            let _ = writeln!(
+                out,
+                "release: `{}` is asked of GitHub's runners for {}",
+                step.name,
+                short(candidate)
+            );
+            match hosting.verify(step, logs, &log(step), within) {
+                hosted::Judged::There(ran, judged) => {
+                    let _ = writeln!(out, "release: {}", judged.said());
+                    // Its greens stand on that run's runners, which no rerun here runs on.
+                    record.environment = Some(hosted::environment(&judged));
+                    record.hosted.push(judged);
+                    there = true;
+                    *ran
+                }
+                hosted::Judged::Here(why) if self.hosted_only => {
+                    unjudged(record, logs, &step.name, &why, out);
+                    return Ok(false);
+                }
+                hosted::Judged::Here(why) => {
+                    let judged = hosted::Hosted::here(&step.name, &why);
+                    let _ = writeln!(out, "release: {}", judged.said());
+                    record.hosted.push(judged);
+                    steps::run(step, &place.checkout, logs, &log(step), within, out)
+                }
+            }
+        } else {
+            steps::run(step, &place.checkout, logs, &log(step), within, out)
+        };
+        tell_check(&ran, out);
+        stopped_in(&ran)?;
+        let mut looked = look(place, candidate, until, &after(&ran), true);
+        // Its tests' failures, each rerun alone in the checkout the look found as it was, which
+        // is looked at again once they ended ([`alone`]).
+        let mut ran = ran;
+        // Never those of a check GitHub judged: a rerun here is this machine's own build of them.
+        if looked.is_ok() && !there && alone::rerun(&mut ran, &place.checkout, logs, within, out) {
+            let mut reruns = (ran.steps.iter())
+                .filter_map(|step| step.alone.as_ref())
+                .flat_map(|alone| &alone.reruns);
+            looked = reruns.try_for_each(stopped_in).and_then(|()| {
+                let at = format!("after `{}` reran its failures alone", ran.name);
+                look(place, candidate, until, &at, true)
+            });
+            if looked.is_err() {
+                alone::void(
+                    &mut ran,
+                    "the run stopped after its reruns, before they could be looked at",
+                );
+            }
+        }
+        keep(record, logs, ran, looked)?;
+        Ok(true)
+    }
+
+    /// The message of the tag `name` of a green run, its `record` and what it `carried` read, after
+    /// the `previous` release: what changed since, the checks green on it, what it publishes and
+    /// what a project does to take it. With it, the bound the tag and its push have: the run's,
+    /// and no less than [`FINISH`] from the last look at the checkout, which stops the run when
+    /// that changed or the run was told to stop.
+    fn notes(
+        &self,
+        name: &str,
+        previous: Option<&notes::Previous>,
+        record: &Run,
+        carried: &[record::Carried],
+        out: &mut dyn Write,
+    ) -> Result<(String, Bound<'a>), Stop> {
+        let (repo, options, candidate) = (self.repo, self.options, self.candidate);
+        let until = self.within.bound;
+        let changes = match previous {
+            Some(previous) => {
+                notes::changes(&repo.root, &previous.commit, candidate).map_err(Stop::Error)?
+            }
+            None => Vec::new(),
+        };
+        told_to_stop(until, "before it tagged")?;
+        let until = until.later(FINISH);
+        // What git names alone: the processes were listed after the last check, and nothing has run
+        // in the checkout since.
+        look(self.place, candidate, until, "before it tagged", false)?;
+        // A check carried whole is green as much as one run, in the order the checks are named: the
+        // notes say which were carried.
+        let ran = |name: &str| record.checks.iter().any(|ran| ran.name == name);
+        let checked: Vec<String> = (options.checks.iter())
+            .map(|step| step.name.clone())
+            .filter(|name| {
+                // Carried whole, by its own green or by each step and part it listed.
+                let under = format!("{name}/");
+                let kept =
+                    |kept: &record::Carried| kept.name == *name || kept.name.starts_with(&under);
+                ran(name) || carried.iter().any(kept)
+            })
+            .collect();
+        let held_notes = (self.held.map(|held| held.notes(carried))).unwrap_or_default();
+        // What it publishes on crates.io once pushed: each package whose version crates.io lacks now.
+        let publishes = match run_registry() {
+            Some(registry) if options.push && repo.project.releases.publish => {
+                crates::notes(&self.place.checkout, &registry, until)
+            }
+            _ => Vec::new(),
+        };
+        // A tag is never held back for its notes: one git cannot read is said, and left out.
+        let taking = consumer::taking(&repo.root, name, candidate).unwrap_or_else(|why| {
+            let _ = writeln!(
+                out,
+                "release: {name}'s message says nothing of what a project does to take it: {why}"
+            );
+            Vec::new()
+        });
+        let message = notes::message(
+            name,
+            candidate,
+            notes::facts(&repo.root, candidate),
+            previous,
+            &checked,
+            &publishes,
+            &held_notes,
+            &alone::notes(&record.checks, &board::passed_alone_slug(&record.id)),
+            &taking,
+            &changes,
+        );
+        Ok((message, until))
+    }
+
+    /// Tag the candidate `name` with `message`, and push that tag alone where the run pushes,
+    /// within `until`: into `record` the tag, whether the remote took it, and the tags the remote
+    /// still lacks, `name` ahead of those `unpushed` before it. A tag git refuses, or a push that
+    /// fails, is the record's error, never the run's stop.
+    fn tag_and_push(
+        &self,
+        name: &str,
+        message: &str,
+        mut unpushed: Vec<String>,
+        until: Bound<'_>,
+        record: &mut Run,
+        out: &mut dyn Write,
+    ) {
+        let (root, remote) = (&self.repo.root, self.options.remote.as_str());
+        if let Err(problem) = git_until(
+            root,
+            &["tag", "-a", name, self.candidate, "-m", message],
+            until,
+        ) {
+            record.error = Some(format!("cannot tag {name}: {problem}"));
+            return;
+        }
+        record.tag = Some(name.to_string());
+        unpushed.insert(0, name.to_string());
+        if self.options.push {
+            // That one ref, whatever the configuration says to push beside it.
+            let refspec = format!("refs/tags/{name}:refs/tags/{name}");
+            let pushed = git_until(
+                root,
+                &[
+                    "push",
+                    "--quiet",
+                    "--no-follow-tags",
+                    "--recurse-submodules=no",
+                    remote,
+                    &refspec,
+                ],
+                until,
+            );
+            match pushed {
+                Ok(_) => {
+                    record.pushed = true;
+                    unpushed.retain(|tag| *tag != name);
+                }
+                Err(problem) => {
+                    record.error = Some(format!(
+                        "tagged {name} here, but the push to {remote} failed: {problem}; {} \
+                         delivers it",
+                        record::push_line(remote, name)
+                    ));
+                }
+            }
+        }
+        record.unpushed = Some(unpushed);
+        let pushed = if record.pushed {
+            format!(", pushed to {remote}")
+        } else {
+            ", not pushed".into()
+        };
+        let _ = writeln!(out, "release: green; tagged {name}{pushed}");
+    }
+}
+
+/// The run itself, into `record`, `within` the run's bound, as its six steps: the candidate
+/// ([`candidate_commit`]), its place among the releases known ([`released`], [`forward`]), the
+/// checkout and its records, each check ([`Round::check_one`]), green or red, and the tag with its
+/// notes ([`Round::notes`], [`Round::tag_and_push`]). With `held`, a rerun of that release
 /// candidate: its tip is checked, with no wait for the regenerator (a fix commits the client its
 /// own sources make), each check as the candidate plans it ([`candidate::Candidate::plan`]).
-#[expect(
-    clippy::too_many_lines,
-    reason = "one run, step by step, reads best in one place"
-)]
 fn night(
     repo: &Repo,
     options: &Options,
@@ -2173,109 +2626,33 @@ fn night(
     within: Within<'_>,
 ) -> Result<(), Stop> {
     let until = within.bound;
-    let placed = |why: String| {
-        if options.named {
-            Stop::Refused(why)
-        } else {
-            Stop::Error(why)
-        }
-    };
-    let mut place =
-        place::place(&repo.root, &repo.main, &repo.common, &options.worktree).map_err(placed)?;
+    let mut place = place::place(&repo.root, &repo.main, &repo.common, &options.worktree)
+        .map_err(|why| Stop::by(options.named, why))?;
     let remote = options.remote.as_str();
+    // The candidate: the commit this run checks.
     let tip = fetch_line(&repo.root, remote, &options.branch, until).map_err(Stop::Error)?;
     let main_line = format!("{remote}/{}", options.branch);
     let delivered = receipts::Receipts::read(&repo.root);
-    let mut candidate = match (&options.out_of_cycle, held) {
-        (_, Some(held)) => {
-            // On it by its history, or by the squash that delivered it there
-            // ([`receipts::Receipts::holds`]).
-            if !(delivered.holds(&repo.root, &held.commit, &tip)).map_err(Stop::Error)? {
-                return Err(Stop::Error(format!(
-                    "the release candidate {} is not on {main_line}: only a commit on it is \
-                     released",
-                    short(&held.commit)
-                )));
-            }
-            held.commit.clone()
-        }
-        (None, None) => tip.clone(),
-        (Some(rev), None) => {
-            let named = commit(&repo.root, rev).map_err(Stop::Refused)?;
-            if !is_ancestor(&repo.root, &named, &tip).map_err(Stop::Error)? {
-                return Err(Stop::Refused(format!(
-                    "{rev} ({}) is not on {main_line}: only a commit on it is released",
-                    short(&named)
-                )));
-            }
-            named
-        }
-    };
+    let mut candidate = candidate_commit(repo, options, held, &delivered, &tip, &main_line)?;
     record.commit.clone_from(&candidate);
     record.tip = tip;
+    // Its place among the releases known: one already, behind the newest, or ahead of it.
     let releases = releases(repo, remote, until).map_err(Stop::Error)?;
-    let names = || releases.iter().map(|known| known.name.as_str());
-    let newest_first = tags::newest_first(names());
+    let newest_first = tags::newest_first(releases.iter().map(|known| known.name.as_str()));
     let known = |release: &Release| releases.iter().find(|known| known.name == release.name());
     let newest = newest_first.first().and_then(known);
-    let mut unpushed: Vec<String> = (newest_first.iter())
+    let unpushed: Vec<String> = (newest_first.iter())
         .filter_map(known)
         .filter(|known| !known.on_remote)
         .map(|known| known.name.clone())
         .collect();
     record.unpushed = Some(unpushed.clone());
-    if let Some(released) = releases.iter().find(|known| known.commit == candidate) {
-        if options.out_of_cycle.is_some() {
-            return Err(Stop::Refused(format!(
-                "{} is {} already",
-                short(&candidate),
-                released.name
-            )));
-        }
-        if let Some(newest) = newest.filter(|newest| newest.name != released.name) {
-            return Err(Stop::Error(format!(
-                "{main_line} is {} ({}), behind the newest release {}: main went back, and \
-                 nothing is released until it moves past {}",
-                released.name,
-                short(&candidate),
-                newest.name,
-                newest.name
-            )));
-        }
-        let _ = writeln!(
-            out,
-            "release: {main_line} is {} already ({}): nothing new to check",
-            released.name,
-            short(&candidate)
-        );
-        record.result = "unchanged".into();
-        if options.push && !released.on_remote {
-            record.error = Some(format!(
-                "{} is tagged here but not on {remote}: {} delivers it",
-                released.name,
-                record::push_line(remote, &released.name)
-            ));
-        }
+    if released(
+        options, &releases, newest, &candidate, &main_line, record, out,
+    )? {
         return Ok(());
     }
-    // A release on a head a pull request delivered is behind whatever holds its squash.
-    if let Some(newest) = newest
-        && !(delivered.holds(&repo.root, &newest.commit, &candidate)).map_err(Stop::Error)?
-    {
-        let named = options.out_of_cycle.as_deref().unwrap_or(&main_line);
-        let why = format!(
-            "{named} ({}) is not a descendant of the newest release {} ({}): a release only \
-             moves forward",
-            short(&candidate),
-            newest.name,
-            short(&newest.commit)
-        );
-        return Err(if options.out_of_cycle.is_some() {
-            Stop::Refused(why)
-        } else {
-            Stop::Error(why)
-        });
-    }
+    forward(repo, options, &delivered, newest, &candidate, &main_line)?;
     let previous = newest.map(|newest| notes::Previous {
         facts: notes::facts(&repo.root, &newest.commit),
         tag: newest.name.clone(),
@@ -2285,6 +2662,7 @@ fn night(
     if options.out_of_cycle.is_none() && held.is_none() {
         regenerated(repo, options, &mut candidate, record, until, out)?;
     }
+    // The checkout, holding the candidate, and the run's records.
     let what = match held {
         Some(held) => format!("round {} of the release candidate", held.next_round()),
         None => record.kind.clone(),
@@ -2306,7 +2684,6 @@ fn night(
     let logs = record::logs(folder, &record.id);
     fs::create_dir_all(&logs).map_err(|e| Stop::Error(symphony::text::os_error(&e, &logs)))?;
     record::so_far(&logs, record);
-    let log = |step: &Step| logs.join(format!("{}.log", board::key(&step.name)));
     // What the tree says its checks read, and what they run on: a green this run finds is
     // recorded with both, and a rerun carries one only on the same of each ([`inputs`]). A first
     // run carries nothing, and says nothing of either.
@@ -2327,134 +2704,29 @@ fn night(
         }
     }
     let mut carried: Vec<record::Carried> = Vec::new();
-    // A run of main's tip the hosted clock started verifies nothing here: a check its workflow
-    // does not serve stops it before any check runs, as a check GitHub gives no result of does.
-    let hosted_only = options.hosted_only && held.is_none();
-    let rulesets =
-        |step: &Step| step.name == rulesets::NAME && !repo.project.releases.rulesets.is_empty();
-    if hosted_only
-        && let Some(step) =
-            (options.checks.iter()).find(|step| !hosted::serves(step) && !rulesets(step))
-    {
-        let why = format!(
-            "GitHub's runners verify `{}` alone, never `{}`",
-            VERIFY.1, step.command
-        );
+    let (id, main_tip) = (record.id.clone(), record.tip.clone());
+    let round = Round {
+        repo,
+        options,
+        held,
+        place: &place,
+        candidate: &candidate,
+        logs: &logs,
+        tip,
+        hosting: hosting(repo, options, &candidate, &main_tip, &id),
+        // A run of main's tip the hosted clock started verifies nothing here.
+        hosted_only: options.hosted_only && held.is_none(),
+        within,
+    };
+    // Each check, in the order named.
+    if let Some((step, why)) = round.unserved() {
         unjudged(record, &logs, &step.name, &why, out);
         return Ok(());
     }
-    // The command that verifies on GitHub's machines, where the project names one.
-    let (id, main_tip) = (record.id.clone(), record.tip.clone());
-    let hosting = (!repo.project.releases.hosted.is_empty()).then(|| hosted::Hosting {
-        root: &repo.root,
-        main: &repo.main,
-        command: &repo.project.releases.hosted,
-        commit: &candidate,
-        tip: &main_tip,
-        remote,
-        branch: &options.branch,
-        by: &id,
-    });
     for step in &options.checks {
-        told_to_stop(until, &format!("before `{}` started", step.name))?;
-        let (planned, kept) = match held {
-            Some(held) => held.plan(&step.name, &tip),
-            None => (candidate::Planned::Whole, Vec::new()),
-        };
-        // How the greens it keeps are kept: all from a commit of this tree, as a rerun always
-        // carried, or some by their inputs' digest.
-        let by_tree = kept.iter().all(|kept| kept.digest.is_none());
-        carried.extend(kept);
-        let only;
-        let step = match &planned {
-            candidate::Planned::Whole => step,
-            candidate::Planned::Carried => {
-                let _ = writeln!(
-                    out,
-                    "release: `{}` carried green: {}",
-                    step.name,
-                    if by_tree {
-                        "the commit it was green on holds this tree"
-                    } else {
-                        "its inputs are as they were when it was green"
-                    }
-                );
-                continue;
-            }
-            candidate::Planned::Steps(names) => {
-                let _ = writeln!(
-                    out,
-                    "release: `{}` reruns {}, the rest carried green {}",
-                    step.name,
-                    names.join(", "),
-                    if by_tree {
-                        "from this tree"
-                    } else {
-                        "on the inputs they were green on"
-                    }
-                );
-                only = step.only(names);
-                &only
-            }
-        };
-        // What the run's time leaves out is red, never passed over: a release is checked whole.
-        let whole = matches!(planned, candidate::Planned::Whole);
-        let mut there = false;
-        let ran = if Instant::now() >= until.until {
-            Ran::never(step, &log(step), NOT_STARTED.into())
-        } else if let Some(hosting) = hosting.as_ref().filter(|_| whole && hosted::serves(step)) {
-            let _ = writeln!(
-                out,
-                "release: `{}` is asked of GitHub's runners for {}",
-                step.name,
-                short(&candidate)
-            );
-            match hosting.verify(step, &logs, &log(step), within) {
-                hosted::Judged::There(ran, judged) => {
-                    let _ = writeln!(out, "release: {}", judged.said());
-                    // Its greens stand on that run's runners, which no rerun here runs on.
-                    record.environment = Some(hosted::environment(&judged));
-                    record.hosted.push(judged);
-                    there = true;
-                    *ran
-                }
-                hosted::Judged::Here(why) if hosted_only => {
-                    unjudged(record, &logs, &step.name, &why, out);
-                    return Ok(());
-                }
-                hosted::Judged::Here(why) => {
-                    let judged = hosted::Hosted::here(&step.name, &why);
-                    let _ = writeln!(out, "release: {}", judged.said());
-                    record.hosted.push(judged);
-                    steps::run(step, &place.checkout, &logs, &log(step), within, out)
-                }
-            }
-        } else {
-            steps::run(step, &place.checkout, &logs, &log(step), within, out)
-        };
-        tell_check(&ran, out);
-        stopped_in(&ran)?;
-        let mut looked = look(&place, &candidate, until, &after(&ran), true);
-        // Its tests' failures, each rerun alone in the checkout the look found as it was, which
-        // is looked at again once they ended ([`alone`]).
-        let mut ran = ran;
-        // Never those of a check GitHub judged: a rerun here is this machine's own build of them.
-        if looked.is_ok() && !there && alone::rerun(&mut ran, &place.checkout, &logs, within, out) {
-            let mut reruns = (ran.steps.iter())
-                .filter_map(|step| step.alone.as_ref())
-                .flat_map(|alone| &alone.reruns);
-            looked = reruns.try_for_each(stopped_in).and_then(|()| {
-                let at = format!("after `{}` reran its failures alone", ran.name);
-                look(&place, &candidate, until, &at, true)
-            });
-            if looked.is_err() {
-                alone::void(
-                    &mut ran,
-                    "the run stopped after its reruns, before they could be looked at",
-                );
-            }
+        if !round.check_one(step, record, &mut carried, out)? {
+            return Ok(());
         }
-        keep(record, &logs, ran, looked)?;
     }
     if let Some(held) = held {
         record.rerun = Some(record::Rerun {
@@ -2464,6 +2736,7 @@ fn night(
         });
         record::so_far(&logs, record);
     }
+    // Green or red.
     let green =
         record.checks.iter().all(Ran::green) && !(record.checks.is_empty() && carried.is_empty());
     record.result = if green { "green" } else { "red" }.into();
@@ -2475,114 +2748,16 @@ fn night(
         let _ = writeln!(out, "release: red: {}; no release", red.join(", "));
         return Ok(());
     }
-    let name = tags::next(&when_day(options.now), names());
-    if let Some(newest) = newest_first.first()
-        && Release::parse(&name).is_none_or(|next| next <= *newest)
-    {
-        record.error = Some(format!(
-            "this machine's clock names the release {name}, which does not sort after the newest \
-             release {}: no tag",
-            newest.name()
-        ));
-        return Ok(());
-    }
-    let changes = match &previous {
-        Some(previous) => {
-            notes::changes(&repo.root, &previous.commit, &candidate).map_err(Stop::Error)?
+    // The tag of a green candidate, with its notes, pushed alone.
+    let name = match next_name(options.now, &releases, newest_first.first()) {
+        Ok(name) => name,
+        Err(why) => {
+            record.error = Some(why);
+            return Ok(());
         }
-        None => Vec::new(),
     };
-    told_to_stop(until, "before it tagged")?;
-    let until = until.later(FINISH);
-    // What git names alone: the processes were listed after the last check, and nothing has run
-    // in the checkout since.
-    look(&place, &candidate, until, "before it tagged", false)?;
-    // A check carried whole is green as much as one run, in the order the checks are named: the
-    // notes say which were carried.
-    let ran = |name: &str| record.checks.iter().any(|ran| ran.name == name);
-    let checked: Vec<String> = (options.checks.iter())
-        .map(|step| step.name.clone())
-        .filter(|name| {
-            // Carried whole, by its own green or by each step and part it listed.
-            let under = format!("{name}/");
-            let kept = |kept: &record::Carried| kept.name == *name || kept.name.starts_with(&under);
-            ran(name) || carried.iter().any(kept)
-        })
-        .collect();
-    let held_notes = held.map(|held| held.notes(&carried)).unwrap_or_default();
-    // What it publishes on crates.io once pushed: each package whose version crates.io lacks now.
-    let publishes = match run_registry() {
-        Some(registry) if options.push && repo.project.releases.publish => {
-            crates::notes(&place.checkout, &registry, until)
-        }
-        _ => Vec::new(),
-    };
-    // A tag is never held back for its notes: one git cannot read is said, and left out.
-    let taking = consumer::taking(&repo.root, &name, &candidate).unwrap_or_else(|why| {
-        let _ = writeln!(
-            out,
-            "release: {name}'s message says nothing of what a project does to take it: {why}"
-        );
-        Vec::new()
-    });
-    let message = notes::message(
-        &name,
-        &candidate,
-        notes::facts(&repo.root, &candidate),
-        previous.as_ref(),
-        &checked,
-        &publishes,
-        &held_notes,
-        &alone::notes(&record.checks, &board::passed_alone_slug(&record.id)),
-        &taking,
-        &changes,
-    );
-    if let Err(problem) = git_until(
-        &repo.root,
-        &["tag", "-a", &name, &candidate, "-m", &message],
-        until,
-    ) {
-        record.error = Some(format!("cannot tag {name}: {problem}"));
-        return Ok(());
-    }
-    record.tag = Some(name.clone());
-    unpushed.insert(0, name.clone());
-    if options.push {
-        // That one ref, whatever the configuration says to push beside it.
-        let refspec = format!("refs/tags/{name}:refs/tags/{name}");
-        let pushed = git_until(
-            &repo.root,
-            &[
-                "push",
-                "--quiet",
-                "--no-follow-tags",
-                "--recurse-submodules=no",
-                remote,
-                &refspec,
-            ],
-            until,
-        );
-        match pushed {
-            Ok(_) => {
-                record.pushed = true;
-                unpushed.retain(|tag| *tag != name);
-            }
-            Err(problem) => {
-                record.error = Some(format!(
-                    "tagged {name} here, but the push to {remote} failed: {problem}; {} \
-                     delivers it",
-                    record::push_line(remote, &name)
-                ));
-            }
-        }
-    }
-    record.unpushed = Some(unpushed);
-    let pushed = if record.pushed {
-        format!(", pushed to {remote}")
-    } else {
-        ", not pushed".into()
-    };
-    let _ = writeln!(out, "release: green; tagged {name}{pushed}");
+    let (message, until) = round.notes(&name, previous.as_ref(), record, &carried, out)?;
+    round.tag_and_push(&name, &message, unpushed, until, record, out);
     Ok(())
 }
 
@@ -3466,5 +3641,316 @@ mod tests {
         assert!(red_in(&night, "verify"), "the check is red in its step");
         assert!(!red_in(&night, "verify-lint"));
         assert!(!red_in(&night, "tests"), "a step is keyed under its check");
+    }
+
+    /// A stop, as its kind and what it says.
+    fn stop(stop: Stop) -> (&'static str, String) {
+        match stop {
+            Stop::Refused(why) => ("refused", why),
+            Stop::Error(why) => ("error", why),
+            Stop::InUse(why) => ("in use", why),
+        }
+    }
+
+    /// A run of `origin/main` asked nothing by hand, pushing its tag.
+    fn asked() -> Options {
+        Options {
+            remote: "origin".into(),
+            branch: "main".into(),
+            worktree: PathBuf::from("/nowhere"),
+            named: false,
+            checks: Vec::new(),
+            out_of_cycle: None,
+            push: true,
+            now: 0.0,
+            timeout: Duration::from_secs(60),
+            cause: None,
+            hosted_only: false,
+            refresh: false,
+            rerun: false,
+        }
+    }
+
+    fn known(name: &str, commit: &str, on_remote: bool) -> Known {
+        Known {
+            name: name.into(),
+            commit: commit.into(),
+            on_remote,
+        }
+    }
+
+    /// A repository at `tree`'s `repo`, on `main`, and what commits there, giving the commit.
+    fn repo_in(tree: &crate::test_tree::Tree) -> (Repo, impl Fn(&str) -> String) {
+        let root = tree.path("repo");
+        fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q", "-b", "main"]).unwrap();
+        let repo = Repo {
+            root: root.clone(),
+            common: root.join(".git"),
+            main: root.clone(),
+            project: Project::of(&root),
+            unread: None,
+        };
+        let commit_here = move |message: &str| {
+            let identity = ["-c", "user.name=t", "-c", "user.email=t@example.com"];
+            let commit = ["commit", "-q", "--allow-empty", "-m", message];
+            git(&root, &[&identity[..], &commit[..]].concat()).unwrap();
+            git(&root, &["rev-parse", "HEAD"]).unwrap()
+        };
+        (repo, commit_here)
+    }
+
+    #[test]
+    fn a_stop_is_a_refusal_of_what_was_asked_by_hand_else_an_error() {
+        assert_eq!(
+            stop(Stop::by(true, "why".into())),
+            ("refused", "why".into())
+        );
+        assert_eq!(stop(Stop::by(false, "why".into())), ("error", "why".into()));
+    }
+
+    #[test]
+    fn the_candidate_is_the_tip_the_commit_named_or_the_held_one_and_always_on_the_line() {
+        let tree = crate::test_tree::Tree::new();
+        let (repo, commit_here) = repo_in(&tree);
+        let first = commit_here("first");
+        let tip = commit_here("tip");
+        git(&repo.root, &["checkout", "-q", "-b", "side", &first]).unwrap();
+        let aside = commit_here("aside");
+        let none = receipts::Receipts::default();
+        let of = |options: &Options, held: Option<&candidate::Candidate>, tip: &str| {
+            candidate_commit(&repo, options, held, &none, tip, "origin/main").map_err(stop)
+        };
+        let held_at = |commit: &str| {
+            let mut run = run_of("r1", "release", commit);
+            run.checks = vec![red("verify")];
+            candidate::Candidate::of(&run)
+        };
+        let named = |rev: &str| Options {
+            out_of_cycle: Some(rev.into()),
+            ..asked()
+        };
+
+        assert_eq!(of(&asked(), None, &tip), Ok(tip.clone()), "the tip itself");
+        assert_eq!(of(&named(&first), None, &tip), Ok(first.clone()));
+        assert_eq!(
+            of(&named("main~1"), None, &tip),
+            Ok(first.clone()),
+            "a name is resolved to its commit"
+        );
+        assert_eq!(
+            of(&named(&tip), None, &tip),
+            Ok(tip.clone()),
+            "the tip, named"
+        );
+        let (kind, why) = of(&named(&aside), None, &tip).unwrap_err();
+        assert_eq!(kind, "refused");
+        assert_eq!(
+            why,
+            format!(
+                "{aside} ({}) is not on origin/main: only a commit on it is released",
+                short(&aside)
+            )
+        );
+        let (kind, _) = of(&named("no-such-rev"), None, &tip).unwrap_err();
+        assert_eq!(kind, "refused", "a name git does not know");
+
+        // A held candidate is the commit, whatever else was asked.
+        assert_eq!(
+            of(&asked(), Some(&held_at(&first)), &tip),
+            Ok(first.clone())
+        );
+        assert_eq!(
+            of(&named(&tip), Some(&held_at(&first)), &tip),
+            Ok(first.clone())
+        );
+        let (kind, why) = of(&asked(), Some(&held_at(&aside)), &tip).unwrap_err();
+        assert_eq!(
+            kind, "error",
+            "a candidate off the line is the board's to hear"
+        );
+        assert_eq!(
+            why,
+            format!(
+                "the release candidate {} is not on origin/main: only a commit on it is released",
+                short(&aside)
+            )
+        );
+        let (kind, _) = of(&asked(), Some(&held_at(&"0".repeat(40))), &tip).unwrap_err();
+        assert_eq!(kind, "error", "a commit git does not hold");
+    }
+
+    #[test]
+    fn a_candidate_released_already_ends_the_run_unchanged_and_says_a_tag_the_remote_lacks() {
+        let releases = [
+            known("release-2026-01-02", "bbb", true),
+            known("release-2026-01-01", "aaa", false),
+        ];
+        let newest = Some(&releases[0]);
+        let ask = |options: &Options, releases: &[Known], newest, candidate: &str| {
+            let mut record = run_of("r", "release", candidate);
+            let mut out = Vec::new();
+            let was = released(
+                options,
+                releases,
+                newest,
+                candidate,
+                "origin/main",
+                &mut record,
+                &mut out,
+            )
+            .map_err(stop);
+            (was, record, String::from_utf8(out).unwrap())
+        };
+
+        let (was, record, out) = ask(&asked(), &releases, newest, "ccc");
+        assert_eq!(was, Ok(false), "no release holds it: the run goes on");
+        assert_eq!(
+            (record.result.as_str(), record.error, out.as_str()),
+            ("red", None, "")
+        );
+        let (was, ..) = ask(&asked(), &[], None, "ccc");
+        assert_eq!(was, Ok(false), "no release yet");
+
+        let (was, record, out) = ask(&asked(), &releases, newest, "bbb");
+        assert_eq!(was, Ok(true));
+        assert_eq!(record.result, "unchanged");
+        assert_eq!(record.error, None, "the remote holds its tag");
+        assert_eq!(
+            out,
+            "release: origin/main is release-2026-01-02 already (bbb): nothing new to check\n"
+        );
+
+        // The newest is tagged here alone: said only by a run that pushes.
+        let local = [known("release-2026-01-01", "aaa", false)];
+        let (was, record, _) = ask(&asked(), &local, Some(&local[0]), "aaa");
+        assert_eq!(was, Ok(true));
+        assert_eq!(
+            record.error,
+            Some(format!(
+                "release-2026-01-01 is tagged here but not on origin: {} delivers it",
+                record::push_line("origin", "release-2026-01-01")
+            ))
+        );
+        let quiet = Options {
+            push: false,
+            ..asked()
+        };
+        let (was, record, _) = ask(&quiet, &local, Some(&local[0]), "aaa");
+        assert_eq!((was, record.error), (Ok(true), None));
+
+        let (was, record, out) = ask(&asked(), &releases, newest, "aaa");
+        assert_eq!(
+            was,
+            Err((
+                "error",
+                "origin/main is release-2026-01-01 (aaa), behind the newest release \
+                 release-2026-01-02: main went back, and nothing is released until it moves past \
+                 release-2026-01-02"
+                    .into()
+            ))
+        );
+        assert_eq!((record.result.as_str(), out.as_str()), ("red", ""));
+
+        let named = Options {
+            out_of_cycle: Some("bbb".into()),
+            ..asked()
+        };
+        let (was, ..) = ask(&named, &releases, newest, "bbb");
+        assert_eq!(
+            was,
+            Err(("refused", "bbb is release-2026-01-02 already".into())),
+            "an out-of-cycle release of a release"
+        );
+    }
+
+    #[test]
+    fn a_candidate_that_does_not_hold_the_newest_release_is_not_released() {
+        let tree = crate::test_tree::Tree::new();
+        let (repo, commit_here) = repo_in(&tree);
+        let first = commit_here("first");
+        let tip = commit_here("tip");
+        let none = receipts::Receipts::default();
+        let ask = |options: &Options, newest: Option<&Known>, candidate: &str| {
+            forward(&repo, options, &none, newest, candidate, "origin/main").map_err(stop)
+        };
+        let at = |commit: &str| known("release-2026-01-01", commit, true);
+        let named = Options {
+            out_of_cycle: Some("old".into()),
+            ..asked()
+        };
+
+        assert_eq!(ask(&asked(), None, &tip), Ok(()), "no release yet");
+        assert_eq!(ask(&asked(), Some(&at(&first)), &tip), Ok(()));
+        assert_eq!(ask(&named, Some(&at(&first)), &tip), Ok(()));
+        let why = |named: &str| {
+            format!(
+                "{named} ({}) is not a descendant of the newest release release-2026-01-01 ({}): \
+                 a release only moves forward",
+                short(&first),
+                short(&tip)
+            )
+        };
+        assert_eq!(
+            ask(&asked(), Some(&at(&tip)), &first),
+            Err(("error", why("origin/main")))
+        );
+        assert_eq!(
+            ask(&named, Some(&at(&tip)), &first),
+            Err(("refused", why("old"))),
+            "named by hand: refused, by what was named"
+        );
+    }
+
+    #[test]
+    fn the_next_release_is_named_by_the_day_and_never_behind_the_newest() {
+        let day = when_day(0.0);
+        let first = format!("release-{day}");
+        assert_eq!(next_name(0.0, &[], None), Ok(first.clone()));
+
+        let today = [known(&first, "aaa", true)];
+        let newest = Release::parse(&first).unwrap();
+        let second = next_name(0.0, &today, Some(&newest)).unwrap();
+        assert_eq!(second, format!("{first}.2"), "one past the day's newest");
+
+        // A release of a later day than this machine's clock names: no name sorts after it.
+        let later = [known("release-9999-12-31", "bbb", true)];
+        let newest = Release::parse("release-9999-12-31").unwrap();
+        assert_eq!(
+            next_name(0.0, &later, Some(&newest)),
+            Err(format!(
+                "this machine's clock names the release {first}, which does not sort after the \
+                 newest release release-9999-12-31: no tag"
+            ))
+        );
+    }
+
+    #[test]
+    fn github_verifies_only_where_the_project_names_its_command() {
+        let tree = crate::test_tree::Tree::new();
+        tree.write("plain/README.md", "no project file\n");
+        tree.write(
+            "hosted/symphony.toml",
+            "[project]\nid = \"hosted\"\n\n[releases]\nhosted = [\"gh\", \"verify\"]\n",
+        );
+        let repo = |main: &Path| Repo {
+            root: main.to_path_buf(),
+            common: main.join(".git"),
+            main: main.to_path_buf(),
+            project: Project::of(main),
+            unread: None,
+        };
+        let options = asked();
+        let plain = repo(&tree.path("plain"));
+        assert!(hosting(&plain, &options, "ccc", "ttt", "run-1").is_none());
+        let hosted = repo(&tree.path("hosted"));
+        let asks = hosting(&hosted, &options, "ccc", "ttt", "run-1").unwrap();
+        assert_eq!(asks.command, ["gh", "verify"]);
+        assert_eq!((asks.commit, asks.tip, asks.by), ("ccc", "ttt", "run-1"));
+        assert_eq!((asks.remote, asks.branch), ("origin", "main"));
+        assert_eq!(
+            (asks.root, asks.main),
+            (hosted.root.as_path(), hosted.main.as_path())
+        );
     }
 }

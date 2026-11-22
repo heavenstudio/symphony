@@ -2727,7 +2727,12 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
   there until it does. A check belongs to its commit, so a green eligible on one head merges
   nothing at another; a new commit is pushed to the same pull request at the next dispatch, the
   merge armed across it and pending until the approve names the new head. One whose head and
-  evidence are as last published asks the host nothing more. Armed only while the task is in
+  evidence are as last published asks the host nothing more. Neither does one that runs once the
+  task landed at that head (a write's dispatch that waited for the land of its merge): its log
+  says it landed already, and the thread nothing. One whose publication the host refuses because
+  it merged that head meanwhile says so in its log alone as well, as the watcher's next round
+  closes the task; a pull request merged at another head is the refusal it was. Armed only while
+  the task is in
   review, blocked or done: a task moved back to work (a changes verdict) has its merge turned off
   first and its checks said again after, so no check published meanwhile lets the host merge it,
   and stays so until it moves to review.
@@ -3487,18 +3492,27 @@ assessor = "haiku"
   subagent's role.
 - **`just tasks limits`** prints each limit, the pipeline alarm's thresholds
   ([The pipeline alarm](#the-pipeline-alarm)) and each role's model, each with where it came
-  from (`[limits] low_volume, line 8`, `[agents] launch model, line 12`, `the smallest claude
-  offers`, or `default`), the
+  from (`[limits] low_volume, line 8`, `[agents] launch model, line 12`, `the board's store
+  [limits] low_volume, over 4 ([limits] low_volume, line 8)`, `the smallest claude offers`, or
+  `default`), the
   machine's count of agents under `machine_agents`, and each key of `[limits]` this build does
   not know, left out.
 - **A change holds at once.** Every command reads the file as it stands, and a store kept open
   (the Symphony's server keeps its reader and its data worker's) reads it again at its next
   read whenever the file's length or time changed: no restart.
+- **The board's store.** A preference stored on the board (`just tasks settings set KEY VALUE`)
+  is read after the project file and before the local file: a limit, `[agents] launch`'s agent,
+  model or effort, a role's model or `[agents] panes`. It holds from the next command, `just
+  tasks limits` names the store for it with the committed value it stands over, and `just tasks
+  settings remove KEY` puts the file's value back. Each change is kept in the entry's record
+  (`just tasks settings list`); what the store may hold, and how a value is judged, is
+  [PROJECT_FILE](../operations/PROJECT_FILE.md#the-boards-store) (`crates/tasks/src/settings.rs`).
 - **The local file.** `symphony.local.toml` beside the main checkout's project file, which git
-  does not version, is read after it: a key of `[limits]`, `[agents] launch` or
-  `[agents.models]` it writes holds on this machine in the committed one's place, and `just
-  tasks limits` names that file and its line for it. It holds no other setting, and one that is
-  refused is said on stderr and read by nobody, the committed settings holding
+  does not version, is read last: a key of `[limits]`, `[agents] launch` or
+  `[agents.models]` it writes holds on this machine in the place of the committed one and of a
+  stored one, and `just tasks limits` names that file and its line for it. It holds no other
+  setting, and one that is refused is said on stderr and read by nobody, the committed settings
+  holding
   ([PROJECT_FILE](../operations/PROJECT_FILE.md#the-local-settings-file), `crates/tasks/src/local.rs`).
 - **A value the board cannot read** is said on stderr with its line and takes its default
   (`⚠ PATH: [limits] low_volume (line 3) is -1; it is at least 0; it takes its default, 4`): a

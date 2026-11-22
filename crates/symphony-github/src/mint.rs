@@ -21,7 +21,7 @@
 use crate::config::{App, Config, PullRequests, Releases, Verification};
 use crate::credential::{self, Secret};
 use crate::reconcile::Context;
-use crate::transport::{Failure, Request};
+use crate::transport::{Failure, Request, rate_limited};
 use data_encoding::BASE64URL_NOPAD;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -437,12 +437,7 @@ fn make(
             .collect();
         jwt.redact(&said)
     };
-    let limited = response
-        .headers
-        .get("x-ratelimit-remaining")
-        .map(String::as_str)
-        == Some("0")
-        || response.headers.contains_key("retry-after");
+    let limited = rate_limited(&response).is_some();
     match response.status {
         201 => {
             let token = (value["token"].as_str())
