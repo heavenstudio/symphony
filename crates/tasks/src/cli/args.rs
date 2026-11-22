@@ -389,8 +389,8 @@ const COMMANDS: &[Command] = &[
     },
     Command {
         name: "say",
-        pos: &[pos("slug"), pos("text")],
-        opts: &[AS, opt("--to", "to", STR)],
+        pos: &[pos("slug"), maybe("text")],
+        opts: &[AS, opt("--to", "to", STR), opt("--file", "file", STR)],
     },
     Command {
         name: "launch",
@@ -1575,7 +1575,7 @@ mod tests {
             (&["search"][..], "search", "query"),
             (&["launch"][..], "launch", "slug"),
             (&["verdict", "s"][..], "verdict", "verdict"),
-            (&["say", "s", "-x"][..], "say", "text"),
+            (&["say"][..], "say", "slug"),
             (&["--as", "x", "--as", "y", "claim"][..], "claim", "slug"),
         ] {
             assert_eq!(
@@ -1983,6 +1983,12 @@ mod tests {
     fn a_dash_or_a_negative_number_is_a_value() {
         assert_eq!(run(&["say", "s", "-5"]).get("text"), Some("-5"));
         assert_eq!(run(&["say", "s", "-"]).get("text"), Some("-"));
+        // A line from a file names no text; the command says which it takes.
+        let filed = run(&["say", "s", "--file", "post.md"]);
+        assert_eq!(
+            (filed.get("text"), filed.get("file")),
+            (None, Some("post.md"))
+        );
         assert_eq!(
             run(&["create", "a", "b", "--body-file", "-"]).get("body_file"),
             Some("-")
@@ -1991,9 +1997,12 @@ mod tests {
         // Python 3.14's argparse takes anything that starts like a negative number (`-\.?\d`) as one.
         assert_eq!(run(&["say", "s", "-1x"]).get("text"), Some("-1x"));
         assert_eq!(run(&["say", "s", "-.5x"]).get("text"), Some("-.5x"));
+        // What does not start like one is an option, and `say` has none by that name.
         assert!(
             refused(&["say", "s", "-.x"])
-                .ends_with("just tasks say: error: the following arguments are required: text\n")
+                .contains("just tasks say: error: unrecognized arguments: -.x"),
+            "{}",
+            refused(&["say", "s", "-.x"])
         );
     }
 

@@ -1057,6 +1057,53 @@ fn a_body_file_of_a_dash_is_read_from_stdin() {
 }
 
 #[test]
+fn a_line_is_said_from_a_file_or_stdin_and_never_from_both_or_neither() {
+    let c = Case::new();
+    let orch = c.register("orchestrator");
+    assert_eq!(c.run_as(&orch, &["create", "a/long", "Long"], "").code, 0);
+    let post = "tests: S1 red at 1a2b3c4\n\n- `code`, 'quotes' and $(nothing run)\n";
+    let file = scratch("say-file").join("post.md");
+    std::fs::write(&file, post).unwrap();
+    let ran = c.run_as(
+        &orch,
+        &["say", "a/long", "--file", file.to_str().unwrap()],
+        "",
+    );
+    assert_eq!(ran.code, 0, "{}", ran.err);
+    let ran = c.run_as(&orch, &["say", "a/long", "--file", "-"], "from stdin\n");
+    assert_eq!(ran.code, 0, "{}", ran.err);
+    let said: Vec<String> = (c.store().thread("a/long").unwrap().into_iter())
+        .map(|m| m.text)
+        .collect();
+    // Its trailing line end is the file's, not the line's.
+    assert!(said.contains(&post.trim_end().to_string()), "{said:?}");
+    assert!(said.contains(&"from stdin".to_string()), "{said:?}");
+    for (args, why) in [
+        (
+            &["say", "a/long", "text", "--file", "-"][..],
+            "✖ say takes its line as TEXT or from --file, never both\n",
+        ),
+        (
+            &["say", "a/long"][..],
+            "✖ say needs its line: TEXT, or --file FILE (- for stdin)\n",
+        ),
+    ] {
+        let ran = c.run_as(&orch, args, "");
+        assert_eq!((ran.code, ran.err.as_str()), (1, why), "{args:?}");
+    }
+    let missing = scratch("say-missing").join("missing.md");
+    let missing = missing.to_str().unwrap();
+    let ran = c.run_as(&orch, &["say", "a/long", "--file", missing], "");
+    assert_eq!(
+        (ran.code, ran.err),
+        (
+            1,
+            format!("✖ no file {missing}: --file names it by its path from here, or - for stdin\n")
+        )
+    );
+}
+
+#[test]
 fn a_body_file_that_cannot_be_read_is_a_refusal_naming_it() {
     let c = Case::new();
     let orch = c.register("orchestrator");

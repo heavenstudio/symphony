@@ -435,6 +435,13 @@ task, whatever worktree or machine it runs in:
 just tasks say sim/jump-departure "the dock ring is at 900" --to @reviewer
 ```
 
+A long line, such as a request for review with its evidence, is written as a file
+and posted with `--file PATH` in place of the text (`--file -` reads stdin), so no
+quote, backtick or `$(…)` in it meets a shell; its trailing line ends are dropped,
+and a line given both ways, or neither, is refused. `--file PATH` is plain words,
+which the allow rules pass in a Claude or a Codex session alike; stdin fed by a
+heredoc is a redirection, which no Codex rule matches.
+
 `--to` takes a handle, a role (`@executor`, `@reviewer`, `@orchestrator`,
 `@reserved`), or `owner`. Addressed messages reach the matching native callback
 as plain `MSG` event lines. Without an address, an agent's post stays on the

@@ -313,7 +313,8 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
         "say" => {
             let to = p.get("to").map(recipient);
-            let m = store.say(&c.arg("slug"), &c.actor()?, &c.arg("text"), to.as_deref())?;
+            let text = said(c)?;
+            let m = store.say(&c.arg("slug"), &c.actor()?, &text, to.as_deref())?;
             c.say(&format!("sent #{} on {}", m.id, m.slug));
         }
         "launch" => panes::launch(store, c)?,
@@ -660,6 +661,42 @@ fn recipient(to: &str) -> String {
         Some(role) => format!("@{role}"),
         None => to.into(),
     }
+}
+
+/// The line `say` posts: its `text` argument, or what `--file` names (stdin for `-`), its trailing
+/// line ends dropped, so a long post is written as a file and never quoted for a shell. One of the
+/// two, never both and never neither.
+fn said(c: &mut Context) -> Result<String, Stop> {
+    let p = c.parsed;
+    let read = match (p.get("file"), p.get("text")) {
+        (Some(_), Some(_)) => {
+            return Err(Stop::Refused(
+                "say takes its line as TEXT or from --file, never both".into(),
+            ));
+        }
+        (None, None) => {
+            return Err(Stop::Refused(
+                "say needs its line: TEXT, or --file FILE (- for stdin)".into(),
+            ));
+        }
+        (None, Some(text)) => return Ok(text.to_string()),
+        (Some("-"), None) => {
+            let mut text = String::new();
+            c.input
+                .read_to_string(&mut text)
+                .map_err(|e| Stop::Refused(format!("cannot read the line from stdin: {e}")))?;
+            text
+        }
+        (Some(file), None) => std::fs::read_to_string(c.env.cwd.join(file)).map_err(|e| {
+            Stop::Refused(match e.kind() {
+                std::io::ErrorKind::NotFound => {
+                    format!("no file {file}: --file names it by its path from here, or - for stdin")
+                }
+                _ => format!("cannot read the file {file}: {e}"),
+            })
+        })?,
+    };
+    Ok(read.trim_end_matches(['\n', '\r']).to_string())
 }
 
 /// `create SLUG TITLE`: a new task from its arguments and its body (the `body` argument, a file, or
