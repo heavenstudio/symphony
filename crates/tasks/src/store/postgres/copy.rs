@@ -75,7 +75,7 @@ END;",
 
 /// Every table of the dump: its name in the dump, its table, and the order of its key (a
 /// schemaless table's in any, which `Store::dump` puts in its own).
-const DUMPED: [(&str, &str, &str); 16] = [
+pub(in crate::store) const DUMPED: [(&str, &str, &str); 16] = [
     ("tasks", "task", "sid"),
     ("task_links", "link", "slug, kind, target"),
     ("sessions", "session", "handle"),
