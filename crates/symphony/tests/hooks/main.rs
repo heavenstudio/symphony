@@ -17,6 +17,7 @@ mod own_names;
 mod owner_words;
 mod recipe_variables;
 mod recipes;
+mod size_lines;
 #[path = "../common/mod.rs"]
 mod support;
 mod tasks_beat;
