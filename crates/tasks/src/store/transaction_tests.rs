@@ -76,7 +76,7 @@ fn a_write_needing_a_step_the_board_lacks_is_refused_whole_until_the_board_takes
             common: common.clone(),
         };
         let store = open(&Opening::write().at(ahead()).live(Some(live)));
-        assert_eq!(store.additions().unwrap(), 0);
+        assert_eq!(store.additions().unwrap(), crate::schema::ADDITIONS);
         let unchanged = |what: &str| {
             assert_eq!(
                 behind.get("sim/jump").unwrap().priority,
@@ -84,7 +84,11 @@ fn a_write_needing_a_step_the_board_lacks_is_refused_whole_until_the_board_takes
                 "{backend:?}: {what}"
             );
             assert!(!there(&behind, "fixture_tag"), "{backend:?}: {what}");
-            assert_eq!(behind.additions().unwrap(), 0, "{backend:?}: {what}");
+            assert_eq!(
+                behind.additions().unwrap(),
+                crate::schema::ADDITIONS,
+                "{backend:?}: {what}"
+            );
         };
         // Named, bare, quoted or nested: refused by the guard, before the write's first statement.
         let named = [
@@ -105,9 +109,11 @@ fn a_write_needing_a_step_the_board_lacks_is_refused_whole_until_the_board_takes
             match store.transact::<Value>(write, json!({})) {
                 Err(Failure::Stop(Error::Refused(why))) => assert!(
                     why.contains(&format!(
-                        "has 0 of schema {}'s additive steps, and this write names `fixture_tag`, \
-                         which step 1 defines: nothing was written",
-                        crate::schema::VERSION
+                        "has {} of schema {}'s additive steps, and this write names `fixture_tag`, \
+                         which step {} defines: nothing was written",
+                        crate::schema::ADDITIONS,
+                        crate::schema::VERSION,
+                        crate::schema::ADDITIONS + 1
                     )),
                     "{backend:?}: {why}"
                 ),
@@ -140,7 +146,7 @@ fn a_write_needing_a_step_the_board_lacks_is_refused_whole_until_the_board_takes
         }
         // Once a build that may move it adds the step, the write the guard refused passes.
         open(&Opening::write().at(ahead()).migrating());
-        assert_eq!(store.additions().unwrap(), 1);
+        assert_eq!(store.additions().unwrap(), crate::schema::ADDITIONS + 1);
         store
             .transact::<Value>(
                 then(

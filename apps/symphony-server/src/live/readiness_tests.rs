@@ -3,7 +3,6 @@
 
 use super::Hub;
 use crate::front::{Shared, router};
-use crate::gate::Gate;
 use crate::testing::{Tree, board::surreal, repository};
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -93,13 +92,7 @@ async fn board_json_recovers_after_external_migration_at_the_existing_retry_dead
         .await
         .unwrap();
     let port = listener.local_addr().unwrap().port();
-    let shared = Shared::new(
-        7,
-        port,
-        &root,
-        None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
+    let shared = Shared::new(7, port, &root, None, crate::testing::open_gate());
     assert!(shared.api.set(hub.clone()).is_ok());
     let app = router(shared.clone());
     let (stop, stopped) = tokio::sync::oneshot::channel();

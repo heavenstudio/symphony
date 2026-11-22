@@ -8,11 +8,10 @@
 use super::*;
 use crate::execution::{Provider, Providers};
 use crate::front::{Shared, router};
-use crate::gate::Gate;
 use crate::testing::{
     Tree,
-    board::{Fixture, HOST, NOW, Seed},
-    repository,
+    board::{Fixture, Seed},
+    repository, store_on,
 };
 use axum::body::{Body, to_bytes};
 use axum::extract::connect_info::MockConnectInfo;
@@ -20,7 +19,6 @@ use axum::http::{HeaderMap, Request, header};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use symphony_board::execution::{Admission, Collection, Coordinator, Grant, Input, Worked};
-use symphony_board::rpc::Client;
 use symphony_plugin::execution::ContentRef;
 use tower::ServiceExt;
 
@@ -37,17 +35,6 @@ const TASK: &str = "tools/run";
 const OTHER: &str = "tools/other";
 const PROJECT: &str = "proj";
 const CONFIGURATION: &str = "fake";
-
-/// The board `client` reaches, at the fixture's clock.
-fn store_on(client: &Client) -> Store {
-    Store::with(
-        Client::new(client.addr(), "sf", client.database()),
-        Box::new(|| NOW),
-        Box::new(|_| false),
-        HOST,
-    )
-    .unwrap()
-}
 
 fn input() -> Input {
     Input::new(
@@ -96,7 +83,7 @@ impl Served {
             fake.clone(),
         )]);
         hub.refresh_page("", &root).unwrap();
-        let gate = Gate::new(Arc::new(|_| Ok(None)), Arc::new(std::time::Instant::now));
+        let gate = crate::testing::open_gate();
         let shared = Shared::new(1, 1, &root, None, gate);
         assert!(shared.api.set(Arc::new(hub)).is_ok());
         let runtime = tokio::runtime::Builder::new_multi_thread()
