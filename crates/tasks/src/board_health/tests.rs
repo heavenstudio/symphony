@@ -498,7 +498,7 @@ fn every_client_of_a_board_counts_its_requests_in_the_boards_one_log() {
     // answers a conflict to one of two defined there at once: the write is sent again, as the
     // store's opening sends its own, and each time it was sent is a request the log counts.
     let mut sent = 0u64;
-    let until = std::time::Instant::now() + test_time::backstop(std::time::Duration::from_secs(30));
+    let until = crate::store_fixture::conflicts_deadline();
     crate::store_fixture::retry_conflicts(until, || {
         sent += 1;
         client.define_then("CREATE thing SET n = 1 RETURN NONE;", json!({}))

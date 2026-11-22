@@ -6,7 +6,7 @@ use super::postgres::{Pg, work as pg};
 use super::statement::both;
 use super::surreal::work as sql;
 use super::{
-    Change, Error, Failure, Message, Opens, REFUSED, Say, Store, Task, Which, executors_or,
+    Change, Error, Failure, Message, Opens, REFUSED, Say, Store, Task, Which, executors_or, lapsed,
     left_actor, refused, repr, unknown_actor,
 };
 use crate::alarm::{NOTHING, UNDER, WAS};
@@ -1023,10 +1023,11 @@ impl Store {
         // Each candidate with its rank, and the edge to preview for one a workflow holds.
         let mut candidates: Vec<(Rank, Task, Option<String>)> = Vec::new();
         for task in tasks {
+            // The reservations that still hold it, by the rule a write lapses one by
+            // ([`super::lapsed`]): the view's tasks already leave out one past its time, and give
+            // a holder with no session `Lost`, which lapses one as no session does.
             let reservers: Vec<&str> = (task.roles.iter())
-                .filter(|r| {
-                    r.role == "reserved" && !matches!(r.health, Health::Lost | Health::Left)
-                })
+                .filter(|r| r.role == "reserved" && !lapsed(r.expires, Some(r.health), view.now).0)
                 .map(|r| r.handle.as_str())
                 .collect();
             let mine = reservers.contains(&handle);

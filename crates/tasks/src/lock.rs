@@ -1,8 +1,8 @@
 //! A lock whose holder panicked is taken all the same: what it guards is kept whole by each
 //! holder's own writes, and one panic in a request, a worker or a test's thread must not fail every
 //! later one that takes the same lock. The board, the library and the server recover a poisoned
-//! lock through [`Recovered`] alone, never by hand; a test that means a poisoned lock to fail it
-//! keeps its `unwrap()`.
+//! lock through [`Recovered`] alone, never by hand, and in this crate clippy refuses a recovery by
+//! hand (its clippy.toml); a test that means a poisoned lock to fail it keeps its `unwrap()`.
 
 use std::sync::{LockResult, PoisonError};
 
@@ -16,6 +16,10 @@ pub trait Recovered<G> {
 }
 
 impl<G> Recovered<G> for LockResult<G> {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the one recovery of a poisoned lock, which the crate's clippy.toml refuses elsewhere"
+    )]
     fn recover(self) -> G {
         self.unwrap_or_else(PoisonError::into_inner)
     }
@@ -107,12 +111,14 @@ mod tests {
         for poisoned in [false, true] {
             let mut mutex = mutex(poisoned);
             recovered(mutex.get_mut(), poisoned).push("by get_mut");
+            assert_eq!(mutex.is_poisoned(), poisoned, "recovered, not cleared");
             assert_eq!(
                 *recovered(mutex.lock(), poisoned),
                 ["written", "by get_mut"]
             );
             let mut rwlock = rwlock(poisoned);
             *recovered(rwlock.get_mut(), poisoned) += 1;
+            assert_eq!(rwlock.is_poisoned(), poisoned, "recovered, not cleared");
             assert_eq!(*recovered(rwlock.read(), poisoned), 8);
         }
     }
