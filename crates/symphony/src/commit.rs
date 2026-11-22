@@ -295,9 +295,28 @@ fn home(root: &Path) -> Result<PathBuf, String> {
     Ok(common_dir(root)?.join(symphony_board::folders::SERVER))
 }
 
+/// A server lock taken ([`shared_lock`]), unlocked as it goes, before its descriptor closes. A
+/// close alone releases the lock only with the last copy of the descriptor, and a spawn another
+/// thread makes copies it into its child until the child's exec (on macOS, for milliseconds after
+/// a spawn that failed too): that child would hold the lock past this drop. An unlock releases it
+/// for every copy.
+struct Held(File);
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+
 /// Separate locks keep HTTP read/edit/write sections short while commit preparation may build
 /// generated content. Every serving generation opens its own descriptor in the same common dir.
-fn shared_lock(root: &Path, name: &str) -> Result<File, String> {
+fn shared_lock(root: &Path, name: &str) -> Result<Held, String> {
+    lock_file(root, name).map(Held)
+}
+
+/// The server's lock `name` of `root`, taken: what [`shared_lock`] holds, and the file
+/// [`write_lock`] hands a caller outside this module.
+fn lock_file(root: &Path, name: &str) -> Result<File, String> {
     let _stage = PublicationStage::start(format_args!("lock {name}"));
     let folder = home(root)?;
     std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
@@ -323,7 +342,7 @@ pub fn write_lock(root: &Path) -> Result<Option<File>, String> {
     if !worktree {
         return Ok(None);
     }
-    shared_lock(root, "verdict-writes.lock").map(Some)
+    lock_file(root, "verdict-writes.lock").map(Some)
 }
 
 /// Locked for the whole lifetime of a queued edit. Sequence order follows the save's short
@@ -1558,7 +1577,7 @@ pub fn commit_verdicts(root: &Path, edits: &[Edit], message: &str) -> Outcome {
         let backlog = Backlog::new(root)?;
         retry_conflicts(root, backlog.sequence, || {
             let _commits = shared_lock(root, "verdict-commits.lock")?;
-            let _file = write_lock(root)?;
+            let _file = write_lock(root)?.map(Held);
             commit_inner(root, edits, message)
         })
     })();
@@ -1647,18 +1666,18 @@ struct Job {
 /// The three locks a publication writes main's checkout under, taken in the one order that keeps
 /// it deadlock-free: the commits lock, this server's saves, then the write lock a save and the
 /// lander share (a save takes the last two in that order too). Released in reverse, the fields
-/// being declared last-taken first.
+/// being declared last-taken first, each file lock unlocked as it goes ([`Held`]).
 struct PublicationLocks<'a> {
-    _file: Option<File>,
+    _file: Option<Held>,
     _held: std::sync::MutexGuard<'a, ()>,
-    _commits: File,
+    _commits: Held,
 }
 
 impl<'a> PublicationLocks<'a> {
     fn take(root: &Path, writes: &'a Mutex<()>) -> Result<Self, String> {
         let commits = shared_lock(root, "verdict-commits.lock")?;
         let held = writes.lock().recover();
-        let file = write_lock(root)?;
+        let file = write_lock(root)?.map(Held);
         Ok(Self {
             _file: file,
             _held: held,
@@ -2295,7 +2314,7 @@ impl OutputJob {
             PublicationAttempt::Retry => Ok(false),
             PublicationAttempt::Dirty(why) => {
                 let outside = {
-                    let _file = write_lock(root)?;
+                    let _file = write_lock(root)?.map(Held);
                     let pending = waiting.lock().recover();
                     let pages: std::collections::BTreeSet<_> =
                         pending.values().map(|edit| edit.rel.as_str()).collect();
