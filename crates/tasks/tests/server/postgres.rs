@@ -20,6 +20,11 @@ fn programs() -> PathBuf {
     postgres::discover_programs(&root).unwrap()
 }
 
+/// The folder of the board of the test named `name`, under the temporary folder.
+fn folder(name: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("pg-{}-{name}", std::process::id()))
+}
+
 /// A board of a test's own under the temporary folder, its PostgreSQL stopped and its folder
 /// removed when it goes, however the test ends.
 struct Board {
@@ -29,17 +34,28 @@ struct Board {
 
 impl Board {
     fn new(name: &str) -> Board {
-        Board::at(&std::env::temp_dir().join(format!("pg-{}-{name}", std::process::id())))
+        Board::at(&folder(name))
     }
 
     fn at(dir: &Path) -> Board {
+        Board::served(dir, |_| programs())
+    }
+
+    /// A board of a test's own whose `pg_ctl` is a script of `lines` ([`but_pg_ctl`]).
+    fn with_pg_ctl(name: &str, lines: &str) -> Board {
+        Board::served(&folder(name), |dir| but_pg_ctl(dir, lines))
+    }
+
+    /// A board made anew at `dir`, its PostgreSQL served by the programs in the folder
+    /// `programs` makes or names in it.
+    fn served(dir: &Path, programs: impl FnOnce(&Path) -> PathBuf) -> Board {
         if dir.exists() {
             std::fs::remove_dir_all(dir).unwrap();
         }
         std::fs::create_dir_all(dir).unwrap();
         let pg = Home::new(&dir.join("board"), Path::new("/no/surreal"))
             .telling(|_| {})
-            .postgresql(&programs());
+            .postgresql(&programs(dir));
         Board {
             dir: dir.into(),
             pg,
@@ -383,6 +399,85 @@ fn a_server_still_stopping_at_the_backstop_is_left_and_the_refusal_names_the_ret
     drop(client);
     assert!(sys::gone(serving.pid, GONE).unwrap(), "it ends by itself");
     assert_ne!(board.pg.ensure().unwrap().pid, serving.pid);
+}
+
+/// `programs/` in `dir`: the machine's PostgreSQL programs, each a link to its own, but
+/// `pg_ctl`, a script of `lines` with `$REAL` naming the machine's `pg_ctl`. A server started from
+/// it runs as `programs/postgres`, which the board takes for its own.
+fn but_pg_ctl(dir: &Path, lines: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt as _;
+    let real = programs();
+    let bin = dir.join("programs");
+    std::fs::create_dir_all(&bin).unwrap();
+    for name in ["postgres", "initdb", "psql"] {
+        std::os::unix::fs::symlink(real.join(name), bin.join(name)).unwrap();
+    }
+    let pg_ctl = bin.join("pg_ctl");
+    std::fs::write(
+        &pg_ctl,
+        format!(
+            "#!/bin/sh\nREAL='{}'\n{lines}\nexec \"$REAL\" \"$@\"\n",
+            real.join("pg_ctl").display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&pg_ctl, std::fs::Permissions::from_mode(0o755)).unwrap();
+    bin
+}
+
+/// A stop that finds its server gone by the time `pg_ctl` reads its record has stopped it: that
+/// is a scratch board's server ending with the command that started it, between the stop's read
+/// of the record and pg_ctl's, and a move that met it then was refused as a server that had not
+/// stopped within the board's patience, though nothing was waited for. Here the stop's own
+/// `pg_ctl stop` is preceded by one that stops the server first, so pg_ctl finds no record.
+#[test]
+fn a_stop_whose_server_ended_before_pg_ctl_read_its_record_has_stopped_it() {
+    let board = Board::with_pg_ctl(
+        "stop-ended",
+        "[ \"$1\" != stop ] || \"$REAL\" \"$@\" >/dev/null 2>&1",
+    );
+    let serving = board.pg.ensure().unwrap();
+    let stopped = board.pg.stop().unwrap().expect("it ran");
+    assert_eq!(stopped.pid, serving.pid);
+    board.none_left();
+    assert!(!pid_alive(serving.pid), "it ended");
+    assert!(!serving.socket.exists(), "its socket's folder goes with it");
+    assert_eq!(board.pg.stop().unwrap(), None, "nothing runs to stop");
+}
+
+/// A stop `pg_ctl` says has not ended, whose server still runs on its data, is refused, saying
+/// pg_ctl's words and the machine's load, and the server is left serving, never signalled again;
+/// the next stop stops it. pg_ctl refuses the first stop here (a marker it removes as it does).
+#[test]
+fn a_stop_pg_ctl_refuses_while_its_server_runs_is_refused_with_the_load_and_left_serving() {
+    let once = folder("stop-refused").join("refuse-once");
+    let board = Board::with_pg_ctl(
+        "stop-refused",
+        &format!(
+            "if [ \"$1\" = stop ] && [ -e '{0}' ]; then rm -f '{0}'; \
+             echo 'pg_ctl: server does not shut down' >&2; exit 1; fi",
+            once.display()
+        ),
+    );
+    let serving = board.pg.ensure().unwrap();
+    std::fs::write(&once, "").unwrap();
+    let refused = board.pg.stop().unwrap_err().to_string();
+    assert!(
+        refused.contains(&format!(
+            "the board's PostgreSQL (pid {}) was asked to stop, and pg_ctl, which waits 60 s at \
+             most for its end, says it has not ended (pg_ctl: server does not shut down; load \
+             average ",
+            serving.pid
+        )),
+        "{refused}"
+    );
+    assert!(
+        refused.contains("it is left to finish, never signalled again; its log is "),
+        "{refused}"
+    );
+    assert_eq!(board.psql(&serving, "SELECT 1"), "1", "it still serves");
+    assert_eq!(board.pg.stop().unwrap().map(|s| s.pid), Some(serving.pid));
+    board.none_left();
 }
 
 /// The variable naming the board a helper ([`helper_starts_and_ends`]) starts.

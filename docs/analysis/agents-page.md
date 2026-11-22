@@ -1,9 +1,10 @@
 # The agents page, orchestrator-first
 
 What the Agents page would show if it opened on the orchestrators rather than on task cards: three
-layouts, put to the owner on the agents-page-orchestrator-first card in
-[DECISIONS](../DECISIONS.md), and the board they were drawn from. Every figure is this
-repository's own board as the shared server answered it on the evening of 2026-11-16, read only.
+layouts, put to the owner on the
+[agents-page-orchestrator-first](#agents-page-orchestrator-first) card, and the board they were
+drawn from. Every figure is this repository's own board as the shared server answered it on the
+evening of 2026-11-16, read only.
 
 The ask is the owner's note inbox/agents-page-needs-redesign: the page looks like the task board
 rearranged, and should be more orchestrator based, with less task card information. The page was
@@ -161,6 +162,29 @@ needs.
 
 B is the choice if the page should be a to-do list across orchestrators, at the cost of the most new
 logic. C is the choice for a project that runs many orchestrators, as it reads one at a time.
+
+- [-] **agents-page-orchestrator-first** — The Agents page would open on the orchestrators instead of repeating the board. For each one: how many tasks it holds against its limit of 16 and how many of its 8 slots are in use, the agents it runs and what each is doing this minute, and what is waiting on it. Lost agents and agents stopped on a question come first, and a task is only its title, as a link. Your own open asks stay in the queue. The "Happening now" cards and the A-to-Z list of agents go. How should it be laid out? A: one panel per orchestrator, its agents beside what waits on it, everything open. B: first a list of what needs a look across every orchestrator, then a compact list of who runs what. C: a tile per orchestrator with its counts; open one to see its agents and what waits on it. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/agents-page#The options]]
+  [2026-11-16 22:32] agent — Base: the page today, wide, from the shared server (shot at 22:29). ![The agents page today, wide](agents-page/today-wide.png)
+  [2026-11-16 22:32] agent — Posted for the board task `app/agents-page-orchestrator-first-options`, from your note on inbox/agents-page-needs-redesign: "Probably be more orchestrator based with less direct task card info". The three options at 1440 wide, drawn from this board at 22:11: ![The agents page, option A](agents-page/a-wide.png) ![The agents page, option B](agents-page/b-wide.png) ![The agents page, option C](agents-page/c-wide.png)
+
+    **Today.** The page opens with the board's in-progress and review cards again, then every agent A to Z. On a phone the two orchestrators are on its seventh and eighth screens, and their load is a folded "Following 16 open tasks" and "slots: 5 of 8". Nothing says both are at their limit, so the board gives them no more and 27 open tasks wait with no orchestrator.
+
+    **A, a panel per orchestrator.** Its load on top, its agents on the left, what waits on it on the right; on a phone they stack. Under two screens wide and four on a phone, against five and a half and eight and a half today.
+
+    **B, needs a look first.** One list across both orchestrators (a quiet agent holding work, a blocked task whose agent left, ready tasks nobody is on), then each orchestrator on one line with its agents under it.
+
+    **C, a tile per orchestrator.** Its counts in large figures; open a tile to see its agents and what waits on it (silver-sparrow's is open in the picture).
+
+    **What each costs.** Under all three the server sends four facts it does not send today: which orchestrator each agent works for, each orchestrator's task count against its limit, how many tasks wait for an orchestrator, and how many messages to it nobody answered. Why each task waits comes from `tools/task-waits-on`, being built now. Beyond that, **A** costs the least: one panel, from what the page already reads. **B** costs the most: a new ranked list the server builds, so that it agrees with what each orchestrator is told, and a rule for what comes first. **C** costs what A does, plus remembering which tile is open, and takes a tap more to see anyone's agents; it suits a project with many orchestrators.
+
+    **Why A.** You want to see whether the work is moving and what it waits on. A shows every orchestrator's load, agents and waiting work together, the same wide and on a phone, with nothing to open.
+
+    **Earlier verdicts checked.** **board-at-a-glance** (B) sets how a task's wait reads: a wait on you names the decision card, never a person alone. The lists here use that line, and it says nothing of this page's layout. **owner-asks-place** (A) shows your open asks, what you said that waits on an agent's answer, in the queue's *Waiting on the agent* group with who holds each and for how long, counted on Home, with no page of their own. So this page leaves them there: an orchestrator's list of what waits on it holds no asks. **header-page-names** keeps Agents as this page's name. None of them decides this card.
+  [2026-11-16 22:32] agent — On a phone: today's first screen, an orchestrator's row today, on its seventh screen, then the first screen of A, B and C. ![Today on a phone](agents-page/today-phone.png) ![An orchestrator today, on a phone](agents-page/today-phone-orchestrator.png) ![Option A on a phone](agents-page/a-phone.png) ![Option B on a phone](agents-page/b-phone.png) ![Option C on a phone](agents-page/c-phone.png)
+  [2026-11-17 12:13] owner · rejected — I would like to explore a mix of C and B. A "card" per orchestrator, but instead of column based, make it full width and with more details like in B.
+
+    Also there should be no "Machine context" and remember the columns/stages are supposed to be "configurable" so the status aspects would be dynamic and need to make sense with it in mind.
+  [2026-11-17 12:28] agent — The revised direction is one full-width card per orchestrator, stacked vertically: the grouping from C with the visible working detail from B. Each card should show its load, agents and current activity, followed by what needs attention; there is no Machine context section. Stage names, order and counts must follow the project’s configured workflow, rather than assume fixed In progress or Review columns. Agent conditions such as waiting for access or losing contact remain distinct from task stages. The A/B/C pictures above remain the earlier proposals; this direction replaces their layout recommendation.
 
 ## The data
 

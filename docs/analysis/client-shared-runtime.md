@@ -2,8 +2,8 @@
 
 Whether the client's eight page modules can share one copy of the code they all carry, so that a
 page's module holds only its own code: what each module holds, the ways the locked toolchain
-offers, a prototype of the most promising one, what it would change, and the card it is asked on
-in [DECISIONS](../DECISIONS.md). Measured 2026-11-13 on this Mac with Rust 1.99.0, dx 0.7.10 and
+offers, a prototype of the most promising one, what it would change, and the card it is asked on,
+[below](#client-shared-runtime). Measured 2026-11-13 on this Mac with Rust 1.99.0, dx 0.7.10 and
 wasm-bindgen 0.2.129, against the client main had committed at 310a8c3, at load averages of 30 to
 136 from a release run and other agents' builds: every time below is slower than on a quiet
 machine, and moves with the machine's load as much as with the files ([below](#the-prototype)).
@@ -58,6 +58,18 @@ shared part. B saves more and makes moves between all pages cheap, but needs the
 which the owner set two days ago, raised by about 65 KB; home's estimate stays under its cap. C
 alone answers Reports but costs the size line half a megabyte it does not have, so it can only
 land together with A's next step.
+
+- [r] **client-shared-runtime** — You chose to share the runtime between the client's page modules; it works, but not for every page within your caps. Today 57 % of the client's code is a copy of code another module holds, and a first visit to Reports loads the whole task pages' module, 557,536 bytes. With one shared part, Reports drops to 286,100. But the shared part holds code a given page never uses: shared with the board, `/tasks` grew from 295,837 to 360,579 bytes on a first visit, over its 300,000 cap. Which pages should share? A: every page but home and the board, which keep their own modules and caps. Reports 286,100; a task page and `/agents` 7,460 more; the published client about 2.4 MB smaller, 4.7 MB once the documents and the queue join (it is 20.56 MB of a 20.75 MB line). B: all eight, about 7 MB smaller and cheap moves between every page, but the board's cap raised to about 365,000 and likely home's (estimated 291,000 against its 300,000). C: only inside the task pages' module: Reports the same, nothing else shared, and the published client 0.5 MB larger, past its line, so it cannot land alone. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/client-shared-runtime#The choice]]
+  [2026-11-13 17:58] agent — Posted for the board task `perf/client-shared-runtime-investigation`. The prototype is the branch `perf/client-shared-runtime-prototype`, never landed. Whichever you choose, two faults in the build tool's splitter come first: it blanks some text in the shared part (every task page showed "Page unavailable" until the prototype repaired it), and it writes its files differently on every build, which the client check refuses. The first step of the work is a step of our build that repairs both, until the tool does; the analysis says how.
+  [2026-11-13 18:17] owner · approved — A
+  [2026-11-13 18:20] agent — Recorded: A, every page but home and the board ("A"). Since the card was posted, the review of the analysis corrected three things it said. None changes A, and the analysis now says each:
+
+    - **Reports' 557,536 bytes** are its whole first visit; the task pages' module and its script are 534,635 of them.
+    - **Home under B** was estimated at about 291,000, about 9 KB under its 300,000 cap, not likely over it as the card said. The board's cap would still have had to rise to about 365,000.
+    - **A's cost in time** is one request more on a shared page, for its part. This machine's load hid it, so it is measured on a quiet machine as the evidence of A's second step.
+
+    The analysis lists A's five steps in order, the splitter's repair first.
+  [2026-11-13 20:43] agent · resolved
 
 ## What each module holds
 

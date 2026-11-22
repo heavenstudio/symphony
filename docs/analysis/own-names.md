@@ -19,8 +19,8 @@ by the thing it named and its new name.
 
 Symphony grew inside the consuming project and still carries its names: variables, state folders,
 the names of that project's own tools, and documents that name it. This is the inventory behind the
-names card in [DECISIONS](../DECISIONS.md), for the board task that renames them, and the plan for
-removing them. Nothing here renames anything.
+[names card](#symphony-own-names), for the board task that renames them, and the plan for removing
+them. Nothing here renames anything.
 
 Read 2026-11-11 on main `aaa4aed`. Each fact about the code names the file it was read in. The
 consuming project was read, never changed, at its main `f309cad`, which pins Symphony at `c9a0af8`.
@@ -82,7 +82,7 @@ These are defaults that a note on the card can change.
 2. **The consuming project's tool names** leave the code, as the table below says for each.
 3. **Prose.** Guides, AGENTS files and skills say "a consuming project". Analysis documents
    keep their measurements of the consuming project's board, since they are dated records. The
-   dated history in [DECISIONS](../DECISIONS.md) stays as written but for that project's name.
+   dated history under each card stays as written but for that project's name.
 4. **Board variables** take `SYMPHONY_` rather than the board's own `TASKS_` (`TASKS_SURREAL`,
    `TASKS_SWEEP_RECENT_HOURS`, `TASKS_WT_DIR`). This gives one prefix to look for, at the cost
    of two prefixes in the board's own guide.
@@ -95,6 +95,25 @@ These are defaults that a note on the card can change.
    landing, verify, nightly and hooks tools, and every tool by its prefix, on `PATH` to prove the
    standalone workspace runs none of them. It is the one allowed exception to the grep. (It now
    names them `project-slots`, `project-rust-tests` and so on.)
+
+- [r] **symphony-own-names** — Symphony still carries the names of the project it grew in, the consuming project. Counted on main today: 113 variables with that project's two-letter prefix, 19 of them read outside tests; five state folders by that prefix in each repository's git common dir (the board's, the SurrealDB fetch's, the server's, the documents' and the models'); three of that project's own tools named in Symphony's code (its slot, landing and cargo tools); and six documents that name it. A second project should meet none of them. Proposed names: `SYMPHONY_` for variables; one `symphony/` folder in the git common dir holding `tasks`, `surreal`, `server`, `models` and `tools`; and the consuming project's tools named only in its own `symphony.toml`. How do the old names go? A: a bridge. One release reads both names and says once when it used an old one; each project's state moves on a day you pick; the release after both have moved stops reading the old names. B: at once. One release renames everything, and both projects change and move the same day. C: new projects only. The two existing projects keep their old folders for good. Recommended: A. Approve and say A, B or C in the note (and the prefix, if not `SYMPHONY_`), or comment. [[analysis/own-names#The choices]]
+  [2026-11-11 19:17] agent — Posted for the board task that renames them, in the tools lane of this repository's board. A grep for the old prefix and the consuming project's name, any case, finds 825 lines in 213 files; the generated client has none. As occurrences, by category: 182 variables Symphony reads, 185 test-only variables, 193 folder and file names, 19 format names, 96 test temp names, 109 of the consuming project's own names, and 72 mentions of its name in docs. [[analysis/own-names#The count]]
+  [2026-11-11 19:20] agent · auto-approved — A: the owner asked on 2026-11-11 for every direct reference to the consuming project to be removed from Symphony's app folder (the owner's exact words: board post #2869), which rules out C; B reaches the same names by moving both projects' live boards on one day, and A does it with no day on which a board cannot be read. Prefix `SYMPHONY_`. Moving a project's live state still needs the owner's word on the day. Any verdict here overrides this.
+  [2026-11-11 22:02] owner · approved — B - just remove the bandaid quickly. Break things then fix them ASAP
+  [2026-11-11 22:02] agent — B replaces the auto-approved A: no bridge. Every old name goes in one pass, variables, state folders and tool names, with no reader of an old name left behind; the consuming project's pin, wrappers and tests move in the same pass, and what breaks is fixed as it shows. The variables slice already built drops its old-name reads before it lands. The two live boards move by folder renames with the shared server stopped for the seconds it takes; I say when on the day, before doing it. Carried on that board task.
+
+    **What moving means.** Each project's state moves by a few folder renames in its git common dir, not a copy. The consuming project's board is 7.2 GB and this one's is 80 MB. The board's database and the shared server on port 8765 stop for the seconds it takes. A one-line file left at each old name makes an older build fail with a message instead of starting an empty board. Nothing moves without your word on the day. [[analysis/own-names#Moving live state]]
+
+    **A, a bridge.** Cost: a small helper that reads both names, carried by one or two releases. The consuming project keeps working through it until its pin and wrappers move, which is a note for its board.
+
+    **B, at once.** Cost: the consuming project's pin, wrappers and tests land with both moves on the same day. Every older build fails until it is rebuilt, and the consuming project keeps 46 of them.
+
+    **C, new projects only.** Cost: both naming schemes stay in the code, and the grep never comes clean. Nothing moves.
+
+    **Why A.** Each project moves on its own day with nothing broken in between, and the code ends with no old name except the fences.
+
+    **Defaults unless the note says otherwise.** The board database's internal namespace `sf` stays until each board's next reclaim. The consuming project's tool names become `symphony.toml` settings. Analysis documents name the consuming project where they measured its board. Board variables take `SYMPHONY_`, not `TASKS_`. `tasks-cutover` is retired. [[analysis/own-names#Smaller choices]]
+  [2026-11-11 22:02] agent · resolved
 
 ## The count
 
@@ -449,7 +468,9 @@ Mentions only, which are reworded with the docs:
 
 Category c: 67 lines, 72 occurrences, all in `docs/`.
 
-- **[DECISIONS](../DECISIONS.md): 14 lines.** The cards' dated history. It stays as written.
+- **The cards' dated history: 14 lines**, in the register then, and now under each card where it
+  sits: 12 in [reports-and-monitoring](reports-and-monitoring.md), one each in
+  [client-cache](client-cache.md) and [symphony-update](symphony-update.md). It stays as written.
 - **[reports-and-monitoring](reports-and-monitoring.md): 33 lines.** Measurements of the
   consuming project's board and verify, and the gates adapter task. It keeps the name, as a dated
   record.

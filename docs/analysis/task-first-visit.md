@@ -2,10 +2,10 @@
 
 What a task's page shows the first time a browser opens it, before its reads answer, and what
 moves when they do: today's way (A) against drawing what is under the head only once the task's
-page has answered (B), as the card in [DECISIONS](../DECISIONS.md#task-first-visit-head-first)
-asks. Measured 2026-11-16 on this Mac in headless Chrome, against the browser target's stand-in
-server and its fixture task (`apps/symphony-ui/tests/browser/layout_shift.rs`), at main `325f08f1`
-for A and on a throwaway build of B made for this page and not kept.
+page has answered (B), as [the card](#task-first-visit-head-first) asks. Measured 2026-11-16 on
+this Mac in headless Chrome, against the browser target's stand-in server and its fixture task
+(`apps/symphony-ui/tests/browser/layout_shift.rs`), at main `325f08f1` for A and on a throwaway
+build of B made for this page and not kept.
 
 ## The choice
 
@@ -33,6 +33,25 @@ A task with six gates, phone and wide:
 ![Six gates on a phone: A waiting, B waiting, loaded](task-first-visit-six-gates-phone.webp)
 
 ![Six gates wide: A waiting, B waiting, loaded](task-first-visit-six-gates-wide.webp)
+
+- [r] **task-first-visit-head-first** — The first time your browser opens a task, its page shows the outline of every part at once, but it cannot know their sizes yet, so it guesses them, and when the task arrives everything under a wrong guess jumps once: on a phone, a task with two gates where four were guessed pulls the timeline up about 190 px. B would show only the head's outline until the task arrives, usually within a fraction of a second, then everything under it at once, each part where it stays, so nothing jumps; for that moment the page under the head is empty. Every later visit is the same under both. Should a task's first visit show what is under its head only once the task has arrived? A: no, keep every outline at once, as today. B: yes, the head's outline first, the rest with the task. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/task-first-visit#The choice]]
+  [2026-11-16 19:55] agent — Posted for the board task `app/task-first-visit-holds-still`. A task with two gates on a phone, the page waiting for the task and then loaded, under each: ![Two gates on a phone, waiting then loaded, under A](task-first-visit-two-gates-phone-a.webp) ![Two gates on a phone, waiting then loaded, under B](task-first-visit-two-gates-phone-b.webp)
+
+    **How much each moves**, a first visit's layout shift (under 0.05 is good, and every page's browser test fails at 0.05):
+    - **A:** two gates 0.14 on a phone and 0.03 wide; six gates 0.02, as what moves goes down and mostly off a phone's screen; four, the guess, 0.02 on a phone, its title guessed a line taller. A longer title, more facts or another brief move it further.
+    - **B:** 0 for each, on a phone and wide, whichever of the task and its gates answers first, measured on a build made for this card and not kept.
+
+    **What B costs.** Under the head nothing shows until the task's page answers, the first of its reads to answer: about 40 ms after the outline here; on the live server about 80 ms of its own time plus the trip, longer on a phone over the tailnet (not measured). The head arrives when it does today. Gates that answer before the page, rare under load, wait for it. The six-gate pictures and the figures in each order are in the analysis.
+
+    **Why B.** Your goal for loading pages is that nothing already shown moves when its data arrives. On a first visit only B keeps it, whatever the task's shape, and every part still draws its own outline from the moment its size is known. The other way considered, getting the counts onto the device from the board's rows first, cannot help a browser that kept nothing, and the rows carry no count of gates.
+
+    **Earlier verdicts checked.** **skeleton-first-visit** (B: a first visit guesses the last task's sizes, else fixed ones) chose between guesses, both of which move; B here guesses nothing under the head, which would make the option chosen another, so it is a new card rather than a line on that one. **components-draw-when-data-arrives** (A, with your note that components draw their own mock-ups while they wait for their data) does not decide it: under B each part still draws its outline while its own data is read, but on a first visit only once the task gives its size. **skeleton-loading-outline** approved the outlines' look, which B keeps; it said a first visit still moves, which B changes.
+  [2026-11-16 19:55] agent — The same task wide: waiting under A, waiting under B, then loaded. ![Two gates wide: A waiting, B waiting, loaded](task-first-visit-two-gates-wide.webp)
+  [2026-11-16 20:29] owner · approved — A
+  [2026-11-17 17:22] agent — Recovered the original card from `85fb3482` with the existing owner verdict preserved. Recorded: A, keep every outline at once. The analysis and pictures are the evidence measured on 2026-11-16; these measurements have not been rerun.
+  [2026-11-17 19:18] agent · resolved
+  [2026-11-17 20:45] agent · resolved
+  [2026-11-17 20:54] agent · resolved
 
 ## What moves
 

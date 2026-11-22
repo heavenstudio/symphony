@@ -496,7 +496,7 @@ whose justfile runs a `land` of its own (`just --show land` is not the Symphony'
 its push and its close: it runs no generator and no sweep, and nothing slow is on its
 path or behind its lock, since every merge could make a slow run start again, and a lock
 or queue around one would hold the whole pipeline back
-([its card](DECISIONS.md#land-tests-changed-packages)). One land of a
+([its card](CHECKS.md#land-tests-changed-packages)). One land of a
 repository runs at a time (`land.lock` in `symphony/tasks/`), the lock held for those
 seconds and its check; a second waits its turn and says whose, with no timeout,
 since the lock is freed when its holder's process ends however it ends, and a signal
@@ -889,7 +889,8 @@ holds](#the-limit-on-the-tasks-an-orchestrator-holds)):
   or a lost holder's is given on by the rules above, it waits marked with none that stays, and any
   orchestrator takes the role on it or hands it over, though no other role is taken on a done
   task. It takes no place under the limit and no slot. Ten minutes after its approve, its
-  orchestrator's PULL lists it as `approved_unlanded` until it lands ([Sessions](#sessions)). A task done by a landing, by a close
+  orchestrator's PULL lists it as `approved_unlanded` until it lands ([Sessions](#sessions)). Its
+  assessor still writes what it needs ([Needed stamps](#needed-stamps)). A task done by a landing, by a close
   as covered by another's landing or by a subtask's `done` never carries the mark.
 
 A task's own story (`--for`, the filer's work, its parent session, the task above it, the one it
@@ -1092,6 +1093,20 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
   review, blocked or done: a task moved back to work (a changes verdict) has its merge turned off
   first and its checks said again after, so no check published meanwhile lets the host merge it,
   and stays so until it moves to review.
+- **A head moved under an approve.** A delivery takes an approve naming the head alone, so a task
+  approved and not landed whose branch is at a commit its approve does not name (a merge of the
+  default branch that settles a conflict, a fix, or an approve that named no commit) waits on a
+  fresh one, which only a task in review is given. The dispatch that finds it, a write's or the
+  watcher's round, moves it back to review itself, by the board's own move from done ([Tasks and
+  roles](#tasks-and-roles)) made as its orchestrator, whoever's write started the dispatch (an
+  assessor's holds no role that may make it), and says so once to `@orchestrator`, naming the head
+  and the commit the approve named: its orchestrator starts its assessor and resumes its reviewer as
+  at any move to review, and nobody moves it by hand. Then it is published as any head: the pull
+  request shows the new head with `symphony/eligible` pending, its merge armed across the push,
+  until an assessment and an approve name it. An approve that comes before the assessment leaves the
+  task done, and the assessment is written all the same ([Needed stamps](#needed-stamps)). One that
+  does not go back (a task with no orchestrator, whose dispatch moves as who started it, may be one)
+  is refused, naming `just tasks move SLUG review`.
 - **Who watches.** One watcher per project, `tasks land --watch` (`watch.lock` in the lands'
   folder, `watch.log` its lines), started by each arming where none runs, which reads each armed
   task every `[land] watch_seconds` (30) and ends once none is left. A round writes a task's line
@@ -1129,7 +1144,7 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
 | What the watcher reads | What follows |
 | --- | --- |
 | A check that is not the Symphony's red at the head (a CI the repository adds), or the host reporting the pull request in conflict with the default branch | the task back to in progress (from done by review): its executor merges the default branch once, or puts the check right, and moves it to review, which dispatches it again |
-| The pull request closed unmerged, by someone | back to in progress, naming it; the next dispatch opens another |
+| The pull request closed unmerged, by someone | back to in progress, naming it, moved as its orchestrator whoever's write's dispatch found it (an assessor's included); the next dispatch opens another |
 | Neither merged nor red once `[land] merge_within_minutes` (30) passed since its evidence stood (review time counts for nothing) | the task stays where it is, the work not at fault: `just land SLUG` arms it again |
 | Any of these where the task cannot go back (cancelled or closed, a document save, which stays pending and shown, or what the regenerator made, which it cancels and makes again) | `tools/delivery-failed-SLUG` filed to `@orchestrator`, naming the pull request and why; a second failure is a line on the one open |
 
@@ -1431,7 +1446,7 @@ sources, and a server built from main then embeds the older client. The release 
 within its time, while the regenerator makes main's outputs, and releases nothing of a
 main still behind, filing nothing for it: the regenerator's red is the task then
 ([RELEASES](RELEASES.md)). A consuming project's pin moved to a commit of main waits the
-same way ([its card](DECISIONS.md#pin-waits-for-current-client)): it moves only once `just tasks
+same way ([its card](#pin-waits-for-current-client)): it moves only once `just tasks
 regenerate --status --wait`, run in the Symphony checkout, exits 0, and then to the
 commit it names. The pin is the project's own tooling, which runs it first; a pin to a
 release needs no wait, as no release is cut on a main whose client is behind. A branch
@@ -1440,6 +1455,16 @@ candidate's fix that changes what the client is built from, since no regenerator
 candidate: it commits the distribution its own sources make (`just client-update`), which the
 candidate's rerun checks, and the land keeps main's side of it all the same
 ([RELEASES](RELEASES.md#the-release-candidate)).
+
+- [r] **pin-waits-for-current-client** — A land now merges and pushes in seconds. The client the server embeds is rebuilt after it by one background run, which commits it to main a few minutes later: about 14 minutes when the land changed the client, none when it did not. In between, main's committed client is older than its sources. A release already waits for it: the nightly releases nothing while main's client is behind. May a project's pin be moved to a commit of main whose committed client is behind? A: no; the pin waits until `just tasks regenerate --status` says the client is current, as a release does. B: yes; the pin moves, and the project's server serves the older client until its next move. Recommended: A. Approve and say A or B in the note, or comment. [[TASKS#The regenerator]]
+  [2026-11-12 14:20] agent — Posted for the board task `perf/land-batches-approved-tips`.
+
+    **Why it matters.** A change to the wire types, the server and the client lands its server at once and its client one round later. A server built from main in that window embeds the older client against the newer server, so a page can fail to read what the server sends.
+
+    **Where it applies.** Your verdict on how projects take a newer Symphony (they follow release tags, never main) already keeps a behind client out of every pin to a release, since no release is cut on one. This is for a pin moved by hand to a commit of main, which is every pin move until the first release is tagged. The check belongs to the project's own pin tooling. Symphony gives it the signal: the status command exits nonzero unless main's client is current.
+  [2026-11-12 14:31] owner · approved — A
+  [2026-11-12 14:33] agent — Building A now. A new form of the status command, `just tasks regenerate --status --wait` run in the Symphony checkout, waits while main's client is being rebuilt and succeeds only once it is current, the way the nightly waits before a release. A pin moved to a commit of main moves only after it succeeds, and the guides now say so. The pin itself is moved by the project's own tooling, which runs this command first. A pin to a release needs no wait, since no release is cut while main's client is behind.
+  [2026-11-12 16:36] agent · resolved
 
 ## Gates
 
@@ -1642,25 +1667,28 @@ landing](#the-default-landing)).
   cards' part `crates/tasks/src/stamps/posted.rs`): the owner's `approve SHA` naming T on the
   task's thread, or the owner's approve of the cards the task posted for the owner's look, read
   from git in the main checkout, never from a worktree's files. The cards' approve stands when
-  the branch posted a card (one of a register in a project document at T that the merge base of
-  T with the default branch holds no copy of, the owner's lines and its mark aside, as the pages
-  read a branch's posted cards), each card it posted has `approved` as its newest owner verdict
-  at T, committed (a reject, a question, pending, dismissed or none, on any of them, and it does
-  not), and nothing came after the newest of those approves but the owner's lines: every commit
-  on T's first-parent line after the one the owner's page showed when the owner gave it (the
-  commit before the first that carries the approve) adds the owner's lines under those cards
-  and nothing else, or is a merge of the default branch that is git's own merge of its two
-  parents. Any other commit after it, code, a document or a card's text, keeps it from
-  standing, whoever reviewed it: the owner asked for a look of their own, and its reading names
-  that commit. Met by the cards, the reading names them, `Approved by the owner on card NAME, at
-  1a2b3c4`, which the task page shows and the land's line carries. It is never waived.
+  the branch posted a card (one in a project document at T, inline where it decides or in a
+  register, that the merge base of T with the default branch holds no copy of in any document, the
+  owner's lines and its mark aside, as the pages read a branch's posted cards), each card it posted
+  has `approved` as its newest owner verdict at T, committed (a reject, a question, pending,
+  dismissed or none, on any of them, and it does not), and nothing came after the newest of those
+  approves but the owner's lines: every commit on T's first-parent line after the one the owner's
+  page showed when the owner gave it (the commit before the first that carries the approve) adds the
+  owner's lines under those cards and nothing else, or is a merge of the default branch that is
+  git's own merge of its two parents. Any other commit after it, code, a document or a card's text,
+  keeps it from standing, whoever reviewed it: the owner asked for a look of their own, and its
+  reading names that commit. Met by the cards, the reading names them, `Approved by the owner on
+  card NAME, at 1a2b3c4`, which the task page shows and the land's line carries. It is never waived.
 - **The needs** are the board's own field `fields._board.needs`, out of `just tasks field`'s
   reach as the red mark is: the stamps, the tip the assessment read (none, from
   the brief), who made it and why. `just tasks needs SLUG STAMP… [--tip TIP] --why WHY --as
   HANDLE` writes them, `none` alone for a task that needs no stamp, run in a checkout of the
   task's repository: `--tip` is resolved there to its whole commit, refused when it names none.
   It refuses a stamp the catalogue lacks, `none` beside a stamp, an empty reason and a task
-  done or cancelled. Each write is a line on the thread, which keeps every assessment: `needs
+  cancelled or done, but one approved and not landed (the `unlanded` mark, [Tasks and
+  roles](#tasks-and-roles)): it reads done while its land is still to make, of a head its
+  assessor may not have read, so its assessment is written as open work's is and leaves it
+  done. Each write is a line on the thread, which keeps every assessment: `needs
   tests, review at 1a2b3c4 (was review): a store query and its test, no page or wire; by
   HANDLE`.
 - **The assessor** is a role in name, with no row on the task: `just tasks needs` is refused,
@@ -2325,7 +2353,7 @@ another program in its foreground). A close and a restore of one session each ho
 run, so neither starts while the other runs; one whose hold lapsed and was taken over writes
 nothing more, and a restore that lost it kills the terminal it started. A Codex record
 takes the thread its callback registered whichever is written first; one closed with no thread
-says on its thread that restore cannot resume it. See the [tasks skill](../crates/symphony/shipped/skills/tasks/SKILL.md#launch-restore-clean-up-hc).
+says on its thread that restore cannot resume it. See the [tasks skill](../crates/symphony/shipped/skills/tasks/SKILL.md#launch-restore-clean-up).
 
 An initialized JavaScript REPL can retain `kernel.js` and `trusted-worker.js` under the
 ChatGPT app's bundled `node`. Their command lines do not distinguish waiting for a cell
@@ -2518,7 +2546,7 @@ A board `TASKS_SERVER` names (a test's) starts no sweep unless
 **What the sweep sets aside stays, its build output never, and past a cap the sweep asks for a
 check by hand.** A finished worktree's pictures and other artifacts are kept in the main checkout
 and its build output is not; past a size cap, agents are asked to check by hand and remove what
-nothing uses any more ([its card](DECISIONS.md#sweep-artifacts-set-aside)). What is set aside
+nothing uses any more ([its card](#sweep-artifacts-set-aside)). What is set aside
 stays in the main checkout's artifacts folder, which
 git ignores, and nothing commits it; attaching it to the repository without a commit on main is a
 design of its own. Build output in a worktree's artifacts folder (a folder tagged as a cache by a
@@ -2600,7 +2628,7 @@ counts as a sign of life, and so does every tool call of a subagent (below):
 
 | health | meaning |
 |---|---|
-| live | seen in the last 90 s, or inside one long tool call that could still be running |
+| live | seen in the last 90 s, inside one long tool call that could still be running, or waiting on a recorded build or test of its own that still runs |
 | stale | quiet, or its monitor has stopped: its work is still held, nobody may take it |
 | lost | gone for 10 minutes holding claimable work: that work can be claimed, on the record |
 | left | it said `just tasks leave` (its roles were released, the open work it orchestrated given to another orchestrator, or waiting for one while none stays), or it has been gone 10 minutes holding nothing anyone could claim |
@@ -2638,7 +2666,14 @@ an orchestrator never keep a child it registered alive. The hook looks at the bo
 only for a board command or a key already bound. A foreground Bash call
 reads live for as long as its timeout allows (at most 10 minutes), so a long
 `verify-full` does not look like silence; of calls running side by side, the
-one that may run longest keeps the mark, and only its own end clears it. Each
+one that may run longest keeps the mark, and only its own end clears it. A
+build or test that outlives its call (one started in the background, or moved
+there when its call's timeout ran out) keeps its session live by its recorder:
+while its command runs, the recorder of a run whose record names the session
+says it was seen, every 20 s and once more as the run ends, so the session
+is neither stale nor lost nor orphaning its task while it waits, and ages from
+the run's end as from any last sign of life
+([its session is there](MACHINE_WORK.md#recording-builds-and-tests)). Each
 tool call of a bound subagent also records, on its binding (never its session
 row, which keeps where its orchestrator ran `register`), the checkout that call
 ran in: the top folder above the hook's `cwd` and the branch checked out there,
@@ -3266,6 +3301,27 @@ a box that clips, the rows under it where they were. The pictures it follows are
 `docs/analysis/reports-timeline-phone.svg` and
 `docs/analysis/reports-timeline-wide.svg`.
 
+- [-] **timeline-burst-drawing** — A burst of runs, dozens of tests minutes apart in a task that lasted days, makes the task's wide timeline 12 px taller per run, with no limit: tools/board-token-usage's is 911 px tall, and its Tests lane is 37 thin rows that read as a dashed line, with no words. How should a lane draw a burst, every run kept its own and reachable? A: as it is, a thin row per run, the box growing. B: the same rows, the lane scrolling in a box of its own past 256 px, the height of six rows with words. C: each burst one mark that says how many runs and how many went red ("37 tests · 4 red"), opened in place to its runs by a click, a tap or Enter; on a phone, one row of the list the same way. Recommended: C. Approve and say A, B or C in the note, or comment. [[TASKS#The timeline]]
+  [2026-11-17 00:43] agent — Posted for the board task `app/timeline-burst-drawing-card`, from the review of `app/timeline-builds-and-tests-apart`. tools/board-token-usage at 1280 wide, on a private server of main's build (the shared server runs a release from before builds and tests had lanes of their own): A as it is, then B and C drawn on that page by hand, not built. ![The burst wide, option A](analysis/timeline-burst/a-wide.webp) ![The burst wide, option B](analysis/timeline-burst/b-wide.webp) ![The burst wide, option C](analysis/timeline-burst/c-wide.webp)
+
+    **A, as it is.** The box is 911 px; a typical whole timeline is 508. The Tests lane alone is 449 px: 12 tests on 11-15 and 37 on 11-16, each a sliver on five days of hours, each in a row of its own so that none is drawn over another. A run's words are only in its hover, its focus and its row on a phone.
+
+    **B, the lane scrolls.** The box is 719 px. The lane stops at 256 px and scrolls the rest, its scroll bar in the margin past the hours. The rows are A's, no easier to read, and the runs below its edge are a scroll away inside a page that scrolls too.
+
+    **C, one mark per burst.** The box is 509 px, about a typical timeline's. The lane is one row: a stacked mark with its count, its words under it. Opened, the burst draws its runs under the mark as A does, and closes the same way. The mark is no run's bar: its count says it holds several, so it never reads as one long run. A burst is runs each queued so soon after the one before it ended (half a percent of the hours drawn, as today) that they would need more than six rows; every other run is drawn as now.
+
+    **What each costs.** A, nothing. B, a few lines of style, and a box that scrolls inside the page, which a trackpad catches as it passes over. C the most: the bursts found in the layout, a mark the keyboard and a tap open and close, its words, the phone's folded row, and their tests.
+
+    **Why C.** What a burst says is how many ran and whether any went red: C says it on one line, wide and on a phone, where the thin rows say neither. It gives back 402 px wide and 2,140 px on a phone's Show all, and every run is still one press away, each with its words in its hover, its focus and its row.
+
+    **Earlier verdicts checked.** **task-page-timeline-place** (C) keeps a phone's box at 240 px behind Show all; no option changes that. Your note on `inbox/timeline-should-not-be-collapsed-by-defa` had the wide timeline shown whole: "Desktop collapse save almost no space and hides really good information from view." It weighs against B and C, which hide runs until scrolled or opened, and does not decide this card: that collapse cut every task's lanes for little room, where a burst costs 402 px of rows that show no words. `app/timeline-builds-and-tests-apart`, from your question whether a 55 min build was several, never draws two runs as one bar, and no option does. None of them decides how a burst is drawn.
+  [2026-11-17 00:43] agent — On a phone the box opens at 240 px on the latest steps under every option (here round 3 and Done), so the burst shows only after Show all. There A and B list every run, 61 steps in 3,143 px, each row reading "Test, just test-rs -p sympho…"; C folds more than six runs in a row of the list into one row, 16 steps in 1,003 px. The list puts a run under the stage it began in, so 11-15's burst, which spans two stages, folds its first seven runs and leaves the last six as rows. ![A and B on a phone, after Show all](analysis/timeline-burst/phone-all.webp) ![C on a phone, after Show all](analysis/timeline-burst/c-phone-all.webp) C wide, in dark: ![C wide, dark](analysis/timeline-burst/c-wide-dark.webp)
+  [2026-11-17 00:43] agent — **Not asked here: the word under a bar.** It is the command's first word, so every `cargo install` reads "cargo 55 m" and every `just test-rs` "test-rs", and a phone's row is cut before what tells two runs apart. Better: the command's distinguishing words, the command without `just`, its flags and the test filter after `--`. So `just test-rs -p symphony-board --test cli -- beat` reads "test-rs symphony-board cli", `cargo install symphony-server (cold-full)` keeps all four words and `just lint-rs` stays "lint-rs"; under a bar with too little room for them, the first word as now, so no word goes where one shows today. It is not built here: it changes the drawing this card's answer changes, so it is built with that answer.
+  [2026-11-17 12:15] owner · question — why whould this be vertical instead of being horizontal reflecting actual ran times?
+  [2026-11-17 12:28] agent — Time already runs horizontally on the wide timeline: each bar is positioned by its recorded times. The vertical pile comes from a layout rule that gives runs separate rows not only when they overlap, but also when they are close together (within 0.5% of the whole time range). Across five days that is 36 minutes, so even sequential short tests get stacked. That avoids bars visually joining, but creates the height problem this proposal then tries to hide. Your suggestion addresses the cause: keep sequential runs on the same horizontal time axis, reserve extra rows for actual overlap, and let a closer time view reveal short runs at their real duration. The proposal should explore that before folding bursts; A/B/C overlooked it. The phone view is a separate chronological list because of its narrower width.
+  [2026-11-17 12:35] owner · rejected — yes. rework the proposal to be more horizontal based.
+  [2026-11-17 12:35] agent — Revised proposal: keep Builds and Tests on a shared horizontal time axis. Sequential runs reuse the same row; only genuinely overlapping queued/running intervals need another row. Each run keeps its actual start, end and duration, with waiting distinguished from execution. For a dense period, zoom into that time range and pan horizontally, with a clear return to the whole task; every lane uses the same scale so comparisons remain meaningful. Selecting a run shows its full command, exact times and result without adding a row per run. Very short runs stay individually reachable by keyboard and selection, without stretching their duration to fit a label. This replaces the vertical stacking, inner scrolling and folded-burst proposals above. The earlier pictures illustrate rejected options, not this revision; the revised layout still needs visual validation, including a narrow-screen treatment consistent with your existing phone-height decision.
+
 ## Links with the documents
 
 A task's `--link` lists it in the **Related tasks** panel of that document's page in the
@@ -3322,6 +3378,45 @@ recovery binding and `just tasks recovery`: [BOARD_OPERATIONS](BOARD_OPERATIONS.
 `just tasks status` prints the board's health over the last hour as its Symphony server
 recorded it, and every page and the project picker say when it is unwell. What is counted, the
 record and its hour files, and each warning: [BOARD_OPERATIONS](BOARD_OPERATIONS.md#board-health).
+
+- [r] **sweep-swept-retention** — Before the sweep removes a finished worktree, it moves what git ignores in its artifacts folder (the pictures its thread names, a test's leftovers) into the main checkout's `artifacts/swept/NAME/`, and nothing ever empties that folder. Any rule that empties it deletes evidence, so the rule is yours. How long is what was set aside kept? A: for good, every dry run saying how much it holds (built). B: 30 days after the worktree's task closed, then deleted, the dry run naming what goes next. C: only the files a task's thread names; the rest is deleted as the worktree goes. Recommended: A. Approve and say A, B (and the days, if not 30) or C in the note, or comment. [[TASKS#Board health]]
+  [2026-11-12 14:31] agent — Posted for the board task `tools/sweep-removes-nothing`. A dry run on a scratch repository after one sweep set a worktree's evidence aside; the highlighted line is the new one: ![A sweep's dry run, ending with what the main checkout holds set aside](analysis/sweep-dry-run-set-aside.svg)
+
+    **What it would hold.** On 2026-11-12, 16 of this repository's 40 worktrees had an artifacts folder, 4.6 GB in all: 3.5 GB of it one review's build, 0.9 GB one test's proof, the rest a few MB each. Each move is a rename on the same disk, so it takes no new space: it is what the worktrees held already.
+
+    **A, keep for good.** Nothing a thread names is ever lost. Cost: the folder grows with every task that leaves evidence, a review's build kept in its artifacts included; the dry run says how much, and the board warns on every page when free disk drops under 20 GB.
+
+    **B, keep 30 days.** The disk comes back by itself. Cost: a link on an older thread stops working, and a task reopened after that has lost its pictures.
+
+    **C, keep what a thread names.** Keeps the evidence and drops the leftovers, such as that 3.5 GB build. Cost: a picture named by another spelling, or only in a card, is deleted; the sweep reads the threads of every task tied to the worktree before each removal.
+
+    **Why A.** It deletes nothing until a size worth acting on shows, and B or C can follow as one rule over the same folder.
+  [2026-11-12 14:39] owner · question — images should be kept, build should not. Images and other artifacts can be pushed into a main tree. However there should be a cap to the size of the folder, after which it should ask/warn agents to manually check and remove stale images and artifacts not in use. Maybe 5 GB limit?
+  [2026-11-12 15:14] agent — Built as you said, for the board task `tools/sweep-removes-nothing`. Your words, 2026-11-12: "images should be kept, build should not. Images and other artifacts can be pushed into a main tree. However there should be a cap to the size of the folder, after which it should ask/warn agents to manually check and remove stale images and artifacts not in use. Maybe 5 GB limit?" and, the same day: "Instead of directly commiting, artifacts could be attached some with some different process. Either nodes, or git files? Forgot the name but I think there was something for this type of challenge in particular. But if there's something that still actively references the artifact, then it should be kept until space used becomes a problems requiring it to be remove."
+
+    **Kept, never committed.** The orchestrator's reading of "pushed into a main tree", labelled as theirs: kept in the main checkout's artifacts folder (ignored by git), not committed to the repository. Attaching artifacts without a commit on main (Git LFS, notes or a ref of its own) is a design task of its own, not built here.
+
+    **Build output is never kept.** A folder tagged with `CACHEDIR.TAG`, as Cargo's build folders are, or a file of compiled code, known by its first bytes (ELF, Mach-O, wasm, an archive), goes with the worktree. A correction to the figures above: the 3.5 GB I called one review's build is no build but a scratch repository's `.git` (`artifacts/hg-review/sf/.git` in that worktree), which these rules keep; the test's proof holds 280 MB server binaries, which are compiled code and now go.
+
+    **The cap, and nothing removed.** `[board] swept_cap_gb` in `symphony.toml`, 5 GB when unwritten, your suggested figure. The sweep never removes anything it set aside. Past the cap it still sets aside, and the sweep's output, the land's and a dry run's say so in one line, and `just tasks status` warns of it until it is under again, naming the size, the cap and the five largest folders with their tasks and stages. Each folder is marked `in use: WHERE` while a task tied to it is not done or cancelled, a post on an open task's thread names a path under it, or a file of `docs/` on main does (cards included), and `no reference found` otherwise; only those are suggested for the check by hand. The lookup is one read of the open tasks' threads and one search of `docs/`, made once each time the folder is measured past its cap. Rules: [[TASKS#Board health]].
+  [2026-11-12 17:43] owner · approved
+  [2026-11-12 17:59] agent · resolved
+
+- [r] **sweep-artifacts-set-aside** — A worktree whose task is done or cancelled used to stay whole for as long as anything sat in its `artifacts/` folder: the pictures its thread names, a test's leftovers, a review's build. That was the reason in 729 of the sweep log's 850 "kept" lines. What should the sweep do with that folder before it removes the worktree? A: move it into the main checkout's `artifacts/swept/NAME/`, and back if git refuses the removal. B: delete it with the worktree. C: keep the worktree, as before. Recommended: A, which is built. Approve and say A, B or C in the note, or comment. [[TASKS#Board health]]
+  [2026-11-12 12:15] agent — Posted for the board task `tools/sweep-removes-nothing`.
+
+    **What the folders hold today.** 16 of the 40 worktrees have one, 4.6 GB in all: 3.5 GB is one review's build (`hg-review`), 0.9 GB one test's proof, and the rest is a few MB each.
+
+    **A, move.** Nothing is lost, and every picture a thread names can still be found by its worktree's name. The move is a rename on the same disk, so it copies nothing. Cost: `artifacts/swept/` in the main checkout keeps growing until someone empties it, about 4.6 GB today.
+
+    **B, delete.** All the disk comes back at once. Cost: a task's evidence pictures are never committed, so a thread's link to one stops working once its worktree goes.
+
+    **C, keep.** Nothing changes. Cost: the 16 worktrees and their build output stay until someone empties each folder by hand. That is part of why the sweep removed 0 of 38.
+
+    **Why A.** It loses nothing, frees everything else in the worktree, and switching to B later is one line. The task's report has the other causes of "removed 0".
+  [2026-11-12 12:38] owner · approved — A
+  [2026-11-12 12:42] agent — Built as A says, nothing else changed. Before the sweep removes a worktree whose work is finished, it moves what git ignores in that worktree's artifacts/ into the main checkout's artifacts/swept/NAME/, NAME being the worktree's folder (NAME-2, NAME-3 when that name is taken). If git then refuses the removal, everything goes back. Nothing empties artifacts/swept/ by itself. It goes to review with the board task tools/sweep-removes-nothing now.
+  [2026-11-12 12:42] agent · resolved
 
 ### The tasks API
 

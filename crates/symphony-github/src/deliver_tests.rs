@@ -228,6 +228,36 @@ fn the_projects_git_pushes_a_head_to_its_branch_and_never_over_another_history()
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A merge is asked by the method its request names for its kind of head: a task's squashed, an
+/// import's by a merge commit. The other method, none, and a head that is no whole commit are
+/// refused in the same words.
+#[test]
+fn a_merges_method_is_its_kinds_own_and_its_head_one_whole_commit() {
+    let head = "a".repeat(40);
+    let asked = |method: &str| json!({"method": method});
+    assert_eq!(merge_method(&asked("squash"), &head, false), Ok("squash"));
+    assert_eq!(merge_method(&asked("merge"), &head, true), Ok("merge"));
+    let refusal =
+        refused("a merge is of one whole commit: a task's squashed, an import's by a merge commit");
+    for (request, head, imported) in [
+        (asked("merge"), head.as_str(), false),
+        (asked("squash"), head.as_str(), true),
+        (asked("rebase"), head.as_str(), false),
+        (json!({}), head.as_str(), false),
+        (json!({"method": null}), head.as_str(), true),
+        (asked("squash"), "a".repeat(39).as_str(), false),
+        (asked("squash"), "main", false),
+        (asked("merge"), "", true),
+        (asked("squash"), "g".repeat(40).as_str(), false),
+    ] {
+        assert_eq!(
+            merge_method(&request, head, imported),
+            Err(refusal.clone()),
+            "{request} at {head:?}, imported {imported}"
+        );
+    }
+}
+
 /// A transport that answers every request `status` with `headers`.
 struct Answers(u16, Vec<(&'static str, &'static str)>);
 

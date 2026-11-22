@@ -17,7 +17,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use symphony_docs::syntax;
-pub use symphony_docs::syntax::{REGION_END, REGION_START, card_end};
+pub use symphony_docs::syntax::{REGION_END, REGION_START, card_end, carded};
 
 use crate::text::{NS, S, prefix_chars, repr, splitlines, strip};
 

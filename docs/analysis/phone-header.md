@@ -1,9 +1,10 @@
 # The header on a phone, in one row
 
-A smaller header for a phone, as proposed on the card **phone-header-one-row** in
-[DECISIONS](../DECISIONS.md). The header today is two rows on a phone, as [The header](header-names.md#on-a-phone)
-describes; this would make it one. That card was rejected for its name, which the owner wants
-gone on a phone; its replacement, **phone-header-mark-only**, is [The mark alone](#the-mark-alone).
+A smaller header for a phone, as proposed on the card
+[**phone-header-one-row**](#phone-header-one-row). The header today is two rows on a phone, as
+[The header](header-names.md#on-a-phone) describes; this would make it one. That card was rejected
+for its name, which the owner wants gone on a phone; its replacement,
+[**phone-header-mark-only**](#phone-header-mark-only), is [The mark alone](#the-mark-alone).
 
 ## The proposal
 
@@ -31,6 +32,21 @@ browser has none.
 At desk width nothing changes: the button is not drawn and the row of pages is today's. A theme
 that picks the compact header (`[theme.layouts] header = "compact"`) keeps its one row of pages at
 every width.
+
+- [-] **phone-header-one-row** — On a phone the header would be one row instead of two: the mark and name, a menu button that names the page you are on (☰ Board), ◑ and the bell. The page links and Projects move into that menu, which opens under the button over the page, so nothing below it moves. The header goes from 97 px to 53 px tall, so every page starts 44 px higher. Wider than a phone nothing changes. It changes **header-on-a-phone**, which keeps every page in view on a second row. Approve, or comment. [[analysis/phone-header#The proposal]]
+  [2026-11-16 22:15] agent — Posted for the board task `app/phone-header-is-one-row`, from your words on its inbox item: "Navigation should also be made even smaller on mobile, possibly using hambúrguer menus".
+  [2026-11-16 22:15] agent — The board, then a document, light then dark. Each shows today, the one row, and the one row with its menu open: ![The board on a phone, light: today, one row, menu open](phone-header/board-light.webp) ![The board on a phone, dark: today, one row, menu open](phone-header/board-dark.webp) ![A document on a phone, light: today, one row, menu open](phone-header/doc-light.webp) ![A document on a phone, dark: today, one row, menu open](phone-header/doc-dark.webp)
+
+    **How the menu works.** A tap on the button, or Enter, opens it; Tab moves into it. Escape or a tap anywhere else closes it, and so does following a link. The page you are on is lit in it, as in today's row. Projects, which leaves this project for the list of all projects, is its first line.
+
+    **What it costs.** Changing page takes two taps instead of one. Activity loses its word on a phone and keeps its bell and its unread dot.
+
+    **Not pictured.** At 320 wide the row still fits with the name whole, where today the name is cut short. At desk width the header is the same, pixel for pixel. The server's own pages (the project list, a missing page) get the same menu. A theme with the compact header keeps its one scrolling row. The same board task builds it after your answer.
+
+    **Earlier verdicts checked.** **header-on-a-phone** chose two rows with every page in view; pages behind a button is another choice than the one it describes, so it is asked here and not recorded on it. **header-page-names** (the names and their order), **header-appearance** (the ◑ button) and **symphony-mark** (the fermata and its name) are kept as they are. None of them decides whether the pages go behind a menu.
+  [2026-11-16 22:30] owner · rejected — Symphony title should be omitted, only the icon should show for mobile
+  [2026-11-16 23:02] agent — Replaced by **phone-header-mark-only**: the same one row with the mark alone and no name on a phone; the name stays wider than a phone, and in the page for a screen reader. Pictures of the board and a document, light and dark, are on that card.
+  [2026-11-17 12:24] agent — Your direction is preserved: mobile shows only the icon, with the Symphony name hidden visually and retained for screen readers; wider layouts keep the name. The replacement **phone-header-mark-only** records this and was approved by you on 2026-11-17 at 03:49. This delayed notification does not reopen that choice.
 
 ## How the pictures were made
 
@@ -132,3 +148,21 @@ What building it touches is the list above, with two tests the first card's revi
 The board task `app/symphony-mark-followups` drops the name on the narrowest phones only, and its
 acceptance keeps the phone's two rows: the mark alone, once built, does its first item's work and
 changes that acceptance.
+
+- [r] **phone-header-mark-only** — Replaces: phone-header-one-row. On a phone the header would be one row with the mark alone and no name: the fermata, a menu button that names the page you are on (☰ Board), ◑ and the bell. The page links and Projects move into that menu, which opens under the button over the page, so nothing below it moves. The header goes from 97 px to 53 px tall, so every page starts 44 px higher. Wider than a phone nothing changes, the name included. It changes **header-on-a-phone**, which keeps every page in view on a second row. Approve, or comment. [[analysis/phone-header#The mark alone]]
+  [2026-11-16 23:05] agent — Posted for the board task `app/phone-header-mark-only`, from your rejection of **phone-header-one-row**: "Symphony title should be omitted, only the icon should show for mobile". The name is the only change from that card.
+  [2026-11-16 23:05] agent — The board, then a document, light then dark. Each shows today, the mark alone, and the menu open: ![The board on a phone, light: today, the mark alone, menu open](phone-header/mark-only-board-light.webp) ![The board on a phone, dark: today, the mark alone, menu open](phone-header/mark-only-board-dark.webp) ![A document on a phone, light: today, the mark alone, menu open](phone-header/mark-only-doc-light.webp) ![A document on a phone, dark: today, the mark alone, menu open](phone-header/mark-only-doc-dark.webp)
+
+    **The name.** It goes on every page 760 px wide or less, the server's own pages too (the project list, a missing page). A project with a name and an icon of its own shows its icon alone the same way. A screen reader still reads the name: it stays in the page out of sight, as the bell keeps its word Activity. The mark is no link today and stays none; Home is in the menu.
+
+    **The width it frees.** 84 px, the name and the gap after it. Nothing takes it: the gap between the menu button and ◑ grows. Only a page name too long for the button uses it, and is cut short with "…" past that. At 320 wide, Board leaves 102 px free; a page name of 234 px shows 138 px of itself, and the header stays one row with no sideways scroll.
+
+    **How the menu works.** As on the rejected card: a tap or Enter opens it, Tab moves into it, Escape or a tap anywhere else closes it, and Escape gives the focus back to the button. Following a link closes it too. The page you are on is lit in it, and Projects is its first line.
+
+    **What it costs.** Changing page takes two taps instead of one. Activity loses its word on a phone, keeping its bell and its unread dot. The name shows only wider than a phone.
+
+    **Not pictured.** At 320, 360 and 375 wide the row is one line with no sideways scroll. At desk width the header is the same, pixel for pixel, name and all. A theme with the compact header keeps its one scrolling row. The same board task builds it after your answer.
+
+    **Earlier verdicts checked.** **phone-header-one-row** is rejected; your words on it ask for this card's one change. **header-on-a-phone** chose two rows with every page in view; pages behind a button is another choice, so it is asked here and not recorded there. **symphony-mark** (C) put the fermata and its wordmark at the head of the header; your words on **phone-header-one-row**, which came after it, drop the wordmark on a phone, and wider than a phone it stays. **header-page-names** (the names and their order) and **header-appearance** (the ◑ button) are kept. None of them decides whether the pages go behind a menu.
+  [2026-11-17 03:49] owner · approved
+  [2026-11-17 12:24] agent · resolved

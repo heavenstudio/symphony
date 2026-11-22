@@ -8,8 +8,7 @@
 //! marks as following input too: its phone emulation marks a load's own shifts so, and a measured
 //! panel is scored from after its opening, so no shift the click itself caused is in its score.
 use super::{
-    SHOWN, chrome, chrome::Chrome, common, dist, document_landing::TWO_FRAMES, look_parity,
-    site::Site,
+    READY, SHOWN, chrome, chrome::Chrome, document_landing::TWO_FRAMES, look_parity, site::Site,
 };
 use serde_json::{Value, json};
 
@@ -116,14 +115,6 @@ pub(super) struct Scheme {
 pub(super) const DARK: Scheme = Scheme { name: "dark" };
 pub(super) const LIGHT: Scheme = Scheme { name: "light" };
 
-/// Have `browser`'s page answer `prefers-color-scheme` as `scheme`, whatever the machine's is.
-fn set_scheme(browser: &mut Chrome, scheme: Scheme) {
-    browser.call(
-        "Emulation.setEmulatedMedia",
-        json!({"features":[{"name":"prefers-color-scheme","value":scheme.name}]}),
-    );
-}
-
 /// What a measured load opens once its page is settled: a panel, by the control that opens it,
 /// and what it shows once its read is in.
 #[derive(Clone, Copy, Debug)]
@@ -203,12 +194,9 @@ fn measure_in(
     before: &str,
 ) -> Loads {
     if let Some(scheme) = scheme {
-        set_scheme(browser, scheme);
+        browser.scheme(scheme.name);
     }
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": width.width, "height": width.height, "deviceScaleFactor": 1, "mobile": width.mobile}),
-    );
+    browser.viewport(width.width, width.height, width.mobile);
     let held = open.map_or("", |open| open.held);
     browser.call(
         "Page.addScriptToEvaluateOnNewDocument",
@@ -229,10 +217,7 @@ fn load(
 ) -> Vec<Shift> {
     browser.open(&site.url(path));
     assert!(
-        browser.wait_for(
-            &format!("document.documentElement.dataset.navigation === 'ready' && ({ready})"),
-            SHOWN
-        ),
+        browser.wait_for(&format!("{READY} && ({ready})"), SHOWN),
         "{path} never showed {ready}: {:?}",
         browser.eval("document.body.innerText.slice(0, 2000)")
     );
@@ -338,7 +323,7 @@ fn paragraph(text: &str) -> Value {
 /// conversation, and a document at `path` whose `sections` arrive as the server sends them: an
 /// outline without their bodies, then the bodies a later read asks for.
 pub(super) fn site(path: &str, sections: &[Value], cards: Value) -> Site {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let mut responses = look_parity::responses();
     // The task's gates as the server answers them, short enough for a line each on a phone, and
     // with its page what the server answered last (`GatesSeen`), the room they hold until then.
@@ -627,11 +612,8 @@ fn first_visit(
     order: Order,
 ) -> f64 {
     browser.fresh_context();
-    set_scheme(browser, scheme);
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": width.width, "height": width.height, "deviceScaleFactor": 1, "mobile": width.mobile}),
-    );
+    browser.scheme(scheme.name);
+    browser.viewport(width.width, width.height, width.mobile);
     browser.call(
         "Page.addScriptToEvaluateOnNewDocument",
         json!({ "source": RECORD }),
@@ -653,10 +635,7 @@ fn first_visit(
         browser.eval("document.body.innerText.slice(0, 2000)")
     );
     assert!(
-        browser.wait_for(
-            &format!("document.documentElement.dataset.navigation === 'ready' && ({TASK_READY})"),
-            SHOWN
-        ),
+        browser.wait_for(&format!("{READY} && ({TASK_READY})"), SHOWN),
         "{page}, {}: the task never showed its thread",
         order.name
     );
@@ -770,8 +749,8 @@ fn a_task_holds_still_while_its_thread_loads() {
 /// and from four rows to two, the timeline drawn under it:
 /// `div.task-gates-slot [13,396,364,434]→[13,364,364,243]`,
 /// `section#timeline [0,0,0,0]→[13,638,364,206]`. The owner kept that move (the card
-/// `task-first-visit-head-first` in docs/DECISIONS.md, every outline at once); the limit only
-/// goes down.
+/// `task-first-visit-head-first` in docs/analysis/task-first-visit.md, every outline at once); the
+/// limit only goes down.
 const PHONE_PAGE_FIRST_LIMIT: f64 = 0.14;
 /// The same visit with the gates' answer drawn before the page's: it scores 0.0636, the timeline
 /// drawn (0.0434, `[0,0,0,0]→[13,670,364,174]`) and then both going up 32 px (0.0201,

@@ -1,9 +1,9 @@
 # The client cache
 
 What it takes for a Symphony page to draw at once from what the browser last held and then ask the
-server only for what changed, as proposed on the client-cache card in [DECISIONS](../DECISIONS.md),
-and the measurements it rests on. Each fact about the code names the file and function it was read
-in. "Measured 2026-11-11" marks this machine that day.
+server only for what changed, as proposed on the [client-cache](#client-cache) card, and the
+measurements it rests on. Each fact about the code names the file and function it was read in.
+"Measured 2026-11-11" marks this machine that day.
 
 The ask, as the board task `perf/client-cache` records it (2026-11-11): the client should behave like
 Apollo's cache-and-network policy. A page draws at once from what the browser last held, then asks
@@ -50,6 +50,26 @@ Recommended, in five choices; the card asks the owner for each.
    page already has keeps trying.
 
 A first visit, or a read the cache does not hold, goes as today, and its answer is kept.
+
+- [r] **client-cache** — A page draws at once from what this device last held, marked as possibly out of date, while it asks the server whether anything changed; an unchanged read answers with no body. Measured today, a return visit to a task page draws its brief after 192 ms on this Mac and 2.9 s at phone speed, waiting on data the device already had; with the cache, about 85 ms and 1.8 s. Five choices, each with its default: 1. Where: IndexedDB, keys by project. 2. Freshness: a checksum per read, answered `304` with no body when unchanged; the live feed as today. 3. Kept: the board, the queue, the 30 tasks and 20 documents opened last, each with what its page drew; 8 MB a project (tasks 2, documents 6), 32 MB in all, 14 days, least recently used out first; never searches, older messages or the landing offer. 4. Versions: a format number in the wire crate clears the cache when it changes; a server update needs nothing. 5. Stale: a notice, and the verdict, answer and task buttons wait until the server answers. Approve to take all five defaults, or comment with the ones to change. [[analysis/client-cache#The design]]
+  [2026-11-11 18:30] agent — Posted for the board task `perf/client-cache/design`.
+
+    **Today.** Every data read is answered `no-store`, so a return visit downloads its data again and draws nothing until it arrives. Measured on a private server with a copy of this board, five runs each, warm: home 107 ms, `/tasks` 401 ms, a task 192 ms, this register 194 ms, the consuming project's register 296 ms; at phone speed (Fast 3G) 2.3 to 3.8 s. The page's code starts asking for data at 50 to 75 ms, and at 1.8 s on the phone.
+
+    **1.** IndexedDB works on the tailnet's plain `http://`, reads off the page's thread and has room. localStorage holds about 5 MB for the whole origin, shared with drafts; a service worker needs a secure page, which the tailnet is not.
+
+    **2.** A checksum survives a server restart. The feed's version moves with every agent's health, and the feed keeps only its last 128 events, a few minutes on a busy board.
+
+    **3.** Thirty tasks take about 1.3 MB; separate caps keep a week of tasks from pushing out the documents.
+
+    **4.** Clearing on every client build would cost a slow visit per page after each update; main's client changed 7 times today.
+
+    **5.** Nothing that acts is given on content the server has not confirmed. The landing offer is always read fresh.
+
+    **Gain.** Every page draws in about 60 to 85 ms here and 1.8 s on the phone, about 0.6 s once `perf/asset-caching` lands too. An unchanged visit's data drops from 13.5 to 6.4 KB on `/tasks` and from 26.7 to 9.9 KB on the large register. A first visit is unchanged but for the store's code, about 1 to 2 KB. [[analysis/client-cache#Expected gain]]
+  [2026-11-11 18:48] owner · approved
+  [2026-11-11 19:00] agent — Recorded: the design as recommended, built by the board task `perf/client-cache/build`. The owner added two things in the terminal (2026-11-11), now in that task's brief. Documents are kept by how often they are visited, not only how recently: a project's entrypoint pages stay, a page opened once goes first. And pages are fetched ahead: the tasks and documents a drawn page links to are read into the cache while the device is idle, within the same caps, never on a metered or slow connection, and never for a link that acts.
+  [2026-11-11 19:00] agent · resolved
 
 ## What a visit loads today
 

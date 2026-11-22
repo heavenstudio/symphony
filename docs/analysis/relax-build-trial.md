@@ -1,9 +1,9 @@
 # Relax against cargo
 
 Whether Relax, Makepad's live Rust compiler, could replace or sit beside cargo in Symphony's build
-and test loop, tried on this workspace and measured against cargo, as the relax-not-adopted card
-in [DECISIONS](../DECISIONS.md) records. "Measured 2026-11-11" marks this machine that day: an
-Apple M3 Max, 16 cores, 64 GB, macOS, shared with a dozen other agents' builds.
+and test loop, tried on this workspace and measured against cargo, as the
+[relax-not-adopted](#relax-not-adopted) card records. "Measured 2026-11-11" marks this machine
+that day: an Apple M3 Max, 16 cores, 64 GB, macOS, shared with a dozen other agents' builds.
 
 The ask: evaluate whether adopting Relax (https://makepad.github.io/relax/#architecture) could
 help Symphony's build process, by an empirical test, and adopt it if its numbers are better, with
@@ -30,6 +30,30 @@ Nothing is adopted; cargo stays the build, the test runner and the gate of recor
   agent's every `just tasks`, is a no-op.
 - **Short test processes run on its slowest tier.** The `symphony-api` wire tests take 3.7 to 5.0 s
   under a warm Relax against 0.03 to 0.10 s in cargo's unoptimised test build.
+
+- [r] **relax-not-adopted** — Could Relax, Makepad's live Rust compiler, make Symphony's builds faster? Tried on this workspace against cargo: not yet, so nothing is adopted and cargo stays the build and the gate. Of the six cases tried, three ran and matched cargo. `docs-audit`, the server and the `chrome-devtools` tests stop on gaps in its standard library and its ARM vector instructions, and 7 of the 32 `symphony-schema` tests fail under it that pass under cargo. Where it runs, an edit reaches its result sooner; with nothing changed it is slower, and that is every `just tasks` command. Approve to close, or comment. [[analysis/relax-build-trial#The result]]
+  [2026-11-11 20:12] agent — Posted for the board task `tools/relax-build-trial`. Medians of three runs each, at load 150 to 275 on 16 cores:
+
+    | | cargo | Relax |
+    |---|---|---|
+    | `symphony-args` tests, after an edit | 3.1 s | 0.8 s |
+    | `symphony-api` tests, clean checkout | 37 s, 22 CPU-s | 28 s, 39 CPU-s |
+    | `symphony-api` tests, after an edit | 18 s, 9 CPU-s | 10 s, 20 CPU-s |
+    | `symphony-api` tests, nothing changed | 3.0 s | 5.6 s |
+    | `tasks list`, after an edit in `crates/tasks` | 75 s, 27 CPU-s | 12 s, 14 CPU-s |
+    | `tasks list`, nothing changed | 5 s, 0.3 CPU-s | 11 s, 12 CPU-s |
+    | 18 short `symphony-api` tests, run alone | 0.03 to 0.10 s | 3.7 to 5.0 s |
+    | peak memory, `tasks list` | 720 MB | 1.05 GB |
+    | disk, per worktree | 4.7 GB | 2.5 GB, and 1.2 GB once per machine |
+
+    **Adopted:** nothing: no recipe, pin or doc change. The trial's Relax build stayed in a scratch folder.
+
+    **Why not.** The crates agents edit most (`symphony`, the board's library, the server) do not run under it. Its false failures would send agents after bugs that are not theirs. The board launcher's usual case, nothing changed, gets slower and takes 1 GB per command. And on `symphony-api` it spends twice cargo's CPU on a machine whose limit is CPU. Short test processes never leave its slowest tier, which is where LLVM wins for us.
+
+    **What would change it:** a published `relax` binary to pin, the missing standard library pieces and ARM vector instructions, and test runs that do not start on its slowest tier. [[analysis/relax-build-trial#What would have to change]]
+  [2026-11-11 20:20] agent · auto-approved — not adopted: the owner asked for "empirical test, if better numbers should be adopted" and said "if there's proof this is better no need to ask me to decide" (2026-11-11); the measurements leave one option standing, since three of six cases do not start under Relax and 7 of 32 `symphony-schema` tests fail under it that pass under cargo. Cargo stays the build and the gate. Any verdict here overrides this.
+  [2026-11-12 08:51] owner · approved
+  [2026-11-12 10:54] agent · resolved
 
 ## What Relax is
 

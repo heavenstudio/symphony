@@ -6,9 +6,9 @@
 //! `--refresh` finishes what it left.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt as _;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
+use super::refresh::executable;
 use super::{CHECK, DAY, Fixture, NOW};
 
 /// A Cargo workspace in the fixture's checkout: `alpha`; `bravo` building with it; `charlie`
@@ -126,11 +126,6 @@ done
             ("PATH", self.path.as_str()),
         ]
     }
-}
-
-fn executable(path: &Path, text: &str) {
-    fs::write(path, text).unwrap();
-    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
 /// A release run with the stand-in check at `now` and `extra` in its environment, which must end

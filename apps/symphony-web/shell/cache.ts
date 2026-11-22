@@ -87,7 +87,8 @@ export interface Store {
   forget(format: number, project: string, id: string): Promise<boolean | null>;
 }
 
-declare const window: Window & typeof globalThis & { symphonyCache: Store };
+declare const window: Window &
+  typeof globalThis & { symphonyCache: Store; symphonyCacheOpenMs?: unknown };
 
 window.symphonyCache = ((): Store => {
   const MB = 1e6,
@@ -105,9 +106,14 @@ window.symphonyCache = ((): Store => {
   // A visit counts one, halving every three days: the documents opened often and lately stay
   // longest.
   const HALF_LIFE = 3 * DAY;
-  // How long a page waits for the database to open before it goes on without the cache, and
-  // within how long of a page's first keep its visit comes.
+  // How long a page waits for the database to open before it goes on without the cache, unless
+  // the page names another (`symphonyCacheOpenMs`, a positive number of ms a browser test's
+  // script sets, so a page tested with its cache has it however long a loaded machine takes to
+  // open it; any other value is ignored), at most the longest wait a browser's timer takes,
+  // 2^31 - 1 ms, past which Chrome's fires at once; and within how long of a page's first keep
+  // its visit comes.
   const OPENING = 500,
+    LONGEST = 2 ** 31 - 1,
     VISIT = 6e4;
   let opened: Promise<IDBDatabase | null> | undefined, named: number | undefined;
   let checked = new Map<number, Promise<IDBDatabase | null>>();
@@ -152,6 +158,11 @@ window.symphonyCache = ((): Store => {
   const decayed = (item: Item, now: number) =>
     item.score * 2 ** (-Math.max(0, now - item.used) / HALF_LIFE);
 
+  const opening = () => {
+    const named = window.symphonyCacheOpenMs;
+    return typeof named === "number" && named > 0 ? Math.min(named, LONGEST) : OPENING;
+  };
+
   function open(): Promise<IDBDatabase | null> {
     opened ??= new Promise<IDBDatabase | null>((resolve) => {
       let late = false;
@@ -159,7 +170,7 @@ window.symphonyCache = ((): Store => {
       const deadline = setTimeout(() => {
         late = true;
         resolve(null);
-      }, OPENING);
+      }, opening());
       const request = indexedDB.open("symphony-cache", 1);
       request.onupgradeneeded = () => {
         for (const name of ["items", "parts"])

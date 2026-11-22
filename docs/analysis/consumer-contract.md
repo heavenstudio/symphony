@@ -4,7 +4,7 @@ Whether Symphony's packages can be released and versioned one by one, so that a 
 takes each when it is ready, and what that asks of Cargo, of the one machine every project shares
 and of the release. This is an investigation: nothing here is built. The direction is B, the
 process boundary and a few packages with version numbers of their own
-([its card](../DECISIONS.md#consumer-contract-versioning)); each further choice B leaves open is a
+([its card](#consumer-contract-versioning)); each further choice B leaves open is a
 decision of its own, on a card of its own.
 
 - **Today there is one version of everything.** The consuming project names ten Symphony packages
@@ -492,8 +492,47 @@ it links today, each at the version it names.
 A project keeping an older server, older board commands or an older board schema than the
 machine's. Under each option those are one per machine and move together for every project at
 the machine's update, as each board's schema does
-([its card](../DECISIONS.md#board-schema-at-update)). What a contract can phase is a project's own
+([its card](plugin-delivery.md#board-schema-at-update)). What a contract can phase is a project's own
 code: its plugin, its tools and the helpers it links.
+
+- [r] **consumer-contract-versioning** — A consuming project could take Symphony's parts one at a time, each when it is ready, and Symphony's releases would stop waiting on that project's whole test suite; how much can be phased depends on how far the contract goes. Today the project takes all of Symphony at one commit, and the machine's one server is built from it. How far should the contract go? A: the process boundary only: a project links nothing of Symphony, its plugin is a program of its own speaking the versioned plugin protocol, and the machine runs one Symphony release for the server, the board commands and the client. B: A, plus a few packages with version numbers of their own that a project may keep linking at the version it names: the plugin kit (its seams, blocks and doc checks) as one, and each small helper (child processes, schema checks, arguments, the repository reader). C: every one of the 14 packages versioned on its own, a project linking what it links today. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/consumer-contract#The options]]
+  [2026-11-13 18:42] agent — Posted for the board task `docs/consumer-contract-analysis`, from your comment on **conciliation-consumer-own-reds**.
+
+    **What a project can stay behind on:**
+    - A: its plugin program, while the machine's server speaks that program's protocol major (how many releases a major lasts is a number to set), and its scripts and tools that call `tasks api` or Symphony's commands, within those versions.
+    - B: A's, plus its plugin kit's version, and each helper for as long as it likes, since nothing on the machine shares them.
+    - C: any package, within what the others' versions accept.
+    - None of them: a server, board commands or a board schema older than the machine's. Those stay one per machine and move together at its update, as you chose for the board: "C makes sense to improve upon A. while we don't have a dedicated build service."
+
+    **What Symphony must keep working:**
+    - A: every minor of the plugin protocol, and the previous major for that window; the board's `tasks api` calls; command names and outputs; settings keys (the server already leaves out one it does not know and reads the rest; the lint and registration would warn of a retired one for the window rather than refuse it).
+    - B: A's, plus the kit's and the helpers' Rust names within a major, a check against the previous version's tag saying when a change needs a new one. Last week 0 to 13 commits touched these parts' sources.
+    - C: the Rust names of every package, the library and the board included, whose sources 198 and 270 commits touched last week (commits, not counted changes to public names); and a package registry, since with Git pins two versions of this repository bring two copies of every package they share (tried here), whose types do not match (from Cargo's documentation; not compiled).
+
+    **The work:**
+    - Here, A and B: finish the plugin path you chose ("Let's go with B first, measure results against the current approach for a post change comparison."): every seam answered from a process, and the release installed on the machine instead of built by a project; then checks of the contract in place of the conciliation. B adds the kit split out of the wire types, and its version tags. C adds the registry, version checks for every package, and tests across the versions a project may combine.
+    - On the consuming project's board, A and B: its host is no longer built (4 files); its plugin becomes a process and leaves the library's internals (27 of the 44 of its files that name the library); its review tool writes the board through `tasks api` rather than the board's library. Two other users of the library need an answer: an art tool (9 files), which runs Symphony's status, triage and page rendering with its plugin installed, and its review tool's landing (4 files), which takes the landing's checks and the lock it shares with the server. Under A both reach those through the machine's commands or copy them, and the project also copies the helpers it links, one of them in 132 of its files. Under B the analysis proposes the art tool through the machine's commands, and the landing on the library at the kit's own tag, which promises nothing, so a break there is the project's own, found by its gate.
+
+    **What changes for releases, under A and B:** a release is judged by checks this repository owns (the plugin protocol, `tasks api`, the kit's version check), never by a project's whole suite, so a project's own reds stay on its own board. The release is installed on the machine and moves no project's pin; each project moves its kit and helpers through its own landing. Until that is built, **conciliation-consumer-own-reds** decides what holds a release.
+
+    **Why B.** It phases what a project's own code can phase, and promises stability only where little changes. A makes the project copy code it links today, and possibly change its plugin at whatever kit it rebuilds with, for no promise in return. C promises stability on the packages that change most, needs a registry, and still cannot phase the server or a board.
+
+    **Earlier verdicts checked.** **plugin-delivery-choice** (B), **release-delivery** (C) and **board-schema-at-update** (C) chose how plugins, releases and boards reach the machine: A and B build on them, and C leaves them as they are. **symphony-update-command** (B) has projects follow release tags, which every option keeps. **consumer-api-break-release** (A) keeps an old name beside the new for a release, which B keeps for its kit. None says whether packages are versioned apart, so none decides this card.
+
+    This card is the only change. The build is filed after your verdict. [[analysis/consumer-contract#Why B]]
+  [2026-11-13 19:39] owner · approved — There are multiple A/B/Cs here. No way to decide on all things. Those are separate decisions. For the original question, I agree with approach B
+  [2026-11-13 20:27] agent — Recorded: B, for the question this card asked. A project links nothing of Symphony but the plugin kit (its seams, blocks and doc checks) and the small helpers (child processes, schema checks, arguments, the repository reader), each at the version it names; its plugin is a program of its own speaking the versioned plugin protocol; and the machine runs one Symphony release for the server, the board commands and the client.
+
+    **What B decides, so none of it is asked:**
+    - **Where versions live:** this card gives B "its version tags" and the registry to C, so the kit and each helper get a line of tags in this repository, cut by the release run; Git is enough. The kit and the helpers start at 1.0.0: for a pinned tag Cargo reads 0.x and 1.0 alike.
+    - **The board's rules:** under every option the board commands "stay one per machine and move together at its update", so a changed rule reaches every project at the machine's update, the release's notes saying so, and a project's test that relied on the old rule is that project's to update. `tasks api` promises what its calls take and answer, not the rules behind them.
+    - **An old protocol major:** the protocol is on its first major and no setting or command is retired, so how long an old one is kept is asked by the task that first plans a second.
+
+    **The one choice left** is a card of its own: **contract-tool-route**, how the project's art tool and landing tool get what they use of the library today.
+
+    **The build, in order on the board:** the release candidate's red already under way takes the consuming project's suite out of the release run, so its own reds no longer hold a release. Then the refresh leaves a project's own refusals to it; `tasks api` answers its version; the kit leaves the wire types, carries what a plugin uses and gets its tags; every seam a plugin declares answers from a process; and last the release is built and run on the machine, from which a release moves no project's pin.
+  [2026-11-13 20:43] agent · resolved
+  [2026-11-13 21:25] agent — The owner, 2026-11-13, after this verdict: "I would like to publish crates (MIT license) to crates.io as the pacakge manager". So under B the kit's and the helpers' versions live on crates.io, not on tag lines in this repository: this replaces the record's "Git is enough" (board task `tools/publish-to-crates-io`). The record's "The kit and the helpers start at 1.0.0" was the agent's, not your words; it holds only because the kit's blocks have now left the app's wire types (board task `tools/kit-vocabulary-leaves-the-wire-types`), as with them inside it nearly every release would need a new major. So the kit, its three packages at one version, and each helper start at 1.0.0, and the app's wire types (`symphony-api`) at 0.1.0, which promises no name.
 
 ## Why B
 
@@ -503,7 +542,7 @@ code: its plugin, its tools and the helpers it links.
   were touched by 0 to 13 commits last week; those of the library and the board, which it leaves
   free, by 198 and 270 (commits, not counted changes to public names).
 - **It builds on what was chosen.** Plugin delivery goes the process way first, measured against
-  today's ([its card](../DECISIONS.md#plugin-delivery-choice)). B finishes that path (every seam
+  today's ([its card](plugin-delivery.md#plugin-delivery-choice)). B finishes that path (every seam
   from a process, the release installed on the machine) and adds the version lines a phased update
   needs. That design's target split already has the plugin SDK as a crate
   rebuilt when "a seam changes, by semver"
@@ -515,7 +554,7 @@ code: its plugin, its tools and the helpers it links.
   phase the server or the board's schema.
 
 The release keeps its full verification and its conciliation
-([its card](../DECISIONS.md#symphony-update-command)), with the conciliation become checks of what
+([its card](symphony-update.md#symphony-update-command)), with the conciliation become checks of what
 Symphony promises, so a project's own reds stay on its own board and no longer hold Symphony's
 release.
 
@@ -534,7 +573,7 @@ release.
 
 ## Open choices
 
-One choice is the owner's, a card of its own in [DECISIONS](../DECISIONS.md): how the art tool and
+One choice is the owner's, a card of its own ([below](#contract-tool-route)): how the art tool and
 the review tool's landing get what they use of the library today, through the machine's commands
 or through copies of their own. Whichever, the write lock the landing shares with the server joins
 the contract.
@@ -542,7 +581,7 @@ the contract.
 B decides the rest:
 
 - **Where versions live:** on crates.io, the package manager, where the packages are published
-  under MIT ([its card](../DECISIONS.md#consumer-contract-versioning)). So not on lines of tags in
+  under MIT ([its card](#consumer-contract-versioning)). So not on lines of tags in
   this repository, which the options' table (Distribution) found enough for B: the kit and the helpers
   are published there, each version once ([RELEASES](../RELEASES.md#packages-on-cratesio)).
 - **The board's rules:** the board commands stay one per machine and move at its update, so a
@@ -557,6 +596,22 @@ written in. The kit could take it only once its blocks had left the app's wire t
 `symphony-blocks`: with them inside it, nearly every release, changing a wire type, would have
 needed a new major, which says nothing. `symphony-api`, the app's wire types, stays at 0.1.0 and
 promises no name.
+
+- [a] **contract-tool-route** — Under B a consuming project links nothing of Symphony but the plugin kit and the small helpers. Two of its tools use more of Symphony's library today, so each needs another way to get what it uses. Its art tool, which checks its art cards, sorts the register's cards with the project's plugin inside the library, runs Symphony's status and triage, and draws a card as a page draws it. Its landing tool uses the checks a landing makes (whether generated files must be made again, what counts as a document, whether your open lines are left) and the reader of the project's settings. A: Symphony's commands: both tools run the machine's own commands, which start the project's plugin as the machine does; Symphony adds the commands it lacks (one that draws a single card, one that answers the landing's checks for a branch) and keeps those commands' output stable. B: the project's own copies: it copies what the two tools use into its own code, and Symphony builds nothing. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/consumer-contract#Open choices]]
+  [2026-11-13 20:27] agent — Posted for the board task `design/contract-b-breakdown`: the one choice B leaves open, a card of its own as your note on **consumer-contract-versioning** asks.
+
+    **What they use:** the art tool, in 9 files; the landing tool, in three files and a test. Both also read the register and use small text helpers, which are copied under either option.
+
+    **The lock.** The landing tool also takes the lock the machine's server takes while it writes the main checkout. Under either option the lock's place and rule are written down as part of what Symphony promises, and the landing takes it itself, so it does not decide this card.
+
+    **A** costs Symphony two new commands, and keeping their output and status's and triage's stable for the project to read. **B** costs Symphony nothing. The project keeps copies of how a card is sorted and drawn and of the landing's checks. They keep passing while the machine does otherwise, until someone copies again.
+
+    **Why A.** Both tools exist to check what the machine does: the card you will see, and whether the machine would hold a land. Only the machine's own commands answer that.
+
+    **When.** No Symphony task waits on this. It is needed when the project moves these two tools off the library, after its plugin.
+
+    **Earlier verdicts checked.** **consumer-contract-versioning** (B) lets a project link only the kit and the helpers, so neither tool keeps the library, and it leaves open how they get what they use. No other card speaks of either tool. Symphony's side is filed after your answer.
+  [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
 
 ## Verified and inferred
 

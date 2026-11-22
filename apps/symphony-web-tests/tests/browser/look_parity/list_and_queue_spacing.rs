@@ -167,10 +167,7 @@ fn assert_list_lines(
 
 /// Widths the owner reads at; tall enough that every lazy slot is revealed and on screen.
 fn viewport(browser: &mut Chrome, width: u32) {
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":if width < 400 { 2400 } else { 1600 },"deviceScaleFactor":1,"mobile":width < 400}),
-    );
+    browser.viewport(width, if width < 400 { 2400 } else { 1600 }, width < 400);
 }
 
 #[test]
@@ -235,10 +232,7 @@ fn the_home_queue_rows_keep_list_spacing_beside_a_taller_next_card() {
     let site = ParitySite::start();
     let Some(mut browser) = chrome() else { return };
     for width in [1280, 390] {
-        browser.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":width < 400}),
-        );
+        browser.viewport(width, 900, width < 400);
         browser.open(&site.url("/"));
         assert!(browser.wait_for(
             "document.querySelectorAll('.nextcard').length === 4 && document.querySelector('.hero .pics') !== null",

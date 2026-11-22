@@ -1,7 +1,7 @@
 # Owner asks
 
-What becomes of what the owner says that waits on an agent's answer, as proposed on the owner-asks
-card in [DECISIONS](../DECISIONS.md), and what the proposal rests on. Each fact about the code names
+What becomes of what the owner says that waits on an agent's answer, as proposed on the
+[owner-asks](#owner-asks) card, and what the proposal rests on. Each fact about the code names
 the file and function it was read in, at main `7ad7376` and still so at `58309d8`. "On this
 board, 2026-11-11" marks this repository's own board that day.
 
@@ -40,6 +40,28 @@ were added. The [open questions](#open-questions) stay open.
    goes to the chat seat, then to an orchestrator. A holder that goes stale, lost or left passes it
    on at once; one that has not answered within ten minutes passes it on, and may still answer.
    Anyone's answer closes it.
+
+- [-] **owner-asks** — What you say that waits on an agent's answer stops being a board task and becomes an ask: a verdict with a note, a rejection, a card message, a comment, a chat question or a message on a task. Five choices, each with its default. 1. Name: an ask, open or answered, never a task and in no task count; an open one shows who holds it and for how long. 2. Where: the queue's *Waiting on the agent* group lists the open asks with holder and age; the tasks board has one line of asks above its columns, never counted in them; `just tasks asks` in the terminal. 3. Store: a record of its own on the board; no verdict task is filed again, the open one becomes an ask, the finished ones leave every count. 4. Priority: pushed to its holder at once, first in its digest and named before any ready task; shown late after ten minutes with nobody holding it. 5. Routing: first the running agent working on what it is about (the executor of the card's task or branch, then its reviewer and orchestrator), then the chat seat, then an orchestrator; it moves on when its holder goes quiet or has not answered in ten minutes. Approve to take all five defaults, or comment with the ones to change. [[analysis/owner-asks#The design]]
+  [2026-11-11 19:21] agent — Posted for the board task `tools/owner-asks-not-tasks`.
+
+    **Today.** Each verdict you save becomes a `verdicts/…` task in the board's columns and counts. Eight were filed today; seven were each claimed by an agent and approved by a reviewer, to record an answer already on the card. Your question on worktree-build-folders was answered on its branch 17 minutes after you asked; its task sat ready 50 minutes longer and counts as 1.1 h of work nobody took. Chat goes to one session, whatever it is about. [[analysis/owner-asks#Today]]
+
+    **1.** The app already calls a chat question an ask; the word now covers everything you wait on an agent for. It has no stage, so nothing has to pretend to claim or review it.
+
+    **3.** A flag on a task would leave every count, list and digest to filter it out, now and each one added later, and a claim and a review would still close it.
+
+    **5.** "Has context" is read from what the board keeps: roles on the task, the task a branch belongs to, the task whose brief names the card, launch records and where a subagent last worked. Nothing new is recorded.
+
+    Two smaller questions, ten minutes and comments already open, are at [[analysis/owner-asks#Open questions]].
+  [2026-11-11 19:33] owner · approved
+  [2026-11-11 19:39] agent · question — Your approval came before these pictures, so it takes the five defaults but not how asks look. With asks, the queue, the tasks board and the home page, then the queue and the board on a phone: ![The queue with asks](owner-asks-queue-asks.png) ![The board with asks](owner-asks-board-asks.png) ![The home page with asks](owner-asks-home-asks.png) ![The queue with asks on a phone](owner-asks-queue-asks-phone.png) ![The board with asks on a phone](owner-asks-board-asks-phone.png) Is this how asks should look? Approve to keep it, or comment with what to change. The same pages today are at [[analysis/owner-asks#Pictures]].
+  [2026-11-11 22:19] owner · rejected — it should not be in the same page as tasks. That page is already bloated with too many things.
+  [2026-11-11 22:20] agent — The line of asks above the tasks board's columns is dropped: nothing about asks is drawn on the tasks page. The five defaults you approved at 19:33 stand, less that line. Where asks are shown instead is the new card owner-asks-place.
+
+- [r] **owner-asks-place** — Where open asks are shown, now that the tasks page shows none ("it should not be in the same page as tasks. That page is already bloated with too many things."). A. The queue's *Waiting on the agent* group lists each open ask with who holds it and for how long, and the home page counts them; no new page. B. The same, plus a page of their own, `/asks`, linked from the queue, that also keeps the answered ones. Recommended: A, since the queue is already where you look for what waits, and B can follow if answered asks turn out to be worth rereading. [[analysis/owner-asks#The design]]
+  [2026-11-11 22:21] agent — Posted for the board task `tools/owner-asks-build`, replacing the look question on the card owner-asks. A as built: ![The queue with asks](owner-asks-queue-asks.png) ![The home page with asks](owner-asks-home-asks.png) ![The queue with asks on a phone](owner-asks-queue-asks-phone.png)
+  [2026-11-11 22:22] owner · approved
+  [2026-11-12 06:45] agent · resolved
 
 ## Today
 
