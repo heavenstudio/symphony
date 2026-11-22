@@ -92,6 +92,8 @@ decision you are asked to make is a *card*, one line in a *register*. The regist
 <!-- register:start -->
 ## Needs your decision
 
+### General
+
 - [ ] **lamp-count** — Sell twelve lamps at launch, or twenty? A: twelve. B: twenty. Approve and say A or B in the note, or comment.
 <!-- register:end -->
 ```
@@ -205,9 +207,9 @@ only in a folder you trust) and type a skill's name, with `/` in Claude Code and
 
 One orchestrator session is the usual start: tell it what you want built, and it files the tasks
 and staffs them with subagents of its own, each in a worktree of its task's branch. You follow
-along in the app: **Board** shows who
-holds what and what is stuck on whom, **Agents** who is alive, and a task's page its thread,
-where a message you write reaches the agent holding it.
+along in the app: [**Board**](product/BOARD.md) shows who
+holds what and what is stuck on whom, **Agents** who is alive, and [a task's page](product/TASK.md)
+its thread, where a message you write reaches the agent holding it.
 
 An agent in a terminal of its own, which `just tasks launch SLUG` starts in a worktree under
 `<project>-wt/` beside the main checkout and the pages can link to, needs the Herdr terminal app
@@ -222,6 +224,7 @@ agents run as subagents of the session you opened.
 - [Taking a release](RELEASES.md#taking-a-release): moving to a newer Symphony.
 - [Setting up GitHub](GITHUB_SETUP.md): issues as proposals, a landing delivered as a pull
   request. Optional.
-- [The plugin protocol](PLUGIN_PROTOCOL.md): a project's own card kinds, pages and theme.
+- [Writing a plugin and a theme](PLUGIN_WRITING.md): a project's own card kinds, pages and
+  theme, from a first plugin to its component on a page.
 - [The Mac app](../apps/symphony-desktop/README.md): the servers you follow in the dock and the
   menu bar.

@@ -376,10 +376,7 @@ mod tests {
         );
         std::fs::write(root.join("GUIDE.md"), guide).unwrap();
         std::fs::write(root.join("notes.txt"), "plain notes").unwrap();
-        let gate = crate::gate::Gate::new(
-            std::sync::Arc::new(|_| Ok(None)),
-            std::sync::Arc::new(std::time::Instant::now),
-        );
+        let gate = crate::testing::open_gate();
         let shared = crate::front::Shared::project(1, 1234, &root, None, gate, "/alpha");
         let ask = |path: &str, headers: &[(&str, &str)]| {
             let mut request = Request::builder().uri(path);
@@ -525,10 +522,7 @@ mod tests {
         let away = Tree::new();
         away.write("away.html", page);
         std::os::unix::fs::symlink(away.path("away.html"), root.join("docs/leak.html")).unwrap();
-        let gate = crate::gate::Gate::new(
-            std::sync::Arc::new(|_| Ok(None)),
-            std::sync::Arc::new(std::time::Instant::now),
-        );
+        let gate = crate::testing::open_gate();
         let shared = crate::front::Shared::project(1, 1234, &root, None, gate, "/alpha");
         let ask = |path: &str, scope: &str, headers: &[(&str, &str)]| {
             let mut request = Request::builder().uri(path);

@@ -19,10 +19,7 @@ fn device(page: &mut Chrome, touch: bool) {
         json!({"enabled":touch,"maxTouchPoints":5}),
     );
     let (width, height) = if touch { (390, 844) } else { (1280, 900) };
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":height,"deviceScaleFactor":1,"mobile":touch}),
-    );
+    page.viewport(width, height, touch);
 }
 
 /// The font size, in px, of the first element `selector` names once it is in the page.

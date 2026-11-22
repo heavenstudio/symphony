@@ -1,5 +1,5 @@
 //! A release's install in a temporary machine folder, its build a stand-in for cargo that writes
-//! the four binaries, each answering what the install asks of it.
+//! the five binaries, each answering what the install asks of it.
 
 use super::*;
 use crate::test_tree::Tree;
@@ -116,13 +116,13 @@ fn a_green_build_is_installed_whole_with_its_manifest_and_current_pointed_at_it(
         installed.ran.command,
         "the install of release-2026-11-20 on the machine"
     );
-    // The four binaries on the release profile, the server told its client is beside
+    // The five binaries on the release profile, the server told its client is beside
     // it, and no board of the run's named to the build.
     assert_eq!(
         builds(&tree),
         [
             "build --release --locked -p symphony-server -p symphony-board -p symphony-app --bin \
-             symphony-server --bin tasks --bin agent-send --bin symphony beside=1 board=none"
+             symphony-server --bin tasks --bin agent-send --bin symphony --bin tasks-move beside=1 board=none"
         ]
     );
     let machine = tree.path("machine");
@@ -153,11 +153,12 @@ fn a_green_build_is_installed_whole_with_its_manifest_and_current_pointed_at_it(
             "bin/tasks",
             "bin/agent-send",
             "bin/symphony",
+            "bin/tasks-move",
             manifest.client.as_str()
         ]
     );
     assert!(manifest.artifacts.iter().all(|artifact| artifact.size > 0));
-    assert_eq!(manifest.artifacts[4].size, 6 + 3);
+    assert_eq!(manifest.artifacts[5].size, 6 + 3);
     assert_eq!(release::current(&machine).as_deref(), Some(TAG));
     assert!(symphony::builds::released(&machine, "tasks").is_some());
     let place = release::folder(&machine, TAG);
@@ -498,7 +499,7 @@ fn a_binary_that_cannot_say_what_it_serves_is_the_installs_red() {
     checkout(&tree);
     // A server that refuses the question.
     let script = "#!/bin/sh\nout=\"$CARGO_TARGET_DIR/release\"\nmkdir -p \"$out\"\nfor b in \
-                  symphony-server tasks agent-send symphony; do printf '#!/bin/sh\\necho no >&2; \
+                  symphony-server tasks agent-send symphony tasks-move; do printf '#!/bin/sh\\necho no >&2; \
                   exit 3\\n' > \"$out/$b\"; chmod +x \"$out/$b\"; done\n";
     let builder = executable(&tree, "refusing", script).into_os_string();
     let installed = run(&tree, &builder, COMMIT);
@@ -539,13 +540,13 @@ fn the_build_is_cargos_through_the_checkouts_launcher_unless_a_stand_in_is_named
     assert_eq!(stood_in.argv[1..], built.argv[2..]);
 }
 
-/// The install as a release makes it, with cargo itself: this checkout's four binaries built on
+/// The install as a release makes it, with cargo itself: this checkout's five binaries built on
 /// the release profile in its own build folder and installed in a machine folder under that build
 /// folder (`.target/install-trial/machine`), which is left for a look and goes with the build
 /// folder. It takes a release build's time, so it runs only when asked:
 /// `tools/cargo.sh test -p symphony-build --lib the_real_build -- --ignored --nocapture`.
 #[test]
-#[ignore = "a release build of four binaries: minutes, and gigabytes of build folder"]
+#[ignore = "a release build of five binaries: minutes, and gigabytes of build folder"]
 fn the_real_build_installs_this_checkouts_release() {
     let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let checkout = checkout.canonicalize().unwrap();
@@ -577,6 +578,15 @@ fn the_real_build_installs_this_checkouts_release() {
         symphony_plugin::protocol::PROTOCOL.minor
     );
     assert_eq!(release::current(&machine).as_deref(), Some("release-trial"));
+    // The move of a board's store is there beside `tasks`, found as a project's start finds
+    // the release's binaries, and it is that program.
+    let moves = symphony::builds::released(&machine, release::MOVE).unwrap();
+    let said = symphony_board::sys::output(command(&moves).arg("--version")).unwrap();
+    assert!(said.status.success(), "{said:?}");
+    assert!(
+        String::from_utf8_lossy(&said.stdout).starts_with("tasks-move "),
+        "{said:?}"
+    );
 }
 
 /// `git ARGS` in `tree`'s checkout, as an author of the test's own.

@@ -5,6 +5,7 @@ mod beat_fixture;
 #[allow(dead_code)]
 mod board;
 mod board_beat;
+mod card_homes;
 mod common;
 #[path = "../../../../tools/test-support/script_board.rs"]
 mod fixture_script;

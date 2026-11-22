@@ -9,11 +9,10 @@
 
 use super::Hub;
 use crate::front::{Shared, router};
-use crate::gate::Gate;
 use crate::testing::{
     Tree,
     board::{Fixture, HOST, NOW, Seed},
-    git, repository,
+    git, repository, store_on,
 };
 use axum::body::{Body, to_bytes};
 use axum::extract::connect_info::MockConnectInfo;
@@ -25,7 +24,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_board::rpc::Client;
 use tower::ServiceExt;
 
@@ -700,13 +699,7 @@ pub(super) fn served_with(
     root: &Path,
     hub: Hub,
 ) -> (Arc<Shared>, impl Fn(&str, Headers<'_>) -> Answer + use<>) {
-    let shared = Shared::new(
-        1,
-        1,
-        root,
-        None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
+    let shared = Shared::new(1, 1, root, None, crate::testing::open_gate());
     assert!(shared.api.set(Arc::new(hub)).is_ok());
     let app = router(shared.clone()).layer(MockConnectInfo(
         "127.0.0.1:2".parse::<SocketAddr>().unwrap(),
@@ -739,17 +732,6 @@ pub(super) fn served_with(
         })
     };
     (shared, send)
-}
-
-/// A store on `client`'s board at the fixture's time and host.
-pub(super) fn store_on(client: &Client) -> symphony_board::Store {
-    symphony_board::Store::with(
-        Client::new(client.addr(), "sf", client.database()),
-        Box::new(|| NOW),
-        Box::new(|_| false),
-        HOST,
-    )
-    .unwrap()
 }
 
 #[test]

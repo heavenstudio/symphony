@@ -7,6 +7,7 @@ use crate::cli::machine_work::recorded::{
     self, CpuReading, Found, HISTORY, OPERATIONS, Phase, RETAIN, ROTATE_BYTES, ROTATED, Record,
     Step,
 };
+use crate::sweep::trigger::now;
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -456,14 +457,6 @@ fn a_recorded_and_a_project_inventory_merge_into_one_and_never_share_a_nonce() {
         .merge(Inventory::decode(&slots(TWO), Some("other")).unwrap());
     assert!(elsewhere.is_err());
     fs::remove_dir_all(&dir).unwrap();
-}
-
-/// Seconds since the epoch, now.
-fn now() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs_f64()
 }
 
 /// `file` last changed `seconds` ago.

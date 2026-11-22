@@ -9,6 +9,7 @@
 //!   quote's marks before the second), and inside any identifier built from it. The one fence is
 //!   the owner's own dated lines under a card ([`owner_lines`]), which no agent writes or rewrites.
 
+use crate::support::repo as workspace;
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -30,13 +31,6 @@ const FENCES: [(&str, usize, &str); 1] = [(
 /// The consuming project's name, its two words each spelled backwards so that this file names it
 /// nowhere.
 const NAME_BACKWARDS: [&str; 2] = ["rats", "yrdnuof"];
-
-fn workspace() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
-}
 
 fn git(root: &Path, args: &[&str]) -> Vec<u8> {
     let done = Command::new("git")
@@ -115,22 +109,17 @@ fn in_text<'a>(name: &Regex, text: &'a str) -> Vec<(usize, &'a str)> {
 /// write.
 ///
 /// Such a line is read as the card parser reads it, never by a pattern of this test's: a card
-/// (`syntax::cards`) whose line is inside a register region (`register::regions`), under it a dated
-/// line the parser says the owner wrote (`syntax::entry_line`) or a deeper-indented line continuing
-/// one (`syntax::is_continuation`). An undated line under a card is judged although the parser reads
-/// it as the owner's note: a card's own body is such lines, and agents write it. So is every line
-/// outside a card, outside a region or in a document-level fence, however it reads.
+/// (`syntax::cards`), wherever it sits in its document, inline where the thing it decides is said
+/// or in a register region, under it a dated line the parser says the owner wrote
+/// (`syntax::entry_line`) or a deeper-indented line continuing one (`syntax::is_continuation`). An
+/// undated line under a card is judged although the parser reads it as the owner's note: a card's
+/// own body is such lines, and agents write it. So is every line outside a card or in a
+/// document-level fence, however it reads.
 fn owner_lines(text: &str) -> BTreeSet<usize> {
     use symphony_docs::syntax;
     let lines: Vec<&str> = text.split('\n').collect();
-    let regions = symphony::register::regions(&lines);
     let mut found = BTreeSet::new();
     for card in syntax::cards(&lines) {
-        // `card.line` is from 1, a region's bounds are indexes: the card's index is inside them.
-        let at = card.line - 1;
-        if !regions.iter().any(|(start, end)| *start < at && at < *end) {
-            continue;
-        }
         // Who wrote the dated entry the lines so far belong to, none after an undated line.
         let mut dated: Option<&str> = None;
         for (under, line) in card.raw.iter().enumerate() {
@@ -379,15 +368,15 @@ fn the_name_is_found_in_any_case_and_spelling_inside_identifiers_and_across_a_li
 }
 
 #[test]
-fn only_the_owners_dated_lines_under_a_card_in_a_register_may_name_the_consuming_project() {
+fn only_the_owners_dated_lines_under_a_card_may_name_the_consuming_project() {
     let [first, second] = NAME_BACKWARDS.map(|word| word.chars().rev().collect::<String>());
     let named = format!("{first} {second}");
     let document = [
         "# An analysis".to_string(), // 1
         String::new(),               // 2
-        // An owner-looking line outside a card, and one under a card outside the register.
+        // An owner-looking line outside a card, and one under a card inline in the document.
         format!("  [2026-11-21 09:39] owner · rejected — as in {named}"), // 3
-        "- [ ] **outside** — A card that is prose.".to_string(),          // 4
+        "- [ ] **inline** — A card where it decides.".to_string(),        // 4
         format!("  [2026-11-21 09:39] owner · rejected — as in {named}"), // 5
         String::new(),                                                    // 6
         "<!-- register:start -->".to_string(),                            // 7
@@ -417,23 +406,25 @@ fn only_the_owners_dated_lines_under_a_card_in_a_register_may_name_the_consuming
         String::new(),
     ]
     .join("\n");
-    // The owner's lines: each dated owner line under the register's card, with what continues it.
+    // The owner's lines: each dated owner line under a card, inline or in the register, with what
+    // continues it.
     assert_eq!(
         owner_lines(&document).into_iter().collect::<Vec<_>>(),
-        [14, 15, 17, 18, 21]
+        [5, 14, 15, 17, 18, 21, 30]
     );
     let name = name();
     let refused: Vec<usize> = judged(&name, &document)
         .into_iter()
         .map(|(line, _)| line)
         .collect();
-    // Passed: 14, 15 to 17 (parted inside the owner's entry), 17 and 18's first. Refused: every
+    // Passed: 5, 14, 15 to 17 (parted inside the owner's entry), 17, 18's first and 30. Refused: every
     // line an agent could write, 13 (a dated-looking line that continues the agent's entry), and
     // the names parted from the owner's line into an undated one (18 to 19) or into prose (21 to 23).
-    assert_eq!(refused, [3, 5, 10, 11, 12, 13, 18, 20, 21, 26, 30]);
-    assert_eq!(in_text(&name, &document).len(), refused.len() + 4);
+    assert_eq!(refused, [3, 10, 11, 12, 13, 18, 20, 21, 26]);
+    assert_eq!(in_text(&name, &document).len(), refused.len() + 6);
 
-    // The same in a tree, and no fence for a file that is not a register.
+    // The same in a tree, where a file with no register has the fence too, and an agent's line
+    // under its card does not.
     let scratch = repository_of(
         "own-name-owner-lines",
         &[
@@ -441,7 +432,8 @@ fn only_the_owners_dated_lines_under_a_card_in_a_register_may_name_the_consuming
             (
                 "docs/owner.md".to_string(),
                 format!(
-                    "- [-] **card** — No register here.\n  [2026-11-21 09:39] owner — {named}\n"
+                    "- [-] **card** — No register here.\n  [2026-11-21 09:39] owner — {named}\n  \
+                     [2026-11-21 09:40] agent — {named}\n"
                 )
                 .into_bytes(),
             ),
@@ -450,22 +442,23 @@ fn only_the_owners_dated_lines_under_a_card_in_a_register_may_name_the_consuming
     let found = in_tree(&scratch);
     assert_eq!(found.len(), refused.len() + 1, "{found:?}");
     assert_eq!(found[0], format!("docs/analysis.md:3: {named}"));
-    assert_eq!(found[refused.len()], format!("docs/owner.md:2: {named}"));
+    assert_eq!(found[refused.len()], format!("docs/owner.md:3: {named}"));
     let _ = std::fs::remove_dir_all(&scratch);
 }
 
 #[test]
-fn a_register_never_closed_or_a_text_without_one_has_no_owner_lines() {
+fn a_cards_owner_line_is_the_owners_with_a_register_without_one_or_in_one_never_closed() {
     let entry = "- [-] **card** — A card.\n  [2026-11-21 09:39] owner · rejected — no\n";
+    let owners = |text: &str| owner_lines(text).into_iter().collect::<Vec<_>>();
     assert!(owner_lines("").is_empty());
-    assert!(owner_lines(entry).is_empty());
-    assert!(owner_lines(&format!("<!-- register:start -->\n{entry}")).is_empty());
+    assert_eq!(owners(entry), [2]);
+    assert_eq!(owners(&format!("<!-- register:start -->\n{entry}")), [3]);
     assert_eq!(
-        owner_lines(&format!(
+        owners(&format!(
             "<!-- register:start -->\n{entry}<!-- register:end -->\n"
-        ))
-        .into_iter()
-        .collect::<Vec<_>>(),
+        )),
         [3]
     );
+    // An example in a code block is no card, and its lines are judged.
+    assert!(owner_lines(&format!("```\n{entry}```\n")).is_empty());
 }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::store_fixture::pair;
 use std::fs;
 use std::path::PathBuf;
 use symphony_plugin::execution::PrincipalKind;
@@ -30,13 +31,6 @@ to = { phase = "build", state = "available" }
 from = { phase = "review", state = "awaiting_review" }
 to = { phase = "build", state = "available" }
 "#;
-
-fn pair(phase: &str, state: &str) -> Pair {
-    Pair {
-        phase: phase.into(),
-        state: state.into(),
-    }
-}
 
 fn mapping(from: (&str, &str), to: (&str, &str)) -> Mapping {
     Mapping {

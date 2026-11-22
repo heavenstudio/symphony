@@ -37,10 +37,7 @@ const LIFECYCLE: &str = "for (const [target, types] of [[document, ['freeze', 'r
 /// reload shows, and keeps the page's lifecycle ([`LIFECYCLE`]).
 fn opened(page: &mut Chrome, url: &str, slug: &str) {
     page.open(url);
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": 1280, "height": 900, "deviceScaleFactor": 1, "mobile": false}),
-    );
+    page.viewport(1280, 900, false);
     assert!(
         page.wait_for(
             &format!(

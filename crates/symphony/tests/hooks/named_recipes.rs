@@ -13,6 +13,7 @@
 #[allow(dead_code)]
 mod rule;
 
+use crate::support::repo as workspace;
 use regex::Regex;
 use rule::{Rule, Standing, audited, named_in, recipes};
 use std::collections::BTreeSet;
@@ -76,13 +77,6 @@ fn each_own_recipe_the_text_names_is_one_of_this_repositorys_and_a_filed_one_is_
         panic!("docs/CHECKS.md names `just check-fast` as filed: {rule:?}");
     };
     assert_eq!(rule.entries[at].task, Some("tools/check-fast"));
-}
-
-fn workspace() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
 }
 
 /// The string literals of Rust source `text`, each with the line it starts on, out of comments and

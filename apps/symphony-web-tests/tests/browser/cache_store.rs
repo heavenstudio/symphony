@@ -79,6 +79,9 @@ window.t = {
 };
 "#;
 
+/// The wait `named.html` names for its database, in ms: any other than the store's own.
+const NAMED_OPENING: u64 = 7;
+
 /// A folder holding the store and the pages that load it: `/` as the shell would, and the others
 /// in a browser whose IndexedDB is missing, refused, never answers or answers past the deadline.
 fn pages() -> PathBuf {
@@ -132,6 +135,15 @@ fn pages() -> PathBuf {
         )
         .unwrap();
     }
+    // A database that never answers, in a page that names the wait for it (`symphonyCacheOpenMs`)
+    // and keeps each wait the store asks a timer for (`waits`).
+    std::fs::write(
+        dir.join("named.html"),
+        format!(
+            "<!DOCTYPE html><html><head><script>             Object.defineProperty(window, \"indexedDB\", {{ value: {{ open() {{ return {{}}; }} }} }});             window.symphonyCacheOpenMs = {NAMED_OPENING}; window.waits = [];             const timer = window.setTimeout;             window.setTimeout = (work, ms, ...more) => {{ window.waits.push(ms); return timer(work, ms, ...more); }};</script>             </head><body><script type=\"module\" src=\"/assets/cache.js\"></script></body></html>"
+        ),
+    )
+    .unwrap();
     dir
 }
 
@@ -215,6 +227,15 @@ fn the_store_keeps_reads_by_format_and_project_and_holds_the_approved_caps() {
         for (at, also) in coverage(&mut chrome).into_iter().enumerate() {
             ran[at] |= also;
         }
+    }
+    chrome.open(&site.url("/named.html"));
+    assert!(
+        chrome.wait_for("window.symphonyCache", crate::SHOWN),
+        "/named.html"
+    );
+    a_page_that_names_the_wait_for_its_database_waits_that_long(&mut chrome);
+    for (at, also) in coverage(&mut chrome).into_iter().enumerate() {
+        ran[at] |= also;
     }
     report(&ran);
     drop(site);
@@ -1031,6 +1052,20 @@ fn an_open_that_does_not_answer_in_time_lets_the_page_go_on(chrome: &mut Chrome)
     assert_eq!(said["read"], json!(null));
     let waited = said["waited"].as_f64().unwrap();
     assert!((490.0..5_000.0).contains(&waited), "waited {waited} ms");
+}
+
+/// A page that names how long its database is waited for (`symphonyCacheOpenMs`, as the browser
+/// tests of a page with its cache do) has the store wait that long, and no other: the one timer it
+/// asked for is the named wait, after which the call goes on without the cache.
+fn a_page_that_names_the_wait_for_its_database_waits_that_long(chrome: &mut Chrome) {
+    let said = run(
+        chrome,
+        r#"
+        const read = await C.read(1, "alpha", "task:a", "page");
+        return { read, waits: window.waits };
+        "#,
+    );
+    assert_eq!(said, json!({"read": null, "waits": [NAMED_OPENING]}));
 }
 
 /// However many calls follow an open that missed its deadline, answered late or never, the page

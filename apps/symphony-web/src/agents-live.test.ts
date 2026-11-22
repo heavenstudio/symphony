@@ -28,7 +28,17 @@ import {
   trimmed,
   workingOn,
 } from "./agents-live";
-import { aMachine, anAgent, anOperation, aRole, aTask, aWork, CASES } from "./testing";
+import {
+  aMachine,
+  anAgent,
+  anOperation,
+  fakeAnswer as answer,
+  aRole,
+  aTask,
+  aWork,
+  CASES,
+  feedEvent as event,
+} from "./testing";
 import type { Agent, MachineObservation, Task } from "./wire";
 import { freshnessWord, NO_WORK, phaseLabel, scopedPhases } from "./work";
 
@@ -426,12 +436,6 @@ describe("the lists of agents", () => {
   });
 });
 
-/** A feed event of `changes`, each a region and its data. */
-const event = (...changes: [string, unknown][]) => ({
-  version: 1,
-  changes: changes.map(([region, data]) => ({ region, data })),
-});
-
 describe("a feed event's changes", () => {
   it("are read whole, each region the page follows", () => {
     const changes = readChanges(
@@ -481,16 +485,6 @@ describe("a feed event's changes", () => {
     }
   });
 });
-
-/** A response as the page reads one: its status and its JSON body. */
-function answer(status: number, body: unknown = null): Response {
-  return {
-    status,
-    ok: status >= 200 && status < 300,
-    headers: { get: () => null },
-    json: async () => body,
-  } as unknown as Response;
-}
 
 /** A page of the agents as the server writes one: `agents`, `tasks` and what `more` says. */
 function agentPage(agents: Agent[], tasks: Task[] = [], more: Record<string, unknown> = {}) {

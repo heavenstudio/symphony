@@ -24,15 +24,16 @@ at once.
 - **A task board.** Agents file tasks with a brief, claim them, post evidence, review one another
   and land approved branches with one command. The board shows who holds what, what is stuck and
   on whom, and each task's page shows its gates, its timeline and its thread
-  ([the board](docs/TASKS.md)).
+  ([the board's page](docs/product/BOARD.md), [a task's page](docs/product/TASK.md),
+  [how the board works](docs/TASKS.md)).
 - **Agents and their sessions.** Who is connected, on which task and branch, whether each is alive,
   and a link into its terminal. What you say on a card or a task reaches the agent that holds it.
 - **Runs and reports.** Every build, test and check an agent runs is recorded, and the reports
   show how work flows: tasks done, lead time, where the hours go
   ([runs](docs/RUNS.md), [machine work](docs/MACHINE_WORK.md)).
 - **Plugins and themes.** A project adds its own card kinds, pages and actions as a plugin, and
-  its own look as a theme ([the project file](docs/PROJECT_FILE.md),
-  [the plugin protocol](docs/PLUGIN_PROTOCOL.md)).
+  its own look as a theme ([writing a plugin and a theme](docs/PLUGIN_WRITING.md),
+  [the project file](docs/PROJECT_FILE.md), [the plugin protocol](docs/PLUGIN_PROTOCOL.md)).
 - **One server, many projects.** Each registered project is served under its own address with its
   own documents, board and theme; the front page lists them with what waits on you in each.
 
@@ -105,7 +106,8 @@ A project with plugins of its own takes Symphony's versioned libraries from crat
 this repository by Git at a release tag with the selected revision in its Cargo lockfile. Take
 the related packages from one source together; its host supplies its plugins and its own
 verification, approval and landing policy
-([the plugin protocol](docs/PLUGIN_PROTOCOL.md), [releases](docs/RELEASES.md)).
+([writing a plugin](docs/PLUGIN_WRITING.md), [the plugin protocol](docs/PLUGIN_PROTOCOL.md),
+[releases](docs/RELEASES.md)).
 
 ## Working on Symphony
 

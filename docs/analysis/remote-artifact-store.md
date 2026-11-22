@@ -3,7 +3,7 @@
 Proposed: let a consuming project keep working evidence in private durable storage and rebuild
 its document workspace from retained Git revisions. A local project keeps its current files and
 attachment links. This is a design boundary, not implemented persistence or permission to move
-data. Its [decision card](../DECISIONS.md#durable-project-artifacts) asks about that optional
+data. Its [decision card](#durable-project-artifacts) asks about that optional
 boundary; provider implementation and any migration need separately approved work.
 
 ## Source and scope
@@ -28,7 +28,7 @@ storage task.
 | Documents and configuration | [project.rs](../../crates/symphony/src/project.rs), `file`, `walk`, `artifact`, and [entrypoint.rs](../../crates/symphony/src/entrypoint.rs) map routes and restrict discovery. [save.rs](../../crates/symphony/src/save.rs), `document`, reads and edits checkout text under write locks; [commit.rs](../../crates/symphony/src/commit.rs) queues immutable edits and publishes verdict commits. Local locks and the posted-card guard do not supply a cross-replica expected-revision write. |
 
 The existing [artifact split](attached-artifacts.md) and
-[clone-picture decision](../DECISIONS.md#pictures-in-every-clone) remain in force: document and
+[clone-picture decision](attached-artifacts.md#pictures-in-every-clone) remain in force: document and
 card pictures, including those of past decisions, are committed beside their documents. Working
 evidence may stay outside Git. The cancelled reference-index task is not an implemented durable
 reference ledger. This proposal changes neither current retention nor existing documents.
@@ -69,6 +69,16 @@ worker and application container, and can subsequently read the exact acknowledg
 The provider documents that durability boundary. An ephemeral pod filesystem, a mutable shared
 link, or an upload acknowledged only in an application buffer cannot satisfy it. A local adapter
 may retain current disk semantics; selecting it makes no cloud-survival promise.
+
+- [r] **durable-project-artifacts** — A hosted project's working evidence should remain readable after its worker and app container disappear. Should Symphony define an optional storage contract for that evidence, with each consuming project supplying its private storage provider? A: define the shared contract for verified uploads, project access, revision-bound references and restore; local projects keep their current files and links. B: leave the entire remote evidence contract to each consuming project. Both preserve Git-backed document and card pictures. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/remote-artifact-store#Smallest boundary]]
+  [2026-11-17 19:38] agent — Proposed by board task `tools/remote-artifact-store`. This asks for a design direction only. Implementation, provider selection, migration, retention changes and any live-data operation need their own authorized work.
+
+    **Cost of A:** Symphony owns the common identity, integrity, authorization and publication rules; the consuming project owns credentials, storage, repository retention and backup operations. **B:** Symphony adds nothing; each consumer must keep its own evidence references and recovery rules consistent with task delivery.
+
+    **Earlier verdicts checked:** **pictures-in-every-clone**, F, commits document/card images and keeps working evidence outside Git; **sweep-swept-retention** keeps referenced files and asks for manual cleanup past the cap. Neither chooses a remote provider or defines hosted publication and restore. This proposal preserves those decisions and leaves this repository's storage unchanged.
+  [2026-11-17 20:42] owner · approved — A
+  [2026-11-17 20:47] agent — Your “A” approves the optional shared contract for verified uploads, project access, revision-bound evidence references and restore, with each project supplying its private storage provider. Local files and links, and Git-backed document/card pictures, remain supported. Implementation will prove durability and access behavior before any live provider activation.
+  [2026-11-17 20:47] agent · resolved
 
 ## Identity and provenance
 

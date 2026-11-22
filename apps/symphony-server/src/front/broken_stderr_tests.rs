@@ -47,7 +47,7 @@ async fn stop_with_stderr_broken() {
         0,
         &root,
         None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+        crate::testing::open_gate(),
     );
     shared
         .saves

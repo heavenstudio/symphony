@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use symphony::machine::{Entry, Registry};
 
@@ -15,7 +15,7 @@ use super::{Maintain, Projects, Warming};
 use crate::backstop::NO_PERIOD;
 use crate::front::Shared;
 use crate::front::test_clock::TestClock;
-use crate::gate::Gate;
+use crate::testing::handing::{Handing, tell_at, watching};
 use crate::testing::{Tree, joined};
 
 /// The backstop of every wait here: rounds that take milliseconds on a quiet machine.
@@ -47,7 +47,7 @@ impl Machine {
             1,
             &tree.path(starter).canonicalize().unwrap(),
             Some(&tree.path("install")),
-            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+            crate::testing::open_gate(),
             &format!("/{starter}"),
         );
         Machine { tree, starter }
@@ -137,27 +137,44 @@ fn says(said: &Said, line: &str) -> bool {
     said.lock().unwrap().iter().any(|said| said == line)
 }
 
+/// A watcher event of the registry renamed into place at `path`, as a backend says it.
+fn renamed(path: impl Into<PathBuf>) -> notify::Result<notify::Event> {
+    let kind = notify::EventKind::Modify(notify::event::ModifyKind::Name(
+        notify::event::RenameMode::Any,
+    ));
+    Ok(notify::Event::new(kind).add_path(path.into()))
+}
+
 /// A project registered while the server runs has its maintenance started, and one removed has it
-/// stopped, by the server's own look at the registry, with no request, woken by the machine's own
-/// watcher of the machine folder (its backstop's period is past the test); the starter's checkout
-/// is never maintained here (the server's own workers maintain it), and the server's stop ends
-/// every other project's and the look.
+/// stopped, by the server's own look at the registry, with no request, woken by its watcher of the
+/// machine folder (its backstop's period is past the test); the starter's checkout is never
+/// maintained here (the server's own workers maintain it), and the server's stop ends every other
+/// project's and the look, whose watcher goes with it. The test tells the watcher's events itself:
+/// under load a real backend can lose one outright, which the look's period is for
+/// (`backstop.rs`), and on no period a lost event would leave the look waiting for good.
 #[test]
 fn registering_or_removing_a_project_starts_or_stops_its_maintenance_with_no_request() {
     let machine = Machine::new(&[("alpha", "exit 0"), ("beta", "exit 0")]);
+    let folder = machine.tree.path("machine");
     let said = Said::default();
     let projects = machine.projects(recording(&said));
-    let look = projects.watch_with::<notify::RecommendedWatcher>(NO_PERIOD);
+    let look = projects.watch_with::<Handing<false>>(NO_PERIOD);
     assert_eq!(*said.lock().unwrap(), ["started beta"]);
     let beta = state(&projects, "beta");
     assert_eq!(beta.maintaining(), 1);
+    test_time::until_true("the look to watch the machine folder", WAIT, || {
+        watching(&folder) == Some(notify::RecursiveMode::NonRecursive)
+    })
+    .unwrap();
 
     machine.register("gamma", "exit 0");
+    tell_at(&folder, renamed(folder.join(super::PROJECTS)));
     test_time::until_true("gamma's maintenance started", WAIT, || {
         says(&said, "started gamma")
     })
     .unwrap();
     machine.remove("beta");
+    tell_at(&folder, renamed(folder.join(super::PROJECTS)));
     test_time::until_true("beta's maintenance ended", WAIT, || {
         says(&said, "ended beta")
     })
@@ -176,6 +193,7 @@ fn registering_or_removing_a_project_starts_or_stops_its_maintenance_with_no_req
     // The server's stop: the starter first, its look at the registry, then every other project.
     machine.starter.stop();
     joined(look, "the stop to end the look at the registry", WAIT);
+    assert_eq!(watching(&folder), None, "the watcher goes with the look");
     let gamma = state(&projects, "gamma");
     projects.stop();
     assert!(says(&said, "ended gamma"), "{said:?}");
@@ -225,69 +243,17 @@ fn the_look_is_woken_by_a_change_of_the_registry_or_current_alone() {
     ))));
 }
 
-/// The handler a [`Handing`] watcher was given, and what it was asked to watch.
-#[derive(Default)]
-struct Handed {
-    handler: Option<Box<dyn notify::EventHandler>>,
-    watched: Vec<(PathBuf, notify::RecursiveMode)>,
-}
-
-std::thread_local! {
-    /// What the [`Handing`] watcher the test on this thread made was handed.
-    static HANDED: std::cell::RefCell<Handed> = std::cell::RefCell::default();
-}
-
-/// A watcher that hands its handler to the test ([`HANDED`]), or, when `FAILS`, fails to watch,
-/// its handler gone with it as a dropped watcher's is.
-struct Handing<const FAILS: bool>;
-
-impl<const FAILS: bool> notify::Watcher for Handing<FAILS> {
-    fn new<F: notify::EventHandler>(handler: F, _: notify::Config) -> notify::Result<Self> {
-        if !FAILS {
-            HANDED.with_borrow_mut(|handed| handed.handler = Some(Box::new(handler)));
-        }
-        Ok(Self)
-    }
-
-    fn watch(&mut self, path: &std::path::Path, mode: notify::RecursiveMode) -> notify::Result<()> {
-        if FAILS {
-            return Err(notify::Error::generic("no such folder"));
-        }
-        HANDED.with_borrow_mut(|handed| handed.watched.push((path.into(), mode)));
-        Ok(())
-    }
-
-    fn unwatch(&mut self, _: &std::path::Path) -> notify::Result<()> {
-        Ok(())
-    }
-
-    fn kind() -> notify::WatcherKind {
-        notify::WatcherKind::NullWatcher
-    }
-}
-
 #[test]
 fn the_registry_watch_wakes_the_look_once_a_burst_and_one_that_cannot_watch_wakes_nothing() {
     let machine = std::path::Path::new("/m");
     let wakes = crate::backstop::Wakes::new();
-    let watcher = super::watch_registry::<Handing<false>>(machine, wakes.waker());
-    assert!(watcher.is_some());
+    let watcher = super::watch_registry::<Handing<false>>(machine, wakes.waker())
+        .expect("the machine folder watched");
     assert_eq!(
-        HANDED.with_borrow(|handed| handed.watched.clone()),
+        watcher.watched,
         vec![(machine.to_path_buf(), notify::RecursiveMode::NonRecursive)]
     );
-    let tell = |path: &str| {
-        let renamed = notify::EventKind::Modify(notify::event::ModifyKind::Name(
-            notify::event::RenameMode::Any,
-        ));
-        HANDED.with_borrow_mut(|handed| {
-            handed
-                .handler
-                .as_mut()
-                .expect("a watcher was made")
-                .handle_event(Ok(notify::Event::new(renamed).add_path(PathBuf::from(path))));
-        });
-    };
+    let tell = |path: &str| watcher.tell(renamed(path));
     tell("/m/projects.json.4242");
     assert!(!wakes.wait(Some(Duration::ZERO)), "a write under way");
     tell("/m/projects.json");

@@ -61,7 +61,7 @@ a measurement before and after.
 ## Consumer API changes
 
 A public Rust item a known consumer calls is replaced across at least two releases
-(RULES.md `code/consumer-api-two-releases`, [its card](DECISIONS.md#consumer-api-break-release)):
+(RULES.md `code/consumer-api-two-releases`, [its card](analysis/release-candidate.md#consumer-api-break-release)):
 
 1. Ship the replacement alongside the old item, which keeps its signature and behaviour. Do not
    mark the old item `#[deprecated]`: a consumer's lint denies warnings, so the warning itself
@@ -87,7 +87,7 @@ for that rule; vocabulary variant inventories wider than those calls are left to
 
 This overlap does not replace the kit's and helpers' major-version requirements
 ([packages on crates.io](RELEASES.md#packages-on-cratesio)), or the separate versioned
-[`tasks api` contract](TASKS.md#the-tasks-api). Symphony's release checks build no consumer:
+[`tasks api` contract](BOARD_API.md#the-tasks-api). Symphony's release checks build no consumer:
 consumer-owned landing gates meet the new pin, and releases run this repository's checks alone.
 
 ## What a landing tells a consumer
@@ -122,7 +122,7 @@ is an additive step on the contract (`schema::ADDED`): the version stays, the st
 run after the contract's, and the board counts the steps it has (`meta:additions`). Builds on
 either side of an additive step read and write the board. Only a breaking step moves boards under
 their writers, and only it is held by the writers it would leave behind
-([TASKS](TASKS.md#who-writes-a-board)).
+([BOARD_OPERATIONS](BOARD_OPERATIONS.md#who-writes-a-board)).
 
 An additive step may define:
 
@@ -152,7 +152,7 @@ What each side does, on both engines:
   statement replaces such a row whole (`store/surreal/fence_tests.rs`). The whole-board dump reads
   each row exactly, handed every field, which its struct refuses by name, as a copy would drop it. The code of a step asks
   `Store::additions` before it reads or writes what the step defines.
-- A build ahead adds its steps where it may move the board ([TASKS](TASKS.md#where-it-lives)),
+- A build ahead adds its steps where it may move the board ([BOARD_OPERATIONS](BOARD_OPERATIONS.md#which-build-moves-a-live-board)),
   holding no writer, and uses the board as it is where it may not. The guard refuses, in the
   write's own transaction, a write naming a table of a step the board lacks, whatever its quoting
   or nesting, in the statement as it is sent on either engine; and the database refuses a field or
@@ -182,7 +182,7 @@ for a listed step, its own version otherwise. The schema guard reads that record
 both engines. A store the Symphony's reader opened (`symphony::taskview::connect`: the server, its
 page saves and the `symphony` commands that reach the board through it) writes a board one schema
 ahead only while the record names its schema or an older one. Every other case is refused, as for
-a step not listed ([TASKS](TASKS.md#who-writes-a-board)):
+a step not listed ([BOARD_OPERATIONS](BOARD_OPERATIONS.md#who-writes-a-board)):
 
 - a record that is missing or of any other shape;
 - a board two schemas ahead;
@@ -312,7 +312,7 @@ says.
   run the recorder keeps with its commit
   ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), so its reviewer reads it as
   recorded, like any test. A guide, or a document under
-  `docs/` but the register and `docs/history/`, also runs the check for the owner's words in the
+  `docs/` but `docs/history/`, a card's own lines and a register region aside, also runs the check for the owner's words in the
   shapes the guides gave them, dated or straight-quoted (`just test-rs -p symphony-app --test hooks
   owner_words`, RULES.md `docs/no-ledger-in-documents`), and its reviewer reads for any other
   shape. For a shipped skill,
@@ -339,7 +339,8 @@ but never a blank line. One rule, two places:
 
 - the docs audit, in the Symphony's own checkout alone (its project file names it `symphony`, and
   it holds the lists), judges its documents, the Markdown under `docs/` but the decision register
-  (`docs/DECISIONS.md`), `docs/analysis/` and `docs/history/`, which are records; and, of the files
+  (`docs/DECISIONS.md`), `docs/analysis/` and `docs/history/`, which are records, as are a card's
+  own lines wherever it sits in a document, which it passes over; and, of the files
   git's index holds (so a new one once added), every file of what it delivers, under
   `crates/symphony/shipped/` (the skills, the Codex rules and the recipes), and its guides, each
   `AGENTS.md`, `README.md` and `RULES.md` at the root or in a package under `crates/` or `apps/`.
@@ -738,7 +739,9 @@ binary this workspace delivers (`symphony-server`, `symphony`, `tasks` and
 `just size-check` builds the four as `cargo install` builds them, with `Cargo.toml`'s
 `[profile.release]`, and runs `symphony-build size-budget`, which prints each size beside its
 budget (`symphony-build`, the commands only this repository's build and release run use, is no
-binary it delivers, and has no line).
+binary it delivers, and has no line; nor has `tasks-move`, which a release installs beside
+`tasks` for the one move of a board's store and no project links or runs by a recipe, its bytes
+said in the release's manifest and the install's line).
 Past a line it fails, naming the size, the budget and how to see what grew: `cargo bloat --release
 --crates --bin NAME` (`cargo install cargo-bloat --root DIR`, never a workspace dependency) beside
 the same at a commit within it (the last release, or before the first one, the commit that last
@@ -1018,3 +1021,51 @@ waits on it, and a red goes back to `@executor`
 **What evidence missed, the full run finds.** [The release run](#the-release-run) runs every target
 on main's tip every 20 landings, and each day or more often once the owner schedules it, and
 publishes a release when every check is green; each red it finds is one task, with one owner.
+
+- [-] **land-tests-changed-packages** — `just land` checks a merge with the docs audit alone and runs no test, so a red that a branch's evidence missed reaches main. Three did tonight, each already red at the approved tip: a route change whose `after_http` nobody ran; a branch that added a `symphony` command and merged main's new test that lists them, and never ran that 0.2 s test; and a board change whose `polish::` and `shot::` browser tests nobody ran. Should the land's check also run, on the merge, the fast test targets of the packages the branch changed? A: no; the executor and the reviewer run them at the tip, and the lander reruns by hand what main gained since, as CHECKS now says. B: yes, for each package that both the branch and main's newer commits changed. C: yes, for every package the branch changed, on every land. Recommended: C. Approve and say A, B or C in the note, or comment. [[CHECKS#After main moves]]
+  [2026-11-12 06:06] agent — Posted for the board task `tools/checks-name-the-tests-landings-missed`.
+
+    **What the land would have caught under each**, of tonight's three reds:
+
+    | red at the tip | A | B | C |
+    |---|---|---|---|
+    | a route change: `-p symphony-server --test after_http` | no | yes, as main had changed `symphony-server` too | yes |
+    | a new command: `-p symphony --test serve` | no | no: main had changed none of the branch's packages since its tip | yes |
+    | a board change: its `polish::` and `shot::` browser tests | no | no | no |
+
+    None of the three was made by the land's merge, so B's own case, two lines of work green alone and red together, did not occur. The tests CHECKS now names for each kind of change (a route's targets, the rule for a new command, the tasks board's row), run at the tip, catch all three: A rests on that alone, and B and C are the land's net under it.
+
+    **A land today** rebuilds the client in its own worktree to compare it with the committed one, 7 to 20 minutes (median 11, over the 17 client checks lands ran tonight), builds `symphony` for the docs audit, and runs no test.
+
+    **What a package's fast targets take**, cargo's own run times from tonight's three nightly runs, build not included, a fast target being one that took under 2.5 minutes in every run:
+
+    | package | its fast targets | run |
+    |---|---|---|
+    | `symphony` | all but `nightly` | 3 to 5 min |
+    | `symphony-board` | the library, `child_guard`, `cli`, `launch`, `store` | 4 to 6 min |
+    | `symphony-server` | the library and the `after_*` targets | 3 to 3.5 min |
+    | `symphony-ui` | all but `browser` and `wasm_build` | 10 to 30 s |
+    | each other crate | all | seconds |
+
+    First the land's worktree builds those test binaries: the whole workspace's took 4 and 5 minutes on two nights and 18 on a loaded one, and a land's packages are part of that.
+
+    **Not fast, so in neither:** the browser target first (171 s one night, 61 minutes on another when its tests timed out), the board's `perf`, `sweep` and `server` (2.5 to 15 minutes each; `perf` took 883 s in one run) and `launcher` (seconds, and 10 minutes once), the server's `standalone` (3 to 5), the client's `wasm_build` (1 to 3) and `symphony`'s `nightly` (nearly 3). They stay the nightly's: under load their timeouts would turn lands red that changed nothing they test. Where the line falls is the recipe's to set, not this card's.
+
+    **What B and C cost over tonight's lands**, each land's packages weighed by those run times (the middle of each range), the client distribution counted as `symphony-server` as CHECKS does:
+
+    | lands since | lands | B runs tests on | for, in all | C runs tests on | for, in all |
+    |---|---|---|---|---|---|
+    | 18:00 on 11-11 | 47 | 31 | 2.8 hours | 41 | 4.4 hours |
+    | 00:00 on 11-11 | 64 | 39 | 3.6 hours | 55 | 6 hours |
+
+    Main's newer commits mostly touch the same few packages a branch does, so B runs on two lands in three and costs about two thirds of what C does. A land that runs either adds 5 to 6.5 minutes on average and up to 13 (a branch through `symphony`, the board and the server), beside the client check's 11.
+
+    **A, by hand.** Nothing added to a land. Cost: a target someone leaves out reaches main red and stays there until a full run finds it.
+
+    **B, shared packages.** Catches one of the three, because main happened to have changed the same package. Cost: about two thirds of C's.
+
+    **C, every changed package.** Catches two of the three whatever main did meanwhile, and B's case as well, since every package both changed is one the branch changed. Cost: the minutes above, on 41 of the 47 lands.
+
+    **Why C.** The reds that reached main tonight were evidence that left a target out, which C catches on every land and B only where main moved in the same package; B costs two thirds of C and caught half as much. A adds nothing to a land, but rests on every executor and reviewer running what CHECKS names, which three branches tonight did not. Built as one recipe the check names, which picks the packages from the branch's diff: the mechanical half of `just check-fast`, filed as `tools/check-fast`.
+  [2026-11-12 06:42] owner · rejected — Adding 5 minutes may seem low, but the issue is that it becomes a “blocking 5 mins”. Every new PR that gets merged could invalidate the 5 min run, making it have to run it again and again and again, spiraling the 5 minute forever. A solution like a lock or queue would directly bottleneck the pipeline which isn’t acceptable either. So a nightly or more often run that then runs all tests and publishes when green is the only acceptable choice I can think of. Or the orchestrators could do a manual run of what they think is needed to ensure quality. But this cannot be an automated approach or that would wait and spiral OR add a number of tickets bottleneck to be merged and both are not acceptable.
+  [2026-11-12 06:44] agent — Done as you say, with no replacement card: the land's check stays the docs audit and runs no test, and nothing automatic waits on a land. Quality rests on three things: the evidence at the tip that CHECKS names for each kind of change, run again at the new tip after a branch merges main, for the packages the branch itself changed; an orchestrator's run by hand of what it judges a land needs, which nothing waits on; and the full run (`just nightly`), nightly or more often, which runs every test and publishes a release when green, each red it finds a task with one owner. CHECKS and RELEASES now say so. [[CHECKS#After main moves]]

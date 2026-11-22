@@ -7,7 +7,6 @@
 
 use super::{Hub, relinks};
 use crate::front::{Shared, router};
-use crate::gate::Gate;
 use crate::testing::{
     Tree,
     board::{Fixture, Seed},
@@ -23,7 +22,7 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tower::ServiceExt;
 
 const TOPIC: &str = "docs/TOPIC.md";
@@ -40,13 +39,7 @@ impl Served {
     fn new(root: &Path) -> Self {
         let hub = Hub::new(root, &root.join("build/client"));
         hub.refresh_docs(None).unwrap();
-        let shared = Shared::new(
-            1,
-            1,
-            root,
-            None,
-            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-        );
+        let shared = Shared::new(1, 1, root, None, crate::testing::open_gate());
         assert!(shared.api.set(Arc::new(hub)).is_ok());
         let hub = shared.api.get().unwrap().clone();
         let app = router(shared).layer(MockConnectInfo(

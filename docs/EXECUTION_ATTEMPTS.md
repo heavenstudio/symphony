@@ -3,7 +3,7 @@
 [`symphony_board::execution`](../crates/tasks/src/execution.rs) is the board's record of each time
 a task's role ran on a project's execution provider, and the coordinator that admits, recovers and
 judges those attempts. It is stage 2 of the [execution design](analysis/remote-execution-attempts.md#delivery-after-approval)
-under [its card](DECISIONS.md#execution-provider-attempts), built on the kit's
+under [its card](analysis/remote-execution-attempts.md#execution-provider-attempts), built on the kit's
 [execution adapter contract](EXECUTION_ADAPTER.md), whose types it reuses. A project supplies the
 provider as a kit `Adapter`, its credentials and its storage; the host that runs Symphony builds
 the grants and runs the coordinator. The board's own launcher is its first provider: each local
@@ -224,7 +224,7 @@ another project or board refuses the whole read, however its id came.
   out its sessions.
 - **`tasks api`'s `attempts`** (2.5, `{"slug": S}`) reads a task's history as the board's own
   service, under the project the call runs in, with no control offered
-  ([the tasks API](TASKS.md#the-tasks-api)).
+  ([the tasks API](BOARD_API.md#the-tasks-api)).
 
 ### The provider seam
 
