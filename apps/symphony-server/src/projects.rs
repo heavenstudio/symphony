@@ -33,10 +33,11 @@
 //! starter's checkout is maintained by the server's own workers, under whatever id it is
 //! registered with.
 
+use crate::lock::Held as _;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use axum::Router;
@@ -248,7 +249,7 @@ impl Projects {
     /// Start the maintenance of each other project served now, once: none once the server stopped
     /// them or its starter is stopping, as nothing would join it.
     fn go_live(&self) {
-        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut held = self.held.lock().held();
         if held.live || held.stopped || self.starter.stopping() {
             return;
         }
@@ -277,7 +278,7 @@ impl Projects {
     fn read(&self) -> std::sync::MutexGuard<'_, Held> {
         // A panic while reading leaves the list before it whole: the new one is stored last, in
         // one assignment with the stamp it was read at.
-        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut held = self.held.lock().held();
         let stamp = fs::metadata(self.machine.join(PROJECTS)).ok().map(|meta| {
             (
                 meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
@@ -479,18 +480,8 @@ async fn dispatch(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     request: Request,
 ) -> Response {
-    let ip = peer.ip();
-    let starter = projects.starter.clone();
-    let allowed = ip.is_loopback()
-        || crate::spawn::blocking(move || starter.gate.allows(ip))
-            .await
-            .unwrap_or(false);
-    if !allowed {
-        return (
-            StatusCode::FORBIDDEN,
-            "Forbidden: the Symphony answers only this machine and its tailnet\n",
-        )
-            .into_response();
+    if !crate::front::peer_allowed(&projects.starter, peer.ip()).await {
+        return crate::front::peer_refused();
     }
     let path = request.uri().path().to_string();
     // `/api/front` holds to loopback's name alone; every other route to a name of this machine.
@@ -730,13 +721,8 @@ async fn forward(project: &Served, inner: &str, mut request: Request) -> Respons
 
 /// `GET /api/front`: the starter's status and the ids served, to loopback's name alone.
 fn front(projects: &Projects, served: &[Served], headers: &HeaderMap) -> Response {
-    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
-    if !host.is_some_and(crate::front::names_loopback) {
-        return (
-            StatusCode::FORBIDDEN,
-            "Forbidden: the Host header does not name this machine's loopback\n",
-        )
-            .into_response();
+    if let Some(refused) = crate::front::loopback_refused(headers) {
+        return refused;
     }
     let mut status = projects.starter.status();
     status.projects = served
@@ -789,7 +775,7 @@ fn listed(project: &Served) -> symphony_api::ListedProject {
     listed.unwell = hub.standing().unwell();
     listed.writes = hub.writes();
     // A writer's panic leaves at worst a page between two of its regions' updates, as the list's.
-    let pages = hub.pages.read().unwrap_or_else(PoisonError::into_inner);
+    let pages = hub.pages.read().held();
     if let Some(page) = pages.get("") {
         listed.version = Some(page.board.version);
         listed.waiting = Some(page.board.counts.waiting);
@@ -832,7 +818,7 @@ fn list(served: &[Served]) -> String {
             let counts = hub.and_then(|hub| {
                 // A writer's panic leaves at worst a page between two of its regions' updates:
                 // these counts are shown, and the project's next delta corrects them.
-                let pages = hub.pages.read().unwrap_or_else(PoisonError::into_inner);
+                let pages = hub.pages.read().held();
                 pages.get("").map(|page| page.board.counts.clone())
             });
             let standing = hub.map(|hub| hub.standing());

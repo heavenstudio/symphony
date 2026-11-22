@@ -2,9 +2,9 @@
 //! served by the `symphony-test-plugin` binary, asked as a project's plugins are and answering as
 //! it does linked; its process killed, a call after the pause starts it again (the lib's
 //! `plugins::process` tests show the calls meanwhile, with a pause longer than the test); its
-//! process ending with its input whatever its calls do; and what its calls cost linked, through
-//! the loopback and from its process, and what a register read costs linked, card by card from its
-//! process and in one request.
+//! process ending with its input whatever its calls do; and what its calls cost linked and from its
+//! process, and what a register read costs linked, card by card from its process and in one
+//! request.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read as _, Write as _};
@@ -1068,25 +1068,24 @@ fn by_call_and_name(path: &Path, key: &str) -> BTreeMap<String, Vec<f64>> {
     found
 }
 
-/// What each call of a component and a card kind costs linked, through the loopback and from the
-/// plugin's own process: a measurement, not a check. Run alone, it prints each call's medians in
-/// microseconds: linked (the call timed alone), the loopback's round trip, the process's (the
-/// host's wait for its answer) and the plugin's own time there, and the bytes of the process's
-/// two lines; how much more a call costs from the process than linked, over every call; the
-/// render of `slow`, which spends [`SPENT`] in the plugin, so each meter is seen to move by it;
-/// and a page of ten components drawn linked and from the process, neither recorded. Best in a
-/// release build on a quiet machine, run twice (docs/engineering/PLUGIN_PROTOCOL.md says the command).
+/// What each call of a component and a card kind costs linked and from the plugin's own process:
+/// a measurement, not a check. Run alone, it prints each call's medians in microseconds: linked
+/// (the call timed alone), the process's (the host's wait for its answer) and the plugin's own
+/// time there, and the bytes of the process's two lines; how much more a call costs from the
+/// process than linked, over every call; the render of `slow`, which spends [`SPENT`] in the
+/// plugin, so each meter is seen to move by it; and a page of ten components drawn linked and from
+/// the process, neither recorded. Best in a release build on a quiet machine, run twice
+/// (docs/engineering/PLUGIN_PROTOCOL.md says the command).
 #[test]
 #[ignore = "a measurement, not a check: run it alone with --ignored --nocapture"]
-fn the_cost_of_a_plugins_calls_linked_through_the_loopback_and_from_its_process() {
+fn the_cost_of_a_plugins_calls_linked_and_from_its_process() {
     const ROUNDS: usize = 1_000;
     const PAGES: usize = 200;
     let tree = Tree::new();
     let root = tree.root.as_path();
-    let (timed_record, looped_record) = (tree.path("timed.jsonl"), tree.path("looped.jsonl"));
-    let calls = |timing, loopback| PluginCalls { timing, loopback };
-    let timed = Plugins::new(vec![&PIPED]).measured(calls(true, false), &timed_record);
-    let looped = Plugins::new(vec![&PIPED]).measured(calls(false, true), &looped_record);
+    let timed_record = tree.path("timed.jsonl");
+    let timing = PluginCalls { timing: true };
+    let timed = Plugins::new(vec![&PIPED]).measured(timing, &timed_record);
     let recorded = project(&tree, "timing = true\n");
     let piped = Plugins::at(&recorded, root);
     let piped_record = symphony::plugins::record(&recorded, root);
@@ -1100,14 +1099,12 @@ fn the_cost_of_a_plugins_calls_linked_through_the_loopback_and_from_its_process(
     // Interleaved, so the machine's load weighs on each alike.
     for _ in 0..ROUNDS {
         component_and_kind_calls(&timed, root);
-        component_and_kind_calls(&looped, root);
         component_and_kind_calls(&piped, root);
     }
     let median_of = |table: &BTreeMap<String, Vec<f64>>, name: &str| {
         median(&mut table.get(name).cloned().unwrap_or_default())
     };
     let linked_us = by_call_and_name(&timed_record, "us");
-    let looped_trip = by_call_and_name(&looped_record, "round_trip_us");
     let (piped_trip, piped_us) = (
         by_call_and_name(&piped_record, "round_trip_us"),
         by_call_and_name(&piped_record, "us"),
@@ -1117,15 +1114,14 @@ fn the_cost_of_a_plugins_calls_linked_through_the_loopback_and_from_its_process(
         by_call_and_name(&piped_record, "answer_bytes"),
     );
     println!(
-        "{ROUNDS} rounds; medians in microseconds\n{:<38} {:>9} {:>9} {:>9} {:>9} {:>7} {:>7}",
-        "call", "linked", "loopback", "process", "in it", "req B", "ans B"
+        "{ROUNDS} rounds; medians in microseconds\n{:<38} {:>9} {:>9} {:>9} {:>7} {:>7}",
+        "call", "linked", "process", "in it", "req B", "ans B"
     );
     let mut more = Vec::new();
     for name in linked_us.keys() {
         let (linked, process) = (median_of(&linked_us, name), median_of(&piped_trip, name));
         println!(
-            "{name:<38} {linked:>9.3} {:>9.3} {process:>9.3} {:>9.3} {:>7} {:>7}",
-            median_of(&looped_trip, name),
+            "{name:<38} {linked:>9.3} {process:>9.3} {:>9.3} {:>7} {:>7}",
             median_of(&piped_us, name),
             median_of(&asked, name),
             median_of(&answered, name),

@@ -68,8 +68,8 @@ Extending it, and the contracts a project or a provider builds against:
 - [Plugin protocol](engineering/PLUGIN_PROTOCOL.md) — a plugin answering from a process of its
   own: the setting, the seams it answers, its process, its commands, a register read in one
   request, the line, each call's minor, the versions and the wire's shape.
-- [Plugin calls](engineering/PLUGIN_CALLS.md) — each call into a project's plugins timed, and sent
-  through a JSON round trip inside the process: the two settings, the record and how to read it.
+- [Plugin calls](engineering/PLUGIN_CALLS.md) — each call into a project's plugins timed: the
+  setting, the record and how to read it.
 - [Commands for a project's tools](engineering/TOOL_COMMANDS.md) — draw one card, check a branch
   for a landing, read status and triage, and share the document write lock.
 - [Working artifact contracts](engineering/ARTIFACTS.md) — optional verified publication and

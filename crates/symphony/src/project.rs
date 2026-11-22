@@ -154,26 +154,24 @@ impl PluginProcess {
     }
 }
 
-/// How a project's plugin calls are measured, both off unless its file turns them on
-/// (docs/engineering/PLUGIN_CALLS.md): `[plugins] timing` records each call's time, `[plugins] loopback` sends
-/// each call through a JSON round trip inside the process and records both times
+/// How a project's plugin calls are measured, off unless its file turns it on
+/// (docs/engineering/PLUGIN_CALLS.md): `[plugins] timing` records each call's time
 /// ([`crate::plugins::Plugins::at`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PluginCalls {
     pub timing: bool,
-    pub loopback: bool,
 }
 
 impl PluginCalls {
-    /// Whether a call is recorded: under either setting.
+    /// Whether a call is recorded: under `timing`.
     pub fn recorded(self) -> bool {
-        self.timing || self.loopback
+        self.timing
     }
 
-    /// The two settings of the `symphony.toml` at `root`, read alone and quietly: nothing else in
-    /// the file is read or checked and nothing is said of it, and a file that does not parse, a
-    /// setting that is not `true` or `false`, or no file, turns neither on. What a plugin command
-    /// reads before it runs ([`crate::plugins::command`]), so with both off it loads no project.
+    /// The `[plugins] timing` of the `symphony.toml` at `root`, read alone and quietly: nothing else
+    /// in the file is read or checked and nothing is said of it, and a file that does not parse, a
+    /// value that is not `true` or `false`, or no file, leaves it off. What a plugin command reads
+    /// before it runs ([`crate::plugins::command`]), so with it off it loads no project.
     pub fn read(root: &Path) -> PluginCalls {
         #[derive(Default, serde::Deserialize)]
         #[serde(default)]
@@ -184,14 +182,12 @@ impl PluginCalls {
         #[serde(default)]
         struct PluginSettings {
             timing: bool,
-            loopback: bool,
         }
         std::fs::read_to_string(root.join(FILE))
             .ok()
             .and_then(|text| toml::from_str::<Settings>(&text).ok())
             .map(|settings| PluginCalls {
                 timing: settings.plugins.timing,
-                loopback: settings.plugins.loopback,
             })
             .unwrap_or_default()
     }
@@ -842,7 +838,6 @@ impl Project {
             plugins: file.plugins.crates,
             plugin_calls: PluginCalls {
                 timing: file.plugins.timing,
-                loopback: file.plugins.loopback,
             },
             theme,
             agents,

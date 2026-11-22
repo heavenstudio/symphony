@@ -76,8 +76,8 @@ pub(crate) type View = fn(&Store, &Scope, &Provider, &Grant, &str) -> Result<Ext
 
 /// What the server does through a provider alone, a resume and a view: held with the providers a
 /// host installs ([`Providers::of`]), so a binary that installs none, the Symphony's own, links
-/// neither, nor the admission a resume makes (as a binary that installs no plugin links no
-/// plugin's loopback).
+/// neither, nor the admission a resume makes (as a binary that installs no plugin links none of
+/// the wrapping that times a plugin's calls).
 #[derive(Clone, Copy)]
 pub(crate) struct Served {
     pub(crate) resume: Resume,

@@ -9,6 +9,7 @@ use crate::backstop::{self, Backstop, Wake, Waker};
 use crate::cli::Serve;
 use crate::front::Shared;
 use crate::home::{Home, Running};
+use crate::lock::Held as _;
 use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -284,14 +285,21 @@ impl Setup {
     }
 }
 
+/// What a generation hands its replacement: its listening sockets and the server's lease.
+struct Handed {
+    sockets: Vec<OwnedFd>,
+    lease: File,
+}
+
 /// Hand the sockets and the lease to `exe`, the replacement serving `serve` (its machine folder,
-/// its root and install folder), and wait until it is ready: its pid.
+/// its root and install folder), and wait until it is ready: its pid. `version` names what it
+/// runs, the sources' fingerprint it was built from or the release it is, as its hand-off and
+/// an installed binary's stamp record it.
 fn replace(
     serve: &Serve,
     exe: &Path,
-    sockets: &[OwnedFd],
-    lease: &File,
-    fingerprint: &str,
+    handed: &Handed,
+    version: &str,
     shared: &Shared,
     mut client: Option<symphony::reload::ClientUpdate>,
 ) -> Result<u32, String> {
@@ -311,12 +319,12 @@ fn replace(
     let ((ready, mut commit), replacement_ends) = Control::pair().map_err(|e| e.to_string())?;
     let transfer = Transfer {
         parent: i64::from(std::process::id()),
-        listeners: sockets.iter().map(AsRawFd::as_raw_fd).collect(),
-        lease: lease.as_raw_fd(),
+        listeners: handed.sockets.iter().map(AsRawFd::as_raw_fd).collect(),
+        lease: handed.lease.as_raw_fd(),
         ready: Some(replacement_ends.ready.as_raw_fd()),
         commit: Some(replacement_ends.commit.as_raw_fd()),
         control: None,
-        fingerprint: fingerprint.into(),
+        fingerprint: version.into(),
     };
     let fds: Vec<_> = transfer
         .listeners
@@ -365,7 +373,7 @@ fn replace(
         Err(e) => Err(format!("replacement did not become ready: {e}")),
     }
     .and_then(|()| {
-        if installed && let Err(why) = stamp_install(&install, fingerprint) {
+        if installed && let Err(why) = stamp_install(&install, version) {
             crate::front::tell(format_args!(
                 "· Symphony reload: could not stamp installed binary: {why}"
             ));
@@ -402,14 +410,18 @@ fn replace(
             .reopen(symphony_board::sweep::trigger::now());
         // The old server is still accepting. Restore its publication if the child failed after it.
         let ours = symphony::machine::release::this().map(|(_, manifest)| &manifest.release);
-        let _ = home.record(
+        if let Err(error) = home.record(
             &Running {
                 port: serve.port,
                 pid: i64::from(std::process::id()),
                 root: serve.root.display().to_string(),
             },
             ours.map(String::as_str),
-        );
+        ) {
+            crate::front::tell(format_args!(
+                "· Symphony reload: could not restore this server's record: {error}"
+            ));
+        }
         return Err(why);
     }
     if let Some(client) = &mut client {
@@ -464,7 +476,10 @@ fn watch_with<W: Watcher + Send + 'static>(
     mut backstop: Backstop,
     mut retry: Retry,
 ) -> Option<std::thread::JoinHandle<()>> {
-    let lease = setup.lease?;
+    let handed = Handed {
+        sockets,
+        lease: setup.lease?,
+    };
     // A release's server builds nothing: it follows the machine's `current` link.
     if let (Some((_, manifest)), Some(machine)) =
         (symphony::machine::release::this(), serve.home.clone())
@@ -478,8 +493,7 @@ fn watch_with<W: Watcher + Send + 'static>(
                     &Follow {
                         machine,
                         release,
-                        sockets,
-                        lease,
+                        handed,
                     },
                     &shared,
                     backstop,
@@ -500,13 +514,10 @@ fn watch_with<W: Watcher + Send + 'static>(
             let relevant = event.as_ref().map_or(true, |event| {
                 event.need_rescan()
                     || (!matches!(event.kind, notify::EventKind::Access(_))
-                        && event.paths.iter().any(|p| {
-                            source_event(
-                                &root,
-                                &checked.lock().unwrap_or_else(|e| e.into_inner()),
-                                p,
-                            )
-                        }))
+                        && event
+                            .paths
+                            .iter()
+                            .any(|p| source_event(&root, &checked.lock().held(), p)))
             });
             if relevant {
                 changed.wake();
@@ -548,7 +559,7 @@ fn watch_with<W: Watcher + Send + 'static>(
             }
             // A starter whose build must serve the machine asked for the hand-off (host rule): a
             // request made while this loop read or built left its wake for the wait above.
-            match handed_over(&serve, &shared, &sockets, &lease, &retry) {
+            match handed_over(&serve, &shared, &handed, &retry) {
                 HandOff::Replaced => return,
                 HandOff::Failed => failure_told = true,
                 HandOff::None => {}
@@ -624,17 +635,7 @@ fn watch_with<W: Watcher + Send + 'static>(
                 continue;
             }
             let result = result
-                .and_then(|client| {
-                    replace(
-                        &serve,
-                        &exe,
-                        &sockets,
-                        &lease,
-                        &fingerprint,
-                        &shared,
-                        client,
-                    )
-                })
+                .and_then(|client| replace(&serve, &exe, &handed, &fingerprint, &shared, client))
                 .map_err(|why| {
                     let again = retry.failed(&fingerprint);
                     format!(
@@ -666,13 +667,7 @@ enum HandOff {
 /// machine folder names ([`crate::host::Handover`]), when one asked. A failure is said on the
 /// notice, with the time `retry` will try the sources' own failed update again, when one waits:
 /// the hand-off is the starter's to ask again.
-fn handed_over(
-    serve: &Serve,
-    shared: &Shared,
-    sockets: &[OwnedFd],
-    lease: &File,
-    retry: &Retry,
-) -> HandOff {
+fn handed_over(serve: &Serve, shared: &Shared, handed: &Handed, retry: &Retry) -> HandOff {
     if !shared
         .handover
         .swap(false, std::sync::atomic::Ordering::SeqCst)
@@ -693,8 +688,7 @@ fn handed_over(
             let result = replace(
                 &successor,
                 &request.exe,
-                sockets,
-                lease,
+                handed,
                 &fingerprint,
                 shared,
                 None,
@@ -759,12 +753,11 @@ fn watch_current<W: Watcher>(machine: &Path, moved: Waker) -> Option<W> {
 }
 
 /// What a release's server hands over when the machine's `current` moves: the machine folder, the
-/// release it runs, its listening sockets and its lease.
+/// release it runs, and what it hands its replacement.
 struct Follow {
     machine: PathBuf,
     release: String,
-    sockets: Vec<OwnedFd>,
-    lease: File,
+    handed: Handed,
 }
 
 /// What a follow of `current` keeps from one check to the next, and from a loop that died to the
@@ -875,8 +868,7 @@ fn follow_current<W: Watcher>(
     let Follow {
         machine,
         release,
-        sockets,
-        lease,
+        handed,
     } = follow;
     let link = machine.join(symphony::machine::release::CURRENT);
     // Watched before its first read, so no move after that read goes unheard.
@@ -942,7 +934,7 @@ fn follow_current<W: Watcher>(
             "· Symphony reload: current names {next}; handing over to its server"
         ));
         let result = to_release(machine, &next)
-            .and_then(|exe| replace(serve, &exe, sockets, lease, &next, shared, None))
+            .and_then(|exe| replace(serve, &exe, handed, &next, shared, None))
             .map_err(|why| {
                 let again = retry.failed(&next);
                 format!(
@@ -1071,7 +1063,7 @@ fn watch_sources(
     ] {
         paths.push((root.join(group), RecursiveMode::Recursive));
     }
-    *directories.lock().unwrap_or_else(|e| e.into_inner()) = sources;
+    *directories.lock().held() = sources;
     watched.retain(|path| {
         if path.is_dir() {
             true

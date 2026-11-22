@@ -6,10 +6,11 @@
 //! project's own, which init never reads or writes, so it is passed over.
 //!
 //! A land's merge meets this at the stamp, the digest of every file of a skill: two branches that
-//! each change one shipped skill and run init differ on its one stamp line, so git conflicts there
-//! and the merge is settled by running init again, never by taking a side by hand, which this test
-//! refuses.
+//! each change the same shipped skill and run init differ on its one stamp line, so git conflicts
+//! there and the merge is settled by running init again, never by taking a side by hand, which this
+//! test refuses.
 
+use crate::common::TempDir;
 use std::path::{Path, PathBuf};
 use symphony::init::{Outcome, Shipped, Skill, init};
 
@@ -39,13 +40,12 @@ fn copy(from: &Path, to: &Path) {
 /// One line for each skill installed under `root` that init would write from `shipped`, naming it
 /// and what to run; none when the installed skills are what init writes.
 fn stale(root: &Path, shipped: &Shipped) -> Vec<String> {
-    let scratch = crate::scratch("installed-skills");
+    let scratch = TempDir::new("installed-skills");
     if root.join(SKILLS).is_dir() {
         copy(&root.join(SKILLS), &scratch.join(SKILLS));
     }
-    let report = init(&scratch, shipped).unwrap();
-    std::fs::remove_dir_all(&scratch).unwrap();
-    report
+    init(&scratch, shipped)
+        .unwrap()
         .into_iter()
         .filter_map(|(entry, outcome)| {
             let name = entry.strip_prefix("skill ")?;
@@ -77,9 +77,9 @@ fn this_repositorys_installed_skills_are_what_init_writes_from_the_shipped_sourc
     assert!(stale.is_empty(), "{}", stale.join("\n"));
 }
 
-/// A project init just wrote the built-in skills into.
-fn installed() -> PathBuf {
-    let root = crate::scratch("installed-skills-project");
+/// A project init just wrote the built-in skills into, removed when dropped.
+fn installed() -> TempDir {
+    let root = TempDir::new("installed-skills-project");
     init(&root, &Shipped::builtin()).unwrap();
     root
 }
@@ -195,7 +195,10 @@ fn an_installed_copy_edited_by_hand_or_stamped_by_hand_names_its_skill() {
         )
     });
     let line = stale(&root, &shipped);
-    assert!(one(&line).contains(".agents/skills/tasks "), "{line:?}");
+    assert!(
+        one(&line).starts_with(".agents/skills/tasks differs from its stamp"),
+        "{line:?}"
+    );
     // A stamped file gone.
     let root = installed();
     std::fs::remove_file(root.join(SKILLS).join("work/finish.md")).unwrap();
@@ -216,7 +219,7 @@ fn a_skill_missing_unstamped_or_no_longer_shipped_is_named() {
         "{line:?}"
     );
     // Nothing installed at all names every skill.
-    let empty = crate::scratch("installed-skills-none");
+    let empty = TempDir::new("installed-skills-none");
     assert_eq!(
         stale(&empty, &Shipped::builtin()).len(),
         Shipped::builtin().skills.len()

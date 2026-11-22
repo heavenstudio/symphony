@@ -10,6 +10,7 @@
 use crate::api::error;
 use crate::front::Shared;
 use crate::live::Hub;
+use crate::lock::Held as _;
 use axum::body::to_bytes;
 use axum::extract::{ConnectInfo, Request};
 use axum::http::StatusCode;
@@ -110,11 +111,7 @@ impl Going<'_> {
         go: &SessionGo,
     ) -> Result<Going<'a>, (StatusCode, String)> {
         let key = format!("{what} {}", go.handle);
-        let fresh = hub
-            .going
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(key.clone());
+        let fresh = hub.going.lock().held().insert(key.clone());
         if fresh {
             Ok(Going { hub, key })
         } else {
@@ -132,11 +129,7 @@ impl Going<'_> {
 
 impl Drop for Going<'_> {
     fn drop(&mut self) {
-        self.hub
-            .going
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&self.key);
+        self.hub.going.lock().held().remove(&self.key);
     }
 }
 

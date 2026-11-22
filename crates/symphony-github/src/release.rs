@@ -22,8 +22,8 @@
 //! creation. The write is journaled before it is made, and no token is in an argument, a URL, the
 //! journal, the state or a line said here.
 
-use crate::config::Releases;
-use crate::deliver::{self, Host, Lost, Stopped, refused, unavailable};
+use crate::config::{Config, Releases};
+use crate::deliver::{self, Host, Lost, Serving, Stopped, refused, unavailable};
 use crate::reconcile::{Context, Outcome};
 use crate::state::{Entry, Event, Released, State, Store};
 use serde_json::{Value, json};
@@ -247,31 +247,18 @@ impl Run<'_> {
 
 /// The answer to `request`.
 fn answer(ctx: &Context<'_>, request: &Value) -> Value {
-    let loaded = match ctx.source.load() {
-        Ok(loaded) => loaded,
-        Err(why) => return refused(format!("turned off: its settings do not read: {why}")),
+    let publishes = |config: &Config| config.releases == Releases::Publish;
+    let serving = match deliver::served(ctx, "releases = \"publish\"", publishes) {
+        Ok(serving) => serving,
+        Err(why) => return refused(why),
     };
-    let config = loaded.config;
-    let serves = config.enabled && config.releases == Releases::Publish;
-    let Some(repository) = config.repository.clone().filter(|_| serves) else {
-        return refused(
-            "turned off: the committed settings do not say enabled = true and releases = \
-             \"publish\"",
-        );
-    };
-    let opened = (ctx.board.state_folder())
-        .map_err(|error| error.said().to_string())
-        .and_then(|folder| Store::open(&folder));
-    let store = match opened {
-        Ok(store) => store,
-        Err(why) => return unavailable(why),
-    };
-    let _lock = match store.lock() {
-        Ok(lock) => lock,
-        Err(why) => return unavailable(why),
-    };
-    let state = match store.state() {
-        Ok(state) => state.unwrap_or_default(),
+    let Serving {
+        config,
+        revision,
+        repository,
+    } = serving;
+    let (store, _lock, state) = match deliver::kept(ctx) {
+        Ok(kept) => kept,
         Err(why) => return unavailable(why),
     };
     let transport = match deliver::connect(ctx, &config) {
@@ -284,7 +271,7 @@ fn answer(ctx: &Context<'_>, request: &Value) -> Value {
     };
     let mut run = Run {
         ctx,
-        revision: loaded.revision,
+        revision,
         store,
         state,
         by: crate::github::clean_title(request["by"].as_str().unwrap_or_default()),
