@@ -1,5 +1,5 @@
 //! A land delivered by pull request of a head that imports the project's upstream
-//! (`[land.upstream]`, docs/TASKS.md "Imports"): merged by a merge commit only where the project
+//! (`[land.upstream]`, docs/workflow/TASKS.md "Imports"): merged by a merge commit only where the project
 //! file, the head's assessment at that head and the history fetched from the upstream agree, one
 //! import after another; a task beside it squashed as ever, and refused with an import while the
 //! upstream does not answer; and what refuses before anything is asked, what is held once merged,

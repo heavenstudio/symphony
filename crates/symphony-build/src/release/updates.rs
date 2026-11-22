@@ -1,4 +1,4 @@
-//! What a refresh does with the machine's schema updates (docs/RELEASES.md, "An update"), kept in
+//! What a refresh does with the machine's schema updates (docs/workflow/RELEASES.md, "An update"), kept in
 //! the machine folder's ledger ([`symphony::machine::updates`]): once the boards and `current` are
 //! settled and the machine's server waited for, each registered project's board, this
 //! repository's included, is read again.
@@ -763,7 +763,7 @@ fn body(look: &Look<'_>, update: &Update, seen: &Seen<'_>, why: &str) -> String 
             .to_string(),
     };
     format!(
-        "The machine's schema update {id} (docs/RELEASES.md, \"An update\") failed in the release \
+        "The machine's schema update {id} (docs/workflow/RELEASES.md, \"An update\") failed in the release \
          run's refresh of {release} (run {run}): {why}\n\n\
          Its board: {project} at {root}, now {live}; the update is complete once the \
          machine's server writes it at schema {schema}. {available}\n\n\

@@ -27,9 +27,10 @@ pub use session::SUPPORTED;
 use super::external::{Settings, Share, TABLE};
 use super::{Answer, Step};
 use crate::db::DbError;
+use crate::lock::Recovered as _;
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, Weak, mpsc};
+use std::sync::{Arc, Mutex, Weak, mpsc};
 use std::time::{Duration, Instant};
 
 /// Why a hosted board did not answer, by kind.
@@ -216,10 +217,7 @@ impl Hosting {
         if target.identity != self.identity {
             return Err(Refusal::Configuration("url_env", MOVED));
         }
-        *self
-            .generation
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = target.generation;
+        *self.generation.lock().recover() = target.generation;
         Ok(target)
     }
 }
@@ -241,12 +239,7 @@ impl pool::Connector for Hosting {
     }
 
     fn usable(&self, connection: &Arc<session::Session>) -> bool {
-        connection.open()
-            && connection.generation
-                == *self
-                    .generation
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
+        connection.open() && connection.generation == *self.generation.lock().recover()
     }
 
     fn close(&self, connection: Arc<session::Session>) {
@@ -315,7 +308,7 @@ impl Client {
             timeout: seconds(settings.request_timeout_seconds),
             requests: AtomicUsize::new(0),
         };
-        let mut pools = POOLS.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut pools = POOLS.lock().recover();
         pools.retain(|(_, pool)| pool.strong_count() > 0);
         let key = (target.identity.clone(), class.clone());
         if let Some(shared) = pools

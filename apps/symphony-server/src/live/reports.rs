@@ -21,11 +21,11 @@
 //! over the new one's.
 
 use super::Hub;
-use crate::lock::Held as _;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use symphony::reports::HOUR;
+use symphony_board::lock::Recovered as _;
 use symphony_board::recording::State;
 use symphony_board::runs::rollup;
 
@@ -99,7 +99,7 @@ impl Rollup {
 /// Say `what` went wrong, once while it stays the same, on the server's log; `None` once it is
 /// right again. Whether it said anything.
 pub(super) fn say(said: &Mutex<Option<String>>, what: Option<String>) -> bool {
-    let mut said = said.lock().held();
+    let mut said = said.lock().recover();
     let new = what
         .as_ref()
         .is_some_and(|what| said.as_ref() != Some(what));
@@ -118,7 +118,7 @@ impl Hub {
     /// commits, which rolls the hour up once it does) or has closed it (the generation it
     /// replaced); a roll-up under way writes no file once the gate closes.
     pub(super) fn reports_tick(&self, board: Option<&symphony_board::Store>) {
-        let mut rollup = self.reports.lock().held();
+        let mut rollup = self.reports.lock().recover();
         let Some(rollup) = rollup.as_mut() else {
             return;
         };
@@ -164,7 +164,7 @@ impl Hub {
         if read.is_none() && rollup.runs.is_none() {
             return;
         }
-        let cards = Arc::clone(&self.branches.lock().held().0);
+        let cards = Arc::clone(&self.branches.lock().recover().0);
         let root = self.root.clone();
         let folder = rollup.folder.clone();
         let runs = rollup.runs.clone();

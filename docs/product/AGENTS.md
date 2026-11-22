@@ -133,6 +133,6 @@ One column: the cards of **Happening now** one under another, then the rows acro
 ## Related
 
 - [The task board](BOARD.md): the same tasks by stage, and what each waits on.
-- [Task board](../TASKS.md#going-to-a-session): sessions, health and going to a session, for
+- [Task board](../workflow/TASKS.md#going-to-a-session): sessions, health and going to a session, for
   agents.
-- [Recording builds and tests](../MACHINE_WORK.md): what **Machine context** reports.
+- [Recording builds and tests](../workflow/MACHINE_WORK.md): what **Machine context** reports.

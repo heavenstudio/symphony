@@ -2,7 +2,7 @@
 //! what reached its default branch, hour by hour. The machine's one server rolls each project it
 //! serves up once an hour, and once after midnight for the day that ended, into one [`ReportDay`]
 //! per UTC day ([`report_file`]), in `symphony/reports/` in the project's git common dir; the
-//! Reports page reads them (docs/analysis/reports-and-monitoring.md, *The day files*).
+//! Reports page reads them (docs/product/analysis/reports-and-monitoring.md, *The day files*).
 //!
 //! A day file under way is written again each hour with what its day held up to then; one whose
 //! day had ended when it was read is [`ReportDay::closed`] and never written again. Each figure
@@ -159,7 +159,7 @@ pub struct ReportHour {
 }
 
 /// The time a custom workflow's tasks spent in one hour, from the board's recorded workflow
-/// transitions alone (docs/WORKFLOW.md, "The app"): the top-level tasks and the subtasks apart, as
+/// transitions alone (docs/workflow/WORKFLOW.md, "The app"): the top-level tasks and the subtasks apart, as
 /// [`ReportHour::top`] and [`ReportHour::subtasks`] are. It is never the machine's time on a
 /// task's builds and tests, which is the runs' own.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -229,7 +229,7 @@ pub struct Flow {
 
 /// A figure for each status a task can take, written as a map of the statuses whose figure is not
 /// zero, by name. A field each rather than a map of names: a map costs the server's binary its own
-/// tree code for each kind of figure (docs/CHECKS.md, size budgets), and the board has these nine.
+/// tree code for each kind of figure (docs/workflow/CHECKS.md, size budgets), and the board has these nine.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(
     default,

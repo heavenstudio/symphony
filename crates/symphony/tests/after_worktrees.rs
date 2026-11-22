@@ -2319,7 +2319,7 @@ fn keyed_document_deltas_send_only_changed_fragments_within_four_kib_gzip() {
 
 /// A card's thread is no part of its section's hash, so the outline names each thread by a hash of
 /// its own: a reply moves its card's alone, and the section a client kept on the device with its
-/// thread is known current by the two together (docs/analysis/client-cache.md).
+/// thread is known current by the two together (docs/engineering/analysis/client-cache.md).
 #[test]
 fn an_outline_names_each_cards_thread_by_a_hash_that_moves_with_that_thread_alone() {
     isolated(

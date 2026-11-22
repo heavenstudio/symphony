@@ -1,5 +1,5 @@
 //! A plugin's seams asked as a host asks them, for the plugin's own tests, with no Symphony library
-//! in its build. [`Host`] writes each call as the protocol's request (docs/PLUGIN_PROTOCOL.md), has
+//! in its build. [`Host`] writes each call as the protocol's request (docs/engineering/PLUGIN_PROTOCOL.md), has
 //! the plugin answer it as its process answers a line ([`crate::serve`]: the seam's object found by
 //! its name, a request that does not read or a panic refused by why, one render's requests answered
 //! on one page whose components share what they load), and reads the answer back as the call's

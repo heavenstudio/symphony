@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
 use serde::Serialize;
+use symphony_board::lock::Recovered as _;
 
 use crate::callouts::{Comment, archive_callouts, ledger_entry, parse_comments};
 use crate::clock::now_stamp;
@@ -87,7 +88,7 @@ pub fn documents(root: &Path) -> Result<Vec<Doc>, ReviewError> {
             .map_err(|e| ReviewError(os_error(&e, &path)))?;
         let stamp = FileStamp::read(&path).map_err(|e| ReviewError(os_error(&e, &path)))?;
         {
-            let parsed = PARSED.lock().unwrap_or_else(|e| e.into_inner());
+            let parsed = PARSED.lock().recover();
             if let Some((before, doc)) = parsed.get(&key)
                 && *before == stamp
             {
@@ -105,7 +106,7 @@ pub fn documents(root: &Path) -> Result<Vec<Doc>, ReviewError> {
             decisions: parse_decisions(&lines),
         };
         if FileStamp::read(&path).ok().as_ref() == Some(&stamp) {
-            let mut parsed = PARSED.lock().unwrap_or_else(|e| e.into_inner());
+            let mut parsed = PARSED.lock().recover();
             if parsed.len() >= 2048 && !parsed.contains_key(&key) {
                 parsed.clear();
             }

@@ -1,7 +1,7 @@
 //! The board's PostgreSQL, beside its SurrealDB ([`Postgres`]): the machine's own, installed by its
 //! package manager, from the folder of programs the project file names (`[board] postgresql`)
 //! or found on `PATH` ([`discover_programs`];
-//! [its card](../../../../docs/analysis/postgresql-binary-source.md#postgresql-binary-source)).
+//! [its card](../../../../docs/operations/analysis/postgresql-binary-source.md#postgresql-binary-source)).
 //! It serves the board whose
 //! home's durable engine identity names it ([`Home::board_server`]): a scratch home's by
 //! [`Home::initialize_backend`], any other's by the move alone ([`super::moving`]).
@@ -628,7 +628,7 @@ pub fn programs(root: &Path) -> Result<Option<PathBuf>, String> {
 pub const HOSTED_16: &str = "SYMPHONY_POSTGRESQL_16";
 
 /// Where the hosted board's check finds PostgreSQL 16's programs
-/// (docs/POSTGRESQL.md, "A hosted board"): the folder [`HOSTED_16`] names, otherwise Homebrew's
+/// (docs/operations/POSTGRESQL.md, "A hosted board"): the folder [`HOSTED_16`] names, otherwise Homebrew's
 /// keg, which changes no `postgres` on `PATH`. The one rule: the check's servers and the release
 /// run's record of what it ran on both ask here. It inspects nothing and starts nothing.
 pub fn hosted_programs_16() -> PathBuf {

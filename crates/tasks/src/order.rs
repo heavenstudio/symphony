@@ -6,7 +6,7 @@
 //! their sorts of a few elements). These sort the slice's positions instead, a `[usize]` compared
 //! through `&dyn Fn`, so that sort is compiled once for the crate, then move each element to its
 //! place: the order `slice::sort_by` gives, equal elements in the order they stood. What each
-//! element type and comparison still compiles is the move and a call (docs/CHECKS.md, "Size
+//! element type and comparison still compiles is the move and a call (docs/workflow/CHECKS.md, "Size
 //! budgets").
 //!
 //! This allocates one position per element, and compares before moving any element. It serves

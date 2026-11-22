@@ -18,23 +18,23 @@ A page kind is an entry under `kinds/` that exports `run` and `stop`, named in `
 (`vite.config.ts`):
 
 - `review`, `/`: `home.tsx`, `home-board.ts`
-  ([REVIEW](../../docs/REVIEW.md#the-web-app)).
+  ([REVIEW](../../docs/workflow/REVIEW.md#the-web-app)).
 - `queue`, `/queue`: `queue.tsx`, `postpone.tsx`
-  ([REVIEW](../../docs/REVIEW.md#queue-categories)).
+  ([REVIEW](../../docs/workflow/REVIEW.md#queue-categories)).
 - `docs`, `/docs/` and every page an entrypoint serves: `document-page.tsx`, `document-live.ts`,
-  `document.ts`, `editor.tsx`, `asks.tsx` ([REVIEW](../../docs/REVIEW.md#commenting-in-place)).
+  `document.ts`, `editor.tsx`, `asks.tsx` ([REVIEW](../../docs/workflow/REVIEW.md#commenting-in-place)).
 - `board`, `/tasks`: `board.tsx`, `boardlive.tsx`, `boardwait.tsx`, `flow.tsx`
-  ([the board's design](../../docs/analysis/board-design.md)).
+  ([the board's design](../../docs/product/analysis/board-design.md)).
 - `task`, `/task/SLUG`: `task-page.tsx`, `task-live.ts`, `parts.ts`, `gates.tsx`, `timeline.tsx`,
-  `timeline-cost.ts`, `task-diff.tsx`, `attempts.tsx` ([TASKS](../../docs/TASKS.md#gates),
-  [the timeline](../../docs/TASKS.md#the-timeline)).
+  `timeline-cost.ts`, `task-diff.tsx`, `attempts.tsx` ([TASKS](../../docs/workflow/TASKS.md#gates),
+  [the timeline](../../docs/workflow/TASKS.md#the-timeline)).
 - `agents`, `/agents`: `agents.tsx`, `agents-live.ts`, `session.tsx`
-  ([TASKS](../../docs/TASKS.md#the-agents-api)).
+  ([TASKS](../../docs/workflow/TASKS.md#the-agents-api)).
 - `reports`, `/reports`: `reports.tsx`, `chart.tsx`.
-- `runs`, `/runs`: `runs.tsx` ([RUNS](../../docs/RUNS.md#the-runs-page)).
+- `runs`, `/runs`: `runs.tsx` ([RUNS](../../docs/workflow/RUNS.md#the-runs-page)).
 - `panel`, persistent (the chat, add task, activity, toasts, the pending bar, Appearance):
   `panel.tsx`, `quick.tsx`, `panel-model.ts`, `panel-focus.ts`, `appearance.tsx`
-  ([REVIEW](../../docs/REVIEW.md#chat)).
+  ([REVIEW](../../docs/workflow/REVIEW.md#chat)).
 - `overlay`, persistent (a select's popup and the picture viewer): `overlay.tsx`,
   `select-popup.tsx`, `picture-viewer.tsx`.
 
@@ -52,9 +52,9 @@ What the kinds share:
 - **Reads** (`request.ts`), **routes** (`route.ts`), **the project's base and keys**
   (`project.ts`, `storage.ts`), **async work's signal** (`mount.ts`).
 - **The device cache** (`cache.ts`, `cache-document.ts`;
-  [the client cache](../../docs/analysis/client-cache.md)) and a page's parts, each a read of its
+  [the client cache](../../docs/engineering/analysis/client-cache.md)) and a page's parts, each a read of its
   own (`parts.ts`;
-  [its analysis](../../docs/analysis/components-draw-when-their-data-arrives.md)).
+  [its analysis](../../docs/design/analysis/components-draw-when-their-data-arrives.md)).
 - **Loading and visibility** (`viewport.tsx`: `NearViewport`, `Settle`, the remembered heights).
 - **Content** (`blocks.tsx`, `blocks-read.ts`, `media.tsx`, `media-layer.ts`): blocks and spans,
   pictures, mockups and a plugin's viewers.
@@ -131,7 +131,7 @@ page are held to `HOME_FIRST_VISIT_BYTES`, `TASKS_FIRST_VISIT_BYTES` and `TASK_F
 and say what a visit counts). One is raised only by its task's orchestrator's recorded decision
 once the cut came first, naming the constant (`just tasks gate SLUG
 apps/symphony-web-tests/tests/browser/main.rs:NAME --raise NEW`,
-[TASKS](../../docs/TASKS.md#gate-decisions)), never by an agent's own word. `report.sh OUT` says
+[TASKS](../../docs/workflow/TASKS.md#gate-decisions)), never by an agent's own word. `report.sh OUT` says
 what each kind of a build makes a browser fetch and why a kind grew; the budget test stays the
 measure of a visit.
 
@@ -177,7 +177,7 @@ input no case lists: a reviewer reads the file's diff for those.
   `npm.sh run test` prints the coverage.
 - **What only a browser shows** is the headless browser target's:
   `just test-rs -p symphony-web-tests --test browser -- FILTER…`, the tests of the pages and
-  controls a change touched ([by page](../../docs/CHECKS.md#the-browser-target-by-page)), never
+  controls a change touched ([by page](../../docs/workflow/CHECKS.md#the-browser-target-by-page)), never
   the whole target, which the release run runs. It builds the client once per run unless
   `SYMPHONY_UI_DIST` names a built distribution's `public/`, and needs Chrome (`SYMPHONY_CHROME`).
   A hidden control takes no focus, so a test waits for `visible(SELECTOR)` before it focuses one;

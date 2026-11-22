@@ -22,7 +22,7 @@ of it.
 ## The form of a spec
 
 Product specs follow this approved form and the pictures' rule below
-([its card](../analysis/product-docs-review-2026-11.md#product-spec-form)).
+([its card](analysis/product-docs-review-2026-11.md#product-spec-form)).
 
 A spec is short enough to read on a phone in a few minutes, and has these parts in this order.
 A part with nothing to say is left out.
@@ -69,7 +69,7 @@ shared server, no project's board and no terminal, and stops the servers it star
   setting and whether a mouse is plugged in): a change of any of them can redraw every picture
   with no page changed, and the whole set is then retaken and committed once.
 - **A task that changes how a page looks retakes its pictures** and commits them with the change:
-  they are the after pictures its evidence shows ([CHECKS](../CHECKS.md#evidence-by-kind-of-change)).
+  they are the after pictures its evidence shows ([CHECKS](../workflow/CHECKS.md#evidence-by-kind-of-change)).
 - **They are committed beside the specs**, so a clone and GitHub show them. A wide picture is
   about 0.1 MB and a phone picture, at three pixels to the point, about 0.3 MB.
 - **Every picture is taken at one moment**, a Monday at 09:30 UTC that the script names: the
@@ -81,3 +81,23 @@ shared server, no project's board and no terminal, and stops the servers it star
   never as *new*. A page whose words come from somewhere else that moves (a commit's date read
   from git, the machine's name, a count by the machine's own day) is pictured only once the
   fixture fixes that too.
+
+## Analysis
+
+An analysis holds a proposal and its evidence: an approved design can still await implementation, and its approval alone does not make it current behavior.
+
+- [The agents page, orchestrator-first](analysis/agents-page.md) — three layouts of an Agents page
+  that opens on the orchestrators.
+- [The board at a glance](analysis/board-design.md) — what a board says before anything is opened:
+  what is stuck, on whom it waits and for how long.
+- [Owner asks](analysis/owner-asks.md) — what becomes of what the owner says that waits on an
+  agent's answer.
+- [Reports and monitoring](analysis/reports-and-monitoring.md) — what a project's runs, task pages
+  and reports would show, and where each figure comes from.
+- [A Settings page](analysis/settings-page.md) — a concept: where a project's settings live now,
+  what on and off mean for its integrations and tools, and a page that shows what is in force and
+  writes the preferences alone.
+- [Desktop client analysis](analysis/desktop-client.md) — the design and evidence behind the Mac
+  app.
+- [Product documentation review, November 2026](analysis/product-docs-review-2026-11.md) — what a
+  person using the Symphony can read about it, and the form of a spec.

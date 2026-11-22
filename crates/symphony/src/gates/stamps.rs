@@ -1,4 +1,4 @@
-//! A task's stamps as its gates (docs/analysis/needed-stamps.md, "The task page"): each stamp of the
+//! A task's stamps as its gates (docs/workflow/analysis/needed-stamps.md, "The task page"): each stamp of the
 //! project's catalogue (`Catalogue::at`), needed at its branch's tip (`read::needed`) and read there
 //! by its reader, met, missing or, for `owner`, held; or left out by the task's assessment, waived,
 //! the assessment its reason. `owner` is held too while a card the task posted waits ([`owner`]),

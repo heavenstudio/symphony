@@ -25,13 +25,13 @@
 
 use super::{Folders, Grain, ReportMark, day_files, days_read, first, page, periods};
 use crate::api::validated::checksum;
-use crate::lock::Held as _;
 use axum::body::Bytes;
 use std::os::unix::fs::MetadataExt as _;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use symphony_api::run_day;
+use symphony_board::lock::Recovered as _;
 
 /// The windows a hub keeps the answers of, the one read longest ago going first: a page asks for
 /// one at a time, of the few its controls offer, while `days` is the asker's to name.
@@ -90,7 +90,7 @@ pub(crate) struct Kept {
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().held()
+    mutex.lock().recover()
 }
 
 fn stamp(path: &Path) -> Option<Stamp> {

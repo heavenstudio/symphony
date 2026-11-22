@@ -2,7 +2,6 @@
 //! client address first; read and save handlers also check Host and Origin.
 
 use crate::backstop::{Waker, Wakers, Wakes};
-use crate::lock::Held as _;
 use crate::{cli::Serve, gate::Gate, sys};
 use axum::Router;
 use axum::body::{Body, HttpBody};
@@ -18,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
+use symphony_board::lock::Recovered as _;
 use symphony_board::{launch::reap::REAP_SECONDS, sys::Command};
 use tokio::sync::watch;
 use tower_http::compression::predicate::{DefaultPredicate, Predicate};
@@ -238,9 +238,9 @@ impl Shared {
     pub fn stop(&self) {
         self.stopped.send_replace(true);
         self.stop_wakers.wake();
-        self.stop_pipes.lock().held().clear();
-        self.end_maintenance(&mut self.maintenance.lock().held());
-        let _held = self.lifecycle.lock().held();
+        self.stop_pipes.lock().recover().clear();
+        self.end_maintenance(&mut self.maintenance.lock().recover());
+        let _held = self.lifecycle.lock().recover();
         if let Some(hub) = self.api.get() {
             hub.stop();
         }
@@ -250,7 +250,7 @@ impl Shared {
     /// joined: each sees the stop at its next look and ends the child it runs. Workers kept once it
     /// stopped are joined at once.
     pub(crate) fn maintained(&self, workers: Vec<std::thread::JoinHandle<()>>) {
-        let mut held = self.maintenance.lock().held();
+        let mut held = self.maintenance.lock().recover();
         held.extend(workers);
         if self.stopping() {
             self.end_maintenance(&mut held);
@@ -261,7 +261,7 @@ impl Shared {
     /// with the list held.
     #[cfg(test)]
     pub(crate) fn maintaining(&self) -> usize {
-        self.maintenance.lock().held().len()
+        self.maintenance.lock().recover().len()
     }
 
     /// Join every worker of `held`, the maintenance list, held so a second stop meanwhile waits
@@ -313,7 +313,7 @@ impl Shared {
     /// descriptor (a process's end, [`sys::until_ends`]) waits on this beside it.
     pub(crate) fn stop_pipe(&self) -> std::io::Result<std::io::PipeReader> {
         let (read, write) = symphony_board::sys::pipe()?;
-        let mut held = self.stop_pipes.lock().held();
+        let mut held = self.stop_pipes.lock().recover();
         if !self.stopping() {
             held.push(write);
         }
@@ -351,7 +351,7 @@ impl Shared {
             root: self.root.display().to_string(),
             ready: self.api.get().is_some(),
             app: None,
-            tailnet: self.tailnet.lock().held().clone(),
+            tailnet: self.tailnet.lock().recover().clone(),
             orphans: 0,
         }
     }
@@ -1043,7 +1043,7 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     {
         let shared = shared.clone();
         background.workers.push(worker(TAILNET_WORKER, move || {
-            *shared.tailnet.lock().held() = crate::gate::magicdns_name();
+            *shared.tailnet.lock().recover() = crate::gate::magicdns_name();
         }));
     }
     if serve.home.is_none() {

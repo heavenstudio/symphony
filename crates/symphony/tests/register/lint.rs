@@ -26,6 +26,8 @@ fn prose_tree() -> Tree {
         "quiet-roads was decided on a Tuesday.\n",
     );
     tree.write("docs/analysis/notes.md", "quiet-roads evidence.\n");
+    tree.write("docs/kappa/analysis/deep.md", "quiet-roads evidence.\n");
+    tree.write("docs/kappa/history/older.md", "quiet-roads, long ago.\n");
     tree
 }
 
@@ -69,7 +71,25 @@ fn registers_code_blocks_history_and_analysis_are_exempt() {
             .iter()
             .any(|(path, _, _)| path == "docs/analysis/notes.md")
     );
+    // An area's own analyses and history are passed over as the first folder's are.
+    assert!(!found.iter().any(|(path, _, _)| {
+        path == "docs/kappa/analysis/deep.md" || path == "docs/kappa/history/older.md"
+    }));
     assert!(!found.iter().any(|(_, line, _)| *line == 5));
+}
+
+#[test]
+fn a_document_named_as_an_exempt_folder_is_judged() {
+    let tree = prose_tree();
+    tree.write("docs/kappa/analysis.md", "# A\n\nquiet-roads here.\n");
+    tree.write("docs/kappa/history.md", "# H\n\nquiet-roads here.\n");
+    let found = history_in_prose(&tree.root).unwrap();
+    for path in ["docs/kappa/analysis.md", "docs/kappa/history.md"] {
+        assert!(
+            found.contains(&finding(path, 3, "quiet-roads")),
+            "{path}: {found:?}"
+        );
+    }
 }
 
 /// One prose line per boundary, each with what the lint finds on it. A mention follows `(`, `[`, `*`, a

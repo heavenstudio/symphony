@@ -1,4 +1,4 @@
-//! The writer rule (docs/RELEASES.md, "The refresh"): whether a registered project's board can move
+//! The writer rule (docs/workflow/RELEASES.md, "The refresh"): whether a registered project's board can move
 //! to a release's schema, by the writers seen there in the last week (its writer record,
 //! [`symphony_board::Writer`]). A release's refresh judges each board by it
 //! (`crates/symphony-build/src/release/refresh.rs`), and so does the machine's server when it

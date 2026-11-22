@@ -52,7 +52,7 @@ Two amber reasons share the line, a dot between them.
 ## Order
 
 Projects are listed in the order they were registered. A project is registered by `just
-symphony` run in its checkout ([getting started](../GETTING_STARTED.md#4-open-the-app-and-answer)).
+symphony` run in its checkout ([getting started](../operations/GETTING_STARTED.md#4-open-the-app-and-answer)).
 
 ## What it reads
 
@@ -89,8 +89,8 @@ One card a row, across the width, and the header's **Projects** under the name.
 
 ## Related
 
-- [Getting started](../GETTING_STARTED.md#4-open-the-app-and-answer): the one server and how a
+- [Getting started](../operations/GETTING_STARTED.md#4-open-the-app-and-answer): the one server and how a
   project joins it.
-- [The commands](../COMMANDS.md#the-app): `just symphony` and registering a project.
+- [The commands](../operations/COMMANDS.md#the-app): `just symphony` and registering a project.
 - [Home](HOME.md): what a project's name opens.
-- [Task board](../TASKS.md): what makes a task blocked, and the board's health.
+- [Task board](../workflow/TASKS.md): what makes a task blocked, and the board's health.

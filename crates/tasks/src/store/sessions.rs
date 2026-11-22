@@ -7,6 +7,7 @@ use super::surreal::sessions as sql;
 use super::work::Pass;
 use super::{Beside, Error, Failure, Found, REFUSED, Session, Store, refused, repr};
 use crate::health::{self, EXECUTING};
+use crate::lock::Recovered as _;
 use crate::maps::Collect as _;
 use crate::orchestration;
 use crate::rows::SessionRow;
@@ -17,7 +18,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
 use std::hash::{BuildHasher, RandomState};
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 
 /// What a session is; a `filer` is a tool's session that files reds ([`crate::red::FILER`]).
 pub const KINDS: [&str; 6] = [
@@ -200,7 +201,7 @@ impl Store {
     }
 
     fn new_handle(&self, taken: &HashSet<String>) -> Result<String, Error> {
-        let mut pick = self.pick.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut pick = self.pick.lock().recover();
         for attempt in 0..200 {
             let adjective = ADJECTIVES[pick.index(ADJECTIVES.len()) % ADJECTIVES.len()];
             let mut handle = format!(
@@ -403,7 +404,7 @@ impl Store {
     /// person to recover and never moves the task to a pair it does not name.
     pub fn leave(&self, handle: &str) -> Result<(), Error> {
         // What it staffs on a task a custom workflow holds goes first, by each position's
-        // lost-holder recovery (docs/WORKFLOW.md, "Recovery").
+        // lost-holder recovery (docs/workflow/WORKFLOW.md, "Recovery").
         self.recover_leaving(handle)?;
         let body = sql::leave();
         let pg = pg::leave();

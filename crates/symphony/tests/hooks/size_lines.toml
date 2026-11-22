@@ -1,5 +1,5 @@
 # The most bytes each file every agent reads at the start of a session may weigh, each under its
-# path's key: docs/CHECKS.md "Size budgets" says which files, the key, the line and its raise.
+# path's key: docs/workflow/CHECKS.md "Size budgets" says which files, the key, the line and its raise.
 
 # The rules and the guides.
 RULES = 22_800

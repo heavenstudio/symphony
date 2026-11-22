@@ -7,7 +7,6 @@
 //! waits for (the server's stop, a starter's hand-off request, the hub's drain), each by a message
 //! through a [`Waker`]. Nothing else ends its wait but the period.
 
-use crate::lock::Held as _;
 use notify::RecursiveMode;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -15,6 +14,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
+use symphony_board::lock::Recovered as _;
 
 /// A missed event costs at most this plus one check. Under a load of 160 a document refresh took
 /// 10.5 s, so a missed edit still shows within 30 s; one sweep of the main checkout's watched
@@ -78,18 +78,18 @@ pub(crate) struct Wakers(Mutex<Vec<Waker>>);
 
 impl Wakers {
     pub(crate) fn add(&self, waker: Waker) {
-        self.0.lock().held().push(waker);
+        self.0.lock().recover().push(waker);
     }
 
     /// Wake every loop waiting on these.
     pub(crate) fn wake(&self) {
-        self.0.lock().held().retain(Waker::wake);
+        self.0.lock().recover().retain(Waker::wake);
     }
 
     /// How many loops these would wake.
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
-        self.0.lock().held().len()
+        self.0.lock().recover().len()
     }
 }
 

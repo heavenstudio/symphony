@@ -9,7 +9,6 @@ use crate::backstop::{self, Backstop, Wake, Waker};
 use crate::cli::Serve;
 use crate::front::Shared;
 use crate::home::{Home, Running};
-use crate::lock::Held as _;
 use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -20,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+use symphony_board::lock::Recovered as _;
 use symphony_board::sys::{self, Stdio};
 
 mod retry;
@@ -347,9 +347,9 @@ fn replace(
         command.arg("--host").arg(host);
     }
     command.arg("--install").arg(&install);
-    let handed = serde_json::to_string(&transfer).map_err(|e| e.to_string())?;
+    let transfer_json = serde_json::to_string(&transfer).map_err(|e| e.to_string())?;
     command.current_dir(&serve.root).stdin(Stdio::null());
-    command.env(INHERITED.name, &handed);
+    command.env(INHERITED.name, &transfer_json);
     if let Some((stdout, stderr)) =
         crate::log::output_for_reload().map_err(|e| format!("cannot inherit server output: {e}"))?
     {
@@ -517,7 +517,7 @@ fn watch_with<W: Watcher + Send + 'static>(
                         && event
                             .paths
                             .iter()
-                            .any(|p| source_event(&root, &checked.lock().held(), p)))
+                            .any(|p| source_event(&root, &checked.lock().recover(), p)))
             });
             if relevant {
                 changed.wake();
@@ -1063,7 +1063,7 @@ fn watch_sources(
     ] {
         paths.push((root.join(group), RecursiveMode::Recursive));
     }
-    *directories.lock().held() = sources;
+    *directories.lock().recover() = sources;
     watched.retain(|path| {
         if path.is_dir() {
             true

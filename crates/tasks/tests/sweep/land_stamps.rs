@@ -1,4 +1,4 @@
-//! The land by the stamps a task needs (docs/analysis/needed-stamps.md, "The land's check"), in
+//! The land by the stamps a task needs (docs/workflow/analysis/needed-stamps.md, "The land's check"), in
 //! scratch repositories on a board of their own: each row of the design's worked examples lands
 //! once what it needs stands at its tip; a waiver on another tip is refused, the defaults back; a
 //! missing stamp's refusal names it and who gives it; a stray red run is cleared by the same

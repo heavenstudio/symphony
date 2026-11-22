@@ -1,5 +1,5 @@
 //! What the `symphony-server` binary links, of what it never runs: on macOS it exports no symbol, as
-//! no other code loads it. The size it would add is the binary's budget's to hold (docs/CHECKS.md,
+//! no other code loads it. The size it would add is the binary's budget's to hold (docs/workflow/CHECKS.md,
 //! "Size budgets").
 
 // The symbols a Mach-O binary exports, read from its export trie.

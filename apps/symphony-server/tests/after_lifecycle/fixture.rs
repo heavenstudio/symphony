@@ -15,6 +15,7 @@ use std::process::{ExitStatus, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
+use symphony_board::lock::Recovered as _;
 use symphony_board::sys::{Child, Command, Stdio};
 
 #[path = "../../../../crates/chrome-devtools/src/scratch.rs"]
@@ -1182,7 +1183,7 @@ impl Repo {
         // Also run while unwinding, when an earlier panic may have poisoned the lock.
         self.stand_ins
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .recover()
             .close();
     }
 }

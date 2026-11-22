@@ -1,7 +1,7 @@
 //! A server the app may follow and show, and the rule that admits one: plain HTTP to this Mac, to
 //! the tailnet's addresses and to its `*.ts.net` names, and nothing else. The servers have no login
 //! and speak plain HTTP, which only loopback and the tailnet's tunnel keep private; a hosted server's
-//! HTTPS and login are not here yet (docs/analysis/desktop-client.md, Trust and access).
+//! HTTPS and login are not here yet (docs/product/analysis/desktop-client.md, Trust and access).
 
 use std::fmt;
 use std::net::{Ipv4Addr, Ipv6Addr};

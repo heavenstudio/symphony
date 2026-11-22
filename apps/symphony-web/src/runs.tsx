@@ -1,4 +1,4 @@
-// The Runs page, `/runs` (docs/RUNS.md, *The Runs page*): what runs and waits for the project on
+// The Runs page, `/runs` (docs/workflow/RUNS.md, *The Runs page*): what runs and waits for the project on
 // this machine now, the machine's schema updates, then every run newest first with its filters, and
 // a run (`/runs?run=ID`) opened on its steps, the tests it failed and its log. Now is the machine
 // work the board reads (`/api/machine-work`); the schema updates are SCHEMA_UPDATES_PATH, the
@@ -74,7 +74,7 @@ export const RESULTS: Record<Result, [string, string]> = {
 /**
  * What `line` says of its run: its end, else running while an operation of the machine's work
  * (`running`, their ids) is it, else started: a line with no end, read from the day files alone,
- * says no more (docs/RUNS.md, *Start and end*).
+ * says no more (docs/workflow/RUNS.md, *Start and end*).
  */
 export function result(line: RunLine, running: ReadonlySet<string>): Result {
   if (line.end !== null) return line.end;

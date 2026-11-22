@@ -16,6 +16,7 @@ use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
+use symphony_board::lock::Recovered as _;
 use symphony_board::pg::external::Settings;
 use symphony_board::pg::hosted::{Client, Environment};
 use symphony_board::pg::{self, Step};
@@ -197,7 +198,7 @@ pub fn cluster_with(major: u32, certificate: Certificate) -> &'static Cluster {
 
 /// [`cluster_with`], the server listening on `loopback` alone.
 pub fn cluster_on(major: u32, certificate: Certificate, loopback: Loopback) -> &'static Cluster {
-    let mut clusters = CLUSTERS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut clusters = CLUSTERS.lock().recover();
     static AT_EXIT: std::sync::Once = std::sync::Once::new();
     AT_EXIT.call_once(|| crate::store::on_exit(stop));
     let started = clusters
@@ -214,12 +215,9 @@ pub fn cluster_on(major: u32, certificate: Certificate, loopback: Loopback) -> &
 /// At the test binary's exit: each server stopped, by its shell's input closed, and its folders
 /// removed.
 extern "C" fn stop() {
-    let clusters = CLUSTERS.lock().unwrap_or_else(|held| held.into_inner());
+    let clusters = CLUSTERS.lock().recover();
     for cluster in clusters.values().flatten() {
-        let mut shell = cluster
-            .shell
-            .lock()
-            .unwrap_or_else(|held| held.into_inner());
+        let mut shell = cluster.shell.lock().recover();
         drop(shell.stdin.take());
         let _ = shell.wait();
         let _ = std::fs::remove_dir_all(&cluster.dir);

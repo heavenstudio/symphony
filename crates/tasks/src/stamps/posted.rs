@@ -1,5 +1,5 @@
 //! The cards a task's branch posted for the owner's look, and whether the owner's approve of them
-//! stands for the `owner` stamp at the branch's tip ([`read`]; docs/TASKS.md, "Needed stamps").
+//! stands for the `owner` stamp at the branch's tip ([`read`]; docs/workflow/TASKS.md, "Needed stamps").
 //! Everything is read from git in the main checkout, never from a worktree's files: the land
 //! carries commits, so an owner's line no commit carries counts for nothing.
 //!

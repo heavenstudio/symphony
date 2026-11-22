@@ -1,4 +1,4 @@
-//! The land by a task's gate decisions (docs/TASKS.md, "Gate decisions"), in scratch repositories
+//! The land by a task's gate decisions (docs/workflow/TASKS.md, "Gate decisions"), in scratch repositories
 //! on a board of their own: a waiver lifts its stamp at the tip it was given for and at no later
 //! one; a raise lands only carried at the number decided, its line saying so, and one the branch
 //! never made, or a limit the branch lowered below main's, lands saying it raised nothing.

@@ -211,7 +211,7 @@ impl Store {
     /// As [`Store::open_as`], for a program that only reads boards: `how` is taken to read
     /// ([`Access::Read`]) whatever it says, so the board is never made or moved forward, and the
     /// program links none of the migration, the schemas' text among it (the Symphony's own
-    /// binary, whose size that text would count against: docs/CHECKS.md, "Size budgets").
+    /// binary, whose size that text would count against: docs/workflow/CHECKS.md, "Size budgets").
     pub fn read_as(client: Client, how: &Opening) -> Result<Store, Error> {
         let host = crate::sys::hostname();
         Store::reading(
@@ -480,10 +480,10 @@ impl Store {
                 postgres::opening::BOARD_STANDING,
             )
         };
-        let record = self.retrying(|| match self.request(read(), json!({})) {
-            Ok(mut found) => Ok(found.pop().unwrap_or(Value::Null)),
-            Err(DbError::Failed(said)) if self.db.undefined(&said) => Ok(Value::Null),
-            Err(other) => Err(other.into()),
+        let record = self.retrying(|| {
+            let found = self.request(read(), json!({}));
+            let record = found.map(|mut found| found.pop().unwrap_or(Value::Null));
+            self.absent_board(record, Value::Null)
         })?;
         let version = record.get("version").and_then(Value::as_i64);
         let from = record.get("writable_from").cloned().unwrap_or(Value::Null);
@@ -563,19 +563,15 @@ impl Store {
     /// board's count of additive steps, in the same one read ([`sql::writers::OPENING`]).
     fn board_opening(&self, program: &Program) -> Result<(Option<i64>, bool, Line, i64), Failure> {
         let vars = writers::opening_vars(program, &self.host);
-        match self.request(
+        let answer = self.request(
             both(sql::writers::OPENING, postgres::writers::OPENING),
             vars,
-        ) {
-            Ok(answer) => {
-                let (found, line, additions) = writers::opened(&answer);
-                Ok((found, true, line, additions))
-            }
-            Err(DbError::Failed(said)) if self.db.undefined(&said) => {
-                Ok((None, false, Line::NoTable, 0))
-            }
-            Err(other) => Err(other.into()),
-        }
+        );
+        let opened = answer.map(|answer| {
+            let (found, line, additions) = writers::opened(&answer);
+            (found, true, line, additions)
+        });
+        self.absent_board(opened, (None, false, Line::NoTable, 0))
     }
 
     /// The additive steps on its contract this store may use on its board now: the fewer of its own
@@ -594,10 +590,10 @@ impl Store {
                 postgres::opening::BOARD_ADDITIONS,
             )
         };
-        self.retrying(|| match self.request(read(), json!({})) {
-            Ok(found) => Ok(found.last().and_then(Value::as_i64).unwrap_or(0)),
-            Err(DbError::Failed(said)) if self.db.undefined(&said) => Ok(0),
-            Err(other) => Err(other.into()),
+        self.retrying(|| {
+            let found = self.request(read(), json!({}));
+            let additions = found.map(|found| found.last().and_then(Value::as_i64).unwrap_or(0));
+            self.absent_board(additions, 0)
         })
     }
 
@@ -632,10 +628,18 @@ impl Store {
     /// database are on the server: one read in them, which defines nothing.
     fn board_schema(&self) -> Result<(Option<i64>, bool), Failure> {
         let read = both(sql::opening::BOARD_SCHEMA, postgres::opening::BOARD_SCHEMA);
-        match self.request(read, json!({})) {
-            Ok(found) => Ok((found.last().and_then(Value::as_i64), true)),
-            Err(DbError::Failed(said)) if self.db.undefined(&said) => Ok((None, false)),
-            Err(other) => Err(other.into()),
+        let found = self.request(read, json!({}));
+        let schema = found.map(|found| (found.last().and_then(Value::as_i64), true));
+        self.absent_board(schema, (None, false))
+    }
+
+    /// `read`, a read of the board, or `none` where the server said the board is not there: its
+    /// database, or on SurrealDB its namespace, never made ([`Board::undefined`]). Any other
+    /// failure is the read's.
+    pub(super) fn absent_board<T>(&self, read: Result<T, DbError>, none: T) -> Result<T, Failure> {
+        match read {
+            Err(DbError::Failed(said)) if self.db.undefined(&said) => Ok(none),
+            other => other.map_err(Failure::from),
         }
     }
 
@@ -746,6 +750,42 @@ mod tests {
             "the server at 127.0.0.1:1 is slow: The database 'tasks' does not exist",
         ] {
             assert!(!undefined(other, "tasks"), "{other}");
+        }
+    }
+
+    /// A read of a board not there is the `none` its caller gives, in the words of the engine the
+    /// store is on alone; any other answer, or any other failure, is the read's own.
+    #[test]
+    fn a_read_of_a_board_not_there_is_none_and_any_other_answer_is_the_reads_own() {
+        use crate::db::DbError;
+        use crate::store::{Error, Failure};
+        use crate::store_fixture::{Backend, Fixture, Seed};
+        let surreal = "The namespace 'sf' does not exist";
+        let postgresql = "database \"sf\" does not exist (SQLSTATE 3D000)";
+        for (backend, absent, elsewhere) in [
+            (Backend::SurrealDb, surreal, postgresql),
+            (Backend::PostgreSql, postgresql, surreal),
+        ] {
+            let f = Fixture::on(backend, Seed::default());
+            let failed = |said: &str| Err::<i64, _>(DbError::Failed(said.into()));
+            assert!(matches!(f.store.absent_board(Ok(3), 0), Ok(3)));
+            assert!(matches!(f.store.absent_board(failed(absent), 0), Ok(0)));
+            for other in [elsewhere, "The table 'meta' does not exist", "unreachable"] {
+                assert!(
+                    matches!(
+                        f.store.absent_board(failed(other), 0),
+                        Err(Failure::Stop(Error::Db(said))) if said == other
+                    ),
+                    "{other}"
+                );
+            }
+            let conflict = f.store.absent_board(Err::<i64, _>(DbError::Conflict), 0);
+            assert!(matches!(conflict, Err(Failure::Again)));
+            let thrown = Err::<i64, _>(DbError::Thrown("refused: not yours".into()));
+            assert!(matches!(
+                f.store.absent_board(thrown, 0),
+                Err(Failure::Stop(Error::Refused(why))) if why == "not yours"
+            ));
         }
     }
 

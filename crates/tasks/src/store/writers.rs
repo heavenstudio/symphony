@@ -17,7 +17,6 @@ use super::statement::both;
 use super::surreal::writers as sql;
 use super::{Failure, Store};
 use crate::board_health::ago;
-use crate::db::DbError;
 use crate::schema::{Access, Schema};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -198,12 +197,9 @@ impl Store {
 
     fn writer_lines(&self) -> Result<Vec<Writer>, Failure> {
         let lines = both(sql::LINES, super::postgres::writers::LINES);
-        let found = match self.request(lines, json!({})) {
-            Ok(found) => found,
-            Err(DbError::Failed(said)) if self.db.undefined(&said) => {
-                return Ok(Vec::new());
-            }
-            Err(other) => return Err(other.into()),
+        let read = self.request(lines, json!({})).map(Some);
+        let Some(found) = self.absent_board(read, None)? else {
+            return Ok(Vec::new());
         };
         let lines = found.last().cloned().unwrap_or(Value::Null);
         crate::objects::read(&lines)

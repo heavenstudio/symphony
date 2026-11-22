@@ -1,4 +1,4 @@
-// A task's execution attempts on its page (docs/EXECUTION_ATTEMPTS.md, "On a task's page"): each
+// A task's execution attempts on its page (docs/engineering/EXECUTION_ATTEMPTS.md, "On a task's page"): each
 // attempt the board kept for it, newest first, past ones and what was bound to them included after
 // their handle left (`/api/task-attempts`), and what may be asked of each here: a cancel, a stop in
 // one of the modes its provider pinned, a resume of one paused or ended with something to resume

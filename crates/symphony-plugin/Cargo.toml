@@ -18,7 +18,7 @@ categories = ["development-tools"]
 # What crates.io gets: the sources, the readme and the licence; never tests/ or fixtures.
 include = ["src/**", "README.md", "LICENSE"]
 
-# A first plugin, whole, which docs/PLUGIN_WRITING.md walks through: built and tested with the
+# A first plugin, whole, which docs/engineering/PLUGIN_WRITING.md walks through: built and tested with the
 # workspace so the page's code cannot go stale, and outside `include`, so not in the package.
 [[example]]
 name = "hello"
@@ -38,7 +38,7 @@ serde_json = { workspace = true, features = ["raw_value", "float_roundtrip"] }
 
 [dev-dependencies]
 # The features the server's build unifies on serde_json, so the protocol's tests read and write JSON
-# as the server does (docs/CHECKS.md): above all `arbitrary_precision`, under which serde's buffered
+# as the server does (docs/workflow/CHECKS.md): above all `arbitrary_precision`, under which serde's buffered
 # content loses a fraction. A dev-dependency's features never reach a plugin's build.
 serde_json = { workspace = true, features = ["arbitrary_precision", "float_roundtrip", "preserve_order", "raw_value"] }
 # The tests' waits on a condition, whose backstop only a stall reaches (RULES.md

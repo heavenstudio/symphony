@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# JUSTFILE [STEP...]: the full verification, `just verify [STEP...]` (docs/CHECKS.md, "The
+# JUSTFILE [STEP...]: the full verification, `just verify [STEP...]` (docs/workflow/CHECKS.md, "The
 # release run"), run inside the verify run that recipe records. Every step runs whatever the ones before
 # it did, and it is red when any step is, naming each red step and its log. The steps, in order:
 #
@@ -9,7 +9,7 @@
 #     size-check    the size-check recipe: the shipped binaries' size budgets
 #     docs-audit    the docs audit, `symphony docs-audit --check`
 #     crates-check  the crates-check recipe: each published package whose version crates.io holds
-#                   packaged from the same sources (docs/RELEASES.md, "Packages on crates.io")
+#                   packaged from the same sources (docs/workflow/RELEASES.md, "Packages on crates.io")
 #     semver-check  the kit/helper APIs against crates.io, with their actual version moves
 #     hosted        the hosted-check recipe: the board built with its hosted feature, its tests and
 #                   its matrix on PostgreSQL 16 and 18, which no other step builds
@@ -18,7 +18,7 @@
 #                   scheduled by nextest with shared-fixture Cargo batches (tools/test-lanes.sh), logs in tests-lanes/
 #                   beside the step's log (SYMPHONY_TEST_LANE_LOGS), named in it as the lanes start
 #
-# Each is recorded as a step of the verify run (docs/MACHINE_WORK.md) and writes its output to a
+# Each is recorded as a step of the verify run (docs/workflow/MACHINE_WORK.md) and writes its output to a
 # log of its own, STEP.log in the folder SYMPHONY_CHECK_STEPS names (the release run names one for
 # each check it runs), else build/verify, which steps.tsv there lists as each step ends: its name, exit
 # status (`-` for the tests when a red nextest-setup kept them from starting), seconds, log and command, and the machine's load as it ended (its load averages over 1, 5
@@ -29,7 +29,7 @@
 # The tests step lists each lane that ran after its own line, as `tests/LANE`, a part of the step,
 # and `tests/LANE...` in place of `tests` runs those lanes alone (tools/test-lanes.sh), which is
 # how a release candidate's rerun runs the lanes whose inputs a fix changed and carries the green
-# of the rest (docs/RELEASES.md, "The rerun"). `--inputs` in place of the steps says what each
+# of the rest (docs/workflow/RELEASES.md, "The rerun"). `--inputs` in place of the steps says what each
 # step and lane reads ([`reads`]) and runs nothing.
 #
 # The tests serve the client the client check built in this same verify (SYMPHONY_UI_DIST). The

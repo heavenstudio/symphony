@@ -135,7 +135,7 @@ screen's width.
 
 ## Related
 
-- [Writing a plugin and a theme](../PLUGIN_WRITING.md#a-theme): every value a theme can set, by
+- [Writing a plugin and a theme](../engineering/PLUGIN_WRITING.md#a-theme): every value a theme can set, by
   name, with a whole example in the settings file and from a plugin.
-- [The project file](../PROJECT_FILE.md#theme): the keys of the theme's table.
-- [The settings check](../PROJECT_FILE.md#the-settings-check): what names a theme's mistakes.
+- [The project file](../operations/PROJECT_FILE.md#theme): the keys of the theme's table.
+- [The settings check](../operations/PROJECT_FILE.md#the-settings-check): what names a theme's mistakes.

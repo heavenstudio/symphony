@@ -1,5 +1,5 @@
 //! An approve standing over the one merge of the default branch made on the commit it names
-//! (docs/TASKS.md, "An approve over one merge"), in scratch repositories on a board of their own:
+//! (docs/workflow/TASKS.md, "An approve over one merge"), in scratch repositories on a board of their own:
 //! a conflict in documents is settled by its executor's one merge and lands on the approve it had
 //! and its tests green at the merge, no verdict between; a commit beyond the merge, a merge made
 //! on another commit than the approved one, a merge of a branch the default branch does not hold,

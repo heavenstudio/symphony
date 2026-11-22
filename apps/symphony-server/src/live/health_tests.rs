@@ -1131,7 +1131,7 @@ fn a_board_that_went_back_is_said_unwell_with_its_line_on_every_page_until_a_sto
     .refusal();
     let went_back = "The task board is unwell: it went back from schema 16 to 13, so what was \
                      written since is lost: nothing was written; do not run `just tasks migrate`; \
-                     the Symphony's docs/BOARD_OPERATIONS.md#a-board-that-went-back says how to recover it.";
+                     the Symphony's docs/operations/BOARD_OPERATIONS.md#a-board-that-went-back says how to recover it.";
 
     assert!(
         hub.reconnect(&mut |_: &Path| Err(refusal.clone()))

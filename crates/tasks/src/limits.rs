@@ -33,12 +33,13 @@
 
 use crate::alarm::{self, Thresholds};
 use crate::cli::Env;
+use crate::lock::Recovered as _;
 use crate::on_review::MANIFEST;
 use crate::settings::Stored;
 use crate::sweep::trigger::main_checkout;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 use toml::Value;
 
@@ -515,7 +516,7 @@ impl Watched {
     /// look, and what is newly wrong said on stderr, once.
     pub fn read_with(&self, stored: &Stored) -> Read {
         let stamp = Self::stamps(&self.path);
-        let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut last = self.last.lock().recover();
         if last.0 != stamp || &last.1 != stored {
             let read = read_with(&self.path, stored);
             // A change of the store alone says only what is new: the files' problems were said.

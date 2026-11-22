@@ -94,7 +94,7 @@ fn stage(task: &Task, work: &MachineWork, activity: bool) -> String {
 
 /// A wait facet that selects open held tasks by their coordination state, then the state's ID: the
 /// tasks it selects are listed across their phases, as a wait kind's are, under the kind's own
-/// `wait` (docs/WORKFLOW.md, "The app").
+/// `wait` (docs/workflow/WORKFLOW.md, "The app").
 const STATE: &str = "state:";
 
 /// The coordination state of a task a custom workflow holds; none for one the board's writers keep.

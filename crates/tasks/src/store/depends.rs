@@ -2,10 +2,11 @@
 //! successor, and once nothing it waits on is cancelled it leaves the block a cancellation put it in.
 
 use super::postgres::depends as pg;
+use super::resume::back_to;
 use super::statement::both;
 use super::surreal::depends as sql;
 use super::work::{BLOCK_LINE, OWNER, no_task};
-use super::{Error, Failure, Opens, STATUSES, Store, Task, Which, refused};
+use super::{Error, Failure, Opens, Store, Task, Which, executors_or, refused};
 use crate::slots::OPEN;
 use crate::stages::UNBLOCK_LINE;
 use serde::Deserialize;
@@ -46,6 +47,22 @@ fn blocked_by(lines: &[String]) -> Blocked<'_> {
         Blocked::Unrecorded
     } else {
         Blocked::ByHand
+    }
+}
+
+/// Where a task a cancelled prerequisite blocked goes back to once nothing it waits on is
+/// cancelled, `executing` whether an executor holds it, with what its line adds to `back to TO`:
+/// where a resume sends it ([`back_to`]), but backlog work goes back to the backlog, which a
+/// resume leaves blocked, and a block line that recorded no status says so. One blocked by hand
+/// stays blocked.
+fn unblocked_to(blocked: &Blocked<'_>, executing: bool) -> Option<(&'static str, &'static str)> {
+    match *blocked {
+        Blocked::From("backlog") => Some(("backlog", "")),
+        Blocked::From(was) => back_to(Some(was), executing).map(|to| (to, "")),
+        Blocked::Unrecorded => {
+            back_to(None, executing).map(|to| (to, " (its block line recorded no earlier status)"))
+        }
+        Blocked::ByHand => None,
     }
 }
 
@@ -154,38 +171,16 @@ impl Store {
             let back = if status != "blocked" || cancelled {
                 None
             } else {
-                match blocked_by(&read.lines) {
-                    Blocked::From(was) if was == "in_progress" && !read.executing => {
-                        Some(("ready", ""))
-                    }
-                    Blocked::From(was)
-                        if STATUSES.contains(&was) && !["done", "cancelled"].contains(&was) =>
-                    {
-                        Some((was, ""))
-                    }
-                    Blocked::Unrecorded if read.executing => Some((
-                        "in_progress",
-                        " (its block line recorded no earlier status)",
-                    )),
-                    Blocked::Unrecorded => {
-                        Some(("ready", " (its block line recorded no earlier status)"))
-                    }
-                    Blocked::From(_) | Blocked::ByHand => None,
-                }
+                unblocked_to(&blocked_by(&read.lines), read.executing)
             };
             // Back to work or review it was blocked from starts it again, as a move would: refused
             // past the cap.
             let slots = match (back, self.slots()) {
                 (Some((to, _)), Some(cap)) if OPEN.contains(&to) => {
                     let view = self.view(&Which::Starting(slug))?;
-                    let mut executing: Vec<String> =
-                        view.holders("executor").map(|r| r.handle.clone()).collect();
-                    if executing.is_empty() {
-                        executing.push(by.into());
-                    }
                     let opens = Opens {
                         status: Some(to.into()),
-                        by: executing,
+                        by: executors_or(view.executors(), Some(by)),
                         what: format!("{slug} cannot go from blocked back to {to}"),
                         ..Opens::default()
                     };
@@ -275,6 +270,48 @@ mod tests {
         assert_eq!(blocked_by(&by_hand), Blocked::ByHand);
         assert_eq!(blocked_by(&lines(&["created by owner"])), Blocked::ByHand);
         assert_eq!(blocked_by(&[]), Blocked::ByHand);
+    }
+
+    #[test]
+    fn a_task_unblocked_goes_back_to_where_its_block_found_it_and_backlog_to_the_backlog() {
+        for was in ["concept", "design", "ready", "review"] {
+            for executing in [false, true] {
+                assert_eq!(
+                    unblocked_to(&Blocked::From(was), executing),
+                    Some((was, ""))
+                );
+            }
+        }
+        for executing in [false, true] {
+            assert_eq!(
+                unblocked_to(&Blocked::From("backlog"), executing),
+                Some(("backlog", ""))
+            );
+            // A resume leaves blocked backlog where it is.
+            assert_eq!(back_to(Some("backlog"), executing), None);
+            for was in ["done", "cancelled", "blocked", "elsewhere"] {
+                assert_eq!(unblocked_to(&Blocked::From(was), executing), None, "{was}");
+            }
+            assert_eq!(unblocked_to(&Blocked::ByHand, executing), None);
+        }
+        // Work in progress goes back to it only with an executor still on it.
+        assert_eq!(
+            unblocked_to(&Blocked::From("in_progress"), true),
+            Some(("in_progress", ""))
+        );
+        assert_eq!(
+            unblocked_to(&Blocked::From("in_progress"), false),
+            Some(("ready", ""))
+        );
+        let unrecorded = " (its block line recorded no earlier status)";
+        assert_eq!(
+            unblocked_to(&Blocked::Unrecorded, true),
+            Some(("in_progress", unrecorded))
+        );
+        assert_eq!(
+            unblocked_to(&Blocked::Unrecorded, false),
+            Some(("ready", unrecorded))
+        );
     }
 
     #[test]

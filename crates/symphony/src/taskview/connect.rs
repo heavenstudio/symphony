@@ -8,7 +8,9 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
+
+use symphony_board::lock::Recovered as _;
 
 /// How long the server waits on each board request: its board tick shares the data worker's thread
 /// with every document refresh, and a page gives up on an answer after 15 s (the client's
@@ -54,16 +56,13 @@ static SERVED: Mutex<BTreeMap<PathBuf, Served>> = Mutex::new(BTreeMap::new());
 pub fn serve(root: &Path) -> Option<PathBuf> {
     let repository = symphony_board::project::locate_quick(root).map(|place| place.common);
     let journal = crate::asks::found_path(root);
-    SERVED
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .insert(
-            root.to_path_buf(),
-            Served {
-                repository: repository.clone(),
-                journal,
-            },
-        );
+    SERVED.lock().recover().insert(
+        root.to_path_buf(),
+        Served {
+            repository: repository.clone(),
+            journal,
+        },
+    );
     repository
 }
 
@@ -72,7 +71,7 @@ pub fn serve(root: &Path) -> Option<PathBuf> {
 fn held(root: &Path) -> Option<PathBuf> {
     SERVED
         .lock()
-        .unwrap_or_else(PoisonError::into_inner)
+        .recover()
         .get(root)
         .and_then(|served| served.repository.clone())
 }
@@ -82,7 +81,7 @@ fn held(root: &Path) -> Option<PathBuf> {
 pub(crate) fn served_journal(root: &Path) -> Option<PathBuf> {
     SERVED
         .lock()
-        .unwrap_or_else(PoisonError::into_inner)
+        .recover()
         .get(root)
         .map(|served| served.journal.clone())
 }

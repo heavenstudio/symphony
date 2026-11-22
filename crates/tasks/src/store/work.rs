@@ -6,8 +6,8 @@ use super::postgres::{Pg, work as pg};
 use super::statement::both;
 use super::surreal::work as sql;
 use super::{
-    Change, Error, Failure, Message, Opens, REFUSED, Say, Store, Task, Which, left_actor, refused,
-    repr, unknown_actor,
+    Change, Error, Failure, Message, Opens, REFUSED, Say, Store, Task, Which, executors_or,
+    left_actor, refused, repr, unknown_actor,
 };
 use crate::alarm::{NOTHING, UNDER, WAS};
 use crate::health::Health;
@@ -472,7 +472,7 @@ impl Store {
     }
 
     /// The session and the task a run started at `place` is for, as a recorder takes them, in one
-    /// read of the board that writes nothing (docs/MACHINE_WORK.md, "For which task"):
+    /// read of the board that writes nothing (docs/workflow/MACHINE_WORK.md, "For which task"):
     ///
     /// 1. the handle `place` names, and the task it holds, else its branch's;
     /// 2. else the one live session whose in-process binding (the beat hook's) places its last tool
@@ -837,19 +837,11 @@ impl Store {
             // executor's parent (the mover's when it has none) where no orchestrator holds it.
             // Blocked work a hold kept open holds its slot already, which the cap reads.
             let starting = OPEN.contains(&status) && !OPEN.contains(&current);
-            let opens = starting.then(|| {
-                let executors: Vec<String> =
-                    view.holders("executor").map(|r| r.handle.clone()).collect();
-                Opens {
-                    status: Some(status.into()),
-                    by: if executors.is_empty() {
-                        vec![handle.into()]
-                    } else {
-                        executors
-                    },
-                    what: format!("{slug} cannot go from {current} to {status}"),
-                    ..Opens::default()
-                }
+            let opens = starting.then(|| Opens {
+                status: Some(status.into()),
+                by: executors_or(view.executors(), Some(handle)),
+                what: format!("{slug} cannot go from {current} to {status}"),
+                ..Opens::default()
             });
             Ok(Change {
                 status: Some(status.into()),
@@ -1003,7 +995,7 @@ impl Store {
     /// offered where an edge leaving its position gives the executor's role, nobody there holds it,
     /// and admission's preview shows nothing stopping `handle` taking that edge now
     /// ([`Store::workflow_actions`]): its reservations, dependencies and authority are the edge's,
-    /// never the board's own claim's (docs/WORKFLOW.md, "Operations").
+    /// never the board's own claim's (docs/workflow/WORKFLOW.md, "Operations").
     pub fn next_for(&self, handle: &str) -> Result<Option<Task>, Error> {
         let view = self.retrying(|| self.shown(&Which::Pullable(handle)))?;
         let me = view

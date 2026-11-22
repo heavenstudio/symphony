@@ -60,7 +60,7 @@ describe("a board with no task", () => {
     expect(html).toContain(
       '<p class="first-steps">No task is open on this board, and none finished today. Add one with the + button, or have an agent file it with the create-task skill or <code>just tasks create</code>: <a href="',
     );
-    expect(html).toContain('/docs/GETTING_STARTED.md" target="_blank"');
+    expect(html).toContain('/docs/operations/GETTING_STARTED.md" target="_blank"');
     expect(html.match(/first-steps/g)).toHaveLength(1);
   });
   it("says it of a new board, which counts no stage at all", () => {

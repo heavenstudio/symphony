@@ -1,4 +1,4 @@
-//! The packages this workspace publishes on crates.io (docs/RELEASES.md, "Packages on crates.io"):
+//! The packages this workspace publishes on crates.io (docs/workflow/RELEASES.md, "Packages on crates.io"):
 //! which they are ([`packages`]); what crates.io holds of each
 //! ([`Registry`]); the check that a package whose version crates.io holds still carries the sources
 //! that version was published with ([`check`], `symphony-build crates-check`); and the release
@@ -699,7 +699,7 @@ pub(crate) fn changed_line(changed: &Changed) -> String {
     format!(
         "{}: on crates.io, and its packaged sources differ from that version's ({named}): \
          a version is published once, so move its version, its line's as the packages' lines say \
-         (docs/RELEASES.md, \"Packages on crates.io\")",
+         (docs/workflow/RELEASES.md, \"Packages on crates.io\")",
         changed.package
     )
 }

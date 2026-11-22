@@ -1,5 +1,5 @@
 //! A document and an entrypoint's folder page drawn from this device's cache on a return visit
-//! (docs/analysis/client-cache.md, "A return visit, step by step"; the web client's
+//! (docs/engineering/analysis/client-cache.md, "A return visit, step by step"; the web client's
 //! apps/symphony-web/src/document-live.ts). With the
 //! server's reads held back, a document draws its outline and the bodies of the sections it drew
 //! before any answer, marked as possibly out of date, its card's verdicts waiting and its note

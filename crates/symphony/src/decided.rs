@@ -1,4 +1,4 @@
-//! The owner's word that ends a task's block (docs/TASKS.md, "What a task waits on").
+//! The owner's word that ends a task's block (docs/workflow/TASKS.md, "What a task waits on").
 //!
 //! A block on `decision:NAME` ends once card NAME carries the owner's verdict that decides it
 //! (approved, rejected or dismissed) in an owner's line dated since the minute the block was

@@ -17,6 +17,7 @@ use super::surreal::callbacks as sql;
 use super::{Error, Store, refused};
 use crate::cli::agents::{Answer, Pane};
 use crate::cli::{attach, probes, pull};
+use crate::lock::Recovered as _;
 use crate::maps::Collect as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -945,7 +946,7 @@ impl Store {
     /// clock's agents view after it ([`Store::clock_panes`]).
     pub fn dispatch_callbacks_snapshot(&self) -> Result<Option<super::Board>, Error> {
         self.resume_task_blocks()?;
-        *self.clock_panes.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.clock_panes.lock().recover() = None;
         let callbacks = self.callbacks()?;
         if callbacks.is_empty() {
             return Ok(None);
@@ -958,10 +959,7 @@ impl Store {
 
     /// The hc terminals this tick of the server clock sampled, when its pane watch took a sample.
     pub(crate) fn clock_panes(&self) -> Option<Answer<Vec<Pane>>> {
-        self.clock_panes
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
+        self.clock_panes.lock().recover().clone()
     }
 
     /// The board as the pass read it, and whether the pass reached every recipient on this host: one
@@ -1005,7 +1003,7 @@ impl Store {
         let idle = self
             .callback_idle
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .recover()
             .as_ref()
             .is_some_and(|idle| {
                 idle.marker == sequence
@@ -1036,8 +1034,8 @@ impl Store {
             observed &= handled;
             pull_at = pull_at.min(due);
         }
-        *self.callback_idle.lock().unwrap_or_else(|e| e.into_inner()) =
-            (observed && initial_sequence == sequence).then_some(Idle {
+        *self.callback_idle.lock().recover() = (observed && initial_sequence == sequence)
+            .then_some(Idle {
                 marker: sequence,
                 health,
                 pull_at,
@@ -1051,7 +1049,7 @@ impl Store {
     /// inbox reads the messages as this board has them. The pool is plain data, whole or none, so
     /// a panic elsewhere leaves nothing half-made in it.
     fn fresh_board(&self) -> Result<(super::Board, u64), Error> {
-        *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.inbox_pool.lock().recover() = None;
         self.callback_board()
     }
 
@@ -1658,10 +1656,7 @@ impl Store {
     /// alone, not the whole board again. The cached snapshot is plain data, whole or none, so a
     /// panic that poisoned its lock left nothing half-made in it.
     fn adopt(&self, moved: &Moved) {
-        let mut cached = self
-            .callback_snapshot
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut cached = self.callback_snapshot.lock().recover();
         if let Some(snapshot) = cached.as_mut()
             && snapshot.callback_sequence == moved.before
         {

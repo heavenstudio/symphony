@@ -80,7 +80,7 @@
 //! schemaless and with no event, as no reader caches them.
 //!
 //! `workflow:[KIND, …]` is a custom delivery workflow's record, from schema 24 (`store/workflow.rs`,
-//! docs/WORKFLOW.md): the active generation (`['active']`), an immutable definition by its digest,
+//! docs/workflow/WORKFLOW.md): the active generation (`['active']`), an immutable definition by its digest,
 //! an activation by its generation, a task's transition by its slug and workflow revision, a
 //! receipt by its principal and key, and an external intent; and, from schema 26, for its guards
 //! (`workflow/guard.rs`), the state the board accepted from each approval authority
@@ -102,7 +102,7 @@
 //! when it was last seen (`store/writers.rs`), from schema 18: schemaless and with no event, as
 //! builds of other schemas write it and a line written moves no marker.
 //!
-//! The board is a contract between the builds that read and write it (docs/TASKS.md, where it
+//! The board is a contract between the builds that read and write it (docs/workflow/TASKS.md, where it
 //! lives). Its version, [`VERSION`], is raised by a breaking step alone; an additive step ([`ADDED`])
 //! leaves it as it is, so every build of one contract reads and writes every board of it, whatever
 //! additive steps either has. What an additive step may be is held by the store's catalogue test
@@ -163,7 +163,7 @@ pub struct Addition {
     /// The tables its step defines: a write naming one is refused on a board without the step.
     pub tables: &'static [&'static str],
     /// Why it is additive: what it adds, and how a build without it reads and writes around it,
-    /// what no catalogue shows (docs/CHECKS.md, a schema step).
+    /// what no catalogue shows (docs/workflow/CHECKS.md, a schema step).
     pub why: &'static str,
 }
 
@@ -215,7 +215,7 @@ pub const OPEN: [&str; 11] = [
 /// store's catalogue test holds a listed version to that on the database (`tests/store/catalogue.rs`,
 /// over the committed definitions of each version); what it cannot see, a rule held in code that
 /// the older Symphony's writes would skip, is its reviewer's to read against the line
-/// ([CHECKS](../../../docs/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). The schema
+/// ([CHECKS](../../../docs/workflow/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). The schema
 /// that brought this list and the record it writes ([`WRITABLE_FROM_SINCE`]) changed `meta` and is
 /// not listed.
 pub const COMPATIBLE: &[(i64, &str)] = &[];

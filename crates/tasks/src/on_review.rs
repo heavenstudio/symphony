@@ -8,7 +8,7 @@
 //!
 //! The `tasks` that moved the task records it (`tasks run`, a test's `TASKS_BIN` on a test's board):
 //! a run of the pipeline `review-callback` started by `on_review`, for the task, on its branch's tip
-//! (docs/RUNS.md). With no recorder it runs unrecorded, started by `on_review` still.
+//! (docs/workflow/RUNS.md). With no recorder it runs unrecorded, started by `on_review` still.
 
 use crate::cli::Env;
 use crate::cli::machine_work::recorded::{PARENT_VAR, PIPELINE_VAR, TRIGGER_VAR};

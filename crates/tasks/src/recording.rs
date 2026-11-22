@@ -12,7 +12,9 @@
 //! The calls are the reload's (`front.rs` holds and opens, `reload.rs` closes and reopens); one
 //! call moves both recorders, so they agree on every minute.
 
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Mutex, MutexGuard};
+
+use crate::lock::Recovered as _;
 
 /// One server generation's gate: open until held or closed.
 #[derive(Debug)]
@@ -40,7 +42,7 @@ impl Default for Gate {
 impl Gate {
     fn state(&self) -> MutexGuard<'_, State> {
         // Each holder reads or replaces a whole value.
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+        self.0.lock().recover()
     }
 
     /// A replacement's, before its hubs start: nothing is recorded until [`Gate::open`].

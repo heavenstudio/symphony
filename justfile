@@ -6,8 +6,8 @@ set positional-arguments
 import 'symphony.just'
 
 # A recipe that builds or tests runs as one operation through tools/record.sh, which records it
-# for the board's Build and Test columns when a recorder answers (docs/MACHINE_WORK.md), as a run
-# of the pipeline it names (docs/RUNS.md); inside it, a recipe recorded with a --step is a step of
+# for the board's Build and Test columns when a recorder answers (docs/workflow/MACHINE_WORK.md), as a run
+# of the pipeline it names (docs/workflow/RUNS.md); inside it, a recipe recorded with a --step is a step of
 # that run, and any other command runs unrecorded. TASKS_SESSION=HANDLE names the session whose
 # task it is, and TASKS_TASK=SLUG the task itself. A tree without tools/record.sh runs the command
 # as it is: no recorder, present or not, fails a recipe.
@@ -22,9 +22,9 @@ fmt:
 # touched, and the fence judges the files of every board target, so every branch's lint runs it.
 # Its last Rust step reads the branch against the default branch: red when it changes what a
 # consumer must do (the board schema, a consumer-API guard's call, a settings key) and no commit of
-# it says so in a `Consumer-Note` trailer (docs/RELEASES.md, "Its notes"). The step after it reads
+# it says so in a `Consumer-Note` trailer (docs/workflow/RELEASES.md, "Its notes"). The step after it reads
 # the branch the same way for the published packages it changes, and runs the crates check on
-# those alone: red when one's sources moved while crates.io holds its version (docs/RELEASES.md,
+# those alone: red when one's sources moved while crates.io holds its version (docs/workflow/RELEASES.md,
 # "Packages on crates.io"). A branch that changes none reads nothing, and a crates.io that gives no
 # answer is said, the packages named as not checked, and no red.
 lint-rs:
@@ -62,9 +62,9 @@ test-rs *ARGS:
 nextest-setup:
     @bash tools/nextest.sh --setup
 
-# The settings check (`symphony settings-check`, docs/PROJECT_FILE.md): symphony.toml read as the
+# The settings check (`symphony settings-check`, docs/operations/PROJECT_FILE.md): symphony.toml read as the
 # Symphony reads it and judged on its shape alone, recorded as a test run, which is what a change
-# of settings' values lands by in a reviewer's place (docs/TASKS.md, "Needed stamps").
+# of settings' values lands by in a reviewer's place (docs/workflow/TASKS.md, "Needed stamps").
 settings-check:
     @{{record}} --pipeline settings test "just settings-check" tools/rs-bin.sh symphony settings-check
 
@@ -118,7 +118,7 @@ docs-check:
 tasks *ARGS:
     @{{ _symphony_board }}{{ _symphony_unasked }}tools/rs-bin.sh tasks "$@"
 
-# Symphony's releases (docs/RELEASES.md), a release run: main's tip, fetched, verified in full
+# Symphony's releases (docs/workflow/RELEASES.md), a release run: main's tip, fetched, verified in full
 # (`just verify`) in a clean checkout outside this folder, building and testing nothing of the
 # projects this machine serves; each red check filed on the board, a green tip tagged
 # release-YYYY-MM-DD and that tag pushed. `--commit COMMIT` releases a commit of main out of cycle,
@@ -146,7 +146,7 @@ _client-check OUT:
     @bash tools/client-check.sh {{quote(OUT)}}/public
 
 # The shipped binaries, built as `cargo install` builds them (the release profile), and the client
-# the server embeds, each against its line in tools/size-budget.toml (docs/CHECKS.md, "Size
+# the server embeds, each against its line in tools/size-budget.toml (docs/workflow/CHECKS.md, "Size
 # budgets"). The release run's verify runs it: one release build, which no task's gate pays for.
 size-check:
     @{{record}} --pipeline size --step size-check build "just size-check" just --justfile {{quote(justfile())}} _size-check
@@ -158,7 +158,7 @@ _size-check:
 
 # Each published package whose version crates.io holds, packaged here and compared with what
 # crates.io holds of that version: red, naming the package, where the sources moved and the version
-# did not (docs/RELEASES.md, "Packages on crates.io"). It reads crates.io and publishes nothing.
+# did not (docs/workflow/RELEASES.md, "Packages on crates.io"). It reads crates.io and publishes nothing.
 crates-check:
     @{{record}} --pipeline crates test "just crates-check" tools/rs-bin.sh symphony-build crates-check .
 
@@ -167,7 +167,7 @@ crates-check:
 semver-check:
     @{{record}} --pipeline semver test "just semver-check" bash tools/semver.sh --all-features -p symphony-plugin -p symphony-blocks -p symphony-docs -p symphony-env -p symphony-args -p symphony-schema -p process-cwd -p repository-read
 
-# The hosted board's build (docs/POSTGRESQL.md, "A hosted board"), which no default build has: the
+# The hosted board's build (docs/operations/POSTGRESQL.md, "A hosted board"), which no default build has: the
 # board's own tests with the `hosted-postgresql` feature and its matrix against PostgreSQL 16 and
 # 18 servers of its own (crates/tasks/tests/hosted), red where either is not installed.
 hosted-check:

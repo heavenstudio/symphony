@@ -1,6 +1,6 @@
 # `symphony-build`: the commands only this repository's own build and release run use
-# (`publish-client`, `size-budget`, `crates-check`, `synced` and `release`, docs/RELEASES.md and
-# docs/CHECKS.md), run as `tools/rs-bin.sh symphony-build COMMAND`.
+# (`publish-client`, `size-budget`, `crates-check`, `synced` and `release`, docs/workflow/RELEASES.md and
+# docs/workflow/CHECKS.md), run as `tools/rs-bin.sh symphony-build COMMAND`.
 # A package of its own, never published (the workspace's `publish = false`) and never shipped: no
 # project is given it (`init::BUILDS` does not name it), and neither the library every project
 # links nor its `symphony` binary compiles any of it. It lints as the library does.

@@ -1,5 +1,5 @@
 //! Each call into a project's plugins timed into its record (`[plugins] timing`,
-//! docs/PLUGIN_CALLS.md).
+//! docs/engineering/PLUGIN_CALLS.md).
 //!
 //! A measured plugin is the plugin behind a wrapper of the same seams: every call into a seam's
 //! object (a component's render, a card kind's slot, a watch's change…) goes through its
@@ -13,10 +13,11 @@
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{LazyLock, Mutex, PoisonError};
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
+use symphony_board::lock::Recovered as _;
 use symphony_plugin::authority::{Operation, Signed};
 use symphony_plugin::protocol::{
     Alive, AnswerGates, ApprovalNeedsAgent, Ask, Attest, AutoApprovable, CacheVersion, CardGates,
@@ -43,7 +44,7 @@ pub(super) fn measured(plugin: &'static dyn Plugin, record: &Path) -> &'static d
         measured: &'static Measured,
     }
     static MADE: LazyLock<Mutex<Vec<Made>>> = LazyLock::new(|| Mutex::new(Vec::new()));
-    let mut made = MADE.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut made = MADE.lock().recover();
     if let Some(found) = made
         .iter()
         .find(|made| std::ptr::eq(made.plugin, plugin) && made.record == record)
@@ -103,7 +104,7 @@ impl Record {
     pub(super) fn at(path: &Path) -> &'static Record {
         static RECORDS: LazyLock<Mutex<Vec<&'static Record>>> =
             LazyLock::new(|| Mutex::new(Vec::new()));
-        let mut records = RECORDS.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut records = RECORDS.lock().recover();
         if let Some(found) = records.iter().find(|record| record.path == path) {
             return found;
         }
@@ -127,7 +128,7 @@ impl Record {
             return;
         };
         text.push('\n');
-        let mut file = self.file.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut file = self.file.lock().recover();
         let now = std::fs::metadata(&self.path).ok();
         let held = file.as_ref().map(|(_, held)| *held);
         if held.is_none() || now.as_ref().map(identity) != held {

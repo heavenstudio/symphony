@@ -5,10 +5,10 @@
 //! [`KEPT`] bytes; past it the least recently asked for is dropped, and gzipped again if it is
 //! asked for again.
 
-use crate::lock::Held as _;
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
+use symphony_board::lock::Recovered as _;
 
 use axum::body::Bytes;
 use axum::http::{HeaderMap, header};
@@ -93,7 +93,12 @@ impl Store {
             .get_or_try_init(|| async {
                 #[cfg(test)]
                 {
-                    *self.runs.lock().held().entry(hash.to_owned()).or_default() += 1;
+                    *self
+                        .runs
+                        .lock()
+                        .recover()
+                        .entry(hash.to_owned())
+                        .or_default() += 1;
                 }
                 // The best level holds a thread a while on a large module: a blocking one, not a worker.
                 let raw = bytes.clone();
@@ -145,7 +150,7 @@ impl Store {
     }
 
     fn lock(&self) -> MutexGuard<'_, Kept> {
-        self.kept.lock().held()
+        self.kept.lock().recover()
     }
 
     /// The bytes kept, which the cap bounds.
@@ -156,7 +161,7 @@ impl Store {
 
     #[cfg(test)]
     pub(super) fn runs(&self, hash: &str) -> usize {
-        self.runs.lock().held().get(hash).copied().unwrap_or(0)
+        self.runs.lock().recover().get(hash).copied().unwrap_or(0)
     }
 }
 

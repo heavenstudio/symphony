@@ -1,7 +1,7 @@
 //! `symphony-build size-budget ROOT RELEASE`: each shipped binary, as `cargo install` builds
 //! it into RELEASE, and the builds of the client distribution the server embeds, each counted
 //! whole ([`Distribution::kept`]), against its line in the budget file under ROOT ([`BUDGET`],
-//! docs/CHECKS.md "Size budgets"). Within every line it prints each size beside its budget, and
+//! docs/workflow/CHECKS.md "Size budgets"). Within every line it prints each size beside its budget, and
 //! where the rule ([`line_for`]) brings down a binary's line that stands above it (exit 0); past
 //! one it says the size, the budget and how to see what grew (exit 1). A budget it cannot read, one
 //! with no line for a shipped binary ([`BUILDS`]) or a line for none, a binary it cannot find, a
@@ -33,13 +33,13 @@ const EMBEDDER: &str = "symphony-server";
 const SHIPPED: &str = "`BUILDS` in crates/symphony/src/init.rs";
 const USAGE: &str = "usage: symphony-build size-budget ROOT RELEASE";
 /// How far above a binary's size its line is set, in percent, and the bytes the line is rounded
-/// down to (docs/CHECKS.md, "Where a line stands").
+/// down to (docs/workflow/CHECKS.md, "Where a line stands").
 const MARGIN_PERCENT: u64 = 4;
 const ROUNDED_TO: u64 = 10_000;
 /// What a line past its budget asks for, after how to see what grew.
 const RAISED: &str = "A reduction takes the bytes back first; a line is raised only in a commit \
                       of its own that names the growth and why no reduction will do, to the size \
-                      plus 4 % and never higher, on a fresh reviewer's approve (docs/CHECKS.md, \
+                      plus 4 % and never higher, on a fresh reviewer's approve (docs/workflow/CHECKS.md, \
                       \"A red at the size check\").";
 
 /// The budget file: the embedded client's line and each shipped binary's, in bytes.

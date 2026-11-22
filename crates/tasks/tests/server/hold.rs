@@ -342,7 +342,7 @@ fn a_server_that_does_not_end_when_asked_is_left_closing_never_killed() {
              owner then holds the board (`just tasks database hold WHY --as HANDLE`, a hold that \
              stands while it says the server still closes), ends it by hand (`kill -9 {pid}`, its \
              log then replayed at the next start) and releases the hold; its ask, {}, is \
-             forgotten once it has ended (docs/BOARD_OPERATIONS.md, Stuck servers). Its log is {}",
+             forgotten once it has ended (docs/operations/BOARD_OPERATIONS.md, Stuck servers). Its log is {}",
             s.dir.join("ending").join(pid.to_string()).display(),
             s.dir.join("server.log").display()
         ))
