@@ -1,9 +1,9 @@
 //! The Markdown syntax every reader of the docs shares, against the rules the docs are read by.
 
 use symphony_docs::syntax::{
-    LineIndex, WikiLink, anchors, card_end, card_line, cards, code_ranges, components, entries,
-    entry_line, heading, heading_anchor, is_continuation, is_indented, line_links, line_of, lines,
-    links, mask_code_spans, pictures, unseen_owner, unseen_owner_line, wikilinks,
+    LineIndex, WikiLink, anchors, card_end, card_line, carded, cards, code_ranges, components,
+    entries, entry_line, heading, heading_anchor, is_continuation, is_indented, line_links,
+    line_of, lines, links, mask_code_spans, pictures, unseen_owner, unseen_owner_line, wikilinks,
 };
 
 #[test]
@@ -231,6 +231,24 @@ fn a_card_line_is_a_task_item_with_a_bold_slug() {
     assert_eq!(card_line("- [z] **a**"), None);
     assert_eq!(card_line("- [x] plain task"), None);
     assert_eq!(card_line("  - [x] **nested**"), None);
+}
+
+#[test]
+fn a_cards_own_lines_are_told_from_the_prose_around_it() {
+    let text = "para\n\n- [ ] **one** — first\n  [2026-09-24] agent — a\n\n    more\n\nprose\n```\n- [x] **fenced** — no\n```\n- [-] **two** — second\n- [ ] **three**\n  last\n";
+    assert_eq!(
+        carded(&lines(text)),
+        [
+            false, false, // para and the blank line under it
+            true, true, true,
+            true, // the card, its entry, the blank line inside it, its last line
+            false, false, // the blank line after the card is no line of it, nor the prose
+            false, false, false, // a card in a code block is code
+            true, true, true, // two cards with no line between them, to the text's end
+        ]
+    );
+    assert_eq!(carded(&lines("")), Vec::<bool>::new());
+    assert_eq!(carded(&lines("no card\n")), [false]);
 }
 
 #[test]

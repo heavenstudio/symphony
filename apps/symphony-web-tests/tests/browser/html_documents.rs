@@ -43,13 +43,6 @@ const tried = (what) => { try { what(); return 'allowed'; } catch (error) { retu
 /// Before any page of the tab loads: the app's page keeps the first report a frame posts it.
 const LISTEN: &str = "addEventListener('message', (event) => { if (event.data && event.data.probe && !window.probeReport) window.probeReport = event.data; });";
 
-fn screen(page: &mut Chrome, width: u32, height: u32, mobile: bool) {
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": width, "height": height, "deviceScaleFactor": 1, "mobile": mobile}),
-    );
-}
-
 /// The probe's report once the page drew its frame and the frame's script ran.
 fn opened(page: &mut Chrome, url: &str) -> Value {
     page.open(url);
@@ -75,7 +68,7 @@ fn an_html_document_runs_its_scripts_in_a_frame_that_never_reaches_the_app() {
         json!({ "source": LISTEN }),
     );
     for (width, height, mobile) in [(1440, 900, false), (390, 844, true)] {
-        screen(&mut page, width, height, mobile);
+        page.viewport(width, height, mobile);
         let report = opened(&mut page, &site.url(ROUTE));
         // Its script ran, in an opaque origin: not the app's.
         assert_eq!(report["origin"], "null", "{width}: {report}");
@@ -140,7 +133,7 @@ fn the_server_draws_an_html_document_and_a_markdown_documents_mockup_of_it() {
         "Page.addScriptToEvaluateOnNewDocument",
         json!({ "source": LISTEN }),
     );
-    screen(&mut page, 1280, 900, false);
+    page.viewport(1280, 900, false);
     let report = opened(&mut page, &site.url("/docs/probe.html"));
     for (what, refused) in [
         ("origin", "null"),

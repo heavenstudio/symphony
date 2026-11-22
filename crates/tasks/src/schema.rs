@@ -94,6 +94,10 @@
 //! (`workflow_history`). No event reads a record's deletion: the whole-board copy replaces the
 //! table. A board with no custom workflow holds no such record and meets neither.
 //!
+//! `setting:⟨key⟩` is a stored preference, from the first additive step on schema 28
+//! ([`ADDED`], `crate::settings`): the setting's key, the value it holds, its revision and every
+//! change of it. Schemaless and with no event: its readers read it at each read of the settings.
+//!
 //! `writer:[host, path]` is a program that opens the board to write, the schema it was built at and
 //! when it was last seen (`store/writers.rs`), from schema 18: schemaless and with no event, as
 //! builds of other schemas write it and a line written moves no marker.
@@ -166,7 +170,16 @@ pub struct Addition {
 /// This build's additive steps on [`VERSION`], in order: a breaking step empties it, its
 /// definitions going into [`DEFINE`] and the PostgreSQL tables, as what they added is then the
 /// contract's.
-pub const ADDED: &[Addition] = &[];
+pub const ADDED: &[Addition] = &[Addition {
+    surreal: "DEFINE TABLE IF NOT EXISTS setting SCHEMALESS;",
+    postgres: "CREATE TABLE IF NOT EXISTS setting (id jsonb PRIMARY KEY, \
+               doc jsonb NOT NULL CHECK (jsonb_typeof(doc) = 'object'));",
+    tables: &["setting"],
+    why: "the table setting, the board's store of preferences (crate::settings): a build without \
+          it never reads or writes the table and reads every setting from the files alone, so a \
+          stored value holds only for builds that have the step, and no rule on a table there \
+          before reads it",
+}];
 
 /// How many additive steps this build has on its contract: [`ADDED`]'s length.
 pub const ADDITIONS: i64 = {

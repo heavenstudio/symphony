@@ -94,7 +94,9 @@ A board behind the running host needs a compatible project board command linked 
 `just tasks migrate` in that project's main checkout under its migration policy. Registration,
 init and the reader never migrate it or replace the shared host. Failed board operations retry
 after 1, 2, 4, 8, 16, 32, then at most 60 seconds; requests and filesystem changes keep that
-deadline. After an external migration, the worker or page reader recovers on its next due
+deadline. The one exception is a board held stopped (`just tasks database hold`, a move, a
+snapshot): an attempt refused by the hold is made again at the first tick or page request after
+its release, whatever was left of its deadline. After an external migration, the worker or page reader recovers on its next due
 attempt without a server restart (`src/live/retry.rs`). The worker's next board tick publishes
 the recovered JSON; page-reader success alone does not refresh that snapshot.
 
@@ -225,7 +227,7 @@ cannot keep installing after `--stop` returns.
 | `/api/agent-page?cursor=…` | Twenty connected agents and their current work and five latest finished tasks; `health=lost` pages lost agents |
 | `/api/task-thread?slug=…` | Alias for the typed paged task history |
 | `/api/agents` | The board's agents view, including probe availability |
-| `/api/reports?grain=…&days=…` | The Reports page's window (`ReportsPage`): its periods by the hour, day or week, each summed from the project's roll-up, agents and board-health day files, a period no file recorded none of; the commits in the window that changed the settings file, the rules or a skill, each with what it changed (`ReportMark`); what was not read. It reads files only, never the board, and at most 64 MiB of them (`src/api/reports.rs`). The answer is kept between reads with what it was read from (the hour, each day file by its stat, the default branch's tip), so a read that finds none of it moved opens no file and starts no git (`src/api/reports/kept.rs`) |
+| `/api/reports?grain=…&days=…` | The Reports page's window (`ReportsPage`): its periods by the hour, day or week, each summed from the project's roll-up, agents and board-health day files, a period no file recorded none of; the commits in the window that changed the settings file, the rules or a skill, each with what it changed (`ReportMark`); what was not read. It reads files only, never the board, and at most 64 MiB of them (`src/api/reports.rs`). The answer is kept between reads with what it was read from (the hour, each day file by its stat, the default branch's tip), so a read that finds none of it moved opens no file and starts no git (`src/api/reports/kept.rs`). Its window ends at the moment `TASKS_NOW` holds the board's clock at, when the server's environment sets it, else at the server's clock (`Hub::recorded_now`), so a server over records written at a held moment reads them, as the product specs' pictures do |
 | `/api/run-log?run=…&tail=…` | Part of a run's log (`RunLog`): its last 64 KiB by default, its last `tail` bytes, or `from=…&to=…` a range, at most 1 MiB; only a regular file in a day folder of the project's `logs/`, never the board (`src/api/run_log.rs`, [RUNS](../../docs/RUNS.md#logs)) |
 | `/api/activity` | Latest forty document and owner-addressed task entries |
 | `/api/pending` | Pending cards in document navigation order, then branch cards |
@@ -340,7 +342,7 @@ Server-Sent Event it has an increasing `id` too, and on the WebSocket none (how 
 form says an event: `symphony_api`'s feed contract). The existing board regions are
 `card`, `queue` (only the five visible cards), `counts`, `progress` and `client`. Additional list
 regions use keyed upserts/removals (`ItemChange<T>`); their `-order` events
-move one key after another (`OrderChange`). They are `queue-item`,
+move one key after another (`key` and `after`). They are `queue-item`,
 `spot-check`, `agent-queue`, `pending`, `activity`, `task`,
 `session` and `agent`. A `task` upsert is a new task; an existing task that
 changed is sent once, as `task-fields`, its changed mutable fields alone,

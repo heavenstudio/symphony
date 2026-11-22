@@ -17,8 +17,8 @@ use tungstenite::{Message, WebSocket};
 use crate::profiles::{self, next_profile};
 use crate::{
     BACKSTOP_FLOOR, BrowserGroup, CLEANUP_CPU, Chrome, End, LAUNCH_BACKSTOP, Leash, Owner, POLL,
-    PROTOCOL_CPU, WaitBudget, chrome_args, cleanup_profile, devtools_endpoint, find, listed,
-    load_said, process, signal_group,
+    PROTOCOL_CPU, ROOTED, WaitBudget, chrome_args, cleanup_profile, devtools_endpoint, find,
+    listed, load_said, process, signal_group,
 };
 
 /// This test binary as the leash: it runs [`browser_leash`] alone.
@@ -1758,7 +1758,7 @@ fn browser_waits_keep_events_and_bound_idle_polls_without_charging_observer_dela
                 }
                 "after-timeout" => json!("usable"),
                 // Asked of a condition that threw: this page's document has its element.
-                "document.documentElement === null" => json!(false),
+                ROOTED => json!(1.0),
                 other => panic!("unexpected evaluation {other}"),
             };
             peer.reply(&command, json!({"result": {"value": value}}));
@@ -4891,11 +4891,12 @@ fn a_page_prefers_no_reduced_motion_until_a_caller_emulates_it() {
 }
 
 #[test]
-fn a_condition_that_throws_on_a_document_with_no_element_yet_is_asked_again() {
-    const ROOT: &str = "document.documentElement === null";
+fn a_condition_that_throws_is_asked_again_until_its_document_was_known_to_have_its_element() {
     let thrown = || json!({"exceptionDetails": {"text": "Uncaught", "exception": {"className": "TypeError"}}});
-    // The stand-in page: `window.root` throws twice on a document with no element, the second
-    // time as the page goes on, then is met; `window.broken` throws on a document that has one.
+    // The stand-in page. `window.root` throws twice on a document with no element, the second
+    // time as the page goes on, then is met. `window.raced` throws on one that got its element
+    // before the driver looked, then on the document the page went to next, which has its own,
+    // then is met. `window.broken` throws on a document that has its element throughout.
     let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, move |peer| {
         let mut asked: Vec<String> = Vec::new();
         while let Some(command) = peer.next() {
@@ -4910,21 +4911,23 @@ fn a_condition_that_throws_on_a_document_with_no_element_yet_is_asked_again() {
             let expression = command["params"]["expression"].as_str().unwrap().to_owned();
             asked.push(expression.clone());
             let count = asked.iter().filter(|asked| **asked == expression).count();
-            let roots = asked.iter().filter(|asked| *asked == ROOT).count();
+            let value = |value: Value| json!({"result": {"value": value}});
             match (expression.as_str(), count) {
-                ("window.root", 1 | 2) | ("window.broken", _) => peer.reply(&command, thrown()),
-                ("window.root", _) => peer.reply(&command, json!({"result": {"value": true}})),
-                (ROOT, _) if roots == 1 => peer.reply(&command, json!({"result": {"value": true}})),
-                (ROOT, _) if roots == 2 => {
-                    refuse(peer, &command, "Execution context was destroyed.");
+                ("window.root" | "window.raced", 1 | 2) | ("window.broken", _) => {
+                    peer.reply(&command, thrown());
                 }
-                (ROOT, _) => peer.reply(&command, json!({"result": {"value": false}})),
+                ("window.root" | "window.raced", _) => peer.reply(&command, value(json!(true))),
+                (ROOTED, 1) => peer.reply(&command, value(Value::Null)),
+                (ROOTED, 2) => refuse(peer, &command, "Execution context was destroyed."),
+                (ROOTED, 3) => peer.reply(&command, value(json!(1.5))),
+                (ROOTED, _) => peer.reply(&command, value(json!(2.5))),
                 (other, count) => panic!("evaluation {count} of {other}"),
             }
         }
         asked
     });
     assert!(chrome.wait_for("window.root", PROTOCOL_CPU).unwrap());
+    assert!(chrome.wait_for("window.raced", PROTOCOL_CPU).unwrap());
     let broken = chrome
         .wait_for("window.broken", PROTOCOL_CPU)
         .unwrap_err()
@@ -4937,12 +4940,19 @@ fn a_condition_that_throws_on_a_document_with_no_element_yet_is_asked_again() {
         peer.join().unwrap(),
         [
             "window.root",
-            ROOT,
+            ROOTED,
             "window.root",
-            ROOT,
+            ROOTED,
             "window.root",
+            "window.raced",
+            ROOTED,
+            "window.raced",
+            ROOTED,
+            "window.raced",
             "window.broken",
-            ROOT,
+            ROOTED,
+            "window.broken",
+            ROOTED,
             "window.broken"
         ]
     );

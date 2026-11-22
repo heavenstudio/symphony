@@ -1,19 +1,11 @@
 //! `claim`, and what it must get past: a live executor, a reservation, the reviewer, a dependency.
 
-use crate::common::{Backend, Fixture, GONE, NOW, Seed, amber_back_meanwhile, refused, session};
+use crate::common::{
+    Backend, Fixture, GONE, NOW, Seed, amber_back_meanwhile, refused, session, two_and_a_task,
+};
 use std::sync::{Arc, Barrier};
 use symphony_board::Health;
 use symphony_board::health::LIVE_SECONDS;
-
-fn two_and_a_task(backend: Backend, status: &str) -> Fixture {
-    Fixture::on(
-        backend,
-        Seed::default()
-            .session("amber-heron")
-            .session("brisk-finch")
-            .task("sim/jump", status),
-    )
-}
 
 on_both! {
     fn claim_makes_the_session_executor_and_starts_the_task(backend: Backend) {

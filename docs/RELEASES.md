@@ -1,7 +1,7 @@
 # Releases
 
 How a Symphony release is cut, named and read. Projects that use the Symphony follow its release
-tags, never main ([its card](DECISIONS.md#symphony-update-command)), since other projects use it. A
+tags, never main ([its card](analysis/symphony-update.md#symphony-update-command)), since other projects use it. A
 release comes from a run that verifies main in full; an urgent fix may be released out of cycle. It
 is judged by the checks this repository owns, never by a consuming project's suite: a project's
 own reds stay on its own board. A project moves to a release itself, by the steps
@@ -29,7 +29,7 @@ Nothing moves a project to a newer Symphony but the project. In order:
    is current.
 4. **Move the board when the notes say its schema moved:** `just tasks migrate` in the main
    checkout, once no session still runs the older commands
-   ([who writes a board](TASKS.md#who-writes-a-board)). An older command refuses a newer board
+   ([who writes a board](BOARD_OPERATIONS.md#who-writes-a-board)). An older command refuses a newer board
    before it writes, naming what to rebuild.
 5. **Start the newer server:** `just symphony --stop`, then `just symphony`.
 
@@ -76,7 +76,7 @@ nothing, and who writes each:
 | Section | Derived from git at the two releases' commits | Said by a landing |
 | --- | --- | --- |
 | Cargo.toml and Cargo.lock | the line that names the release, as a tag or as the full commit for a project that pins one, the lock following it, and each workspace package whose version moves in `Cargo.lock` | `manifest`: any other line a project's manifest changes |
-| Board | the schema's move (`crates/tasks/src/schema.rs`) with the steps the [writer rule](TASKS.md#who-writes-a-board) asks (the project's own build at the new schema first, each writer rebuilt and run, `just tasks migrate`, whose refusal is the one list of the writers, `--leave-behind` for a writer that cannot be rebuilt where it was, and a server's writes refused until it runs the new schema), and the pin's | `board`: what the move changes for a project |
+| Board | the schema's move (`crates/tasks/src/schema.rs`) with the steps the [writer rule](BOARD_OPERATIONS.md#who-writes-a-board) asks (the project's own build at the new schema first, each writer rebuilt and run, `just tasks migrate`, whose refusal is the one list of the writers, `--leave-behind` for a writer that cannot be rebuilt where it was, and a server's writes refused until it runs the new schema), and the pin's | `board`: what the move changes for a project |
 | Public Rust items a consumer calls | the [consumer-API guards](CHECKS.md#consumer-api-changes) that changed | `api`: `OLD => NEW` for a replacement shipped beside the old item, `removed OLD => NEW` for a removal |
 | symphony.toml | the keys [PROJECT_FILE](PROJECT_FILE.md)'s tables list anew, and those they list no more | `settings`: what a project writes instead, a file or a command's arguments |
 | Installed recipes, skills, hooks and rules | the files under `crates/symphony/shipped/` that changed, which `symphony init` rewrites | `init` |
@@ -122,7 +122,7 @@ nothing, and who writes each:
 
 The plugin kit, the helpers and the product are published on crates.io, each by its version,
 under MIT: crates.io is the package manager their versions live in
-([its card](DECISIONS.md#consumer-contract-versioning)).
+([its card](analysis/consumer-contract.md#consumer-contract-versioning)).
 
 - **The kit:** `symphony-plugin`, `symphony-blocks` and `symphony-docs`
   ([the kit](PLUGIN_PROTOCOL.md#the-kit)), one version for the three, from 1.0.0. A new kind of
@@ -298,6 +298,20 @@ kit from crates.io beside a library from Git would be two copies of the kit, who
 match ([the analysis](analysis/consumer-contract.md#two-references-two-copies)). A project's own
 landing moves its Git pin; the machine refresh never does
 ([the refresh](#the-refresh)).
+
+- [r] **kit-new-block-version** — Before the plugin kit goes to crates.io at 1.0.0, one thing about it cannot be changed later without a new major version: what happens to its version when Symphony adds a new kind of block (or a new kind of text span or media) to the vocabulary plugins draw with. A: a new block is a small update (1.1.0): a plugin written for 1.0.0 keeps building and gets the update by itself. B: a new block is a new major version (2.0.0): every plugin's author must change its requirement by hand before it can use any later kit. Recommended: A. Approve and say A or B in the note, or comment. [[RELEASES#Packages on crates.io]]
+  [2026-11-14 02:12] agent — Posted for the board tasks `tools/kit-version-lines` and `tools/release-publishes-to-crates-io`; nothing is published yet, and nothing will be until you say so.
+
+    **What it is in the code.** The vocabulary is three lists in `symphony-blocks`: `Block`, `Span` and `Media`. Rust lets a list be marked as one that may grow. Marked, adding to it is a small update. Unmarked, as today, adding to it is a breaking change, because code elsewhere may have listed every case.
+
+    **A, marked as growing.** A plugin only makes blocks, it does not list them, so nothing changes for a plugin. The cost is in Symphony's own client, the one place that lists every block to draw it: the compiler no longer refuses a build where a new block has no drawing, so a test does that instead (it goes through every block and fails on one the client does not draw).
+
+    **B, as today.** The compiler keeps checking the client. Every new block, span or media kind makes the kit 2.0.0, 3.0.0 and so on, and each consuming project and plugin author moves by hand each time.
+
+    **Why A.** New blocks are how the product grows, so under B the kit's major version would move often and mean little. The check B keeps can be kept by a test. Choosing A after 1.0.0 is published would itself be a new major version, so now is the cheap moment.
+  [2026-11-14 06:29] owner · approved — A
+  [2026-11-15 11:14] agent — Recorded: A, a new kind of block, text span or media is a small update of the kit. It is not in the code yet: the three lists are still unmarked, and the plugin protocol's document said a new kind was a new major. That document now says the rule you chose and that the lists get marked, with a test that the client draws every kind, before the kit's first publication. The task that does it is asked of the orchestrator on the board task `docs/owner-answers-applied`; nothing is published before it lands. [[PLUGIN_PROTOCOL#Versions]]
+  [2026-11-15 11:14] agent · resolved
 
 ## A GitHub Release
 
@@ -788,6 +802,44 @@ log under `logs/ID/`. The newest 60 records and the logs of the newest 14 runs s
 green (or nothing new), 1 red, stopped short or refused, or a green release whose publication or
 refresh failed, 2 a command line refused.
 
+- [~] **conciliation-consumer-own-reds** — Today a Symphony release waits until every test of the consuming project's packages that use Symphony passes against it, even tests that already fail on that project's own main with no Symphony change. So a red on that project's own main holds every Symphony release, and with it the machine's refresh (each project's pin, its board and the shared server moved to the release), as it does now: today's release waits on 31 of its tests, all failing on its own main, none caused here. Before it tags, the release run builds and tests each consuming project's packages that use Symphony against the release, in a scratch copy: the conciliation. What should make that check red? A: any failing test, as today; the release and the refresh wait until the project's main is green. B: only a test or a build that passes at the project's own pinned Symphony and fails with the release; tests already failing at its pin are listed in the release's notes as the project's own, and the release and the refresh go ahead. C: any failing test but those on a list kept by hand for each project in `symphony.toml`. Recommended: B. Approve and say A, B or C in the note, or comment. [[RELEASES#The release run]]
+  [2026-11-13 17:53] agent — Posted for the board task `docs/conciliation-baseline-card`.
+
+    **What happened today.** The release candidate, first judged at 09:00, was rerun at 15:29. Its other red has since been fixed and landed; the conciliation's red is the one left, on 31 tests of the consuming project in 7 test targets. Each was run again alone, with the release and with the project's own pin (no Symphony change at all): all 31 fail both ways, at the same line with the same message. None is caused by the release and none is load: a missing file, a missing entry in its budget table, 11 fixtures that its own landing rules refuse, and 8 that the rules of Symphony's board already in its pin refuse (a subtask is never moved to review, a reviewer cannot judge a task it filed, a draft card is not listed). That pin is a commit of main moved by hand, which no release run has judged: there is no release yet. Each is the project's to fix, and its board has a task for each. A rerun now would be red on the same 31 and spend the second of the candidate's three, so the red is held open until the project's fixes land or you answer.
+
+    **A, any failing test, as today.**
+    - When a release ships: once the consuming project's main is green, after its own tasks for these tests land there, and again after any later red on its main. Until then each rerun is red on the same tests; the candidate is dropped at its 24-hour bound (09:00 on 2026-11-14) or after three red reruns, and the run of main's tip that follows meets the same reds.
+    - When the machine refreshes: only after that release. Meanwhile the project's pin, its board's schema and the shared server stay where they are.
+    - Cost: nothing to build. The project's own reds are filed here as a release red, one task for the check whatever the number of tests, which nothing here can fix.
+    - What it cannot see: nothing broken is released, but it cannot tell the project's own reds from a break the release makes.
+
+    **B, judged against the project's own pin.** In the scratch copy the project's tests run twice: at its own committed lock, and with the lock moved to the release. The check is red only for a test or a build that passes at the pin and fails with the release. Tests already red at the pin are listed in the run's record and the release's notes as the project's own, with its board's tasks where known, and nothing is filed here for them.
+    - When a release ships: at the first run after B is built in which the release breaks nothing new. Today's 31 would not hold it.
+    - When the machine refreshes: right after that release, so the project's pin moves while its own main is still red. Its own commit gate and hooks still decide whether the move lands there; if they refuse it, the release stands and the move waits for that project's own landing, as today.
+    - Cost: a task here to build it. About twice the project's test time on a run where its commit or lock changed since the last baseline (its conciliation took 13, 90 and 23 minutes in the last three runs); a rerun against an unchanged project reuses the baseline and runs once.
+    - What it cannot see: the baseline is whatever the project's pin is. A break that came in with a pin no conciliation judged, as today's pin is, is listed as the project's own: 8 of today's 31 fail on Symphony board rules that came in with that pin. And a test already red at the pin for a reason of the project's that the release also breaks for another: that break shows only once the project fixes the first, and then on its own board, as its own red.
+
+    **C, a list of tests to skip.** Each consuming project gets a list of its tests in this repository's `symphony.toml`, which the conciliation leaves out.
+    - When a release ships: once a task here lists today's 31 and lands. Each later red on the project's main holds the release again until it is listed.
+    - When the machine refreshes: as under B.
+    - Cost: no extra run time. An edit and a land here for each red there, and another to take a test off the list once the project fixes it, which nothing reminds anyone to do.
+    - What it cannot see: anything the release breaks in a listed test, for as long as it stays listed. B and C both turn today's red check green while the 31 still fail; the difference is that B still runs every test and is red on anything the release newly breaks, while C stops running the listed tests.
+
+    **Your words that bear on it:**
+    - 2026-11-11, on how projects take a newer Symphony: "New releases can be pushed for urgent bugfixes, but generally should be generated based on nightly builds that would do a full verification cycle and conciliation." What makes the conciliation red was left open then; this card asks it.
+    - 2026-11-12: "also nightly fixes should be prioritized, like bugfixes are since they block releases. Meaning express path line followed up by another run". Under A, a red nothing here can fix blocks the release all the same.
+    - 2026-11-11: "tests that are failing in main should be handled by an orchestrator as a separate task in order for individual tasks not to be blocked by it and have a single dedicated owner to solve it." The consuming project's own reds have that owner on its own board.
+    - 2026-11-12: "yes, a green release should refresh".
+
+    **Why B.** The conciliation is there to tell whether a release breaks a consuming project, and B answers exactly that: what the release breaks is red, and the project's own reds stay with their owner on its board, as your words above have it for a red main, instead of holding every Symphony release and refresh. A ties Symphony's releases to another project's main being green. C stays blind to what it lists and needs a land here for every red there.
+
+    **Earlier verdicts checked.** **symphony-update-command** (B) asks for a conciliation, not for what makes it red: A, B and C each keep one. **consumer-api-break-release** (A, a deliberate break in two releases) stands under each, since a test the release breaks passes at the pin and fails with the release: A and B see it, and C sees it unless the test is listed. Neither decides this card.
+
+    This card is the only change. The option you choose is built by a task filed after your verdict.
+  [2026-11-13 18:15] owner · question — There should be proper isolation against a contract, so that each package/crate of symphony can be released and versioned on its own. Consumers could list an outdated package u til they are ready to update, allowing a phased update approach. Thoughts?
+  [2026-11-13 18:24] agent · question — On your comment (contract isolation, each package released and versioned on its own, consumers staying on an older one until ready): I think it is the right end state, and it removes this question rather than answering it. With a contract, a release is judged by contract tests this repository owns, never by the consumer's whole suite, so a consumer's own reds cannot hold a release, and the refresh becomes each consumer's own phased move. What it needs, as I read the code today: (1) the contract named and versioned: the plugin protocol and block vocabulary, the wire types, the board's schema and CLI, the installed recipes; (2) consumers reaching Symphony across a boundary that tolerates two versions: the plugin process protocol already is one, while a plugin crate linked into the host is not, since two versions of the wire types in one binary are different types; (3) the two things one machine shares, the server and each board's schema, taking a consumer one version behind, which the schema does not do today (it only moves forward with the pin). That is a design with real choices (which packages version apart, how far back the server and schema reach), so I would put it to you as its own analysis and card, not build it from a comment. It does not ship before the candidate's bound (09:00 on 2026-11-14), so this card still needs A, B or C for the releases until then; my recommendation stays B as the bridge, with the contract design filed now. Say the word (or just approve with A, B or C) and I file the contract analysis either way.
+  [2026-11-13 19:39] owner · dismissed
+
 ## Out of cycle
 
 `just release --commit COMMIT` releases an urgent fix without waiting for the next run: the same
@@ -802,7 +854,7 @@ the candidate does not descend from drops the candidate ([below](#its-bounds)).
 
 A project that says so has its release run verify the candidate on GitHub's macOS runners in
 place of this machine, so a busy or sleeping machine no longer decides a release
-([its card](DECISIONS.md#release-run-on-github), whose
+([its card](analysis/release-pipeline.md#release-run-on-github), whose
 [analysis](analysis/release-pipeline.md#the-hosted-run-on-github) says why). It is the project's
 word, which is two settings, as [a GitHub Release](#a-github-release) has two: `[releases] hosted`
 in `symphony.toml`, the command the run asks, and `verification = "hosted"` in the GitHub
@@ -1130,7 +1182,7 @@ How often is paced by what a run costs where it is verified:
 
 Nothing ticks for either: each landing asks (`--due`), and a run starts when one of them is due.
 Neither starts a run after each landing, or a run of some of the checks: a run is the whole
-verification of one commit ([its card](DECISIONS.md#release-main-judged-in-steps)).
+verification of one commit ([its card](analysis/release-pipeline.md#release-main-judged-in-steps)).
 
 ### The count
 
@@ -1216,9 +1268,9 @@ verification of one commit ([its card](DECISIONS.md#release-main-judged-in-steps
 - **A landing that moves the board's schema** (it raises `VERSION` in
   `crates/tasks/src/schema.rs`, which its `Consumer-Note: board` trailer says,
   [CHECKS](CHECKS.md#what-a-landing-tells-a-consumer)) is followed at once by a release run,
-  whatever the count ([the owner's A](DECISIONS.md#schema-landing-then-release), 2026-11-19).
+  whatever the count ([the owner's A](#schema-landing-then-release), 2026-11-19).
   Main's build moves this repository's board at its first command after the landing
-  ([TASKS](TASKS.md#where-it-lives)), and the machine's server, a release's, then writes nothing
+  ([BOARD_OPERATIONS](BOARD_OPERATIONS.md#which-build-moves-a-live-board)), and the machine's server, a release's, then writes nothing
   to it until a release at the new schema serves it ([the switch](#the-switch)), unless the step is
   declared to keep the Symphony writing and that server's release reads the record the declaration
   writes ([CHECKS](CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). A declared step
@@ -1341,7 +1393,7 @@ Once a release's tag is pushed, the run does this, in order:
   - A project with no board folder, a board not made yet, and one at the release's schema or past
     it have nothing to move.
   - **The writer rule.** A board moves only when every writer seen there in the last week (its
-    writer record, [who writes a board](TASKS.md#who-writes-a-board)) is a release's own, was built
+    writer record, [who writes a board](BOARD_OPERATIONS.md#who-writes-a-board)) is a release's own, was built
     at the release's schema, or is not counted (below). A release's own is a binary of a release
     installed in this machine folder (`releases/NAME/bin/`) on this host, which pointing `current`
     takes on. A board with any other writer behind stays where it is, and the step names each
@@ -1363,7 +1415,7 @@ Once a release's tag is pushed, the run does this, in order:
     and a build put there since that is itself behind and has not run. Each that runs before the
     move writes its line and holds the board; after it, each is refused the board ahead of it,
     naming itself as the program to rebuild, before any write
-    ([who writes a board](TASKS.md#who-writes-a-board)): a refused write, never a corrupt one. A
+    ([who writes a board](BOARD_OPERATIONS.md#who-writes-a-board)): a refused write, never a corrupt one. A
     file restored with its old time still counts.
   - **A build the project no longer runs.** A line behind on this host whose program is still at
     its path is not counted either when it is no build the project runs now and was last seen
@@ -1426,7 +1478,7 @@ Once a release's tag is pushed, the run does this, in order:
   unless the step keeps it writing ([CHECKS](CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)),
   and two ahead it refuses it ([the switch](#the-switch)); that release's `tasks` and `agent-send`
   refuse it either way, naming themselves as the program to rebuild ([who writes a
-  board](TASKS.md#who-writes-a-board)).
+  board](BOARD_OPERATIONS.md#who-writes-a-board)).
 - **The machine's server.** Last, the run says which server answered on the machine's record
   before `current` moved. Nothing here starts, stops, signals or restarts it. A release's server
   follows `current` by its own reload ([the install](#the-install)): the run waits, 5 minutes at
@@ -1536,7 +1588,7 @@ updates up to it (`updates.json` in the machine folder,
   that update, served or not, its task closed, and its next arrival at `N` is a new generation,
   `ID@N.2`, `tests/release-red-update-ID-N-g2`, an entry of its own beside the old, which keeps its
   history; so is an arrival the board's `schema-seen.log` dates after a served one's (the record
-  starts again from an accepted rollback, [TASKS](TASKS.md#a-board-that-went-back)). An open
+  starts again from an accepted rollback, [BOARD_OPERATIONS](BOARD_OPERATIONS.md#a-board-that-went-back)). An open
   update a higher goal supersedes is served when the server writes the board at its schema, else
   ended with its task; so is an open update of a project no longer registered. What the ledger
   cannot tell apart: a board's database recreated at the same schema with no rollback in its
@@ -1613,14 +1665,20 @@ releases/release-2026-11-20/
   bin/tasks
   bin/agent-send
   bin/symphony
+  bin/tasks-move       the move of a board's store, which no recipe runs
   client/HASH/         the client, named by the hash of its files
 current -> releases/release-2026-11-20
 ```
 
 - **The build.** In the run's own checkout, at the release's commit and in its build folder, the
-  run builds the release profile of the four binaries (`tools/cargo.sh build --release --locked`,
+  run builds the release profile of the five binaries (`tools/cargo.sh build --release --locked`,
   each named with `--bin`, of the packages `symphony-server`, `symphony-board` and
-  `symphony-app`). The server
+  `symphony-app`): the four a project's recipes run, and `tasks-move`, by which a project on
+  the release moves its board's store to PostgreSQL
+  ([one board's move](analysis/board-pg-cutover.md#one-boards-move)). No recipe and no refresh
+  runs that one: the project's orchestrator or owner runs it by its path under `current`, and
+  `symphony init` links and names no build of it, so it has no size line
+  ([size budgets](CHECKS.md#size-budgets)). The server
   is built with no client compiled in (`SYMPHONY_CLIENT_BESIDE=1`, which its build script reads):
   run from a release's folder it serves `client/HASH/` from beside it. The client is the
   distribution the commit holds (`apps/symphony-server/client/public/`), which the release's own
@@ -1688,6 +1746,45 @@ schema 25 on writes through
 ([CHECKS](CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). A board two ahead, or a
 project at a newer pin, is refused until `current` names a release that serves it.
 
+- [r] **schema-landing-then-release** — When a task that changes the board's layout (its schema) lands, this project's pages stop saving until a release with that layout runs on the machine: the board still shows, but your verdicts, messages and changes wait or are refused, and reach no agent. Today that lasts until the next release run, which comes every 20 landings, so for hours. What should follow such a landing? A: the orchestrator starts a release run right after it, without asking each time: your pages wait for that run, under 40 minutes when it is green, at the cost of one run outside the count. B: the approved task waits and lands just before the count's next run, its landing the one that starts it: your pages wait for the same run and nothing extra runs, at the cost of holding the task for up to 20 landings. C: as now: it lands when approved, and your pages wait until the count brings a release. Recommended: A. Approve and say A, B or C in the note, or comment. [[RELEASES#The switch]]
+  [2026-11-19 04:52] agent — Posted for the board task `docs/schema-landing-then-release-card`. Two tasks would each change the schema: `tools/durable-provider-attempts` (in review) and `tools/workflow-runtime` (in progress), both to 23 on their branches, so the second to land becomes 24. Read on 2026-11-19 at 04:50: main and release-2026-11-19, which `current` names and the machine's server runs, are at schema 22.
+
+    **Your pages meanwhile.** In this repository the board moves at the first board command after the landing. The machine's server is the release `current` names. With the board one schema ahead it shows the board and writes nothing: your saves and chat wait in its journal, a message on a task, a priority, a field or a cancel is refused, every page says so, and a verdict saved meanwhile reaches no agent until the server reloads at the new schema. Two schemas ahead, it shows no board at all.
+
+    **What ends it.** A green release run at the new schema, its refresh pointing `current` at it, and the server following by its own reload. Three things stand in between, under every option:
+    - **The count.** A run starts once 20 tasks have landed, and 45 to 97 landed a day from 2026-11-15 to 11-18. After five of the last six releases the count's next run came 2½ to nearly 10 hours later.
+    - **A red run.** 19 of the 26 runs since 2026-11-16 were red. A red run's commit is held as the release candidate until its fixes land and a rerun is green: from a counted run's start to its release took 27 minutes to 16 hours, 2¼ hours or less in four of the last six. While a candidate is open no run checks main's newest commit, by hand or by the count; one was open for 25 of the 56 hours since release-2026-11-16.
+    - **The other two projects.** `current` moves only once every program seen writing their boards in the last week is at the new schema. That held release-2026-11-18 for 1 h 50 and release-2026-11-18.2 for 1 h 08, until those programs were brought up and the refresh rerun.
+
+    **What happened.** On 2026-11-17 schema 20 landed at 06:04 while the machine's server was at 18, two behind: it showed no board of this project until it was replaced at 13:03. On 2026-11-18 your verdicts saved from 12:47 reached no agent until 18:05. Schema 21 had landed at 23:02 the night before; its release came at 12:28, the other projects held it until 14:18, and the server took it up only at 17:48. Schema 22 landed meanwhile, at 15:46: the count's run started at 16:03 and was red, its rerun released release-2026-11-18.2 at 16:57, and the other projects held it until 18:05.
+
+    **A run** takes 17 to 37 minutes when green (7 since 2026-11-16, the install and the refresh included) and 20 to 63 when red.
+
+    **What each costs.**
+    - **A:** at most one run more per schema landing, on this machine, and the count starts again from it: there were four schema landings beside the 26 runs since 2026-11-16. A schema landing still waits while a run or a candidate holds the release, since a run started then runs nothing on main's newest commit; B waits for them too. Starting a release run by hand is your call today, so A is your standing word for these runs.
+    - **B:** nothing runs beyond the count. The approved task waits for it, up to 20 landings, and its branch takes main's newer commits meanwhile, so a conflict sends it back to review; tasks that build on it wait as well. The orchestrator lands it when `just release --status` says the next landing starts a run.
+    - **C:** nothing to do. Your pages wait for the count as well as the run, hours each time, as on 2026-11-18.
+
+    **Under every option** the orchestrator holds a second schema landing, without asking, until a release serving the first is `current`, so the board is never two ahead. With both tasks above approved, that is two runs, an hour or so when green, under A; under B, a count for each.
+
+    **A fourth way would remove the wait rather than shorten it.** Nothing of it is built or designed: it is proposed as a design task for the orchestrator to file, and this card does not decide it. The wait comes from one rule, that a program writes only a board at its own schema.
+    - A release's server could keep writing a board one schema ahead wherever that schema changed nothing it writes, each schema saying whether it did: 23 on `tools/durable-provider-attempts` only adds four tables the server never writes, while 23 on `tools/workflow-runtime` adds checks on every write of a task.
+    - Or this board could move only at the refresh, as the other projects' boards do. Then main's newer build would have to write a board one schema behind instead, the same rule turned round, and this board would no longer move with main, as **board-schema-at-update** keeps it.
+
+    **Why A.** A and B leave your pages the same one run, against hours under C. A spends at most one run per schema landing, and none on this machine once the release runs on GitHub; B spends approved work held for hours at every schema landing, with a second review when it conflicts, and a count for each when two come together.
+
+    **Earlier verdicts checked.**
+    - **live-board-schema-moves** (A, 2026-11-15) landed two schema moves at once and took the read-only pages until a refresh, over a release run by hand after each landing (its B, close to A here). The refresh was red then with no end in sight, so that B meant holding both tasks first. It chose for those two tasks and sets no rule for every schema landing. Its other half, the second move "only after the server is refreshed", is the hold above.
+    - **release-main-judged-in-steps** (rejected, 2026-11-18): you refused a round after each landing for the load, and called the count "mostly a control for that, so the machine isn't always under load". A adds a run per schema landing, not per landing; it weighs on A and does not decide it.
+    - **release-run-on-github** (approved, 2026-11-18) runs the release's checks on GitHub's machines, which would take A's run off this one. It is not built: its trial, `tools/release-hosted-trial`, is in the backlog.
+    - **release-main-while-candidate-open** (A): no run of main's newest commit while a candidate is open, which A and B both wait out.
+    - **board-schema-at-update** (C): a board moves only once its writers are at the new schema. It is the third wait above under every option, and the fourth way's second form would change what it keeps for this board.
+  [2026-11-19 07:43] owner · approved — A
+  [2026-11-19 07:45] agent — A recorded as standing authorization: after a schema-changing landing, the orchestrator starts its release run immediately, without asking again or waiting for the 20-landing count. A schema landing still waits while an active run or candidate prevents that run, and the next schema landing waits until the first schema is served by current. Release reds and refresh prerequisites still have to be resolved; this does not authorize bypassing them or manually restarting the shared server. I have routed the rule to the release coordinators and the project guidance update.
+  [2026-11-19 07:45] agent · resolved
+  [2026-11-19 08:00] agent — Your A is now written and landed on main at a727950d4efb: RELEASES, The cadence and Who runs it, hold the rule; AGENTS.md and the orchestrator guide point to it. A schema landing starts its release immediately unless its own cadence hook already started it. Active-run/candidate and second-schema holds remain, and a red run or blocked refresh still follows the normal recovery rules.
+  [2026-11-19 12:45] agent — The hold on a second schema landing is removed, by the owner's word of 2026-11-19 as commit b1be7b0d5 recorded it: said in the orchestrator's terminal, on the hold that kept the approved workflow runtime unlanded, "remove this rule". That commit's message is the only record of it; nothing of it is on this card's thread or the board. A second schema landing no longer waits for `current` to name a release serving the first's schema, so this board may stand two schemas ahead of the machine's server, which then shows no board of it until a release at its schema is `current`. This replaces "Under every option" above, the hold in the 07:45 and 08:00 lines here, and the same hold in **schema-move-keeps-pages-writing**. What stays: the release run at once after each schema landing, and the wait while a run or a release candidate holds the release. The rule is in RELEASES, The cadence, and the orchestrator's guide.
+
 ### The way back
 
 A release is taken back on the machine by hand, by pointing `current` at the release before it,
@@ -1705,12 +1802,38 @@ the newer release moved stays at that release's schema, which the older release'
 and writes nothing to ([the switch](#the-switch)) and the older release's `tasks` refuses. Its
 store as it was before the move is the snapshot the refresh took
 (`before-schema-N-RELEASE.surql`, or `.sql` of a board on PostgreSQL), and a board put back to it is one that went back, which the
-owner accepts ([TASKS](TASKS.md#a-board-that-went-back)). Pointing `current` back on the machine whose
+owner accepts ([BOARD_OPERATIONS](BOARD_OPERATIONS.md#a-board-that-went-back)). Pointing `current` back on the machine whose
 server is the shared one is the owner's word. Pointing it forward is not: while this
 repository's board is at a schema the release `current` names does not serve, an orchestrator
 points `current` at the newest green release that serves it, at once and without asking, and
 another project's pages save nothing until that project takes the release. The next green
 refresh points `current` at the release it installs.
+
+- [r] **consumer-manifest-line** — The app you open on port 8765 still runs release-2026-11-13.2, and no release since has reached it. Every refresh since 2026-11-14 stops at its first command in the consuming project, whose manifest asks for a package named `symphony`; from release-2026-11-14 on that package is named `symphony-app`. One line of that project's manifest has to name it, and nobody here edits that project without your word. Who makes that change? A: the refresh: `just release --refresh`, which already moves that project's pin, also changes the package's name on that line when it finds the old one. B: an orchestrator, once, by hand in that project's checkout. C: you. Recommended: A. Approve and say A, B or C in the note, or comment. [[RELEASES#The refresh]]
+  [2026-11-15 10:20] agent — Posted for the board task `docs/consumer-manifest-line-card`. The red refresh has a task of its own on this board, blocked since 2026-11-14 on this question, which until now was asked only in chat and on that thread.
+
+    **The line**, in the consuming project's workspace manifest, the one place it names the library: `symphony = { package = "symphony-app", git = "https://github.com/heavenstudio/symphony", tag = "release-2026-11-15" }`. Nothing else moves: the key stays `symphony`, so no code changes.
+
+    **It is not an edit on its own.** The release that project is pinned to holds no `symphony-app`, and the releases after it hold no package named `symphony`. So the new name goes in the same commit as the new tag: that line, the tag on all ten of the project's Symphony lines, and its lock. That commit is the pin's move, which the refresh makes at every release.
+
+    **What each costs.**
+    - **A:** a small change to the refresh, as a board task with its review, then a rerun: hours, not minutes. The move is made as today, in a worktree beside that project's checkout and through its own commit gate, and its main takes it only if the commit changes manifests and the lock alone and its hooks allow it. The refresh stays the only thing of Symphony's that edits that project, and a later rename is handled the same way.
+    - **B:** no code, and the soonest. The orchestrator makes the pin's whole move by hand (the line, the ten tags, the lock), commits it on that project's default branch through its commit gate, then reruns the refresh, which finds the pin moved and goes on to the board. It is one exception to the rule that Symphony's agents do not edit that project, made in the checkout the shared server is built from, without the refresh's checks. Pushing that project's branch stays a separate act that needs its own word.
+    - **C:** the same work by your hand, when you get to it. The orchestrator reruns the refresh when you say it is done.
+
+    **What a green refresh brings, and what it does not.** It brings the newest release, release-2026-11-15 (c944025a, 03:11 today), not main's tip.
+    - Your approval of **live-board-schema-moves** (A) waits on it: `tools/board-token-usage` lands only after the server is refreshed.
+    - The fix for pages that never load is not in that release. Measured today on the shared server: with five of its tabs open in one browser, a further page got no answer in 40 s. Main's client, with eight tabs open, returned the queue in 31 to 48 ms. That fix (22afbd67) landed after release-2026-11-15, so it reaches you only with the next release after a refresh works.
+    - The next release is held: a release candidate is open, red in two checks, and no run judges main's tip until it is released or dropped (2026-11-16 04:18 at the latest).
+
+    **What is unknown.** Whether more is red behind this one. `cargo update` is the refresh's first command in that project, so nothing after it has run since 2026-11-13: that project's build against a newer release, its commit gate, its hooks, its board's move, the server's reload. Under every option the first rerun shows the next red, if there is one.
+
+    **Why A.** The commit this needs is the pin's move, and the refresh already makes that move with checks a hand does not have; B and C make it by hand in the checkout your server is built from. A's cost is some hours after B, on a refresh red for two days, and those hours do not delay the tab fix, which waits for the next release either way.
+
+    **Earlier verdicts checked.** **consumer-api-break-release** (A) is about code a project uses staying in place for a release; it does not say who changes a manifest line. No other card speaks of who edits the consuming project.
+  [2026-11-15 10:38] owner · approved — B
+  [2026-11-15 11:13] agent — Recorded: B. An orchestrator, quiet-plover, makes the pin's whole move once by hand in the consuming project's checkout (the line, the release's tag on its Symphony lines and its lock), through that project's own commit gate, then reruns `just release --refresh`, on the red refresh's own board task. Pushing that project's branch stays a separate act that needs your word. [[RELEASES#The refresh]] now says who makes this move.
+  [2026-11-15 11:14] agent · resolved
 
 ## Who runs it
 

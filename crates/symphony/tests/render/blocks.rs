@@ -64,6 +64,46 @@ fn a_card_and_its_whole_thread_are_one_block() {
     assert_eq!(blocks[2].text, "After the card.");
 }
 
+/// A register as a first one is written: its markers right above and below its one card.
+const TIGHT: &str = "# D\n\n<!-- register:start -->\n- [ ] **a** — one.\n<!-- register:end -->\n";
+
+#[test]
+fn a_card_under_a_line_with_no_blank_between_is_a_block_of_its_own() {
+    assert_eq!(spans(TIGHT), [(1, 1), (3, 3), (4, 4), (5, 5)]);
+    assert_eq!(split_blocks(TIGHT)[2].text, "- [ ] **a** — one.");
+    // Under a heading, a paragraph or a list item alike, and two cards in a row are two blocks.
+    assert_eq!(
+        spans("## Needs your decision\n- [ ] **a** — one.\n  its thread\n- [x] **b** — two.\n"),
+        [(1, 1), (2, 3), (4, 4)]
+    );
+    assert_eq!(
+        spans("words\nmore words\n- [ ] **a** — one.\n"),
+        [(1, 2), (3, 3)]
+    );
+    assert_eq!(spans("- an item\n- [ ] **a** — one.\n"), [(1, 1), (2, 2)]);
+}
+
+#[test]
+fn a_card_line_in_a_fence_stays_code_whatever_stands_above_it() {
+    let text = "words\n```\n- [ ] **a** — one.\n```\n";
+    assert_eq!(spans(text), [(1, 4)]);
+    assert!(!page_at(text, "docs/x.md").contains("class=\"decision\""));
+}
+
+#[test]
+fn a_card_right_under_its_registers_marker_is_drawn_as_the_queue_counts_it() {
+    let html = page_at(TIGHT, "docs/DECISIONS.md");
+    assert_eq!(html.matches("class=\"decision\"").count(), 1, "{html}");
+    assert!(html.contains("data-slug=\"a\""), "{html}");
+    assert!(html.contains("data-line=\"4\""), "{html}");
+    assert!(html.contains("data-group=\"decide\""), "{html}");
+    assert!(!html.contains("<li>"), "{html}");
+    let lines: Vec<&str> = TIGHT.lines().collect();
+    let counted = symphony::register::parse_decisions(&lines);
+    assert_eq!(counted.len(), 1);
+    assert_eq!((counted[0].line, counted[0].slug.as_str()), (4, "a"));
+}
+
 #[test]
 fn posts_render_inside_the_card_with_tables_as_tables() {
     let html = page_at(&text(), "docs/x.md");

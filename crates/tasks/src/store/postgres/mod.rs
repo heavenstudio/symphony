@@ -48,6 +48,7 @@ pub(in crate::store) mod snapshot;
 pub(in crate::store) mod spending;
 pub(in crate::store) mod stage_lines;
 pub(in crate::store) mod stamp;
+pub(in crate::store) mod stored_settings;
 pub(in crate::store) mod thread_window;
 pub(in crate::store) mod unanswered;
 pub(in crate::store) mod waits;

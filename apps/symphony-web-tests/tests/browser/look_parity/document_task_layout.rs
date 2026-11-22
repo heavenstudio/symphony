@@ -18,10 +18,7 @@ fn a_long_task_panel_keeps_its_last_link_clear_of_fixed_page_controls() {
     data.get_mut("/api/section").unwrap()["change"]["sections"] = sections;
     let site = ParitySite::with_data(data);
     let Some(mut browser) = chrome() else { return };
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    browser.viewport(1440, 900, false);
     browser.open(&site.url("/docs/game/SPEC.md"));
     assert!(browser.wait_for("document.querySelector('.doc-body pre') !== null && document.querySelector('.doc-tasks a') !== null && document.querySelector('#quick-open') !== null",SHOWN));
     painted_layout(&mut browser);
@@ -55,10 +52,7 @@ fn the_document_task_panel_tells_its_rows_apart_and_folds_finished_work() {
     data.get_mut("/api/section").unwrap()["change"]["path"] = json!("docs/game/SPEC.md");
     let site = ParitySite::with_data(data);
     let Some(mut browser) = chrome() else { return };
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    browser.viewport(1440, 900, false);
     browser.open(&site.url("/docs/game/SPEC.md"));
     assert!(
         browser.wait_for(
@@ -161,10 +155,7 @@ fn every_document_entry_uses_the_same_responsive_task_panel() {
         data.get_mut("/api/section").unwrap()["change"]["path"] = json!(path);
         let site = ParitySite::with_data(data);
         for width in [1440, 390] {
-            browser.call(
-                "Emulation.setDeviceMetricsOverride",
-                json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":false}),
-            );
+            browser.viewport(width, 900, false);
             // Include the new document's first style calculation in the coverage sample.
             track_styles(&mut browser);
             browser.open(&site.url(route));

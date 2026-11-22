@@ -24,7 +24,8 @@ at once.
 - **A task board.** Agents file tasks with a brief, claim them, post evidence, review one another
   and land approved branches with one command. The board shows who holds what, what is stuck and
   on whom, and each task's page shows its gates, its timeline and its thread
-  ([the board](docs/TASKS.md)).
+  ([the board's page](docs/product/BOARD.md), [a task's page](docs/product/TASK.md),
+  [how the board works](docs/TASKS.md)).
 - **Agents and their sessions.** Who is connected, on which task and branch, whether each is alive,
   and a link into its terminal. What you say on a card or a task reaches the agent that holds it.
 - **Runs and reports.** Every build, test and check an agent runs is recorded, and the reports

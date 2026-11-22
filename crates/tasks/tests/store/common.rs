@@ -78,7 +78,7 @@ impl RawWrite for Client {
     }
 }
 
-fn retry_conflicts<T>(
+pub fn retry_conflicts<T>(
     until: Instant,
     mut once: impl FnMut() -> Result<T, DbError>,
 ) -> Result<T, DbError> {
@@ -853,11 +853,65 @@ pub fn bounded<T: Send + 'static>(
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
+/// A new task `slug`, a subtask of `parent`.
+pub fn under(slug: &str, parent: &str) -> NewTask {
+    NewTask {
+        parent: Some(parent.into()),
+        ..NewTask::new(slug, "Jump departure", "owner")
+    }
+}
+
+/// An orchestrator on `a`; `a/b` under it, `a/b/c` under that.
+pub fn chain(backend: Backend) -> (Fixture, String) {
+    let f = Fixture::on(backend, Seed::default());
+    let orch = f.session("orchestrator");
+    f.task("a");
+    f.store.take_role("a", &orch, "orchestrator").unwrap();
+    f.task_with(under("a/b", "a"));
+    f.task_with(under("a/b/c", "a/b"));
+    (f, orch)
+}
+
+/// `amber-heron` and `brisk-finch`, and `sim/jump` at `status`.
+pub fn two_and_a_task(backend: Backend, status: &str) -> Fixture {
+    Fixture::on(
+        backend,
+        Seed::default()
+            .session("amber-heron")
+            .session("brisk-finch")
+            .task("sim/jump", status),
+    )
+}
+
+/// `sim/jump` in review, everyone seen at `NOW`: `ochre-owl` orchestrates, `amber-heron` executed
+/// it, `brisk-finch` reviews it.
+pub fn in_review(backend: Backend) -> Fixture {
+    Fixture::on(
+        backend,
+        Seed::default()
+            .session("ochre-owl")
+            .session("amber-heron")
+            .session("brisk-finch")
+            .task("sim/jump", "review")
+            .role("sim/jump", "ochre-owl", "orchestrator")
+            .role("sim/jump", "amber-heron", "executor")
+            .role("sim/jump", "brisk-finch", "reviewer"),
+    )
+}
+
 /// The refusal's words, or a panic naming what came back instead.
 pub fn refused<T: std::fmt::Debug>(result: Result<T, symphony_board::Error>) -> String {
     match result {
         Err(symphony_board::Error::Refused(message)) => message,
         other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+/// The workflow pair `phase/state`.
+pub fn pair(phase: &str, state: &str) -> symphony_api::workflow::Pair {
+    symphony_api::workflow::Pair {
+        phase: phase.into(),
+        state: state.into(),
     }
 }
 

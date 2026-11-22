@@ -82,18 +82,8 @@ fn timed(mut timeline: Value) -> Value {
 }
 
 fn view(chrome: &mut super::chrome::Chrome, width: u32, phone: bool) {
-    chrome.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": width, "height": 900, "deviceScaleFactor": 1, "mobile": phone}),
-    );
-    frames(chrome);
-}
-
-/// Two of the page's frames drawn.
-fn frames(chrome: &mut super::chrome::Chrome) {
-    chrome.eval(
-        "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-    );
+    chrome.viewport(width, 900, phone);
+    chrome.frames();
 }
 
 /// Whether the elements `selector` matches are drawn (laid out with a size).
@@ -132,7 +122,7 @@ fn open(chrome: &mut super::chrome::Chrome, site: &Site, width: u32, rows: usize
         "the timeline's {rows} rows were not drawn: {:?}",
         chrome.eval("document.querySelector('article.task')?.innerText")
     );
-    frames(chrome);
+    chrome.frames();
 }
 
 /// A person's click on what `selector` matches: brought to the middle of the screen, pressed and
@@ -153,7 +143,7 @@ fn tap(chrome: &mut super::chrome::Chrome, selector: &str) {
             json!({"type": kind, "x": at["x"], "y": at["y"], "button": "left", "clickCount": 1}),
         );
     }
-    frames(chrome);
+    chrome.frames();
 }
 
 /// After a click on "Show all" or "Show the latest": whether the "+" chat sheet is open, and
@@ -276,7 +266,7 @@ fn a_timeline_drawn_wide_and_narrowed_to_a_phone_collapses_as_a_phone_draws_it()
         "narrowed, the list was not measured again: {}",
         chrome.eval("document.querySelector('.tl-drawn').className")
     );
-    frames(&mut chrome);
+    chrome.frames();
     assert_eq!(chrome.eval(MORE), json!("Show all 13 steps"));
     assert_eq!(chrome.eval(BOX_HEIGHT), json!(240));
     assert_eq!(
@@ -370,7 +360,7 @@ fn a_runs_hover_and_focus_say_its_command_its_wait_and_its_run_time_apart() {
         "document.querySelector('.tl-drawn.tl-clipped .tl-more') !== null",
         SHOWN
     ));
-    frames(&mut chrome);
+    chrome.frames();
     let legend = json!(["worked or ran", "queued or waiting", "running now"]);
     let before = chrome.eval(LAST_ROW);
     assert_eq!(
@@ -384,7 +374,7 @@ fn a_runs_hover_and_focus_say_its_command_its_wait_and_its_run_time_apart() {
         ),
         json!(true)
     );
-    frames(&mut chrome);
+    chrome.frames();
     let mut focused = chrome.eval(LAST_ROW);
     let top = focused["top"].take();
     assert!(
@@ -438,7 +428,7 @@ fn on_a_phone_a_runs_row_says_all_of_it_in_every_box() {
     );
     let before = chrome.eval(LAST_ROW);
     tap(&mut chrome, ".tl-list > li:last-of-type");
-    frames(&mut chrome);
+    chrome.frames();
     let focused = chrome.eval(LAST_ROW);
     assert_eq!(
         (&focused["top"], &focused["facts"], &focused["whole"]),
@@ -467,7 +457,7 @@ fn on_a_phone_a_runs_row_says_all_of_it_in_every_box() {
     open(&mut chrome, &site, 390, 13);
     assert!(drawn(&mut chrome, ".tl-note"));
     tap(&mut chrome, ".tl-list > li:last-of-type");
-    frames(&mut chrome);
+    chrome.frames();
     let focused = chrome.eval(LAST_ROW);
     assert!(
         focused["facts"].as_str().unwrap().ends_with(host)
@@ -480,7 +470,7 @@ fn on_a_phone_a_runs_row_says_all_of_it_in_every_box() {
     let shown_all = chrome.eval(BOX_HEIGHT);
     let row = ".tl-list > li.tl-sub:not(.tl-event)";
     tap(&mut chrome, row);
-    frames(&mut chrome);
+    chrome.frames();
     let grown = chrome.eval(BOX_HEIGHT);
     let words = chrome.eval(&format!(
         "(() => {{ const facts = document.querySelector({}).querySelector('.tl-facts'); return [facts.textContent, facts.getBoundingClientRect().height]; }})()",
@@ -653,7 +643,7 @@ fn placeholder_drawn(chrome: &mut super::chrome::Chrome, site: &Site) -> Value {
         "the box's placeholder was not drawn: {:?}",
         chrome.eval("document.querySelector('article.task')?.innerText")
     );
-    frames(chrome);
+    chrome.frames();
     places(chrome)
 }
 
@@ -675,7 +665,7 @@ fn on_a_phone_nothing_on_the_page_moves_when_the_timeline_arrives_or_a_read_adds
     );
     site.hold_route(symphony_api::TASK_TIMELINE_PATH, false);
     assert!(chrome.wait_for("document.querySelectorAll('.tl-drawn .tl-list .tl-row').length === 13 && window.minute !== null", SHOWN));
-    frames(&mut chrome);
+    chrome.frames();
     assert_eq!(places(&mut chrome), before, "the timeline moved the page");
     // A minute's read that brings a step more adds it inside the box.
     let mut more = timed(fixture());
@@ -686,7 +676,7 @@ fn on_a_phone_nothing_on_the_page_moves_when_the_timeline_arrives_or_a_read_adds
         "document.querySelectorAll('.tl-drawn .tl-list .tl-row').length === 14",
         SHOWN
     ));
-    frames(&mut chrome);
+    chrome.frames();
     assert_eq!(places(&mut chrome), before, "a step more moved the page");
     // "Show all" lets the box grow, as the reader asked, and the brief goes below it: at most
     // 240 px tall, the box does not hold the phone's list whole.
@@ -877,7 +867,7 @@ fn a_wide_box_holds_every_lane_with_no_show_all_and_the_next_visit_reserves_it_a
         let arrived =
             format!("document.querySelectorAll('.tl-drawn .tl-list .tl-row').length === {rows}");
         assert!(chrome.wait_for(&arrived, SHOWN), "{rows} steps: not drawn");
-        frames(&mut chrome);
+        chrome.frames();
         // The height is kept in whole pixels, the timeline's own a fraction under it: what is under
         // the box may move by less than one.
         let after = places(&mut chrome);
@@ -888,7 +878,7 @@ fn a_wide_box_holds_every_lane_with_no_show_all_and_the_next_visit_reserves_it_a
             "{rows} steps: the timeline moved the page: {before} then {after}"
         );
         chrome.eval("document.getElementById('timeline').scrollIntoView()");
-        frames(&mut chrome);
+        chrome.frames();
         let at_rest = (places(&mut chrome), chrome.eval(FOOT));
         let part = chrome.eval(LAST_PART);
         assert_eq!(
@@ -902,7 +892,7 @@ fn a_wide_box_holds_every_lane_with_no_show_all_and_the_next_visit_reserves_it_a
                 json!({"type": kind, "x": part["x"], "y": part["y"], "button": "left", "clickCount": 1}),
             );
         }
-        frames(&mut chrome);
+        chrome.frames();
         assert_eq!(
             chrome.eval("document.activeElement?.closest('.tl-lane')?.dataset.lane ?? null"),
             part["lane"],
@@ -939,7 +929,7 @@ fn the_plus_button_covers_nothing_the_timeline_says_at_a_phones_width() {
         let Some(mut chrome) = chrome() else { return };
         open(&mut chrome, &site, 390, rows);
         chrome.eval("document.querySelector('.tl-more')?.click()");
-        frames(&mut chrome);
+        chrome.frames();
         // Whatever the page's scroll, the button's column holds none of the timeline's words.
         assert_eq!(
             chrome.eval("(() => { const button = document.getElementById('quick-open').getBoundingClientRect(); return [...document.querySelectorAll('#timeline-slot .tl-at, #timeline-slot .tl-label, #timeline-slot .tl-took, #timeline-slot .tl-word, #timeline-slot .tl-totals span, #timeline-slot .tl-legend li, #timeline-slot .tl-more, #timeline-slot .tl-day')].filter(e => e.getClientRects().length > 0 && e.getBoundingClientRect().right > button.left).map(e => e.textContent); })()"),
@@ -981,7 +971,7 @@ fn the_timeline_reads_each_minute_only_while_shown_and_open_and_stops_when_left(
     // Hidden, its minute passes without a read; shown again, one read, and the minutes go on.
     chrome.eval("Object.defineProperty(document, 'hidden', {configurable: true, get: () => true}); document.dispatchEvent(new Event('visibilitychange'))");
     chrome.eval("window.minute()");
-    frames(&mut chrome);
+    chrome.frames();
     chrome.eval("new Promise(resolve => setTimeout(resolve, 300))");
     assert_eq!(
         (reads(&site), chrome.eval("window.minuteTimers")),
@@ -1023,7 +1013,7 @@ fn the_timeline_reads_each_minute_only_while_shown_and_open_and_stops_when_left(
         SHOWN
     ));
     chrome.eval("window.minute && window.minute()");
-    frames(&mut chrome);
+    chrome.frames();
     chrome.eval("new Promise(resolve => setTimeout(resolve, 300))");
     assert_eq!(
         (reads(&site), chrome.eval("window.minuteTimers")),
@@ -1042,7 +1032,7 @@ fn the_timeline_reads_each_minute_only_while_shown_and_open_and_stops_when_left(
         "document.querySelector('.tl-totals span')?.textContent.includes('in all')",
         SHOWN
     ));
-    frames(&mut chrome);
+    chrome.frames();
     chrome.eval("new Promise(resolve => setTimeout(resolve, 300))");
     assert_eq!(
         (
@@ -1067,7 +1057,7 @@ fn failed_read(chrome: &mut super::chrome::Chrome) {
         "no failure was drawn: {:?}",
         chrome.eval("document.querySelector('article.task')?.innerText")
     );
-    frames(chrome);
+    chrome.frames();
 }
 
 #[test]
@@ -1244,7 +1234,7 @@ fn an_answer_for_a_task_the_page_left_never_draws_one_tasks_timeline_in_anothers
     }) {
         panic!("{stall}: {:?}", site.targets());
     }
-    frames(&mut chrome);
+    chrome.frames();
     assert_eq!(chrome.eval(BOXES), json!([["b/two", "b/two", 13]]));
     assert_eq!(
         (reads_of(&site, "a%2Fone"), reads_of(&site, "b%2Ftwo")),
@@ -1272,7 +1262,7 @@ fn an_answer_for_a_task_the_page_left_never_draws_one_tasks_timeline_in_anothers
         panic!("{stall}: {:#?}", chrome.requests());
     }
     site.hold_route(&a, false);
-    frames(&mut chrome);
+    chrome.frames();
     assert_eq!(
         chrome.eval(
             "[document.querySelector('.tl-drawn'), document.getElementById('timeline-root')]"
