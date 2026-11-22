@@ -2352,7 +2352,7 @@ another program in its foreground). A close and a restore of one session each ho
 run, so neither starts while the other runs; one whose hold lapsed and was taken over writes
 nothing more, and a restore that lost it kills the terminal it started. A Codex record
 takes the thread its callback registered whichever is written first; one closed with no thread
-says on its thread that restore cannot resume it. See the [tasks skill](../crates/symphony/shipped/skills/tasks/SKILL.md#launch-restore-clean-up-hc).
+says on its thread that restore cannot resume it. See the [tasks skill](../crates/symphony/shipped/skills/tasks/SKILL.md#launch-restore-clean-up).
 
 An initialized JavaScript REPL can retain `kernel.js` and `trusted-worker.js` under the
 ChatGPT app's bundled `node`. Their command lines do not distinguish waiting for a cell
