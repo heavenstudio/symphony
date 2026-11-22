@@ -235,9 +235,48 @@ fn feed_sections(feeds: &[String]) -> Vec<Vec<String>> {
         .collect()
 }
 
-/// A feed event retitling the document `path`: once the page shows it, the page has followed its
-/// feed past the outline's answer, every section read it would make made.
+/// The key of each section the document page drew, or `null` while a section that came near the
+/// screen still waits for its body (its ghost, `.section-loading`). A section is wanted from the
+/// moment it comes near the screen and stays so, and drawn once its body is read, so with none
+/// waiting the sections drawn are those the page wants its feed to name (document-live.ts
+/// `followed`).
+const DRAWN: &str = "document.querySelector('main .section-loading') ? null : [...document.querySelectorAll('main section.doc-section[data-doc-key]')].map(section => section.dataset.docKey)";
+
+/// Wait until the page's feed follows every section it drew, none still waiting for its body: it
+/// then has no section to open its feed again for. A page opens its feed again naming the
+/// sections that came near the screen on the first quiet 200 ms of its stream after they did
+/// (document-live.ts `followDocument`), which a loaded machine leaves until after their bodies
+/// are drawn: the server sends the stream opened again what was pushed in between, the stand-in
+/// does not (`Site::following`), and an event pushed there never reaches the page (the large
+/// document read ahead, release run 2026-11-22T1030-89384, at a load average over 100).
+fn follows_what_it_drew(chrome: &mut Chrome, site: &Site) {
+    let mut drawn = Value::Null;
+    test_time::until_true(
+        "the page's feed following every section it drew",
+        crate::STALL,
+        || {
+            drawn = chrome.eval(DRAWN);
+            drawn.as_array().is_some_and(|keys| {
+                keys.iter()
+                    .all(|key| key.as_str().is_some_and(|key| site.following(key)))
+            })
+        },
+    )
+    .unwrap_or_else(|stall| {
+        let feeds: Vec<String> = site
+            .targets()
+            .into_iter()
+            .filter(|target| target.starts_with(symphony_api::FEED_PATH))
+            .collect();
+        panic!("{stall}: drawn {drawn}; the feed requests {feeds:?}")
+    });
+}
+
+/// A feed event retitling the document `path`, pushed once the page's feed follows every section
+/// it drew ([`follows_what_it_drew`]): once the page shows it, the page has followed its feed past
+/// the outline's answer, every section read it would make made.
 pub(super) fn retitled(chrome: &mut Chrome, site: &Site, path: &str, version: u64, title: &str) {
+    follows_what_it_drew(chrome, site);
     site.push(
         version,
         &json!({"version": version, "changes": [{"region": "document", "data": {"path": path, "title": title}}]})
