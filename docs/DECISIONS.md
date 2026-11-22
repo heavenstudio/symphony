@@ -59,6 +59,7 @@ A document's first card adds its line here.
 - [A task's first visit](design/analysis/task-first-visit.md)
 - [Navigating a task's timeline](design/analysis/timeline-navigation.md)
 - [Orchestrators and messages on a task's timeline](design/analysis/timeline-orchestrator.md)
+- [A task's cost on its card, its page and its timeline](design/analysis/token-cost.md)
 - [Worktree build folders](engineering/analysis/worktree-build-folders.md)
 
 ## Cards with no document of their own

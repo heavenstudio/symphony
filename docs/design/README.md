@@ -23,3 +23,5 @@ The pictures beside them that no analysis shows are the ones a card in the
   the wide timeline, with builds and tests by their recorded times.
 - [Orchestrators and messages on a task's timeline](analysis/timeline-orchestrator.md) — who
   orchestrated a task and which way its messages went, on the timeline's clock.
+- [A task's cost on its card, its page and its timeline](analysis/token-cost.md) — a task's
+  estimated cost after its time on its board card, its page and each stretch of its timeline.
