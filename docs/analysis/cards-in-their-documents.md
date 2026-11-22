@@ -1,12 +1,11 @@
 # Where decision cards live
 
-A proposal for where the owner's decision cards are written: in any document, by default the one
-each card decides about, as the consuming project's are. It names what makes that happen there
-and what this repository's guidance says instead, then covers the words to change, what the
-Symphony must do, what the decision register, `docs/DECISIONS.md`, becomes, how the documents
-could be laid out by area and how the cards written so far would move.
-[Its cards](#the-cards), at the end of this page, ask the two choices. Nothing in the
-product changes with this proposal, and no card moves.
+The proposal that led to where the owner's decision cards are written now: each at the place in
+its document where the thing it decides is said, which
+[REVIEW](../REVIEW.md#where-a-card-is-written) states. This page keeps the evidence: what makes
+cards land in their own documents in the consuming project, what this repository's guidance said
+instead, what the Symphony read already, and the two layouts weighed, a card at its document's end
+and the documents laid out by area. Its cards sit under the sections that argue them.
 
 Every figure of this repository is of main at `8ccc91eb2`, and every figure of the consuming
 project is of its main at `c4d2fc10f`, both read on 2026-11-21. A path is of this repository
@@ -113,14 +112,15 @@ in any reference document has the queue category `docs`
 
 **A card is written in the document that states, or will state, what its verdict changes**:
 a reference document (`RELEASES.md` for how a release is cut), a product spec (a page's
-behaviour), the analysis that proposes something not built yet. It sits in a register region at
-that document's end, under a `## Decisions` heading, added where the document has none.
+behaviour), the analysis that proposes something not built yet. This page proposed a register
+region at that document's end; what was taken instead is the card inline, directly under the
+paragraph or heading that says the thing, with no markers around it.
 
-**The prose above the region says how things are; the region is that document's record.** This
-is what the two rules about history ask (RULES.md `history-is-not-reference`,
+**The prose around a card says how things are; the card's own lines are the document's record at
+that place.** This is what the two rules about history ask (RULES.md `history-is-not-reference`,
 `docs/no-ledger-in-documents`): no dated line or owner's word in what agents read as current. A
-card's lines stay on the card, as today, and the card is at the end of the page it decided
-rather than in another file. A reader after how things are stops at the region's first marker.
+card's lines stay on the card, and the checks that hold those rules pass a card's lines wherever
+it sits.
 
 **`DECISIONS.md` holds only a card no one document holds**: a rule or a guide's wording (the
 guides are outside `docs/`, which is all the board reads), or a choice across several documents.
@@ -259,6 +259,28 @@ What it costs:
 - **The analyses**, which move too: 254 mentions in 73 files, 42 of them in Rust. Moved alone,
   they are about a fifth of the whole.
 
+- [x] **docs-folders-by-area** — The documents under `docs/` would be sorted into folders by area, as the consuming project's are: product, design, workflow, engineering and operations. Your queue names each card by its first folder, so it would sort decisions by those areas, where today every card says `docs` or `analysis`. Which documents move? A: none; the layout stays as it is. B: every document, once: the 19 reference documents and the 48 analyses, each area with its own `analysis/` folder. C: the analyses alone, into `product/analysis/`, `design/analysis/` and so on; the reference documents stay where they are. Recommended: C. Approve and say A, B or C in the note, or comment. [[analysis/cards-in-their-documents#Folders by area]]
+  [2026-11-21 10:21] agent — Posted for the board task `docs/decisions-anywhere-by-default`, on the second half of your rejection of **cards-in-their-documents**, that the consuming project's "docs have better structure between engineering, product, design etc." It goes with **cards-in-any-document** and can be answered apart from it.
+
+    **Base, today.** 19 reference documents and the register at the top of `docs/`, three product specs in `product/`, and 48 analyses with 186 pictures in one `analysis/` folder. The docs index sorts the references under three headings that are no folders. The consuming project has a folder per topic, each with a page saying what it holds, and its engineering folder has an `analysis/` of its own.
+
+    **The areas.**
+    - `product/`: what each page is for and how it behaves.
+    - `design/`: how the app looks: the header, the mark, a page while it loads, the timeline.
+    - `workflow/`: how work moves: review, the board, checks, releases.
+    - `engineering/`: the contracts a project builds against: plugins, tools, artifacts, execution.
+    - `operations/`: setting it up and running it: the project file, PostgreSQL, GitHub.
+
+    **What each costs.**
+    - **A**: nothing. A card in an analysis says `analysis` in your queue, one in a reference document says `docs`.
+    - **B**: 1,092 mentions of the reference documents by path, in 355 files, 237 of them Rust files whose comments name a document, and 254 more for the analyses. A throwaway script rewrites them and the docs audit checks every link. The consuming project's guides link these documents on GitHub 34 times; those break until its own task rewrites them.
+    - **C**: the 254 mentions of analyses, in 73 files. Nothing outside this repository breaks.
+
+    **Why C.** Most cards are argued in analyses, so most of your queue would sort by area, and one folder of 48 analyses becomes five, for about a fifth of B's rewrites. B gives the same shape as the consuming project at five times the cost and a break in its guides; it can follow C later, as the areas would already exist.
+
+    **Earlier verdicts checked.** **product-spec-form** set the form of the specs in `product/`, which every option keeps. No card decides how the other documents are laid out.
+  [2026-11-21 17:27] owner · approved — B
+
 ## How the cards written so far move
 
 - **Only new cards.** Nothing moves. The register stays at 378 KB of mostly settled cards, which
@@ -308,60 +330,6 @@ analyses with 186 pictures stop being one folder, for about a fifth of B's rewri
 its breaks outside this repository. B is the same shape as the consuming project's, at five times
 the rewrites and a break in the consuming project's guides.
 
-## What it costs, in slices
-
-1. **The words** (A, B and C): the guide, the rule, the review guide, the docs index and the two
-   shipped apply-review pages. Documents and skills only.
-2. **The checks** (B and C): one name, one card in `status --lint` and the docs index; the two
-   checks reading records by region; triage's category. Each tested on a slug in two documents,
-   in a document and a history record, and in two regions of one document.
-3. **The move** (B and C): documents only, after slices 1 and 2 land.
-4. **The register's list** (C): the page's list and `--cards`, with a picture of the page wide
-   and on a phone.
-5. **The folders** (the second card, B or C): one scripted move with the constants, after the
-   card move so no card's link is rewritten twice.
-
-## Tradeoffs
-
-- **A reference document grows by its cards.** A card's lines average 4.3 KB. They are below
-  everything the document says, behind a fold on its page, and an agent reading for how things
-  are stops at the marker.
-- **Two homes for one subject for a while.** After the move, `RELEASES.md` holds 4 cards about
-  releases and the analyses that argued the others hold theirs. The queue and `--json` name each card's
-  file.
-- **A region's headings.** A save regroups a region under the register's own group headings, so
-  a document's last headings are *Needs your decision* down to *Resolved*, under `## Decisions`.
-- **No one page of every decision** under B, in the app or in a clone: the queue lists what is
-  open, and a settled card is found on its document or by `--json`.
-
-## The cards
-
-<!-- register:start -->
-## Waiting on an agent
-
-### Decision cards
-
-- [x] **docs-folders-by-area** — The documents under `docs/` would be sorted into folders by area, as the consuming project's are: product, design, workflow, engineering and operations. Your queue names each card by its first folder, so it would sort decisions by those areas, where today every card says `docs` or `analysis`. Which documents move? A: none; the layout stays as it is. B: every document, once: the 19 reference documents and the 48 analyses, each area with its own `analysis/` folder. C: the analyses alone, into `product/analysis/`, `design/analysis/` and so on; the reference documents stay where they are. Recommended: C. Approve and say A, B or C in the note, or comment. [[analysis/cards-in-their-documents#Folders by area]]
-  [2026-11-21 10:21] agent — Posted for the board task `docs/decisions-anywhere-by-default`, on the second half of your rejection of **cards-in-their-documents**, that the consuming project's "docs have better structure between engineering, product, design etc." It goes with **cards-in-any-document** and can be answered apart from it.
-
-    **Base, today.** 19 reference documents and the register at the top of `docs/`, three product specs in `product/`, and 48 analyses with 186 pictures in one `analysis/` folder. The docs index sorts the references under three headings that are no folders. The consuming project has a folder per topic, each with a page saying what it holds, and its engineering folder has an `analysis/` of its own.
-
-    **The areas.**
-    - `product/`: what each page is for and how it behaves.
-    - `design/`: how the app looks: the header, the mark, a page while it loads, the timeline.
-    - `workflow/`: how work moves: review, the board, checks, releases.
-    - `engineering/`: the contracts a project builds against: plugins, tools, artifacts, execution.
-    - `operations/`: setting it up and running it: the project file, PostgreSQL, GitHub.
-
-    **What each costs.**
-    - **A**: nothing. A card in an analysis says `analysis` in your queue, one in a reference document says `docs`.
-    - **B**: 1,092 mentions of the reference documents by path, in 355 files, 237 of them Rust files whose comments name a document, and 254 more for the analyses. A throwaway script rewrites them and the docs audit checks every link. The consuming project's guides link these documents on GitHub 34 times; those break until its own task rewrites them.
-    - **C**: the 254 mentions of analyses, in 73 files. Nothing outside this repository breaks.
-
-    **Why C.** Most cards are argued in analyses, so most of your queue would sort by area, and one folder of 48 analyses becomes five, for about a fifth of B's rewrites. B gives the same shape as the consuming project at five times the cost and a break in its guides; it can follow C later, as the areas would already exist.
-
-    **Earlier verdicts checked.** **product-spec-form** set the form of the specs in `product/`, which every option keeps. No card decides how the other documents are laid out.
-  [2026-11-21 17:27] owner · approved — B
 - [-] **cards-in-any-document** — Replaces: cards-in-their-documents. A decision card would be written, by default, in whichever document it decides about: `RELEASES.md` for a decision about releases, a product spec for how a page behaves, an analysis for something proposed and not built. The card sits at the end of that document, below everything it says about how things are. `docs/DECISIONS.md` would keep only the cards that belong to no one document. You would answer every card from the queue as today; opening one shows its document above it. How far should this go now? A: the words alone: the guides and the shipped skill say the default, new cards follow it, and the 88 cards stay in `DECISIONS.md`. B: the words, a check that no two documents use one card name, and the 88 cards moved once to the documents they link; `DECISIONS.md` keeps 6 cards and the queue is the list of every decision. C: as B, and the `DECISIONS.md` page also lists every card held elsewhere, drawn live. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/cards-in-their-documents#The choices]]
   [2026-11-21 10:21] agent — Posted for the board task `docs/decisions-anywhere-by-default`, answering your rejection of **cards-in-their-documents**: "This isn't just about analysis docs. The idea is that decisions are made in any place, And this should be the default behavior." This card drops that card's limit to analyses, and its "never in a reference document".
 
@@ -396,10 +364,7 @@ the rewrites and a break in the consuming project's guides.
 
     None of them decides where a card is written.
   [2026-11-21 17:26] owner · rejected — Ideally, decisions are at the place where they “decide” not at the bottom
-
-## Rejected and replaced
-
-### Decision cards
+  [2026-11-21 18:19] agent — Done as you said, by the board task `docs/cards-inline-where-they-decide`, with no new card: your three answers leave nothing to choose. A card is now written at the place in its document where the thing it decides is said, directly under the paragraph or heading that says it, never at the bottom ([where a card is written](../REVIEW.md#where-a-card-is-written)). The Symphony reads, queues, links, answers and resolves a card there as it does one in a register. The move is done too, on your first words ("we should not be hoarding all decisions in this file", "properly move decisions to their rightful locations"): 91 cards went, word for word, under the heading each one links, in 50 documents; `DECISIONS.md` keeps the 6 that link no document and lists the documents that hold the others. This card and the two beside it moved the same way, under the sections that argue them.
 
 - [-] **cards-in-their-documents** — Each decision card would be written at the end of the analysis that argues it, instead of in `docs/DECISIONS.md`, which today holds all 88 cards in 378 KB. You would still answer every card from the queue as today; opening one shows its analysis above it. What should `DECISIONS.md` become, and do the cards written so far move? A: only new cards go in their analyses; `DECISIONS.md` keeps all its cards and lists no new one. B: every card moves once to its analysis; `DECISIONS.md` keeps the 17 cards that have none, and its page lists every other card live, one line each, linking it. C: as B, but `DECISIONS.md` holds a committed one-line copy of every card, rewritten on each post and answer. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/cards-in-their-documents#The choice]]
   [2026-11-21 13:20] agent — Posted for the board task `docs/decisions-live-with-their-documents`, on your ask of 2026-11-20: "we should not be hoarding all decisions in this file. The ideal scenario is that decisions are hopefully added or connected to the particular files that they belong at. [...] Decisions.md could be a sort of catch all that just has a copy of a decision made in another place?". This card is written the proposed way, at the end of its analysis, and reaches your queue as any card does.
@@ -425,4 +390,29 @@ the rewrites and a break in the consuming project's guides.
     None of them decides where a card is written.
   [2026-11-21 09:39] owner · rejected — This isn't just about analysis docs. The idea is that decisions are made in any place, And this should be the default behavior. If you look at the star-foundry project, you can see how in there decisions are a lot more spread, docs have better structure between engineering, product, design etc. There's probably some skill or instructions in star foundry that better dictates this that is missing on this project.
   [2026-11-21 10:21] agent — Answered by **cards-in-any-document**: a card in any document is the default, reference documents included, and this card's limit to analyses is dropped. How the documents are laid out by area is **docs-folders-by-area**. What makes the consuming project's cards land in their own documents, and the words this project has in their place, are in the analysis above, by file and line.
-<!-- register:end -->
+
+## What it costs, in slices
+
+1. **The words** (A, B and C): the guide, the rule, the review guide, the docs index and the two
+   shipped apply-review pages. Documents and skills only.
+2. **The checks** (B and C): one name, one card in `status --lint` and the docs index; the two
+   checks reading records by region; triage's category. Each tested on a slug in two documents,
+   in a document and a history record, and in two regions of one document.
+3. **The move** (B and C): documents only, after slices 1 and 2 land.
+4. **The register's list** (C): the page's list and `--cards`, with a picture of the page wide
+   and on a phone.
+5. **The folders** (the second card, B or C): one scripted move with the constants, after the
+   card move so no card's link is rewritten twice.
+
+## Tradeoffs
+
+- **A reference document grows by its cards.** A card's lines average 4.3 KB. They are below
+  everything the document says, behind a fold on its page, and an agent reading for how things
+  are stops at the marker.
+- **Two homes for one subject for a while.** After the move, `RELEASES.md` holds 4 cards about
+  releases and the analyses that argued the others hold theirs. The queue and `--json` name each card's
+  file.
+- **A region's headings.** A save regroups a region under the register's own group headings, so
+  a document's last headings are *Needs your decision* down to *Resolved*, under `## Decisions`.
+- **No one page of every decision** under B, in the app or in a clone: the queue lists what is
+  open, and a settled card is found on its document or by `--json`.

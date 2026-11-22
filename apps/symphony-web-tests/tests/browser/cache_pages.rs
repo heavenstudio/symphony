@@ -156,12 +156,25 @@ pub(super) fn keeps(chrome: &mut Chrome, parts: &[&str]) {
     );
 }
 
+/// A page's script naming the longest wait a timer takes for its database's open
+/// (`symphonyCacheOpenMs`, `apps/symphony-web/shell/cache.ts`): the page waits for the open
+/// itself, and only a stall, which each test's own wait says, ends it.
+const DATABASE_WAITED_FOR: &str = "window.symphonyCacheOpenMs = 2147483647;";
+
 /// This origin's store opened before a page's first visit, in a page of the site's without the
-/// client (`/api/pending`, a read no test here counts): the store keeps a scratch item, asked again
-/// until it answers, and forgets it. A fresh profile's first open makes the database against the
-/// store's 500 ms deadline, which a loaded machine can miss, and the page then keeps nothing, as
-/// it should (`shell/cache.ts`); with the database made, the page's own open makes nothing.
+/// client (`/api/pending`, a read no test here counts): the store keeps a scratch item and forgets
+/// it, so a fresh profile's database is made before the page's own open, which then makes nothing.
+///
+/// That page and every page opened after it name the wait for its database
+/// ([`DATABASE_WAITED_FOR`]): these tests are of a page with its cache, and an open, the first or
+/// a return visit's, passes the store's 500 ms deadline on a loaded machine, which leaves the page
+/// without what this device kept (`shell/cache.ts`). The deadline is the store's own tests'
+/// (`cache_store.rs`).
 pub(super) fn store_opened(chrome: &mut Chrome, site: &Site) {
+    chrome.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source": DATABASE_WAITED_FOR}),
+    );
     chrome.open(&site.url("/api/pending"));
     // The store as the shell carries it, its types stripped.
     let store = crate::assets::store();
@@ -191,10 +204,7 @@ pub(super) fn store_opened(chrome: &mut Chrome, site: &Site) {
 
 /// A first visit to `page`: drawn from the server, live, and its reads kept.
 fn visit(chrome: &mut Chrome, site: &Site, page: &Page) {
-    chrome.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    chrome.viewport(1440, 900, false);
     store_opened(chrome, site);
     chrome.open(&site.url(page.path));
     if page.drawn.starts_with("[data-status=build]") {
@@ -239,17 +249,83 @@ pub(super) fn notice(chrome: &mut Chrome, saved: f64, unreachable: bool) -> Stri
     }
 }
 
-/// When the oldest of what `page` draws from the device was kept: its parts, and the task board's
-/// every kept column.
-fn oldest(chrome: &mut Chrome, page: &Page) -> f64 {
-    kept(chrome)
-        .iter()
-        .filter(|(part, _)| {
-            page.parts.contains(&part.as_str())
-                || page.path == TASKS.path && part.starts_with("board:waiting column:")
-        })
+impl Page {
+    /// Whether `part` is of what this page draws from the device: its parts, and the task
+    /// board's every kept column.
+    fn keeps(&self, part: &str) -> bool {
+        self.parts.contains(&part)
+            || self.path == TASKS.path && part.starts_with("board:waiting column:")
+    }
+}
+
+/// When the oldest of the kept parts `of` names was kept.
+pub(super) fn oldest(chrome: &mut Chrome, of: impl Fn(&str) -> bool) -> f64 {
+    oldest_of(&kept(chrome), of)
+}
+
+/// The oldest moment among `kept`'s parts `of` names, each kept at its seconds; with none of
+/// them kept, later than any moment.
+fn oldest_of(kept: &serde_json::Map<String, Value>, of: impl Fn(&str) -> bool) -> f64 {
+    kept.iter()
+        .filter(|(part, _)| of(part))
         .map(|(_, saved)| saved.as_f64().unwrap())
         .fold(f64::INFINITY, f64::min)
+}
+
+#[test]
+fn the_oldest_kept_part_is_among_the_parts_asked_for_and_none_kept_is_later_than_any() {
+    let kept = json!({"board: board": 30.5, "board: queue": 20.0, "task:a page": 10.0});
+    let kept = kept.as_object().unwrap();
+    assert_eq!(oldest_of(kept, |part| part.starts_with("board:")), 20.0);
+    assert_eq!(oldest_of(kept, |part| part == "board: board"), 30.5);
+    assert_eq!(oldest_of(kept, |_| true), 10.0);
+    assert_eq!(oldest_of(kept, |_| false), f64::INFINITY);
+    assert_eq!(oldest_of(&serde_json::Map::new(), |_| true), f64::INFINITY);
+}
+
+#[test]
+fn a_page_keeps_its_parts_and_the_task_board_every_kept_column() {
+    assert!(TASKS.keeps("board:waiting counts"));
+    assert!(TASKS.keeps("board:waiting column:build"));
+    assert!(!TASKS.keeps("board: queue"));
+    assert!(QUEUE.keeps("board: queue"));
+    assert!(!QUEUE.keeps("board:waiting column:build"));
+    assert!(!QUEUE.keeps(""));
+}
+
+/// How many answers the stand-in has sent to each of `reads`.
+pub(super) fn answered(site: &Site, reads: &[&str]) -> Vec<usize> {
+    reads.iter().map(|read| site.answers(read).len()).collect()
+}
+
+/// The answers to `read`, one of `reads`, since `before` ([`answered`] of the same `reads`).
+pub(super) fn since(site: &Site, reads: &[&str], before: &[usize], read: &str) -> Vec<Answered> {
+    let at = (reads.iter().position(|each| *each == read))
+        .unwrap_or_else(|| panic!("{read} is none of the reads counted, {reads:?}"));
+    site.answers(read)[before[at]..].to_vec()
+}
+
+/// Hold back each of `reads`, or let them go.
+pub(super) fn hold(site: &Site, reads: &[&str], held: bool) {
+    for read in reads {
+        site.hold_route(read, held);
+    }
+}
+
+/// Open `path` again, from a blank page, with `held` held back; the answers to each of `reads`
+/// counted before it ([`answered`]).
+pub(super) fn return_held(
+    chrome: &mut Chrome,
+    site: &Site,
+    reads: &[&str],
+    held: &[&str],
+    path: &str,
+) -> Vec<usize> {
+    let before = answered(site, reads);
+    hold(site, held, true);
+    chrome.open("about:blank");
+    chrome.open(&site.url(path));
+    before
 }
 
 /// The page shows what this device kept, saying so, and its actions wait.
@@ -274,32 +350,6 @@ fn drawn_from_the_device(chrome: &mut Chrome, page: &Page, said: &str) {
             "the Later button waits"
         );
     }
-}
-
-/// How many answers the stand-in has sent to each of [`READS`].
-fn answered(site: &Site) -> Vec<usize> {
-    READS.iter().map(|read| site.answers(read).len()).collect()
-}
-
-/// The answers to `read` since `before` ([`answered`]).
-fn since(site: &Site, before: &[usize], read: &str) -> Vec<Answered> {
-    let at = READS.iter().position(|each| *each == read).unwrap();
-    site.answers(read)[before[at]..].to_vec()
-}
-
-fn hold(site: &Site, held: bool) {
-    for read in READS {
-        site.hold_route(read, held);
-    }
-}
-
-/// Open `page` again with every read held back; the answers counted before it.
-fn return_held(chrome: &mut Chrome, site: &Site, page: &Page) -> Vec<usize> {
-    let before = answered(site);
-    hold(site, true);
-    chrome.open("about:blank");
-    chrome.open(&site.url(page.path));
-    before
 }
 
 /// Each read of `answers` named a tag, was answered `304`, and asked once.
@@ -333,17 +383,17 @@ fn a_return_visit_draws_what_this_device_kept_before_any_answer_and_checks_it_wi
     };
     for page in [HOME, TASKS, QUEUE] {
         visit(&mut chrome, &site, &page);
-        let saved = oldest(&mut chrome, &page);
-        let before = return_held(&mut chrome, &site, &page);
+        let saved = oldest(&mut chrome, |part| page.keeps(part));
+        let before = return_held(&mut chrome, &site, &READS, &READS, page.path);
         let said = notice(&mut chrome, saved, false);
         drawn_from_the_device(&mut chrome, &page, &said);
         assert_eq!(
-            answered(&site),
+            answered(&site, &READS),
             before,
             "{}: drawn before any read was answered",
             page.path
         );
-        hold(&site, false);
+        hold(&site, &READS, false);
         shows(&mut chrome, LIVE, page.path);
         if page.path == QUEUE.path {
             shows(
@@ -357,7 +407,7 @@ fn a_return_visit_draws_what_this_device_kept_before_any_answer_and_checks_it_wi
         }
         // The board is read fresh, its version starting the feed; every other kept read is asked
         // whether it changed, once.
-        let board = since(&site, &before, "/api/board");
+        let board = since(&site, &READS, &before, "/api/board");
         assert_eq!(
             board
                 .iter()
@@ -369,7 +419,7 @@ fn a_return_visit_draws_what_this_device_kept_before_any_answer_and_checks_it_wi
         );
         let checked: Vec<Answered> = ["/api/task-board", "/api/queue"]
             .into_iter()
-            .flat_map(|read| since(&site, &before, read))
+            .flat_map(|read| since(&site, &READS, &before, read))
             .collect();
         eprintln!("{} checked: {checked:#?}", page.path);
         if page.path == HOME.path {
@@ -416,15 +466,15 @@ fn a_changed_read_redraws_and_its_copy_replaces_the_kept_one() {
             json!(title)
         );
         visit(&mut chrome, &site, &page);
-        let saved = oldest(&mut chrome, &page);
-        let before = return_held(&mut chrome, &site, &page);
+        let saved = oldest(&mut chrome, |part| page.keeps(part));
+        let before = return_held(&mut chrome, &site, &READS, &READS, page.path);
         let said = notice(&mut chrome, saved, false);
         drawn_from_the_device(&mut chrome, &page, &said);
         site.set_json(read, &changed);
-        hold(&site, false);
+        hold(&site, &READS, false);
         shows(&mut chrome, &redrawn, page.path);
         shows(&mut chrome, LIVE, page.path);
-        let asked = since(&site, &before, read);
+        let asked = since(&site, &READS, &before, read);
         assert!(
             !asked.is_empty()
                 && asked
@@ -443,12 +493,12 @@ fn a_changed_read_redraws_and_its_copy_replaces_the_kept_one() {
             ),
             "the changed read kept",
         );
-        let saved = oldest(&mut chrome, &page);
-        return_held(&mut chrome, &site, &page);
+        let saved = oldest(&mut chrome, |part| page.keeps(part));
+        return_held(&mut chrome, &site, &READS, &READS, page.path);
         let said = notice(&mut chrome, saved, false);
         drawn_from_the_device(&mut chrome, &page, &said);
         shows(&mut chrome, &redrawn, page.path);
-        hold(&site, false);
+        hold(&site, &READS, false);
         shows(&mut chrome, LIVE, page.path);
     }
 }
@@ -481,7 +531,7 @@ fn draws_nothing_kept(chrome: &mut Chrome, site: &Site, what: &str) {
         json!([null, true, false]),
         "{what}: nothing drawn from the device"
     );
-    hold(site, false);
+    hold(site, &READS, false);
     shows(chrome, &present(TASKS.drawn), what);
     shows(chrome, LIVE, what);
     keeps(chrome, TASKS.parts);
@@ -502,7 +552,7 @@ fn a_store_of_another_format_or_a_value_this_client_cannot_read_draws_nothing() 
             symphony_api::CACHE_FORMAT + 1
         ),
     );
-    return_held(&mut chrome, &site, &TASKS);
+    return_held(&mut chrome, &site, &READS, &READS, TASKS.path);
     draws_nothing_kept(&mut chrome, &site, "another format");
     // A kept value of a shape this client cannot read: a miss, and its item is forgotten whole.
     rewrite(
@@ -514,7 +564,7 @@ fn a_store_of_another_format_or_a_value_this_client_cannot_read_draws_nothing() 
             cursor.continue();
         }"#,
     );
-    return_held(&mut chrome, &site, &TASKS);
+    return_held(&mut chrome, &site, &READS, &READS, TASKS.path);
     draws_nothing_kept(&mut chrome, &site, "an unreadable value");
 }
 
@@ -537,8 +587,8 @@ fn counts_kept_without_their_columns_draw_and_then_read_each_column() {
             cursor.continue();
         }"#,
     );
-    let before = answered(&site);
-    hold(&site, true);
+    let before = answered(&site, &READS);
+    hold(&site, &READS, true);
     chrome.open("about:blank");
     chrome.open(&site.url(TASKS.path));
     shows(
@@ -546,10 +596,10 @@ fn counts_kept_without_their_columns_draw_and_then_read_each_column() {
         "(main => main?.dataset.cache === 'device' && main.querySelector('[data-status=ready] .count')?.textContent === '1')(document.querySelector('main'))",
         "the counts drawn from the device",
     );
-    hold(&site, false);
+    hold(&site, &READS, false);
     shows(&mut chrome, &present(TASKS.drawn), "the column read");
     shows(&mut chrome, LIVE, "the column read");
-    let columns = since(&site, &before, "/api/task-board")
+    let columns = since(&site, &READS, &before, "/api/task-board")
         .into_iter()
         .filter(|answer| answer.target.contains("status=ready"))
         .collect::<Vec<_>>();
@@ -570,7 +620,7 @@ fn a_server_that_does_not_answer_leaves_the_kept_copy_drawn_saying_so() {
     };
     for page in [HOME, TASKS, QUEUE] {
         visit(&mut chrome, &site, &page);
-        let saved = oldest(&mut chrome, &page);
+        let saved = oldest(&mut chrome, |part| page.keeps(part));
         site.fail_route("/api/board", true);
         chrome.open("about:blank");
         chrome.open(&site.url(page.path));
@@ -636,7 +686,7 @@ fn a_check_that_fails_is_asked_again_until_it_answers() {
         (QUEUE, "/api/queue"),
     ] {
         visit(&mut chrome, &site, &page);
-        let saved = oldest(&mut chrome, &page);
+        let saved = oldest(&mut chrome, |part| page.keeps(part));
         let (asked, from) = (site.requests().len(), site.answers(read).len());
         site.fail_route(read, true);
         chrome.open("about:blank");
@@ -670,7 +720,7 @@ fn the_feeds_machine_work_answers_for_a_failing_read_of_it() {
         return;
     };
     visit(&mut chrome, &site, &TASKS);
-    let saved = oldest(&mut chrome, &TASKS);
+    let saved = oldest(&mut chrome, |part| TASKS.keeps(part));
     let from = site.answers("/api/machine-work").len();
     site.fail_route("/api/machine-work", true);
     chrome.open("about:blank");

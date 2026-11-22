@@ -70,7 +70,7 @@ Each is needed before a live board moves. None is built by this page.
 |---|---|
 | The live-board guard covers PostgreSQL's tables and finds a PostgreSQL board | landed with the lifecycle |
 | Holds, stopped-cluster snapshots, reclaim and the schema fence on PostgreSQL | landed, proved on scratch boards |
-| A copy does not let an old task number or version be taken for a new one | landed with `tools/board-recovery-generation`, board schema 22: every copy of a whole board replaces its [recovery generation](../TASKS.md#a-board-that-was-copied-or-restored), and a write naming a task read before the copy is refused. The cutover is itself such a copy |
+| A copy does not let an old task number or version be taken for a new one | landed with `tools/board-recovery-generation`, board schema 22: every copy of a whole board replaces its [recovery generation](../BOARD_OPERATIONS.md#a-board-that-was-copied-or-restored), and a write naming a task read before the copy is refused. The cutover is itself such a copy |
 | PostgreSQL starting for a board that is not a scratch one | landed with `tools/board-pg-cutover-pieces`: PostgreSQL serves any board whose home names it (`backend.json`), and a board outside a scratch place gets that name only by the move below; there its server outlives the command that started it, as SurrealDB's does |
 | The cutover command: hold, export, copy, compare, switch, with each failure leaving the board as it was | landed with the same task, proved on scratch boards: `tasks-move ENGINE`, [one board's move](#one-boards-move) |
 | Restoring a PostgreSQL snapshot over the board it was taken from | landed with the same task: `tasks-move --restore SNAPSHOT`, under the move's journal; the cluster it replaces is kept ([POSTGRESQL](../POSTGRESQL.md#holds-snapshots-and-recovery)) |
@@ -142,6 +142,22 @@ Nothing is deleted but the move's work folder. The old store, with every databas
 beside the board's, and the export stay in `moved/`, and the snapshot with the snapshots, until
 the owner says otherwise.
 
+A release installs `tasks-move` beside its `tasks` ([the install](../RELEASES.md#the-install)),
+so a project with no build of its own moves its board with what the release holds, at the schema
+its `tasks` writes. Its orchestrator or owner runs it from the project's main checkout by its
+path in the machine folder, since no recipe reaches it and `just tasks` would refuse a live
+board's move ([where it lives](../TASKS.md#where-it-lives)):
+
+```sh
+"$HOME/Library/Application Support/Symphony/current/bin/tasks-move" postgresql --as HANDLE
+```
+
+Elsewhere than macOS the machine folder is `$XDG_DATA_HOME/symphony`, else
+`~/.local/share/symphony`, and `SYMPHONY_MACHINE_DIR` names another. A release before the
+one that first installed it holds none: the project waits for `current` to name one that does.
+No refresh runs it: a board moves when its project says so, after its pin (step 4 of
+[the order](#the-order)).
+
 **A failure.** Before the switch nothing of the board has changed places: the work folder is
 removed, the export already written stays in `moved/STAMP-ENGINE/` beside nothing else, and the
 board is on the engine it was on. Marking the journal committed is the commit point. A step
@@ -185,10 +201,11 @@ absence grants nothing, and a live board's move is the owner's call.
 repository's board, and 42 s back ([the rehearsal](#the-rehearsal-2026-11-19)), and 74 s for the
 board itself on a machine loaded far past its cores
 ([its move](#this-repositorys-board-moved-2026-11-21)). The Symphony's pages say it is held for
-a while longer: a page's reader that found the board held tries it again only after a wait that
-doubles from 1 s to 60 s (`apps/symphony-server/src/live/retry.rs`), so they went on saying so for
-about 100 s past the board's own release. The copy into PostgreSQL is ended at 270 s by its server, thirty
-short of the 300 s its caller waits ([TASKS](../TASKS.md#a-board-that-was-copied-or-restored)).
+a while longer: a page's reader that found the board held then tried it again only after a wait
+that doubled from 1 s to 60 s (`apps/symphony-server/src/live/retry.rs`), so they went on saying so
+for about 100 s past the board's own release. Since, a reader refused by a hold tries again at its
+first tick or page request after the release. The copy into PostgreSQL is ended at 270 s by its server, thirty
+short of the 300 s its caller waits ([BOARD_OPERATIONS](../BOARD_OPERATIONS.md#a-board-that-was-copied-or-restored)).
 
 ## The rehearsal, 2026-11-19
 
@@ -267,7 +284,7 @@ before 2026-11-24.
 
 ## The choice
 
-What the live move waits for, chosen on [its card](../DECISIONS.md#board-pg-cutover): the
+What the live move waits for, chosen on [its card](#board-pg-cutover): the
 prerequisites, and the memory peak.
 
 - **The prerequisites and the rehearsal.** What is not ready above is built, and
@@ -291,3 +308,66 @@ drop.
 
 The other option, not taken, was to move on the prerequisites alone and accept the measured
 cost.
+
+- [r] **board-pg-cutover** — PostgreSQL now passes the board's tests on scratch boards, and no live board has moved. Moving one means holding it, so nobody can write to it, while it is copied and compared; going back after it has been written to takes a second hold. Side by side, PostgreSQL failed nothing and answers most commands sooner, but its server used 1.7 times the CPU and its memory peaked at 1,752 MiB with thirty sessions writing at once, against the 512 MiB target the move was approved with. When may the live boards move? A: once the missing pieces are built and a rehearsal on a copy is clean. B: as A, and only after a task finds why memory peaks that high and brings it under the target, or shows it cannot be. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/board-pg-cutover#The choice]]
+  [2026-11-18 15:06] agent — Posted for the board task `docs/board-pg-cutover-card`. Nothing live moves before you answer.
+
+    **The order, under either.**
+    1. A release whose programs read either store is installed. No board moves.
+    2. A rehearsal: this repository's board is exported, copied into a scratch PostgreSQL, compared table by table and timed.
+    3. This repository's board moves first, and runs a few days.
+    4. Each of the two other projects takes that release by its own pin, then its board moves. A board never moves ahead of its pin: a pinned build speaks only SurrealDB.
+
+    **One board's move:** hold, export, copy, compare, switch, release. A difference in the compare stops it with the board still on SurrealDB. The old store and the export are kept, nothing is deleted.
+
+    **How long it cannot be written.** Not timed yet. The copy alone is under five minutes for today's board; the rehearsal gives the whole figure before any live board is held.
+
+    **The way back.** Before anyone writes on PostgreSQL: put the old store back, nothing lost. After: the same move in reverse, a second hold of about the same length. The round trip is tested on a generated board of the live one's shape. Search for words not in Latin letters can rank differently on the two.
+
+    **What the comparison showed,** thirty sessions, 3,000 commands, same export and build, 2026-11-18:
+
+    | | SurrealDB | PostgreSQL |
+    |---|---|---|
+    | failed | 0 | 0 |
+    | server CPU | 34.5 s | 60.0 s |
+    | memory, peak | 448 MiB | 1,752 MiB |
+    | memory, afterwards | 392 MiB | 53 MiB |
+    | a command, median | 41 ms | 28 ms |
+
+    One run each, sessions back to back: a ceiling, not the usual rate. No improvement in CPU is claimed.
+
+    **A second memory figure, measured since,** on a generated board ten times today's size (9,310 tasks, 130,670 messages), the same thirty sessions and 3,000 commands, nothing failed: PostgreSQL's server peaked at 14.8 GiB against SurrealDB's 3.3 GiB, and afterwards held 218 MiB against 2.0 GiB. One run each on a loaded machine, and nobody has looked for the cause ([[analysis/board-store-baseline#Paired board work on it]], from the board task `tools/board-copy-at-ten-times`).
+
+    **Not built yet, needed under either:** the cutover command itself, PostgreSQL starting for a board that is not a scratch one, restoring a PostgreSQL snapshot over its own board, and the release's snapshot before a schema move.
+
+    **Built since this card was posted.** The copy's guard against reused task numbers (`tools/board-recovery-generation`, landed, board schema 22): every copy of a whole board, the cutover's among them, gives the board a new recovery generation, and a write that names a task read before the copy is refused ([[TASKS#A board that was copied or restored]]).
+
+    **A board ten times today's size** was measured by `tools/board-copy-at-ten-times`, landed ([[analysis/board-store-baseline#A board ten times the size, measured 2026-11-18]]). PostgreSQL copied it in 78.5 to 141.8 s over four runs, the time going with the machine's load. Its server now ends a copy at 270 s with the board as it was, which a quiet machine reaches at about 32 times today's board and a loaded one sooner. Before that limit a copy reported failed could still replace the board; now only one whose commit and answer take the last thirty seconds can. SurrealDB refuses the same copy in one line under the 256 MiB memtable its server ships with, the board as it was, and copied it in 68.1 s under 2 GiB, which no shipped setting gives. Today's boards copy on both, so this bounds growth and the way back for a board that has grown, not the first move.
+
+    **Why B.** The memory target was part of what you approved, the run misses it by more than three times, and nobody knows why yet: a setting, or the price of one connection per command. B delays only the last step: the missing pieces and the rehearsal go ahead meanwhile.
+
+    **Earlier verdicts checked.** Your approval of PostgreSQL for the board (2026-11-09, recorded on the board task `tools/board-postgresql`) chose the store and one connection per command; that task's brief keeps the cutover for your review, which is this card. **postgresql-binary-source** (C) says where the program comes from. Neither says when a live board moves, or what happens when the measured memory misses the target.
+  [2026-11-18 18:01] owner · approved — B sounds great
+  [2026-11-18 18:12] agent — B it is, and the work is handed on: the orchestrator files its board tasks from the paragraphs posted on the board task `docs/apply-owner-verdicts-2026-11-18`. No live board moves until every one of them is done.
+
+    **Goes ahead now,** none waiting for the memory answer:
+
+    1. PostgreSQL starting for a board that is not a scratch one.
+    2. The cutover command: hold, export, copy, compare, switch, each failure leaving the board as it was.
+    3. Restoring a PostgreSQL snapshot over its own board.
+    4. The release's snapshot before a schema move, on a PostgreSQL board.
+    5. The rehearsal on a copy of this repository's board, timed, its result on the board.
+
+    **The one B adds.** A task finds why PostgreSQL's server peaks at 1,752 MiB with thirty sessions (14.8 GiB on a board ten times the size) and brings it under the 512 MiB target, or shows it cannot be, measured by the same driver on scratch boards. If it cannot be brought under, you get that result here before anything moves.
+
+    **Then** this repository's board moves first and runs a few days; each other project's board follows its own pin.
+
+    `tools/hosted-postgresql-adapter`, in progress, is the managed-database connection and covers none of these.
+
+    [[analysis/board-pg-cutover#The choice]] now reads as decided.
+  [2026-11-18 18:12] agent · resolved
+  [2026-11-18 18:16] agent — Filed: perf/board-pg-memory-peak (started now), tools/board-pg-cutover-pieces, tools/board-pg-cutover-rehearsal, tools/board-pg-this-board-moves. No live board moves before the memory result and the rehearsal are on the board.
+  [2026-11-18 19:53] agent — The memory result, from the board task `perf/board-pg-memory-peak`: found, and under the target on a board of today's size. A read of the whole board was answered as one value, which each command's PostgreSQL process built whole and kept until the command ended, so thirty commands held thirty boards. The reads now answer a row at a time. Thirty sessions peak at 377 to 419 MiB over three runs (1,590 to 1,846 before, the same day and export), ten at 161 to 165 (601 to 605 before), nothing failed. The CPU is not shown equal: the server's was 54.6 to 57.3 s and once 83.7 against 56.2 to 62.8, the `tasks` processes' 57.3 to 65.9 s against 50.0 to 57.4, leaning higher. No setting changed and the target is as you approved it. On a board ten times today's size the peak is 1.7 to 1.8 GiB, down from 14.9: still over 512 MiB, so the live move stays held until you answer this result, and the one on today's board does not stand in for it. SurrealDB was not run on that copy; its 3.3 GiB is another fixture's figure ([[analysis/board-store-baseline#PostgreSQL's memory peak, measured 2026-11-18]]). Scratch boards only; no live board was touched.
+  [2026-11-19 02:04] agent — The ten-times result above is put to you as a card of its own, **board-pg-memory-at-ten-times**: the live move stays held until you answer it there.
+  [2026-11-19 17:25] agent — The rehearsal, from the board task `tools/board-pg-cutover-rehearsal`: clean. A copy of this repository's board (1,029 tasks, 16,079 messages) was moved to PostgreSQL on a scratch board by the real command: 28,985 rows compared, none different, and the board could not be written for 52 seconds. The move back took 42 seconds, and the board after the round trip is the export byte for byte. Fifteen searches answered the same on both. One run each way on a busy machine; the live board was only read. [[analysis/board-pg-cutover#The rehearsal, 2026-11-19]]
+  [2026-11-21 18:01] agent — This repository's board moved to PostgreSQL on 2026-11-21 at 17:52, by the board task `tools/board-pg-this-board-moves`: 41,891 rows compared, none different, and the board could not be written for 74 seconds on a heavily loaded machine. The SurrealDB store is kept whole, with its export, and the 46 scratch boards it held beside the board stay there; nothing was deleted. Every table read back the same, and the board took writes at once. For about 100 seconds after, the Symphony's pages still said the board was held, until they tried again. Each other project's board moves after its own pin, and not before 2026-11-24. [[analysis/board-pg-cutover#This repository's board moved, 2026-11-21]]

@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::store_fixture::{Backend, Fixture, Seed};
+pub(super) use crate::store_fixture::{pair, refused};
 use crate::workflow::activate::tests::{MAPPED, TWO, custom};
 use crate::workflow::{Custom, agent_session, local_owner};
 use std::collections::BTreeMap;
@@ -10,20 +11,6 @@ use std::sync::{Arc, Barrier};
 use symphony_api::workflow::Pair;
 
 pub(super) const BACKENDS: [Backend; 2] = [Backend::SurrealDb, Backend::PostgreSql];
-
-pub(super) fn pair(phase: &str, state: &str) -> Pair {
-    Pair {
-        phase: phase.into(),
-        state: state.into(),
-    }
-}
-
-pub(super) fn refused(result: Result<impl std::fmt::Debug, Error>) -> String {
-    match result {
-        Err(Error::Refused(why)) => why,
-        other => panic!("expected a refusal, got {other:?}"),
-    }
-}
 
 /// TWO, its claim depending on done work when `depends`.
 fn two(depends: bool) -> Custom {

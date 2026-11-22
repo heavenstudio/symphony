@@ -172,6 +172,16 @@ impl Defaults {
     /// that does not parse, or a `default` that is no agent a launch starts, is an error naming
     /// the file.
     pub fn configured(root: &Path) -> Result<Defaults, String> {
+        Self::configured_with(root, &crate::settings::Stored::default())
+    }
+
+    /// As [`Defaults::configured`], with what the board's store holds (`stored`,
+    /// [`crate::Store::stored`]) over the committed settings and under the local file: the order
+    /// every setting is read in ([`crate::settings`]).
+    pub fn configured_with(
+        root: &Path,
+        stored: &crate::settings::Stored,
+    ) -> Result<Defaults, String> {
         let path = root.join(MANIFEST);
         let committed = match std::fs::read_to_string(&path) {
             Ok(text) => Self::parse(&path.display().to_string(), &text),
@@ -180,6 +190,7 @@ impl Defaults {
         }?;
         // A local file that is refused is read by nobody, and said where the limits are read
         // ([`crate::limits::read_at`]), on every command.
+        let committed = committed.over(&stored.held);
         Ok(match crate::local::beside(&path) {
             Ok(Some(local)) => committed.over(&local),
             _ => committed,
@@ -247,6 +258,12 @@ impl Defaults {
                 assessor: given(models.assessor),
             },
         })
+    }
+
+    /// `[agents] launch`'s `default`, `model` and `effort` as these hold them, in
+    /// [`crate::local::LAUNCH`]'s order: what `tasks limits` says a stored one stands over.
+    pub(crate) fn launch(&self) -> [Option<&str>; 3] {
+        [self.agent, self.model.as_deref(), self.effort.as_deref()]
     }
 
     /// Whether the project names any of the three.

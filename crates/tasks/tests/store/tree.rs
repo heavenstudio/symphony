@@ -1,6 +1,6 @@
 //! Making tasks, finding them by document, and the tree of subtasks.
 
-use crate::common::{Backend, Fixture, NOW, Seed, refused};
+use crate::common::{Backend, Fixture, NOW, Seed, chain, refused, under};
 use symphony_board::health::LIVE_SECONDS;
 use symphony_board::{Health, NewTask};
 
@@ -8,26 +8,8 @@ fn jump() -> NewTask {
     NewTask::new("sim/jump", "Jump departure", "owner")
 }
 
-fn under(slug: &str, parent: &str) -> NewTask {
-    NewTask {
-        parent: Some(parent.into()),
-        ..NewTask::new(slug, "Jump departure", "owner")
-    }
-}
-
 fn slugs(tasks: Vec<symphony_board::Task>) -> Vec<String> {
     tasks.into_iter().map(|t| t.slug).collect()
-}
-
-/// An orchestrator on `a`; `a/b` under it, `a/b/c` under that.
-fn chain(backend: Backend) -> (Fixture, String) {
-    let f = Fixture::on(backend, Seed::default());
-    let orch = f.session("orchestrator");
-    f.task("a");
-    f.store.take_role("a", &orch, "orchestrator").unwrap();
-    f.task_with(under("a/b", "a"));
-    f.task_with(under("a/b/c", "a/b"));
-    (f, orch)
 }
 
 on_both! {

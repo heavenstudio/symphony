@@ -12,7 +12,12 @@
 //! ([`Landing::arm`]). The check the default branch requires, `symphony/eligible`, is pending while
 //! a stamp is missing, so the host merges once the last one stands, seconds after the write that
 //! made it stand published it, with nobody running a land. A dispatch whose head and evidence are
-//! as it published them asks the host nothing.
+//! as it published them asks the host nothing, and neither does one that runs once the task
+//! landed at that head: it says so in its log alone. One whose publication the host refuses
+//! because it merged that head meanwhile ([`Landing::merged_meanwhile`]) stops with no word on
+//! the thread, the merge being the watcher's to settle. One that finds its task approved, not
+//! landed and at a head the approve does not name moves it back to review first
+//! ([`Landing::reviewed_again`]), where the fresh approve that head waits on is given.
 //!
 //! Whether the host merged is the one thing the board cannot see, and it is the watcher's
 //! ([`watch`]): one per project (`tasks land --watch`, detached, [`WATCH_LOCK`]), started by each
@@ -34,8 +39,8 @@
 //! the board sets on what it starts: a move is not a land, but what it starts publishes and arms
 //! only what the land would.
 
-use super::delivery::{self, Binding, Journal, Stage, Transport};
-use super::{FOLDER, GIT_VARS, Landing, RECIPE, Refusal, Stop, short};
+use super::delivery::{self, Binding, Journal, Receipt, Stage, Transport};
+use super::{FOLDER, GIT_VARS, Landing, Mode, RECIPE, Refusal, Stop, short};
 use crate::cli::Env;
 use crate::sweep::git::rev;
 use crate::sweep::trigger;
@@ -589,12 +594,27 @@ impl Landing<'_> {
                 "{slug} has no branch in the main checkout to dispatch"
             )))
         })?;
+        // Landed already at this head, by its own receipt ([`Landing::repeated`] refused any
+        // other): a write's dispatch that ran once the land of its merge had closed the task and
+        // dropped its journal. Nothing is published to a pull request merged, and nothing stopped.
+        if let Some(receipt) = Receipt::read(&self.folder, slug).filter(|kept| kept.head == tip) {
+            unmark(&self.folder, slug);
+            return Ok(format!(
+                "{slug} landed already as {} from {} by pull request #{} of {}: nothing is \
+                 dispatched",
+                short(&receipt.squash),
+                short(&receipt.head),
+                receipt.pull,
+                receipt.name
+            ));
+        }
         // A pull request bound before and merged or closed since is settled first.
         if let Some(journal) = journal.clone().filter(|journal| journal.binding.is_some())
             && let Some(done) = self.settled_before(journal)
         {
             return done;
         }
+        let task = self.reviewed_again(task, &tip)?;
         // Out of review with its merge armed: turned off before anything is published, as a
         // publication that keeps its evidence standing would leave the host seconds to merge a
         // task moved back to work.
@@ -636,6 +656,60 @@ impl Landing<'_> {
         ))
     }
 
+    /// `task` as a dispatch goes on with it at `tip`, its branch's head: back in review, by the
+    /// board's own move from done ([`Store::move_to`]), where its reviewer approved it, no landing
+    /// has closed it ([`crate::orchestration::unlanded`]) and the approve does not name `tip`. A
+    /// delivery takes an approve naming the head alone ([`super::evidence`]), so a head moved
+    /// under an approved task (a merge of the default branch that settles a conflict, a fix)
+    /// waits on a fresh one, which only a task in review is given: said once to its orchestrator,
+    /// which starts its assessor and resumes its reviewer as at any move to review. Any other task as it
+    /// is. One that does not go back is refused, naming the move that does.
+    fn reviewed_again(&mut self, task: Task, tip: &str) -> Result<Task, Stop> {
+        let slug = self.slug;
+        if crate::orchestration::unlanded(&task).is_none() {
+            return Ok(task);
+        }
+        let thread = self.store.thread(slug)?;
+        let Ok(approval) = super::approval(&task, &thread) else {
+            return Ok(task);
+        };
+        let approved: Vec<String> = (super::named(&approval.text).into_iter())
+            .filter_map(|word| rev(&self.main, &format!("{word}^{{commit}}")))
+            .collect();
+        if approved.iter().any(|sha| sha == tip) {
+            return Ok(task);
+        }
+        let moved = format!(
+            "{slug}'s head is {}, which its approve by {} does not name ({})",
+            short(tip),
+            approval.by,
+            approved.first().map_or_else(
+                || "it names no commit".to_string(),
+                |sha| format!("it names {}", short(sha))
+            )
+        );
+        match self.store.move_to(slug, "review", self.actor) {
+            Ok(task) => {
+                let verify = self.verifying(&task);
+                self.post(
+                    &format!(
+                        "land {slug}: {moved}; {slug} is back in review{verify}. Its assessor \
+                         reads {head} and its reviewer approves it naming it; its pull \
+                         request shows {head} with `symphony/eligible` pending until then",
+                        head = short(tip)
+                    ),
+                    Some("@orchestrator"),
+                );
+                Ok(task)
+            }
+            Err(error) => Err(self.refuse(Refusal::to(
+                format!("{moved}, and it does not go back to review ({error})"),
+                "@orchestrator",
+                format!("`just tasks move {slug} review` does"),
+            ))),
+        }
+    }
+
     /// The pull request `journal` is bound to, read: merged since, settled as a land settles a
     /// merge; closed unmerged, a failure ([`Landing::undelivered`]); open, or not read, none, and the
     /// dispatch goes on.
@@ -651,6 +725,37 @@ impl Landing<'_> {
             "closed" => Some(self.undelivered(journal, Failure::Closed)),
             _ => None,
         }
+    }
+
+    /// The line a dispatch ends with, saying nothing on the thread, where the host refused its
+    /// publication because it merged the head meanwhile: the pull request `journal` binds, read
+    /// as open when the dispatch began, reads merged at `tip`, the head asked to be published,
+    /// and the watcher reads `journal` ([`Journal::watched`]), so its next round settles the
+    /// merge and closes the task. None for a land or a round, where the pull request does not
+    /// read, and where it was merged at another head or closed: the refusal stands as it is.
+    pub(super) fn merged_meanwhile(&self, journal: &Journal, tip: &str) -> Option<String> {
+        let slug = self.slug;
+        if !matches!(self.mode, Mode::Dispatch) || !journal.watched() {
+            return None;
+        }
+        let binding = journal.binding.as_ref()?;
+        let request = json!({
+            "verb": "result", "slug": slug,
+            "repository": binding.repository, "pull": binding.pull,
+        });
+        let result = self.ask("result", &request).ok()?;
+        let merged = delivery::state(&result).0 == "merged" && result["head"].as_str() == Some(tip);
+        merged.then(|| {
+            // One that ended, or that a reboot ended, is started for it.
+            let _ = watch_start(self.env, &self.main);
+            format!(
+                "{slug}: pull request #{} of {} merged {} while it was dispatched: nothing more \
+                 is published to it, and the watcher's next round closes the task",
+                binding.pull,
+                binding.name,
+                short(tip)
+            )
+        })
     }
 
     /// A round of the watcher for this task, armed at the host, at `clock` (whole seconds since
@@ -725,6 +830,10 @@ impl Landing<'_> {
                 }
             });
         }
+        let task = match &tip {
+            Some(tip) => self.reviewed_again(task, tip)?,
+            None => task,
+        };
         // A head or evidence that changed since it was published, or a publication that did not
         // end: dispatched again.
         if let Some(tip) = tip {

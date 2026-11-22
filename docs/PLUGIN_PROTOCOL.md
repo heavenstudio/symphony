@@ -8,6 +8,9 @@ with no rebuild of the server. The requests and answers are the serde types of
 ([PLUGIN_CALLS](PLUGIN_CALLS.md)). The plugin's side is `symphony_plugin::serve`
 (`crates/symphony-plugin/src/serve.rs`) and the host's is `crates/symphony/src/plugins/process.rs`.
 
+This page is the reference. [Writing a plugin and a theme](PLUGIN_WRITING.md) writes a first
+plugin from nothing, with its code, its test, its settings and how to see it drawn.
+
 ## The kit
 
 A plugin, linked or a process, is built on the plugin kit: three crates that move together, as their
@@ -106,9 +109,9 @@ the process declares, the project is served as its file says, with no change to 
 of such a project says why it is not known ([below](#its-commands)). Its other seams (board fields,
 gates, prose rules, generators and transports) are not asked of a process: a plugin that declares
 any of them is refused under `[plugins.process]`, naming them, rather than losing them without a
-word, and stays a linked plugin's to answer. Each is answered from a process once a plugin first
-declares it from one. So is a plugin refused that declares another name than the one
-`[plugins.process]` gives it.
+word, and stays a linked plugin's to answer. The refusal is what holds: the protocol has their
+calls and the SDK's `serve` answers them, but no host asks one of a process. So is a plugin
+refused that declares another name than the one `[plugins.process]` gives it.
 
 ## The host
 
@@ -320,7 +323,7 @@ plugin of 0.3 does not write and a host reads as none: no authority is asked of 
   (`Card`, `Picture`, `TaskOffer`, `Submission`, `Theme`, `Image`, `Viewer`…) and a variant's own
   fields are not marked, as a plugin and its tests build them by their fields: a field added to one
   is a new major of the kit, whichever minor of the protocol carries it.
-- **The vocabulary grows in a minor** ([its card](DECISIONS.md#kit-new-block-version)). A new
+- **The vocabulary grows in a minor** ([its card](RELEASES.md#kit-new-block-version)). A new
   kind of block, text span or media is a minor of the kit (1.1.0), never a new major: a plugin
   makes blocks and never has to list them, so one written for 1.0.0 keeps building. `Block`, `Span` and `Media` are `#[non_exhaustive]`,
   and so is every other list of the kit a minor may add to: the words a block carries

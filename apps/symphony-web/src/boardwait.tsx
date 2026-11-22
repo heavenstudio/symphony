@@ -197,11 +197,6 @@ export function WaitCard({ task, now }: { task: Task; now: number }) {
       </a>
       <div className="waiting-slug">
         <code>{shown(task.slug)}</code>
-        {cost !== undefined && (
-          <span className="card-cost" title={cost.title}>
-            {cost.said}
-          </span>
-        )}
         <span className="prio">{`p${task.priority}`}</span>
         <button
           type="button"
@@ -217,7 +212,20 @@ export function WaitCard({ task, now }: { task: Task; now: number }) {
         <span className="on" title={waitLabel(task)}>
           {shown(finished ? (task.status === "done" ? "Done" : "Cancelled") : waitLabel(task))}
         </span>
-        <span className={old ? "age old" : "age"}>{waitAge(since, now)}</span>
+        <span className={old ? "age old" : "age"}>
+          {/* The task's estimated cost, where it took tokens, before its time. */}
+          {cost !== undefined && (
+            <>
+              <span className="card-cost" title={cost.title}>
+                {cost.said}
+              </span>
+              <span className="card-cost-dot" aria-hidden="true">
+                ·
+              </span>
+            </>
+          )}
+          {waitAge(since, now)}
+        </span>
         <span className="why" title={why}>
           {shown(why)}
         </span>

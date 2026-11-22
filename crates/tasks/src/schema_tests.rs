@@ -357,7 +357,14 @@ fn a_statement_that_changes_the_database_makes_a_write_in_any_case_and_a_read_ne
 fn this_builds_schema_is_the_version_and_its_neighbours_one_either_side() {
     let schema = Schema::this_build();
     assert_eq!(schema.version(), VERSION);
-    assert_eq!(schema.steps(), DEFINE);
+    // The contract's own steps, then each additive step this build has on it, in order.
+    assert_eq!(Schema::of_this_contract(0).steps(), DEFINE);
+    let added: String = ADDED
+        .iter()
+        .map(|step| format!("\n{}", step.surreal))
+        .collect();
+    assert_eq!(schema.steps(), format!("{DEFINE}{added}"));
+    assert_eq!(schema.additions(), ADDITIONS);
     let next = schema.then("DEFINE TABLE IF NOT EXISTS later SCHEMALESS;");
     assert_eq!(next.version(), VERSION + 1);
     assert!(next.steps().starts_with(DEFINE));
@@ -367,7 +374,7 @@ fn this_builds_schema_is_the_version_and_its_neighbours_one_either_side() {
     );
     let before = schema.before();
     assert_eq!(before.version(), VERSION - 1);
-    assert_eq!(before.steps(), DEFINE);
+    assert_eq!(before.steps(), schema.steps());
 }
 
 /// The writers' table arrives with its own schema raise, schemaless and with no event, so builds

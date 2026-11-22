@@ -2,7 +2,7 @@
 //! otherwise, an issue imported and kept in step, a task published from its curated text, and
 //! each side's edits met by the rule that one changed side updates the other and two conflict.
 
-use crate::Rig;
+use crate::{Rig, draft};
 use symphony_github::config::Source as _;
 use symphony_github::plan::{find_marker, import_slug, longest_body, marker_for};
 use symphony_github::state::{Flag, Origin};
@@ -10,20 +10,6 @@ use symphony_github::state::{Flag, Origin};
 const IMPORT: &str = "issues = \"import\"\nimport_labels = [\"symphony\"]";
 const EXCHANGE: &str =
     "issues = \"exchange\"\nimport_labels = [\"symphony\"]\nexport_label = \"from-symphony\"";
-
-fn draft(rig: &Rig, slug: &str, title: &str, body: &str) {
-    let file = rig.dir.0.join("public.md");
-    std::fs::write(&file, body).unwrap();
-    rig.run(&[
-        "publish",
-        slug,
-        "--title",
-        title,
-        "--body-file",
-        file.to_str().unwrap(),
-    ])
-    .ok();
-}
 
 #[test]
 fn with_no_settings_committed_nothing_is_read_written_or_kept() {

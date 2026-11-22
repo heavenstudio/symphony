@@ -123,3 +123,53 @@ fn at_end_of_file_without_trailing_newline() {
         "a\n\n> [!question] why\n> b\n"
     );
 }
+
+// A card inline in its document, between two paragraphs: a comment may follow it, never part it.
+
+const INLINE: &str = "# T\n\npara\n\n- [ ] **lamp** — A lamp.\n  [2026-11-21 10:00] agent — Posted.\n\n    More of it.\n\nnext\n";
+
+#[test]
+fn a_comment_between_an_inline_cards_lines_is_refused_naming_the_card() {
+    for line in [5, 6, 7] {
+        let refused = insert_comment(INLINE, line, "comment", "why?", "").unwrap_err();
+        assert_eq!(
+            refused.0,
+            format!(
+                "line {line} is inside the card 'lamp' (lines 5 to 8): a comment there would cut the lines under it from the card. Say it on the card itself (its Verdict / message), or comment on a block outside the card"
+            )
+        );
+    }
+}
+
+#[test]
+fn a_comment_after_an_inline_cards_last_line_follows_the_card() {
+    let out = insert_comment(INLINE, 8, "comment", "why?", "").unwrap();
+    assert_eq!(
+        out,
+        INLINE.replace(
+            "    More of it.\n",
+            "    More of it.\n\n> [!comment] why?\n"
+        )
+    );
+    // The card keeps every line it had.
+    let card = &symphony::register::parse_decisions(&crate::lines(&out))[0];
+    assert_eq!(card.raw.len(), 3);
+}
+
+#[test]
+fn a_comment_on_the_paragraph_above_an_inline_card_is_taken() {
+    let out = insert_comment(INLINE, 3, "comment", "why?", "").unwrap();
+    assert!(
+        out.starts_with("# T\n\npara\n\n> [!comment] why?\n\n- [ ] **lamp**"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_comment_between_two_adjacent_inline_cards_is_taken() {
+    let text = "- [ ] **one** — First.\n- [ ] **two** — Second.\n";
+    assert_eq!(
+        insert_comment(text, 1, "comment", "why?", "").unwrap(),
+        "- [ ] **one** — First.\n\n> [!comment] why?\n\n- [ ] **two** — Second.\n"
+    );
+}

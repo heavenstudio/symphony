@@ -25,14 +25,14 @@ impl Store {
 
     /// The limits this store holds to now.
     pub fn limits(&self) -> Limits {
-        self.limits.now()
+        self.limits.now(|| self.stored())
     }
 
     /// The project file this store's limits are read from, as it reads it now, with where each
     /// was written: none for a store held to limits set here ([`Store::limiting`]).
     pub fn limits_read(&self) -> Option<Read> {
         match &self.limits {
-            Held::Watched(watched) => Some(watched.read()),
+            Held::Watched(watched) => Some(watched.read_with(&self.stored())),
             Held::Set(_) => None,
         }
     }
