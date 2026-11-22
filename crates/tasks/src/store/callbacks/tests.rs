@@ -248,3 +248,111 @@ fn a_leased_visit_keeps_the_plans_pull_time_and_is_unreached_without_the_lease()
         "another holds the lease"
     );
 }
+
+/// Only an observer an older dispatcher recorded a look for, and no newer one wrote for since, is
+/// upgraded: one never observed, or written for by a newer dispatcher, is not.
+#[test]
+fn only_a_look_no_newer_dispatcher_wrote_for_is_upgraded() {
+    let looked = || {
+        let empty = json!({"roles":[], "statuses":{}, "ready":{}, "children":{}});
+        Some(serde_json::from_value::<attach::Seen>(empty).unwrap())
+    };
+    for (seen, delivery_version, upgrades) in [
+        (None, None, false),
+        (looked(), None, true),
+        (looked(), Some(1), false),
+        (None, Some(1), false),
+    ] {
+        let state = State {
+            seen,
+            delivery_version,
+            ..State::default()
+        };
+        assert_eq!(upgrades_legacy(&state), upgrades, "{delivery_version:?}");
+    }
+}
+
+/// An orchestrator's look and PULL read the holdings the visit observed, and refuse a visit that
+/// observed none.
+#[test]
+fn a_visit_with_no_holdings_observation_has_no_holdings_to_read() {
+    let fixture = crate::store_fixture::Fixture::empty();
+    let env = crate::cli::Env::of_process();
+    let none = Visit::new(Pass::Deliver, &env, &fixture.store, None);
+    let refused = holdings(&none).map(|_| ()).unwrap_err().to_string();
+    assert!(
+        refused.contains("orchestrator PULL has no holdings observation"),
+        "{refused}"
+    );
+    let observed = pull::Holdings::from([("amber-wren".into(), BTreeSet::from(["p/a".into()]))]);
+    let visit = Visit::new(Pass::Deliver, &env, &fixture.store, Some(&observed));
+    assert!(std::ptr::eq(holdings(&visit).unwrap(), &observed));
+}
+
+/// A due PULL to an orchestrator: its first says the whole digest and is queued to wait for its
+/// acknowledgement; an observer an older dispatcher kept has its whole digest counted as told on
+/// upgrade, and nothing queued; a visit with no holdings observation plans none.
+#[test]
+fn a_due_pull_is_queued_first_and_upgraded_for_a_legacy_observer() {
+    use crate::store_fixture::{Backend, Fixture, Seed};
+    let fixture = Fixture::on(Backend::SurrealDb, Seed::default().task("p/ready", "ready"));
+    let store = &fixture.store;
+    let handle = fixture.session("orchestrator");
+    let (board, _) = store.callback_board().unwrap();
+    let observed = store.slot_holdings().unwrap();
+    let env = crate::cli::Env::of_process();
+    let visit = Visit::new(Pass::Deliver, &env, store, Some(&observed));
+    let agents = Agents {
+        view: None,
+        idle: Vec::new(),
+        busy: Vec::new(),
+    };
+    let plan = |state: &mut State, visit: &Visit<'_>| {
+        store.plan_pull(&handle, &board, visit, state, &[], &agents)
+    };
+    let entry = |list: &str, name: &str| (list.to_string(), name.to_string());
+    let (volume, ready) = (
+        entry("low_volume", &handle),
+        entry("ready_unstaffed", "p/ready"),
+    );
+    let whole = format!(
+        "PULL executing=0 ready_unstaffed=1 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0\n\
+         low_volume {handle} open=0 threshold=4 cap=none — pick disjoint ready work or resolve owned blockers using actual resources and ownership\n\
+         ready_unstaffed p2 p/ready — Task p/ready"
+    );
+    let first = plan(&mut State::default(), &visit).unwrap();
+    assert_eq!(
+        first.entries,
+        BTreeSet::from([volume.clone(), ready.clone()])
+    );
+    assert_eq!(first.text, whole);
+    assert!(first.said.idle.is_empty());
+    assert_eq!(first.account.plan, PullPlan::Queued);
+    assert_eq!(
+        first.account.recorded, None,
+        "nothing told before the first"
+    );
+    let awaiting = first.account.awaiting.as_ref().unwrap();
+    assert_eq!(
+        (&awaiting.entries, awaiting.withheld.len()),
+        (&first.entries, 0)
+    );
+    // An older dispatcher's look: what it recorded counts as told, but the condition it never
+    // knew, the orchestrator's low volume, which the upgrade queues alone.
+    let looked = json!({"roles":[], "statuses":{}, "ready":{}, "children":{}});
+    let mut legacy = State {
+        seen: Some(serde_json::from_value(looked).unwrap()),
+        ..State::default()
+    };
+    let upgraded = plan(&mut legacy, &visit).unwrap();
+    assert_eq!(upgraded.text, whole);
+    assert_eq!(upgraded.account.plan, PullPlan::Queued);
+    assert_eq!(upgraded.account.recorded, Some(BTreeSet::from([ready])));
+    assert_eq!(upgraded.account.untold, BTreeSet::from([volume]));
+    let none = Visit::new(Pass::Deliver, &env, store, None);
+    let refused = plan(&mut State::default(), &none).map(|_| ()).unwrap_err();
+    assert!(
+        refused.to_string().contains("no holdings observation"),
+        "{refused}"
+    );
+}

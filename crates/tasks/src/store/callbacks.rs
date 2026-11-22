@@ -130,6 +130,24 @@ struct Accounted {
     marker: Moved,
 }
 
+/// The agents view a visit took, when its recipient's look needed one, with the sessions it lists
+/// idle and those running a test ([`pull::idle_and_busy`]).
+struct Agents {
+    view: Option<crate::cli::agents::View>,
+    idle: Vec<String>,
+    busy: Vec<String>,
+}
+
+/// What a PULL due for its recipient planned ([`Store::plan_pull`]): its text and what it says,
+/// the account of what the recipient was told of it, and every entry of the whole digest, which
+/// the observation records as older dispatchers do.
+struct Pulled {
+    text: String,
+    said: pull::Said,
+    account: Account,
+    entries: BTreeSet<(String, String)>,
+}
+
 /// The board marker just before and just after one of a dispatcher's own writes.
 #[derive(Deserialize)]
 struct Moved {
@@ -1052,12 +1070,7 @@ impl Store {
         // What the recipient hears, and the whole board's look older dispatchers keep.
         let mut seen = attach::seen(board, handle, &session.row.kind);
         if orchestrator {
-            seen = seen.with_holdings(
-                visit.holdings.ok_or_else(|| {
-                    Error::Db("orchestrator PULL has no holdings observation".into())
-                })?,
-                handle,
-            );
+            seen = seen.with_holdings(holdings(visit)?, handle);
         }
         let mut legacy = attach::legacy_seen(board, handle, &session.row.kind);
         let active: BTreeSet<&str> = board
@@ -1079,7 +1092,7 @@ impl Store {
         // Baseline a legacy observer once. Its writer can later erase Seen's newer fields, but
         // cannot reset this marker or cursor and turn a new addressed message into old history.
         let initializing = state.delivery_version.is_none();
-        let legacy_upgrade = initializing && state.seen.is_some();
+        let legacy_upgrade = upgrades_legacy(&state);
         let first_observation = initializing && state.seen.is_none();
         let cursor = state
             .message_cursor
@@ -1124,7 +1137,6 @@ impl Store {
         let quiet = (seen.children.values())
             .chain(legacy.children.values())
             .any(|health| health.quiet());
-        let env = crate::cli::Env::of_process();
         let view = if scheduled || changed || quiet {
             Some(crate::cli::agents::describe_board(
                 self,
@@ -1137,8 +1149,9 @@ impl Store {
             None
         };
         let (idle, busy) = pull::idle_and_busy(view.as_ref(), &seen.children);
+        let agents = Agents { view, idle, busy };
         // One running a test is present however quiet the board says it is.
-        for agent in &busy {
+        for agent in &agents.busy {
             for look in [&mut seen, &mut legacy] {
                 if let Some(health) = look.children.get_mut(agent) {
                     *health = crate::Health::Live;
@@ -1169,61 +1182,18 @@ impl Store {
         }
         // The recorded entries are the whole digest's, as older dispatchers record them; what
         // the recipient was told of them is in the PULLs it acknowledged ([`Account`]).
-        let mut account: Option<Account> = None;
-        let (mut pull_text, mut pull_current) = (String::new(), BTreeSet::new());
-        let mut pull_said: Option<pull::Said> = None;
-        if due {
-            let root = probes::repo_root(&env.cwd);
-            let root = root.as_deref();
-            let landed = |task: &crate::Task| root.is_some_and(|r| probes::landed(r, &task.slug));
-            let tips = probes::tips(root);
-            let holdings = visit
-                .holdings
-                .ok_or_else(|| Error::Db("orchestrator PULL has no holdings observation".into()))?;
-            let observed = pull::Observation { board, holdings };
-            let digest = pull::digest_on(
-                self,
-                observed,
-                &idle,
-                Some(&landed),
-                Some(&tips),
-                self.now(),
-                &busy,
-            )?;
-            let entries = digest.entries();
-            let digest = digest.only_for(board, handle);
-            let heard = digest.entries();
-            // A session with no terminal told idle stays told while it rests on the same beat,
-            // whatever a dispatcher that does not list it recorded since.
-            let mut idle_told = state.recall_idle(&resting(view.as_ref(), board, &heard));
-            idle_told.retain(|child, _| {
-                (board.sessions.iter()).any(|s| s.row.handle == *child && s.row.left_at.is_none())
-            });
-            // Once it acknowledged a PULL this generation queued, it hears what changed since.
-            let told = super::pull_account::told(&state, &entries);
-            let baseline = super::pull_account::baseline(&state, &heard);
-            let lines = match (baseline, &told) {
-                (Some(said), Some(told)) if !legacy_upgrade => digest.changes_since(said, told),
-                // The whole digest; after a new channel reset the account, the posts it was told
-                // stay told.
-                _ => digest.event_lines_since(
-                    &(state.acknowledged()).unwrap_or_else(|| state.pull_unanswered.clone()),
-                ),
-            };
-            pull_text = (lines.iter().map(|l| event_line(l)))
-                .collect::<Vec<_>>()
-                .join("\n");
-            pull_said = Some(pull::Said {
-                idle: idle_told,
-                ..digest.said_after(baseline)
-            });
-            account = Some(match legacy_upgrade {
-                true => Account::upgrade(&state, &entries, &heard),
-                false => Account::of(&state, &queued, &entries, &heard),
-            });
-            pull_current = entries;
-        }
-        let plan = account.as_ref().map(|account| &account.plan);
+        let pulled = match due {
+            true => Some(self.plan_pull(handle, board, visit, &mut state, &queued, &agents)?),
+            false => None,
+        };
+        let account = pulled.as_ref().map(|pulled| &pulled.account);
+        let pull_said = pulled.as_ref().map(|pulled| &pulled.said);
+        let pull_text = pulled.as_ref().map_or("", |pulled| pulled.text.as_str());
+        let no_entries = BTreeSet::new();
+        let pull_current = pulled
+            .as_ref()
+            .map_or(&no_entries, |pulled| &pulled.entries);
+        let plan = account.map(|account| &account.plan);
         let pull_kept = match plan {
             Some(PullPlan::Kept(key)) => Some(key),
             _ => None,
@@ -1242,14 +1212,14 @@ impl Store {
             plan: PullPlan::Queued,
             awaiting: Some(awaiting),
             ..
-        }) = &account
+        }) = account
         {
             let (key, slug) = (format!("pull-{revision}"), session_task(board, handle));
             events.push(Event {
                 pull_entries: Some(awaiting.entries.clone()),
                 pull_withheld: Some(awaiting.withheld.clone()),
-                pull_said: pull_said.clone(),
-                ..Event::line(key, handle, pull_text.clone(), slug, None)
+                pull_said: pull_said.cloned(),
+                ..Event::line(key, handle, pull_text.to_string(), slug, None)
             });
         }
         let legacy = compact(&legacy);
@@ -1329,8 +1299,7 @@ impl Store {
             && state.registration_revision == state.observed_registration
             && state.statuses == statuses
             && state.unknown_children == unknown_children
-            && (account.as_ref())
-                .is_none_or(|a| a.changes_nothing(&state, &queued, &pull_text, pull_said.as_ref()))
+            && account.is_none_or(|a| a.changes_nothing(&state, &queued, pull_text, pull_said))
             && rescoped.is_empty();
         let current = unchanged && state.inbox_cursor == Some(board.latest_message);
         // A write's observation leaves a recipient whose look moved by the newest message alone, and
@@ -1389,9 +1358,9 @@ impl Store {
             both(sql::account(), pg::account()),
             json!({"handle":handle, "waiting":waiting, "events":events, "seen":stored_seen, "narrowing":narrowing, "unknown_children":unknown_children, "snapshot_sequence":sequence, "statuses":statuses, "revision":revision,
                 "pull":if due {self.now()} else {state.pull}, "legacy_upgrade":legacy_upgrade,
-                "pull_queued":account.as_ref().map_or(&state.pull_queued, |a| &a.queued),
-                "pull_awaiting":account.as_ref().and_then(|a| a.awaiting.as_ref()),
-                "pull_account":account.as_ref().map(|a| json!({"recorded":a.recorded, "unheard":a.unheard, "untold":a.untold, "withheld":a.withheld})),
+                "pull_queued":account.map_or(&state.pull_queued, |a| &a.queued),
+                "pull_awaiting":account.and_then(|a| a.awaiting.as_ref()),
+                "pull_account":account.map(|a| json!({"recorded":a.recorded, "unheard":a.unheard, "untold":a.untold, "withheld":a.withheld})),
                 "message_cursor":board.latest_message, "inbox_cursor":board.latest_message,
                 "computed":due, "pull_current":pull_current, "rescoped":rescoped,
                 "pull_kept":pull_kept, "pull_text":pull_text, "pull_said":pull_said, "replace_pull":pull_replaced}),
@@ -1414,6 +1383,78 @@ impl Store {
             return Ok((held, pull_at));
         }
         Ok((true, pull_at))
+    }
+
+    /// The PULL due for `handle`, built again from `board` with the agents a visit saw: what it says,
+    /// and the account of what the recipient in `state` was told of it, with the lines still
+    /// `queued` for it ([`Account`]). An observer a newer dispatcher never wrote for hears the whole
+    /// digest, and has its account upgraded. Each session with no terminal it was told is idle is
+    /// read back into `state` ([`State::recall_idle`]).
+    fn plan_pull(
+        &self,
+        handle: &str,
+        board: &super::Board,
+        visit: &Visit<'_>,
+        state: &mut State,
+        queued: &[Queued],
+        agents: &Agents,
+    ) -> Result<Pulled, Error> {
+        let legacy_upgrade = upgrades_legacy(state);
+        let env = crate::cli::Env::of_process();
+        let root = probes::repo_root(&env.cwd);
+        let root = root.as_deref();
+        let landed = |task: &crate::Task| root.is_some_and(|r| probes::landed(r, &task.slug));
+        let tips = probes::tips(root);
+        let observed = pull::Observation {
+            board,
+            holdings: holdings(visit)?,
+        };
+        let digest = pull::digest_on(
+            self,
+            observed,
+            &agents.idle,
+            Some(&landed),
+            Some(&tips),
+            self.now(),
+            &agents.busy,
+        )?;
+        let entries = digest.entries();
+        let digest = digest.only_for(board, handle);
+        let heard = digest.entries();
+        // A session with no terminal told idle stays told while it rests on the same beat,
+        // whatever a dispatcher that does not list it recorded since.
+        let mut idle_told = state.recall_idle(&resting(agents.view.as_ref(), board, &heard));
+        idle_told.retain(|child, _| {
+            (board.sessions.iter()).any(|s| s.row.handle == *child && s.row.left_at.is_none())
+        });
+        // Once it acknowledged a PULL this generation queued, it hears what changed since.
+        let told = super::pull_account::told(state, &entries);
+        let baseline = super::pull_account::baseline(state, &heard);
+        let lines = match (baseline, &told) {
+            (Some(said), Some(told)) if !legacy_upgrade => digest.changes_since(said, told),
+            // The whole digest; after a new channel reset the account, the posts it was told
+            // stay told.
+            _ => digest.event_lines_since(
+                &(state.acknowledged()).unwrap_or_else(|| state.pull_unanswered.clone()),
+            ),
+        };
+        let text = (lines.iter().map(|l| event_line(l)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let said = pull::Said {
+            idle: idle_told,
+            ..digest.said_after(baseline)
+        };
+        let account = match legacy_upgrade {
+            true => Account::upgrade(state, &entries, &heard),
+            false => Account::of(state, queued, &entries, &heard),
+        };
+        Ok(Pulled {
+            text,
+            said,
+            account,
+            entries,
+        })
     }
 
     /// A plan's visit made again under the recipient's lease, once no other dispatcher holds it:
@@ -1617,6 +1658,18 @@ fn deliver_batches<T>(
         end = pending.len();
     }
     Ok(())
+}
+
+/// The slot holdings `visit` observed, which an orchestrator's look and its PULL are read with.
+fn holdings<'v>(visit: &Visit<'v>) -> Result<&'v pull::Holdings, Error> {
+    (visit.holdings)
+        .ok_or_else(|| Error::Db("orchestrator PULL has no holdings observation".into()))
+}
+
+/// Whether a visit to the recipient in `state` upgrades a legacy observer: one an older dispatcher
+/// recorded a look for and no newer one has written for since, which it baselines once.
+fn upgrades_legacy(state: &State) -> bool {
+    state.delivery_version.is_none() && state.seen.is_some()
 }
 
 fn event_line(text: &str) -> String {
