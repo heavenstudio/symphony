@@ -425,7 +425,7 @@ fn lacking(build: &Build, starter_id: &str, entry: &Entry) -> Option<String> {
         ),
         (Lack::Plugins(names), Some(_)) => format!(
             "a [plugins.process] command for {} in {}, then `just symphony` in its checkout, lets \
-             this server serve it (docs/PLUGIN_PROTOCOL.md)",
+             this server serve it (docs/engineering/PLUGIN_PROTOCOL.md)",
             names.join(", "),
             entry.root.join(symphony::project::FILE).display()
         ),

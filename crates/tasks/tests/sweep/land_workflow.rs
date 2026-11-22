@@ -1,4 +1,4 @@
-//! `tasks land` on a task a custom workflow holds (docs/WORKFLOW.md, "External effects"), in
+//! `tasks land` on a task a custom workflow holds (docs/workflow/WORKFLOW.md, "External effects"), in
 //! scratch repositories on a board of their own: it lands by the prepare and finalize edges of the
 //! default landing's adapter and by nothing else, refuses before any merge a task no such edge
 //! leaves, binds the head its approve read, withdraws a reservation that went stale, and finishes

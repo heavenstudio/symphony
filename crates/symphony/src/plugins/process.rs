@@ -1,4 +1,4 @@
-//! A plugin that answers from a process of its own (`[plugins.process]`, docs/PLUGIN_PROTOCOL.md):
+//! A plugin that answers from a process of its own (`[plugins.process]`, docs/engineering/PLUGIN_PROTOCOL.md):
 //! the host's side of the protocol. Its project names it in `[plugins] crates` as a linked plugin
 //! is named, and its command in `[plugins.process]`; [`made`] gives the one [`Remote`] for that
 //! name, command and checkout in this process, kept for the process's life, which stands in the

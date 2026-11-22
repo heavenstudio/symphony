@@ -130,7 +130,7 @@ describe("a folder with no document", () => {
     expect(html).toContain(
       '<p class="first-steps">No document is here yet. A Markdown file in this folder is a page of its own, and a card in its register waits for your verdict in the queue: <a href="',
     );
-    expect(html).toContain('/docs/GETTING_STARTED.md" target="_blank"');
+    expect(html).toContain('/docs/operations/GETTING_STARTED.md" target="_blank"');
   });
   it("says nothing once it lists a document or a folder, or draws an intro", () => {
     const entry = { kind: "doc", path: "docs/A.md", title: "A", docs: 0, waiting: 0, summary: "" };

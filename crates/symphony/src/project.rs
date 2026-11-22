@@ -75,7 +75,7 @@ pub const PANES: [&str; 2] = ["hc", "none"];
 /// The id of a project whose folder's name has no letter or digit to make one of.
 pub const DEFAULT_ID: &str = "project";
 /// Where a project keeps its review guide, in an entrypoint's folder, in the order they are tried:
-/// the Symphony's own `docs/REVIEW.md`, and a consuming project's `docs/workflow/REVIEW.md`.
+/// the Symphony's own `docs/workflow/REVIEW.md`, and a consuming project's `docs/workflow/REVIEW.md`.
 pub const GUIDES: [&str; 2] = ["REVIEW.md", "workflow/REVIEW.md"];
 /// The prefix naming a path in the repository's common git folder.
 const COMMON_DIR: &str = ".git/";
@@ -113,7 +113,7 @@ pub struct Project {
 }
 
 /// How a plugin that answers from a process of its own is started (`[plugins.process]`,
-/// docs/PLUGIN_PROTOCOL.md): its command, a program the file names by a relative path holding a `/`
+/// docs/engineering/PLUGIN_PROTOCOL.md): its command, a program the file names by a relative path holding a `/`
 /// taken under the project's root, run in that root without the session.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PluginProcess {
@@ -153,7 +153,7 @@ impl PluginProcess {
 }
 
 /// How a project's plugin calls are measured, off unless its file turns it on
-/// (docs/PLUGIN_CALLS.md): `[plugins] timing` records each call's time
+/// (docs/engineering/PLUGIN_CALLS.md): `[plugins] timing` records each call's time
 /// ([`crate::plugins::Plugins::at`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PluginCalls {
@@ -269,7 +269,7 @@ impl Default for Land {
     }
 }
 
-/// When the Symphony's own release run (`symphony-build release`, docs/RELEASES.md) releases
+/// When the Symphony's own release run (`symphony-build release`, docs/workflow/RELEASES.md) releases
 /// besides each day's, and what a green release does then.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Releases {

@@ -584,7 +584,7 @@ async fn attempts(hub: Arc<Hub>, request: &Request) -> Response {
 }
 
 /// The board's active custom workflow, and the local owner's next actions on one task it holds
-/// (docs/WORKFLOW.md, "The app"): the board's own reads, the same for every branch.
+/// (docs/workflow/WORKFLOW.md, "The app"): the board's own reads, the same for every branch.
 async fn workflow(hub: Arc<Hub>, path: &str, request: &Request) -> Response {
     let slug = query(request, "slug").unwrap_or_default();
     let actions = path == symphony_api::workflow::WORKFLOW_ACTIONS_PATH;

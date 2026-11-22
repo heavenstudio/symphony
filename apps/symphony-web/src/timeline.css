@@ -365,7 +365,7 @@
 }
 /* On a light page a segment's words are the page's own colour: its tone on its tint reads under
    4.5:1 for review and done (the owner's to judge on task-timeline-as-built,
-   docs/analysis/reports-and-monitoring.md). */
+   docs/product/analysis/reports-and-monitoring.md). */
 @media not (prefers-color-scheme: dark) {
   .tl-seg {
     color: var(--foreground);

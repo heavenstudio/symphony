@@ -10,7 +10,9 @@ describe("an empty page's first steps", () => {
     );
   });
   it("link the guide in the Symphony's repository", () => {
-    expect(GETTING_STARTED).toMatch(/^https:\/\/[^ ]+\/blob\/main\/docs\/GETTING_STARTED\.md$/);
+    expect(GETTING_STARTED).toMatch(
+      /^https:\/\/[^ ]+\/blob\/main\/docs\/operations\/GETTING_STARTED\.md$/,
+    );
   });
 });
 

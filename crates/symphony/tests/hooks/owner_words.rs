@@ -124,16 +124,16 @@ fn the_guides_and_the_documents_are_held_and_the_records_are_not() {
         "apps/symphony-web/AGENTS.md",
         "crates/symphony-api/README.md",
         "docs/README.md",
-        "docs/TASKS.md",
+        "docs/workflow/TASKS.md",
         "docs/DECISIONS.md",
-        "docs/analysis/desktop-client.md",
+        "docs/product/analysis/desktop-client.md",
     ] {
         assert!(held(path), "{path}");
     }
     for path in [
         "docs/history/owner-words.md",
         "docs/history/README.md",
-        "docs/analysis/owner-asks-board-asks.png",
+        "docs/product/analysis/owner-asks-board-asks.png",
         "crates/symphony/shipped/skills/work/SKILL.md",
         "crates/tasks/src/slots.rs",
         "apps/symphony-server/CRATE.md",

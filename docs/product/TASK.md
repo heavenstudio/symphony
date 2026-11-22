@@ -233,9 +233,9 @@ into them.
 ## Related
 
 - [The task board](BOARD.md): where a task's card is, and what its wait line says.
-- [Task board](../TASKS.md#gates): how each gate is read, [which a task needs](../TASKS.md#needed-stamps),
-  [who a message reaches](../TASKS.md#talking-on-a-task), [the timeline](../TASKS.md#the-timeline)
-  and [going to a session](../TASKS.md#going-to-a-session).
-- [Checks](../CHECKS.md): what a task shows as evidence before review.
-- [Execution attempts](../EXECUTION_ATTEMPTS.md#on-a-tasks-page) and
-  [Workflow](../WORKFLOW.md#the-app): the two parts only some projects have.
+- [Task board](../workflow/TASKS.md#gates): how each gate is read, [which a task needs](../workflow/TASKS.md#needed-stamps),
+  [who a message reaches](../workflow/TASKS.md#talking-on-a-task), [the timeline](../workflow/TASKS.md#the-timeline)
+  and [going to a session](../workflow/TASKS.md#going-to-a-session).
+- [Checks](../workflow/CHECKS.md): what a task shows as evidence before review.
+- [Execution attempts](../engineering/EXECUTION_ATTEMPTS.md#on-a-tasks-page) and
+  [Workflow](../workflow/WORKFLOW.md#the-app): the two parts only some projects have.

@@ -28,7 +28,7 @@ serde = { version = "1", features = ["derive"] }
 ts-rs = { workspace = true, optional = true }
 
 [dev-dependencies]
-# The features the server's build unifies on serde_json (docs/CHECKS.md), so this package's own tests
+# The features the server's build unifies on serde_json (docs/workflow/CHECKS.md), so this package's own tests
 # read and write JSON as the server does: above all `arbitrary_precision`, whose number a board
 # field's value reads. A dev-dependency's features never reach the client or a plugin's build.
 serde_json = { version = "1", features = ["arbitrary_precision", "float_roundtrip", "preserve_order", "raw_value"] }

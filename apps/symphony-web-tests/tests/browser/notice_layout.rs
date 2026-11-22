@@ -220,7 +220,7 @@ fn a_task_page_error_is_a_notice_and_clearing_it_on_reconnect_keeps_the_page_end
 }
 
 /// The held-switch notice as the server says it on the holder's pages: six lines at 390 px.
-const HELD: &str = "The machine's Symphony stays a project's build, not the release release-1: pantry names the linked plugin fixture-shelf, and a release's server serves a plugin only from its process: a [plugins.process] command for it in its symphony.toml lets the release serve every project (docs/PLUGIN_PROTOCOL.md).";
+const HELD: &str = "The machine's Symphony stays a project's build, not the release release-1: pantry names the linked plugin fixture-shelf, and a release's server serves a plugin only from its process: a [plugins.process] command for it in its symphony.toml lets the release serve every project (docs/engineering/PLUGIN_PROTOCOL.md).";
 
 /// The two pages with a composer at their end: a task's, its thread's, and a document's, its
 /// questions'.

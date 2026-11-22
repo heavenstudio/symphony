@@ -88,11 +88,11 @@ pub(crate) struct Run {
     pub(crate) remote: String,
     #[serde(default)]
     pub(crate) unpushed: Option<Vec<String>>,
-    /// What started it, when the cadence did (docs/RELEASES.md): the landings it counted.
+    /// What started it, when the cadence did (docs/workflow/RELEASES.md): the landings it counted.
     #[serde(default)]
     pub(crate) cause: Option<String>,
     /// What the release it tagged, or the release a `--refresh` named, refreshed on the machine
-    /// (docs/RELEASES.md).
+    /// (docs/workflow/RELEASES.md).
     #[serde(default)]
     pub(crate) refreshed: Option<Refresh>,
     /// What the release it tagged, or the release a `--refresh` named, published on crates.io
@@ -143,7 +143,7 @@ pub(crate) struct Carried {
 }
 
 /// What a refresh step ends as when its project finishes it (writers of its board to rebuild, a
-/// board from before the writer record): green here, filed nowhere (docs/RELEASES.md).
+/// board from before the writer record): green here, filed nowhere (docs/workflow/RELEASES.md).
 pub(crate) const THEIRS: &str = "the project's to finish";
 /// What a step that is its project's to finish is said with: the command that says what taking the
 /// release asks of the project.

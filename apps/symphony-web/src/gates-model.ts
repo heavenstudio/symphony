@@ -1,4 +1,4 @@
-// A task's gates as its page draws them (`GET /api/task-gates`, docs/TASKS.md#gates): every stamp
+// A task's gates as its page draws them (`GET /api/task-gates`, docs/workflow/TASKS.md#gates): every stamp
 // or check the task needs to land, each met, missing, waived, held or unknown, with who, when and
 // why. This is what the section knows without a page: the room it holds before its answer
 // (`Room`, kept per task in this browser), what it says of an answer, the words it links, the times

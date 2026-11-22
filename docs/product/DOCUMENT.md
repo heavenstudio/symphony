@@ -12,7 +12,7 @@ another documents address.
   document. **All docs** returns to the document list.
 - **Comments on a block.** Press **+ comment** beside the paragraph, heading or table. Choose
   comment, question or decision, write the first line as its title, then **Save comment**.
-- **Asks a question.** The document's [ask conversation](../REVIEW.md#asking) is a chat;
+- **Asks a question.** The document's [ask conversation](../workflow/REVIEW.md#asking) is a chat;
   a comment requests a lasting change.
 - **Opens the evidence.** Tap a picture for its original, or a mockup's **full size** link.
 - **Looks back.** Open **Versions and diffs**, then choose a dated commit to read what changed.
@@ -50,8 +50,8 @@ to the column, with a caption and **full size** link. Its scripts are isolated f
 Document and card pictures must be committed beside them so a clone shows the evidence.
 Working evidence can be local to this machine. Valid uploads named by a verdict or document
 comment are committed with that save. Appearing in the page alone does not make an original
-durable; see the [picture](../REVIEW.md#writing-a-card) and
-[attachment rules](../REVIEW.md#attaching-files). Media show the supplied version, not proof
+durable; see the [picture](../workflow/REVIEW.md#writing-a-card) and
+[attachment rules](../workflow/REVIEW.md#attaching-files). Media show the supplied version, not proof
 that proposed behavior is implemented.
 
 ## Versions and branch pages
@@ -100,6 +100,6 @@ Related tasks move below the document. Tables and diffs scroll within their boxe
 ## Related
 
 - [Cards and verdicts](CARDS.md): deciding, notes, Later and settled cards.
-- [Concept review](../REVIEW.md#commenting-in-place): comment format, review authority and saves.
-- [The project file](../PROJECT_FILE.md#entrypoints): which files are documents and their addresses.
+- [Concept review](../workflow/REVIEW.md#commenting-in-place): comment format, review authority and saves.
+- [The project file](../operations/PROJECT_FILE.md#entrypoints): which files are documents and their addresses.
 - [Product pictures](README.md#pictures): how these fictional examples are captured and retaken.

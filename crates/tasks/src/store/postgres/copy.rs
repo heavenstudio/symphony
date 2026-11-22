@@ -4,7 +4,7 @@
 //! stages nothing: one cut short leaves the board as it was, and is made again whole. What it
 //! costs is its messages' terms, counted a row at a time by the search's trigger and written to
 //! their index: time in proportion to the text, most of a copy's
-//! ([the numbers](../../../../../docs/analysis/board-store-baseline.md)).
+//! ([the numbers](../../../../../docs/operations/analysis/board-store-baseline.md)).
 //!
 //! `copied_fields` keeps imported fields as text beside their task: jsonb cannot preserve a JSON
 //! number's spelling or distinguish an exponent float from an integer. The dump gives both that

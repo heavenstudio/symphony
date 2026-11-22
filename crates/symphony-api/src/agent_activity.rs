@@ -1,4 +1,4 @@
-//! The agents' activity as the machine's one Symphony server keeps it (`docs/AGENT_ACTIVITY.md`):
+//! The agents' activity as the machine's one Symphony server keeps it (`docs/workflow/AGENT_ACTIVITY.md`):
 //! one [`AgentLine`] a line in the day files `symphony/agents/YYYY-MM-DD.jsonl` in the project's
 //! git common dir, a line for each change in a session's health and, once an hour, an
 //! [`AgentHour`] of what the hour held. The server writes them (`apps/symphony-server`,
@@ -95,7 +95,7 @@ pub struct AgentChange {
 
 /// What one writer watched of an hour. An hour can have more than one, from two writers (a server
 /// stopped and another started, a reload's hand-off) or one whose commit failed; no two cover the
-/// same moment, and `docs/AGENT_ACTIVITY.md`, *Reading an hour*, says how they add up.
+/// same moment, and `docs/workflow/AGENT_ACTIVITY.md`, *Reading an hour*, says how they add up.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AgentHour {
     pub schema: u32,

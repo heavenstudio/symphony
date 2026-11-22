@@ -4,7 +4,7 @@ resolver = "3"
 members = ["apps/symphony-desktop", "apps/symphony-server", "apps/symphony-web-tests", "crates/chrome-devtools", "crates/process-cwd", "crates/repository-read", "crates/symphony", "crates/symphony-api", "crates/symphony-args", "crates/symphony-blocks", "crates/symphony-build", "crates/symphony-docs", "crates/symphony-env", "crates/symphony-github", "crates/symphony-plugin", "crates/symphony-schema", "crates/tasks", "crates/test-time"]
 
 # What every member inherits. `publish = false` keeps a member off crates.io unless its own
-# manifest says `publish = true` with the metadata crates.io shows (docs/RELEASES.md, "Packages on
+# manifest says `publish = true` with the metadata crates.io shows (docs/workflow/RELEASES.md, "Packages on
 # crates.io"; crates/symphony/tests/packages.rs holds which members those are).
 [workspace.package]
 edition = "2024"
@@ -21,7 +21,7 @@ debug = "line-tables-only"
 incremental = false
 
 # What `cargo install` builds the shipped binaries with, each held to its line in
-# tools/size-budget.toml (docs/CHECKS.md, "Size budgets"). `strip = true` leaves out the symbol
+# tools/size-budget.toml (docs/workflow/CHECKS.md, "Size budgets"). `strip = true` leaves out the symbol
 # table, 18 to 26 % of each binary. A panic still prints its thread, file:line:col and message,
 # but a backtrace names nothing: RUST_BACKTRACE=1 prints no frames and `full` raw addresses, and
 # no unstripped copy is kept to read them against. A build to debug or profile sets

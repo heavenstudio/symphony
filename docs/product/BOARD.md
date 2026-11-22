@@ -158,7 +158,7 @@ cancelled tasks open from **Done** as on a wide screen.
 ## Related
 
 - [A task's page](TASK.md): what a card opens.
-- [Task board](../TASKS.md#what-a-task-waits-on): how the board decides what a task waits on,
+- [Task board](../workflow/TASKS.md#what-a-task-waits-on): how the board decides what a task waits on,
   and the commands agents move tasks with.
-- [Recording builds and tests](../MACHINE_WORK.md): what puts a task in **build** or **test**.
-- [Workflow](../WORKFLOW.md): a project's own stages.
+- [Recording builds and tests](../workflow/MACHINE_WORK.md): what puts a task in **build** or **test**.
+- [Workflow](../workflow/WORKFLOW.md): a project's own stages.

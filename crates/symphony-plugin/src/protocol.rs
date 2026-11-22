@@ -1,4 +1,4 @@
-//! The plugin protocol's data (docs/PLUGIN_PROTOCOL.md): each seam's call as a request and the type
+//! The plugin protocol's data (docs/engineering/PLUGIN_PROTOCOL.md): each seam's call as a request and the type
 //! of its answer, both serde types, what a plugin declares once ([`Declaration`]), and the line
 //! each travels in ([`Envelope`]). A request names the seam's object (a component, a card kind, a
 //! route…) by its name, a watch by its place among the plugin's watches, and carries owned forms of
@@ -208,7 +208,7 @@ pub struct Envelope<Q = Box<RawValue>, A = Box<RawValue>> {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answered: Option<A>,
     /// Beside an answer, the plugin's own time for the call, in microseconds: what the host records
-    /// as the call's own time under a process (docs/PLUGIN_CALLS.md).
+    /// as the call's own time under a process (docs/engineering/PLUGIN_CALLS.md).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub us: Option<f64>,
 }

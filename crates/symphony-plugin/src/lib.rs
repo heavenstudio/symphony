@@ -4,7 +4,7 @@
 //! vocabulary of `symphony-blocks`, re-exported in [`vocabulary`]), never a Symphony library type,
 //! so a plugin can answer from a process of its own as well as linked: each seam's call is the line
 //! protocol's data in [`protocol`], and a plugin's binary whose `main` is [`serve`]`(&PLUGIN)`
-//! answers it on its stdin and stdout (docs/PLUGIN_PROTOCOL.md).
+//! answers it on its stdin and stdout (docs/engineering/PLUGIN_PROTOCOL.md).
 //!
 //! The client holds no plugin code: a component renders to [`vocabulary::Block`]s, which every
 //! project's client draws with the same generic components.
@@ -16,7 +16,7 @@
 //! checks, [`DocCheck`], the docs' syntax they read, and the text and markup rules a plugin reads
 //! and writes by). The kit's crates depend on no other workspace crate but each other, so a plugin
 //! built on the kit links nothing of the Symphony's library, board or server
-//! (docs/PLUGIN_PROTOCOL.md, "The kit").
+//! (docs/engineering/PLUGIN_PROTOCOL.md, "The kit").
 
 #![forbid(unsafe_code)]
 
@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 /// The block vocabulary a plugin renders to, and the data its seams return: `symphony-blocks`
 /// re-exported whole, so every word a block carries is named from here. Everything public in that
 /// crate is the kit's public vocabulary, and a type added there is a published addition, under the
-/// kit's version rules (docs/PLUGIN_PROTOCOL.md, *Versions*).
+/// kit's version rules (docs/engineering/PLUGIN_PROTOCOL.md, *Versions*).
 pub mod vocabulary {
     pub use symphony_blocks::*;
 }
@@ -554,7 +554,7 @@ pub struct Theme {
     pub name: String,
     pub icon: Option<String>,
     /// Token names (`primary`, `background`, `foreground`, `font-sans`, …) and their CSS values
-    /// (docs/PLUGIN_WRITING.md lists them).
+    /// (docs/engineering/PLUGIN_WRITING.md lists them).
     pub tokens: BTreeMap<String, String>,
     /// Stylesheets appended after the tokens, project-relative.
     pub stylesheets: Vec<String>,

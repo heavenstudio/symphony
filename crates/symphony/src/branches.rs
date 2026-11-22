@@ -57,7 +57,7 @@ impl Tree {
 #[derive(Clone, Debug)]
 pub struct BranchCard {
     pub tree: Tree,
-    /// The page's document name, as `docs/RELEASES.md`, whatever the project's documents folder
+    /// The page's document name, as `docs/workflow/RELEASES.md`, whatever the project's documents folder
     /// is called: [`Project::file`] is the file under the worktree.
     pub doc: String,
     /// On a live branch, the card as the branch's HEAD commit holds it, with the owner's lines its

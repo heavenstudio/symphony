@@ -1,6 +1,6 @@
 //! `agent-send` follows no workflow: its message moves no task and its program links none of the
 //! workflow, so a workflow the default branch commits is activated on the live board by the next
-//! `tasks` write, never by a message (docs/WORKFLOW.md, "Activation and mappings").
+//! `tasks` write, never by a message (docs/workflow/WORKFLOW.md, "Activation and mappings").
 
 use super::{Held, Live, SEND};
 use crate::common::NOW;

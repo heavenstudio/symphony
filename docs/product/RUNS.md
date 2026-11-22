@@ -146,11 +146,11 @@ are two to a row, **Show** under them.
 
 ## Related
 
-- [Runs](../RUNS.md): what a run and a step are, what a line records, how logs are kept and how
+- [Runs](../workflow/RUNS.md): what a run and a step are, what a line records, how logs are kept and how
   failed tests are read from them.
-- [Recording builds and tests](../MACHINE_WORK.md#recording-builds-and-tests): how a command comes
+- [Recording builds and tests](../workflow/MACHINE_WORK.md#recording-builds-and-tests): how a command comes
   to be recorded.
 - [The task board](BOARD.md): the **build** and **test** columns, which show the same work as
   **Now**.
-- [Releases](../RELEASES.md#the-refresh): what moves a board to a new schema.
+- [Releases](../workflow/RELEASES.md#the-refresh): what moves a board to a new schema.
 - [Reports](REPORTS.md): the project's work over time.

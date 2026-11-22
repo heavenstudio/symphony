@@ -1,4 +1,4 @@
-//! The release candidate (docs/RELEASES.md): a run of main's tip red in a check holds that commit,
+//! The release candidate (docs/workflow/RELEASES.md): a run of main's tip red in a check holds that commit,
 //! the local branch `release-candidate`, until its reds' own lands answer them; while it waits main's
 //! tip is not run; a red's own land advances it to the newest approved commit of the fix that holds
 //! the candidate and the fix alone, once the remote's main holds the merge; its rerun runs what was

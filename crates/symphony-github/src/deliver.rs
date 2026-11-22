@@ -1,5 +1,5 @@
 //! `symphony-github deliver VERB --request FILE`: what answers a land delivered by a pull request
-//! (`[land] delivery = ["symphony-github", "deliver"]`, docs/TASKS.md), one JSON object read and
+//! (`[land] delivery = ["symphony-github", "deliver"]`, docs/workflow/TASKS.md), one JSON object read and
 //! one printed. It serves only `enabled` settings whose `pull_requests` is `publish`, and decides
 //! nothing: what a task needs and whether it stands is the evidence the land hands it, which it
 //! writes down as checks and never reads the board for.

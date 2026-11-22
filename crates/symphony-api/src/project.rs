@@ -17,7 +17,7 @@ pub struct ProjectView {
     /// (`docs/DECISIONS.md`), whatever the folder is called, else its project-relative path; empty
     /// when the project has no such file yet, and the home then offers no link to one.
     pub register: String,
-    /// The review guide as a link names it, by its route (`docs/REVIEW.md`); empty when the
+    /// The review guide as a link names it, by its route (`docs/workflow/REVIEW.md`); empty when the
     /// project has none, and the home then offers no link to one.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub guide: String,

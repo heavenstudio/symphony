@@ -1,5 +1,5 @@
 //! What a red check's log says failed, as its task names it before the log's last lines
-//! (docs/RELEASES.md, a red's text), read from the log ([`read`]):
+//! (docs/workflow/RELEASES.md, a red's text), read from the log ([`read`]):
 //!
 //! - a test run's, a log in which cargo started a test target (`     Running …`, `   Doc-tests …`)
 //!   or said one failed, or libtest named a test `FAILED`: each test libtest named `FAILED`, with

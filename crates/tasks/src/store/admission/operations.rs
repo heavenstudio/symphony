@@ -1,4 +1,4 @@
-//! The board's operations on tasks a custom workflow holds (docs/WORKFLOW.md, "Operations"): the
+//! The board's operations on tasks a custom workflow holds (docs/workflow/WORKFLOW.md, "Operations"): the
 //! active workflow read once for a command's readers ([`Store::workflow_operating`]), the pass that
 //! settles what no session asked for ([`Store::settle_held`]: a lost holder's recovery, and a
 //! dependant's policy when a prerequisite ended without success), and a claim named by the role it

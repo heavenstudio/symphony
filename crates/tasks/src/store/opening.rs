@@ -211,7 +211,7 @@ impl Store {
     /// As [`Store::open_as`], for a program that only reads boards: `how` is taken to read
     /// ([`Access::Read`]) whatever it says, so the board is never made or moved forward, and the
     /// program links none of the migration, the schemas' text among it (the Symphony's own
-    /// binary, whose size that text would count against: docs/CHECKS.md, "Size budgets").
+    /// binary, whose size that text would count against: docs/workflow/CHECKS.md, "Size budgets").
     pub fn read_as(client: Client, how: &Opening) -> Result<Store, Error> {
         let host = crate::sys::hostname();
         Store::reading(

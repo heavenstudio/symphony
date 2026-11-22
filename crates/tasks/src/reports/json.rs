@@ -1,7 +1,7 @@
 //! The day file's text ([`symphony_api::reports::ReportDay`]), written by hand: compact JSON on one
 //! line, each field in its order and each value as serde writes it, which the test holds byte for
 //! byte to serde's own. Serde's writer costs the server's binary code of its own for each kind of
-//! part of the file (docs/CHECKS.md, size budgets); here each field is one call to a writer of its
+//! part of the file (docs/workflow/CHECKS.md, size budgets); here each field is one call to a writer of its
 //! kind of value, each kept out of line, and serde_json still writes each string and number.
 
 use serde::Serialize;

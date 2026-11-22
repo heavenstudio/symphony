@@ -1,4 +1,4 @@
-//! The kit's lists that grow in a minor (`docs/PLUGIN_PROTOCOL.md`, *Versions*), from a crate that
+//! The kit's lists that grow in a minor (`docs/engineering/PLUGIN_PROTOCOL.md`, *Versions*), from a crate that
 //! links the kit alone, as a plugin's does: a new kind of block, text span or media, a new word
 //! one carries, a new state of a gate, a new kind of board field or way of drawing a file is a
 //! minor of the kit, never a new major. So each of those enums is `#[non_exhaustive]`: this crate

@@ -3,9 +3,9 @@
 //! [`install`]s that list before anything reads a project; every seam is asked through
 //! [`Plugins`], so the Symphony's own code names no plugin. A plugin the project's
 //! `[plugins.process]` names a command for answers from a process of its own instead, which this
-//! process starts ([`process`], docs/PLUGIN_PROTOCOL.md): a project chooses per plugin. A project
+//! process starts ([`process`], docs/engineering/PLUGIN_PROTOCOL.md): a project chooses per plugin. A project
 //! whose file turns on `[plugins] timing` has each call into its plugins timed ([`measure`],
-//! docs/PLUGIN_CALLS.md).
+//! docs/engineering/PLUGIN_CALLS.md).
 
 use std::path::Path;
 use std::sync::{Arc, OnceLock};

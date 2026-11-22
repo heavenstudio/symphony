@@ -677,7 +677,7 @@ export function gateChanges(timeline: TaskTimeline): Row[] {
   return rows;
 }
 
-// A custom workflow's places (docs/WORKFLOW.md, "The app").
+// A custom workflow's places (docs/workflow/WORKFLOW.md, "The app").
 
 /** What a stretch of places shares: its phase, its state, or both, its place. */
 export type PlaceKey = "phase" | "state" | "place";

@@ -753,7 +753,7 @@ fn a_board_that_went_back_is_warned_of_first_and_written_at_once_until_it_opens_
     let _ = fs::remove_file(&path);
     let line = "it went back from schema 16, so what was written since is lost: nothing was \
                 written; do not run `just tasks migrate`; the Symphony's \
-                docs/BOARD_OPERATIONS.md#a-board-that-went-back says how to recover it";
+                docs/operations/BOARD_OPERATIONS.md#a-board-that-went-back says how to recover it";
 
     assert!(!recorder.went_back(T0 + 1.0, None), "nothing changed");
     assert_eq!(Report::read(&path), Ok(None), "and nothing was written");

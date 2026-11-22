@@ -101,7 +101,9 @@ pub(super) fn prose(tree: &Docs, problems: &mut Vec<Problem>) {
         .filter(|s| !s.is_empty() && !s.chars().all(word))
         .collect();
     for rel in scanned {
-        if matches!(rel.split('/').nth(1), Some("history" | "analysis")) {
+        let mut folders = rel.split('/').skip(1).collect::<Vec<_>>();
+        folders.pop();
+        if folders.iter().any(|p| matches!(*p, "history" | "analysis")) {
             continue; // the ledger and the evidence may say why and when
         }
         for (line, text) in prose_lines(tree.text(rel)) {

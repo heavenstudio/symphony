@@ -1,7 +1,7 @@
 //! What every agent reads at the start of a session stays within a line: the rules, the guides, each
 //! file of a shipped skill and each project page beside an installed one has a line in bytes in
 //! `size_lines.toml` beside this file, and one grown past it is red, as is one with no line and a
-//! line naming no such file (docs/CHECKS.md, "Size budgets"). Each line is set under a bare key
+//! line naming no such file (docs/workflow/CHECKS.md, "Size budgets"). Each line is set under a bare key
 //! made from its file's path ([`key`]), so a gate decision's raise can name it, and every line is
 //! read here as the gate reads it. It weighs the files git tracks; what a file says is a
 //! reviewer's to read.
@@ -164,7 +164,7 @@ fn the_guides_the_rules_and_the_shipped_skills_stay_within_their_lines() {
     reds.extend(unraisable(&text, &lines));
     assert!(
         reds.is_empty(),
-        "what every session reads grew unseen (docs/CHECKS.md, \"Size budgets\"):\n{}",
+        "what every session reads grew unseen (docs/workflow/CHECKS.md, \"Size budgets\"):\n{}",
         reds.join("\n")
     );
 }

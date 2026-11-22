@@ -1,4 +1,4 @@
-// What a task's tokens cost on its timeline (docs/TASKS.md, "What the tokens cost"): the total
+// What a task's tokens cost on its timeline (docs/workflow/TASKS.md, "What the tokens cost"): the total
 // after the task's time, and each row of the board's record (a session's calls on the task in one
 // role and one review round, `/api/task-tokens`'s `rows`) on the one stage stretch its calls were
 // made for, so the stretches add up to the total. No DOM, and nothing of the task kind's own: the

@@ -119,7 +119,7 @@ fn a_rule_of_a_ruleset_never_read_holds_nobody() {
 #[test]
 fn a_rule_that_restricts_updates_is_refused_whoever_it_lets_through() {
     // GitHub's auto-merge, armed by the App, merges only where no rule asks for a bypass, and the
-    // check alone holds a merge to its evidence (docs/GITHUB.md).
+    // check alone holds a merge to its evidence (docs/operations/GITHUB.md).
     for (rule, named) in [
         (json!({"type": "update", "ruleset_id": 2}), "ruleset 2"),
         (json!({"type": "update", "ruleset_id": 1}), "ruleset 1"),

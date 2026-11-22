@@ -1,6 +1,6 @@
 //! `workflow show`, `workflow actions SLUG` and `workflow apply SLUG EDGE --revision N`: the custom
 //! workflow a board activated, the edges a session could take from where a task stands, and one
-//! taken through the board's one admission ([`Store::apply_operation`], docs/WORKFLOW.md). The
+//! taken through the board's one admission ([`Store::apply_operation`], docs/workflow/WORKFLOW.md). The
 //! principal is the agent session `--as` names, as the local host binds it, never one the
 //! command's input names; the owner acts from the Symphony.
 //!

@@ -1,7 +1,7 @@
 //! A custom workflow through the Symphony's routes, on a fixture project's own board: the active
 //! definition and a task's place read, the local owner's next actions previewed, an edge taken,
 //! repeated under its key and refused as stale from the revision it left, and the feed saying the
-//! board activated a workflow so a page reads the definition again (docs/WORKFLOW.md, "The app").
+//! board activated a workflow so a page reads the definition again (docs/workflow/WORKFLOW.md, "The app").
 
 use super::boards_tests::{Project, answer, asked, env, writer};
 use crate::front::Shared;

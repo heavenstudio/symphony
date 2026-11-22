@@ -1,7 +1,7 @@
 //! A test run `tools/cargo.sh` sends through the board's recorder (`tasks run`), read by the real
 //! server from its checkout's work folder: the board's Build and Test columns follow it, a slice's
 //! run on its parent's card, and until anything was recorded they are one rail
-//! (docs/MACHINE_WORK.md).
+//! (docs/workflow/MACHINE_WORK.md).
 use super::{
     SHOWN, binaries, chrome, chrome::Chrome, owner_controls::ScratchBoard, restored::Native,
 };
@@ -33,7 +33,7 @@ const PROBE_WAIT: &str = "120";
 /// release; dropping the run releases it and reaps it, so a failed assertion leaves no run. On that
 /// scratch board its recorder takes the scale of its waits ([`SCALE`]), and the script waits long
 /// for its probe ([`PROBE_WAIT`]): a loaded machine never leaves a run unrecorded, or recorded for
-/// no task (docs/MACHINE_WORK.md, "A test's waits"). A recorder grown slow is the board's tests' to
+/// no task (docs/workflow/MACHINE_WORK.md, "A test's waits"). A recorder grown slow is the board's tests' to
 /// turn red.
 struct Run {
     child: Child,

@@ -1,5 +1,5 @@
 //! Each call into a project's plugins timed into its record (`[plugins] timing`,
-//! docs/PLUGIN_CALLS.md).
+//! docs/engineering/PLUGIN_CALLS.md).
 //!
 //! A measured plugin is the plugin behind a wrapper of the same seams: every call into a seam's
 //! object (a component's render, a card kind's slot, a watch's change…) goes through its

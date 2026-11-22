@@ -1,4 +1,4 @@
-//! Go to session (docs/TASKS.md, "Going to a session"). Each agent's way into its session is
+//! Go to session (docs/workflow/TASKS.md, "Going to a session"). Each agent's way into its session is
 //! resolved on the board's tick ([`symphony_api::resolve_sessions`]); a page links a web address
 //! itself. What reaches a pane comes here: from this machine, `POST /api/agent-focus` has the
 //! Herdr app show it ([`symphony_board::launch::go::focus`]); from any machine the gate admits
