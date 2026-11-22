@@ -469,9 +469,8 @@ Mentions only, which are reworded with the docs:
 Category c: 67 lines, 72 occurrences, all in `docs/`.
 
 - **The cards' dated history: 14 lines**, in the register then, and now under each card where it
-  sits: 11 in [reports-and-monitoring](reports-and-monitoring.md), one each in
-  [board-design](board-design.md), [client-cache](client-cache.md) and
-  [symphony-update](symphony-update.md). It stays as written.
+  sits: 12 in [reports-and-monitoring](reports-and-monitoring.md), one each in
+  [client-cache](client-cache.md) and [symphony-update](symphony-update.md). It stays as written.
 - **[reports-and-monitoring](reports-and-monitoring.md): 33 lines.** Measurements of the
   consuming project's board and verify, and the gates adapter task. It keeps the name, as a dated
   record.
