@@ -11,7 +11,7 @@
 
 use crate::git;
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// A project's file, at its root.
 pub const FILE: &str = "symphony.toml";
@@ -169,12 +169,51 @@ fn file_id(path: &Path) -> Option<String> {
         .map(str::to_string)
 }
 
+/// `path`, which the project file writes for `key`, as a path inside the project: relative, its
+/// `.` parts dropped and its parts joined by `/`, as the repository names its files (`./docs/` is
+/// `docs`). The one rule for a project-relative path in the project file: the Symphony's load
+/// judges every such key by it, and the board's own reads of the file ([`Project::guide`],
+/// [`board_path`], [`artifacts`], [`documents`]) take what it takes, so a path one refuses the
+/// other never follows.
+///
+/// # Errors
+///
+/// When it leads out of the project (absolute, or with a `..` part) or names nothing in it (empty,
+/// or `.` alone), naming `key`.
+pub fn inside(key: &str, path: &str) -> Result<String, String> {
+    path_in(key, path, false)
+}
+
+/// [`inside`], the project's root itself allowed when `root` is: `.`, read as the empty path (an
+/// entrypoint's folder). The empty path written is refused all the same.
+///
+/// # Errors
+///
+/// As [`inside`], but for `.` when `root` is.
+pub fn path_in(key: &str, path: &str, root: bool) -> Result<String, String> {
+    let refused = || format!("{key} {path:?} must be a path inside the project");
+    let mut parts = Vec::new();
+    for part in Path::new(path).components() {
+        match part {
+            Component::Normal(name) => parts.push(name.to_string_lossy()),
+            Component::CurDir => {}
+            _ => return Err(refused()),
+        }
+    }
+    if parts.is_empty() && (!root || path.is_empty()) {
+        return Err(refused());
+    }
+    Ok(parts.join("/"))
+}
+
 /// The board's guide of a project whose file names none, project-relative.
 pub const GUIDE: &str = "TASKS.md";
 
 impl Project {
     /// The project's board guide, project-relative, which says where its board lives and how it
-    /// moves: its file's `[board] guide`, else [`GUIDE`]. A file that does not read names none.
+    /// moves: its file's `[board] guide` as [`inside`] reads it, else [`GUIDE`]. A file that does
+    /// not read names none, and nor does a guide the Symphony refuses (empty, or leading out of
+    /// the project).
     pub fn guide(&self) -> String {
         self.place
             .file
@@ -182,31 +221,26 @@ impl Project {
             .and_then(|path| std::fs::read_to_string(path).ok())
             .and_then(|text| text.parse::<toml::Table>().ok())
             .and_then(|file| {
-                file.get("board")?
-                    .get("guide")?
-                    .as_str()
-                    .filter(|guide| !guide.is_empty())
-                    .map(str::to_string)
+                let guide = file.get("board")?.get("guide")?.as_str()?;
+                inside("[board] guide", guide).ok()
             })
             .unwrap_or_else(|| GUIDE.to_string())
     }
 }
 
 /// Where the path `[board] KEY` names in the project file of the main checkout of the repository
-/// whose common dir is `common` is: one under `.git/` in the common dir, any other under the main
-/// checkout. None when there is no main checkout, no file, it does not read, or it names no path
-/// there: the project has none of that kind, and the board reads none (`[board] slot_locks`,
-/// `[board] assessments`; the Symphony's `project::Board` checks them). Only that key is read; the
-/// rest of the file is the Symphony's.
+/// whose common dir is `common` is, as [`inside`] reads it: one under `.git/` in the common dir,
+/// any other under the main checkout. None when there is no main checkout, no file, it does not
+/// read, or it names no path there that the Symphony takes (empty, or leading out of the project):
+/// the project has none of that kind, and the board reads none (`[board] slot_locks`, `[board]
+/// assessments`; the Symphony's `project::Board` refuses what [`inside`] does). Only that key is
+/// read; the rest of the file is the Symphony's.
 pub fn board_path(common: &Path, key: &str) -> Option<PathBuf> {
     let root = main_checkout(common)?;
     let text = std::fs::read_to_string(root.join(FILE)).ok()?;
     let file = text.parse::<toml::Table>().ok()?;
-    let path = file
-        .get("board")?
-        .get(key)?
-        .as_str()
-        .filter(|path| !path.is_empty())?;
+    let written = file.get("board")?.get(key)?.as_str()?;
+    let path = inside(&format!("[board] {key}"), written).ok()?;
     Some(match path.strip_prefix(".git/") {
         Some(rest) => common.join(rest),
         None => root.join(path),
@@ -214,9 +248,9 @@ pub fn board_path(common: &Path, key: &str) -> Option<PathBuf> {
 }
 
 /// The project's artifacts folder, project-relative, as the project file at `root` names it
-/// (`[project] artifacts`, else `artifacts`) and the Symphony reads it (`Project::artifact`): its
-/// `.` parts dropped, its parts joined by `/`. None when the file does not read, or names a
-/// folder that is empty or leaves the project, which the Symphony refuses.
+/// (`[project] artifacts`, else `artifacts`) and the Symphony reads it (`Project::artifact`), by
+/// [`inside`]. None when the file does not read, or names a folder [`inside`] refuses, as the
+/// Symphony does.
 pub fn artifacts(root: &Path) -> Option<String> {
     let named = match std::fs::read_to_string(root.join(FILE)) {
         Ok(text) => match text.parse::<toml::Table>().ok()?.get("project") {
@@ -229,15 +263,7 @@ pub fn artifacts(root: &Path) -> Option<String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => "artifacts".into(),
         Err(_) => return None,
     };
-    let mut parts = Vec::new();
-    for part in Path::new(&named).components() {
-        match part {
-            std::path::Component::Normal(name) => parts.push(name.to_str()?.to_string()),
-            std::path::Component::CurDir => {}
-            _ => return None,
-        }
-    }
-    (!parts.is_empty()).then(|| parts.join("/"))
+    inside("[project] artifacts", &named).ok()
 }
 
 /// The convention's documents folder, read when a project file names no `[[entrypoints]]`.
@@ -246,8 +272,9 @@ const DOCS: &str = "docs";
 /// The folders the Symphony reads a project's documents from, project-relative ("" the project's
 /// root), as the project file `text` names them in `[[entrypoints]] folder` and the Symphony reads
 /// them (`Project::pathspecs`): `docs` when it names none, the convention's. Where an owner's line on
-/// a card can be written. A file that does not read, or a folder outside the project (which the
-/// Symphony refuses), reads as the project's root: every folder, never one too few.
+/// a card can be written, each folder by [`path_in`]. A file that does not read, or a folder it
+/// refuses (which the Symphony refuses), reads as the project's root: every folder, never one too
+/// few.
 pub fn documents(text: &str) -> Vec<String> {
     let root = || vec![String::new()];
     let Ok(table) = text.parse::<toml::Table>() else {
@@ -264,18 +291,10 @@ pub fn documents(text: &str) -> Vec<String> {
         let Some(folder) = entry.get("folder").and_then(toml::Value::as_str) else {
             return root();
         };
-        let mut parts = Vec::new();
-        for part in Path::new(folder).components() {
-            match part {
-                std::path::Component::Normal(name) => match name.to_str() {
-                    Some(name) => parts.push(name),
-                    None => return root(),
-                },
-                std::path::Component::CurDir => {}
-                _ => return root(),
-            }
+        match path_in("[[entrypoints]] folder", folder, true) {
+            Ok(folder) => folders.push(folder),
+            Err(_) => return root(),
         }
-        folders.push(parts.join("/"));
     }
     if folders.is_empty() {
         return root();
@@ -417,6 +436,125 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_path_inside_the_project_is_spelt_as_the_repository_names_it_and_any_other_is_refused() {
+        for (path, spelt) in [
+            ("docs", "docs"),
+            ("./docs/", "docs"),
+            ("a/./b//c", "a/b/c"),
+            (".git/test-slots", ".git/test-slots"),
+            ("./.git/x", ".git/x"),
+            ("..x/y", "..x/y"),
+        ] {
+            assert_eq!(inside("[k] key", path).as_deref(), Ok(spelt), "{path}");
+            assert_eq!(
+                path_in("[k] key", path, true).as_deref(),
+                Ok(spelt),
+                "{path}"
+            );
+        }
+        for path in ["", ".", "./", "../x", "a/../b", "/abs", "/", "x/.."] {
+            assert_eq!(
+                inside("[k] key", path),
+                Err(format!(
+                    "[k] key {path:?} must be a path inside the project"
+                )),
+                "{path}"
+            );
+        }
+        // The root itself is a folder only where it is asked for, and never the empty path written.
+        for path in [".", "./", "././"] {
+            assert_eq!(path_in("[k] key", path, true).as_deref(), Ok(""), "{path}");
+        }
+        for path in ["", "../x", "/abs"] {
+            assert!(path_in("[k] key", path, true).is_err(), "{path}");
+        }
+    }
+
+    /// A scratch main checkout whose common dir is its `.git` folder, its project file `text`.
+    fn checkout(name: &str, text: Option<&str>) -> (PathBuf, PathBuf) {
+        let root =
+            std::env::temp_dir().join(format!("symphony-project-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        if let Some(text) = text {
+            std::fs::write(root.join(FILE), text).unwrap();
+        }
+        let common = root.join(".git");
+        (root, common)
+    }
+
+    #[test]
+    fn the_board_guide_is_the_files_inside_the_project_else_the_default() {
+        let (root, common) = checkout("guide", None);
+        let project = Project {
+            place: Place {
+                root: root.clone(),
+                file: Some(root.join(FILE)),
+                common,
+            },
+            id: "x".into(),
+        };
+        for (guide, read) in [
+            ("\"handbook/BOARD.md\"", "handbook/BOARD.md"),
+            ("\"./docs/TASKS.md\"", "docs/TASKS.md"),
+            ("\"../BOARD.md\"", GUIDE),
+            ("\"docs/../../BOARD.md\"", GUIDE),
+            ("\"/elsewhere/BOARD.md\"", GUIDE),
+            ("\".\"", GUIDE),
+            ("\"\"", GUIDE),
+            ("7", GUIDE),
+        ] {
+            std::fs::write(root.join(FILE), format!("[board]\nguide = {guide}\n")).unwrap();
+            assert_eq!(project.guide(), read, "{guide}");
+        }
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_board_path_is_the_files_inside_the_project_under_git_the_common_dir_and_none_outside() {
+        let (root, common) = checkout("board-path", None);
+        assert_eq!(board_path(&common, "slot_locks"), None, "no file");
+        for (written, read) in [
+            ("\".git/test-slots\"", Some(common.join("test-slots"))),
+            ("\"./.git/test-slots/\"", Some(common.join("test-slots"))),
+            ("\".git\"", Some(root.join(".git"))),
+            ("\"slots\"", Some(root.join("slots"))),
+            ("\"./out/./slots/\"", Some(root.join("out/slots"))),
+            ("\"../slots\"", None),
+            ("\".git/../slots\"", None),
+            ("\"/var/slots\"", None),
+            ("\".\"", None),
+            ("\"\"", None),
+            ("3", None),
+        ] {
+            std::fs::write(
+                root.join(FILE),
+                format!("[board]\nslot_locks = {written}\n"),
+            )
+            .unwrap();
+            assert_eq!(board_path(&common, "slot_locks"), read, "{written}");
+            assert_eq!(
+                board_path(&common, "assessments"),
+                None,
+                "{written}: another key"
+            );
+        }
+        std::fs::write(
+            root.join(FILE),
+            "[board]\nslot_locks = \"slots\"\nnot toml [",
+        )
+        .unwrap();
+        assert_eq!(
+            board_path(&common, "slot_locks"),
+            None,
+            "a file that does not read"
+        );
+        // A common dir that is no main checkout's `.git` folder has no main checkout's file.
+        assert_eq!(board_path(&root, "slot_locks"), None);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
     fn the_artifacts_folder_is_the_files_else_artifacts_and_none_outside_the_project() {
         let root =
             std::env::temp_dir().join(format!("symphony-project-artifacts-{}", std::process::id()));
@@ -458,6 +596,8 @@ mod tests {
             // What the Symphony refuses reads as every folder, never one too few.
             (entry("\"../elsewhere\""), vec![""]),
             (entry("\"/abs\""), vec![""]),
+            (entry("\"\""), vec![""]),
+            (entry("\"\"") + &entry("\"docs\""), vec![""]),
             (entry("3"), vec![""]),
             ("[[entrypoints]]\nurl = \"u\"\n".into(), vec![""]),
             ("entrypoints = []\n".into(), vec![""]),
