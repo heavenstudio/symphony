@@ -225,6 +225,68 @@ fn a_failure_or_a_hold_names_a_route_or_one_of_its_targets() {
     assert_eq!(held.join().unwrap(), "200");
 }
 
+/// The cache tests' helpers (`cache_pages.rs`) count, slice and hold by the reads they are given,
+/// in the order given: a read never asked counts none, and one outside the reads is not held.
+#[test]
+fn the_cache_helpers_count_slice_and_hold_the_reads_they_are_given() {
+    use crate::cache_pages::{answered, hold, since};
+    let dist = Dist::new("/assets/shell.js", &[]);
+    let site = Site::start(dist.path(), &board());
+    site.set_json("/api/queue", &serde_json::json!({"cards": []}));
+    site.set_json("/api/asks", &serde_json::json!({"asks": []}));
+    let reads = ["/api/queue", "/api/asks", "/api/never-asked"];
+    let status = |path: &str| get(site.addr, path, "").0[9..12].to_string();
+    assert_eq!(answered(&site, &reads), [0, 0, 0]);
+    assert_eq!(answered(&site, &[]), [] as [usize; 0]);
+    assert_eq!(status("/api/asks"), "200");
+    let before = answered(&site, &reads);
+    assert_eq!(before, [0, 1, 0]);
+    assert_eq!(since(&site, &reads, &before, "/api/asks"), []);
+    assert_eq!(status("/api/asks?card=one"), "200");
+    assert_eq!(status("/api/queue"), "200");
+    let targets = |read: &str| -> Vec<String> {
+        since(&site, &reads, &before, read)
+            .into_iter()
+            .map(|answer| answer.target)
+            .collect()
+    };
+    assert_eq!(targets("/api/asks"), ["/api/asks?card=one"]);
+    assert_eq!(targets("/api/queue"), ["/api/queue"]);
+    assert_eq!(targets("/api/never-asked"), [] as [&str; 0]);
+    assert_eq!(answered(&site, &reads), [1, 2, 0]);
+    assert_eq!(
+        answered(&site, &["/api/asks", "/api/queue"]),
+        [2, 1],
+        "counted in the order the reads are given"
+    );
+
+    hold(&site, &["/api/queue"], true);
+    let (addr, asked) = (site.addr, site.targets().len());
+    let held = std::thread::spawn(move || get(addr, "/api/queue", "").0[9..12].to_string());
+    test_time::until_true(
+        "the held request arriving",
+        test_time::backstop(std::time::Duration::from_secs(10)),
+        || site.targets().len() != asked,
+    )
+    .expect("the held request never arrived");
+    assert_eq!(status("/api/asks"), "200", "a read not named is not held");
+    assert_eq!(answered(&site, &reads), [1, 3, 0], "the held read waits");
+    hold(&site, &["/api/queue"], false);
+    assert_eq!(held.join().unwrap(), "200");
+    assert_eq!(answered(&site, &reads), [2, 3, 0]);
+}
+
+/// Asking for the answers to a read that is none of the reads counted is the test's mistake.
+#[test]
+#[should_panic]
+fn the_answers_since_a_count_are_of_a_read_that_was_counted() {
+    let dist = Dist::new("/assets/shell.js", &[]);
+    let site = Site::start(dist.path(), &board());
+    let reads = ["/api/queue"];
+    let before = crate::cache_pages::answered(&site, &reads);
+    crate::cache_pages::since(&site, &reads, &before, "/api/asks");
+}
+
 /// A retired build file answers 404 until it is restored, and only it: the others stay served.
 #[test]
 fn a_retired_build_file_is_gone_until_it_is_restored() {
