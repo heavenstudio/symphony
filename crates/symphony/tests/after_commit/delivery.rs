@@ -764,3 +764,484 @@ pub(super) fn the_land_of_a_pending_saves_task_is_said_from_its_journal(f: &Fixt
     assert_eq!(state(&root), State::Conflicted);
     f.clean_workers();
 }
+
+/// `symphony reply PATH SLUG TEXT…` run in process from an agent's session, as the chat skill
+/// runs it in the main checkout: its exit code and what it printed.
+fn agent_reply(args: &[&str]) -> (i32, String) {
+    let mut argv = vec!["reply".to_string()];
+    argv.extend(args.iter().map(|arg| arg.to_string()));
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = symphony::cli::main(&argv, &mut "".as_bytes(), &mut out, &mut err);
+    let said = String::from_utf8(out).unwrap() + &String::from_utf8(err).unwrap();
+    (code, said)
+}
+
+pub(super) fn an_agents_reply_kept_from_main_is_delivered_behind_the_owners_save(f: &Fixture) {
+    let root = delivering(f);
+    let saves = ClosingSaves::start(&root);
+    let message = json!({"path":"docs/a.md","slug":"one","text":"what would two look like?"});
+    assert_eq!(
+        saves.post("", "/api/message", message),
+        json!({"ok":true,"delivery":"pending"})
+    );
+    drop(saves);
+    let owners = pending::saves(&root);
+    assert_eq!(owners.len(), 1, "{owners:?}");
+    let owner = owners[0].branch.clone();
+    assert_eq!(owners[0].state, State::Waiting);
+
+    // The agent answers from main's checkout: kept, nothing of the checkout written.
+    let page = root.join("docs/a.md");
+    let (code, said) = agent_reply(&[
+        page.to_str().unwrap(),
+        "one",
+        "Like the first, smaller.",
+        "--now",
+        "2026-11-22 21:10",
+        "--as",
+        "fox-1",
+    ]);
+    assert_eq!(code, 0, "{said}");
+    assert_eq!(git(&root, &["status", "--porcelain"]), "");
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), DOC);
+    // Shown after the owner's line it answers, and waiting for that save's delivery.
+    let shown = pending::shown(&root, "docs/a.md", DOC.into());
+    let asked = shown.find("what would two look like?").unwrap();
+    let answer = shown.find("agent — Like the first, smaller.").unwrap();
+    assert!(asked < answer, "{shown}");
+    let both = pending::saves(&root);
+    assert_eq!(both.len(), 2, "{both:?}");
+    let agent = both[1].branch.clone();
+    assert_eq!(
+        (both[1].state.clone(), both[1].by.as_str()),
+        (State::Queued, "fox-1")
+    );
+    let note = pending::note(&root, "docs/a.md").unwrap();
+    assert!(note.contains("This page shows 2 saves"), "{note}");
+    // A server's pass leaves it queued while the owner's save is on its way.
+    pass(&root);
+    assert_eq!(pending::saves(&root)[1].state, State::Queued);
+    assert_eq!(branches(&root), std::slice::from_ref(&owner));
+
+    // The owner's save lands and main here follows: the reply is committed on the main that
+    // holds it, a head of its own, and filed in words that say it is an agent's.
+    landed(&root, &owner, &owner);
+    git(&root, &["merge", "-q", "--ff-only", "origin/main"]);
+    pass(&root);
+    let pending = pending::saves(&root);
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    assert_eq!(
+        (pending[0].branch.as_str(), &pending[0].state),
+        (agent.as_str(), &State::Waiting)
+    );
+    assert_eq!(
+        git(&root, &["rev-parse", &format!("{agent}^")]),
+        git(&root, &["rev-parse", "main"])
+    );
+    let delivered = git(&root, &["diff", "main", &agent, "--", "docs/a.md"]);
+    assert!(
+        delivered.contains("+  [2026-11-22 21:10] agent — Like the first, smaller."),
+        "{delivered}"
+    );
+    assert_eq!(
+        delivered
+            .lines()
+            .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
+            .count(),
+        1,
+        "{delivered}"
+    );
+    let message = git(&root, &["log", "-1", "--format=%B", &agent]);
+    assert!(
+        message.starts_with("docs: an agent's save (fox-1)"),
+        "{message}"
+    );
+    let store = f.store();
+    let task = store.get(&agent).unwrap();
+    assert_eq!(task.status, "review");
+    assert_eq!(task.title, "Deliver an agent's save of docs/a.md");
+    let body = &task.body;
+    assert!(
+        body.starts_with(
+            "An agent (fox-1) saved a reply or a tidy of docs/a.md in the checkout on main"
+        ),
+        "{body}"
+    );
+    assert!(!body.contains("the owner's own"), "{body}");
+    assert_eq!(git(&root, &["status", "--porcelain"]), "");
+    f.clean_workers();
+}
+
+/// An agent's reply on the card `slug` of `file` from main's checkout, at `minute` past 21:00.
+fn replied(root: &Path, file: &str, slug: &str, text: &str, minute: u8) {
+    let page = root.join(file);
+    let now = format!("2026-11-22 21:{minute:02}");
+    let (code, said) = agent_reply(&[
+        page.to_str().unwrap(),
+        slug,
+        text,
+        "--now",
+        &now,
+        "--as",
+        "fox-1",
+    ]);
+    assert_eq!(code, 0, "{said}");
+}
+
+pub(super) fn an_agents_saves_whose_turn_has_come_go_as_one_task(f: &Fixture) {
+    let root = delivering(f);
+    let saves = ClosingSaves::start(&root);
+    let message = json!({"path":"docs/a.md","slug":"one","text":"what would two look like?"});
+    assert_eq!(
+        saves.post("", "/api/message", message),
+        json!({"ok":true,"delivery":"pending"})
+    );
+    drop(saves);
+    let owner = pending::saves(&root)[0].branch.clone();
+
+    // A reply behind the owner's save, and two on another page, the second written after the
+    // first: all kept, nothing of the checkout written.
+    replied(&root, "docs/a.md", "one", "Like the first, smaller.", 10);
+    replied(&root, "docs/b.md", "two", "Drafted.", 11);
+    replied(&root, "docs/b.md", "two", "Pictured too.", 12);
+    assert_eq!(git(&root, &["status", "--porcelain"]), "");
+    pass(&root);
+
+    // The two of b.md go as one commit on the first's branch, filed as one task; the reply on
+    // a.md waits for the owner's save it answers.
+    let kept = pending::saves(&root);
+    assert_eq!(kept.len(), 4, "{kept:?}");
+    let batch = kept[2].branch.clone();
+    assert_eq!(batch, format!("docs/owner-save-{}", kept[2].sequence));
+    assert_eq!(kept[3].branch, batch);
+    assert_eq!(
+        (&kept[1].state, &kept[2].state, &kept[3].state),
+        (&State::Queued, &State::Waiting, &State::Waiting)
+    );
+    let mut made = vec![owner.clone(), batch.clone()];
+    made.sort();
+    assert_eq!(branches(&root), made);
+    assert_eq!(
+        git(&root, &["rev-parse", &format!("{batch}^")]),
+        git(&root, &["rev-parse", "main"])
+    );
+    let delivered = git(&root, &["diff", "main", &batch]);
+    let added: Vec<&str> = (delivered.lines())
+        .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
+        .collect();
+    assert_eq!(
+        added,
+        [
+            "+  [2026-11-22 21:11] agent — Drafted.",
+            "+  [2026-11-22 21:12] agent — Pictured too."
+        ],
+        "{delivered}"
+    );
+    let message = git(&root, &["log", "-1", "--format=%B", &batch]);
+    assert_eq!(message, "docs: an agent's saves (fox-1)\n\ndocs/b.md");
+    let store = f.store();
+    let task = store.get(&batch).unwrap();
+    assert_eq!(task.status, "review");
+    assert_eq!(task.title, "Deliver an agent's saves of docs/b.md");
+    assert!(
+        task.body.starts_with(
+            "An agent (fox-1) saved 2 replies or tidied files of docs/b.md in the checkout on main"
+        ),
+        "{}",
+        task.body
+    );
+    let second = format!("docs/owner-save-{}", kept[3].sequence);
+    assert!(store.get(&second).is_err(), "{second} was filed");
+    // A pass again files nothing twice and moves no branch.
+    let tip = git(&root, &["rev-parse", &batch]);
+    pass(&root);
+    assert_eq!(git(&root, &["rev-parse", &batch]), tip);
+    assert_eq!(branches(&root), made);
+
+    // A later reply on b.md waits for that batch, as one on a.md waits for the owner's save.
+    replied(&root, "docs/b.md", "two", "One more.", 13);
+    landed(&root, &owner, &owner);
+    git(&root, &["merge", "-q", "--ff-only", "origin/main"]);
+    pass(&root);
+    let kept = pending::saves(&root);
+    assert_eq!(kept.len(), 4, "{kept:?}");
+    let alone = kept[0].branch.clone();
+    assert_eq!(alone, format!("docs/owner-save-{}", kept[0].sequence));
+    assert_eq!(
+        (kept[1].branch.as_str(), kept[2].branch.as_str()),
+        (batch.as_str(), batch.as_str())
+    );
+    assert_eq!(kept[3].state, State::Queued);
+    let message = git(&root, &["log", "-1", "--format=%B", &alone]);
+    assert_eq!(message, "docs: an agent's save (fox-1)\n\ndocs/a.md");
+    assert_eq!(
+        store.get(&alone).unwrap().title,
+        "Deliver an agent's save of docs/a.md"
+    );
+
+    // The batch's one receipt proves both its saves, and the reply after it goes next.
+    landed(&root, &batch, &batch);
+    git(&root, &["merge", "-q", "--ff-only", "origin/main"]);
+    pass(&root);
+    let left: Vec<String> = (pending::saves(&root).into_iter().map(|save| save.branch)).collect();
+    let last = format!("docs/owner-save-{}", pending::saves(&root)[1].sequence);
+    assert_eq!(left, [alone, last.clone()]);
+    let text = git(&root, &["show", &format!("{last}:docs/b.md")]);
+    assert!(
+        text.contains("Pictured too.") && text.contains("One more."),
+        "{text}"
+    );
+    assert_eq!(git(&root, &["status", "--porcelain"]), "");
+    f.clean_workers();
+}
+
+/// The journal entry of `sequence` as a pass left it before any delivery: its edit, the base and
+/// who saved it, and nothing of a branch, a task or a batch.
+fn unjournaled(root: &Path, sequence: u64) {
+    let path = root
+        .join(".git/symphony/server/verdict-publications")
+        .join(format!("{sequence:020}.json"));
+    let mut entry: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let delivery = &entry["delivery"];
+    entry["delivery"] = json!({"base": delivery["base"], "by": delivery["by"]});
+    write(&path, &entry.to_string());
+}
+
+pub(super) fn a_batch_made_and_never_journaled_is_taken_up_as_it_was(f: &Fixture) {
+    let root = delivering(f);
+    replied(&root, "docs/b.md", "two", "Drafted.", 11);
+    replied(&root, "docs/b.md", "two", "Pictured too.", 12);
+    pass(&root);
+    let kept = pending::saves(&root);
+    let batch = kept[0].branch.clone();
+    assert_eq!(kept[1].branch, batch);
+    let tip = git(&root, &["rev-parse", &batch]);
+
+    // The pass cut short after the branch was made: no entry says so. A reply on another page
+    // kept since goes with none of it, though its turn has come.
+    unjournaled(&root, kept[0].sequence);
+    unjournaled(&root, kept[1].sequence);
+    replied(&root, "docs/a.md", "one", "Smaller.", 13);
+    pass(&root);
+    assert_eq!(git(&root, &["rev-parse", &batch]), tip);
+    let kept = pending::saves(&root);
+    assert_eq!(kept.len(), 3, "{kept:?}");
+    assert_eq!(
+        (kept[0].branch.as_str(), kept[1].branch.as_str()),
+        (batch.as_str(), batch.as_str()),
+        "{kept:?}"
+    );
+    let later = format!("docs/owner-save-{}", kept[2].sequence);
+    assert_eq!(kept[2].branch, later);
+    assert!(
+        kept.iter().all(|save| save.state == State::Waiting),
+        "{kept:?}"
+    );
+    let message = git(&root, &["log", "-1", "--format=%B", &later]);
+    assert_eq!(message, "docs: an agent's save (fox-1)\n\ndocs/a.md");
+    let store = f.store();
+    assert_eq!(store.get(&batch).unwrap().status, "review");
+    assert_eq!(store.get(&later).unwrap().status, "review");
+    let filed = (store.tasks(None).unwrap().into_iter())
+        .filter(|task| task.slug.starts_with("docs/owner-save-"))
+        .count();
+    assert_eq!(filed, 2);
+    f.clean_workers();
+}
+
+/// The page `file` as the saves still waiting leave it on `main` here.
+fn as_shown(root: &Path, file: &str) -> String {
+    let text = git(root, &["show", &format!("main:{file}")]) + "\n";
+    pending::shown(root, file, text)
+}
+
+/// The edit of `file` from the page as shown to `new`, made of it by `change`.
+fn shown_edit(root: &Path, file: &str, change: impl Fn(&str) -> String) -> symphony::commit::Edit {
+    let base = as_shown(root, file);
+    symphony::commit::Edit {
+        rel: file.into(),
+        new: change(&base),
+        base,
+    }
+}
+
+pub(super) fn a_tidys_saves_reach_main_in_one_commit_or_not_at_all(f: &Fixture) {
+    let root = delivering(f);
+    write(
+        &root.join("docs/c.md"),
+        "# C\n\nan answered comment\n\nrest\n",
+    );
+    git(&root, &["add", "docs/c.md"]);
+    git(&root, &["commit", "-qm", "page c"]);
+    git(&root, &["push", "-q", "origin", "main"]);
+    git(&root, &["fetch", "-q", "origin"]);
+    // docs/a.md stands for the ledger, the others for the pages a tidy takes comments from.
+    let tidy = |page: &str, entry: &str, from: &str| {
+        let ledger = shown_edit(&root, "docs/a.md", |text| format!("{text}{entry}\n"));
+        let page = shown_edit(&root, page, |text| text.replace(from, "tidied"));
+        pending::keep_together(&root, vec![ledger, page], "fox-1").unwrap()
+    };
+    let first = tidy("docs/b.md", "entry one", "second proposal");
+    pass(&root);
+    let one = format!("docs/owner-save-{}", first[0]);
+    let kept = pending::saves(&root);
+    assert_eq!(
+        kept.iter()
+            .map(|save| save.branch.as_str())
+            .collect::<Vec<_>>(),
+        [one.as_str(), one.as_str()]
+    );
+    let files = git(&root, &["diff", "--name-only", "main", &one]);
+    assert_eq!(files, "docs/a.md\ndocs/b.md");
+
+    // A reply on page C, then a second tidy whose ledger entry is C's comment.
+    let reply = shown_edit(&root, "docs/c.md", |text| format!("{text}a reply\n"));
+    let replied = pending::keep(&root, reply, "fox-1").unwrap();
+    let second = tidy("docs/c.md", "entry two", "an answered comment");
+    pass(&root);
+    // The reply goes alone: C's tidied page waits with its ledger entry, behind the first tidy.
+    let alone = format!("docs/owner-save-{replied}");
+    let mut made = vec![one.clone(), alone.clone()];
+    made.sort();
+    assert_eq!(branches(&root), made);
+    assert_eq!(
+        git(&root, &["diff", "--name-only", "main", &alone]),
+        "docs/c.md"
+    );
+    let waiting = |root: &Path| -> Vec<State> {
+        (pending::saves(root).into_iter())
+            .filter(|save| second.contains(&save.sequence))
+            .map(|save| save.state)
+            .collect()
+    };
+    assert_eq!(waiting(&root), [State::Queued, State::Queued]);
+
+    // The first tidy delivered: the ledger's turn has come, and C's page waits for the reply,
+    // so the ledger waits with it.
+    landed(&root, &one, &one);
+    git(&root, &["merge", "-q", "--ff-only", "origin/main"]);
+    pass(&root);
+    assert_eq!(branches(&root), made);
+    assert_eq!(waiting(&root), [State::Queued, State::Queued]);
+
+    // The reply delivered: the second tidy goes, its ledger and its page in one commit.
+    landed(&root, &alone, &alone);
+    git(&root, &["merge", "-q", "--ff-only", "origin/main"]);
+    pass(&root);
+    let two = format!("docs/owner-save-{}", second[0]);
+    let kept = pending::saves(&root);
+    assert_eq!(
+        kept.iter()
+            .map(|save| save.branch.as_str())
+            .collect::<Vec<_>>(),
+        [two.as_str(), two.as_str()]
+    );
+    assert_eq!(waiting(&root), [State::Waiting, State::Waiting]);
+    assert_eq!(
+        git(&root, &["diff", "--name-only", "main", &two]),
+        "docs/a.md\ndocs/c.md"
+    );
+    let ledger = git(&root, &["show", &format!("{two}:docs/a.md")]);
+    assert!(ledger.contains("entry one\nentry two"), "{ledger}");
+    let page = git(&root, &["show", &format!("{two}:docs/c.md")]);
+    assert!(
+        page.contains("tidied") && page.contains("a reply"),
+        "{page}"
+    );
+    let store = f.store();
+    assert_eq!(
+        store.get(&two).unwrap().title,
+        "Deliver an agent's saves of docs/a.md and 1 more"
+    );
+    assert_eq!(git(&root, &["status", "--porcelain"]), "");
+    f.clean_workers();
+}
+
+pub(super) fn a_tidy_that_cannot_be_committed_holds_back_no_later_save(f: &Fixture) {
+    let root = delivering(f);
+    write(
+        &root.join("docs/c.md"),
+        "# C\n\nan answered comment\n\nrest\n",
+    );
+    git(&root, &["add", "docs/c.md"]);
+    git(&root, &["commit", "-qm", "page c"]);
+    git(&root, &["push", "-q", "origin", "main"]);
+    git(&root, &["fetch", "-q", "origin"]);
+    // A tidy whose page save was written against a text main no longer has: docs/a.md stands
+    // for its ledger, at the top, and docs/b.md for its page.
+    let ledger = shown_edit(&root, "docs/a.md", |text| {
+        text.replace("first paragraph", "first paragraph, entry one")
+    });
+    let stale = TWO.replace("second proposal", "an older proposal");
+    let page = symphony::commit::Edit {
+        rel: "docs/b.md".into(),
+        new: stale.replace("[ ]", "[x]"),
+        base: stale,
+    };
+    let first = pending::keep_together(&root, vec![ledger, page], "fox-1").unwrap();
+    pass(&root);
+    // It goes nowhere, and each of its saves says why.
+    assert!(branches(&root).is_empty());
+    let kept = pending::saves(&root);
+    let State::Held(why) = &kept[0].state else {
+        panic!("{kept:?}");
+    };
+    assert!(why.contains("conflicts with main"), "{why}");
+    let State::Held(with) = &kept[1].state else {
+        panic!("{kept:?}");
+    };
+    assert!(
+        with.starts_with("kept with the save of docs/a.md its tidy kept first, which is held:"),
+        "{with}"
+    );
+    let note = pending::note(&root, "docs/b.md").unwrap();
+    assert!(note.contains("kept with the save of docs/a.md"), "{note}");
+
+    // The owner's save of its page goes, and so does a later tidy, its ledger at the foot.
+    let saves = ClosingSaves::start(&root);
+    let message = json!({"path":"docs/b.md","slug":"two","text":"and the third?"});
+    assert_eq!(
+        saves.post("", "/api/message", message),
+        json!({"ok":true,"delivery":"pending"})
+    );
+    drop(saves);
+    let later = {
+        let ledger = shown_edit(&root, "docs/a.md", |text| {
+            text.replace("last paragraph", "last paragraph, entry two")
+        });
+        let page = shown_edit(&root, "docs/c.md", |text| {
+            text.replace("an answered comment", "tidied")
+        });
+        pending::keep_together(&root, vec![ledger, page], "fox-1").unwrap()
+    };
+    pass(&root);
+    let kept = pending::saves(&root);
+    let owner = kept.iter().find(|save| save.by.is_empty()).unwrap();
+    assert_eq!(owner.state, State::Waiting, "{kept:?}");
+    assert_eq!(
+        git(&root, &["diff", "--name-only", "main", &owner.branch]),
+        "docs/b.md"
+    );
+    let two = format!("docs/owner-save-{}", later[0]);
+    let tidied: Vec<&State> = (kept.iter())
+        .filter(|save| later.contains(&save.sequence))
+        .map(|save| &save.state)
+        .collect();
+    assert_eq!(tidied, [&State::Waiting, &State::Waiting], "{kept:?}");
+    assert_eq!(
+        git(&root, &["diff", "--name-only", "main", &two]),
+        "docs/a.md\ndocs/c.md"
+    );
+    let held = git(&root, &["show", &format!("{two}:docs/a.md")]);
+    assert!(
+        held.contains("entry two") && !held.contains("entry one"),
+        "{held}"
+    );
+    assert!(
+        first
+            .iter()
+            .all(|number| !branches(&root).contains(&format!("docs/owner-save-{number}")))
+    );
+    assert_eq!(git(&root, &["status", "--porcelain"]), "");
+    f.clean_workers();
+}
