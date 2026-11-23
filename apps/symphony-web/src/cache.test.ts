@@ -45,15 +45,14 @@ describe("the task board's kept reads", () => {
     expect(keptView("", 1, 0)).toBe(false);
   });
 
-  it("are a column for each status, the machines' two and the owner's sign-off, once each", () => {
+  it("are a column for each status and the machines' two, once each", () => {
     expect(columns(["ready", "build", "review"], [["done", 1]])).toEqual([
       "ready",
       "build",
       "review",
       "test",
-      "signoff",
     ]);
-    expect(columns([], [["done", 1]])).toEqual(["done", "build", "test", "signoff"]);
+    expect(columns([], [["done", 1]])).toEqual(["done", "build", "test"]);
   });
 });
 

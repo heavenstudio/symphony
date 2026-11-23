@@ -1,14 +1,19 @@
-//! The class a description may not lower ([`protected`], [`judged`]), and the run of a program's
-//! command ([`run`]): what it printed, or why not, with its time bounded.
+//! The class a description may not lower ([`protected`], [`judged`]), the scope it may not take,
+//! the anchors of the plugins' entries ([`plugins`]), and the run of a program's command
+//! ([`run`]): what it printed, or why not, with its time bounded.
 
+use std::path::Path;
 use std::time::Duration;
 
 use symphony_api::{
     Setting, SettingClass, SettingKind, SettingScope, SettingSource, SettingsEntry,
 };
 use symphony_board::sys;
+use symphony_plugin::{Describer, Plugin};
 
-use super::{judged, protected, run};
+use super::{judged, plugins, protected, run};
+use crate::plugins::Plugins;
+use crate::settings::class;
 
 #[test]
 fn a_key_the_local_file_refuses_is_protected_however_it_is_spelt() {
@@ -28,6 +33,10 @@ fn a_key_the_local_file_refuses_is_protected_however_it_is_spelt() {
         // A table said whole is protected where it holds a key that is.
         "[project]",
         "[board]",
+        // A table below a key refused by name takes that key's class, said whole or not.
+        "[project.cargo] wrapper",
+        "[board.on_land]",
+        "project.cargo.wrapper",
     ] {
         assert!(protected(key), "{key}");
     }
@@ -35,10 +44,13 @@ fn a_key_the_local_file_refuses_is_protected_however_it_is_spelt() {
         "[limits] low_volume",
         "[agents] panes",
         "[agents.launch] model",
+        "agents.launch.model",
+        "[agents] launch model",
         "[project] name",
         "[board] port",
-        // Not `[board]`'s own key, but one of a table below it.
+        // Not `[board]`'s own key, but one of a table below it, of the key `x`.
         "[board.x] on_land",
+        "[agents]",
         "[every] shade",
         "enabled",
         "",
@@ -46,6 +58,19 @@ fn a_key_the_local_file_refuses_is_protected_however_it_is_spelt() {
     ] {
         assert!(!protected(key), "{key}");
     }
+}
+
+#[test]
+fn a_table_said_whole_is_reviewed_where_it_holds_a_reviewed_key() {
+    for table in ["land", "plugins", "workflow", "project", "board"] {
+        assert_eq!(class(table, ""), SettingClass::Reviewed, "{table}");
+    }
+    for table in ["limits", "agents", "theme", ""] {
+        assert_eq!(class(table, ""), SettingClass::Preference, "{table}");
+    }
+    // A key of its own keeps its class, said whole or not.
+    assert_eq!(class("project", "name"), SettingClass::Preference);
+    assert_eq!(class("project", "cargo"), SettingClass::Reviewed);
 }
 
 fn setting(key: &str, class: SettingClass) -> Setting {
@@ -109,6 +134,99 @@ fn a_protected_key_called_a_preference_is_reviewed_in_the_projects_scope_alone()
     assert_eq!(delivery.class, SettingClass::Reviewed);
     assert_eq!(delivery.scopes, [SettingScope::Project]);
     assert_eq!(delivery.value, "v", "nothing else of it changes");
+}
+
+#[test]
+fn no_description_is_written_in_the_boards_store_whatever_its_describer_says() {
+    let scopes = vec![
+        SettingScope::Project,
+        SettingScope::Board,
+        SettingScope::Machine,
+    ];
+    let shade = Setting {
+        scopes: scopes.clone(),
+        ..setting("[every] shade", SettingClass::Preference)
+    };
+    // The store keeps this key, from the Symphony's own entry, never from a description.
+    let limit = Setting {
+        scopes: scopes.clone(),
+        ..setting("[limits] low_volume", SettingClass::Preference)
+    };
+    let delivery = Setting {
+        scopes,
+        ..setting("[land] delivery", SettingClass::Preference)
+    };
+    let judged = judged(described(vec![shade, limit, delivery]), "a".into(), false);
+    let scopes: Vec<_> = (judged.settings.iter()).map(|s| s.scopes.clone()).collect();
+    assert_eq!(
+        scopes,
+        [
+            vec![SettingScope::Project, SettingScope::Machine],
+            vec![SettingScope::Project, SettingScope::Machine],
+            vec![SettingScope::Project],
+        ]
+    );
+}
+
+/// A describer of the id it holds: one whose id starts `broken` cannot say.
+struct Says(&'static str);
+
+impl Describer for Says {
+    fn id(&self) -> &str {
+        self.0
+    }
+    fn describe(&self, _: &Path) -> Result<SettingsEntry, String> {
+        if self.0.starts_with("broken") {
+            return Err("its file does not read".into());
+        }
+        Ok(described(Vec::new()))
+    }
+}
+
+/// A plugin of a name and its describers.
+struct Describes(&'static str, &'static [Says]);
+
+impl Plugin for Describes {
+    fn name(&self) -> &str {
+        self.0
+    }
+    fn describers(&self) -> Vec<&dyn Describer> {
+        (self.1.iter()).map(|d| -> &dyn Describer { d }).collect()
+    }
+}
+
+#[test]
+fn each_plugin_entry_has_an_anchor_no_earlier_one_took() {
+    static X: Describes = Describes(
+        "x",
+        &[Says("y-z"), Says("y-z"), Says("broken"), Says("broken")],
+    );
+    static X_Y: Describes = Describes("x-y", &[Says("z"), Says("z-2")]);
+    let entries = plugins(&Plugins::new(vec![&X, &X_Y]), Path::new("/p"));
+    let ids: Vec<&str> = (entries.iter()).map(|e| e.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "plugin-x-y-z",
+            // Two describers of one id.
+            "plugin-x-y-z-2",
+            // One that cannot say is counted on as well.
+            "plugin-x-broken",
+            "plugin-x-broken-2",
+            // Plugin `x-y`'s `z` meets plugin `x`'s `y-z`, and `z-2` the count given before it.
+            "plugin-x-y-z-3",
+            "plugin-x-y-z-2-2",
+        ]
+    );
+    assert_eq!(
+        entries[1].name, "A",
+        "a counted entry is described all the same"
+    );
+    assert!(
+        (entries[3].state.as_ref()).is_some_and(|s| s.why.contains("its file does not read")),
+        "{:?}",
+        entries[3]
+    );
 }
 
 #[test]

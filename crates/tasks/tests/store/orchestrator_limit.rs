@@ -267,6 +267,37 @@ fn the_boards_give_fills_none_past_the_limit_and_a_waiting_task_is_any_takers(ba
 }
 
 on_both! {
+fn a_place_under_the_limit_goes_to_a_task_that_waits_on_nothing_before_one_that_still_waits(backend: Backend) {
+    // In the board's order: one that waits on open work, one on work that is done, one on none.
+    let seed = Seed::default()
+        .task("tools/landed", "done")
+        .task("tools/open", "ready")
+        .task("tools/waits", "ready")
+        .link("tools/waits", "dep", "tools/open")
+        .task("tools/after", "ready")
+        .link("tools/after", "dep", "tools/landed")
+        .task("tools/free", "ready");
+    let f = Fixture::on(backend, seed);
+    let store = limited(&f, 3);
+    let amber = f.session("orchestrator");
+    store
+        .take_role("tools/open", &amber, "orchestrator")
+        .unwrap();
+    settle(&f, &[&amber]);
+    // Two places: they go to the two that can be worked on now, and the one nobody can start waits.
+    let given = store.give_unowned(None).unwrap();
+    assert_eq!(
+        given.gave,
+        [
+            ("tools/after".to_string(), amber.clone()),
+            ("tools/free".to_string(), amber.clone())
+        ]
+    );
+    assert_eq!(given.waiting, ["tools/waits"]);
+}
+}
+
+on_both! {
 fn a_red_with_none_under_the_limit_goes_to_one_that_stays_whatever_it_holds(backend: Backend) {
     let f = Fixture::on(backend, Seed::default());
     let store = limited(&f, 1);

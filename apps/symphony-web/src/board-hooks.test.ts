@@ -400,6 +400,18 @@ describe("a custom workflow's flow", () => {
     await reads(2);
   });
 
+  it("forgets its failure once none is active: the same generation back imports the chunk again", async () => {
+    flowComes(false);
+    const read = mount(useFlow, "", 3);
+    await drawnUntil(read, (now) => expect(now.failed).toBe(true));
+    expect(read.draw("", null).failed).toBe(false);
+    flowComes(true);
+    expect(read.draw("", 3).failed).toBe(false);
+    await reads(1);
+    flows.read[0]?.answer(flow);
+    expect(await read.settle()).toMatchObject({ flow, failed: false });
+  });
+
   it("keeps no failure its generation left while the shell answered", async () => {
     const shell = aSlowShell();
     flowComes(false);

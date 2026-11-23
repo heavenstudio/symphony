@@ -445,11 +445,15 @@ pub trait Gates: Send + Sync {
 /// A description declares: it runs nothing, writes nothing and reaches no outside service. It
 /// cannot lower a setting's class: a setting the Symphony would run or that decides what lands
 /// (a key the local settings file refuses) is shown reviewed whatever the describer says, and a
-/// describer may mark a setting of its own reviewed. A linked plugin and one answering from its
-/// process describe alike (`describers.describe`, protocol 0.5).
+/// describer may mark a setting of its own reviewed. Nor can it take the board's scope
+/// ([`SettingScope::Board`](vocabulary::SettingScope::Board)): the board's store keeps the
+/// Symphony's own preferences alone, so the page shows a description's setting without it. A
+/// linked plugin and one answering from its process describe alike (`describers.describe`,
+/// protocol 0.5).
 pub trait Describer: Send + Sync {
     /// Its id, unique among the plugin's describers: its entry's anchor on the page is the
-    /// plugin's name and this, whatever id the entry it answers gives.
+    /// plugin's name and this, whatever id the entry it answers gives, counted on where an entry
+    /// before took it.
     fn id(&self) -> &str;
     /// The entry for the project at `root`, or why it cannot say, which the page shows in the
     /// entry's place.
