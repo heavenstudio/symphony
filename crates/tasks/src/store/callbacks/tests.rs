@@ -1049,3 +1049,94 @@ fn queued_panes_of_every_recipient_in_one_read_on_surrealdb() {
 fn queued_panes_of_every_recipient_in_one_read_on_postgresql() {
     queued_panes_of_every_recipient_in_one_read(crate::store_fixture::Backend::PostgreSql);
 }
+
+/// A Codex thread registered from no terminal, as Codex's shell registers one, on both stores: it
+/// is confirmed while an open launch record puts it in a live Codex terminal, kept unconfirmed while
+/// that terminal runs something else, and retired by a sweep (never a dry run, never without hc)
+/// once every terminal the board launched it in is closed or gone, though another task's record of
+/// it is closed. One no launch records stays, and one registered from a terminal is that
+/// terminal's, whatever its records say.
+#[test]
+fn a_codex_thread_from_no_terminal_retires_once_every_terminal_it_was_launched_in_is_gone() {
+    use crate::store_fixture::{Backend, Fixture, Seed};
+    for backend in [Backend::SurrealDb, Backend::PostgreSql] {
+        let seed = Seed::default().task("p/work", "in_progress");
+        let f = Fixture::on(backend, seed.task("p/next", "ready"));
+        let store = &f.store;
+        let [launched, unplaced, placed] = ["worker"; 3].map(|kind| f.session(kind));
+        let launch = |slug: &str, handle: &str, thread: &str, pane: &str| {
+            let new = crate::NewLaunch {
+                claude_session: format!("codex:{thread}"),
+                pane: pane.into(),
+                ..crate::NewLaunch::new(slug, handle, "executor")
+            };
+            store.record_launch(&new).unwrap();
+        };
+        let register = |handle: &str, thread: &str, terminal: Option<&str>| {
+            let address = format!("codex:{thread}");
+            (store.callback_in(handle, Some(&address), false, false, terminal)).unwrap();
+        };
+        launch("p/work", &launched, "0aaa", "t1");
+        register(&launched, "0aaa", None);
+        register(&unplaced, "0bbb", None);
+        launch("p/work", &placed, "0ccc", "t2");
+        store
+            .close_task_session("p/work", &placed, "its program ended", "")
+            .unwrap();
+        register(&placed, "0ccc", Some("t3"));
+        let terminal = |address: &str, agent: &str| -> crate::launch::hc::Object {
+            let listed = json!({"address": address, "agent": agent, "state": "live"});
+            listed.as_object().unwrap().clone()
+        };
+        let sweep = |live: &[crate::launch::hc::Object], refresh: bool| {
+            let presence = crate::launch::reap::presence(store, live).unwrap();
+            store.callback_presence(Some(&presence), refresh).unwrap()
+        };
+        let registered = || {
+            store
+                .callbacks()
+                .unwrap()
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        };
+        let set = |handles: &[&String]| -> BTreeSet<String> {
+            handles.iter().map(|h| h.to_string()).collect()
+        };
+
+        let codex = [terminal("t1", "codex"), terminal("t3", "codex")];
+        assert_eq!(
+            sweep(&codex, true),
+            set(&[&launched, &placed]),
+            "{backend:?}"
+        );
+        assert_eq!(registered(), set(&[&launched, &unplaced, &placed]));
+
+        // Its launch's terminal runs something else: kept, unconfirmed. The terminal `placed`
+        // registered from is gone: retired, though its own records were closed all along.
+        let shell = [terminal("t1", "zsh")];
+        assert_eq!(sweep(&shell, false), BTreeSet::new());
+        assert_eq!(registered(), set(&[&launched, &unplaced, &placed]));
+        assert_eq!(sweep(&shell, true), BTreeSet::new());
+        assert_eq!(registered(), set(&[&launched, &unplaced]), "{backend:?}");
+
+        // Its launch's terminal is gone: nothing changes without hc or on a dry run; a sweep
+        // retires it. The thread no launch records stays.
+        assert_eq!(
+            store.callback_presence(None, true).unwrap(),
+            BTreeSet::new()
+        );
+        assert_eq!(sweep(&[], false), BTreeSet::new());
+        assert_eq!(registered(), set(&[&launched, &unplaced]));
+        sweep(&[], true);
+        assert_eq!(registered(), set(&[&unplaced]), "{backend:?}");
+
+        // Launched again for another task, its first record closed: present in the new terminal.
+        store
+            .close_task_session("p/work", &launched, "its program ended", "")
+            .unwrap();
+        launch("p/next", &launched, "0aaa", "t4");
+        register(&launched, "0aaa", None);
+        assert_eq!(sweep(&[terminal("t4", "codex")], true), set(&[&launched]));
+        assert_eq!(registered(), set(&[&launched, &unplaced]), "{backend:?}");
+    }
+}

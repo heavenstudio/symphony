@@ -259,7 +259,7 @@ What it costs:
 - **The analyses**, which move too: 254 mentions in 73 files, 42 of them in Rust. Moved alone,
   they are about a fifth of the whole.
 
-- [x] **docs-folders-by-area** — The documents under `docs/` would be sorted into folders by area, as the consuming project's are: product, design, workflow, engineering and operations. Your queue names each card by its first folder, so it would sort decisions by those areas, where today every card says `docs` or `analysis`. Which documents move? A: none; the layout stays as it is. B: every document, once: the 19 reference documents and the 48 analyses, each area with its own `analysis/` folder. C: the analyses alone, into `product/analysis/`, `design/analysis/` and so on; the reference documents stay where they are. Recommended: C. Approve and say A, B or C in the note, or comment. [[analysis/cards-in-their-documents#Folders by area]]
+- [r] **docs-folders-by-area** — The documents under `docs/` would be sorted into folders by area, as the consuming project's are: product, design, workflow, engineering and operations. Your queue names each card by its first folder, so it would sort decisions by those areas, where today every card says `docs` or `analysis`. Which documents move? A: none; the layout stays as it is. B: every document, once: the 19 reference documents and the 48 analyses, each area with its own `analysis/` folder. C: the analyses alone, into `product/analysis/`, `design/analysis/` and so on; the reference documents stay where they are. Recommended: C. Approve and say A, B or C in the note, or comment. [[analysis/cards-in-their-documents#Folders by area]]
   [2026-11-21 10:21] agent — Posted for the board task `docs/decisions-anywhere-by-default`, on the second half of your rejection of **cards-in-their-documents**, that the consuming project's "docs have better structure between engineering, product, design etc." It goes with **cards-in-any-document** and can be answered apart from it.
 
     **Base, today.** 19 reference documents and the register at the top of `docs/`, three product specs in `product/`, and 48 analyses with 186 pictures in one `analysis/` folder. The docs index sorts the references under three headings that are no folders. The consuming project has a folder per topic, each with a page saying what it holds, and its engineering folder has an `analysis/` of its own.
@@ -281,6 +281,7 @@ What it costs:
     **Earlier verdicts checked.** **product-spec-form** set the form of the specs in `product/`, which every option keeps. No card decides how the other documents are laid out.
   [2026-11-21 17:27] owner · approved — B
   [2026-11-21 17:55] agent — Built as B by the board task `docs/folders-by-area`: the 24 reference documents and the 48 analyses are in `product/`, `design/`, `workflow/`, `engineering/` and `operations/`, each with a page saying what it holds and an `analysis/` folder of its own, and the docs index lists by area. The register and the index stay at the top of `docs/`, and `history/` as it was. A link to a document by its old path on GitHub no longer resolves, which the landing tells the consuming project.
+  [2026-11-22 21:51] agent · resolved
 
 ## How the cards written so far move
 

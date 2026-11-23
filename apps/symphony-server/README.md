@@ -358,7 +358,7 @@ no session). A `session` or `agent` change is sent only when something a page
 shows changed, never for a heartbeat or a tool call alone (`last_seen`,
 `last_tool`, `last_tool_call`), and carries the record as it is now. `message`
 appends one structured thread message by id, with its typed `blocks` and display
-`stamp`; `task-counts` and `task-signoff` update the column totals and owner queue.
+`stamp`; `task-counts` updates the column totals.
 `docs` replaces navigation order; `agent-probes` reports
 probe availability; `tasks-status` reports board availability, and of a board
 that went whether it is `slow` (it took the read and answered late) or
