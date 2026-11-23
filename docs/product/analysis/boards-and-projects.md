@@ -2,13 +2,12 @@
 
 Whether a project may hold several boards, or a second board is a project of its own. Three
 concepts lean on the answer: who is on a board ([users and identity](users-and-identity.md)),
-what a project starts from (the blueprints concept, on the branch `app/blueprints`), and a
-[desktop app](desktop-client.md) that reaches more than one server. This is a concept: it
-questions the idea against what the Symphony has, compares the shapes it could take, and puts
-two choices to the owner. Nothing here is built, and nothing is built from it but by a task filed
-from an approved card.
+what a project starts from ([blueprints](blueprints.md)), and a [desktop app](desktop-client.md)
+that reaches more than one server. This is a concept: it questions the idea against what the
+Symphony has, compares the shapes it could take, and puts two choices to the owner. Nothing here
+is built, and nothing is built from it but by a task filed from an approved card.
 
-Read at `66d362173`, and the blueprints concept on its branch at `4cfe5ca6c`. The links name the
+Read at `66d362173`, and the blueprints concept as it landed at `11f6a2490`. The links name the
 modules and documents read. A fact marked *inferred* was reasoned from them and not tried.
 
 ## The answer in short
@@ -69,8 +68,8 @@ The owner gave three examples, on three cards.
    even be multiple boards for the same project where people have different permissions"
    ([its card](users-and-identity.md#people-kept-where)).
 2. **A different template for part of the work.** "There can be multiple boards for the same
-   project, which means, even multiple templates for it" (a question on the blueprints card of
-   how a project records its blueprint, on the branch `app/blueprints`).
+   project, which means, even multiple templates for it"
+   ([its card](blueprints.md#blueprint-in-project)).
 3. **Several machines on one project.** "For now I think the model should be indeed two separate
    boards. Albeit we will soon move to a 'central board' with 'multiple machines connected'"
    ([the desktop analysis](desktop-client.md#open-questions)).
@@ -333,7 +332,7 @@ Under the answers recommended, B on both cards.
 Under A on the first card it would read otherwise: a project's documents, cards and settings
 would each need a rule for which board's people decide them.
 
-**Blueprints** (the branch `app/blueprints`).
+**Blueprints** ([its analysis](blueprints.md#what-the-project-holds-of-its-blueprint)).
 
 - A blueprint attaches to a project, with one record beside its project file. The card on how a
   project records its blueprint can be asked again with one record for each project.
