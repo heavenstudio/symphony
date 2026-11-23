@@ -975,7 +975,7 @@ Two costs under every option, A's as much as the others':
   clone and every board of the project reads. With one board for a project, that board's say is
   the whole of it; several boards for one project is a concept of its own.
 
-- [ ] **settings-who-changes** — Today you change every setting the Settings page offers. Its concept, now on main, keeps a change in the board's store, where it holds at once, and a control beside it makes the value the project's, a commit. It left to this concept who may do that once there are several people. A: the group the Settings page maps to; the page is a place like a folder of documents, so any member of its group changes a stored value and makes it the project's, and no power is added. B: the board's admins, as with who is on the board. C: a power of its own, to configure, given apart from deciding. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Who changes settings]]
+- [x] **settings-who-changes** — Today you change every setting the Settings page offers. Its concept, now on main, keeps a change in the board's store, where it holds at once, and a control beside it makes the value the project's, a commit. It left to this concept who may do that once there are several people. A: the group the Settings page maps to; the page is a place like a folder of documents, so any member of its group changes a stored value and makes it the project's, and no power is added. B: the board's admins, as with who is on the board. C: a power of its own, to configure, given apart from deciding. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Who changes settings]]
   [2026-11-22 20:13] agent — Posted for the board task `app/users-and-identity`, the question the settings concept (`app/settings-page`) left to this one. A concept: nothing is built by this card.
 
     ![Who changes a preference in the board's store and makes it the project's](users-and-identity/settings-who.svg)
@@ -1005,6 +1005,7 @@ Two costs under every option, A's as much as the others':
     - **settings-board-store** (B) and **settings-page-project-save** (A), on main, say where a change goes and how it is committed, not who may make it.
 
     None decides this.
+  [2026-11-23 00:41] owner · approved — A
 
 ### What a plugin is told of who asked
 
@@ -1043,7 +1044,7 @@ every read one per person. A leaves a plugin's commits authored as the machine.
 Under B or C the kit's types gain a field, shipped beside what they hold today under the kit's
 version rules, so a plugin built against an older kit keeps working.
 
-- [ ] **plugin-told-who** — A project's plugin is told nothing of who asked today: a board action's answer is taken as yours. With several people the core admits every call before a plugin is asked, so who may do what is settled before the plugin runs. What is left is what the plugin is told. A: nothing; the board's own line names the person, and the plugin's own commit is authored as the machine. B: on every call made for a person, their public part (short name, display name, git handles) and their groups and powers there. C: the public part on a write alone, a board action's answer; reads carry nobody, and no call carries powers. Recommended: C. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#What a plugin is told of who asked]]
+- [x] **plugin-told-who** — A project's plugin is told nothing of who asked today: a board action's answer is taken as yours. With several people the core admits every call before a plugin is asked, so who may do what is settled before the plugin runs. What is left is what the plugin is told. A: nothing; the board's own line names the person, and the plugin's own commit is authored as the machine. B: on every call made for a person, their public part (short name, display name, git handles) and their groups and powers there. C: the public part on a write alone, a board action's answer; reads carry nobody, and no call carries powers. Recommended: C. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#What a plugin is told of who asked]]
   [2026-11-22 20:13] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
 
     ![What a project's plugin is told of the person who asked](users-and-identity/plugin-told.svg)
@@ -1068,6 +1069,7 @@ version rules, so a plugin built against an older kit keeps working.
     - Your note on **group-card-who-decides**, "Feels this is mixing authentication with authorization", keeps who may do what the Symphony's own. It leaves open what a plugin is told once the Symphony has decided.
 
     None decides this.
+  [2026-11-23 00:40] owner · approved — C
 
 ## Sessions
 
