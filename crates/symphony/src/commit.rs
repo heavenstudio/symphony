@@ -501,6 +501,9 @@ pub struct Outcome {
     pub committed: bool,
     pub error: String,
     pub notes: Vec<String>,
+    /// The commit made on the default branch, once it is made.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub commit: String,
 }
 
 fn run(
@@ -1176,26 +1179,44 @@ fn apply(root: &Path, parent: &str, edits: &[Edit]) -> Result<(Blobs, Blobs), Co
     let mut before = BTreeMap::new();
     let project = Project::of(root);
     for edit in edits {
-        if !project.is_page(&edit.rel) {
+        // A settings edit of the project file, changing preferences alone ([`settings`]), is the
+        // one edit of a file that is no design document the app commits.
+        let setting = match settings::changes(edit) {
+            Some(changes) => {
+                changes?;
+                true
+            }
+            None => false,
+        };
+        if !setting && !project.is_page(&edit.rel) {
             let under: Vec<String> = project
                 .entrypoints
                 .iter()
                 .map(|entry| crate::entrypoint::join(&entry.folder, "*.md"))
                 .collect();
             return Err(format!(
-                "{} is not a design document under {}: the app commits only those",
+                "{} is not a design document under {}: the app commits only those, and the \
+                 project file's preferences",
                 edit.rel,
                 under.join(" or ")
             )
             .into());
         }
         if !blobs.contains_key(&edit.rel) {
-            let text = checked(run(
+            let shown = run(
                 root,
                 &["show", &format!("{parent}:{}", edit.rel)],
                 None,
                 None,
-            )?)
+            )?;
+            // A project file main does not hold yet is an empty one to a settings edit made
+            // against none.
+            let absent = setting && edit.base.is_empty() && !shown.status.success();
+            let text = if absent {
+                Ok(String::new())
+            } else {
+                checked(shown)
+            }
             .map_err(|e| {
                 format!(
                     "{} is not on main, so the verdict on it cannot land: {e}",
@@ -1239,7 +1260,8 @@ fn sync(root: &Path, rel: &str, old: &str, new: &str) -> Result<(), String> {
     let _stage = PublicationStage::start(format_args!("sync {} {rel}", root.display()));
     let file = root.join(rel);
     let current = std::fs::read_to_string(&file).ok();
-    if current.as_deref() == Some(old) {
+    // A file the checkout never had, and the commit adds, is taken as committed too.
+    if current.as_deref() == Some(old) || (current.is_none() && old.is_empty()) {
         git(root, &["checkout", "-q", "HEAD", "--", rel])?;
         return Ok(());
     }
@@ -1457,7 +1479,16 @@ fn made(
     })
 }
 
-fn commit_inner(root: &Path, edits: &[Edit], message: &str) -> Result<Outcome, CommitError> {
+/// `edits` committed as one commit on the default branch over a private index, then each main
+/// checkout synchronized. `written`: the checkout at `root` holds the edits already, as a document
+/// save writes its file before it commits; otherwise it is synchronized as every other main
+/// checkout is, its own uncommitted edits of the file merged onto the commit.
+fn commit_inner(
+    root: &Path,
+    edits: &[Edit],
+    message: &str,
+    written: bool,
+) -> Result<Outcome, CommitError> {
     delivered_by_the_host(root)?;
     let source = root.canonicalize().map_err(|e| e.to_string())?;
     let (saved, refused) = saved_uploads(root, edits);
@@ -1499,7 +1530,8 @@ fn commit_inner(root: &Path, edits: &[Edit], message: &str) -> Result<Outcome, C
         }
         let mut notes = refused.clone();
         for wt in trees {
-            let written = wt == source || wt.canonicalize().is_ok_and(|path| path == source);
+            let written =
+                written && (wt == source || wt.canonicalize().is_ok_and(|path| path == source));
             for (rel, text) in &blobs {
                 // The source checkout contains the queued save, rather than main's old
                 // blob. Merge only edits made after that save onto the committed result.
@@ -1529,6 +1561,7 @@ fn commit_inner(root: &Path, edits: &[Edit], message: &str) -> Result<Outcome, C
         return Ok(Outcome {
             committed: true,
             notes,
+            commit,
             ..Outcome::default()
         });
     }
@@ -1578,12 +1611,42 @@ pub fn commit_verdicts(root: &Path, edits: &[Edit], message: &str) -> Outcome {
         retry_conflicts(root, backlog.sequence, || {
             let _commits = shared_lock(root, "verdict-commits.lock")?;
             let _file = write_lock(root)?.map(Held);
-            commit_inner(root, edits, message)
+            commit_inner(root, edits, message, true)
         })
     })();
     result.unwrap_or_else(|error| Outcome {
         error,
         ..Outcome::default()
+    })
+}
+
+/// A settings edit of the project file ([`settings`]), made against the default branch's text,
+/// committed straight to the default branch as one commit with `message`, over a private index:
+/// nothing the checkout holds besides is staged or committed. Under the locks a publication
+/// takes, `writes` the server's saves; the file in the checkout is not written first, and each
+/// main checkout takes the commit with its own uncommitted edits of the file merged on. The
+/// commit, and what a checkout could not take. Refused, with nothing committed, where the project
+/// delivers by pull request ([`delivered_by_the_host`]): such an edit goes to the committer's
+/// journal instead ([`Committer::submit`]).
+///
+/// # Errors
+///
+/// The edit is no settings edit, it no longer applies to the default branch, the project
+/// delivers by pull request, or git refused.
+pub fn commit_setting(
+    root: &Path,
+    edit: &Edit,
+    message: &str,
+    writes: &Mutex<()>,
+) -> Result<Outcome, String> {
+    let _stage = PublicationStage::start(format_args!("commit setting {message:?}"));
+    if settings::changes(edit).is_none() {
+        return Err(format!("{} is not the project file", edit.rel));
+    }
+    let backlog = Backlog::new(root)?;
+    retry_conflicts(root, backlog.sequence, || {
+        let _locks = PublicationLocks::take(root, writes)?;
+        commit_inner(root, std::slice::from_ref(edit), message, false)
     })
 }
 
@@ -2289,6 +2352,7 @@ impl OutputJob {
                         root,
                         std::slice::from_ref(&self.job.edit),
                         "docs: owner verdicts",
+                        true,
                     )
                 })?;
                 for note in outcome.notes {
@@ -2608,7 +2672,12 @@ impl Committer {
                     Ok(false) => {
                         let outcome = retry_conflicts(&root, backlog.sequence, || {
                             let _locks = PublicationLocks::take(&root, &writes)?;
-                            commit_inner(&root, std::slice::from_ref(&edit), "docs: owner verdicts")
+                            commit_inner(
+                                &root,
+                                std::slice::from_ref(&edit),
+                                "docs: owner verdicts",
+                                true,
+                            )
                         });
                         match outcome {
                             Ok(outcome) => {
@@ -2687,6 +2756,7 @@ impl Committer {
 }
 
 pub mod pending;
+pub mod settings;
 
 #[cfg(test)]
 mod passes_tests;

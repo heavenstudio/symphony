@@ -446,13 +446,17 @@ async fn off_board(
             let read = crate::spawn::blocking(move || runs::answer(&hub, &filters).map(Json));
             answered(read.await, "the runs could not be read: ")
         }
-        // The settings are the project's files and this machine's programs alone, the board
-        // never read; a read, which writes nothing.
+        // The settings are the project's files, its board's store of preferences and this
+        // machine's programs; a read, which writes nothing. A board that does not answer is said
+        // on the page, and the files' settings hold.
         symphony_api::SETTINGS_PATH => {
             let hub = shared.hub()?;
             let read = crate::spawn::blocking(move || {
                 let machine = symphony::settings::Machine::of_process();
-                Ok(Json(symphony::settings::page(&hub.root, &machine)))
+                let board = symphony::settings::stored::Board::of(&hub.root);
+                Ok(Json(symphony::settings::page_with(
+                    &hub.root, &machine, &board,
+                )))
             });
             answered(read.await, "the settings could not be read: ")
         }

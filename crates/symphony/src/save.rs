@@ -16,12 +16,13 @@ mod attest;
 mod failure;
 mod quick;
 mod quick_task;
+mod settings;
 pub use failure::Failure;
 
 #[cfg(test)]
 mod close_tests;
 
-pub const ROUTES: [&str; 14] = [
+pub const ROUTES: [&str; 15] = [
     "/api/postpone",
     "/api/decision",
     "/api/comment",
@@ -36,6 +37,7 @@ pub const ROUTES: [&str; 14] = [
     "/api/ask-reply",
     symphony_api::TASK_ACTION_ROUTE,
     WORKFLOW_APPLY,
+    symphony_api::SETTING_WRITE_PATH,
 ];
 
 /// The owner's operation on a task a custom workflow holds, through the board's one admission
@@ -450,6 +452,7 @@ impl Saves {
                 Ok(json!({"ok":true, "said": done.said}))
             }
             "/api/ask" | "/api/ask-reply" => self.ask(scope, route, payload),
+            symphony_api::SETTING_WRITE_PATH => self.setting(scope, payload),
             "/api/quick-chat" | "/api/quick-task" => self.quick(scope, route, payload),
             _ => Err(Failure {
                 status: 404,

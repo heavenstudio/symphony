@@ -65,11 +65,13 @@ not have.
 `/settings`, under each project and in the header after Reports, shows what is in force for the
 project and where each value comes from: one read, `/api/settings`
 (`crates/symphony/src/settings.rs`, the wire types `crates/symphony-api/src/settings.rs`), which
-the client draws and which writes nothing. Every thing it shows is an entry in one shape: its
+the client draws. Every thing it shows is an entry in one shape: its
 name, what it is for, its state and why, what it needs and whether this machine has it, and its
-settings, each with its key, its value in force, its source (the default, or the file with the
-table, the key and the line, as `just tasks limits` names one, and for a local value the committed
-one it holds over), the scopes it may be written in and its class. A setting is *reviewed* when
+settings, each with its key, its value in force, its source (the default, the file with the
+table, the key and the line, or [the board's store](#the-boards-store), as `just tasks limits`
+names one, with the value it stands over: for the store's the committed value and its line, for a
+local value the committed one, or the store's where it holds one), the scopes it may be written in
+and its class. A setting is *reviewed* when
 the local settings file refuses its table or key by name (`PROTECTED` and `PROTECTED_KEYS` in
 `crates/tasks/src/local.rs`, the one list) and a *preference* otherwise; a reviewed table is said
 as a sentence with its file and line. Its parts are the integrations and tools (the launch agents,
@@ -80,8 +82,42 @@ workflow) and the device's appearance. GitHub is said by what the
 checkout's HEAD names, as that program reads it. The page runs no program and holds no copy of
 its rules, so a file that writes `enabled = true` is said as enabled in its file and never as on:
 a file the program refuses runs as off, which its own status tells. A project file that does not load is said at the top of
-the page with what holds in its place, as is a local file that is refused. The page shows a
-preference as its value alone: no control on it changes one.
+the page with what holds in its place, as is a local file that is refused, a store that cannot be
+read and an entry of it that is not.
+
+The page writes [the board's store](#the-boards-store) and nothing else, by one route,
+`/api/setting` (`crates/symphony/src/save/settings.rs`). Each preference the store keeps has a
+control chosen by its kind, never by its name: a switch, a choice, a number or a text. A value
+kept there holds at once, the store named as its source; one the store refuses (a setting that
+holds a command or decides what lands, a key it does not keep, a value of the wrong kind or out
+of range) is said on its row with why, and nothing is written, whatever the request names. A
+field's text not kept yet is a draft on that device. Beside a stored value the row shows the
+store's record of its changes and two controls:
+
+- **Make it the project's** edits the default branch's project file as `symphony model` does
+  (`crates/symphony/src/project/edit.rs`): the value's span alone, every comment, blank line and
+  the order of the rest kept; a key the file does not write goes under its table. [The settings
+  check](#the-settings-check) runs on the file it would leave, and a refusal is said with the
+  file, the key's line and why, nothing written and the entry kept. A green one is committed
+  straight to the default branch by the committer the owner's document saves use
+  (`crates/symphony/src/commit.rs`): one commit of the project file alone, whatever else the
+  checkout holds, whose message names the key, the value before and the value after (`settings:
+  [limits] low_volume from 4 to 3`); each main checkout takes it with its own edits of the file
+  merged on, or keeps its file as it is where they meet and says so. Once it stands the entry is
+  removed, while it still holds the value committed, and the file's value is in force. Where the
+  project delivers by pull request (`[land] delivery`), the edit is kept and delivered as a
+  document save is ([a land dispatched at
+  review](../workflow/TASKS.md#a-land-dispatched-at-review)): committed on a branch of its own and
+  filed as the owner's task, the row saying it waits and offering no second commit, the entry in
+  force until the delivery is proved, then removed.
+- **Remove** removes the entry, its record kept: the files' value is in force again.
+
+The commit's own guard is the store's: the committer takes no edit of the project file that
+changes anything but preferences the store would keep with that value
+(`crates/symphony/src/commit/settings.rs`). The page never writes the local settings file, and a
+local value over the store's is shown with its line, over the store's. Its write is a write like
+every owner's save, held to the server's Host and Origin checks, and a hosted visitor is refused
+it.
 
 ## The settings check
 
@@ -203,9 +239,11 @@ reads the local file (`crates/tasks/src/settings.rs`, with `limits.rs` and
 `launch/defaults.rs`), so the limits a command is held to and the agent and model a launch starts
 agree, and `just tasks limits` names the store for each value it gives, with the committed value
 that one stands over (`the board's store [limits] machine_agents, over 12 ([limits]
-machine_agents, line 9)`). The Symphony's own load of the project file reads the files alone:
-`panes`, which only that load reads, is kept, judged and listed here and is a row of `just tasks
-limits` once stored.
+machine_agents, line 9)`). The Symphony's own load of the project file reads the files alone;
+`panes`, which only that load reads, is read from the store where the server addresses agents'
+panes (its machine work and its focus of an agent's pane), as the Settings page reads it, and is
+a row of `just tasks limits` once stored. The Settings page writes the store, and makes a stored
+value the project's ([the Settings page](#the-settings-page)).
 
 The table comes with an additive step of the board's schema
 ([CHECKS](../workflow/CHECKS.md#the-board-is-a-contract)): a build without the step reads every setting from

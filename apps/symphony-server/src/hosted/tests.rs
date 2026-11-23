@@ -567,6 +567,7 @@ async fn route_query_and_body_aliases_cannot_choose_another_scope() {
         "/api/machine-work",
         "/api/schema-updates",
         "/api/settings",
+        "/api/setting",
         "/api/agent-focus",
         "/api/agent-screen",
         "/api/task-offer",
@@ -601,6 +602,14 @@ async fn route_query_and_body_aliases_cannot_choose_another_scope() {
             "{json}"
         );
     }
+    // A hosted visitor never writes a setting: the Settings page's write is not served there.
+    let write = r#"{"key":"limits.low_volume","action":"store","value":1}"#;
+    let status = harness(&fake)
+        .oneshot(post(symphony_api::SETTING_WRITE_PATH, write))
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(fake.visited.lock().unwrap().is_empty());
 }
 

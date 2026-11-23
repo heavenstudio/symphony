@@ -14,6 +14,7 @@ export const ASK_LATE_SECONDS = 600;
 export const FILE_QUERY = "raw";
 export const REPORTS_PATH = "/api/reports";
 export const SETTINGS_PATH = "/api/settings";
+export const SETTING_WRITE_PATH = "/api/setting";
 export const RUNS_PATH = "/api/runs";
 export const RUN_PATH = "/api/run";
 export const RUN_LOG_PATH = "/api/run-log";
@@ -451,10 +452,16 @@ export type SettingsPage = {
   files: Array<SettingsFile>;
   /**
    * What is wrong with a file, each said whole with what holds in its place: a project file
-   * that does not load, a local file that is refused, a limit that cannot be read.
+   * that does not load, a local file that is refused, a limit that cannot be read, a board's
+   * store that cannot be read or an entry of it that is not.
    */
   problems?: Array<string>;
   sections: Array<SettingsSection>;
+  /**
+   * The settings the page writes, each a preference the board's store keeps: one for each it
+   * draws a control for, whether the store has an entry for it or not.
+   */
+  stored?: Array<StoredSetting>;
 };
 
 export type SettingsFile = {
@@ -575,16 +582,93 @@ export type SettingSource = {
    */
   line?: number | null;
   /**
-   * The committed value a local file's holds over, said as [`SettingSource::said`] says one.
+   * What the value stands over: for a local file's, where the committed one is written, said as
+   * [`SettingSource::said`] says one; for the board's store's, the committed value and where
+   * (`4 (symphony.toml [limits] low_volume, line 5)`); for a local file's over the store's, the
+   * stored value and the store.
    */
   over?: string | null;
 };
 
-export type SettingScope = "project" | "machine" | "device";
+export type SettingScope = "project" | "board" | "machine" | "device";
 
 export type SettingClass = "preference" | "reviewed";
 
 export type SettingKind = "text" | "number" | "switch" | "choice" | "list" | "sentence";
+
+export type StoredSetting = {
+  /**
+   * The setting, by its key on the page ([`Setting::key`]: `[limits] low_volume`).
+   */
+  setting: string;
+  /**
+   * Its key in the store, which a write names (`limits.low_volume`).
+   */
+  key: string;
+  /**
+   * What the store's entry holds, as shown; none with no entry, or once it was removed.
+   */
+  value?: string | null;
+  /**
+   * Whether that value is the one in force: not where the local file writes the setting, nor
+   * where the store does not read its entry.
+   */
+  held: boolean;
+  /**
+   * Why the store does not read its entry, when it refuses it.
+   */
+  refused?: string | null;
+  /**
+   * Every change of the entry, oldest first.
+   */
+  changes?: Array<StoredChange>;
+  /**
+   * Where making it the project's stands while its commit waits for its delivery by pull
+   * request: the branch that delivers it, and how far it went.
+   */
+  waiting?: string | null;
+};
+
+export type StoredChange = {
+  before?: string | null;
+  after?: string | null;
+  /**
+   * When, as the board says a minute (`2026-11-22 20:15`).
+   */
+  at: string;
+  by: string;
+};
+
+export type SettingAction = "store" | "remove" | "commit";
+
+export type SettingValue = boolean | number | string;
+
+export type SettingWrite = {
+  /**
+   * The setting, by its key in the store ([`StoredSetting::key`]).
+   */
+  key: string;
+  action: SettingAction;
+  /**
+   * The value [`SettingAction::Store`] keeps; none for the others.
+   */
+  value?: SettingValue | null;
+};
+
+export type SettingWritten = {
+  /**
+   * What it did, in a sentence.
+   */
+  said: string;
+  /**
+   * The commit made on the default branch, for a commit made there.
+   */
+  commit?: string | null;
+  /**
+   * Whether the commit waits for its delivery by pull request, its entry kept meanwhile.
+   */
+  waiting: boolean;
+};
 
 export type RunsPage = {
   /**
