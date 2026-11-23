@@ -352,19 +352,21 @@ fn a_failed_stop_takes_only_its_own_pid_for_running_and_a_ps_that_cannot_run_for
 
 /// Whether a process is this board's server is what `ps` says its command line is: the board's
 /// `postgres -D` on its data, nothing else, and nothing for a pid `ps` says nothing of. A `ps`
-/// that could not be run tells neither, and says why.
+/// that could not be run, or that failed saying why on its error output, tells neither, and says
+/// why.
 #[test]
 fn a_server_is_its_programs_postgres_on_its_data_and_a_ps_that_cannot_run_is_unknown() {
     use std::os::unix::process::ExitStatusExt as _;
     let pg = Home::new(Path::new("/nowhere/board"), Path::new("/s"))
         .postgresql(Path::new("/nowhere/bin"));
-    let ps = |code: i32, line: &str| {
+    let said = |code: i32, line: &str, error: &str| {
         Ok(std::process::Output {
             status: std::process::ExitStatus::from_raw(code << 8),
             stdout: line.as_bytes().to_vec(),
-            stderr: Vec::new(),
+            stderr: error.as_bytes().to_vec(),
         })
     };
+    let ps = |code: i32, line: &str| said(code, line, "");
     let serves = |said| pg.serves_as_said(said);
     assert_eq!(
         serves(ps(
@@ -399,6 +401,25 @@ fn a_server_is_its_programs_postgres_on_its_data_and_a_ps_that_cannot_run_is_unk
         serves(ps(1, "")),
         Ok(false),
         "ps exits 1 for a pid with no process"
+    );
+    assert_eq!(
+        serves(said(1, "", "\n")),
+        Ok(false),
+        "nothing but a blank line on its error output says no failure"
+    );
+    assert_eq!(
+        serves(said(1, "", "ps: process id too large: 999999\n")),
+        Err("ps failed (exit status: 1): ps: process id too large: 999999".into()),
+        "ps that ran and failed, saying why, tells neither"
+    );
+    assert_eq!(
+        serves(said(
+            0,
+            "/nowhere/bin/postgres -D /nowhere/board/postgresql\n",
+            "ps: a warning\n"
+        )),
+        Ok(true),
+        "what a ps that succeeded warns of changes nothing"
     );
     assert_eq!(
         serves(Err(std::io::Error::other("no process could be made"))),

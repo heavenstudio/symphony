@@ -226,10 +226,11 @@ impl Store {
 
     /// `role` taken on `slug` by `principal` through the one claim edge leaving its pair that
     /// gives it, at the snapshot read now: the workflow-aware form of the board's claim (the
-    /// analysis's legacy alias), which reads the task's next actions and sends the revision it read
-    /// there, and, for an edge depending on `accepted_output`, the outputs it reads standing for
-    /// what the task depends on ([`Store::accepted_outputs`]). Refused as `explicit_action_required`, naming the edges, where no edge or several
-    /// open ones give the role; admission refuses the one edge for what stops it.
+    /// analysis's legacy alias), which reads the task's next actions with the outputs standing for
+    /// what it depends on in one read ([`Store::workflow_actions_with_outputs`]) and sends the
+    /// revision it read there, and, for an edge depending on `accepted_output`, those outputs.
+    /// Refused as `explicit_action_required`, naming the edges, where no edge or several open ones
+    /// give the role; admission refuses the one edge for what stops it.
     pub fn claim_by_workflow(
         &self,
         slug: &str,
@@ -243,7 +244,7 @@ impl Store {
                 "no custom workflow is active on this board: the board's own claim keeps its tasks",
             ));
         };
-        let next = self.workflow_actions(slug, principal, host)?;
+        let (next, outputs) = self.workflow_actions_with_outputs(slug, principal, host)?;
         let giving: Vec<&str> = (operating.definition.edges.iter())
             .filter(|edge| edge.from == next.snapshot.at && !edge.automatic)
             .filter(|edge| {
@@ -284,14 +285,14 @@ impl Store {
                 }
             },
         };
-        // An edge that takes the accepted outputs of what the task depends on names the ones it
-        // reads standing, as it sends the revision it read: the write's fence on each prerequisite
-        // refuses it where one is superseded first, and admission names one none stands for.
+        // An edge that takes the accepted outputs of what the task depends on names the ones the
+        // read of its revision found standing: the write's fence on each prerequisite refuses it
+        // where one is superseded first, and admission names one none stands for.
         let takes = (operating.definition.edges.iter())
             .any(|e| e.id == edge && e.dependencies == Dependency::AcceptedOutput);
         let mut input_revisions = BTreeMap::new();
         if takes {
-            for (prerequisite, output) in self.accepted_outputs(slug)?.takes {
+            for (prerequisite, output) in outputs.takes {
                 if let Some(output) = output {
                     input_revisions.insert(prerequisite, output);
                 }

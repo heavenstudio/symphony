@@ -669,7 +669,7 @@ About 160 worktrees take ~3 s to scan on a busy machine; a check that nothing mo
   the screen, the first of a page first.
 - **Text is gzipped, pictures revalidate** (`ETag`, `304`), models load as they near the screen.
 
-**Media and mockups** ([HTML mockups in cards](#html-mockups-in-cards)). The client renders media in `apps/symphony-web/src/media.tsx`; its layer over a drawn page is
+**Media and mockups** ([HTML mockups in cards](#html-mockups-in-cards)). The client renders media in `apps/symphony-web/src/media.tsx` (a board's picture and a mockup's frame in `media-picture.tsx`); its layer over a drawn page is
 `media-layer.ts`, and the native server confines raw media to the selected
 checkout in `apps/symphony-server/src/media_files.rs`. Browser coverage returns after
 the Rust migration, including attempts to read, write or navigate the parent

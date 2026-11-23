@@ -2,21 +2,23 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DocumentPicture,
-  decode,
   elementHtml,
   encoded,
   FileViewer,
+  MediaView,
+  pictureRef,
+  styleRefs,
+  writtenStyle,
+} from "./media";
+import {
+  decode,
   isMockup,
   label,
   localAsset,
-  MediaView,
   MockupFrame,
   PictureView,
-  pictureRef,
-  styleRefs,
   WAITING,
-  writtenStyle,
-} from "./media";
+} from "./media-picture";
 import { CASES } from "./testing";
 import type { Image, Media, Viewer } from "./wire";
 

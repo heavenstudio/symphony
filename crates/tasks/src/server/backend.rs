@@ -202,8 +202,9 @@ impl Home {
     }
 
     /// The home named PostgreSQL's when it names no engine yet: what every start writes before it
-    /// makes or serves a cluster ([`super::Postgres::make`]), so no cluster is made, and none
-    /// found without an identity is served, without the identity that selects it. The caller
+    /// makes or serves a cluster, one it finds running included ([`super::Postgres::serve`]), so
+    /// no cluster is made, and none found without an identity is served, without the identity
+    /// that selects it. The caller
     /// holds the starters' lock and has allowed PostgreSQL here ([`Home::allow_postgresql`]).
     pub(super) fn identified(&self) -> Result<(), ServerError> {
         if self.identity()?.is_none() {

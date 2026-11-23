@@ -138,6 +138,7 @@ pub(super) fn target(
             | "/api/health"
             | symphony_api::SCHEMA_UPDATES_PATH
             | symphony_api::SETTINGS_PATH
+            | symphony_api::SETTING_WRITE_PATH
     ) {
         return Err(Refusal::Missing);
     }

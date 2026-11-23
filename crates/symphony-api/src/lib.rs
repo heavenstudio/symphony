@@ -86,8 +86,9 @@ pub use schema_updates::{
     SCHEMA_UPDATES_PATH, SCHEMA_UPDATES_SHOWN, SchemaUpdate, SchemaUpdates, UpdateState, UpdateTime,
 };
 pub use settings::{
-    EntryNeed, EntryState, SETTINGS_PATH, Setting, SettingClass, SettingKind, SettingScope,
-    SettingSource, SettingsEntry, SettingsFile, SettingsPage, SettingsSection,
+    EntryNeed, EntryState, SETTING_WRITE_PATH, SETTINGS_PATH, Setting, SettingAction, SettingClass,
+    SettingKind, SettingScope, SettingSource, SettingValue, SettingWrite, SettingWritten,
+    SettingsEntry, SettingsFile, SettingsPage, SettingsSection, StoredChange, StoredSetting,
 };
 pub use task_diff::{
     TASK_DIFF_FILE_PATH, TASK_DIFF_PATH, TaskDiff, TaskDiffFile, TaskDiffPatch, TaskDiffSource,
