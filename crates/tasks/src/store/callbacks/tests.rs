@@ -845,8 +845,33 @@ fn stored_states_of_every_recipient_in_one_read(backend: crate::store_fixture::B
         .unwrap();
     line(store, amber, "pull-3", json!({}));
     line(store, amber, "agent-4", json!({"delivered":true}));
+    line(store, amber, "event-5", json!({"attempts":3}));
+    line(
+        store,
+        amber,
+        "pane-6-0",
+        json!({"text":"BLOCKED pane", "retry_at": now + 60.0}),
+    );
+    line(
+        store,
+        amber,
+        "pane-7-0",
+        json!({"text":"pane said", "delivered":true}),
+    );
+    line(
+        store,
+        amber,
+        "pane-8-0",
+        json!({"text":"pane said", "attempts":3}),
+    );
     line(store, birch, "agent-1", json!({"attempts":3}));
     line(store, birch, "agent-2", json!({"retry_at": now + 60.0}));
+    line(
+        store,
+        cedar,
+        "agent-3",
+        json!({"attempts":2, "retry_at": now - 1.0}),
+    );
     line(store, birch, "chat-1", json!({}));
     store
         .raw()
@@ -871,8 +896,13 @@ fn stored_states_of_every_recipient_in_one_read(backend: crate::store_fixture::B
         Some(7)
     );
     assert_eq!(amber_stored.checked_pull, 5.0);
-    let queued: Vec<&str> = amber_stored.queued.iter().map(|q| q.key.as_str()).collect();
-    assert_eq!(queued, ["pull-3"], "a delivered line is no longer queued");
+    let mut queued: Vec<&str> = amber_stored.queued.iter().map(|q| q.key.as_str()).collect();
+    queued.sort_unstable();
+    assert_eq!(
+        queued,
+        ["event-5", "pane-6-0", "pull-3"],
+        "PULLs, events and blocked panes undelivered, whether due or not"
+    );
     assert!(amber_stored.pending, "its PULL line is due");
     let birch_stored = &stored[birch];
     assert_eq!(
@@ -887,7 +917,10 @@ fn stored_states_of_every_recipient_in_one_read(backend: crate::store_fixture::B
     );
     let cedar_stored = &stored[cedar];
     assert!(cedar_stored.state.is_none() && cedar_stored.queued.is_empty());
-    assert!(!cedar_stored.pending);
+    assert!(
+        cedar_stored.pending,
+        "a retry whose time has come is due, with no state of its own"
+    );
     for recipient in &recipients {
         let alone = store.stored_one(recipient).unwrap();
         let together = &stored[&recipient.handle];
@@ -907,7 +940,10 @@ fn stored_states_of_every_recipient_in_one_read(backend: crate::store_fixture::B
         );
     }
     let (pending, sent) = requests(store, || store.pending(&all).unwrap());
-    assert_eq!((pending, sent), ([amber.to_string()].into(), 1));
+    assert_eq!(
+        (pending, sent),
+        ([amber.to_string(), cedar.to_string()].into(), 1)
+    );
     let seated = [recipient_on(store, birch, true)];
     let seated: Vec<&Callback> = seated.iter().collect();
     assert!(
