@@ -974,7 +974,10 @@ pub fn serve(serve: Serve) -> i32 {
 
 /// The server, until it is stopped (SIGTERM, SIGINT, SIGHUP) or, for a server of its own port, until
 /// the process that started it ends. `open` opens its page once it listens. A server of its own
-/// is refused the one server's port before it binds anything.
+/// is refused the one server's port before it binds anything. Its signals are watched before
+/// anything outside can see it (its port recorded, a listener bound, its URL printed): one sent as
+/// it starts is kept, and acted on once its start is done, so a stop then still clears its port
+/// record.
 pub fn run(serve: Serve, open: bool) -> i32 {
     if serve.home.is_none()
         && let Some(why) = crate::cli::refused_port(serve.port)
@@ -994,28 +997,45 @@ pub fn run(serve: Serve, open: bool) -> i32 {
         }
     };
     runtime.block_on(async {
-        match start(serve, open).await {
-            Ok(started) => started.serve_until_stopped(signalled()).await,
+        let stop = signalled();
+        let asked = serve.home.is_some().then(hand_off_asked).flatten();
+        match start(serve, open, asked).await {
+            Ok(started) => started.serve_until_stopped(stop).await,
             Err(status) => status,
         }
     })
 }
 
-/// SIGTERM, SIGINT or SIGHUP; never, when they cannot be watched.
-async fn signalled() {
+/// SIGTERM, SIGINT or SIGHUP, watched from this call on: one sent before the future is first
+/// polled is kept, and resolves it then. Never, when they cannot be watched. It is called inside
+/// the runtime.
+fn signalled() -> impl Future<Output = ()> + Send + 'static {
     use tokio::signal::unix::{SignalKind, signal};
-    let (Ok(mut term), Ok(mut int), Ok(mut hup)) = (
+    let watched = (
         signal(SignalKind::terminate()),
         signal(SignalKind::interrupt()),
         signal(SignalKind::hangup()),
-    ) else {
-        return std::future::pending().await;
-    };
-    tokio::select! {
-        _ = term.recv() => {}
-        _ = int.recv() => {}
-        _ = hup.recv() => {}
+    );
+    async move {
+        let (Ok(mut term), Ok(mut int), Ok(mut hup)) = watched else {
+            return std::future::pending().await;
+        };
+        tokio::select! {
+            _ = term.recv() => {}
+            _ = int.recv() => {}
+            _ = hup.recv() => {}
+        }
     }
+}
+
+/// SIGUSR1, a hand-off asked of the one server ([`handover_when_asked`]), watched from this call
+/// on, so one asked before its loop starts is kept; none, said, when it cannot be watched. It is
+/// called inside the runtime.
+fn hand_off_asked() -> Option<tokio::signal::unix::Signal> {
+    use tokio::signal::unix::{SignalKind, signal};
+    signal(SignalKind::user_defined1())
+        .inspect_err(|_| eprintln!("· Symphony server: cannot watch for hand-off requests"))
+        .ok()
 }
 
 /// Stop the server once `signal` resolves. Stop waits for the hub's tick in flight, so it runs on
@@ -1048,8 +1068,14 @@ struct Started {
     drain: Duration,
 }
 
-/// Listen, start the owned workers and print the URL; a failed start is its exit status.
-async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
+/// Listen, start the owned workers and print the URL; a failed start is its exit status. `asked`
+/// is the one server's watch for a hand-off request ([`hand_off_asked`]), none for a server of its
+/// own.
+async fn start(
+    mut serve: Serve,
+    open: bool,
+    asked: Option<tokio::signal::unix::Signal>,
+) -> Result<Started, i32> {
     // The release this server is, read once, now: what it serves and follows for its life.
     if let Some((_, manifest)) = symphony::machine::release::this() {
         eprintln!("· Symphony: the server of the release {}", manifest.release);
@@ -1229,8 +1255,8 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     if let Some(projects) = &projects {
         background.workers.push(projects.watch());
     }
-    if serve.home.is_some() {
-        handover_when_asked(&shared);
+    if let Some(asked) = asked {
+        handover_when_asked(&shared, asked);
     }
     let url = format!("http://127.0.0.1:{port}/");
     println!("→ Symphony at {url}  (pid {})", shared.pid);
@@ -1253,14 +1279,9 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     })
 }
 
-/// A starter whose build must replace this server asks with SIGUSR1, its request in the machine
-/// folder ([`crate::host::Handover`]); the reload worker, woken, reads it at once.
-fn handover_when_asked(shared: &Arc<Shared>) {
-    use tokio::signal::unix::{SignalKind, signal};
-    let Ok(mut asked) = signal(SignalKind::user_defined1()) else {
-        eprintln!("· Symphony server: cannot watch for hand-off requests");
-        return;
-    };
+/// A starter whose build must replace this server asks with SIGUSR1, `asked`, its request in the
+/// machine folder ([`crate::host::Handover`]); the reload worker, woken, reads it at once.
+fn handover_when_asked(shared: &Arc<Shared>, mut asked: tokio::signal::unix::Signal) {
     let shared = shared.clone();
     crate::spawn::task(async move {
         loop {
@@ -1705,6 +1726,9 @@ mod nosniff_tests;
 
 #[cfg(test)]
 mod broken_stderr_tests;
+
+#[cfg(test)]
+mod signals_tests;
 
 #[cfg(test)]
 mod session_tests;
