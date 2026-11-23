@@ -3,8 +3,9 @@
 //! or found on `PATH` ([`discover_programs`];
 //! [its card](../../../../docs/operations/analysis/postgresql-binary-source.md#postgresql-binary-source)).
 //! It serves the board whose
-//! home's durable engine identity names it ([`Home::board_server`]): a scratch home's by
-//! [`Home::initialize_backend`], any other's by the move alone ([`super::moving`]).
+//! home's durable engine identity names it ([`Home::board_server`]), and a board not made yet,
+//! whose first start writes that identity before it makes the data ([`Postgres::make`]); a
+//! board on SurrealDB becomes PostgreSQL's by the move alone ([`super::moving`]).
 //!
 //! Its data is `postgresql/` in the board's folder, made by `initdb` at the first start in a folder
 //! beside it and renamed into place, so an `initdb` cut short never leaves a half-made one where a
@@ -225,12 +226,15 @@ impl Postgres {
 
     /// The data made by `initdb` when it is not there (it holds no `PG_VERSION`), in a folder
     /// beside it, which an earlier `initdb` cut short may have left and which is made anew, then
-    /// renamed into place. What `initdb` says goes to the log.
+    /// renamed into place. A home that names no engine yet is named PostgreSQL's before anything
+    /// is made ([`Home::identified`]): a board not made yet is made here by its first start. What
+    /// `initdb` says goes to the log.
     fn make(&self) -> Result<(), ServerError> {
         let data = self.data();
         if data.join("PG_VERSION").is_file() {
             return Ok(());
         }
+        self.home.identified()?;
         let making = self.home.dir.join(format!("{DATA}.making"));
         if making.exists() {
             fs::remove_dir_all(&making).map_err(io("could not remove", &making))?;
@@ -651,7 +655,9 @@ pub fn discover_programs(root: &Path) -> Result<PathBuf, String> {
     discover_with_path(root, std::env::var_os("PATH").as_deref())
 }
 
-fn discover_with_path(root: &Path, path: Option<&std::ffi::OsStr>) -> Result<PathBuf, String> {
+/// [`discover_programs`] on the search path `path` in place of this process's: what `symphony
+/// init` tells a project from the machine it was handed.
+pub fn discover_with_path(root: &Path, path: Option<&std::ffi::OsStr>) -> Result<PathBuf, String> {
     let folder = match programs(root)? {
         Some(folder) => folder,
         None => {

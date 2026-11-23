@@ -1096,7 +1096,7 @@ mod real {
 
     impl Drop for Serving {
         fn drop(&mut self) {
-            let _ = self.0.stop();
+            let _ = self.0.stop_board();
         }
     }
 }

@@ -20,6 +20,8 @@ pub use failure::{Failure, Refused};
 
 #[cfg(test)]
 mod close_tests;
+#[cfg(test)]
+mod lock_tests;
 
 pub const ROUTES: [&str; 14] = [
     "/api/postpone",
@@ -311,14 +313,17 @@ impl Saves {
         match store.apply_attested(&owner, &host, &request, &attestations) {
             Ok(result) => Ok(json!({"ok": true, "result": result})),
             Err(refused) => {
-                let failure = Failure::from(refused);
                 // Which guard it was, read after the refusal: none where the board answers none,
-                // or cannot be read again.
-                let guard = (attest::guards(&failure.error))
+                // or cannot be read again. Judged on the board's error, never on the words a
+                // failure makes of it.
+                let guard = (attest::guards(&refused))
                     .then(|| store.guard_refusal(&owner, &request, &attestations))
                     .and_then(|read| read.ok().flatten())
                     .map(Box::new);
-                Err(Refused { failure, guard })
+                Err(Refused {
+                    failure: Failure::from(refused),
+                    guard,
+                })
             }
         }
     }
@@ -419,57 +424,7 @@ impl Saves {
                 Ok(json!({"ok":true}))
             }
             WORKFLOW_APPLY => (self.workflow_apply(payload)).map_err(|refused| refused.failure),
-            symphony_api::TASK_ACTION_ROUTE => {
-                let slug = string(payload, "slug");
-                let store = self.store()?;
-                let task = store.get(slug)?;
-                let branch = crate::taskview::approval_branch(&store, &task)?;
-                let plugins = crate::plugins::Plugins::of(&self.root);
-                let actions = plugins.board_actions();
-                // The board action that made the offer, by the name the offer gave.
-                let named = string(payload, "action");
-                let done = match actions.iter().find(|action| action.name() == named) {
-                    Some(action) => action.submit(
-                        &self.root,
-                        &symphony_plugin::TaskRef {
-                            slug,
-                            status: &task.status,
-                            branch: &branch,
-                        },
-                        &symphony_plugin::Submission {
-                            payload: string(payload, "payload").into(),
-                            note: string(payload, "note").into(),
-                        },
-                    )?,
-                    // The Symphony's own, where no plugin's has its name: the owner's approve of
-                    // the tip its offer showed, the line the `owner` stamp reads.
-                    None if named == crate::gates::stamps::OWNER_APPROVE => {
-                        symphony_plugin::Submitted {
-                            said: crate::gates::stamps::approve_line(string(payload, "payload"))
-                                .map_err(|error| Failure { status: 400, error })?,
-                            released: Vec::new(),
-                        }
-                    }
-                    None => {
-                        return Err(Failure {
-                            status: 404,
-                            error: "no such board action".into(),
-                        });
-                    }
-                };
-                // With a note the owner's line waits on an agent: it opens the task's ask.
-                if string(payload, "note").trim().is_empty() {
-                    store.say(slug, "owner", &done.said, None)?;
-                } else {
-                    store.say_asking(slug, &done.said, None)?;
-                }
-                // The work it releases goes back to review. A move that fails here is made by the
-                // next landing or stamp edit, which re-reads them.
-                for held in &done.released {
-                    let _ = store.move_to(held, "review", "owner");
-                }
-                Ok(json!({"ok":true, "said": done.said}))
-            }
+            symphony_api::TASK_ACTION_ROUTE => self.task_action(payload),
             "/api/ask" | "/api/ask-reply" => self.ask(scope, route, payload),
             "/api/quick-chat" | "/api/quick-task" => self.quick(scope, route, payload),
             _ => Err(Failure {
@@ -513,6 +468,60 @@ impl Saves {
             }
         }
         result
+    }
+
+    /// The owner's board action on a task ([`symphony_api::TASK_ACTION_ROUTE`]): `payload`'s
+    /// `action`, submitted to the project's board action of that name with its `payload` and
+    /// `note`, or where none has it, the Symphony's own owner approve. The line it says goes on the
+    /// task `slug`'s thread, and the work it releases back to review.
+    fn task_action(&self, payload: &Value) -> Result<Value, Failure> {
+        let slug = string(payload, "slug");
+        let store = self.store()?;
+        let task = store.get(slug)?;
+        let branch = crate::taskview::approval_branch(&store, &task)?;
+        let plugins = crate::plugins::Plugins::of(&self.root);
+        let actions = plugins.board_actions();
+        // The board action that made the offer, by the name the offer gave.
+        let named = string(payload, "action");
+        let done = match actions.iter().find(|action| action.name() == named) {
+            Some(action) => action.submit(
+                &self.root,
+                &symphony_plugin::TaskRef {
+                    slug,
+                    status: &task.status,
+                    branch: &branch,
+                },
+                &symphony_plugin::Submission {
+                    payload: string(payload, "payload").into(),
+                    note: string(payload, "note").into(),
+                },
+            )?,
+            // The Symphony's own, where no plugin's has its name: the owner's approve of
+            // the tip its offer showed, the line the `owner` stamp reads.
+            None if named == crate::gates::stamps::OWNER_APPROVE => symphony_plugin::Submitted {
+                said: crate::gates::stamps::approve_line(string(payload, "payload"))
+                    .map_err(|error| Failure { status: 400, error })?,
+                released: Vec::new(),
+            },
+            None => {
+                return Err(Failure {
+                    status: 404,
+                    error: "no such board action".into(),
+                });
+            }
+        };
+        // With a note the owner's line waits on an agent: it opens the task's ask.
+        if string(payload, "note").trim().is_empty() {
+            store.say(slug, "owner", &done.said, None)?;
+        } else {
+            store.say_asking(slug, &done.said, None)?;
+        }
+        // The work it releases goes back to review. A move that fails here is made by the
+        // next landing or stamp edit, which re-reads them.
+        for held in &done.released {
+            let _ = store.move_to(held, "review", "owner");
+        }
+        Ok(json!({"ok":true, "said": done.said}))
     }
 
     /// A card postponed, brought back or visited for the owner: `payload`'s `action` on the card
@@ -667,7 +676,7 @@ impl Saves {
             String::new()
         };
         let _held = self.writes.lock().recover();
-        let _file = commit::write_lock(&root)?;
+        let _file = held_write_lock(&root)?;
         if self.closed.load(Ordering::Acquire) {
             return Err(Failure {
                 status: 503,
@@ -864,6 +873,13 @@ impl Saves {
             Ok(json!({"ok":true,"id":id}))
         }
     }
+}
+
+/// The write lock a save shares with the lander ([`commit::write_lock`]), unlocked as it drops,
+/// as every lock the committer takes is ([`commit::Held`]): closed alone, it would stay held by a
+/// copy of its descriptor a child another thread spawned keeps until its exec, past the save.
+fn held_write_lock(root: &Path) -> Result<Option<commit::Held>, String> {
+    Ok(commit::write_lock(root)?.map(commit::Held))
 }
 
 /// The verdicts that close a card: once one is given, nothing more is asked of the owner.
