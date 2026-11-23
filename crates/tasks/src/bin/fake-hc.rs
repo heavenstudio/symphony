@@ -15,14 +15,14 @@
 //! An agent `run` starts (its program, past `env` and its settings and the board's Codex wrapper,
 //! is `claude` or `codex`) waits at its prompt, `idle`, as hc runs one with no template: no
 //! `first_message`; its foreground is the program as it runs, the wrapper's `-c` given the
-//! terminal's address. `send` gives it its
-//! next message as hc does: refused while it is `blocked` (unless `--force`), else it goes
-//! `working` and the answer says `started` (null for a program that reports no status), `status`
-//! (its word when the text went in) and `turn`. `FAKE_HC_SILENT=N` leaves the first N agents saying
-//! nothing, `FAKE_HC_BUSY=N` `working` before any message, `FAKE_HC_BLOCKED=N` `blocked` on Claude's
-//! folder-trust dialog (its status `msg` the question; with `FAKE_HC_BLOCKED_SCREEN=FILE`, on a
-//! dialog showing FILE that hc names only `dialog open`), and `FAKE_HC_DEAF=N` never starting a turn
-//! on what is sent (`started` false); `FAKE_HC_EXIT=N` ends the first N at once.
+//! terminal's address. `send` gives it its next message as hc does: refused while it is `blocked`
+//! (unless `--force`), else it goes `working` and the answer says `started` (null for a program
+//! that reports no status), `status` (its word when the text went in) and `turn`.
+//! `FAKE_HC_SILENT=N` leaves the first N agents saying nothing, `FAKE_HC_BUSY=N` `working` before
+//! any message, `FAKE_HC_BLOCKED=N` `blocked` on Claude's folder-trust dialog (its status `msg` the
+//! question; with `FAKE_HC_BLOCKED_SCREEN=FILE`, on a dialog showing FILE that hc names only
+//! `dialog open`), and `FAKE_HC_DEAF=N` never starting a turn on what is sent (`started` false);
+//! `FAKE_HC_EXIT=N` ends the first N at once.
 //! `FAKE_HC_START_SCREEN=FILE` makes a codex start show FILE as its hooks chooser, silent until a
 //! `keys` press confirms a choice (`FAKE_HC_START_SELECTED` picks the highlighted one,
 //! `FAKE_HC_DROP_DOWN=1` loses the first down).
@@ -203,9 +203,8 @@ fn flags<'a>(args: &'a [String], name: &str) -> Vec<&'a str> {
         .collect()
 }
 
-/// The program an argv runs, past `env` and its `KEY=VALUE` settings.
-/// What an argv runs past `env` and its settings: the program, and whether it starts through the
-/// board's wrapper (`IN_ITS_TERMINAL`), which the shell `exec`s away.
+/// What an argv runs past `env` and its `KEY=VALUE` settings: the program, and whether it starts
+/// through the board's wrapper (`IN_ITS_TERMINAL`), which the shell `exec`s away.
 fn started(argv: &[String]) -> (&[String], bool) {
     let mut at = 0;
     if argv.first().is_some_and(|a| a == "env") {
@@ -221,6 +220,7 @@ fn started(argv: &[String]) -> (&[String], bool) {
     }
 }
 
+/// The program an argv runs ([`started`]).
 fn program(argv: &[String]) -> &[String] {
     started(argv).0
 }

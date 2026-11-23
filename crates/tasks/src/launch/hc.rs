@@ -736,7 +736,7 @@ mod tests {
         let other = words("env A=1 sh -c true codex resume th3");
         assert_eq!(program(&other)[0], "sh");
         assert_eq!(conversation(&other), None);
-        assert!(program(&words("env A=1 sh -c")).starts_with(&["sh".to_string()]));
+        assert_eq!(program(&words("env A=1 sh -c")), ["sh", "-c"]);
     }
 
     #[test]
