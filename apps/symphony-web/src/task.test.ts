@@ -7,7 +7,6 @@ import {
   merge,
   readItemChange,
   readListing,
-  readSlugs,
   readTask,
   readTaskChange,
   slugOrder,
@@ -190,13 +189,6 @@ describe("a change the feed sends", () => {
     ["a task it cannot read", { key: "w/a", value: { slug: "w/a" } }],
   ])("of a task is none for %s", (_, value) => {
     expect(readItemChange(value)).toBeNull();
-  });
-
-  it("of the owner's sign-off is its slugs", () => {
-    expect(readSlugs(["w/a", "w/b"])).toEqual(["w/a", "w/b"]);
-    expect(readSlugs([])).toEqual([]);
-    expect(readSlugs([1])).toBeNull();
-    expect(readSlugs("w/a")).toBeNull();
   });
 });
 

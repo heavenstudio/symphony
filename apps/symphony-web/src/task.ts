@@ -167,11 +167,6 @@ export function readItemChange(value: unknown): ItemChange<Task> | null {
     : { key: field(value, "key") as string, value: read, removed: removed === true };
 }
 
-/** The slugs of the tasks waiting for the owner's sign-off, as the feed sends them, or none. */
-export function readSlugs(value: unknown): string[] | null {
-  return isTexts(value) ? value : null;
-}
-
 /** Whether `task` is a deliverable task rather than a slice of one: it has no parent. */
 export function isTask(task: Pick<Task, "parent">): boolean {
   return task.parent === null || task.parent === undefined;
