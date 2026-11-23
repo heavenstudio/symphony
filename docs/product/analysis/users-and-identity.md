@@ -4,9 +4,8 @@ Several people on one board. Who each one is, is proved outside the Symphony's c
 that signs them in; what each may do is the Symphony's own, kept with the board: the groups that
 own what waits to be decided, and the powers to speak, decide and direct agents. This is
 a concept: it questions the idea against what the Symphony has, says the shape that fits, and
-puts its choices to the owner a few at a time (this round's: [what ships for
-notices](#what-the-symphony-ships-for-notices) and [whose agent may
-review](#whose-agent-may-review)). Nothing here is built,
+puts its choices to the owner a few at a time; those not asked yet are [listed at its
+end](#later-rounds). Nothing here is built,
 and nothing is built from it but by a task filed from an approved card.
 
 Read at `59538b83e`, and the settings concept as it landed on main at `b31695d8d`. The links name
@@ -36,14 +35,16 @@ the modules and documents read.
   ([decided](#words-without-agent-reach)), but for the note beside a verdict, which is written with
   it ([decided](#the-note-beside-a-verdict)).
 - **Agents are personal or shared.** A personal agent runs on its person's machine and credits
-  and answers only them. A shared agent is the board's, and works for whoever may direct agents.
+  and answers only them, and on a task may do what they may, a review among it
+  ([decided](#whose-agent-may-review)). A shared agent is the board's, and works for whoever may
+  direct agents.
 - **The core signs nobody in.** A sign-in service, a plugin of the server and never of a project,
   does that, with OAuth 2, and hands the Symphony signed data saying who the person is. The core
   only verifies it ([how](#how-a-provider-plugs-in)). The Symphony ships one such service, and
   any other that signs the same way replaces it.
 - **A person's lines carry their name**, in the owner's place
-  ([decided](#how-a-persons-name-is-written)), and a notice by mail or Slack is sent by a program
-  of the server's, outside the core ([decided](#who-sends-a-notice)).
+  ([decided](#how-a-persons-name-is-written)), and a notice by Slack, WhatsApp or email is sent by
+  that service's plugin, the server's and apart from the core ([decided](#who-sends-a-notice)).
 - **A project's plugin is told who sent a write, and nothing more.** Never what a person may do,
   never how to reach them, and nobody on a read ([decided](#what-a-plugin-is-told-of-who-asked)).
 - **Not on a board, a person cannot see it exists.** That holds for a machine of the tailnet
@@ -438,7 +439,7 @@ A person's profile is what the Symphony knows of who they are, apart from what t
 | sign-ins | which sign-in service's subject is this person; there can be several | the board's admins |
 | emails | a notice by mail; matching a commit's author to a person | the person and admins |
 | git handles | whose commit a save of theirs is authored as; whose commits are theirs | everyone; they are in git already |
-| chat usernames (Slack) | where a notice is sent | the person and admins |
+| chat addresses (a Slack user, a WhatsApp number) | where a notice is sent | the person and admins |
 | preferences | which notices, by which way | the person |
 
 What a person may do (their groups, their powers) is not in the profile. It is each board's
@@ -452,8 +453,8 @@ Kept once, with the server, and written by the person
 - **A board keeps only that person's groups and powers**, and refers to the profile. Who someone
   is, is kept apart from what they may do, as signing in is.
 - **A line carries the short name and nothing else.** A name once used is never given to
-  another. Emails and chat usernames are in no repository, and no agent or plugin is handed
-  them.
+  another. Emails and chat addresses are in no repository, and no agent or project plugin is
+  handed them.
 - **The lines already written as `owner` stay**, and a machine with nobody named keeps writing
   as `owner`.
 
@@ -1033,9 +1034,9 @@ handed who asked (the principal in `symphony_plugin::authority::Operation`)
 What follows:
 
 - **An authority is told a person by their short name**, never by their sign-in's subject, which
-  can be an email: no plugin is handed an email or a chat username.
+  can be an email: no project plugin is handed an email or a chat address.
 - **Mail and chat are no project plugin's to send**, since only the server knows where a person
-  is reached. What sends them is [asked this round](#who-sends-a-notice).
+  is reached. The server's [notice plugins](#who-sends-a-notice) send them.
 - **The kit's `Submission` gains who sent it**, shipped beside what it holds today under the
   kit's version rules, so a plugin built against an older kit keeps working. The line the board
   says on the task for a submission names the person.
@@ -1132,29 +1133,29 @@ What follows:
 
 ### Who sends a notice
 
-A notice program, the server's plugin ([its card](#notice-sender), B). Today a notice reaches the
-owner on the page (the queue, the Activity panel) and in the Mac app, and nothing is sent by mail
-or chat.
+A notice plugin, the server's ([its card](#notice-sender), B), one for each service
+([below](#what-the-symphony-ships-for-notices)). Today a notice reaches the owner on the page (the
+queue, the Activity panel) and in the Mac app, and nothing is sent by mail or chat.
 
 ![What sends a notice outside the page](users-and-identity/notice-sender.svg)
 
-- **It is a separate program**, named in the server's settings as the sign-in service is, outside
-  the core and never a project's.
-- **The server hands it one notice at a time**: one person's notice and the address their
-  profile names for the way they chose (mail, Slack).
-- **It keeps what sending needs**, the Slack token or the mail server's password. Any program
-  that takes the same message replaces it.
+- **Each is a separate program**, named in the server's settings as the sign-in service is,
+  outside the core and never a project's: one for Slack, one for WhatsApp, one for email.
+- **The server hands one notice at a time** to the plugin of the way a person chose: their
+  notice and the address their profile names for that way.
+- **Each keeps what its sending needs**, such as the Slack token or the mail server's password.
+  Any program that takes the same message replaces one.
 
 What follows:
 
-- **The program decides nothing.** The board decides who is told (the members of the group that
-  owns the thing) and a person's preferences which notices by which way. The program is handed no
+- **A plugin decides nothing.** The board decides who is told (the members of the group that
+  owns the thing) and a person's preferences which notices by which way. A plugin is handed no
   list of people, only each address as a notice needs it.
 - **The message the server hands it is a contract** kept stable across releases, as the sign-in
   header is.
 - **The page and the Mac app show every notice**, so a person who sets no address misses nothing.
-- **A notice leaves the Symphony** for a mail server or Slack. What it carries there, a link
-  alone or the words it is about, is a [later round's](#later-rounds).
+- **A notice leaves the Symphony** for a mail server, Slack or WhatsApp. What it carries there, a
+  link alone or the words it is about, is a [later round's](#later-rounds).
 
 - [r] **notice-sender** — Today a notice reaches you only on the page and in the Mac app. A person's profile can hold their email and their Slack username, and which notices they want by which way; what sends a notice by mail or Slack? A: nothing; notices stay on the page and in the Mac app. B: a notice program, the server's plugin like the sign-in service, outside the core; the server hands it one person's notice and address, and it keeps the Slack token or the mail password. C: the core sends them itself, with each service's credentials in the server's settings. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Who sends a notice]]
   [2026-11-23 00:52] agent — Posted for the board task `app/users-and-identity`, from your note on **public-name-where-declared**, which named "communication usernames and preferences (for example slack user)" for a person's record. A concept: nothing is built by this card.
@@ -1188,28 +1189,40 @@ What follows:
 
 ### What the Symphony ships for notices
 
-**Base.** Nothing is sent outside the page today. A notice program is a separate program the
-server's settings name ([above](#who-sends-a-notice)). For signing in, the Symphony ships the
-check and the format first, then a sign-in service of its own that any other replaces
-([its card](#sign-in-service-shipped)). The choice is what it ships for notices.
+The core ships the message's format alone, and three plugins apart from it send: one for Slack,
+one for WhatsApp, one for email ([its card](#notice-program-shipped), A). The owner's words for
+the plugins: "I would like plugins added (separate from the current core of Symphony) for Slack,
+WhatsApp and Email."
 
-![What the Symphony ships for sending notices](users-and-identity/notice-shipped.svg)
+![Notices: the format in the core, a plugin for each service](users-and-identity/notice-plugins.svg)
 
-- **A, the message's format alone.** A notice stays on the page and in the Mac app until someone
-  writes a program that takes it.
-- **B, the format and a notice program of its own, for mail and Slack**, which any other
-  replaces.
-- **C, the format and a program for mail alone.** Slack and other chat services are left to
-  programs others write.
+- **The core sends nothing.** It makes the notice message and hands it on. The message is a
+  contract kept stable across releases ([above](#who-sends-a-notice)), so a plugin built on it
+  keeps working.
+- **Each service is a plugin of its own**, a package the core does not link, as the GitHub issue
+  exchange is. Whoever runs the server sets up the ones they want, and nothing of them is in a
+  project's `symphony.toml`. Any program that takes the same message replaces one.
+- **Each keeps its own secret**: the Slack app's token, the WhatsApp business account's token,
+  the mail server's password.
 
-Under every option the program is a package the core does not link, as the GitHub issue exchange
-is, set up once by whoever runs the server; nothing of it is in a project's `symphony.toml`.
+What follows:
 
-**Recommended: B.** Slack is the way the owner named for a person's record, and a format no
-program sends to reaches nobody. Its cost is the Symphony's to keep: Slack's interface followed
-as Slack changes it, and its token kept safe, where mail (C) is a standard that changes little.
+- **A notice goes to the plugin of the way its person chose.** With no plugin set up for that
+  way, it stays on the page and in the Mac app, where every notice is shown anyway.
+- **A person's profile gains a WhatsApp number**, beside their emails and Slack user
+  ([above](#a-persons-profile)).
+- **The format comes first**, then the three plugins, each built and released on its own, in any
+  order. What each needs:
+  - **Slack**: a Slack app installed in the workspace and its bot token; a direct message to the
+    person's Slack user. It follows Slack's interface as Slack changes it.
+  - **WhatsApp**: a WhatsApp business account with a number to send from, and its token. A
+    message that opens a conversation must use a template Meta has approved, so each kind of
+    notice is a template submitted first; the person agrees to be messaged; and Meta charges for
+    such messages.
+  - **Email**: a mail server and its password, or a mail service's key, and an address to send
+    from. Mail is a standard that changes little.
 
-- [x] **notice-program-shipped** — Follows notice-sender, where you chose B: a notice by mail or Slack is sent by a separate program, the server's plugin, outside the core. What is left is what the Symphony ships of it. A: the message's format alone; notices stay on the page and in the Mac app until someone writes a program. B: the format and a notice program of its own, for mail and Slack, which any other replaces. C: the format and a program for mail alone; Slack is left to programs others write. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#What the Symphony ships for notices]]
+- [r] **notice-program-shipped** — Follows notice-sender, where you chose B: a notice by mail or Slack is sent by a separate program, the server's plugin, outside the core. What is left is what the Symphony ships of it. A: the message's format alone; notices stay on the page and in the Mac app until someone writes a program. B: the format and a notice program of its own, for mail and Slack, which any other replaces. C: the format and a program for mail alone; Slack is left to programs others write. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#What the Symphony ships for notices]]
   [2026-11-23 01:10] agent — Posted for the board task `app/users-and-identity`, from your B on **notice-sender**. A concept: nothing is built by this card.
 
     ![What the Symphony ships for sending notices](users-and-identity/notice-shipped.svg)
@@ -1232,6 +1245,8 @@ as Slack changes it, and its token kept safe, where mail (C) is a standard that 
 
     Neither decides this.
   [2026-11-23 11:18] owner · approved — A. But I would like plugins added (separate from the current core of Symphony) for Slack, WhatsApp and Email.
+  [2026-11-23 11:21] agent — Recorded, A, with your addition: "I would like plugins added (separate from the current core of Symphony) for Slack, WhatsApp and Email." The core ships the notice message's format alone and sends nothing. Three plugins outside it send: one for Slack, one for WhatsApp, one for email. Each is a package the core does not link, set up by whoever runs the server, and each keeps its own secret. Written in [[analysis/users-and-identity#What the Symphony ships for notices]] with a new picture, and in [[analysis/users-and-identity#Who sends a notice]]. What follows: a notice goes to the plugin for the way its person chose, and stays on the page and in the Mac app when none is set up; a person's profile gains a WhatsApp number; the format comes first, and each plugin is then a build of its own, in any order. WhatsApp costs the most of the three. A notice that starts a conversation must use a template Meta has approved, so each kind of notice is a template submitted first. The person must agree to be messaged, and Meta charges for such messages.
+  [2026-11-23 11:21] agent · resolved
 
 ## Sessions
 
@@ -1253,9 +1268,10 @@ never decides a card, gives the `owner` stamp or takes an edge that waits for a 
 people on a board there are two kinds:
 
 - **A personal agent** is one a person starts on their own machine, under their own credits.
-  Only that person directs it. On the board it may do no more than they may: a reader's agent
-  reads. Others see what it posts and speak under it; their words reach its person, not the
-  agent.
+  Only that person directs it. On a task it may do what they may there, no more and no less
+  ([decided](#whose-agent-may-review)): a reader's agent reads, and the agent of someone who may
+  direct agents works with a task's agents as they do, a review among it. Others see what it
+  posts and speak under it; their words reach its person, not the agent.
 - **A shared agent** is the board's: the orchestrators, executors and reviewers staffed for its
   tasks. It runs on a host, a machine and credits somebody offers the board. Anyone who may
   direct agents directs it, whoever hosts it. It keeps two names apart: the person whose word it
@@ -1272,30 +1288,37 @@ agent on another machine proves its handle to a board.
 
 ### Whose agent may review
 
-**Base.** A task's review comes from a fresh session: never one that executed the task,
-orchestrates or orchestrated it, or filed it ([the default
-landing](../../workflow/TASKS.md#the-default-landing)). The rule reads sessions; nothing says
-whose an agent is. With people, a reviewer is either a shared agent, staffed for the board by its
-role and acting on no one person's word, or a person's personal agent, which works on its
-person's word alone. The choice is whether a personal agent of the person whose task it is may
-review it.
+Any fresh session, whoever's agent it is ([its card](#review-not-own-agent), A), on the owner's
+own principle: "If the person can interact with agents on a task, so should their own agents
+too."
 
-![Whose agent may review a task](users-and-identity/review-whose.svg)
+![A person's own agent stands where its person stands](users-and-identity/agent-reach.svg)
 
-- **A, sessions alone, as today.** A fresh session reviews, whoever's agent it is. A person's own
-  word on a task is still the `owner` stamp where its assessment names one.
-- **B, not their own agent.** A personal agent of the person who filed the task or started work
-  on it gives it no verdict. A shared agent, or another person's agent, does.
+- **The fresh-session rule is today's.** A session that executed a task, orchestrates or
+  orchestrated it, or filed it never reviews it ([the default
+  landing](../../workflow/TASKS.md#the-default-landing)). Any other session reviews it, the
+  personal agent of the person who filed it or started its work among them.
+- **A personal agent stands where its person stands.** Whether its person is a member of the
+  group that owns a task, and the powers they hold, say what it may do there with the task's
+  agents: what its person may, no more and no less.
+- **A review is an agent's verdict**, never a person's decision. No agent decides a card or gives
+  the `owner` stamp, whoever's agent it is. A person's own word on a task is still that stamp
+  where its assessment names one.
 
-Under both, on a board with nobody named every agent is the one person's and reviews as today, and
-a review stays an agent's verdict, never a person's decision.
+What follows:
 
-**Recommended: B.** A personal agent acts on its person's word, so its review is that person's
-own read of their own work, which the fresh-reviewer rule keeps out for sessions. B carries the
-same rule from sessions to people. Its cost is small: the board's staffed reviewers are shared
-agents, and still review anyone's task.
+- **The agent of someone who may direct agents** reviews any task a fresh session may, and its
+  messages on a task's thread reach the task's agents as its person's do.
+- **The agent of someone who may not direct agents** writes as its person does. What it says on
+  a task, a review among it, is held by the board until someone who may direct agents passes it
+  on ([above](#words-without-agent-reach)).
+- **The board's staffed reviewers are shared agents**, and review anyone's task as today.
+- **The board knows whose agent a session is.** A personal agent's reach is read from its
+  person, so the tie between them is a board's record. How an agent on another machine proves it
+  is [left for later](#later-rounds), with how it proves its handle.
+- **On a board with nobody named** every agent is the one person's and reviews as today.
 
-- [x] **review-not-own-agent** — With several people, a task could be reviewed by a personal agent of the very person who filed it or started its work: a fresh session, but working on that person's word. Today's rule reads sessions alone. A: as today, a fresh session reviews whoever's agent it is. B: a personal agent of the person who filed the task or started work on it gives it no verdict; a shared agent, or another person's agent, does. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Whose agent may review]]
+- [r] **review-not-own-agent** — With several people, a task could be reviewed by a personal agent of the very person who filed it or started its work: a fresh session, but working on that person's word. Today's rule reads sessions alone. A: as today, a fresh session reviews whoever's agent it is. B: a personal agent of the person who filed the task or started work on it gives it no verdict; a shared agent, or another person's agent, does. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Whose agent may review]]
   [2026-11-23 01:10] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
 
     ![Whose agent may review a task](users-and-identity/review-whose.svg)
@@ -1318,6 +1341,8 @@ agents, and still review anyone's task.
 
     Neither decides this.
   [2026-11-23 11:10] owner · approved — This should follow the member/owner aspect. If the person can interact with agents on a task, so should their own agents too. This sounds like A
+  [2026-11-23 11:17] agent — Recorded, A, with your principle: "If the person can interact with agents on a task, so should their own agents too." Any fresh session reviews a task, whoever's agent it is, the personal agent of the person who filed it or started its work among them; the fresh-session rule itself is today's. A personal agent stands where its person stands: whether they are a member of the group that owns the task, and the powers they hold, say what it may do there with the task's agents, no more and no less. The concept said "no more" already; your note adds "no less". Written in [[analysis/users-and-identity#Whose agent may review]], with a new picture, and in [[analysis/users-and-identity#Agents beside people]]. What follows: the agent of someone who may not direct agents writes as they do, so what it says on a task, a review among it, is held until someone who may direct agents passes it on; an agent still never decides a card or gives the owner stamp; and the board must know whose agent a session is, whose proof for an agent on another machine is listed for a later round with its handle's.
+  [2026-11-23 11:17] agent · resolved
 
 ## The way from one owner
 
@@ -1332,11 +1357,12 @@ Each step can ship alone, and a machine with one person sees none of them.
 4. **Ownership.** A card and a task have their group, from the board's map of places or a name
    written on them; queues and notices follow it, and any member's answer settles what the
    group owns. Its members move, prioritize and cancel its tasks. The Settings page is one of
-   the places, and its group's members change its settings. A notice program, the server's,
-   sends mail and Slack.
+   the places, and its group's members change its settings. The core makes notice messages, and
+   the server's plugins for Slack, WhatsApp and email send them, each shipping on its own.
 5. **Speaking apart from directing agents.** A person's words reach people always. The board
    holds the words of someone who may not direct agents, and passing them on makes them an ask.
-   The note beside a verdict is written with it.
+   The note beside a verdict is written with it. A personal agent, tied to its person on the
+   board, reaches a task's agents as its person does, a review among it.
 6. **The signed word verified.** The core's check of a sign-in service's signed data, and hosted
    saves through the same writes as local ones. Then the Symphony's own sign-in service, a
    separate program in front.
@@ -1351,7 +1377,7 @@ admin. The first person named is the first moment anything differs.
   board's store and holds at once, and a control beside it makes it the project's, a commit on a
   green settings check; a setting that holds a command the server runs is reviewed and never
   changed from the page. It left to this concept who may change the project's preferences with
-  several people, [asked this round](#who-changes-settings). Three things it hands back are the
+  several people, [decided here](#who-changes-settings). Three things it hands back are the
   shape here already: an identity provider's settings decide who gets in, so the page never
   writes them (here they are the server's, named where it is started); a commit the page makes
   names who asked; and "this machine" is a local server's alone, as a hosted board has no
@@ -1372,7 +1398,7 @@ Not carded yet.
 - What a notice carries outside the Symphony: a link alone, or the words it is about.
 - Queues and notices per person and per group.
 - Shared agents: whose machine and credits host them, what a host may limit, and how an agent on
-  another machine proves its handle to a board.
+  another machine proves to a board its handle and, for a personal agent, whose it is.
 - Removing a person: their open asks, their unanswered cards, their agents' sessions.
 - Several boards for one project: nothing proposed here ties people to a project, and what else
   a second board needs, among it who makes a value the project's for every board, is a concept
