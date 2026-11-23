@@ -47,15 +47,7 @@ import { getIf, getJson, said } from "./request";
 import { field, holdPlace, list as items } from "./shared";
 import { tryAgain } from "./state";
 import { load, save } from "./storage";
-import {
-  holderHealth,
-  isTask,
-  merge,
-  readItemChange,
-  readListing,
-  readSlugs,
-  readTaskChange,
-} from "./task";
+import { holderHealth, isTask, merge, readItemChange, readListing, readTaskChange } from "./task";
 import { markTasksReady } from "./taskcard";
 import { Debounce } from "./timing";
 import { failed as failedRead } from "./trouble";
@@ -90,8 +82,6 @@ export interface BoardData {
   counts: [string, number][];
   lifecycleCounts: [string, number][];
   connected: boolean;
-  statuses: string[];
-  signoff: string[];
   query: string;
   wait: string;
   projection: WaitingBoard | null;
@@ -153,8 +143,6 @@ export function emptyBoard(): BoardData {
     counts: [],
     lifecycleCounts: [],
     connected: true,
-    statuses: [],
-    signoff: [],
     query: "",
     wait: "",
     projection: null,
@@ -189,16 +177,14 @@ type Change =
   | { region: "task-fields"; change: TaskChange }
   | { region: "session"; key: string; health: string | null }
   | { region: "message" }
-  | { region: "task-signoff"; slugs: string[] | null }
   | { region: "counts" }
   | { region: "tasks-status"; available: boolean | undefined; slow: boolean };
 
 /**
  * The changes of feed event `value` the board follows, read whole before any is applied; none when
- * one cannot be read, which loses the stream. While `searching`, the owner's sign-off is read
- * again rather than taken from the event.
+ * one cannot be read, which loses the stream.
  */
-export function readChanges(value: unknown, searching: boolean): Change[] | null {
+export function readChanges(value: unknown): Change[] | null {
   const read: Change[] = [];
   for (const change of items(field(value, "changes"))) {
     const data = field(change, "data");
@@ -225,10 +211,6 @@ export function readChanges(value: unknown, searching: boolean): Change[] | null
       });
     } else if (region === "message") {
       read.push({ region });
-    } else if (region === "task-signoff") {
-      const slugs = searching ? null : readSlugs(data);
-      if (!searching && slugs === null) return null;
-      read.push({ region, slugs });
     } else if (["task-counts", "task-recent-counts", "workflow"].includes(region as string)) {
       // A workflow activated: the counts say its generation, by which the board reads it.
       read.push({ region: "counts" });
@@ -419,13 +401,12 @@ export class LiveBoard {
     this.host.redraw();
   }
 
-  /** A listing's complete totals: its stages' counts, the statuses and the owner's sign-off. */
+  /** A listing's complete totals: its stages' counts, what its tasks wait on, its orchestrators
+   * and its unstarted work. */
   showCounts(list: TaskListing): void {
     const { d } = this;
     d.counts = list.counts;
     d.lifecycleCounts = list.lifecycle_counts;
-    d.statuses = list.statuses;
-    d.signoff = list.signoff;
     d.projection = list.waiting ?? null;
     d.orchestrators = list.orchestrators;
     d.unstarted = list.unstarted;
@@ -448,7 +429,6 @@ export class LiveBoard {
     d.tasks = withListed(d.tasks, list.tasks, before);
     d.counts = list.counts;
     d.lifecycleCounts = list.lifecycle_counts;
-    d.signoff = list.signoff;
     d.projection = list.waiting ?? null;
     d.orchestrators = list.orchestrators;
     d.unstarted = list.unstarted;
@@ -911,7 +891,7 @@ export class LiveBoard {
    */
   apply(value: unknown): boolean | null {
     const { d } = this;
-    const changes = readChanges(value, d.query !== "");
+    const changes = readChanges(value);
     if (changes === null) return null;
     const { journal } = d;
     journal.version += 1;
@@ -939,7 +919,7 @@ export class LiveBoard {
   /** The events heard since `cursor`'s read began, applied again to what it answered. */
   replay(cursor: ReadCursor): void {
     for (const value of cursor.events()) {
-      const changes = readChanges(value, this.d.query !== "");
+      const changes = readChanges(value);
       if (changes !== null) this.merge(changes);
     }
   }
@@ -1015,13 +995,6 @@ export class LiveBoard {
         }
         case "message":
           refresh ||= searching;
-          break;
-        case "task-signoff":
-          if (change.slugs === null) refresh = true;
-          else {
-            d.signoff = change.slugs;
-            changed = true;
-          }
           break;
         case "counts":
           // Legacy feed totals describe lifecycle. Ask for the complete stage projection under
@@ -1130,8 +1103,6 @@ export function TasksView({ scope, board, stale, freshness, refreshed }: TasksVi
           counts={d.counts}
           work={d.work}
           connected={!stale}
-          statuses={d.statuses}
-          signoff={d.signoff}
           waiting={d.projection}
           orchestrators={d.orchestrators}
           unstarted={d.unstarted}
