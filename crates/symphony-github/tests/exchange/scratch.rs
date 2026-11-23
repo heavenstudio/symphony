@@ -186,7 +186,6 @@ impl Drop for Scratch {
 
 #[test]
 fn only_what_main_commits_turns_it_on() {
-    let _starts = crate::starting();
     let dir = Dir::new("committed");
     let root = dir.0.join("project");
     std::fs::create_dir_all(&root).unwrap();
@@ -267,7 +266,6 @@ fn only_what_main_commits_turns_it_on() {
 
 #[test]
 fn a_token_file_inside_the_repository_is_refused_before_any_request() {
-    let _starts = crate::starting();
     let scratch = Scratch::new("token-inside");
     let inside = scratch.root.join("token");
     std::fs::write(&inside, TOKEN).unwrap();
@@ -301,7 +299,6 @@ fn a_token_file_inside_the_repository_is_refused_before_any_request() {
     reason = "one board's life in order, each step on what the one before left"
 )]
 fn issues_are_exchanged_with_a_real_board_through_its_api_and_curl() {
-    let _starts = crate::starting();
     let scratch = Scratch::new("board");
     let mut said = String::new();
 
