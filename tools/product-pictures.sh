@@ -10,7 +10,10 @@
 # theme of its own. Every picture is taken at one moment (NOW below, on the board's clock and the
 # page's), in UTC, so a page that draws an age or a time is the same picture on any day. It touches
 # no shared server, no project's board and no terminal, and ends the servers it started, the
-# board's PostgreSQL they started with them.
+# board's PostgreSQL they started with them. It works in one folder, /tmp/symphony-product-pictures,
+# one run at a time, as the Settings page draws its paths, and puts on its servers' PATH false for
+# the agents' and Herdr's programs and its own build of the GitHub exchange's, so no page names a
+# program or a folder of this machine's.
 #
 #   tools/product-pictures.sh          retake every picture
 #   tools/product-pictures.sh NAME...  retake those named (the list's first word)
@@ -21,25 +24,53 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 list="$root/docs/product/pictures.txt"
 out="$root/docs/product/pictures"
-work="$(mktemp -d "${TMPDIR:-/tmp}/symphony-product-pictures.XXXXXXXX")"
 # The moment of every picture: 2026-03-02 09:30 UTC, a Monday morning.
 NOW=1772443800
 export TZ=UTC
+
+# The programs, this checkout's own builds, built before the lock below is waited for, so a run
+# that builds holds no other run up; the run that holds it finds each fresh again in seconds.
+shot="$("$root/tools/rs-bin.sh" --build symphony)"
+serve="$("$root/tools/rs-bin.sh" --build symphony-server)"
+tasks="$("$root/tools/rs-bin.sh" --build tasks)"
+copy="$("$root/tools/rs-bin.sh" --build tasks-copy)"
+# The GitHub exchange's program is its package's own binary, which tools/rs-bin.sh does not run:
+# Cargo builds it, as a build of it is made for the main checkout (AGENTS.md), and records no run.
+TASKS_RECORDER=off "$root/tools/cargo.sh" build --quiet --locked -p symphony-github
+github="${CARGO_TARGET_DIR:-$root/.target}"
+[[ "$github" = /* ]] || github="$root/$github"
+github="$github/debug/symphony-github"
+
+# Every run works in the one folder WORK: the Settings page draws the paths of the copy's files and
+# of the programs it finds, so a folder of each run's own would be other words in each picture. One
+# run at a time holds it: the script runs again holding LOCK, the kernel's lock on that file, which
+# lockf (macOS) or flock (Linux) waits for, half an hour at most, and which a run that ends in any
+# way, killed outright too, lets go.
+work=/tmp/symphony-product-pictures
+lock="$work.lock"
+if [ "${SYMPHONY_PICTURES_LOCK:-}" != "$lock" ]; then
+    export SYMPHONY_PICTURES_LOCK="$lock"
+    if command -v lockf >/dev/null; then
+        exec lockf -k -t 1800 "$lock" "$BASH" "$0" "$@"
+    fi
+    if command -v flock >/dev/null; then
+        exec flock -w 1800 "$lock" "$BASH" "$0" "$@"
+    fi
+    echo "product-pictures: neither lockf nor flock is here to hold $lock" >&2
+    exit 1
+fi
+
 # Every server started, each followed by its output's reader.
 started=()
 board=""
 
-finish() {
-    # Each server, then its reader, though a child of the server's still held its output.
-    for pid in ${started[@]+"${started[@]}"}; do
-        kill "$pid" 2>/dev/null || true
-        wait "$pid" 2>/dev/null || true
-    done
-    # The copy's board server, the PostgreSQL its last starter, the Symphony's, started, ends once
-    # its starters have: it is no child of this script's to wait for, so it is ended by the pid its
-    # data records (the first line of postmaster.pid) and looked at until it is gone (ten seconds at
-    # most), as it writes in the folder removed next. The second project holds no board, and the
-    # one server's read of it makes and starts none.
+# `clear_work`: WORK removed, the copy's board server ended first. That server, the PostgreSQL its
+# last starter, the Symphony's, started, ends once its starters have: it is no child of this
+# script's to wait for, so it is ended by the pid its data records (the first line of
+# postmaster.pid) and looked at until it is gone (ten seconds at most), as it writes in the folder
+# removed next. The second project holds no board, and the one server's read of it makes and starts
+# none.
+clear_work() {
     board="$(head -n 1 "$work/project/.git/symphony/tasks/postgresql/postmaster.pid" 2>/dev/null || true)"
     if [ -n "$board" ]; then
         kill "$board" 2>/dev/null || true
@@ -50,7 +81,21 @@ finish() {
     fi
     rm -rf "$work"
 }
+
+finish() {
+    # Each server, then its reader, though a child of the server's still held its output.
+    for pid in ${started[@]+"${started[@]}"}; do
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+    done
+    clear_work
+}
 trap finish EXIT
+# What a run killed outright left there goes first, its board server with it.
+clear_work
+mkdir "$work"
+# WORK as the servers name it: on macOS, /tmp is /private/tmp.
+work="$(cd "$work" && pwd -P)"
 
 # `repository FOLDER TO`: tools/product-pictures/FOLDER as a repository of its own at TO, as the
 # server serves a git checkout, its one commit made at a moment of its own, so its id is the same
@@ -65,24 +110,27 @@ repository() {
 }
 repository fixture "$work/project"
 
-shot="$("$root/tools/rs-bin.sh" --build symphony)"
-serve="$("$root/tools/rs-bin.sh" --build symphony-server)"
-tasks="$("$root/tools/rs-bin.sh" --build tasks)"
-copy="$("$root/tools/rs-bin.sh" --build tasks-copy)"
 # The board's database is the machine's PostgreSQL, 18 or later, on which the copy's first board
 # command makes its board, as a project's is (docs/operations/PROJECT_FILE.md#board).
 # TASKS_RECORDER=off: nothing here is a build or a test of a task's. No hook, sweep or terminal of
 # this machine's is the copy's: a board command there starts none, and the terminals' two
-# programs are false, so the one server's own sweep of the copy's board reaches none either.
+# programs are false (the servers' Herdr program, `hc`, the false in their folder below), so the
+# one server's own sweep of the copy's board reaches none either.
 export SYMPHONY_MACHINE_DIR="$work/machine" TASKS_RECORDER=off TASKS_SWEEP=off \
     HC_BIN=/usr/bin/false HERDR_APP_BIN=/usr/bin/false
 unset TASKS_SESSION TASKS_TASK TASKS_SERVER TASKS_DATABASE
 mkdir "$work/machine"
-# The board build a server's sweep of the copy's board runs, alone in a folder put first on the
-# servers' PATH: a project's checkout links its own (`just symphony`), and a sweep that finds none
-# fails, which every page would say.
+# The servers' own programs, in a folder put first on their PATH: the board build a server's sweep
+# of the copy's board runs (a project's checkout links its own, `just symphony`, and a sweep that
+# finds none fails, which every page would say); the GitHub exchange's, which the Settings page asks
+# to describe itself; and false in the place of the agents' and Herdr's, which that page finds by
+# name, so it names no program of this machine's and a launch from here would start nothing.
 mkdir "$work/bin"
 ln -s "$tasks" "$work/bin/tasks"
+ln -s "$github" "$work/bin/symphony-github"
+for program in claude codex hc; do
+    ln -s /usr/bin/false "$work/bin/$program"
+done
 
 # The copy's board is made by its first command, on PostgreSQL, as a project's is; the server
 # makes none. The board's own server ends with the command that started it, and the Symphony's
@@ -94,7 +142,8 @@ ln -s "$tasks" "$work/bin/tasks"
 }
 
 # `start NAME FD ARGUMENT...`: the Symphony server with ARGUMENT..., run in the copy with its board
-# clock held at NOW, its address left in `base`. Its output goes through a FIFO to a reader that
+# clock held at NOW and its own programs first on its PATH, Herdr's found there by its name, its
+# address left in `base`. Its output goes through a FIFO to a reader that
 # keeps it whole in NAME.log and says the server's address on a second FIFO the first time the
 # server prints it, or an empty line once the output ends without one, the server having ended.
 # The script waits for that line, `read -t` its deadline. The second FIFO is held open both ways
@@ -105,7 +154,7 @@ start() {
     shift 2
     mkfifo "$work/$name.output" "$work/$name.address"
     eval "exec $fd<>\"\$work/\$name.address\""
-    (cd "$work/project" && PATH="$work/bin:$PATH" TASKS_NOW=$NOW exec "$serve" "$@") \
+    (cd "$work/project" && PATH="$work/bin:$PATH" HC_BIN=hc TASKS_NOW=$NOW exec "$serve" "$@") \
         >"$work/$name.output" 2>&1 &
     started+=("$!")
     {

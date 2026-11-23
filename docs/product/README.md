@@ -15,6 +15,7 @@ of it.
 - [The task board](BOARD.md) — every task by its stage, and what each waits on.
 - [A task's page](TASK.md) — its gates, timeline, brief, changes and thread, and the owner's approval.
 - [Reports](REPORTS.md) — the project's work over time: what was done, by how many agents, at what cost.
+- [Settings](SETTINGS.md) — what is in force and where each value comes from, and the preferences kept on the board.
 - [Runs](RUNS.md) — every recorded build and test, what runs now, and one run's steps, failures and log.
 - [The agents page](AGENTS.md) — who is at work, who went quiet, and how to reach each.
 - [Themes and appearance](THEMES.md) — a project's own name, icon and colours, and one device's own look.
@@ -56,7 +57,11 @@ are of the machine's one server, started then over a machine folder of the scrip
 holds the fixture and a second project with no board (`tools/product-pictures/pantry`), so its `/`
 is the project picker with one of each. Those after its `=theme` line are of the fixture's own
 server again, with a theme of its own (`tools/product-pictures/theme.toml`). The script reaches no
-shared server, no project's board and no terminal, and stops the servers it started.
+shared server, no project's board and no terminal, and stops the servers it started. The Settings
+page draws the paths of the files it reads and of the programs it finds, so the script works in
+one folder, `/tmp/symphony-product-pictures`, one run at a time (a second waits for the first),
+and its servers find a stand-in for the agents' and Herdr's programs and its own build of the
+GitHub exchange's before any of the machine's.
 
 - **A new picture** is a line in `pictures.txt`: its name, the widths a document shows it at, the
   page's path and, for a state that takes a press to reach, the steps of `symphony shot` that
