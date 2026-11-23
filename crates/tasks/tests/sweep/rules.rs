@@ -725,7 +725,9 @@ fn what_the_project_names_as_disposable_goes_and_is_kept_where_it_names_none() {
     let settings = r.detached("node-settings");
     write(&settings, "node_modules/left-pad/index.js", "x\n");
     write(&settings, ".claude/settings.local.json", "{}\n");
-    let said = r.sweep();
+    // Not aged again, so the worktree's stamps are the ones its saved verdict was read with: it is
+    // read again only because the patterns differ.
+    let said = text(&r.sweep_now(|o| o.recent_hours = 0.0));
     r.assert_removed(&wt, &said);
     r.assert_kept(&settings, &said);
     assert!(!said.contains("node_modules/"), "{said}");

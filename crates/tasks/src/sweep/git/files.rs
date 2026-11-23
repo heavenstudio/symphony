@@ -103,7 +103,7 @@ pub fn left_behind(path: &Path, finished: bool, artifacts: Option<&str>) -> Vec<
 /// [`left_behind`] where the project names ignored paths of its own that go with a merged
 /// worktree: `disposable`, its `[board] sweep_disposable` ([`crate::project::disposable`]), each
 /// matched as the board's own are ([`DISPOSABLE`]) and, as they are, nowhere under the artifacts
-/// folder.
+/// folder, nor a folder holding it, which git names whole.
 pub fn left_behind_with(
     path: &Path,
     finished: bool,
@@ -155,7 +155,13 @@ fn ignored_disposable(
     });
     let root_log = below.is_some_and(|tail| !tail.contains('/') && tail.ends_with(".log"));
     let goes = |patterns: &[&str]| patterns.iter().any(|pattern| fnmatch(pattern, name));
-    let named = project.iter().any(|pattern| fnmatch(pattern, name));
+    // Git names an ignored folder whole (`out/`), so one that holds the artifacts folder
+    // (`out/shots`) holds its evidence, which a project's pattern never lets go with it: the
+    // evidence is set aside from the folder's own names alone (`sweep::aside`).
+    let holds_artifacts = artifacts.is_some_and(|folder| {
+        name.ends_with('/') && format!("{}/", folder.trim_end_matches('/')).starts_with(name)
+    });
+    let named = !holds_artifacts && project.iter().any(|pattern| fnmatch(pattern, name));
     let disposable = below.is_none() && (goes(&DISPOSABLE) || named);
     root_log || disposable || (finished && (goes(&FINISHED_OUTPUT) || below.is_some()))
 }
@@ -366,6 +372,31 @@ mod tests {
         // Open work's evidence stays evidence, whatever the project names.
         assert!(!goes("artifacts/node_modules/"));
         assert!(!goes("artifacts/shots/tsconfig.tsbuildinfo"));
+    }
+
+    #[test]
+    fn what_the_project_names_never_takes_a_folder_that_holds_its_artifacts() {
+        // Git names an ignored folder whole: `out/` stands for everything in it, evidence too.
+        let project = ["out/", "o*/", "*/node_modules/"].map(String::from);
+        let goes =
+            |name: &str, finished| ignored_disposable(name, finished, Some("out/shots"), &project);
+        for finished in [false, true] {
+            assert!(!goes("out/", finished), "finished: {finished}");
+        }
+        // Beside the folder, inside the same parent, and beyond it, what the project names goes.
+        for name in [
+            "out/cache/",
+            "out/web/node_modules/",
+            "outer/",
+            "web/node_modules/",
+        ] {
+            assert!(goes(name, false), "{name}");
+        }
+        // A folder whose name only begins like the parent's holds none of it.
+        let shots = |name: &str| ignored_disposable(name, false, Some("out/shots"), &project);
+        assert!(shots("o/"), "o/ matches o*/ and holds no out/shots");
+        // With no artifacts folder there is no evidence to hold, and the named parent goes.
+        assert!(ignored_disposable("out/", false, None, &project));
     }
 
     #[test]
