@@ -116,6 +116,11 @@ fn a_server_of_its_own_sweeps_where_its_project_asks_in_its_main_checkout_on_the
         unasked.contains("runs no idle-session sweep") && unasked.contains("own_sweep = true"),
         "{unasked}"
     );
+    // The machine's one server sweeps the project when it serves it, whatever this one does.
+    assert!(
+        unasked.contains("the machine's one server sweeps the project if it serves it; if not,"),
+        "{unasked}"
+    );
     // A preview's, where the key would change nothing, says nothing.
     assert_eq!(own_sweep_line(&linked, false), None);
     let asks = "[project]\nid = \"lantern\"\n\n[board]\nown_sweep = true\n";
