@@ -75,7 +75,40 @@ export function compose(text: string, files: readonly Upload[]): string {
 export interface Attachments {
   files: Upload[];
   pending: string[];
+  /**
+   * The names of the files given to the composer whose sending has not started (`sendAfter`): on
+   * their way all the same, so its post waits for them from the moment they are given, but not
+   * counted against MAX_FILES, to which `take` holds each batch in its turn.
+   */
+  queued: string[];
   trouble: string | null;
+}
+
+/** `names` out of `held`'s queue, one of each: a batch's, whose names are the first queued. */
+function unqueue(held: Attachments, names: readonly string[]): void {
+  const left = [...held.queued];
+  for (const name of names) {
+    const at = left.indexOf(name);
+    if (at >= 0) left.splice(at, 1);
+  }
+  held.queued = left;
+}
+
+/**
+ * What a composer's form shows of `held`: its files, those on their way (sending, or queued while
+ * their sending comes), and its last refusal. One on its way holds its post (`busy`).
+ */
+export function shownOf(
+  held: Attachments,
+): Pick<Attach, "files" | "pending" | "trouble" | "busy" | "empty"> {
+  const pending = [...held.pending, ...held.queued];
+  return {
+    files: held.files,
+    pending,
+    trouble: held.trouble,
+    busy: pending.length > 0,
+    empty: held.files.length === 0,
+  };
 }
 
 /** A mounted composer: its mount's id and what takes its files. */
@@ -190,8 +223,10 @@ export const UNSENT =
 
 /**
  * A composer's `files`, taken into `held` after the batches `before` them (attach-upload.ts `take`,
- * whose `changed`, `kept` and `alive` these are) once their sending has come. Where it did not come,
- * UNSENT is said, unless the composer left or the page's build is gone (the page then loads again).
+ * whose `changed`, `kept` and `alive` these are) once their sending has come. They are queued at
+ * once, so the post waits for them while it comes, and leave the queue in the tick `take` holds
+ * the first pending. Where it did not come, they leave it and UNSENT is said, unless the composer
+ * left or the page's build is gone (the page then loads again).
  */
 export function sendAfter(
   before: Promise<void>,
@@ -202,11 +237,19 @@ export function sendAfter(
   alive: () => boolean,
   load: () => Promise<{ take: typeof take }> = sending,
 ): Promise<void> {
+  const names = files.map((file) => file.name);
+  held.queued = [...held.queued, ...names];
+  changed();
   return before.then(load).then(
-    (chunk) => chunk.take(files, held, changed, kept, alive),
+    (chunk) => {
+      unqueue(held, names);
+      return chunk.take(files, held, changed, kept, alive);
+    },
     async () => {
       const shell = snapshot("reviewShell") as { gone(): Promise<boolean> } | undefined;
-      if (!alive() || (await shell?.gone())) return;
+      const quiet = !alive() || (await shell?.gone()) === true;
+      unqueue(held, names);
+      if (quiet) return;
       held.trouble = UNSENT;
       changed();
     },
@@ -218,6 +261,7 @@ export function useAttach(key: string): Attach {
   const [held] = useState<Attachments>(() => ({
     files: restored(load(storageKey(key)) ?? ""),
     pending: [],
+    queued: [],
     trouble: null,
   }));
   const [, drawn] = useReducer((n: number) => n + 1, 0);
@@ -251,11 +295,7 @@ export function useAttach(key: string): Attach {
   }, [key, held]);
   return {
     zone: key,
-    files: held.files,
-    pending: held.pending,
-    trouble: held.trouble,
-    busy: held.pending.length > 0,
-    empty: held.files.length === 0,
+    ...shownOf(held),
     compose: (text) => compose(text, held.files),
     clear() {
       held.files = [];
