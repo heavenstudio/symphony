@@ -64,11 +64,10 @@ pub(crate) fn local<B>(
 /// of the session, or when it is reached by its web address alone.
 fn paned(hub: &Hub, handle: &str) -> Result<(SessionGo, String), (StatusCode, String)> {
     let project = symphony::project::Project::of(&hub.root);
-    // The board's store's setting over the project file's; a board that does not answer holds
-    // none, and the file's is in force.
-    let stored = symphony::taskview::connect(&hub.root)
-        .map(|store| store.stored())
-        .unwrap_or_default();
+    // The board's store's setting over the project file's, read on the board the page reads share
+    // ([`Hub::reader`]), never one opened anew; a board that does not answer holds none, and the
+    // file's is in force.
+    let stored = hub.reader().map(|store| store.stored()).unwrap_or_default();
     let panes = stored.panes(&project.agents.panes);
     if panes != "hc" {
         return Err((

@@ -14,7 +14,10 @@
 //!   settings check runs on the result ([`crate::project::Project::checked`]), and one it refuses
 //!   is answered with its file and line and nothing written. A green one is committed straight to
 //!   the default branch by the owner's committer, one commit naming the key, the old value and
-//!   the new ([`crate::commit::commit_setting`]), and the entry is removed once it stands. Where
+//!   the new ([`crate::commit::commit_setting`]), and the entry is removed once it stands; but
+//!   where a checkout on the default branch kept its own edit of the line, which the commit does
+//!   not merge into, the entry stays in force over that edit until the checkout takes the commit,
+//!   and making the value the project's again then removes it, the branch writing it already. Where
 //!   the project delivers by pull request it is kept and delivered as a document save is
 //!   (`crate::commit::pending`), answered as waiting, and its entry stays until the delivery is
 //!   proved. Such an edit is made against the project file as the saves still waiting for their
@@ -289,16 +292,27 @@ impl Saves {
         }
         let short: String = outcome.commit.chars().take(12).collect();
         let mut said = format!("committed to {default} as {short}, \"{message}\"");
-        match store.remove_setting_holding(key, &held, BY) {
-            Ok(_) => {
-                said.push_str("; the board's entry is removed, and the file's value is in force")
-            }
-            Err(why) => said.push_str(&format!(
-                "; the board's entry could not be removed, and still holds: {why}"
-            )),
-        }
+        // A note is a checkout on the default branch that kept its own edit of the file, which
+        // the commit does not merge into: there the file still writes that edit's value, so the
+        // entry stays in force over it until the checkout takes the commit.
+        let taken = outcome.notes.is_empty();
         for note in outcome.notes {
             said.push_str(&format!("; {note}"));
+        }
+        if taken {
+            match store.remove_setting_holding(key, &held, BY) {
+                Ok(_) => said
+                    .push_str("; the board's entry is removed, and the file's value is in force"),
+                Err(why) => said.push_str(&format!(
+                    "; the board's entry could not be removed, and still holds: {why}"
+                )),
+            }
+        } else {
+            said.push_str(&format!(
+                "; the board's entry stays, in force over that edit, until the checkout takes the \
+                 commit: make {} the project's again then, which removes it",
+                named(key)
+            ));
         }
         Ok(SettingWritten {
             said,

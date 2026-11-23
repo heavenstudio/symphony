@@ -193,6 +193,49 @@ fn any_other_table_or_key_is_refused_as_none_a_local_file_overrides() {
     );
 }
 
+/// `key` of the table `path` leads to, holding `value`, as a file writes it.
+fn nested(path: &[&str], key: &str, value: &Value) -> toml::Table {
+    let mut table = toml::Table::from_iter([(key.to_string(), value.clone())]);
+    for name in path.iter().rev() {
+        table = toml::Table::from_iter([((*name).to_string(), Value::Table(table))]);
+    }
+    table
+}
+
+#[test]
+fn what_each_place_keeps_is_what_its_judge_takes() {
+    let text = |text: &str| Value::String(text.into());
+    let mut settings: Vec<(&[&str], &str, Value)> = vec![
+        (&["agents", "launch"], "default", text("claude")),
+        (&["agents", "launch"], "model", text("fable")),
+        (&["agents", "launch"], "effort", text("high")),
+        (&["agents"], "panes", text("hc")),
+        // Neither keeps these: a key the Symphony does not know in a table either holds, a
+        // reviewed setting, and a table neither holds.
+        (&["agents", "launch"], "command", text("x")),
+        (&["agents", "models"], "owner", text("m")),
+        (&["limits"], "wip", Value::Integer(3)),
+        (&["agents"], "worktrees", text("../wt")),
+        (&["land"], "check", Value::Boolean(false)),
+        (&["board"], "on_review", text("x")),
+        (&["project"], "name", text("x")),
+        (&["theme"], "accent", text("red")),
+    ];
+    settings.extend(ROLES.iter().map(|role| (&["agents", "models"][..], *role, text("m"))));
+    settings.extend(limits::KEYS.map(|key| (&["limits"][..], key, Value::Integer(3))));
+    for place in [Place::File, Place::Store] {
+        for (path, key, value) in &settings {
+            let taken = judge(place, PATH, &nested(path, key, value), &|_, _| None).is_ok();
+            let at = format!("{place:?} [{}] {key}", path.join("."));
+            assert_eq!(place.keeps(path, key), taken, "{at}");
+        }
+    }
+    assert!(Place::Store.keeps(&["agents"], "panes"));
+    assert!(!Place::File.keeps(&["agents"], "panes"), "the store's alone");
+    assert!(Place::File.keeps(&["limits"], LOW));
+    assert!(!Place::Store.keeps(&[], "panes"), "a key under no table");
+}
+
 #[test]
 fn an_unknown_key_of_a_table_it_may_hold_is_refused_in_the_project_files_words() {
     for (text, name) in [
