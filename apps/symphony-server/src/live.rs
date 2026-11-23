@@ -1585,12 +1585,10 @@ impl Hub {
                 let lane = measured("signoff", || {
                     taskview::signoff(store, &next.tasks, &pending, &self.root, &self.gates)
                 })?;
-                let signoff: Vec<String> = lane.iter().map(|(slug, _)| slug.clone()).collect();
-                let mut old = self.task_signoff.lock().recover();
-                if *old != signoff {
-                    changed.push(region_event("task-signoff", json!(signoff)));
-                    *old = signoff;
-                }
+                // The listing's `signoff` and its `?status=signoff` selection read the lane; no
+                // page does, so the feed says nothing of it.
+                *self.task_signoff.lock().recover() =
+                    lane.iter().map(|(slug, _)| slug.clone()).collect();
                 // A lane that moved moves what its tasks wait on: the board's snapshot again, over
                 // what was read of it already.
                 let lane = {
@@ -3481,6 +3479,7 @@ mod tests {
             ["initial-card"],
             "pending documents did not change"
         );
+        // The listing reads the lane; the feed sends no region of it, as no page reads one.
         assert_eq!(*hub.task_signoff.lock().unwrap(), ["tools/signoff"]);
         let pages = hub.pages.read().unwrap();
         let event: serde_json::Value =
@@ -3490,8 +3489,8 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|change| change["region"] == "task-signoff"
-                    && change["data"] == serde_json::json!(["tools/signoff"]))
+                .all(|change| change["region"] != "task-signoff"),
+            "{event}"
         );
         // And a page that holds the task is told what it waits on now.
         let told = event["changes"].as_array().unwrap().iter().any(|change| {
