@@ -306,8 +306,9 @@ decide what runs and what lands) is shown reviewed, written in the project's sco
 its describer calls it, and a describer may mark a setting of its own reviewed. Nor is the board's
 scope its describer's to take: the board's store keeps the Symphony's own preferences alone, so a
 description's setting is shown without it, among the scopes it may be written in and as its
-value's source alike, and the page draws no control for one. A plugin built before the seam
-declares none and is asked nothing.
+value's source alike, and the page draws no control for one, not even for a key of the
+Symphony's own that the store keeps: that control is drawn on the Symphony's own row alone. A
+plugin built before the seam declares none and is asked nothing.
 
 ## The line
 
