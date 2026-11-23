@@ -172,7 +172,7 @@ A is nearest to "keeps propagating", and an update that needs no agent's work is
 promises a project that follows. B is the careful one where a blueprint is not the project
 owner's own. Under each, the version arrives as a commit in the project.
 
-- [ ] **blueprint-following** — A blueprint would work as you described: a starter whose later versions keep arriving while the project leaves alone what the blueprint put there. A project that changes one becomes its own version, and asks for later changes as an agent's task. That leaves one thing open: how a new version reaches a project that still follows. A: by itself. Symphony files the update when the blueprint has a newer tag, runs the project's own checks, and lands it once they pass, with no reviewer. B: by itself, read first. As A, and a reviewer agent reads the changes before it lands. C: when asked. The project's page says a newer version exists, and nothing happens until you ask. Recommended: A. Approve and say A, B or C in the note, or comment. *Replaces:* blueprint-shape. [[analysis/blueprints#How a new version arrives]]
+- [x] **blueprint-following** — A blueprint would work as you described: a starter whose later versions keep arriving while the project leaves alone what the blueprint put there. A project that changes one becomes its own version, and asks for later changes as an agent's task. That leaves one thing open: how a new version reaches a project that still follows. A: by itself. Symphony files the update when the blueprint has a newer tag, runs the project's own checks, and lands it once they pass, with no reviewer. B: by itself, read first. As A, and a reviewer agent reads the changes before it lands. C: when asked. The project's page says a newer version exists, and nothing happens until you ask. Recommended: A. Approve and say A, B or C in the note, or comment. *Replaces:* blueprint-shape. [[analysis/blueprints#How a new version arrives]]
   [2026-11-23 11:23] agent — Posted for the board task `app/blueprints`, from your note on **blueprint-shape**: "have it be and starter but that allows future changes to continue to propagate, as long as the project does not change settings that the blueprint puts in place".
 
     **Base.** Nothing is built. Your shape is written up as the design, above this card: what "the blueprint put" is recorded when a project takes it, key by key and file by file.
@@ -184,6 +184,7 @@ owner's own. Under each, the version arrives as a commit in the project.
     **Why A.** You described updates for a project that follows as needing no agent's task, since nothing of the project's can break. A is that. B is worth it mainly for a blueprint you do not write yourself.
 
     **Earlier verdicts checked.** Your note on **blueprint-shape** gives the shape and does not say what starts an update or whether anyone reads it. **settings-page-shape** keeps settings that run commands off the page's saves; a blueprint's version is a commit under every option here, so it does not decide this. **blueprint-home** (B) says where a version comes from, not how it lands.
+  [2026-11-23 12:21] owner · approved — A
 
 ### What the project holds of its blueprint
 
