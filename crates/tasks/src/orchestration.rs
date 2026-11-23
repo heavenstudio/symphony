@@ -507,8 +507,9 @@ pub fn give_due(tasks: &[Task], tops: &[&Task], pool: &Pool) -> bool {
 }
 
 /// The tasks somebody answers for ([`owed`]) that are somebody's on `tasks` and would be nobody's
-/// were each role `gone` says dropped: the topmost of each tree they make, in the board's order. What a leave gives
-/// ([`crate::Store::leave`]) and what a release of the role is refused for.
+/// were each role `gone` says dropped: the topmost of each tree they make, in the board's order.
+/// What a leave gives ([`crate::Store::leave`]), those that wait on nothing first ([`first_free`]),
+/// and what a release of the role is refused for.
 pub fn orphaned(tasks: &[Task], gone: impl Fn(&Task, &crate::Role) -> bool) -> Vec<&Task> {
     tops(tasks, &orphans(tasks, gone))
 }

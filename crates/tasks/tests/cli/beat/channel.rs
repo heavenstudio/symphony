@@ -1,21 +1,29 @@
 //! A launched session's channel, registered by its own heartbeat: `launch` and `restore` leave the
 //! registration to the agent, and one that skips `just tasks callback` would sit idle on messages
 //! nobody delivers. The hook's beat before a board command registers the session's inbox socket
-//! for the handle an open launch records its conversation for.
+//! for the handle an open launch records its conversation for. Run as the `tasks` binary, as the
+//! hook runs it, the beat leaves the delivery to the channel it registers to a detached dispatcher.
 
 use super::bash;
 use crate::Case;
-use serde_json::Value;
+use crate::detached::{self, Listener};
+use serde_json::{Value, json};
+use std::cell::RefCell;
 use std::os::unix::net::UnixListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+use symphony_board::cli::{Env, main_detaching};
 use symphony_board::{NewLaunch, NewTask};
 
-/// A board with a launched executor, `handle`, whose conversation is `CONVERSATION`, and a keys'
-/// folder of its own.
+/// A board with a launched executor, `handle`, on a task `filer` filed, whose conversation is
+/// `CONVERSATION`, and a keys' folder of its own. It removes the folder and every socket it bound
+/// when it goes, whatever a case asserted.
 struct Launched {
     case: Case,
+    filer: String,
     handle: String,
     folder: PathBuf,
+    sockets: RefCell<Vec<PathBuf>>,
 }
 
 const CONVERSATION: &str = "conv-1";
@@ -42,8 +50,10 @@ impl Launched {
             .unwrap();
         Launched {
             case,
+            filer,
             handle,
             folder,
+            sockets: RefCell::default(),
         }
     }
 
@@ -55,18 +65,44 @@ impl Launched {
         ));
         let _ = std::fs::remove_file(&path);
         let listener = UnixListener::bind(&path).unwrap();
+        self.sockets.borrow_mut().push(path.clone());
         (path, listener)
     }
 
-    /// The hook's beat of `event` in a session whose inbox is `socket`.
-    fn beat(&self, socket: &std::path::Path, event: &Value) {
+    /// The environment of the launched session whose inbox is `socket`, in terminal `t1`.
+    fn session(&self, socket: &Path) -> Env {
         let mut env = self.case.env.clone();
         env.vars.insert(
             "CLAUDE_CODE_MESSAGING_SOCKET".into(),
             socket.to_string_lossy().into_owned(),
         );
         env.vars.insert("HC_TERMINAL_ID".into(), "t1".into());
-        super::beat(&env, event);
+        env
+    }
+
+    /// The hook's beat of `event` in a session whose inbox is `socket`.
+    fn beat(&self, socket: &Path, event: &Value) {
+        super::beat(&self.session(socket), event);
+    }
+
+    /// [`Launched::beat`] as the `tasks` binary runs it (`cli::main_detaching`), which starts a
+    /// write's dispatcher detached: in a folder that is there, the event's, where that dispatcher
+    /// starts.
+    fn beat_as_the_binary(&self, socket: &Path, event: &Value) {
+        let mut event = event.clone();
+        event["cwd"] = json!(std::env::temp_dir());
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = main_detaching(
+            &["beat".to_string()],
+            &self.session(socket),
+            &mut event.to_string().as_bytes(),
+            &mut out,
+            &mut err,
+            Path::new(env!("CARGO_BIN_EXE_tasks")),
+        );
+        let out = String::from_utf8(out).unwrap();
+        let err = String::from_utf8(err).unwrap();
+        assert_eq!((code, out.as_str(), err.as_str()), (0, "", ""));
     }
 
     /// A board command of the launched session's own, about to run.
@@ -86,6 +122,9 @@ impl Launched {
 impl Drop for Launched {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.folder);
+        for socket in self.sockets.get_mut().drain(..) {
+            let _ = std::fs::remove_file(socket);
+        }
     }
 }
 
@@ -100,7 +139,6 @@ fn a_launched_sessions_board_command_registers_the_channel_it_never_registered()
     assert_eq!(l.address(), None);
     l.beat(&path, &l.inbox());
     assert_eq!(l.address(), uds(&path));
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -120,7 +158,6 @@ fn only_the_conversation_a_launch_records_is_connected() {
         .0;
     l.beat(&path, &event);
     assert!(!l.case.store().callbacks().unwrap().contains_key(&free));
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -152,7 +189,6 @@ fn a_subagent_and_a_beat_an_agent_wrote_register_nothing() {
         .0;
     l.beat(&path, &returned);
     assert_eq!(l.address(), None);
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -165,7 +201,6 @@ fn a_launch_already_closed_connects_nothing() {
         .unwrap();
     l.beat(&path, &l.inbox());
     assert_eq!(l.address(), None);
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -180,7 +215,6 @@ fn a_socket_nobody_listens_on_yet_is_tried_again_at_the_next_board_command() {
     let (path, _listener) = l.socket("deaf");
     l.beat(&path, &l.inbox());
     assert_eq!(l.address(), uds(&path));
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -199,7 +233,6 @@ fn the_socket_remembered_for_a_session_goes_with_its_binding() {
                                   "session_id": CONVERSATION});
     super::beat(&l.case.env, &read);
     assert!(!l.folder.join(CONVERSATION).exists() && !remembered.exists());
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -219,9 +252,6 @@ fn a_channel_turned_off_stays_off_until_the_conversation_runs_on_a_new_socket() 
     let (second, _b) = l.socket("off-b");
     l.beat(&second, &l.inbox());
     assert_eq!(l.address(), uds(&second));
-    for path in [first, second] {
-        let _ = std::fs::remove_file(path);
-    }
 }
 
 #[test]
@@ -234,7 +264,6 @@ fn a_restored_conversation_moves_the_channel_its_last_process_left() {
     let (second, _b) = l.socket("moved-b");
     l.beat(&second, &l.inbox());
     assert_eq!(l.address(), uds(&second));
-    let _ = std::fs::remove_file(second);
 }
 
 #[test]
@@ -249,9 +278,51 @@ fn a_channel_that_holds_the_chat_seat_is_left_where_it_is() {
     let (other, _b) = l.socket("chat-b");
     l.beat(&other, &l.inbox());
     assert_eq!(l.address(), Some(held));
-    for path in [seat, other] {
-        let _ = std::fs::remove_file(path);
-    }
+}
+
+#[test]
+fn the_hooks_beat_leaves_the_delivery_to_the_channel_it_registers_to_a_detached_dispatcher() {
+    let l = Launched::new("handed");
+    let listener = Listener::new("beat-handed");
+    // A message for the handle, which waits for the channel its session never registered.
+    let id = (l.case.store())
+        .say("sim/a", &l.filer, "over to the channel", Some(&l.handle))
+        .unwrap()
+        .id;
+    // A dispatcher that died holding this host's lease: the one the beat starts asks it for a pass
+    // and waits.
+    detached::held_by_the_dead(&l.case);
+    l.beat_as_the_binary(&listener.path, &l.inbox());
+    assert_eq!(l.address(), uds(&listener.path));
+    // The beat queued the message for the channel it registered, and delivered nothing itself.
+    let store = l.case.store();
+    let line = (store.raw()).row("callback_event", json!([l.handle, format!("message-{id}")]));
+    assert!(
+        line.exists().unwrap(),
+        "the message is queued for the channel"
+    );
+    assert_ne!(
+        line.field("delivered").unwrap(),
+        json!(true),
+        "delivered by the beat itself"
+    );
+    detached::until(
+        || detached::lease(&l.case)["asked"] == json!(1),
+        "the beat's dispatcher's ask",
+    );
+    detached::lapse(&l.case);
+    let lines = listener.until(&format!("MSG #{id} "), Duration::from_secs(60));
+    let delivered = (lines.iter())
+        .filter(|line| line.contains("over to the channel"))
+        .count();
+    assert_eq!(delivered, 1, "{lines:?}");
+    detached::until(
+        || {
+            let lease = detached::lease(&l.case);
+            lease["until"] == json!(0) && lease["served"] == json!(1)
+        },
+        "the taken lease's release",
+    );
 }
 
 #[test]

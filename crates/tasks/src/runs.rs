@@ -14,7 +14,7 @@ use std::io::{self, Write as _};
 use std::os::unix::fs::{FileExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use symphony_api::{End, RUN_SCHEMA, RunLine, run_day};
+use symphony_api::{End, FailedTest, RUN_SCHEMA, RunLine, run_day};
 
 pub mod refused;
 pub mod rollup;
@@ -113,6 +113,20 @@ pub fn with_tests(mut line: RunLine, runs: &Path) -> RunLine {
         line.failed = Some(tests.failed);
     }
     line
+}
+
+/// The tests `record`'s run failed, as its end line says them ([`with_tests`]): that line read
+/// back from the file of the day it ended in the folder it went to, by its id. None for an
+/// operation that is no run or has not ended, and for an end line not found there or naming no
+/// tests (one a sweep wrote for a recorder that ended first, a log naming no test binary).
+pub fn failed(record: &Record) -> Option<Vec<FailedTest>> {
+    let runs = record.run.as_ref()?.runs.as_deref()?;
+    let ended = record.ended_at.filter(|_| record.state == Step::Finished)?;
+    let id = &record.operation_id;
+    lines_holding(Path::new(runs), &run_day(ended), id)
+        .into_iter()
+        .rfind(|line| line.run == *id && line.end.is_some())?
+        .failed
 }
 
 /// The folder's lock, waited for at most `wait`; none when it stayed held that long.
@@ -901,6 +915,61 @@ mod tests {
         assert_eq!(read.failed.map(|failed| failed.len()), Some(2));
         fs::write(dir.join(log), "    Finished `dev` profile\n").unwrap();
         assert_eq!(said(&with_tests(end, &dir)), (None, None), "no test binary");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_runs_failed_tests_are_its_end_lines_in_the_file_of_the_day_it_ended() {
+        let dir = scratch("failed");
+        let mut record = running_step();
+        record.run.as_mut().unwrap().runs = Some(dir.display().to_string());
+        let failing = |name: &str| FailedTest {
+            suite: Some("tests/cli.rs (cli)".into()),
+            name: name.into(),
+            line: "assertion failed".into(),
+        };
+        // Running: its start line is there, and it has not ended.
+        append(&dir, &line(&record).unwrap(), NOW, LOCK_WAIT).unwrap();
+        assert_eq!(failed(&record), None, "a run still running");
+        record.state = Step::Finished;
+        record.ended_at = Some(NOW + 1.0);
+        record.exit_code = Some(101);
+        assert_eq!(
+            failed(&record),
+            None,
+            "its start line alone, in its day's file"
+        );
+        // It ended the day after it began.
+        record.ended_at = Some(NOW + DAY_S);
+        assert_eq!(failed(&record), None, "no file of the day it ended");
+        // A step of it, its id this run's parent, failed a test of its own: not this run's.
+        let mut step = line(&record).unwrap();
+        (step.run, step.parent) = ("e".repeat(32), Some(record.operation_id.clone()));
+        step.failed = Some(vec![failing("the_steps")]);
+        append(&dir, &step, NOW, LOCK_WAIT).unwrap();
+        assert_eq!(failed(&record), None, "a step naming it as its parent");
+        // Its end line, in the file of the day after it began, the day it ended.
+        let mut end = line(&record).unwrap();
+        end.failed = Some(vec![failing("a"), failing("b")]);
+        append(&dir, &end, NOW, LOCK_WAIT).unwrap();
+        assert!(
+            dir.join(format!("{}.jsonl", run_day(NOW + DAY_S)))
+                .is_file()
+        );
+        assert_eq!(failed(&record), Some(vec![failing("a"), failing("b")]));
+        // An end line that names no tests, as a sweep writes one, says none.
+        let mut swept = record.clone();
+        swept.operation_id = "9".repeat(32);
+        append(&dir, &line(&swept).unwrap(), NOW, LOCK_WAIT).unwrap();
+        assert_eq!(failed(&swept), None, "an end line naming no tests");
+        // With no folder to read, or no run, there is nothing to read.
+        let mut nowhere = record.clone();
+        nowhere.run.as_mut().unwrap().runs = Some(dir.join("absent").display().to_string());
+        assert_eq!(failed(&nowhere), None, "a folder with no day file");
+        nowhere.run.as_mut().unwrap().runs = None;
+        assert_eq!(failed(&nowhere), None, "no folder named");
+        nowhere.run = None;
+        assert_eq!(failed(&nowhere), None, "no run");
         fs::remove_dir_all(&dir).unwrap();
     }
 

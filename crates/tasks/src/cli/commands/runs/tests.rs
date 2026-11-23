@@ -1,6 +1,6 @@
 //! What `runs` prints of a task's recorded runs at a tip: each command's newest run there and the
-//! runs before it, the `tests` stamp's reading, the `[verdicts] check` as its gate reads it, and
-//! the task's runs at other commits apart.
+//! runs before it, each red one's log with the tests it failed, the `tests` stamp's reading, the
+//! `[verdicts] check` as its gate reads it, and the task's runs at other commits apart.
 
 use super::*;
 use crate::cli::machine_work::recorded::Phase;
@@ -60,8 +60,18 @@ fn at(seconds: f64) -> String {
     local_minute(seconds)
 }
 
-/// What `runs` prints of `runs` for the task and `tools/x/work` under it, at the branch's tip.
+/// What `runs` prints of `runs` for the task and `tools/x/work` under it, at the branch's tip, no
+/// run's failed tests kept.
 fn printed(runs: &[Record], check: Result<&str, &str>) -> Vec<String> {
+    printed_failing(runs, check, &|_| None)
+}
+
+/// [`printed`], the tests each run failed as `failed` says them.
+fn printed_failing(
+    runs: &[Record],
+    check: Result<&str, &str>,
+    failed: &dyn Fn(&Record) -> Option<Vec<FailedTest>>,
+) -> Vec<String> {
     let ours = [SLUG.to_string(), "tools/x/work".to_string()];
     lines(&Shown {
         slug: SLUG,
@@ -70,6 +80,7 @@ fn printed(runs: &[Record], check: Result<&str, &str>) -> Vec<String> {
         runs,
         ours: &ours,
         check,
+        failed,
     })
 }
 
@@ -231,6 +242,7 @@ fn a_tip_named_with_tip_says_so() {
         runs: &[],
         ours: &[SLUG.to_string()],
         check: Ok(""),
+        failed: &|_| None,
     });
     assert_eq!(shown[0], format!("TIP {TIP} (--tip)"));
 }
@@ -393,4 +405,91 @@ fn each_red_run_at_the_tip_that_kept_a_log_is_followed_by_the_logs_path_and_no_o
         "{lines:#?}"
     );
     assert_eq!(lines.iter().filter(|line| line.contains("LOG")).count(), 4);
+}
+
+/// `n` failed tests of `suite`, or of none known: `t0`, `t1`, ….
+fn failing(n: usize, suite: Option<&str>) -> Vec<FailedTest> {
+    (0..n)
+        .map(|i| FailedTest {
+            suite: suite.map(str::to_string),
+            name: format!("t{i}"),
+            line: format!("assertion {i} failed"),
+        })
+        .collect()
+}
+
+#[test]
+fn a_red_runs_log_is_followed_by_the_first_tests_it_failed_then_how_many_more() {
+    let board = "just test-rs -p board";
+    let runs = [
+        // As many failed as are named: each named, with its binary, and no count.
+        kept(red(1, board, TIP, 101), "logs/2026-01-01/a.log", None),
+        // One more than are named: the rest counted.
+        kept(
+            red(2, "just lint-rs", TIP, 101),
+            "logs/2026-01-01/b.log",
+            None,
+        ),
+        // Many, of no binary known: named bare, the rest counted.
+        kept(
+            red(3, "just test-rs -p q", TIP, 101),
+            "logs/2026-01-01/c.log",
+            None,
+        ),
+        // Red with its tests kept, none of them failed (a binary that crashed): its log alone.
+        kept(
+            red(4, "just test-rs -p crash", TIP, 101),
+            "logs/2026-01-01/d.log",
+            None,
+        ),
+        // Red with no tests kept (swept, or no test binary): its log alone.
+        kept(
+            red(5, "just client-lint", TIP, 1),
+            "logs/2026-01-01/e.log",
+            None,
+        ),
+        // Green with a failed test kept (one retried green): no LOG, so nothing named.
+        kept(green(6, "just check", TIP), "logs/2026-01-01/f.log", None),
+    ];
+    // Each run's id is its number ([`run`]).
+    let failed = |run: &Record| match u8::from_str_radix(&run.operation_id, 16).unwrap() {
+        1 => Some(failing(FAILED_NAMED, Some("tests/cli.rs (cli)"))),
+        2 => Some(failing(FAILED_NAMED + 1, Some("tests/a.rs (a)"))),
+        3 => Some(failing(40, None)),
+        4 => Some(Vec::new()),
+        6 => Some(failing(1, None)),
+        _ => None,
+    };
+    let lines = printed_failing(&runs, Ok(""), &failed);
+    let first = lines.iter().position(|line| line.contains("LOG")).unwrap();
+    let under = lines[first..]
+        .iter()
+        .take_while(|line| line.starts_with("  LOG") || line.starts_with("    "))
+        .cloned()
+        .collect::<Vec<_>>();
+    let log = |label: &str, id: f64, file: &str| {
+        format!(
+            "  LOG of the red `{label}` at {}, what failed is at its end: /board/runs/logs/2026-01-01/{file}",
+            at(1000.0 * id + 60.0)
+        )
+    };
+    let named = |range: std::ops::Range<usize>, suite: &str| -> Vec<String> {
+        range.map(|i| format!("    failed t{i}{suite}")).collect()
+    };
+    let mut expected = vec![log(board, 1.0, "a.log")];
+    expected.extend(named(0..FAILED_NAMED, " in tests/cli.rs (cli)"));
+    expected.push(log("just lint-rs", 2.0, "b.log"));
+    expected.extend(named(0..FAILED_NAMED, " in tests/a.rs (a)"));
+    expected.push("    and 1 more failed".into());
+    expected.push(log("just test-rs -p q", 3.0, "c.log"));
+    expected.extend(named(0..FAILED_NAMED, ""));
+    expected.push(format!("    and {} more failed", 40 - FAILED_NAMED));
+    expected.push(log("just test-rs -p crash", 4.0, "d.log"));
+    expected.push(log("just client-lint", 5.0, "e.log"));
+    assert_eq!(under, expected, "{lines:#?}");
+    // They come before the stamp's line, as the LOG lines do.
+    assert!(
+        lines[first + under.len()].starts_with("TESTS"),
+        "{lines:#?}"
+    );
 }

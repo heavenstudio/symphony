@@ -396,13 +396,13 @@ impl Store {
 
     /// The session is done: its roles are released on the record, and it can no longer act. A task
     /// left in progress with no executor is ready again. The open work its orchestrator role kept
-    /// somebody's goes, in the same write, to an orchestrator that stays by rule 4, the topmost task
-    /// of each tree it would leave with none ([`orchestration::orphaned`]), those that wait on
-    /// nothing first ([`orchestration::first_free`]), one line on each thread; with none, each
-    /// such task is marked waiting (`Store::give_unowned`). Only a leaver holding
-    /// the orchestrator role reads the whole board for it. On a task a custom workflow holds, its
-    /// other roles go first, each by its position's lost-holder recovery, which may keep one for a
-    /// person to recover and never moves the task to a pair it does not name.
+    /// somebody's goes, in the same write, to an orchestrator that stays by rule 4, the topmost
+    /// task of each tree it would leave with none ([`orchestration::orphaned`]), those that wait on
+    /// nothing first ([`orchestration::first_free`]), one line on each thread; with none, each such
+    /// task is marked waiting (`Store::give_unowned`). Only a leaver holding the orchestrator role
+    /// reads the whole board for it. On a task a custom workflow holds, its other roles go first,
+    /// each by its position's lost-holder recovery, which may keep one for a person to recover and
+    /// never moves the task to a pair it does not name.
     pub fn leave(&self, handle: &str) -> Result<(), Error> {
         // What it staffs on a task a custom workflow holds goes first, by each position's
         // lost-holder recovery (docs/workflow/WORKFLOW.md, "Recovery").

@@ -825,6 +825,12 @@ fn requests<T>(store: &Store, work: impl FnOnce() -> T) -> (T, usize) {
     (done, store.database().requests() - before)
 }
 
+/// The row `handle` names among a read of many recipients' `rows`, which the test expects there.
+fn of<'r, T>(rows: &'r [(String, T)], handle: &str) -> &'r T {
+    let row = rows.iter().find(|(named, _)| named == handle);
+    &row.unwrap_or_else(|| panic!("no row for {handle}")).1
+}
+
 /// Every recipient's stored state comes in one read, each under its handle: its callback state
 /// (none for a recipient with no row), when its PULL was last checked, the lines a hand-over can
 /// take back, and whether a line of its outbox is due, as the read of one recipient alone gives
@@ -887,10 +893,11 @@ fn stored_states_of_every_recipient_in_one_read(backend: crate::store_fixture::B
     let (stored, sent) = requests(store, || store.stored_states(&all, true).unwrap());
     assert_eq!(sent, 1, "one read for every recipient");
     assert_eq!(
-        stored.keys().map(String::as_str).collect::<Vec<_>>(),
-        [amber, birch, cedar]
+        stored.iter().map(|(h, _)| h.as_str()).collect::<Vec<_>>(),
+        [amber, birch, cedar],
+        "in the recipients' order"
     );
-    let amber_stored = &stored[amber];
+    let amber_stored = of(&stored, amber);
     assert_eq!(
         amber_stored.state.as_ref().map(|s| s.snapshot_sequence),
         Some(7)
@@ -904,7 +911,7 @@ fn stored_states_of_every_recipient_in_one_read(backend: crate::store_fixture::B
         "PULLs, events and blocked panes undelivered, whether due or not"
     );
     assert!(amber_stored.pending, "its PULL line is due");
-    let birch_stored = &stored[birch];
+    let birch_stored = of(&stored, birch);
     assert_eq!(
         birch_stored.state.as_ref().map(|s| s.snapshot_sequence),
         Some(9)
@@ -915,7 +922,7 @@ fn stored_states_of_every_recipient_in_one_read(backend: crate::store_fixture::B
         !birch_stored.pending,
         "tried out, not due yet, or chat it does not hear"
     );
-    let cedar_stored = &stored[cedar];
+    let cedar_stored = of(&stored, cedar);
     assert!(cedar_stored.state.is_none() && cedar_stored.queued.is_empty());
     assert!(
         cedar_stored.pending,
@@ -932,16 +939,9 @@ fn stored_states_of_every_recipient_in_one_read(backend: crate::store_fixture::B
         work();
         reads.load(std::sync::atomic::Ordering::SeqCst) - before
     };
-    let sum = |s: &Stored| {
-        (
-            s.handle.clone(),
-            s.checked_pull,
-            s.queued.len(),
-            s.state.is_some(),
-        )
-    };
+    let sum = |s: &Stored| (s.checked_pull, s.queued.len(), s.state.is_some());
     for recipient in &recipients {
-        let together = &stored[&recipient.handle];
+        let together = of(&stored, &recipient.handle);
         let planned = clock_reads(&|| {
             let alone = clocked.stored_one(recipient, true).unwrap();
             assert_eq!(
@@ -962,8 +962,12 @@ fn stored_states_of_every_recipient_in_one_read(backend: crate::store_fixture::B
     // An observing pass's plans settle whatever waits: every recipient's state, with no due line.
     let observed = clock_reads(&|| {
         let observed = clocked.stored_states(&all, false).unwrap();
-        let read: Vec<_> = observed.values().map(|s| (sum(s), s.pending)).collect();
-        let planned: Vec<_> = stored.values().map(|s| (sum(s), false)).collect();
+        let read: Vec<_> = (observed.iter())
+            .map(|(h, s)| (h.clone(), sum(s), s.pending))
+            .collect();
+        let planned: Vec<_> = (stored.iter())
+            .map(|(h, s)| (h.clone(), sum(s), false))
+            .collect();
         assert_eq!(read, planned);
     });
     assert_eq!(
@@ -978,7 +982,7 @@ fn stored_states_of_every_recipient_in_one_read(backend: crate::store_fixture::B
     let seated = [recipient_on(store, birch, true)];
     let seated: Vec<&Callback> = seated.iter().collect();
     assert!(
-        store.stored_states(&seated, true).unwrap()[birch].pending,
+        of(&store.stored_states(&seated, true).unwrap(), birch).pending,
         "the seat hears the chat"
     );
     assert_eq!(store.pending(&seated).unwrap(), [birch.to_string()].into());
@@ -1032,7 +1036,7 @@ fn queued_panes_of_every_recipient_in_one_read(backend: crate::store_fixture::Ba
     let (queued, sent) = requests(store, || store.queued_panes(&all).unwrap());
     assert_eq!(sent, 1, "one read for every recipient");
     let keys = |handle: &str| -> Vec<(String, String)> {
-        queued[handle]
+        of(&queued, handle)
             .iter()
             .map(|q| (q.key.clone(), q.text.clone()))
             .collect()
@@ -1059,6 +1063,83 @@ fn queued_panes_of_every_recipient_in_one_read_on_surrealdb() {
 #[test]
 fn queued_panes_of_every_recipient_in_one_read_on_postgresql() {
     queued_panes_of_every_recipient_in_one_read(crate::store_fixture::Backend::PostgreSql);
+}
+
+/// A read of many recipients gives its rows in the answer's order, each read by field, and each
+/// taken once by its handle; an answer not in that shape is refused as the store's decoder refuses
+/// one, naming what is wrong in `serde_json`'s words.
+#[test]
+fn a_read_of_many_recipients_takes_each_row_once_and_refuses_another_shape() {
+    let answer = json!([
+        {"handle": "birch-fox", "state": null, "checked_pull": 2, "queued": []},
+        {"handle": "amber-wren", "state": {"snapshot_sequence": 7}, "checked_pull": 0.5,
+         "queued": [{"key": "pull-1", "text": "PULL"}], "pending": true},
+    ]);
+    let mut rows = recipient_rows(&answer, "struct Stored", Stored::of).unwrap();
+    let handles: Vec<&str> = rows.iter().map(|(h, _)| h.as_str()).collect();
+    assert_eq!(handles, ["birch-fox", "amber-wren"]);
+    let birch = &rows[0].1;
+    assert!(birch.state.is_none() && birch.queued.is_empty() && !birch.pending);
+    assert_eq!(birch.checked_pull, 2.0);
+    let amber = taken(&mut rows, "amber-wren").unwrap();
+    assert_eq!(amber.state.map(|s| s.snapshot_sequence), Some(7));
+    assert_eq!((amber.checked_pull, amber.pending), (0.5, true));
+    assert_eq!(amber.queued[0].key, "pull-1");
+    assert!(taken(&mut rows, "amber-wren").is_none(), "taken once");
+    assert!(
+        taken(&mut rows, "cedar-owl").is_none(),
+        "no row read for it"
+    );
+    assert!(taken(&mut rows, "birch-fox").is_some() && rows.is_empty());
+    let lines = recipient_rows(
+        &json!([{"handle": "amber-wren", "queued": [{"key": "pane-1-0", "text": "said"}]}]),
+        "struct Lines",
+        |row| row.field::<Vec<Queued>>("queued"),
+    );
+    assert_eq!(lines.unwrap()[0].1[0].text, "said");
+    let unshaped = |says: &str| Error::Db(format!("an answer not in the board's shape: {says}"));
+    for (answer, says) in [
+        (
+            json!({"handle": "a"}),
+            "invalid type: map, expected a sequence",
+        ),
+        (json!(null), "invalid type: null, expected a sequence"),
+        (
+            json!(["a"]),
+            "invalid type: string \"a\", expected struct Due",
+        ),
+        (json!([{"pending": true}]), "missing field `handle`"),
+        (
+            json!([{"handle": 1, "pending": true}]),
+            "invalid type: number, expected a string",
+        ),
+        (json!([{"handle": "a"}]), "missing field `pending`"),
+        (
+            json!([{"handle": "a", "pending": "yes"}]),
+            "invalid type: string \"yes\", expected a boolean",
+        ),
+    ] {
+        let read = recipient_rows(&answer, "struct Due", |row| row.field::<bool>("pending"));
+        assert_eq!(
+            read.unwrap_err().to_string(),
+            unshaped(says).to_string(),
+            "{answer}"
+        );
+    }
+    let stored = |row: Value| recipient_rows(&json!([row]), "struct Stored", Stored::of);
+    assert_eq!(
+        stored(json!({"handle": "a", "queued": []}))
+            .err()
+            .map(|e| e.to_string()),
+        Some(unshaped("missing field `checked_pull`").to_string())
+    );
+    assert_eq!(
+        stored(json!({"handle": "a", "checked_pull": 1, "queued": [], "pending": null}))
+            .err()
+            .map(|e| e.to_string()),
+        Some(unshaped("invalid type: null, expected a boolean").to_string()),
+        "a due line said null is refused, as a default reads only one left out"
+    );
 }
 
 /// A Codex thread registered from no terminal, as Codex's shell registers one, on both stores: it

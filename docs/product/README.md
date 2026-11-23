@@ -72,9 +72,9 @@ first.
 - **One command retakes them all**, or those named: `tools/product-pictures.sh queue`.
 - **No picture says the board is unwell.** A failed pass of the fixture board's callback dispatch,
   as a loaded machine can make, has every page say so for a minute or more. So the script reads
-  each page once it has captured it, and puts no picture in place whose page said "The task board
-  is unwell" or "is starting": it waits until the server's notice no longer says it and takes that
-  picture again.
+  each page just before it captures it and again just after, and puts no picture in place whose
+  page said "The task board is unwell" or "is starting" at either read: it waits until the
+  server's notice no longer says it and takes that picture again.
 - **A retake that changes nothing writes the same bytes**, so after one, `git status docs/product`
   lists exactly the pictures that had gone stale. That holds on one Chrome, one set of fonts and
   one machine's scroll bars (macOS draws a wide page's bar or not by its *Show scroll bars*
