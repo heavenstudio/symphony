@@ -152,6 +152,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("create", "file a task: SLUG (area/short-name) and TITLE"),
             ("priority", "set a task's priority, 0 (most urgent) to 4"),
+            (
+                "kind",
+                "give an open task its kind: feature, fix, red, tests or docs",
+            ),
             ("parent", "put a task under another, or --none"),
             ("depends", "change what a task waits on"),
             ("field", "set a plugin's board field on a task"),
@@ -617,7 +621,7 @@ options:
                          [--stage {backlog,concept,design,ready}] [--backlog]
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
                          [--depends DEPENDS] [--link LINK] [--no-role]
-                         [--arm ARM]
+                         [--arm ARM] [--kind {feature,fix,red,tests,docs}]
                          slug title
 "#,
         r#"usage: just tasks create [-h] [--as ACTOR] [--body BODY]
@@ -625,7 +629,7 @@ options:
                          [--stage {backlog,concept,design,ready}] [--backlog]
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
                          [--depends DEPENDS] [--link LINK] [--no-role]
-                         [--arm ARM]
+                         [--arm ARM] [--kind {feature,fix,red,tests,docs}]
                          slug title
 
 positional arguments:
@@ -663,6 +667,11 @@ options:
                         lowercase word such as control: `show` prints it and
                         `stats` gives each arm's figures; nothing changes it
                         after
+  --kind {feature,fix,red,tests,docs}
+                        what its work is: `show` prints it and the Reports
+                        page groups the landed tasks by it; `kind` changes it
+                        while it is open (default: none, or red for a task
+                        filed red)
 "#,
     ),
     (
@@ -675,6 +684,24 @@ Set an existing task's priority (0 is most urgent); p0 to p4 read the same.
 positional arguments:
   slug
   {0,1,2,3,4}
+
+options:
+  -h, --help    show this help message and exit
+  --as ACTOR
+"#,
+    ),
+    (
+        "kind",
+        "usage: just tasks kind [-h] [--as ACTOR] slug {feature,fix,red,tests,docs}\n",
+        r#"usage: just tasks kind [-h] [--as ACTOR] slug {feature,fix,red,tests,docs}
+
+Give an open task its kind, what its work is, or change it: `show` prints it
+and the Reports page groups the landed tasks by it. A done or cancelled task
+keeps the kind it had.
+
+positional arguments:
+  slug
+  {feature,fix,red,tests,docs}
 
 options:
   -h, --help    show this help message and exit

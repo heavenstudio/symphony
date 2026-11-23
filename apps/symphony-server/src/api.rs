@@ -70,6 +70,7 @@ pub(crate) const READS: &[&str] = &[
     "/api/ask",
     "/api/health",
     symphony_api::REPORTS_PATH,
+    symphony_api::REPORTS_LANDED_PATH,
     symphony_api::RUN_LOG_PATH,
     symphony_api::RUNS_PATH,
     symphony_api::RUN_PATH,
@@ -427,6 +428,18 @@ async fn off_board(
                 Ok(response)
             });
             answered(read.await, "the reports could not be read: ")
+        }
+        // The landed tasks are the roll-up's day files alone, the board never read.
+        symphony_api::REPORTS_LANDED_PATH => {
+            let (grain, days) = reports::asked(
+                query(request, "grain").as_deref(),
+                query(request, "days").as_deref(),
+            )
+            .map_err(bad)?;
+            let hub = shared.hub()?;
+            let read =
+                crate::spawn::blocking(move || Ok(Json(reports::landed_answer(&hub, grain, days))));
+            answered(read.await, "the landed tasks could not be read: ")
         }
         // A run's log is a file beside the project's day files: the board is never read.
         symphony_api::RUN_LOG_PATH => {

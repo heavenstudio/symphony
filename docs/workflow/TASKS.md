@@ -123,6 +123,21 @@ from `in_progress` when nobody executes it; a block line written before the
 status was recorded sends it to `ready` (`in_progress` with an executor). A task
 blocked by hand stays blocked.
 
+A task's **kind** says what its work is: `feature`, `fix`, `red`, `tests` or `docs`
+(`crates/tasks/src/kind.rs`). `just tasks create --kind KIND` names it, as the api's `create`
+does (`kind`, api 2.7, [BOARD_API](../engineering/BOARD_API.md)) and the create-task skill asks
+a filer to; `just tasks kind SLUG KIND [--as HANDLE]` gives an open task one or changes it, as an
+orchestrator does for a task the owner filed from a page as it briefs it, and says on the
+task's thread the kind it gave and the one it replaced. A word not of the list is refused,
+naming the list, and a done or cancelled task keeps the kind it was filed with. A task filed red
+([Slots](#slots)) with no kind is given `red` in the same write. A task
+may have none, as every task filed before kinds were kept has, and its slug is never read as
+one. `just tasks show` prints it (`kind: fix`, `--json`'s `fields._board.kind`), its page shows it
+among its facts, and the Reports page groups the landed tasks by it
+([Where the tokens go](#where-the-tokens-go)). It is the board field `fields._board.kind`,
+beside the red mark and an experiment's arm and out of `set_field`'s reach, so it is no schema
+step.
+
 `just tasks priority SLUG N [--as HANDLE]` changes an existing task's priority,
 from `0` to `4`, and records the actor and both values on its thread. `next`,
 `list` and the PULL digest use the new priority immediately; the change sends
@@ -3258,19 +3273,27 @@ money spent ([What the tokens cost](#what-the-tokens-cost)):
   A task with none shows no figure.
 - **The Agents page** gives each agent its tokens and cost under its line, from the agents API.
 - **Reports** has *Tokens and cost*: the cost and the tokens of each hour, day or week by role
-  (orchestrators, executors, reviewers and the rest), and below them the window's own: tokens and
-  cost all told, each top-level task landed in the window priced once with its subtasks (the
-  median and the ten dearest, each a link to its page), and the review rounds after the first
-  against the first rounds, from the [day files](../product/analysis/reports-and-monitoring.md#the-day-files).
-  An hour's tokens are what the board's `usage` gained between two hourly roll-ups, shared among
-  the hours between them by time: an hour no two roll-ups span is a gap, never a zero.
+  (orchestrators, executors, reviewers and the rest), and each period's landed tasks: the median
+  and the p90 cost of one, and what 100 of their lines cost, each beside its **All in**, every
+  token of the period over its landed tasks and over every line that reached the default branch.
+  Its *Landed tasks* tab prices each top-level task landed in the window once with its subtasks,
+  at its last landing, and draws them task by task: the dearest ten, the median by kind, the mean
+  by review rounds, and every task's cost against the lines its landing changed
+  ([REPORTS](../product/REPORTS.md#landed-tasks)), all from the
+  [day files](../product/analysis/reports-and-monitoring.md#the-day-files). An hour's tokens are
+  what the board's `usage` gained between two hourly roll-ups, shared among the hours between
+  them by time: an hour no two roll-ups span is a gap, never a zero. What is not recorded above
+  counts on no task, and the page says so.
 
 `just tasks stats` ends with the same reading of its window's day files: tokens and cost by day
-and role, the landed tasks' median and ten dearest, and the review rounds against the first, a
+and role, the landed tasks' median and ten dearest, the review rounds against the first, and
+how many were back after review (`back after review: N of M were reviewed twice or more`), a
 day no two roll-ups span saying `no record`; `--json` carries it as `tokens`: `prices`, `per_day`
 (each `day` with its `by_role`, `null` for no record), and `landed` (`tasks`, `without`,
-`median_dollars`, `dearest`, `first_round`, `later_rounds`, `again`). Without day files (a private server's board, or a board that
-`TASKS_SERVER` names) it says there are none and prints the rest.
+`median_dollars`, `dearest`, `first_round`, `later_rounds`, `back_after_review`, and `again`,
+the tasks with any round past the first, kept for a reader of it). Without day files (a private
+server's board, or a board that `TASKS_SERVER` names) it says there are none and prints the
+rest.
 
 The table moves the board to schema 19, which a build on schema 18 reads unharmed (the
 Symphony, the shared server among them): it opens a board one schema ahead to read

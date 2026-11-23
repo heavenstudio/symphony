@@ -247,6 +247,7 @@ const COMMANDS: &[Command] = &[
             opt("--link", "link", Takes::Append),
             opt("--no-role", "no_role", Takes::Bool),
             opt("--arm", "arm", STR),
+            choice("--kind", "kind", &crate::kind::KINDS),
         ],
     },
     Command {
@@ -257,6 +258,19 @@ const COMMANDS: &[Command] = &[
                 dest: "priority",
                 optional: false,
                 choices: PRIORITIES,
+                many: false,
+            },
+        ],
+        opts: &[AS],
+    },
+    Command {
+        name: "kind",
+        pos: &[
+            pos("slug"),
+            Pos {
+                dest: "kind",
+                optional: false,
+                choices: &crate::kind::KINDS,
                 many: false,
             },
         ],

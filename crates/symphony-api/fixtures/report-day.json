@@ -325,7 +325,12 @@
           "output": 270,
           "calls": 2
         }
-      ]
+      ],
+      "kind": "feature",
+      "lines": {
+        "added": 120,
+        "removed": 30
+      }
     }
   ]
 }

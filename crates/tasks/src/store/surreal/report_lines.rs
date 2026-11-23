@@ -5,7 +5,7 @@
 /// closed task without writing the task, so an approve before the window and its landing in it are
 /// read (the lines by `message_ts`). Each one's thread is read by its own range of keys: a
 /// verdict's text only for its first words, a post's not at all. A body is read only for a task
-/// marked red, for the commits it names. With them, of the tokens the board recorded
+/// marked red, for the commits it names; its kind (`crate::kind`) for every one. With them, of the tokens the board recorded
 /// (`crate::usage`): the whole table summed by role, model and speed (`usage`), and the rows of
 /// each top-level task of the read that is done, with its subtasks' (`spent`, by the table's
 /// index of slugs; `under` names each such subtask's parent). Whether the board runs a custom
@@ -13,7 +13,8 @@
 pub(in crate::store) const READ: &str = "
 LET $spoken = array::distinct((SELECT VALUE slug FROM message WHERE ts >= $since));
 LET $tasks = (SELECT sid, slug, status, created, updated, parent, instruction,
-        fields._board.red AS red, IF fields._board.red { body } ELSE { NONE } AS body FROM task
+        fields._board.red AS red, fields._board.kind AS kind,
+        IF fields._board.red { body } ELSE { NONE } AS body FROM task
     WHERE status NOT IN ['done', 'cancelled'] OR updated >= $since OR slug IN $spoken
     ORDER BY sid);
 LET $landed = (SELECT VALUE slug FROM $tasks WHERE status = 'done' AND !parent);

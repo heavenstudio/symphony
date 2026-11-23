@@ -111,6 +111,8 @@ export const CASES = cases as unknown as {
     agentScreen: unknown;
     reports: unknown;
     emptyReports: unknown;
+    landed: unknown;
+    emptyLanded: unknown;
     taskTokens: unknown;
     emptyTaskTokens: unknown;
     taskCosts: unknown;

@@ -919,6 +919,25 @@ async fn the_route_refuses_a_bad_ask_first_and_answers_the_hubs_folders_at_its_c
     // It was answered from the kept one: its files and git were read for the first alone.
     let kept = &shared.api.get().unwrap().reports_kept;
     assert_eq!((kept.passes(), kept.gits()), (1, 1));
+    // The landed tasks' read: refused as the page's is, answered from the same folders and clock.
+    let (status, _, body) = ask("/api/reports/landed?grain=month", None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+        serde_json::json!({ "error": "grain is hour, day or week, not month" })
+    );
+    landings(&tree);
+    let (status, tag, body) = ask("/api/reports/landed?grain=day&days=3", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let landed: LandedPage = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        landed,
+        landed_page(&folders(&tree).reports, Grain::Day, 3, wednesday())
+    );
+    assert_eq!(landed.tasks.len(), 2);
+    let tag = tag.expect("a JSON read names its body");
+    let (status, _, _) = ask("/api/reports/landed?grain=day&days=3", Some(&tag)).await;
+    assert_eq!(status, StatusCode::NOT_MODIFIED);
 }
 
 /// `n` million input tokens of `role` on Opus 5.5, $4 a million at the table every build embeds,
@@ -1000,49 +1019,205 @@ fn a_period_sums_its_hours_tokens_by_role_and_prices_them_and_an_hour_with_none_
             ("worker".to_string(), 3_000_000, 0.0, 1),
         ])
     );
-    assert_eq!(by_day.landed, None, "no task landed");
+    let landed: Vec<_> = by_day.buckets.iter().map(|bucket| bucket.landed).collect();
+    assert_eq!(landed, [None], "no task landed");
 }
 
-#[test]
-fn the_tasks_landed_in_the_window_are_priced_once_each_at_their_last_landing() {
-    let tree = Tree::new();
-    let landed = |slug: &str, at: f64, spent: Vec<TokenSum>| Landed {
+/// A task landed in the window, of `kind` with `lines` added, having taken `spent`.
+fn landed(slug: &str, at: f64, spent: Vec<TokenSum>) -> Landed {
+    Landed {
         slug: slug.into(),
         at,
         spent,
-    };
-    report(&tree, MONDAY, vec![hour(MONDAY, 0, 0)], |day| {
+        ..Landed::default()
+    }
+}
+
+/// `landed` given `kind` and `lines` added.
+fn kinded(mut landed: Landed, kind: &str, lines: u64) -> Landed {
+    landed.kind = Some(kind.into());
+    landed.lines = Some(symphony_api::reports::Lines {
+        added: lines,
+        removed: 0,
+    });
+    landed
+}
+
+/// Monday lands a task Wednesday lands again, a cheap one with its lines and one with no tokens;
+/// Wednesday's landing of the first was reviewed twice and changed lines.
+fn landings(tree: &Tree) {
+    report(tree, MONDAY, vec![hour(MONDAY, 0, 0)], |day| {
         day.landed = vec![
             landed("a/again", MONDAY + HOUR, vec![opus("executor", 1, 9)]),
-            landed("a/cheap", MONDAY + 2.0 * HOUR, vec![opus("executor", 1, 1)]),
+            kinded(
+                landed("a/cheap", MONDAY + 2.0 * HOUR, vec![opus("executor", 1, 1)]),
+                "docs",
+                50,
+            ),
             landed("a/none", MONDAY + 3.0 * HOUR, vec![]),
         ];
     });
     let wednesday_start = MONDAY + 2.0 * DAY;
     report(
-        &tree,
+        tree,
         wednesday_start,
         vec![hour(wednesday_start, 0, 0)],
         |day| {
-            day.landed = vec![landed(
-                "a/again",
-                wednesday_start + HOUR,
-                vec![opus("executor", 1, 2), opus("reviewer", 2, 1)],
+            day.landed = vec![kinded(
+                landed(
+                    "a/again",
+                    wednesday_start + HOUR,
+                    vec![
+                        opus("executor", 1, 2),
+                        opus("reviewer", 2, 1),
+                        opus("executor", 3, 1),
+                    ],
+                ),
+                "fix",
+                400,
             )];
         },
     );
+}
+
+#[test]
+fn a_period_counts_the_tasks_landed_in_it_once_each_at_their_last_landing() {
+    let tree = Tree::new();
+    landings(&tree);
     let page = page(&folders(&tree), Grain::Day, 3, wednesday(), none);
-    let landed = page.landed.unwrap();
-    let dearest: Vec<(&str, f64)> = (landed.dearest.iter())
-        .map(|task| (task.slug.as_str(), task.cost.dollars))
-        .collect();
-    assert_eq!(dearest, [("a/again", 12.0), ("a/cheap", 4.0)]);
-    assert_eq!((landed.tasks, landed.without, landed.again), (2, 1, 1));
-    assert_eq!(landed.median, Some(8.0));
-    assert_eq!(landed.first_round.cost.dollars, 12.0);
-    assert_eq!(landed.later_rounds.cost.dollars, 4.0);
-    assert_eq!(landed.first_round.cost.prices, Prices::embedded().read);
+    let landed: Vec<Option<BucketLanded>> =
+        page.buckets.iter().map(|bucket| bucket.landed).collect();
+    assert_eq!(
+        landed,
+        [
+            // a/again is Wednesday's: its Monday landing is in no period.
+            Some(BucketLanded {
+                tasks: 2,
+                priced: 1,
+                median: Some(4.0),
+                p90: Some(4.0),
+                lined: 1,
+                lined_cost: 4.0,
+                lines: 50,
+            }),
+            None,
+            Some(BucketLanded {
+                tasks: 1,
+                priced: 1,
+                median: Some(16.0),
+                p90: Some(16.0),
+                lined: 1,
+                lined_cost: 16.0,
+                lines: 400,
+            }),
+        ]
+    );
     // A window that holds only Wednesday sees its landing alone.
     let today = super::page(&folders(&tree), Grain::Day, 1, wednesday(), none);
-    assert_eq!(today.landed.unwrap().tasks, 1);
+    assert_eq!(today.buckets[0].landed.map(|landed| landed.tasks), Some(1));
+}
+
+#[test]
+fn the_landed_tab_prices_each_task_once_at_its_last_landing_with_its_figures_and_groups() {
+    let tree = Tree::new();
+    landings(&tree);
+    let page = landed_page(&Ok(tree.path("reports")), Grain::Day, 3, wednesday());
+    assert_eq!((page.grain, page.days), (Grain::Day, 3));
+    // As the page's window: to the end of the clock's hour.
+    assert_eq!(
+        (page.from, page.to),
+        (MONDAY, MONDAY + 2.0 * DAY + 11.0 * HOUR)
+    );
+    assert_eq!(
+        page.tasks,
+        [
+            LandedRow {
+                slug: "a/again".into(),
+                at: MONDAY + 2.0 * DAY + HOUR,
+                kind: Some("fix".into()),
+                first: 8.0,
+                later: 8.0,
+                tokens: 4_000_000,
+                unpriced: false,
+                reviews: 2,
+                lines: Some(400),
+            },
+            LandedRow {
+                slug: "a/cheap".into(),
+                at: MONDAY + 2.0 * HOUR,
+                kind: Some("docs".into()),
+                first: 4.0,
+                later: 0.0,
+                tokens: 1_000_000,
+                unpriced: false,
+                reviews: 0,
+                lines: Some(50),
+            },
+        ]
+    );
+    assert_eq!(page.without, 1);
+    assert_eq!(
+        page.figures,
+        LandedFigures {
+            tasks: 2,
+            median: Some(10.0),
+            mean: Some(10.0),
+            p90: Some(14.8),
+            cost: 20.0,
+            later: 8.0,
+            back: 1,
+            lined: 2,
+            lined_cost: 20.0,
+            lines: 450,
+            unlined: 0,
+            unread: 0,
+        }
+    );
+    let kinds: Vec<(Option<&str>, u32, f64)> = (page.kinds.iter())
+        .map(|row| (row.kind.as_deref(), row.tasks, row.cost))
+        .collect();
+    assert_eq!(kinds, [(Some("fix"), 1, 16.0), (Some("docs"), 1, 4.0)]);
+    let reviews: Vec<(u32, u32, f64, f64)> = (page.reviews.iter())
+        .map(|row| (row.reviews, row.tasks, row.first, row.later))
+        .collect();
+    assert_eq!(reviews, [(0, 1, 4.0, 0.0), (2, 1, 8.0, 8.0)]);
+    // Monday's a/cheap is the first landing that names a kind.
+    assert_eq!(page.kinds_from, Some(MONDAY + 2.0 * HOUR));
+    assert_eq!(page.prices, Prices::embedded().read);
+    assert!(page.unread.is_empty(), "{:?}", page.unread);
+    // Wednesday alone: a/again, of no landing before it.
+    let today = landed_page(&Ok(tree.path("reports")), Grain::Day, 1, wednesday());
+    assert_eq!(today.tasks.len(), 1);
+    assert_eq!(today.kinds_from, Some(MONDAY + 2.0 * DAY + HOUR));
+}
+
+#[test]
+fn a_landed_tab_with_no_landing_no_folder_or_a_file_that_does_not_read_says_so() {
+    let tree = Tree::new();
+    report(&tree, MONDAY, vec![hour(MONDAY, 0, 0)], |_| {});
+    let empty = landed_page(&Ok(tree.path("reports")), Grain::Day, 3, wednesday());
+    assert!(empty.tasks.is_empty());
+    assert_eq!((empty.without, empty.figures.tasks), (0, 0));
+    assert_eq!((empty.figures.median, empty.kinds_from), (None, None));
+    assert!(empty.kinds.is_empty() && empty.reviews.is_empty() && empty.unread.is_empty());
+    let none = landed_page(&Err("no common dir".into()), Grain::Week, 28, wednesday());
+    assert_eq!(none.unread, ["reports: no common dir"]);
+    let path = tree
+        .path("reports")
+        .join(report_file(&run_day(MONDAY + 2.0 * DAY)));
+    std::fs::write(&path, "{not json").unwrap();
+    let broken = landed_page(&Ok(tree.path("reports")), Grain::Day, 3, wednesday());
+    assert_eq!(broken.unread.len(), 1);
+    assert!(
+        broken.unread[0].starts_with(&path.display().to_string()),
+        "{:?}",
+        broken.unread
+    );
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    let folder = landed_page(&Ok(tree.path("reports")), Grain::Day, 3, wednesday());
+    assert_eq!(
+        folder.unread,
+        [format!("{}: not a regular file", path.display())]
+    );
 }
