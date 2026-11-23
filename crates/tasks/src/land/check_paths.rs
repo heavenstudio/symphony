@@ -27,10 +27,11 @@
 //! is looked for beside its file, and a test-only file named only by a macro or a build script, or
 //! a lint set in a file no entry names, is product.
 
-use crate::sweep::git::git;
+use crate::sweep::git::{blobs, git};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::rc::Rc;
 
 #[cfg(test)]
 mod tests;
@@ -248,62 +249,132 @@ pub fn touched(
         dir,
         &["diff", "--name-only", "-z", "--no-renames", from, tip],
     )?;
+    let paths: Vec<(&str, Vec<&Entry>)> = (listed.split('\0'))
+        .filter(|p| !p.is_empty())
+        .map(|path| (path, entries.iter().filter(|e| e.names(path)).collect()))
+        .collect();
+    // What is read of the files: a Rust file no entry names, its tests and lints, and a file only
+    // tables' entries name, those tables. Each side of them is read at once, and the Rust files'
+    // diffs in one diff.
+    let rust_file = |path: &str, named: &[&Entry]| named.is_empty() && path.ends_with(".rs");
+    let tables = |named: &[&Entry]| !named.is_empty() && named.iter().all(|e| !e.whole());
+    let read: Vec<&str> = (paths.iter())
+        .filter(|(path, named)| rust_file(path, named) || tables(named))
+        .map(|(path, _)| *path)
+        .collect();
     let (old, new) = (Tree::new(dir, from), Tree::new(dir, tip));
+    old.load(&read)?;
+    new.load(&read)?;
+    let diffs = if paths.iter().any(|(path, named)| rust_file(path, named)) {
+        diffs(dir, from, tip)?
+    } else {
+        HashMap::new()
+    };
     let mut found = Vec::new();
-    for path in listed.split('\0').filter(|p| !p.is_empty()) {
-        let named: Vec<&Entry> = entries.iter().filter(|e| e.names(path)).collect();
-        if named.iter().any(|e| e.table.is_none()) {
+    for (path, named) in &paths {
+        if named.iter().any(|e| e.whole()) {
             found.push(path.to_string());
             continue;
         }
-        for entry in &named {
+        for entry in named {
             let keys = entry.table.as_deref().unwrap_or_default();
             if old.table(path, keys)? != new.table(path, keys)? {
                 found.push(format!("{path} [{}]", keys.join(".")));
             }
         }
-        if named.is_empty() && path.ends_with(".rs") {
-            found.extend(rust(&old, &new, path, entries)?);
+        if rust_file(path, named) {
+            found.extend(rust(&old, &new, path, entries, &diffs)?);
         }
     }
     Ok(found)
 }
 
-/// What a change to the Rust file `path` from `old` to `new` changes of the tests and lints: the
-/// file itself when its module is test-only on either side or where its tests are cannot be read
-/// on either ([`regions`]), else each hunk reaching a test's item and each line it adds or removes
-/// that sets a lint's level.
-fn rust(
-    old: &Tree<'_>,
-    new: &Tree<'_>,
-    path: &str,
-    entries: &[Entry],
-) -> Result<Vec<String>, String> {
-    if old.test_only(path, entries, 0)? || new.test_only(path, entries, 0)? {
-        return Ok(vec![format!("{path} (a test module)")]);
-    }
+/// Each Rust file's diff from `from` to `tip` with no context, by its path: one `git diff` of the
+/// commits' Rust files ([`split`]).
+fn diffs(dir: &Path, from: &str, tip: &str) -> Result<HashMap<String, String>, String> {
     let diff = raw(
-        old.dir,
+        dir,
         &[
+            "-c",
+            "core.quotePath=false",
             "diff",
             "-U0",
             "--no-color",
             "--no-ext-diff",
             "--no-renames",
-            old.commit,
-            new.commit,
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            from,
+            tip,
             "--",
-            path,
+            "*.rs",
         ],
     )?;
-    let (Some(was), Some(is)) = (
-        regions(&old.read(path)?.unwrap_or_default()),
-        regions(&new.read(path)?.unwrap_or_default()),
-    ) else {
+    Ok(split(&diff))
+}
+
+/// A diff's text by the file each part is of, a part starting at each `diff --git a/PATH b/PATH`
+/// header, and two parts of one file (a file made a link, which git shows removed and added) one
+/// text. A part whose header git quotes (a path holding a `"`, a `\` or a control character) is
+/// left out, so its file's own diff is read.
+fn split(diff: &str) -> HashMap<String, String> {
+    let mut found: HashMap<String, String> = HashMap::new();
+    let mut of: Option<String> = None;
+    for line in diff.split_inclusive('\n') {
+        if let Some(names) = line.strip_prefix("diff --git ") {
+            let names = names.trim_end_matches('\n');
+            of = (names.len().checked_sub(5))
+                .and_then(|both| names.get(2..2 + both / 2))
+                .filter(|path| names == format!("a/{path} b/{path}"))
+                .map(str::to_string);
+        }
+        if let Some(path) = &of {
+            found.entry(path.clone()).or_default().push_str(line);
+        }
+    }
+    found
+}
+
+/// What a change to the Rust file `path` from `old` to `new` changes of the tests and lints: the
+/// file itself when its module is test-only on either side or where its tests are cannot be read
+/// on either ([`regions`]), else each hunk of its diff (from `diffs`, else its own) reaching a
+/// test's item and each line it adds or removes that sets a lint's level.
+fn rust(
+    old: &Tree<'_>,
+    new: &Tree<'_>,
+    path: &str,
+    entries: &[Entry],
+    diffs: &HashMap<String, String>,
+) -> Result<Vec<String>, String> {
+    if old.test_only(path, entries, 0)? || new.test_only(path, entries, 0)? {
+        return Ok(vec![format!("{path} (a test module)")]);
+    }
+    let own;
+    let diff = match diffs.get(path) {
+        Some(diff) => diff,
+        None => {
+            own = raw(
+                old.dir,
+                &[
+                    "diff",
+                    "-U0",
+                    "--no-color",
+                    "--no-ext-diff",
+                    "--no-renames",
+                    old.commit,
+                    new.commit,
+                    "--",
+                    path,
+                ],
+            )?;
+            &own
+        }
+    };
+    let (Some(was), Some(is)) = (old.regions(path)?, new.regions(path)?) else {
         return Ok(vec![format!("{path} (where its tests end cannot be read)")]);
     };
     let mut found = Vec::new();
-    for hunk in hunks(&diff) {
+    for hunk in hunks(diff) {
         let line = within(hunk.old, &was)
             .map(|_| hunk.new.0)
             .or_else(|| within(hunk.new, &is));
@@ -327,7 +398,10 @@ fn rust(
     Ok(found)
 }
 
-/// One commit's files in a checkout, each listed and read from git once.
+/// One commit's files in a checkout, each listed and read from git once, which of its Rust files
+/// declares which module, searched for once, and what the walk up a module reads of each file, read
+/// once: so what is asked of it costs a few runs of git however many files a diff changes, and no
+/// file is read twice however many of its modules it does.
 struct Tree<'a> {
     dir: &'a Path,
     commit: &'a str,
@@ -335,6 +409,21 @@ struct Tree<'a> {
     files: RefCell<Option<HashSet<String>>>,
     /// The text of each file read so far, none for one the commit does not have.
     texts: RefCell<HashMap<String, Option<String>>>,
+    /// Each file a module declared by file may be, with the files declaring it ([`Tree::declaring`]),
+    /// found at the first question.
+    declarers: RefCell<Option<HashMap<String, Vec<String>>>>,
+    /// Each Rust file's [`Module`] read so far, none for one the commit does not have.
+    modules: RefCell<HashMap<String, Option<Rc<Module>>>>,
+}
+
+/// What the walk up a Rust file's modules reads of it.
+struct Module {
+    /// Whether its file says its module is test-only ([`test_only_file`]).
+    test_only: bool,
+    /// Where its tests are ([`regions`]).
+    regions: Option<Vec<(usize, usize)>>,
+    /// The modules it declares by file ([`declarations`]).
+    declarations: Vec<(usize, String, Option<String>)>,
 }
 
 impl<'a> Tree<'a> {
@@ -344,25 +433,72 @@ impl<'a> Tree<'a> {
             commit,
             files: RefCell::default(),
             texts: RefCell::default(),
+            declarers: RefCell::default(),
+            modules: RefCell::default(),
         }
+    }
+
+    /// The Rust file `path`'s [`Module`], none where the commit has no such file.
+    fn module(&self, path: &str) -> Result<Option<Rc<Module>>, String> {
+        if let Some(module) = self.modules.borrow().get(path) {
+            return Ok(module.clone());
+        }
+        let module = self.read(path)?.map(|text| {
+            Rc::new(Module {
+                test_only: test_only_file(&text),
+                regions: regions(&text),
+                declarations: declarations(&text),
+            })
+        });
+        (self.modules.borrow_mut()).insert(path.to_string(), module.clone());
+        Ok(module)
+    }
+
+    /// Where the tests of the Rust file `path` are ([`regions`]): none where that cannot be told,
+    /// and nowhere in a file the commit does not have.
+    fn regions(&self, path: &str) -> Result<Option<Vec<(usize, usize)>>, String> {
+        Ok(match self.module(path)? {
+            Some(module) => module.regions.clone(),
+            None => Some(Vec::new()),
+        })
     }
 
     /// The file `path`'s text, none where the commit has no such file; the line saying why where git
     /// cannot list or read it, so a file git fails on never reads as one that is not there.
     fn read(&self, path: &str) -> Result<Option<String>, String> {
-        if let Some(text) = self.texts.borrow().get(path) {
-            return Ok(text.clone());
+        self.load(&[path])?;
+        Ok(self.texts.borrow().get(path).cloned().flatten())
+    }
+
+    /// Each of `paths` no read has read yet read, those the commit has in one `git cat-file
+    /// --batch`; the line saying why where git cannot list or read one.
+    fn load(&self, paths: &[&str]) -> Result<(), String> {
+        let mut wanted = Vec::new();
+        for path in paths {
+            if self.texts.borrow().contains_key(*path) {
+                continue;
+            }
+            if self.has(path)? {
+                wanted.push(*path);
+            } else {
+                (self.texts.borrow_mut()).insert(path.to_string(), None);
+            }
         }
-        let text = if self.has(path)? {
-            Some(raw(
-                self.dir,
-                &["show", &format!("{}:{path}", self.commit)],
-            )?)
-        } else {
-            None
-        };
-        (self.texts.borrow_mut()).insert(path.to_string(), text.clone());
-        Ok(text)
+        if wanted.is_empty() {
+            return Ok(());
+        }
+        let specs: Vec<String> = (wanted.iter())
+            .map(|path| format!("{}:{path}", self.commit))
+            .collect();
+        ran();
+        for (path, text) in wanted.iter().zip(blobs(self.dir, &specs)?) {
+            // Listed, so a file git does not answer with is one it failed on.
+            let text = text.ok_or_else(|| {
+                format!("git cat-file --batch: {}:{path} gives no file", self.commit)
+            })?;
+            (self.texts.borrow_mut()).insert(path.to_string(), Some(text));
+        }
+        Ok(())
     }
 
     /// Whether the commit has the file `path`, listing them all the first time it is asked.
@@ -405,6 +541,36 @@ impl<'a> Tree<'a> {
         Ok(Some(value))
     }
 
+    /// The files declaring a module by file that may be the Rust file `path`, in the order git
+    /// lists them: the commit's Rust files holding `mod ` searched for, read and their
+    /// [`declarations`] noted at the first question, so a question costs no run of git.
+    fn declaring(&self, path: &str) -> Result<Vec<String>, String> {
+        if self.declarers.borrow().is_none() {
+            let holding = self.holding(&["mod "])?;
+            self.load(&holding.iter().map(String::as_str).collect::<Vec<_>>())?;
+            let mut declarers: HashMap<String, Vec<String>> = HashMap::new();
+            let texts = self.texts.borrow();
+            for file in &holding {
+                let Some(Some(text)) = texts.get(file) else {
+                    continue;
+                };
+                for (_, module, at) in declarations(text) {
+                    for may_be in declared(file, &module, at.as_deref()) {
+                        let by = declarers.entry(may_be).or_default();
+                        if by.last() != Some(file) {
+                            by.push(file.clone());
+                        }
+                    }
+                }
+            }
+            *self.declarers.borrow_mut() = Some(declarers);
+        }
+        let declarers = self.declarers.borrow();
+        Ok((declarers.as_ref().and_then(|d| d.get(path)))
+            .cloned()
+            .unwrap_or_default())
+    }
+
     /// The Rust files of the commit holding any of `needles`.
     fn holding(&self, needles: &[&str]) -> Result<Vec<String>, String> {
         let mut args = vec!["grep", "-l", "-F"];
@@ -412,6 +578,7 @@ impl<'a> Tree<'a> {
             args.extend(["-e", needle]);
         }
         args.extend([self.commit, "--", "*.rs"]);
+        ran();
         let done = git(self.dir, &args)
             .ok_or_else(|| format!("git cannot run in {}", self.dir.display()))?;
         // `git grep` says it found nothing with 1.
@@ -439,7 +606,7 @@ impl<'a> Tree<'a> {
         if depth > 0 && entries.iter().any(|e| e.table.is_none() && e.names(path)) {
             return Ok(true);
         }
-        if self.read(path)?.is_some_and(|text| test_only_file(&text)) {
+        if self.module(path)?.is_some_and(|module| module.test_only) {
             return Ok(true);
         }
         let file = path.rsplit('/').next().unwrap_or(path);
@@ -453,24 +620,29 @@ impl<'a> Tree<'a> {
             return Ok(false);
         }
         let declaration = format!("mod {name}");
-        for declarer in self.holding(&[&declaration, file])? {
+        for declarer in self.declaring(path)? {
             if declarer == path {
                 continue;
             }
-            let Some(text) = self.read(&declarer)? else {
+            // Only one holding the declaration or the file's name, as a search for those found
+            // them: one writing `mod  NAME;` or `mod r#NAME;` was never followed.
+            let holds = (self.texts.borrow().get(&declarer))
+                .and_then(|text| text.as_deref())
+                .is_some_and(|text| text.contains(&declaration) || text.contains(file));
+            if !holds {
+                continue;
+            }
+            let Some(module) = self.module(&declarer)? else {
                 continue;
             };
-            let gated = regions(&text);
-            for (line, module, at) in declarations(&text) {
-                if !declared(&declarer, &module, at.as_deref())
+            for (line, named, at) in &module.declarations {
+                if !declared(&declarer, named, at.as_deref())
                     .iter()
                     .any(|p| p == path)
                 {
                     continue;
                 }
-                if gated
-                    .as_ref()
-                    .is_none_or(|gated| within((line, 1), gated).is_some())
+                if (module.regions.as_ref()).is_none_or(|gated| within((*line, 1), gated).is_some())
                     || self.test_only(&declarer, entries, depth + 1)?
                 {
                     return Ok(true);
@@ -931,8 +1103,21 @@ fn hunks(diff: &str) -> Vec<Hunk> {
     found
 }
 
+#[cfg(test)]
+thread_local! {
+    /// The runs of git this thread's judgements made ([`ran`]), which a test counts.
+    static RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Counts a run of git on the thread for a test ([`RUNS`]): each this module makes calls it first.
+fn ran() {
+    #[cfg(test)]
+    RUNS.set(RUNS.get() + 1);
+}
+
 /// What git printed for `args` in `dir`, as it printed it; else the line saying why it failed.
 fn raw(dir: &Path, args: &[&str]) -> Result<String, String> {
+    ran();
     let done = git(dir, args).ok_or_else(|| format!("git cannot run in {}", dir.display()))?;
     if done.status.success() {
         return Ok(String::from_utf8_lossy(&done.stdout).into_owned());
