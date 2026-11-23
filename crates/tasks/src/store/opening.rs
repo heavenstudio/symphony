@@ -533,7 +533,7 @@ impl Store {
     }
 
     /// As [`Store::board_schema`], with `program`'s line in the board's writers on this host and the
-    /// board's count of additive steps, in the same one read ([`sql::writers::OPENING`]).
+    /// board's count of additive steps, in the same one read ([`postgres::writers::OPENING`]).
     fn board_opening(&self, program: &Program) -> Result<(Option<i64>, bool, Line, i64), Failure> {
         let vars = writers::opening_vars(program, &self.host);
         let answer = self.request(Statement::from(postgres::writers::OPENING), vars);
@@ -563,10 +563,10 @@ impl Store {
     }
 
     /// Refused, in the guard's words, unless the board, where it is of this store's contract, has
-    /// exactly this store's additive steps: what a whole-board read takes, which a copy, an export
-    /// or a move to another engine is made from ([`schema::Steps::exactly`]), as it holds only the
-    /// tables and fields this build knows. Read before and after `read`, so a move of steps while
-    /// it read is refused too.
+    /// exactly this store's additive steps: what a whole-board read takes, which a copy or an
+    /// export is made from ([`schema::Steps::exactly`]), as it holds only the tables and fields
+    /// this build knows. Read before and after `read`, so a move of steps while it read is refused
+    /// too.
     pub(super) fn with_own_steps<T>(
         &self,
         read: impl FnOnce() -> Result<T, Error>,

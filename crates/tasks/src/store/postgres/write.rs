@@ -1,5 +1,5 @@
-//! A rule's write on PostgreSQL (`super::super::surreal::write`): the actor, the gone witnesses
-//! and the incoming role holders fenced before their task changes.
+//! A rule's write on PostgreSQL: the actor, the gone witnesses and the incoming role holders fenced
+//! before their task changes.
 
 use super::logged;
 

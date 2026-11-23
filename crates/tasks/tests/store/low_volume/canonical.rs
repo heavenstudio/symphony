@@ -2,9 +2,8 @@
 
 use super::*;
 use crate::common::{HOST, NOW};
-use crate::relay::Relay;
 use std::collections::BTreeSet;
-use symphony_board::{Error, Health, NewLaunch, Store};
+use symphony_board::{Error, Health, NewLaunch};
 
 fn held(f: &Fixture, orch: &str, worker: &str, slug: &str) {
     start(f, orch, worker, slug);
@@ -275,71 +274,4 @@ fn failed_holdings_are_errors_and_do_not_clear_the_delivered_account() {
         .unwrap();
     f.store.dispatch_callbacks().unwrap();
     assert!(warnings(&listener.drain(&f, &worker, &orch)).is_empty());
-}
-
-// SurrealDB-only: inspects statement text captured by the HTTP/CBOR relay.
-#[test]
-fn one_holdings_read_is_shared_by_recipients_leases_and_idle_checks() {
-    let f = Fixture::empty();
-    let worker = f.session("worker");
-    let owners: Vec<_> = (0..3).map(|_| f.session("orchestrator")).collect();
-    let listeners: Vec<_> = owners.iter().map(|owner| listen(&f, owner)).collect();
-    for listener in &listeners {
-        assert!(listener.text().contains("open=0 threshold=4"));
-    }
-    let relay = Relay::to(f.store.client().addr(), 0);
-    let store = Store::with(
-        relay.client("sf", f.store.database().database()),
-        Box::new(|| NOW),
-        Box::new(|_| true),
-        HOST,
-    )
-    .unwrap();
-    let before = relay.requests().len();
-    // A new actionable entry forces each recipient through planning and its leased account.
-    f.elsewhere()
-        .create(&NewTask::new("ready", "Ready", &worker))
-        .unwrap();
-    store.dispatch_callbacks().unwrap();
-    let sent = relay.requests().split_off(before);
-    let whole = sent
-        .iter()
-        .filter(|(_, sql)| sql.contains("slots: { open: $slot_open"))
-        .count();
-    assert_eq!(whole, 1, "{sent:?}");
-    let ordinary = sent
-        .iter()
-        .filter(|(_, sql)| {
-            sql.contains("LET $tasks = (SELECT * OMIT id FROM task ORDER BY priority, sid)")
-                && !sql.contains("slots: { open: $slot_open")
-        })
-        .count();
-    assert_eq!(
-        ordinary, 1,
-        "one sequenced callback snapshot; each recipient's unanswered lookup takes the pass's board: {sent:?}"
-    );
-    assert_eq!(
-        sent.iter()
-            .filter(|(_, sql)| sql.contains("LET $callback_sequence =")
-                && sql.contains("LET $tasks = (SELECT * OMIT id FROM task ORDER BY priority, sid)"))
-            .count(),
-        1,
-        "one retained callback snapshot: {sent:?}"
-    );
-    let due_requests = sent.len();
-    let before = relay.requests().len();
-    store.dispatch_callbacks().unwrap();
-    let sent = relay.requests().split_off(before);
-    assert_eq!(
-        sent.iter()
-            .filter(|(_, sql)| sql.contains("slots: { open: $slot_open"))
-            .count(),
-        1,
-        "one holdings observation on the idle pass: {sent:?}"
-    );
-    eprintln!(
-        "holdings read costs: three active recipients, one observation per pass; due pass {} RPCs (one holdings, one callback Board), idle pass {} RPCs",
-        due_requests,
-        sent.len()
-    );
 }

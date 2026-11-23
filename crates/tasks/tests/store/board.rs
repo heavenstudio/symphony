@@ -1,12 +1,11 @@
 //! The reads: the whole board in one round trip however big it is, tasks by priority then creation,
 //! each with its links and holders.
 
-use crate::common::{Fixture, NOW, RawWrite, Seed, refused, session};
-use crate::gate::Gate;
+use crate::common::{Fixture, NOW, Seed, refused, session};
 use symphony_board::Health;
 use symphony_board::health::LIVE_SECONDS;
 use symphony_board::rows::{MessageRow, SessionRow, TaskRow};
-use symphony_board::{NewSession, NewTask, Raw, Store, Task, rpc};
+use symphony_board::{NewSession, NewTask, Store};
 
 fn a_board_of(tasks: usize) -> Seed {
     let mut seed = Seed::default()
@@ -355,81 +354,6 @@ fn a_task_read_is_one_round_trip_too() {
     assert_eq!(f.store.database().requests() - before, 3);
 }
 
-/// `read` of a board holding a ready `sim/jump`, with another session's claim of it forced into the
-/// middle (main's `SnapshotReadTest`): the read stalls on each task row it reads, after the tasks and
-/// before the roles, at a gate while `gate:read` says so when it starts, and the claim lands in that
-/// stall: the gate opens only once the claim has.
-fn claimed_mid_read<T: Send>(read: impl FnOnce(&Store) -> T + Send) -> T {
-    let f = Fixture::new(
-        Seed::default()
-            .session("amber-heron")
-            .task("sim/jump", "ready"),
-    );
-    let (other, board) = (f.other(), f.other_client());
-    let gate = Gate::new();
-    board
-        .write(
-            &format!(
-                "BEGIN TRANSACTION;
-                 DEFINE TABLE gate SCHEMALESS;
-                 DEFINE FIELD stall ON task COMPUTED {{ IF (SELECT VALUE held FROM ONLY gate:read) ?? false {{ {} }}; NONE }};
-                 UPSERT gate:read SET held = true;
-                 COMMIT TRANSACTION;",
-                gate.wait_here()
-            ),
-            serde_json::json!({}),
-        )
-        .unwrap();
-    std::thread::scope(|scope| {
-        let opening = gate.opening();
-        let reading = scope.spawn(|| read(&f.store));
-        gate.reached(); // the read is in its stall
-        Raw::on(&board)
-            .row("gate", "read")
-            .put(serde_json::json!({"held": false}))
-            .unwrap(); // the claim's own read does not stall
-        other.claim("sim/jump", "amber-heron").unwrap();
-        assert!(
-            !reading.is_finished(),
-            "the read ended before the claim landed"
-        );
-        drop(opening);
-        reading.join().unwrap()
-    })
-}
-
-fn consistent(task: &Task) {
-    assert_eq!(
-        task.status == "ready",
-        task.holders("executor").is_empty(),
-        "{} is {} held by {:?}",
-        task.slug,
-        task.status,
-        task.holders("executor")
-    );
-}
-
-// SurrealDB alone: claimed_mid_read injects an HTTP gate in its field definition.
-#[test]
-fn tasks_is_one_snapshot() {
-    let read = claimed_mid_read(|store| store.tasks(None).unwrap());
-    assert_eq!(read.len(), 1);
-    read.iter().for_each(consistent);
-}
-
-// SurrealDB alone: claimed_mid_read injects an HTTP gate in its field definition.
-#[test]
-fn get_is_one_snapshot() {
-    consistent(&claimed_mid_read(|store| store.get("sim/jump").unwrap()));
-}
-
-// SurrealDB alone: claimed_mid_read injects an HTTP gate in its field definition.
-#[test]
-fn the_board_is_one_snapshot() {
-    let board = claimed_mid_read(|store| store.board().unwrap());
-    board.tasks.iter().for_each(consistent);
-}
-
 #[test]
 fn a_thread_is_its_own_task_s_messages_in_order() {
     let said = |id: i64, slug: &str| MessageRow {
@@ -593,52 +517,6 @@ fn a_new_session_is_two_round_trips() {
     let (requests, made) = counted(&f, || f.store.register(&NewSession::new("worker")).unwrap());
     assert_eq!(requests, 2);
     assert_eq!(made, f.store.session(&made.row.handle).unwrap());
-}
-
-/// A schema definition failure leaves no partially created board or version marker.
-/// A later open reports the failure too. Duplicate rows force a unique-index failure.
-// On SurrealDB alone: SurrealDB's engine is its subject.
-#[test]
-fn a_definition_that_fails_leaves_no_board_taken_for_made() {
-    let client = crate::common::client();
-    let (addr, db) = (client.addr().to_string(), client.database().to_string());
-    // The database is made as an open makes it, again when that meets another test's at once in the
-    // shared namespace (the verify of 7ea29d1d: Conflict here). Its statements are no transaction, so
-    // the rows go in after, once.
-    test_time::until(
-        "the database made without meeting another test's definition",
-        test_time::FLOOR,
-        || match client.define_then("RETURN NONE;", serde_json::json!({})) {
-            Err(symphony_board::db::DbError::Conflict) => None,
-            made => Some(made),
-        },
-    )
-    .unwrap()
-    .unwrap();
-    for row in ["a", "b"] {
-        (Raw::on(&client).row("task", row))
-            .create(serde_json::json!({"sid": 1}))
-            .unwrap();
-    }
-    assert!(Store::open(client).is_err());
-    for _ in 0..2 {
-        let again = Store::open(rpc::Client::new(&addr, "sf", &db));
-        assert!(
-            again.is_err(),
-            "a board missing a definition was taken for made"
-        );
-    }
-    let fields = rpc::Client::new(&addr, "sf", &db)
-        .query(
-            "RETURN (INFO FOR DB).tables.session;",
-            serde_json::json!({}),
-        )
-        .unwrap();
-    assert_eq!(
-        fields.last(),
-        Some(&serde_json::Value::Null),
-        "half a board was made"
-    );
 }
 
 #[test]

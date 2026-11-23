@@ -15,10 +15,11 @@
 //! (a session seen, leaving) checks and refuses inside its one transaction instead. They only meet
 //! where both write the same row, so writes that must not pass each other write one: the task's
 //! `version`, the message counter, an agent's own counter for its binding. Mutation triggers also
-//! advance the structural counter (`counter` `board_structure`) for changes to board inputs, except
-//! session mutations, which advance their own per-handle revisions. Authorization and liveness
-//! guards fence the sessions they depend on. Callback readers combine both markers to reuse
-//! unchanged board inputs without making independent heartbeats write one counter.
+//! advance the board's marker (each connection's own `counter` row, `store/postgres/schema.rs`)
+//! for changes to board inputs, except session mutations, which advance their own per-handle
+//! revisions. Authorization and liveness guards fence the sessions they depend on. Callback
+//! readers combine both markers to reuse unchanged board inputs without making independent
+//! heartbeats write one counter.
 
 #[cfg(test)]
 extern crate self as symphony_board;

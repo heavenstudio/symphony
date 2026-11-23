@@ -1,8 +1,27 @@
 //! A failed launch must release its partial setup so the orchestrator can retry it.
 
 use super::launch::Terminals;
-use serde_json::json;
-use symphony_board::{Health, NewTask};
+use symphony_board::{Database, Health, NewTask, Store};
+
+/// A trigger named `name` on `table` that fails each row an `event` (`INSERT`, `UPDATE`) writes
+/// where `when` holds, raising `why`: a database error the board's own writes then meet.
+fn refusing(board: &Store, name: &str, event: &str, table: &str, when: &str, why: &str) {
+    send(
+        board,
+        &format!(
+            "CREATE OR REPLACE FUNCTION fixture_refuse() RETURNS trigger LANGUAGE plpgsql AS $f$ \
+             BEGIN RAISE EXCEPTION '%', TG_ARGV[0]; END $f$; \
+             CREATE TRIGGER {name} BEFORE {event} ON {table} FOR EACH ROW WHEN ({when}) \
+             EXECUTE FUNCTION fixture_refuse('{why}');"
+        ),
+    );
+}
+
+/// `sql` sent to the board's database as it is.
+fn send(board: &Store, sql: &str) {
+    let Database::PostgreSql(client) = board.database();
+    client.simple(sql).unwrap();
+}
 
 fn failed_handle(terminals: &Terminals, actor: &str) -> String {
     let children: Vec<_> = terminals
@@ -104,10 +123,14 @@ fn a_database_error_taking_the_reviewers_role_leaves_its_handle_and_allows_a_ret
     let board = p.board();
     board.claim("sim/jump", &actor).unwrap();
     board.move_to("sim/jump", "review", &actor).unwrap();
-    board.client().query(
-        "DEFINE EVENT unavailable ON role WHEN $event = 'CREATE' AND $after.role = 'reviewer' THEN { THROW 'review role unavailable' };",
-        json!({}),
-    ).unwrap();
+    refusing(
+        &board,
+        "unavailable",
+        "INSERT",
+        "role",
+        "NEW.role = 'reviewer'",
+        "review role unavailable",
+    );
     let args = ["launch", "sim/jump", "--role", "reviewer"];
     let failed = p.as_(&actor, &args);
     assert_eq!(failed.code, 2, "{} {}", failed.out, failed.err);
@@ -124,10 +147,7 @@ fn a_database_error_taking_the_reviewers_role_leaves_its_handle_and_allows_a_ret
         !reviewers.contains(&handle.as_str()),
         "failed handle {handle} still reviews: {reviewers:?}"
     );
-    board
-        .client()
-        .query("REMOVE EVENT unavailable ON role;", json!({}))
-        .unwrap();
+    send(&board, "DROP TRIGGER unavailable ON role;");
     let retried = p.as_(&actor, &args);
     assert_eq!(retried.code, 0, "{} {}", retried.out, retried.err);
     assert_eq!(board.task_sessions("sim/jump").unwrap().len(), 1);
@@ -147,10 +167,14 @@ fn a_failed_final_launch_write_closes_the_terminal_and_allows_a_fresh_launch() {
         if supplied {
             args.extend(["--worktree", &given_arg]);
         }
-        board.client().query(
-            "DEFINE EVENT unavailable ON task_session WHEN $event = 'CREATE' THEN { THROW 'launch record unavailable' };",
-            json!({}),
-        ).unwrap();
+        refusing(
+            &board,
+            "unavailable",
+            "INSERT",
+            "task_session",
+            "true",
+            "launch record unavailable",
+        );
         let failed = p.as_(&actor, &args);
         assert_eq!(failed.code, 2, "{} {}", failed.out, failed.err);
         assert!(
@@ -171,10 +195,7 @@ fn a_failed_final_launch_write_closes_the_terminal_and_allows_a_fresh_launch() {
             "unexpected checkout {}",
             checkout.display()
         );
-        board
-            .client()
-            .query("REMOVE EVENT unavailable ON task_session;", json!({}))
-            .unwrap();
+        send(&board, "DROP TRIGGER unavailable ON task_session;");
         let retried = p.as_(&actor, &args);
         assert_eq!(retried.code, 0, "{} {}", retried.out, retried.err);
         assert_eq!(board.task_sessions("sim/jump").unwrap().len(), 1);
@@ -187,17 +208,25 @@ fn cleanup_failures_keep_the_original_error_and_name_the_resource_still_to_clean
         let mut p = Terminals::new(&format!("rollback-failure-{terminal_failure}"));
         let actor = p.orchestrator();
         let board = p.board();
-        board.client().query(
-            "DEFINE EVENT unavailable ON task_session WHEN $event = 'CREATE' THEN { THROW 'launch record unavailable' };",
-            json!({}),
-        ).unwrap();
+        refusing(
+            &board,
+            "unavailable",
+            "INSERT",
+            "task_session",
+            "true",
+            "launch record unavailable",
+        );
         if terminal_failure {
             p.set("FAKE_HC_FAIL", "kill");
         } else {
-            board.client().query(
-                "DEFINE EVENT cannot_leave ON session WHEN $after.left_at != NONE THEN { THROW 'leave unavailable' };",
-                json!({}),
-            ).unwrap();
+            refusing(
+                &board,
+                "cannot_leave",
+                "INSERT OR UPDATE",
+                "session",
+                "NEW.left_at IS NOT NULL",
+                "leave unavailable",
+            );
         }
         let failed = p.as_(&actor, &["launch", "sim/jump"]);
         assert_eq!(failed.code, 2, "{} {}", failed.out, failed.err);

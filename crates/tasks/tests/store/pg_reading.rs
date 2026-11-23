@@ -1,4 +1,4 @@
-//! Normal reads preserve JSON nulls inside task fields on either database, while absent columns
+//! Normal reads preserve JSON nulls inside task fields, while absent columns
 //! remain absent. These reads share PostgreSQL's row projection with other board views.
 
 use crate::common::{Fixture, Seed};

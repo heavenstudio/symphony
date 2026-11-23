@@ -1,7 +1,7 @@
 //! A plugin's board fields, on the real store and a scratch database for each case: what a write
-//! keeps, what it refuses, and boards of the schema before the field (9) meeting this one's.
+//! keeps, and what it refuses.
 
-use super::common::{Fixture, RawWrite, Seed, refused};
+use super::common::{Fixture, Seed, refused};
 use serde_json::{Value, json};
 use symphony_board::Raw;
 
@@ -9,23 +9,6 @@ use symphony_board::Raw;
 fn record(f: &Fixture, slug: &str) -> Value {
     let db = f.other_database();
     Raw::of(&db).row("task", slug).get().unwrap()
-}
-
-/// Whether the board's task table defines `fields`: SurrealDB's catalogue, the engine the two
-/// boards of schema 9 below are made in, which PostgreSQL's schema never was.
-fn defines_fields(f: &Fixture) -> bool {
-    let found = f
-        .other_client()
-        .query("RETURN (INFO FOR TABLE task).fields.fields;", json!({}))
-        .unwrap();
-    found.last().is_some_and(|definition| !definition.is_null())
-}
-
-fn schema_version(f: &Fixture) -> Value {
-    let version = Raw::on(&f.other_client())
-        .row("meta", "schema")
-        .field("version");
-    version.unwrap()
 }
 
 #[test]
@@ -161,62 +144,4 @@ fn bad_names_values_tasks_and_actors_leave_the_board_unchanged() {
         );
     }
     assert_eq!(f.rows(), before);
-}
-
-// SurrealDB alone: reconstructs its historical schema-9 field definitions.
-#[test]
-fn a_board_of_schema_nine_gains_the_field_when_this_schema_opens_it() {
-    let f = Fixture::new(Seed::default().session("brisk-finch"));
-    f.task("sim/jump");
-    f.other_client()
-        .write(
-            "BEGIN TRANSACTION; REMOVE FIELD fields ON task; UPSERT meta:schema SET version = 9; COMMIT TRANSACTION;",
-            json!({}),
-        )
-        .unwrap();
-    assert!(!defines_fields(&f));
-    let reopened = f.other();
-    assert!(defines_fields(&f));
-    assert_eq!(schema_version(&f), json!(symphony_board::schema::VERSION));
-    let set = reopened
-        .set_field("sim/jump", "game", "effort", &json!("4"), "brisk-finch")
-        .unwrap();
-    assert_eq!(
-        serde_json::to_value(&set.fields).unwrap(),
-        json!({"game": {"effort": "4"}})
-    );
-}
-
-/// A schema-9 open runs its own definitions, every one `IF NOT EXISTS`, and names version 9: the
-/// field's definition and a task's fields stay, and the next open of this schema names its own
-/// version again.
-// SurrealDB alone: reconstructs its historical schema-9 field definitions.
-#[test]
-fn an_open_from_schema_nine_keeps_the_field_and_its_values() {
-    let f = Fixture::new(Seed::default().session("brisk-finch"));
-    f.task("sim/jump");
-    f.store
-        .set_field("sim/jump", "game", "effort", &json!(2), "brisk-finch")
-        .unwrap();
-    f.other_client()
-        .write(
-            "BEGIN TRANSACTION;
-DEFINE TABLE IF NOT EXISTS task SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS version ON task TYPE int DEFAULT 0;
-UPSERT meta:schema SET version = 9;
-COMMIT TRANSACTION;",
-            json!({}),
-        )
-        .unwrap();
-    assert!(defines_fields(&f));
-    assert_eq!(
-        record(&f, "sim/jump")["fields"],
-        json!({"game": {"effort": 2}})
-    );
-    let reopened = f.other();
-    assert_eq!(schema_version(&f), json!(symphony_board::schema::VERSION));
-    assert_eq!(
-        serde_json::to_value(reopened.get("sim/jump").unwrap().fields).unwrap(),
-        json!({"game": {"effort": 2}})
-    );
 }

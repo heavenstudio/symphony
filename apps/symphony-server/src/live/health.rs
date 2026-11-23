@@ -3,10 +3,7 @@
 //! the project says so on the server's notice, beside whatever else that notice says, and the
 //! picker says so under the project's name. A board that went back below the schema it was seen at
 //! ([`symphony_board::board_health::Recorder::went_back`]) is said unwell in those places with that
-//! line alone, which names what not to run and where the recovery is. A board that cannot be reached
-//! while a start replays its store's log ([`symphony_board::server::replaying_in`]: this server's
-//! own, run apart from its reads, or another's) is said to be starting there, with the log's size,
-//! in place of the dispatch's words, until a reach finds no replay. While the disk holding the
+//! line alone, which names what not to run and where the recovery is. While the disk holding the
 //! project has less free than `SYMPHONY_LOW_DISK_GB` ([`symphony_board::board_health::disk`]),
 //! every page says that too. None of it reads the board. While the project's settings do not load,
 //! every page says so and why, as the project is served with the defaults ([`Hub::tell_project`]).
@@ -358,17 +355,12 @@ impl Hub {
     }
 
     /// What a page says of the board at `now`: that it went back, which is why nothing else of it
-    /// is read; else that it is starting, while a replay of its store's log keeps it from being
-    /// reached ([`Hub::reconnect`]); else whether its dispatch or sweep is failing ([`notice`]).
+    /// is read; else whether its dispatch or sweep is failing ([`notice`]).
     fn board_notice(&self, now: f64) -> String {
         if let Some(line) = self.health.rollback() {
             return went_back(&line);
         }
-        let replaying = self.replaying.lock().recover().clone();
-        match replaying {
-            Some(line) => starting(&line),
-            None => notice(self.health.failing(now)),
-        }
+        notice(self.health.failing(now))
     }
 }
 
@@ -395,7 +387,7 @@ pub(crate) enum Signal {
     /// Slow over the hour ([`slow`]), or work waiting to start that no live orchestrator staffs
     /// ([`unstaffed`]).
     Amber,
-    /// Unwell, as its pages say: its dispatch or sweep failing, gone back, or starting.
+    /// Unwell, as its pages say: its dispatch or sweep failing, or gone back.
     Red,
 }
 
@@ -502,12 +494,6 @@ pub(crate) fn machine_folder() -> Option<std::path::PathBuf> {
 /// What a page says of a project whose settings do not load, `why` the load's words.
 pub(crate) fn project(why: &str) -> String {
     format!("This project's settings do not load, so it is served with the defaults: {why}.")
-}
-
-/// What a page says of a board that cannot be reached while a start replays its store's log, `line`
-/// the board's words for it ([`symphony_board::server::replaying_in`]).
-pub(crate) fn starting(line: &str) -> String {
-    format!("The task board is starting: {line}.")
 }
 
 /// What a page says of a board that went back below the schema it was seen at, `line` the

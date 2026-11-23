@@ -5,9 +5,7 @@
 //! their writes carries.
 
 use crate::common::{Fixture, refused};
-use crate::gate::Gate;
 use crate::launches::launch;
-use serde_json::json;
 use symphony_board::NewLaunch;
 use symphony_board::rows::TaskSessionRow;
 
@@ -172,52 +170,6 @@ fn no_write_of_a_hold_another_took_over_lands_and_one_lapsed_but_not_taken_over_
         (closed, reopened, now.closed, now.pane.as_str()),
         (true, true, None, "t11")
     );
-}
-
-// SurrealDB alone: pauses a SurrealDB transaction with an HTTP event gate during lease takeover.
-#[test]
-fn a_write_under_way_as_a_takeover_of_its_hold_commits_fails_and_tried_again_is_refused() {
-    let fixture = Fixture::empty();
-    fixture.task("sim/jump");
-    let read = launch(&fixture, "sim/jump", "executor");
-    let handle = &read.handle;
-    let restore = format!("just tasks restore sim/jump {handle}");
-    let before = fixture.said("sim/jump").len();
-    let hold = fixture.store.take_session(handle, "a close by o").unwrap();
-    // The closure, once its guard passed and it is written, waits uncommitted at a gate the test
-    // opens.
-    let gate = Gate::new();
-    let pause = format!(
-        "DEFINE EVENT paused ON task_session WHEN $after.closed_why = 'closed by o' THEN {{ {} }};",
-        gate.wait_here()
-    );
-    fixture.store.client().query(&pause, json!({})).unwrap();
-    fixture.advance(300.0);
-    let writer = fixture.other();
-    let (closed, taken) = std::thread::scope(|scope| {
-        let opening = gate.opening();
-        let closing =
-            scope.spawn(|| writer.close_task_session_as(&read, "closed by o", &restore, hold));
-        // Its first try passed its guard before the takeover, and waits.
-        gate.reached();
-        // The hold has lapsed: a restore takes the session over, and commits first.
-        let taken = fixture.store.take_session(handle, "a restore").unwrap();
-        assert!(
-            !closing.is_finished(),
-            "the close went on before the gate opened"
-        );
-        drop(opening);
-        (closing.join().unwrap(), taken)
-    });
-    assert_eq!(
-        refused(closed),
-        format!("another close or a restore of {handle} took its session over")
-    );
-    assert_eq!(
-        (current(&fixture), fixture.said("sim/jump").len()),
-        (read.clone(), before)
-    );
-    assert!(fixture.store.renew_session(handle, taken).unwrap());
 }
 
 #[test]

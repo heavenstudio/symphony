@@ -3,9 +3,8 @@
 //! of their worktrees is the worktree sweep's: `tasks sweep --task SLUG`.)
 
 use crate::{Hooked, World};
-use symphony_board::Store;
 use symphony_board::launch::{LaunchError, finish};
-use symphony_board::rpc::Client;
+use symphony_board::{Opening, Store};
 
 impl World {
     pub fn finish(&self, slug: &str) -> Vec<String> {
@@ -163,11 +162,14 @@ fn finishing_never_fails_when_hc_is_down() {
 #[test]
 fn finish_on_a_board_it_cannot_reach_says_so_and_never_fails() {
     let w = World::new();
-    let gone = Store::unchecked(
-        Client::new("127.0.0.1:1", "sf", "gone"),
+    // A PostgreSQL socket folder no server listens in.
+    let nowhere = crate::Folder::new();
+    let gone = Store::unchecked_on(
+        symphony_board::pg::Client::new(&nowhere.0, "gone").into(),
         Box::new(|| crate::common::NOW),
         Box::new(|_| false),
         crate::common::HOST,
+        &Opening::write(),
     );
     let m = w.machine();
     let [line] = <[_; 1]>::try_from(finish(&gone, &w.hc(), &*m.processes, "sim/jump")).unwrap();

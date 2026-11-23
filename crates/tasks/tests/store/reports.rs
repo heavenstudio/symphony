@@ -3,9 +3,9 @@
 //! it with nothing said since, top-level and subtasks, each with its whole thread (a post by its
 //! sender and time alone) and the red mark; one request, and no write. Then the board's figures of
 //! the day file from that read, on the scratch board the store itself wrote through its commands
-//! ([`crate::common::report_board_on`]).
+//! ([`crate::common::report_board`]).
 
-use crate::common::{Fixture, NOW, Seed, report_board, report_board_on};
+use crate::common::{Fixture, NOW, Seed, report_board};
 use symphony_board::NewTask;
 use symphony_board::reports::{DAY, HOUR, day, day_start};
 use symphony_board::sweep::trigger::now;
@@ -17,11 +17,8 @@ fn midnight() -> f64 {
 
 #[test]
 fn one_request_reads_every_open_task_and_every_one_written_since_and_writes_nothing() {
-    // Exercise the default fixture that the server's roll-up tests share too.
-    let f = match backend {
-        Backend::SurrealDb => report_board(),
-        Backend::PostgreSql => report_board(),
-    };
+    // Exercise the fixture that the server's roll-up tests share too.
+    let f = report_board();
     let log = f.store.database().queries();
     let (before, writes_before) = log.report(now());
     let read = f.store.report_records(midnight()).unwrap();

@@ -1,7 +1,7 @@
-//! The PostgreSQL twins of `store/surreal/execution.rs`. Every time they compare or write is the
+//! The statements of `store/execution.rs` on PostgreSQL. Every time they compare or write is the
 //! server's own clock (`clock_timestamp()`, in milliseconds), never a caller's. A row is held whole
-//! in `doc`, as SurrealDB's schemaless record without its id, so either answers alike. A write
-//! that two transactions race on meets the other at a row both write: a fence is made by
+//! in `doc`, its record without its id. A write that two transactions race on meets the other at a
+//! row both write: a fence is made by
 //! `INSERT … ON CONFLICT DO UPDATE`, which under REPEATABLE READ fails the later one as a conflict,
 //! tried again, rather than as a duplicate key.
 

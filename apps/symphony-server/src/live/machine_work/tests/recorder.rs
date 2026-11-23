@@ -60,8 +60,8 @@ fn a_recorded_test_puts_the_task_its_session_holds_in_test_while_it_runs_and_bac
     assert_eq!(claimed.status, "in_progress");
     let release = tree.path("release");
     let vars: BTreeMap<String, String> = [
-        ("TASKS_SERVER", f.store.client().addr().to_string()),
-        ("TASKS_DATABASE", f.store.client().database().to_string()),
+        ("TASKS_SERVER", f.store.database().addr()),
+        ("TASKS_DATABASE", f.store.database().database().to_string()),
         ("TASKS_SESSION", worker.clone()),
         (
             work::FOLDER_VAR,

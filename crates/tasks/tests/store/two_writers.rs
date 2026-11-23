@@ -1,4 +1,4 @@
-//! Two writers meeting on one task, on either database: each one's lines and priorities are all
+//! Two writers meeting on one task: each one's lines and priorities are all
 //! there, every line numbered once and in the order they committed, and no write is lost, each
 //! priority line naming the priority the one before it set.
 

@@ -280,7 +280,7 @@ fn open_work_handed_back_and_forth_between_orchestrators_is_refused_at_the_cap()
 
 #[test]
 fn open_work_moved_under_one_feature_shares_its_slot_regardless_of_instruction_flag() {
-    let seed = super::super::eight_and_seed(&[("work/next", "ready")]);
+    let seed = super::eight_and_seed(&[("work/next", "ready")]);
     let id = seed.dump.tasks.len() as i64 + 1;
     let seed = seed.task_row(TaskRow {
         id,
@@ -325,7 +325,7 @@ fn open_work_moved_under_one_feature_shares_its_slot_regardless_of_instruction_f
 
 #[test]
 fn a_task_two_orchestrators_hold_counts_against_both_and_is_refused_if_either_is_full() {
-    let seed = super::super::eight_and_seed(&[])
+    let seed = super::eight_and_seed(&[])
         .task_row(TaskRow {
             id: 100,
             ..task("both", "ready")

@@ -112,7 +112,7 @@ impl Store {
     /// `body` in one transaction, as `run` says: a write starts with the schema guard, so on a
     /// board at another version than this store's it is refused before any statement of its own,
     /// but for a reader's ordinary write on a board one ahead whose record lets it
-    /// ([`schema::GUARD`]).
+    /// ([`postgres::GUARD`]).
     #[track_caller]
     pub(super) fn run_transaction<'a, T: DeserializeOwned>(
         &self,

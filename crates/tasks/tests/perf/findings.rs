@@ -1,253 +1,434 @@
-//! What a plan the server gives (`EXPLAIN`'s text) says is wrong with a statement:
+//! What a plan PostgreSQL gives says is wrong with a statement. The plan check has the server send
+//! the plan of every statement its commands run, each a block or a trigger runs too, to the
+//! session that ran it as a notice (`auto_explain` with nested statements, its format JSON:
+//! `Board::explained`), which the relay keeps (`crate::proxy`); [`plans_of`] reads the plans out of
+//! the notices, and [`findings`] reads what is wrong out of each:
 //!
-//! - a `TableScan` with a predicate over message, delivery, role, session, callback_state or ask:
-//!   the whole table read to keep a few rows, which an index serves; and a whole index of one of
-//!   them (an `IndexScan` with no `access` range) under a `Filter`, which reads every row as well;
-//! - a predicate holding a subquery (EXPLAIN shows it as `(Operator)`): the server runs it again
-//!   for every row it tests, as `session WHERE handle IN (SELECT … FROM role)` ran the role scan
-//!   once for each of 2.6k sessions.
+//! - a scan of message, delivery, role, session or callback_state ([`WATCHED`]) under a condition
+//!   no index serves: a `Seq Scan` with a `Filter`, the whole table read to keep a few rows; or an
+//!   index read from end to end (an `Index Scan` or `Index Only Scan` with no `Index Cond`) under
+//!   one, which reads every row as well, in the index's order: a walk of `message_sid` from the
+//!   newest message down for one sender's word is the 2026-11-07 look back;
+//! - a subquery the server runs again for every row it is asked of (a `SubPlan` it does not hash)
+//!   that reads a table by no index, as `session WHERE handle IN (SELECT … FROM role)` read the
+//!   role table again for each of 2.6k sessions. One that probes an index for each row is a join's
+//!   inner side, and no finding; one the server hashes (`hashed SubPlan`) or runs once
+//!   (`InitPlan`) reads its rows once.
 //!
-//! A scan with no predicate reads every row because the caller wants every row (the board's
-//! snapshot of its sessions and roles): no index makes that smaller, and it is listed, not failed.
+//! The plans are made with sequential scans disabled (`enable_seqscan = off`), so the server takes
+//! an index wherever one serves the condition, whatever the table's size: callback_state's hundred
+//! rows, which a scan reads faster than any index, still show whether an index would serve the
+//! condition on a board that has grown. A scan left is one no index serves.
 //!
-//! Whether a plan reads rows at all ([`reads_rows`]) is what the check asks of a statement it read
-//! no statement out of ([`crate::sql`]): one that does is a spelling the check does not know.
+//! A scan with no condition reads every row because the caller wants every row (the board's
+//! snapshot of its sessions and roles): no index makes that smaller, and it is listed
+//! ([`whole_reads`]), not failed. A plan the check cannot read is kept as it came
+//! ([`Logged::unread`]), for the check to report, never skipped.
 
-use crate::sql::unquoted;
+use serde_json::Value;
+use std::collections::BTreeSet;
 
-/// The tables no path reads whole to keep a few rows.
-pub const WATCHED: [&str; 6] = [
-    "message",
-    "delivery",
-    "role",
-    "session",
-    "callback_state",
-    "ask",
-];
+/// The tables no path reads whole to keep a few rows (AGENTS.md, "Queries keep their indexes").
+pub const WATCHED: [&str; 5] = ["message", "delivery", "role", "session", "callback_state"];
 
-/// A finding of the check, or a plan it lists.
-#[derive(Debug, Clone, PartialEq)]
+/// A finding of the check.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Finding {
-    /// A whole table read to keep a few rows.
+    /// A watched table read whole, or one of its indexes from end to end, to keep a few rows.
     FilteredScan(String),
-    /// A subquery the server runs again for every row a predicate tests.
-    SubqueryPerRow(String),
-    /// A statement the server would not plan, or one reading a variable the check has no value for.
-    NotPlanned,
+    /// A subquery the server runs again for each row it is asked of, reading this table by no
+    /// index each time.
+    SubPlanPerRow { subplan: String, table: String },
 }
 
-/// What is wrong with `plan`, an `EXPLAIN`'s text. A scan of a whole index (no `access` range)
-/// under a `Filter` is a filtered scan too: the server takes an index for its order alone (`ORDER
-/// BY sid` through `message_sid`) when the one its condition needs is gone, and reads every row.
-pub fn findings(plan: &str) -> Vec<Finding> {
-    let mut found = Vec::new();
-    let mut parent = "";
-    let lines = plan.lines();
-    for line in lines {
-        let attribute = |name: &str| {
-            line.split_once(&format!("{name}: ")).map(|(_, rest)| {
-                rest.split([',', ']'])
-                    .next()
-                    .unwrap_or("")
-                    .trim()
-                    .to_string()
-            })
-        };
-        let node = line.trim_start();
-        if node.starts_with("TableScan")
-            && let Some(table) = attribute("table")
-            && WATCHED.contains(&table.as_str())
-            && line.contains("predicate: ")
-        {
-            found.push(Finding::FilteredScan(table));
+/// One plan the server gave: the statement's text, as the server ran it (a block's or a
+/// trigger's statement as it is written there), and its plan, the tree `EXPLAIN (FORMAT JSON)`
+/// gives.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Plan {
+    pub query: String,
+    pub plan: Value,
+}
+
+/// What the server's plans were: each plan read, and each notice that says it is a plan but did
+/// not read as one, as it came.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Logged {
+    pub plans: Vec<Plan>,
+    pub unread: Vec<String>,
+}
+
+impl Logged {
+    /// Another run's plans and unread entries after these.
+    pub fn extend(&mut self, other: Logged) {
+        self.plans.extend(other.plans);
+        self.unread.extend(other.unread);
+    }
+}
+
+/// What `auto_explain` said in `notices`, each what one notice said: a plan's says
+/// `duration: … ms  plan:` and then, on its next line, the plan's JSON. One that says that and then
+/// no plan is kept unread; a notice of anything else is no plan's.
+pub fn plans_of(notices: &[String]) -> Logged {
+    let mut logged = Logged::default();
+    for notice in notices {
+        let (head, body) = notice.split_once('\n').unwrap_or((notice.as_str(), ""));
+        if !(head.starts_with("duration: ") && head.ends_with("plan:")) {
+            continue;
         }
-        if node.starts_with("IndexScan")
-            && parent.starts_with("Filter")
-            && attribute("access").is_some_and(|range| range.is_empty())
-            && let Some(index) = attribute("index")
-            && let Some(table) = WATCHED.iter().find(|t| index.starts_with(&format!("{t}_")))
-        {
-            found.push(Finding::FilteredScan(table.to_string()));
+        match read_plan(body) {
+            Some(plan) => logged.plans.push(plan),
+            None => logged.unread.push(notice.clone()),
         }
-        if !node.is_empty() {
-            parent = node;
+    }
+    logged
+}
+
+/// A notice's JSON as a plan: its `Query Text` and its `Plan`.
+fn read_plan(body: &str) -> Option<Plan> {
+    let mut entry: Value = serde_json::from_str(body).ok()?;
+    let query = entry.get("Query Text")?.as_str()?.to_owned();
+    let plan = entry.get_mut("Plan")?.take();
+    plan.is_object().then_some(Plan { query, plan })
+}
+
+/// The nodes under `node`, in order.
+fn children(node: &Value) -> impl Iterator<Item = &Value> {
+    (node.get("Plans").and_then(Value::as_array))
+        .into_iter()
+        .flatten()
+}
+
+fn text<'a>(node: &'a Value, field: &str) -> Option<&'a str> {
+    node.get(field).and_then(Value::as_str)
+}
+
+/// Whether `node` reads its table's rows by no index: a scan of the whole table, or a walk of one
+/// of its indexes with no condition on it.
+fn unindexed(node: &Value) -> bool {
+    match text(node, "Node Type") {
+        Some("Seq Scan") => true,
+        Some("Index Scan" | "Index Only Scan") => node.get("Index Cond").is_none(),
+        _ => false,
+    }
+}
+
+/// The subplans `plan` hashes, each named as the plan names it (`SubPlan 2`): a condition reads one
+/// as `(hashed SubPlan 2)`, or `(hashed SubPlan 2).col1` where it compares a column of it.
+fn hashed(plan: &Value) -> BTreeSet<String> {
+    fn strings<'a>(value: &'a Value, into: &mut Vec<&'a str>) {
+        match value {
+            Value::String(text) => into.push(text),
+            Value::Array(items) => items.iter().for_each(|item| strings(item, into)),
+            Value::Object(fields) => fields.values().for_each(|field| strings(field, into)),
+            _ => {}
         }
-        if let Some((_, predicate)) = line.split_once("predicate: ")
-            && let Some(operator) = subplan(predicate)
-        {
-            found.push(Finding::SubqueryPerRow(operator));
+    }
+    let mut texts = Vec::new();
+    strings(plan, &mut texts);
+    let mut found = BTreeSet::new();
+    for text in texts {
+        for (at, _) in text.match_indices("hashed SubPlan ") {
+            let digits: String = (text[at + "hashed ".len() + "SubPlan ".len()..].chars())
+                .take_while(char::is_ascii_digit)
+                .collect();
+            found.insert(format!("SubPlan {digits}"));
         }
     }
     found
 }
 
-/// The first `(Operator)` a predicate or an expression holds outside its quoted values: how
-/// EXPLAIN shows a subquery in it. A value's text (`'status (Ready)'`) holds none.
-fn subplan(predicate: &str) -> Option<String> {
-    let code = unquoted(predicate);
-    let mut rest = code.as_str();
-    while let Some(open) = rest.find('(') {
-        let inner = &rest[open + 1..];
-        let name: String = inner
-            .chars()
-            .take_while(char::is_ascii_alphanumeric)
-            .collect();
-        if name.starts_with(|c: char| c.is_ascii_uppercase())
-            && inner[name.len()..].starts_with(')')
-        {
-            return Some(name);
+/// What is wrong with `plan`, a plan's tree as `EXPLAIN (FORMAT JSON)` gives it.
+pub fn findings(plan: &Value) -> Vec<Finding> {
+    let hashed = hashed(plan);
+    let mut found = Vec::new();
+    walk(plan, &hashed, None, &mut found);
+    found.sort();
+    found.dedup();
+    found
+}
+
+/// The findings of `node` and every node under it, `per_row` the subplan run for each row that
+/// holds it, if one does.
+fn walk(node: &Value, hashed: &BTreeSet<String>, per_row: Option<&str>, found: &mut Vec<Finding>) {
+    let table = text(node, "Relation Name");
+    if let Some(table) = table
+        && unindexed(node)
+    {
+        if WATCHED.contains(&table) && node.get("Filter").is_some() {
+            found.push(Finding::FilteredScan(table.to_owned()));
         }
-        rest = inner;
+        if let Some(subplan) = per_row {
+            found.push(Finding::SubPlanPerRow {
+                subplan: subplan.to_owned(),
+                table: table.to_owned(),
+            });
+        }
     }
-    None
+    for child in children(node) {
+        let runs_per_row = (text(child, "Parent Relationship") == Some("SubPlan"))
+            .then(|| text(child, "Subplan Name"))
+            .flatten()
+            .filter(|name| !hashed.contains(*name));
+        walk(child, hashed, runs_per_row.or(per_row), found);
+    }
 }
 
-/// Whether `plan` reads rows: a node that is a source of them (`TableScan`, `IndexScan`,
-/// `RecordIdScan`, `DynamicScan`, `SourceExpr`: any `…Scan`), or a subquery in an expression,
-/// which EXPLAIN shows as `(Operator)` outside its quoted values (`RETURN '(Ready)'` reads none).
-/// A read inside an `IF`'s branches or a function's arguments it does not show (3.3.0:
-/// `IfElse [branches: 1]`, `array::len(...)`).
-pub fn reads_rows(plan: &str) -> bool {
-    plan.lines().any(|line| {
-        let operator = line.trim_start().split([' ', '[']).next().unwrap_or("");
-        operator.ends_with("Scan") || operator == "SourceExpr" || subplan(line).is_some()
-    })
+/// The watched tables `plan` reads whole, with no condition: listed, not failed.
+pub fn whole_reads(plan: &Value) -> Vec<String> {
+    fn walk(node: &Value, into: &mut Vec<String>) {
+        if let Some(table) = text(node, "Relation Name")
+            && WATCHED.contains(&table)
+            && text(node, "Node Type") == Some("Seq Scan")
+            && node.get("Filter").is_none()
+        {
+            into.push(table.to_owned());
+        }
+        children(node).for_each(|child| walk(child, into));
+    }
+    let mut found = Vec::new();
+    walk(plan, &mut found);
+    found.sort();
+    found.dedup();
+    found
 }
 
-/// Whether `plan` reads a watched table whole, with no predicate: listed, not failed.
-pub fn whole_read(plan: &str) -> Option<String> {
-    let mut scans = (plan.lines())
-        .filter(|line| line.trim_start().starts_with("TableScan") && !line.contains("predicate: "));
-    scans.find_map(|line| {
-        let table = line
-            .split_once("table: ")?
-            .1
-            .split([',', ']'])
-            .next()?
-            .trim();
-        WATCHED.contains(&table).then(|| table.to_string())
-    })
+/// The indexes `plan` reads, by name.
+pub fn indexes(plan: &Value) -> BTreeSet<String> {
+    fn walk(node: &Value, into: &mut BTreeSet<String>) {
+        if let Some(index) = text(node, "Index Name") {
+            into.insert(index.to_owned());
+        }
+        children(node).for_each(|child| walk(child, into));
+    }
+    let mut found = BTreeSet::new();
+    walk(plan, &mut found);
+    found
+}
+
+/// `plan` as an outline to read, a node a line, indented by its depth: its type, its table and its
+/// index, and its conditions.
+pub fn outline(plan: &Value) -> String {
+    fn walk(node: &Value, depth: usize, into: &mut String) {
+        let mut line = format!(
+            "{:indent$}{}",
+            "",
+            text(node, "Node Type").unwrap_or("?"),
+            indent = depth * 2
+        );
+        for (field, said) in [
+            ("Subplan Name", " "),
+            ("Index Name", " using "),
+            ("Relation Name", " on "),
+            ("Index Cond", "  Index Cond: "),
+            ("Recheck Cond", "  Recheck Cond: "),
+            ("Hash Cond", "  Hash Cond: "),
+            ("Join Filter", "  Join Filter: "),
+            ("Filter", "  Filter: "),
+        ] {
+            if let Some(value) = text(node, field) {
+                line.push_str(said);
+                line.push_str(value);
+            }
+        }
+        into.push_str(&line);
+        into.push('\n');
+        children(node).for_each(|child| walk(child, depth + 1, into));
+    }
+    let mut out = String::new();
+    walk(plan, 0, &mut out);
+    out
 }
 
 #[cfg(test)]
-mod reading {
+mod read {
     use super::*;
+    use serde_json::json;
 
-    /// None: what a plan with nothing wrong in it gives.
-    fn none() -> Vec<Finding> {
-        Vec::new()
+    /// A plan's node of `kind` on `table`, with `fields` beside.
+    fn node(kind: &str, table: &str, fields: Value) -> Value {
+        let mut node = json!({"Node Type": kind, "Relation Name": table, "Alias": table});
+        node.as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        node
     }
 
-    /// The plans the server gave on the board of 2026-11-07, before and after its indexes.
+    /// A scan of the whole message table to keep one recipient's messages is found; a read by
+    /// `message_recipient` is not; nor is a scan of a table no path guards.
     #[test]
-    fn a_filtered_scan_of_a_watched_table_and_a_subquery_in_a_predicate_are_findings() {
-        let per_row = "SelectProject [ctx: Db] [projections: *]
-    TableScan [ctx: Db] [table: session, direction: Forward, predicate: handle INSIDE (ProjectValue), pre_decode_filter: no (unsupported predicate)]";
+    fn a_scan_of_message_under_a_condition_is_found_and_an_index_scan_passes() {
+        let scan = node(
+            "Seq Scan",
+            "message",
+            json!({"Disabled": true, "Filter": "(recipient = 'perf-0007'::text)"}),
+        );
+        assert_eq!(findings(&scan), [Finding::FilteredScan("message".into())]);
+        let indexed = node(
+            "Index Scan",
+            "message",
+            json!({"Index Name": "message_recipient", "Index Cond": "(recipient = 'perf-0007'::text)",
+                "Filter": "(kind = 'msg'::text)"}),
+        );
+        assert_eq!(findings(&indexed), []);
+        let task = node(
+            "Seq Scan",
+            "task",
+            json!({"Filter": "(status = 'ready'::text)"}),
+        );
+        assert_eq!(findings(&task), []);
+    }
+
+    /// A walk of `message_sid` from the newest message down, keeping one sender's words, is found:
+    /// an index read from end to end under a condition reads every row; the same index read from
+    /// a key on is not.
+    #[test]
+    fn an_index_walked_from_end_to_end_under_a_condition_is_found() {
+        let walk = json!({"Node Type": "Limit", "Plans": [node(
+            "Index Scan",
+            "message",
+            json!({"Parent Relationship": "Outer", "Scan Direction": "Backward",
+                "Index Name": "message_sid", "Filter": "(sender = 'perf-rare-sender'::text)"}),
+        )]});
+        assert_eq!(findings(&walk), [Finding::FilteredScan("message".into())]);
+        let ranged = node(
+            "Index Only Scan",
+            "message",
+            json!({"Index Name": "message_sender", "Index Cond": "(sender = 'perf-rare-sender'::text)"}),
+        );
+        assert_eq!(findings(&ranged), []);
+    }
+
+    /// A subquery the server hashes is read once, and passes, whatever it reads; one it runs
+    /// again for each row and that reads a table by no index each time is found (a watched one's
+    /// scan under its condition with it); one that probes an index for each row passes; and one
+    /// run once, before the rest, passes too.
+    #[test]
+    fn a_hashed_subplan_passes_and_one_scanning_for_each_row_is_found() {
+        let session = |filter: &str, under: Value| {
+            node(
+                "Index Scan",
+                "session",
+                json!({"Index Name": "session_handle", "Index Cond": "(handle = 'perf-0001'::text)",
+                    "Filter": filter, "Plans": [under]}),
+            )
+        };
+        let subplan = |kind: &str, table: &str, fields: Value| {
+            let mut under = node(kind, table, fields);
+            under["Parent Relationship"] = json!("SubPlan");
+            under["Subplan Name"] = json!("SubPlan 1");
+            under
+        };
+        let tasks = subplan(
+            "Seq Scan",
+            "task",
+            json!({"Filter": "(status = 'review'::text)"}),
+        );
+        let hashed = session("(ANY (handle = (hashed SubPlan 1).col1))", tasks.clone());
+        assert_eq!(findings(&hashed), []);
+        let per_row = session("((SubPlan 1) > 0)", tasks);
         assert_eq!(
-            findings(per_row),
+            findings(&per_row),
+            [Finding::SubPlanPerRow {
+                subplan: "SubPlan 1".into(),
+                table: "task".into()
+            }]
+        );
+        let roles = subplan(
+            "Seq Scan",
+            "role",
+            json!({"Disabled": true, "Filter": "(role = s.kind)"}),
+        );
+        assert_eq!(
+            findings(&session("((SubPlan 1) > 0)", roles)),
             [
-                Finding::FilteredScan("session".into()),
-                Finding::SubqueryPerRow("ProjectValue".into())
+                Finding::FilteredScan("role".into()),
+                Finding::SubPlanPerRow {
+                    subplan: "SubPlan 1".into(),
+                    table: "role".into()
+                },
             ]
         );
-        let scanned = "ProjectValue [ctx: Db] [expr: [<string>  message, NULL]]
-    TableScan [ctx: Db] [table: delivery, direction: Forward, predicate: handle = 'x' AND message > 49000, pre_decode_filter: yes]";
-        assert_eq!(
-            findings(scanned),
-            [Finding::FilteredScan("delivery".into())]
+        let probe = subplan(
+            "Index Scan",
+            "role",
+            json!({"Index Name": "role_handle", "Index Cond": "(handle = s.handle)"}),
         );
-        let indexed = "ProjectValue [ctx: Db] [expr: [<string>  message, NULL]]
-    IndexScan [ctx: Db] [index: delivery_handle, access: ['x'] MoreThan 49000, direction: Forward]";
-        assert_eq!(findings(indexed), none());
-        let filtered = "SelectProject [ctx: Db] [projections: key]
-    Filter [ctx: Db] [predicate: delivered != true AND attempts < 3]
-        IndexScan [ctx: Db] [index: callback_event_handle, access: ['x'], direction: Forward]";
-        assert_eq!(findings(filtered), none());
-        let whole = "SelectProject [ctx: Db] [projections: *, OMIT id]
-    SortByKey [ctx: Db] [sort_keys: connected ASC, handle ASC]
-        TableScan [ctx: Db] [table: session, direction: Forward]";
-        assert_eq!(findings(whole), none());
-        assert_eq!(whole_read(whole).as_deref(), Some("session"));
-        let unwatched = "SelectProject [ctx: Db] [projections: *]
-    TableScan [ctx: Db] [table: task, direction: Forward, predicate: status INSIDE ['ready'], pre_decode_filter: yes]";
-        assert_eq!(findings(unwatched), none());
-    }
-
-    /// The plan a server gave a lower-case `select * from session where kind = 'reviewer'`
-    /// (2026-11-07): the keyword's case changes nothing in it.
-    #[test]
-    fn a_lower_case_select_of_session_under_a_condition_is_a_filtered_scan() {
-        let lower = "SelectProject [ctx: Db] [projections: *]
-    TableScan [ctx: Db] [table: session, direction: Forward, predicate: kind = 'reviewer', pre_decode_filter: yes]";
-        assert_eq!(findings(lower), [Finding::FilteredScan("session".into())]);
-    }
-
-    /// `to_owner` as a clone of the live board planned it with `message_recipient`, and with that
-    /// index removed: the server walked all of `message_sid` for the order alone.
-    #[test]
-    fn a_whole_index_read_under_a_filter_is_a_finding_and_a_ranged_one_is_not() {
-        let ranged = "SelectProject [ctx: Db] [projections: *, OMIT id]
-    IndexScan [ctx: Db] [index: message_recipient, access: ['owner'], direction: Backward, limit: 40]";
-        assert_eq!(findings(ranged), none());
-        let dropped = "SelectProject [ctx: Db] [projections: *, OMIT id]
-    Limit [ctx: Db] [limit: 40]
-        Filter [ctx: Db] [predicate: recipient = 'owner']
-            IndexScan [ctx: Db] [index: message_sid, access: , direction: Backward]";
-        assert_eq!(findings(dropped), [Finding::FilteredScan("message".into())]);
-        let bounded = "SelectProject [ctx: Db] [projections: handle]
-    Filter [ctx: Db] [predicate: type::record('session', handle).left_at = NONE]
-        IndexScan [ctx: Db] [index: callback_state_address, access: >NONE, direction: Forward]";
-        assert_eq!(findings(bounded), none());
-    }
-
-    /// The plans a server gave statements of each kind (3.3.0, 2026-11-07): a read of rows under a
-    /// `LET`, of one record, from a variable or in an expression, against a value, a branch and a
-    /// function's arguments it does not unfold, and a transaction's word.
-    #[test]
-    fn a_plan_reads_rows_through_a_source_of_them_or_a_subquery() {
-        let reads = [
-            "Let [ctx: Db] [name: $x]
-    SelectProject [ctx: Db] [projections: *]
-        TableScan [ctx: Db] [table: session, direction: Forward, predicate: kind = 'reviewer', pre_decode_filter: yes]",
-            "UnwrapExactlyOne [ctx: Db]
-    ProjectValue [ctx: Db] [expr: last]
-        RecordIdScan [ctx: Db] [record_id: counter:board]",
-            "SelectProject [ctx: Db] [projections: *]
-    SourceExpr [ctx: Db] [expr: $said]",
-            "Return [ctx: Db]
-    Expr [ctx: Db] [expr: {a: (SelectProject), b: (ProjectValue)}]",
-        ];
-        for plan in reads {
-            assert!(reads_rows(plan), "{plan}");
-        }
-        let none = [
-            "Return [ctx: Rt]
-    Expr [ctx: Rt] [expr: 1]",
-            "IfElse [ctx: Db] [branches: 1, has_else: true]",
-            "Return [ctx: Db]
-    Expr [ctx: Db] [expr: array::len(...)]",
-            "Expr [ctx: Db] [expr: `BEGIN`]",
-            "Return [ctx: Rt]
-    Expr [ctx: Rt] [expr: '(Ready)']",
-            "Return [ctx: Rt]
-    Expr [ctx: Rt] [expr: { note: 'status (Ready)' }]",
-        ];
-        for plan in none {
-            assert!(!reads_rows(plan), "{plan}");
-        }
-    }
-
-    /// A value's text in a predicate is no subquery, whatever it holds; a subquery beside one is.
-    #[test]
-    fn a_value_quoted_in_a_predicate_is_no_subquery() {
-        let quoted = "SelectProject [ctx: Db] [projections: *]
-    TableScan [ctx: Db] [table: task, direction: Forward, predicate: title = '(Ready)' OR body = \"it's (Done)\", pre_decode_filter: yes]";
-        assert_eq!(findings(quoted), none());
-        let beside = "SelectProject [ctx: Db] [projections: *]
-    TableScan [ctx: Db] [table: task, direction: Forward, predicate: title = '(Ready)' OR slug INSIDE (ProjectValue), pre_decode_filter: no (unsupported predicate)]";
+        assert_eq!(findings(&session("((SubPlan 1) > 0)", probe)), []);
+        let once = node(
+            "Index Scan",
+            "task",
+            json!({"Index Name": "task_slug", "Index Cond": "(slug = (InitPlan 1).col1)",
+                "Plans": [node("Seq Scan", "counter", json!({"Parent Relationship": "InitPlan",
+                "Subplan Name": "InitPlan 1"}))]}),
+        );
+        assert_eq!(findings(&once), []);
         assert_eq!(
-            findings(beside),
-            [Finding::SubqueryPerRow("ProjectValue".into())]
+            hashed_names("(ANY (handle = (hashed SubPlan 12).col1)) OR (hashed SubPlan 3)"),
+            ["SubPlan 12", "SubPlan 3"]
+        );
+    }
+
+    /// The subplans a condition `text` hashes.
+    fn hashed_names(text: &str) -> Vec<String> {
+        hashed(&json!({"Filter": text})).into_iter().collect()
+    }
+
+    /// A scan with no condition is a whole read, listed and not found.
+    #[test]
+    fn a_whole_read_is_listed_not_found() {
+        let whole = json!({"Node Type": "Sort", "Plans": [node("Seq Scan", "session",
+            json!({"Parent Relationship": "Outer", "Disabled": true}))]});
+        assert_eq!(findings(&whole), []);
+        assert_eq!(whole_reads(&whole), ["session"]);
+        assert_eq!(indexes(&whole), BTreeSet::new());
+        assert_eq!(outline(&whole), "Sort\n  Seq Scan on session\n");
+    }
+
+    /// A plan's notice is read; one cut short, or with no plan after its first line, is kept as
+    /// it came, and a notice of anything else is passed over.
+    #[test]
+    fn the_notices_plans_are_read_and_one_that_is_not_whole_is_kept() {
+        let whole = "duration: 0.383 ms  plan:
+{
+  \"Query Text\": \"SELECT count(*) FROM session WHERE kind = 'x';\",
+  \"Plan\": {
+    \"Node Type\": \"Aggregate\",
+    \"Plans\": [
+      {
+        \"Node Type\": \"Seq Scan\",
+        \"Parent Relationship\": \"Outer\",
+        \"Relation Name\": \"session\",
+        \"Filter\": \"(kind = 'x'::text)\"
+      }
+    ]
+  }
+}";
+        let cut = "duration: 0.032 ms  plan:
+{
+  \"Query Text\": \"SELECT 1\",
+  \"Plan\": {";
+        let notices = [
+            whole,
+            "relation \"said\" already exists, skipping",
+            cut,
+            "duration: 1.000 ms  plan:",
+        ]
+        .map(String::from);
+        let logged = plans_of(&notices);
+        assert_eq!(logged.plans.len(), 1, "{logged:#?}");
+        assert_eq!(
+            logged.plans[0].query,
+            "SELECT count(*) FROM session WHERE kind = 'x';"
+        );
+        assert_eq!(
+            findings(&logged.plans[0].plan),
+            [Finding::FilteredScan("session".into())]
+        );
+        assert_eq!(
+            logged.unread,
+            [cut, "duration: 1.000 ms  plan:"],
+            "{logged:#?}"
         );
     }
 }

@@ -327,14 +327,20 @@ fn descendant_answers_keep_sender_sequence_ancestry_and_role_handoff_fences() {
     }
 }
 
-/// A launch record no reader decodes, on the open task the post waits on: the unanswered scan
+/// A launch record no reader decodes, on the open task the post waits on: its start a NaN, which
+/// the database holds and reads out as text, where a reader takes a number. The unanswered scan
 /// reads that task's launch records and fails, while the board and the digest's other reads answer.
-const UNREADABLE_LAUNCH: &str = "DEFINE FIELD OVERWRITE started ON task_session TYPE any;
-UPSERT task_session:['sim/a', 'nobody'] CONTENT { slug: 'sim/a', handle: 'nobody',
-    role: 'executor', claude_session: '', worktree: '', branch: '', pane: '', model: '',
-    started: 'unreadable', closed: 1.0, closed_why: '', restore: '' } RETURN NONE;";
-const READABLE_LAUNCHES: &str = "DELETE task_session:['sim/a', 'nobody'] RETURN NONE;
-DEFINE FIELD OVERWRITE started ON task_session TYPE float;";
+const UNREADABLE_LAUNCH: &str = "INSERT INTO task_session (id, slug, handle, role, \
+    claude_session, worktree, branch, pane, model, started, closed, closed_why, restore) VALUES \
+    ('[\"sim/a\", \"nobody\"]', 'sim/a', 'nobody', 'executor', '', '', '', '', '', 'NaN', 1.0, \
+    '', '')";
+const READABLE_LAUNCHES: &str = "DELETE FROM task_session WHERE id = '[\"sim/a\", \"nobody\"]'";
+
+/// `sql` sent as it is on `f`'s board.
+fn write(f: &crate::common::Fixture, sql: &str) {
+    let symphony_board::Database::PostgreSql(client) = f.other_database();
+    client.simple(sql).unwrap();
+}
 
 /// The scan reads the launches of the open tasks it asks about alone: one no reader decodes, on a
 /// finished task, is never read, and the post stays in the digest.
@@ -347,12 +353,7 @@ fn a_launch_on_a_task_the_scan_does_not_ask_about_is_never_read() {
         .say("sim/a", "owner", "continue", Some("@executor"))
         .unwrap();
     c.f.advance(31.0 * 60.0);
-    use crate::common::RawWrite as _;
-    let write = |sql: &str| {
-        (c.f.store.client())
-            .write(sql, serde_json::json!({}))
-            .unwrap();
-    };
+    let write = |sql: &str| write(&c.f, sql);
     write(&UNREADABLE_LAUNCH.replace("sim/a", "sim/b"));
     assert!(c.f.store.all_task_sessions().is_err());
     assert_eq!(slugs(&c.digest(), "unanswered"), ["sim/a"]);
@@ -387,12 +388,7 @@ fn a_failed_scan_leaves_every_other_list_and_the_post_returns_with_the_scan() {
         whole.lines()
     );
 
-    use crate::common::RawWrite as _;
-    let write = |sql: &str| {
-        (c.f.store.client())
-            .write(sql, serde_json::json!({}))
-            .unwrap();
-    };
+    let write = |sql: &str| write(&c.f, sql);
     write(UNREADABLE_LAUNCH);
     assert!(c.f.store.all_task_sessions().is_err());
     let skipped = c.digest();

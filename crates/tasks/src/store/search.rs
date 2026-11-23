@@ -1,7 +1,7 @@
 //! The board searches by words alone. Word matches and ranking stay in the database, including
-//! message-only matches: SurrealDB's full-text indexes, and on PostgreSQL their twin, the same
-//! analyzer's terms and the same BM25 ([`super::postgres::search`]). The exact slug branch retains
-//! identifiers containing punctuation even when the analyzer splits them into words.
+//! message-only matches: the analyzer's terms, which the schema's triggers keep, and BM25 over
+//! them ([`super::postgres::search`]). The exact slug branch retains identifiers containing
+//! punctuation even when the analyzer splits them into words.
 //!
 //! The search by meaning the board had is deleted
 //! (docs/engineering/analysis/code-review-2026-11.md#board-search-by-meaning). Its tables (`task_chunk` with
@@ -67,8 +67,8 @@ fn validate_query(query: &str) -> Result<bool, Error> {
         }
         previous = class;
     }
-    // The full-text analyzer has no terms for punctuation alone; SurrealDB treats that
-    // empty term set as matching every row. It must remain an empty search result.
+    // The full-text analyzer has no terms for punctuation alone, and every row holds every
+    // term of an empty set. It must remain an empty search result.
     Ok(query.chars().any(char::is_alphanumeric))
 }
 

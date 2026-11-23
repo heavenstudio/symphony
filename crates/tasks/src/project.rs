@@ -152,8 +152,7 @@ pub fn held(root: &Path, machine: Option<&Path>, repository: &Path) -> Result<Pr
 
 /// Whether the common dir `common` is a repository's still: it holds `HEAD`, which git keeps there
 /// at every moment. A `.git` removed and made again by a board's start under way, which makes only
-/// the board's own folders in it (SurrealDB makes every missing folder of its store's path), holds
-/// none.
+/// the board's own folders in it, holds none.
 pub fn is_repository(common: &Path) -> bool {
     common.join("HEAD").is_file()
 }

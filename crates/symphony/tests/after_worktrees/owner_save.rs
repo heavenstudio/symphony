@@ -12,8 +12,6 @@
 mod board;
 
 use serde_json::{Value, json};
-use std::io::{BufRead, BufReader, Read};
-use std::net::TcpStream;
 use std::time::Duration;
 use symphony_board::sys::Command;
 
@@ -21,29 +19,6 @@ const CHILD: &str = "SYMPHONY_OWNER_SAVE_PROBE";
 const CASE: &str = "owner_save::reports_each_private_database_failure_phase";
 /// How long a save may stay uncertain before the wait for it is a stall: the backstop of 30 s.
 const LIMIT: Duration = test_time::backstop(Duration::from_secs(30));
-
-fn packet(stream: &mut BufReader<TcpStream>) -> std::io::Result<Option<(String, Vec<u8>)>> {
-    let mut headers = String::new();
-    let mut size = 0;
-    loop {
-        let mut line = String::new();
-        if stream.read_line(&mut line)? == 0 {
-            return Ok(None);
-        }
-        headers.push_str(&line);
-        if let Some((key, value)) = line.split_once(':')
-            && key.eq_ignore_ascii_case("content-length")
-        {
-            size = value.trim().parse().unwrap();
-        }
-        if line == "\r\n" {
-            break;
-        }
-    }
-    let mut bytes = vec![0; size];
-    stream.read_exact(&mut bytes)?;
-    Ok(Some((headers, bytes)))
-}
 
 #[path = "owner_save/proxy.rs"]
 mod proxy;
@@ -286,20 +261,19 @@ fn phase(phase: &'static str) {
     let tree = super::Tree::new();
     tree.write("docs/PROBE.md", "# Probe\n");
     let root = scratch(&tree.root, phase);
-    let client = board::client();
+    let client = board::postgresql();
     let store = symphony_board::Store::open(symphony_board::rpc::Client::new(
-        client.addr(),
+        &client.addr(),
         "sf",
         client.database(),
     ))
     .unwrap();
     // The phases whose write is made uncertain go through the proxy that holds it.
     let holding =
-        matches!(phase, "create" | "reply").then(|| Holding::start(client.addr().into(), phase));
-    let server = holding.as_ref().map_or_else(
-        || client.addr().to_string(),
-        |held| held.address.to_string(),
-    );
+        matches!(phase, "create" | "reply").then(|| Holding::start(&client.addr(), phase));
+    let server = holding
+        .as_ref()
+        .map_or_else(|| client.addr(), |held| held.address.clone());
     let mut command = child_command(phase);
     let done = symphony_board::sys::output(
         command
@@ -407,7 +381,13 @@ fn reports_each_private_database_failure_phase() {
 
 #[test]
 fn owner_task_receipts_commit_once_and_validation_writes_nothing() {
-    let store = symphony_board::Store::open(board::client()).unwrap();
+    let db = board::postgresql();
+    let store = symphony_board::Store::open(symphony_board::rpc::Client::new(
+        &db.addr(),
+        "sf",
+        db.database(),
+    ))
+    .unwrap();
     let mut new = symphony_board::NewTask {
         slug: "inbox/atomic-receipt".into(),
         title: "Atomic receipt".into(),

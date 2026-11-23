@@ -374,7 +374,7 @@ fn copied_tables(dump: &Dump) -> Vec<(&'static str, Vec<Value>)> {
         row
     };
     // A workflow's records go in before the tasks: the task fence finds each managed task's
-    // transition among them as the task is written (`crate::schema`'s `workflow_position`).
+    // transition among them as the task is written (the trigger `task_workflow`).
     // A dump with none lists no table for them, so its copy says what it said before
     // workflows; the copy empties the board's records either way. What the board accepted
     // from an approval authority is never copied: a copy or a restore may be older than the

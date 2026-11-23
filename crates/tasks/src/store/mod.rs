@@ -254,7 +254,7 @@ pub struct Store {
     /// machine runs and when the pipeline alarm raises and clears; set, or the project file's as
     /// it is now.
     limits: crate::limits::Held,
-    /// The schema version this store writes, which every write's [`schema::GUARD`] checks.
+    /// The schema version this store writes, which every write's [`postgres::GUARD`] checks.
     schema: i64,
     /// How many additive steps on that contract it has ([`schema::ADDED`]): a whole-board copy's
     /// and a rebind's guard holds the board to exactly these.
@@ -713,8 +713,8 @@ impl Store {
     /// project file changed meanwhile never splits one decision.
     ///
     /// A task with no workflow position that the change moves out of done or cancelled while a
-    /// custom workflow is active is refused by the database (`workflow_position`), and the rule is
-    /// then written again placing it at its mapped pair in the same write
+    /// custom workflow is active is refused by the database (the trigger `task_workflow`), and the
+    /// rule is then written again placing it at its mapped pair in the same write
     /// ([`crate::workflow::activate::Placing::reopened`]): a board with no workflow writes as it
     /// always did, in one write.
     fn ruling(

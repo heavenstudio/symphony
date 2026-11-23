@@ -25,7 +25,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use symphony_api::ProjectList;
 use symphony_board::rpc::Client;
-use symphony_board::server::Home;
+use symphony_board::server::{Home, Postgres};
 use symphony_board::{NewSession, NewTask, Store};
 use symphony_desktop::Server;
 use symphony_desktop::follow::{Follow, Kind, Notice};
@@ -46,10 +46,11 @@ const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(30));
 /// How long one read of the list waits at each step.
 const READ_WAIT: Duration = Duration::from_secs(5);
 
-/// A board of the test's own: its SurrealDB server kept in a scratch folder by the board's own
-/// keeper ([`Home`]), which ends it with this process however that ends, and the store on it.
+/// A board of the test's own: its PostgreSQL, the machine's own programs as the workspace finds
+/// them, kept in a scratch folder by the board's own keeper ([`Home`]), which ends it with this
+/// process however that ends, and the store on it.
 struct Board {
-    home: Home,
+    postgres: Postgres,
     address: String,
     store: Store,
 }
@@ -58,12 +59,16 @@ impl Board {
     fn start(tree: &Tree) -> Board {
         let folder = tree.path("board");
         std::fs::create_dir_all(&folder).unwrap();
-        let home = Home::new(&folder, &surreal());
-        let running = home
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let programs = symphony_board::server::postgres::discover_programs(&workspace)
+            .unwrap_or_else(|why| panic!("no PostgreSQL for the board: {why}"));
+        let postgres = Home::new(&folder).supervised(true).postgresql(&programs);
+        let serving = postgres
             .ensure()
             .unwrap_or_else(|why| panic!("the board's server did not start: {why}"));
+        let address = format!("postgresql:{}", serving.socket.display());
         let store = Store::with(
-            Client::new(&running.addr, "sf", DATABASE),
+            Client::new(&address, "sf", DATABASE),
             Box::new(|| {
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -75,8 +80,8 @@ impl Board {
         )
         .unwrap();
         Board {
-            home,
-            address: running.addr,
+            postgres,
+            address,
             store,
         }
     }
@@ -93,23 +98,8 @@ impl Board {
 
 impl Drop for Board {
     fn drop(&mut self) {
-        let _ = self.home.stop_board();
+        let _ = self.postgres.stop();
     }
-}
-
-/// The pinned SurrealDB: `SYMPHONY_SURREAL`, else the one `tools/surreal.sh` finds or fetches.
-fn surreal() -> PathBuf {
-    if let Some(named) = symphony_env::SURREAL.os() {
-        return named.into();
-    }
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/surreal.sh");
-    let found = Command::new("bash").arg(script).output().unwrap();
-    assert!(
-        found.status.success(),
-        "tools/surreal.sh found no SurrealDB: {}",
-        String::from_utf8_lossy(&found.stderr)
-    );
-    PathBuf::from(String::from_utf8(found.stdout).unwrap().trim())
 }
 
 /// The machine's one server, started on a scratch machine folder over the project `desk`.

@@ -64,10 +64,7 @@ fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged() {
     // Run in a private repository so the real machine probe sees only this test's slot.
     const CHILD: &str = "SYMPHONY_STALE_CHILD_FIXTURE";
     if std::env::var_os(CHILD).is_none() {
-        let dir = std::env::temp_dir().join(format!(
-            "symphony-stale-child-{}-{backend:?}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("symphony-stale-child-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let _directory = CommandDirectory(dir.clone());
         assert!(
@@ -81,7 +78,7 @@ fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged() {
         let output = sys::output(Command::of(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                &format!("quiet_callbacks::a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged::{}", if backend == Backend::PostgreSql { "postgresql" } else { "surrealdb" }),
+                "quiet_callbacks::a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged",
                 "--nocapture",
             ])
             .current_dir(&dir)

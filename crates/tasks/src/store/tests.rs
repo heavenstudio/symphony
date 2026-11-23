@@ -50,41 +50,8 @@ fn a_name_is_quoted_as_python_quotes_it() {
     assert_eq!(repr("sim/jump — ✓"), "'sim/jump — ✓'");
 }
 
-/// Each snapshot a page or a list reads is a read, so a late answer to it goes once more: its
-/// bounds are variables, so no `;` stands in it but between its statements.
-#[test]
-fn every_snapshot_read_is_a_read_and_binds_its_bounds() {
-    let slugs = ["p/a".to_string()];
-    for which in [
-        Which::All,
-        Which::SlotHoldings,
-        Which::Status("ready"),
-        Which::Slug("p/a"),
-        Which::Starting("p/a"),
-        Which::Slugs(&slugs),
-        Which::Children("p/a"),
-        Which::Linked("docs/x.md"),
-        Which::Pullable("someone"),
-    ] {
-        for sessions in [Sessions::Whole, Sessions::Shown] {
-            let (read, vars) = (reading(&which, sessions), super::reading::vars(&which));
-            assert_eq!(
-                crate::rpc::Kind::of(&read),
-                crate::rpc::Kind::Read,
-                "{read}"
-            );
-            assert_eq!(
-                (vars["codex"].as_str(), vars["codex_after"].as_str()),
-                (Some("codex:"), Some("codex;")),
-                "{vars}"
-            );
-        }
-    }
-}
-
-/// A read's variables are the store's own, the same for each database: what it picks its tasks
-/// by, the cap's only where it reads an orchestrator's slots, and always the executing statuses
-/// and the presence bounds.
+/// A read's variables are the store's own: what it picks its tasks by, the cap's only where it
+/// reads an orchestrator's slots, and always the executing statuses and the presence bounds.
 #[test]
 fn a_reads_variables_are_what_it_picks_by_and_the_caps_only_where_slots_are_read() {
     let slugs = ["p/a".to_string(), "p/b".to_string()];
@@ -137,41 +104,6 @@ fn a_reads_variables_are_what_it_picks_by_and_the_caps_only_where_slots_are_read
                 assert_eq!(vars[name.as_str()], cap_vars[name.as_str()], "{name}");
             }
         }
-    }
-}
-
-/// The session table is read whole only where every session is asked for: a read of the sessions
-/// its answer shows names each by its id, the holders of the roles it read and, for `next`, the
-/// session asking.
-#[test]
-fn a_read_of_the_sessions_shown_reads_them_by_id_and_never_the_table() {
-    const TABLE: &str = "FROM session ORDER BY";
-    const BY_ID: &str =
-        "FROM $shown_sessions.map(|$h| type::record('session', $h)) ORDER BY connected, handle";
-    let slugs = ["p/a".to_string()];
-    for which in [
-        Which::All,
-        Which::Status("ready"),
-        Which::Slug("p/a"),
-        Which::Slugs(&slugs),
-        Which::Children("p/a"),
-        Which::Linked("docs/x.md"),
-        Which::Pullable("someone"),
-    ] {
-        let whole = reading(&which, Sessions::Whole);
-        assert!(whole.contains(TABLE) && !whole.contains(BY_ID), "{whole}");
-        let shown = reading(&which, Sessions::Shown);
-        assert!(!shown.contains(TABLE) && shown.contains(BY_ID), "{shown}");
-        let asker = "array::concat($view_roles.handle, [$handle])";
-        assert_eq!(
-            shown.contains(asker),
-            matches!(which, Which::Pullable(_)),
-            "{shown}"
-        );
-        assert!(
-            shown.contains("LET $shown_sessions = array::distinct("),
-            "{shown}"
-        );
     }
 }
 
@@ -347,11 +279,12 @@ fn retrying_keeps_callback_capture_and_result_drop_order_through_success_refusal
             self.1.lock().unwrap().push(self.0);
         }
     }
-    let store = Store::unchecked(
-        crate::rpc::Client::new("127.0.0.1:1", "sf", "unused"),
+    let store = Store::unchecked_on(
+        crate::pg::Client::new(std::path::Path::new("/nonexistent"), "unused").into(),
         Box::new(|| 0.0),
         Box::new(|_| false),
         "fixture-host",
+        &Opening::write(),
     );
     for case in ["success", "refusal", "panic"] {
         let events = Arc::new(Mutex::new(Vec::new()));

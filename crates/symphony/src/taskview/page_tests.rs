@@ -3,7 +3,9 @@
 
 use std::fmt::Write as _;
 use std::io::{Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::net::Shutdown;
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -14,34 +16,42 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 )]
 pub(crate) mod store_fixture;
 
-#[path = "../../../tasks/tests/store/relay.rs"]
-mod relay;
-
-#[path = "slow_tests.rs"]
-mod slow;
-
-use store_fixture::{Fixture, Seed, task as row};
+use store_fixture::{Fixture, NOW, Seed, task as row};
 use symphony_board::rows::TaskRow;
+use symphony_board::server::postgres::SOCKET_FILE;
 
 use super::{BRIEF_LIMIT, brief, page};
+use crate::taskview::read_failure;
 use crate::test_tree::Tree;
 
-/// A loopback relay in front of the board's server, counting the bytes the server sends back: what
-/// a read cost, whatever the rows it read hold.
+/// A relay in front of the board's PostgreSQL, on a socket of its own in a folder of its own,
+/// counting the bytes the server sends back: what a read cost, whatever the rows it read hold.
+/// The folder is a short one under `/tmp`, as a socket's path has a length limit, and goes with the
+/// relay.
 struct Relay {
-    addr: String,
+    folder: PathBuf,
     received: Arc<AtomicUsize>,
 }
 
 impl Relay {
+    /// A relay to the PostgreSQL whose socket is in `server`, its address `postgresql:` and
+    /// [`Relay::folder`].
     fn to(server: &str) -> Relay {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap().to_string();
+        static RELAYS: AtomicUsize = AtomicUsize::new(0);
+        let server = PathBuf::from(server.strip_prefix("postgresql:").unwrap()).join(SOCKET_FILE);
+        let folder = PathBuf::from(format!(
+            "/tmp/symphony-relay-{}-{}",
+            std::process::id(),
+            RELAYS.fetch_add(1, Ordering::SeqCst)
+        ));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir(&folder).unwrap();
+        let listener = UnixListener::bind(folder.join(SOCKET_FILE)).unwrap();
         let received = Arc::new(AtomicUsize::new(0));
-        let (server, counted) = (server.to_owned(), Arc::clone(&received));
+        let counted = Arc::clone(&received);
         std::thread::spawn(move || {
             for caller in listener.incoming().map_while(Result::ok) {
-                let upstream = TcpStream::connect(&server).unwrap();
+                let upstream = UnixStream::connect(&server).unwrap();
                 let (mut asked, mut forwarded) =
                     (caller.try_clone().unwrap(), upstream.try_clone().unwrap());
                 std::thread::spawn(move || {
@@ -63,11 +73,22 @@ impl Relay {
                 });
             }
         });
-        Relay { addr, received }
+        Relay { folder, received }
+    }
+
+    /// The relay's address, as a board's is named.
+    fn addr(&self) -> String {
+        format!("postgresql:{}", self.folder.display())
     }
 
     fn received(&self) -> usize {
         self.received.load(Ordering::SeqCst)
+    }
+}
+
+impl Drop for Relay {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.folder);
     }
 }
 
@@ -113,11 +134,11 @@ fn a_long_briefs_page_sends_its_start_reads_only_its_rows_and_reaches_the_rest_o
                 Some("fixture/short"),
             )),
     );
-    let relay = Relay::to(f.store.client().addr());
+    let relay = Relay::to(&f.store.database().addr());
     let store = symphony_board::Store::open(symphony_board::rpc::Client::new(
-        &relay.addr,
+        &relay.addr(),
         "sf",
-        f.store.client().database(),
+        f.store.database().database(),
     ))
     .unwrap();
     let tree = Tree::new();
@@ -375,5 +396,31 @@ fn a_bold_paragraph_longer_than_the_page_is_cut_between_its_lines() {
         shown,
         (0..lines).collect::<Vec<_>>(),
         "every line once, in order"
+    );
+}
+
+/// A board nothing serves cannot be reached, 503, and the page says where it was looked for.
+#[test]
+fn a_page_whose_board_nothing_serves_says_the_board_cannot_be_reached() {
+    const UNREACHABLE: &str = "the task board cannot be reached: ";
+    let tree = Tree::new();
+    let nowhere = tree.path("no-board");
+    std::fs::create_dir_all(&nowhere).unwrap();
+    let refused = symphony_board::Store::unchecked_on(
+        symphony_board::pg::Client::new(&nowhere, "gone").into(),
+        Box::new(|| NOW),
+        Box::new(|_| true),
+        "this-host",
+        &symphony_board::Opening::read(),
+    );
+    let failed = refused.get("fixture/parent").unwrap_err();
+    let (status, said) = read_failure(&failed.to_string(), UNREACHABLE);
+    assert_eq!(status, 503, "{said}");
+    assert!(
+        said.starts_with(&format!(
+            "{UNREACHABLE}the board's database: the board's PostgreSQL is not answering on {}: ",
+            nowhere.join(SOCKET_FILE).display()
+        )),
+        "{said}"
     );
 }

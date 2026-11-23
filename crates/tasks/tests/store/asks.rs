@@ -1,11 +1,11 @@
 //! The owner's asks: one open ask for each thing the owner waits on, a later line about it joining it
 //! while it is open; who holds it and who held it before; the first answer closing it; a close by
-//! hand; the listing; and a board of schema 16 gaining the table with its rows kept.
+//! hand; and the listing.
 
-use crate::common::{Fixture, NOW, RawWrite, Seed, refused};
+use crate::common::{Fixture, NOW, Seed, refused};
 use serde_json::json;
 use symphony_board::rows::HeldRow;
-use symphony_board::{Ask, NewAsk, Schema};
+use symphony_board::{Ask, NewAsk};
 
 /// The owner's verdict with a note on the card `owner-asks` in docs/DECISIONS.md, on the main
 /// checkout.
@@ -507,35 +507,6 @@ fn an_ask_moves_the_boards_marker() {
     assert!(opened > before, "{before} -> {opened}");
     f.store.answer_ask(ask.id, None, "x").unwrap();
     assert!(marker() > opened);
-}
-
-// SurrealDB alone: reconstructs SurrealDB schema 16, before the ask table existed.
-#[test]
-fn a_board_of_schema_16_gains_the_ask_table_with_every_row_kept() {
-    let f = board(Backend::SurrealDb);
-    f.task("sim/run");
-    let original = f.store.dump().unwrap();
-    f.store
-        .client()
-        .write(
-            "BEGIN TRANSACTION; REMOVE TABLE ask; DELETE counter:ask; UPDATE meta:schema SET version = 16; COMMIT TRANSACTION;",
-            json!({}),
-        )
-        .unwrap();
-    let tables = |store: &symphony_board::Store| -> Vec<String> {
-        let found = store
-            .client()
-            .query("RETURN object::keys((INFO FOR DB).tables);", json!({}))
-            .unwrap();
-        serde_json::from_value(found.last().cloned().unwrap()).unwrap()
-    };
-    assert!(!tables(&f.store).contains(&"ask".to_string()));
-    let upgraded = f.other();
-    assert!(tables(&upgraded).contains(&"ask".to_string()));
-    let version = (upgraded.raw().row("meta", "schema").field("version")).unwrap();
-    assert_eq!(version, json!(Schema::this_build().version()));
-    assert_eq!(upgraded.dump().unwrap(), original);
-    assert_eq!(upgraded.open_ask(&verdict("why?")).unwrap().id, 1);
 }
 
 /// The chat event `key` as the board holds it: its words and whether it was delivered.

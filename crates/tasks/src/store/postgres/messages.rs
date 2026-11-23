@@ -27,7 +27,7 @@ pub(in crate::store) fn threads() -> Pg<'static> {
 
 /// The task's ask moves with a line just put on its thread (`sid_`, `ts_`): the owner's, when it
 /// asks, opens it or joins the open one; a line of a session holding a role on the task, or of the
-/// session the owner's last line named, answers it (`super::super::surreal::asks::ON_THREAD`).
+/// session the owner's last line named, answers it.
 const ON_THREAD: &str = "DECLARE
     task_ask_ bigint;
     holds_ boolean;

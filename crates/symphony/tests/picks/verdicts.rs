@@ -13,12 +13,12 @@ use symphony::verdicts::{self, Board, TURNED, VerdictError, epoch};
 use super::board;
 use super::common::{Tree, older_board, tasks_binary};
 
-/// The variables that reach a board of its own: a database of its own on the tests' SurrealDB server,
-/// its clock at `board::NOW`.
+/// The variables that reach a board of its own: a database of its own on the tests' PostgreSQL
+/// server, its clock at `board::NOW`.
 fn board_env() -> Vec<(String, String)> {
-    let db = board::client();
+    let db = board::postgresql();
     vec![
-        ("TASKS_SERVER".into(), db.addr().to_string()),
+        ("TASKS_SERVER".into(), db.addr()),
         ("TASKS_DATABASE".into(), db.database().to_string()),
         ("TASKS_NOW".into(), board::NOW.to_string()),
     ]
@@ -1021,7 +1021,7 @@ mod real {
         // Made by this build, whose opening records its schema; then its store goes back one.
         let version = symphony_board::schema::VERSION;
         fixture_store(&env);
-        symphony_board::Raw::on(&live_client(&env))
+        symphony_board::Raw::of(&live_database(&env))
             .row("meta", "schema")
             .set(serde_json::json!({"version": version - 1}))
             .unwrap();
@@ -1058,17 +1058,24 @@ mod real {
         );
     }
 
-    /// The fixture repository's own board, `b`'s main checkout's: the server on its common dir's
-    /// data, which is how an address is known for the live board's
-    /// (`symphony_board::live::served`), and the variables that reach it.
+    /// The fixture repository's own board, `b`'s main checkout's: its PostgreSQL on its common
+    /// dir's data, the machine's programs as the workspace finds them, which is how an address is
+    /// known for the live board's (`symphony_board::live::served`), and the variables that reach
+    /// it.
     fn live_board(b: &Branched) -> (Serving, [(String, String); 2]) {
-        let server = Serving(symphony_board::server::Home::in_common(
-            &b.tree.root.join(".git"),
-            Some(&board::surreal()),
-        ));
-        let addr = server.0.ensure().unwrap().addr;
+        let programs =
+            symphony_board::server::postgres::discover_programs(&board::project_root()).unwrap();
+        let server = Serving(
+            symphony_board::server::Home::in_common(&b.tree.root.join(".git"))
+                .supervised(true)
+                .postgresql(&programs),
+        );
+        let socket = server.0.ensure().unwrap().socket;
         let env = [
-            ("TASKS_SERVER".to_string(), addr),
+            (
+                "TASKS_SERVER".to_string(),
+                format!("postgresql:{}", socket.display()),
+            ),
             ("TASKS_DATABASE".to_string(), "tasks".to_string()),
         ];
         (server, env)
@@ -1079,11 +1086,16 @@ mod real {
         rpc::Client::new(&env[0].1, "sf", "tasks")
     }
 
+    /// The database of the board `env` reaches, as [`live_client`] names it.
+    fn live_database(env: &[(String, String)]) -> symphony_board::Database {
+        symphony_board::Database::named(&live_client(env)).unwrap()
+    }
+
     /// What a refused run must leave on the board `env` reaches as it was: its schema, and how
     /// many sessions and asks it holds.
     fn held(env: &[(String, String)]) -> Vec<serde_json::Value> {
-        let client = live_client(env);
-        let board = symphony_board::Raw::on(&client);
+        let db = live_database(env);
+        let board = symphony_board::Raw::of(&db);
         vec![
             board.row("meta", "schema").field("version").unwrap(),
             serde_json::json!(board.table("session").count().unwrap()),
@@ -1091,12 +1103,12 @@ mod real {
         ]
     }
 
-    /// A board server this test started, stopped when the test ends, however it ends.
-    struct Serving(symphony_board::server::Home);
+    /// A board's PostgreSQL this test started, stopped when the test ends, however it ends.
+    struct Serving(symphony_board::server::Postgres);
 
     impl Drop for Serving {
         fn drop(&mut self) {
-            let _ = self.0.stop_board();
+            let _ = self.0.stop();
         }
     }
 }
@@ -1131,7 +1143,11 @@ mod contract {
     #[test]
     fn a_board_it_cannot_reach_or_a_binary_that_cannot_run_is_a_refusal_naming_it() {
         let tree = Tree::new();
-        let gone = [("TASKS_SERVER".to_string(), "127.0.0.1:1".to_string())];
+        // A PostgreSQL socket folder no server listens in.
+        let gone = [(
+            "TASKS_SERVER".to_string(),
+            format!("postgresql:{}", tree.path("no-board").display()),
+        )];
         let why = board(&tree, &gone).app_session().unwrap_err();
         assert!(why.is_unreachable(), "{why}");
         let missing = tree.path("no-such-binary");

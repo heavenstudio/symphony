@@ -761,13 +761,9 @@ fn cached_board_inputs_age_without_a_board_read_and_refresh_after_mutation() {
         "Changed by another writer"
     );
     let marker = f.store.marker().unwrap();
-    match f.store.database() {
-        symphony_board::Database::SurrealDb(client) => assert!(client.query("BEGIN TRANSACTION; UPDATE task SET title = 'Uncommitted'; THROW 'rollback'; COMMIT TRANSACTION;", json!({})).is_err()),
-        symphony_board::Database::PostgreSql(client) => {
-            assert!(client.simple("BEGIN; UPDATE task SET title = 'Uncommitted'; DO $test$ BEGIN RAISE EXCEPTION 'rollback'; END $test$; COMMIT;").is_err());
-            client.simple("ROLLBACK").unwrap();
-        }
-    }
+    let symphony_board::Database::PostgreSql(client) = f.store.database();
+    assert!(client.simple("BEGIN; UPDATE task SET title = 'Uncommitted'; DO $test$ BEGIN RAISE EXCEPTION 'rollback'; END $test$; COMMIT;").is_err());
+    client.simple("ROLLBACK").unwrap();
     assert_eq!(
         f.store.marker().unwrap(),
         marker,
@@ -959,7 +955,6 @@ fn a_second_dispatcher_cannot_take_a_live_small_recipient_lease() {
     listener.receive("serialized-direct-message");
 }
 
-// SurrealDB alone: installs a SurrealDB event to audit callback-state writes during retry.
 #[test]
 fn a_failed_chat_waits_without_writes_and_retries_at_its_deadline() {
     let f = Fixture::empty();
@@ -974,23 +969,12 @@ fn a_failed_chat_waits_without_writes_and_retries_at_its_deadline() {
         )
         .unwrap();
     drop(listener);
-    f.store.client().query("DEFINE TABLE callback_audit SCHEMALESS; DEFINE EVENT state_writes ON callback_state WHEN true THEN { UPSERT callback_audit:writes SET count = (count ?? 0) + 1; };", json!({})).unwrap();
+    let state_writes = f.writes_to("callback_state");
     f.store
         .owner_callback("deadline", "retry this owner message")
         .unwrap();
-    let state_writes = || {
-        f.store
-            .raw()
-            .row("callback_audit", "writes")
-            .field("count")
-            .unwrap()
-    };
     let writes = state_writes();
-    assert_eq!(
-        writes,
-        json!(1),
-        "the first failure marks the callback blocked"
-    );
+    assert_eq!(writes, 1, "the first failure marks the callback blocked");
     let rows = || {
         let rows = |table: &str| f.store.raw().table(table).get().unwrap();
         json!({

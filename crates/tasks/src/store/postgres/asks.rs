@@ -1,4 +1,4 @@
-//! The owner's asks on PostgreSQL, paired with `store/surreal/asks`.
+//! The statements of `store/asks.rs` on PostgreSQL: the owner's asks.
 
 use super::{Pg, row};
 

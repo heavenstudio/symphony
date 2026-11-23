@@ -6,10 +6,10 @@
 //!
 //! A row of an open table ([`crate::schema::OPEN`]) is read past a field its struct does not know:
 //! an additive step's, which a build without the step reads around and whose writes keep it. Each
-//! row refuses one read exactly, as a dump is read ([`crate::objects::read_exact`]), since a copy,
-//! an export or a move to another engine made of it would drop it; every other read hands the row
-//! only the fields it names ([`open_row`], [`crate::objects::read`]), as a task's record does
-//! ([`crate::store`]'s `Beside`).
+//! row refuses one read exactly, as a dump is read ([`crate::objects::read_exact`]), since a copy
+//! or an export made of it would drop it; every other read hands the row only the fields it names
+//! ([`open_row`], [`crate::objects::read`]), as a task's record does ([`crate::store`]'s
+//! `Beside`).
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -366,7 +366,7 @@ pub struct UsageRow {
     pub last: f64,
 }
 
-/// A custom delivery workflow's record (`crate::schema`'s `workflow`, from schema 24): the parts
+/// A custom delivery workflow's record (the table `workflow`, from schema 24): the parts
 /// of its id, its kind, what it records and when it was written. Its key is its id because a
 /// record names what it is of (`['event', slug, revision]`), and the task fence finds a task's
 /// transition by it.

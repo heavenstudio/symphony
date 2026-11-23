@@ -200,11 +200,6 @@ fn the_guard_takes_a_writes_own_variables_and_adds_its_own() {
     assert_eq!(none["board_schema"], 11);
     assert_eq!(none["board_schema_ahead"], true);
     assert_eq!(none["board_additions_least"], 0);
-    assert!(GUARD.contains("$board_schema_found != $board_schema"));
-    assert!(GUARD.contains("$board_schema_ahead = true"));
-    assert!(GUARD.contains("type::is_int($board_schema_from)"));
-    // The steps are judged on a board of the store's own contract alone.
-    assert!(GUARD.contains("IF $board_schema_found = $board_schema AND ($board_additions_found"));
     // A copy's: exactly its own.
     let exactly = Steps::exactly(3, "this board", 11);
     assert_eq!((exactly.least, exactly.most), (3, 3));

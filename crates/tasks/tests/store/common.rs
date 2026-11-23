@@ -65,6 +65,10 @@ pub fn project_root() -> PathBuf {
 /// `command` started with its stdin a [`symphony_board::sys::pipe`], kept as `child.stdin`, and its other
 /// streams as `command` sets them: what the child reads ends once the test drops that input, never
 /// later because a child another test spawned took a copy of it.
+#[allow(
+    dead_code,
+    reason = "the test binaries that start children of their own call it; the store's start none"
+)]
 pub fn spawn_with_input(command: &mut Command) -> std::io::Result<Child> {
     let (input, stdin) = symphony_board::sys::pipe()?;
     let mut child = command.stdin(input).spawn()?;
@@ -190,8 +194,8 @@ impl Fixture {
             .unwrap();
     }
 
-    /// Every row of each of the board's tables, as [`Store::raw`] reads them past every rule, on
-    /// either database: what a write refused leaves as it was.
+    /// Every row of each of the board's tables, as [`Store::raw`] reads them past every rule:
+    /// what a write refused leaves as it was.
     #[allow(
         dead_code,
         reason = "each test binary including this file reads the board as its tests need"
@@ -355,6 +359,42 @@ impl Fixture {
     )]
     pub fn other_database(&self) -> Database {
         self.db.another()
+    }
+
+    /// A PostgreSQL client of its own on this board's database: for a test's statement of its
+    /// own, past the store, where no command and no [`Store::raw`] row does what it needs.
+    #[allow(
+        dead_code,
+        reason = "each test binary including this file runs on the databases its tests name"
+    )]
+    pub fn postgresql(&self) -> pg::Client {
+        let Database::PostgreSql(client) = self.db.another();
+        client
+    }
+
+    /// Counts each row of `table` written from now on (made, changed or removed) by a trigger of
+    /// the test's own: how many so far.
+    #[allow(
+        dead_code,
+        reason = "each test binary including this file reads the board as its tests need"
+    )]
+    pub fn writes_to(&self, table: &str) -> impl Fn() -> i64 + use<> {
+        let client = self.postgresql();
+        client
+            .simple(&format!(
+                "CREATE TABLE fixture_writes_{table} (n bigint NOT NULL); \
+                 INSERT INTO fixture_writes_{table} VALUES (0); \
+                 CREATE FUNCTION fixture_count_{table}() RETURNS trigger LANGUAGE plpgsql AS $$ \
+                 BEGIN UPDATE fixture_writes_{table} SET n = n + 1; RETURN NULL; END $$; \
+                 CREATE TRIGGER fixture_count AFTER INSERT OR UPDATE OR DELETE ON {table} \
+                 FOR EACH ROW EXECUTE FUNCTION fixture_count_{table}();"
+            ))
+            .unwrap();
+        let count = format!("SELECT n::text FROM fixture_writes_{table}");
+        move || {
+            let answer = client.request(&[pg::Step::bare(&count)]).unwrap();
+            answer[0].value().unwrap().parse().unwrap()
+        }
     }
 
     pub fn advance(&self, seconds: f64) {

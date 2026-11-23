@@ -1,9 +1,9 @@
-//! The copy of a whole board: a dump in JSON, which `Store::copy` puts on either database in one
+//! The copy of a whole board: a dump in JSON, which `Store::copy` puts on the board in one
 //! transaction (`tasks-copy`, into the database the board is in), and `Store::dump` reads it back in
 //! the same shape, each table in the order of its key.
 
 use crate::children::Child as _;
-use crate::common::{Fixture, NOW, Seed, client, database, server_addr, session, task};
+use crate::common::{Fixture, NOW, Seed, database, session, task};
 use serde_json::json;
 use symphony_board::rows::{
     AskRow, BarredKeyRow, DeliveryKeyRow, DeliveryRow, Dump, HeldRow, LinkRow, MessageRow, RoleRow,
@@ -261,8 +261,8 @@ fn copied(args: &[&str], env: &cli::Env, input: &[u8]) -> (i32, String, String) 
     )
 }
 
-/// The board `db` holds, read by a store of the test's own.
-fn held(db: &Database) -> Dump {
+/// A store of the test's own on the board `db` holds.
+fn store_of(db: &Database) -> Store {
     Store::opening_on(
         db.another(),
         Box::new(|| NOW),
@@ -271,23 +271,41 @@ fn held(db: &Database) -> Dump {
         &Opening::write(),
     )
     .unwrap()
-    .dump()
-    .unwrap()
 }
 
-/// How the copy names where it copied: SurrealDB's namespace and database, PostgreSQL's database.
+/// The board `db` holds, read by a store of the test's own.
+fn held(db: &Database) -> Dump {
+    store_of(db).dump().unwrap()
+}
+
+/// How the copy names where it copied: the database, and its server's socket.
 fn place(db: &Database) -> String {
-    if db.is_postgresql() {
-        format!("{} at {}", db.database(), db.addr())
-    } else {
-        format!("sf/{} at {}", db.database(), db.addr())
-    }
+    format!("{} at {}", db.database(), db.addr())
 }
 
 #[test]
 fn a_copy_reads_back_as_it_was_written() {
     let f = Fixture::new(Seed { dump: everything() });
     assert_eq!(f.store.dump().unwrap(), everything());
+}
+
+/// A plugin's field whose value nests nulls, in an object and in a list, is copied as it was.
+#[test]
+fn a_copy_keeps_the_nulls_nested_in_a_plugins_field() {
+    let mut dump = everything();
+    dump.tasks[0].fields = [(
+        "fixture".into(),
+        [(
+            "settings".into(),
+            serde_json::json!({"empty": null, "items": [null, {"value": null}]}),
+        )]
+        .into_iter()
+        .collect(),
+    )]
+    .into_iter()
+    .collect();
+    let f = Fixture::new(Seed { dump: dump.clone() });
+    assert_eq!(f.store.dump().unwrap(), dump);
 }
 
 #[test]
@@ -351,39 +369,31 @@ fn a_null_inside_a_tasks_fields_is_copied_and_read_back() {
 }
 
 #[test]
-fn a_board_with_nothing_staged_removes_no_staging() {
-    let f = Fixture::new(Seed { dump: everything() });
-    f.store.remove_staging().unwrap();
-    assert_eq!(f.store.dump().unwrap(), everything());
-}
-
-#[test]
 fn the_copy_command_reads_a_dump_and_says_what_it_copied() {
-    let db = client();
+    let db = database();
     let dump = serde_json::to_vec(&everything()).unwrap();
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let args = [server_addr(), db.database().to_string()];
+    let args = [db.addr(), db.database().to_string()];
     let code = copy_main(&args, &no_env(), &mut dump.as_slice(), &mut out, &mut err);
     assert_eq!((code, String::from_utf8(err).unwrap()), (0, String::new()));
     assert_eq!(
         String::from_utf8(out).unwrap(),
         format!(
-            "tasks-copy: 2 tasks, 2 links, 2 sessions, 2 roles, 2 messages, 1 deliveries, 1 barred keys, 1 task sessions, 1 delivery keys, 2 asks, 2 usage rows into sf/{} at {}\n",
-            db.database(),
-            server_addr()
+            "tasks-copy: 2 tasks, 2 links, 2 sessions, 2 roles, 2 messages, 1 deliveries, 1 barred keys, 1 task sessions, 1 delivery keys, 2 asks, 2 usage rows into {}\n",
+            place(&db)
         )
     );
-    assert_eq!(Store::open(db).unwrap().dump().unwrap(), everything());
+    assert_eq!(held(&db), everything());
 }
 
 #[test]
 fn the_copy_command_takes_a_board_written_before_the_added_columns() {
-    let db = client();
+    let db = database();
     let old = br#"{"tasks": [{"id": 1, "slug": "a", "title": "A", "body": "", "status": "ready", "priority": 2,
         "parent": null, "created_by": "owner", "created": 1.0, "updated": 1.0}],
         "sessions": [{"handle": "h", "kind": "worker", "parent": null, "worktree": "", "branch": "", "model": "",
         "pid": null, "host": "", "affinity": "", "connected": 1.0, "last_seen": 1.0, "left_at": null}]}"#;
-    let args = [server_addr(), db.database().to_string()];
+    let args = [db.addr(), db.database().to_string()];
     let code = copy_main(
         &args,
         &no_env(),
@@ -392,7 +402,7 @@ fn the_copy_command_takes_a_board_written_before_the_added_columns() {
         &mut Vec::new(),
     );
     assert_eq!(code, 0);
-    let store = Store::open(db).unwrap();
+    let store = store_of(&db);
     assert!(!store.get("a").unwrap().instruction);
     assert_eq!(store.session("h").unwrap().row.busy_until, None);
 }
@@ -413,21 +423,22 @@ fn the_copy_command_refuses_in_one_line() {
             "❌ tasks-copy: usage: tasks-copy ADDR [DATABASE] < dump.json, or tasks-copy --board [--out]\n"
         )
     );
-    let (code, said) = refusal(&[server_addr(), client().database().into()], b"{\xff}");
+    let db = database();
+    let (code, said) = refusal(&[db.addr(), db.database().into()], b"{\xff}");
     assert_eq!(code, 2);
     assert!(
         said.starts_with("❌ tasks-copy: cannot read the dump: "),
         "{said}"
     );
     assert_eq!(said.lines().count(), 1);
-    let (code, said) = refusal(&[server_addr(), client().database().into()], b"not json");
+    let (code, said) = refusal(&[db.addr(), database().database().into()], b"not json");
     assert_eq!(code, 2);
     assert!(
         said.starts_with("❌ tasks-copy: the dump is not a board's JSON: "),
         "{said}"
     );
     assert_eq!(said.lines().count(), 1);
-    let (code, said) = refusal(&[server_addr(), "t-x".into()], b"{}");
+    let (code, said) = refusal(&[db.addr(), "t-x".into()], b"{}");
     assert_eq!(
         (code, said.as_str()),
         (
@@ -435,10 +446,11 @@ fn the_copy_command_refuses_in_one_line() {
             "❌ tasks-copy: \"t-x\" is not a plain name for a database\n"
         )
     );
+    // A SurrealDB server's address is refused before anything is reached.
     let (code, said) = refusal(&["127.0.0.1:1".into()], b"{}");
     assert_eq!(code, 2);
     assert!(
-        said.starts_with("❌ tasks-copy: the board's database: "),
+        said.starts_with("❌ tasks-copy: 127.0.0.1:1 names a SurrealDB server, "),
         "{said}"
     );
     assert_eq!(said.lines().count(), 1);
@@ -449,7 +461,8 @@ fn the_copy_command_refuses_in_one_line() {
 #[test]
 fn the_copy_command_refuses_a_column_or_a_table_it_does_not_know_by_name() {
     let f = Fixture::new(Seed { dump: everything() });
-    let args = [server_addr(), f.other_client().database().to_string()];
+    let board = f.other_database();
+    let args = [board.addr(), board.database().to_string()];
     let refusal = |dump: &serde_json::Value| {
         let (mut out, mut err) = (Vec::new(), Vec::new());
         let input = serde_json::to_vec(dump).unwrap();
@@ -481,11 +494,10 @@ fn the_copy_command_refuses_a_column_or_a_table_it_does_not_know_by_name() {
 
 #[test]
 fn the_copy_binary_is_the_command() {
-    let db = client();
+    let db = database();
     // The copy reads the whole dump before it says anything, so the dump is written first.
     let mut child = sys::spawn_piped(
-        Command::of(env!("CARGO_BIN_EXE_tasks-copy"))
-            .args([server_addr(), db.database().to_string()]),
+        Command::of(env!("CARGO_BIN_EXE_tasks-copy")).args([db.addr(), db.database().to_string()]),
     )
     .unwrap();
     std::io::Write::write_all(
@@ -642,21 +654,13 @@ fn a_copy_leaves_each_senders_last_word_as_its_messages_one_by_one_would() {
     assert_eq!(said(&f, &["amber-heron"]), [word(50, "sim/b")]);
 }
 
-/// The PostgreSQL client of `f`'s board, for a statement of the test's own.
-fn postgresql_of(f: &Fixture) -> symphony_board::pg::Client {
-    match f.other_database() {
-        Database::PostgreSql(client) => client,
-        Database::SurrealDb(_) => panic!("this board is on SurrealDB"),
-    }
-}
-
 /// A copy the server ends (as its limit ends one, here by a trigger that raises the same
 /// condition at a table of the test's choosing) is rolled back whole and says in one line how
 /// far it was: at its first table, in the middle, and past its last.
 #[test]
-fn a_postgresql_copy_the_server_ends_says_the_rows_it_reached_and_leaves_the_board() {
-    let f = Fixture::new(Backend::PostgreSql, Seed { dump: many_words() });
-    let client = postgresql_of(&f);
+fn a_copy_the_server_ends_says_the_rows_it_reached_and_leaves_the_board() {
+    let f = Fixture::new(Seed { dump: many_words() });
+    let client = f.postgresql();
     client
         .simple(
             "CREATE FUNCTION fixture_ended() RETURNS trigger LANGUAGE plpgsql AS $$ \
@@ -729,115 +733,28 @@ fn a_big_board() -> Dump {
     seed.dump
 }
 
+/// The tables of `f`'s board, as the database's own catalogue names them.
 fn tables(f: &Fixture) -> Vec<String> {
-    let found = f
-        .store
-        .client()
-        .query("RETURN (INFO FOR DB).tables;", serde_json::json!({}))
+    let answer = (f.postgresql())
+        .request(&[symphony_board::pg::Step::bare(
+            "SELECT coalesce(jsonb_agg(tablename ORDER BY tablename), '[]')::text \
+             FROM pg_tables WHERE schemaname = current_schema()",
+        )])
         .unwrap();
-    let mut names: Vec<String> = found[0].as_object().unwrap().keys().cloned().collect();
-    names.sort();
-    names
+    serde_json::from_str(answer[0].value().unwrap()).unwrap()
 }
 
-const BOARD_TABLES: [&str; 33] = [
-    "artifact_ledger",
-    "ask",
-    "barred_key",
-    "callback_event",
-    "callback_lease",
-    "callback_state",
-    "chat_event",
-    "counter",
-    "delivery",
-    "delivery_key",
-    "execution_artifact",
-    "execution_attempt",
-    "execution_fact",
-    "execution_fence",
-    "link",
-    "message",
-    "meta",
-    "moved",
-    "recovery",
-    "role",
-    "said",
-    "session",
-    "session_revision",
-    "setting",
-    "task",
-    "task_chunk",
-    "task_embedding_checkpoint",
-    "task_embedding_source",
-    "task_session",
-    "unanswered_restore",
-    "usage",
-    "workflow",
-    "writer",
-];
-
+/// A board bigger than a request of a few MiB is still one request, leaving no table of its own
+/// behind, and a copy refused at its last row leaves the board as it was.
 #[test]
-fn copy_replaces_derived_vectors_only_when_the_board_swap_commits() {
+fn a_big_board_is_copied_in_one_request_and_refused_whole() {
     let f = Fixture::new(Seed { dump: everything() });
-    let raw = f.store.raw();
-    let derived = serde_json::json!({
-        "slug": "sim/jump", "source": "brief", "source_hash": "old", "model": "fake",
-    });
-    let mut chunk = derived.clone();
-    chunk["text_hash"] = "old".into();
-    chunk["text"] = "cached board text".into();
-    chunk["embedding"] = serde_json::json!(vec![1.0_f32; 384]);
-    raw.row("task_chunk", "one").create(chunk).unwrap();
-    let mut source = derived;
-    source["parts"] = 1.into();
-    raw.row("task_embedding_source", "one")
-        .create(source)
-        .unwrap();
-    (raw.row("task_embedding_checkpoint", "board"))
-        .create(serde_json::json!({"snapshot": {"model": "fake"}}))
-        .unwrap();
-    let counts = || -> Vec<serde_json::Value> {
-        [
-            "task_chunk",
-            "task_embedding_source",
-            "task_embedding_checkpoint",
-        ]
-        .map(|table| serde_json::json!(f.store.raw().table(table).count().unwrap()))
-        .to_vec()
-    };
-    assert_eq!(counts(), vec![serde_json::json!(1); 3]);
-    let mut bad = everything();
-    bad.messages[0].kind = "shout".into();
-    assert!(matches!(f.store.copy(&bad), Err(Error::Db(_))));
-    assert_eq!(f.store.dump().unwrap(), everything());
-    assert_eq!(counts(), vec![serde_json::json!(1); 3]);
-    f.store.copy(&Dump::default()).unwrap();
-    assert_eq!(f.store.dump().unwrap(), Dump::default());
-    assert_eq!(counts(), vec![serde_json::json!(0); 3]);
-}
-
-#[test]
-fn a_board_bigger_than_one_request_is_copied_whole() {
-    let f = Fixture::new(Seed {
-        dump: a_big_board(),
-    });
-    assert_eq!(f.store.dump().unwrap(), a_big_board());
-    assert_eq!(
-        tables(&f),
-        BOARD_TABLES,
-        "nothing of the copy is left behind"
-    );
-}
-
-/// On PostgreSQL a board bigger than SurrealDB's request is still one request, and a copy refused
-/// at its last row leaves the board as it was.
-#[test]
-fn on_postgresql_a_big_board_is_copied_in_one_request_and_refused_whole() {
-    let f = Fixture::new(Backend::PostgreSql, Seed { dump: everything() });
+    let held = tables(&f);
     let before = f.store.database().requests();
     f.store.copy(&a_big_board()).unwrap();
     assert_eq!(f.store.database().requests() - before, 1);
     assert_eq!(f.store.dump().unwrap(), a_big_board());
+    assert_eq!(tables(&f), held, "nothing of the copy is left behind");
     let mut bad = a_big_board();
     bad.messages.last_mut().unwrap().kind = "shout".into();
     bad.tasks[0].title = "Not this one".into();
@@ -845,42 +762,15 @@ fn on_postgresql_a_big_board_is_copied_in_one_request_and_refused_whole() {
     assert_eq!(f.store.dump().unwrap(), a_big_board());
 }
 
-/// What a copy that ended before its cleanup left staged, or one whose cleanup failed, is
-/// cleared by the next copy before it stages, whether that copy is kept or refused.
-#[test]
-fn a_copy_clears_the_staging_an_earlier_copy_left() {
-    let f = Fixture::new(Seed { dump: everything() });
-    let leave = || {
-        (f.store.client())
-            .query(
-                "DEFINE TABLE copy_00000000deadbeef_task SCHEMALESS; \
-                 DEFINE TABLE copy_00000000deadbeef_message SCHEMALESS; \
-                 INSERT INTO copy_00000000deadbeef_message [{ row: { text: 'left' } }];",
-                serde_json::json!({}),
-            )
-            .unwrap();
-        assert_eq!(tables(&f).len(), BOARD_TABLES.len() + 2);
-    };
-    leave();
-    f.store.copy(&many_words()).unwrap();
-    assert_eq!(tables(&f), BOARD_TABLES);
-    assert_eq!(f.store.dump().unwrap(), many_words());
-    leave();
-    let mut bad = everything();
-    bad.messages[0].kind = "shout".into();
-    assert!(matches!(f.store.copy(&bad), Err(Error::Db(_))));
-    assert_eq!(tables(&f), BOARD_TABLES);
-    assert_eq!(f.store.dump().unwrap(), many_words());
-}
-
 #[test]
 fn a_big_dump_refused_late_leaves_the_board_and_nothing_else() {
     let f = Fixture::new(Seed { dump: everything() });
+    let before = tables(&f);
     let mut bad = a_big_board();
     bad.messages.last_mut().unwrap().kind = "shout".into();
     assert!(matches!(f.store.copy(&bad), Err(Error::Db(_))));
     assert_eq!(f.store.dump().unwrap(), everything());
-    assert_eq!(tables(&f), BOARD_TABLES);
+    assert_eq!(tables(&f), before, "no table of the copy is left behind");
 }
 
 #[test]
@@ -912,7 +802,7 @@ fn board_out_writes_the_boards_dump_as_the_copy_reads_it_on_one_line() {
     );
 }
 
-/// The address form takes either server: SurrealDB's `HOST:PORT`, PostgreSQL's socket.
+/// The address form takes PostgreSQL's socket.
 #[test]
 fn the_copy_command_copies_into_the_database_at_an_address() {
     let db = database();
@@ -923,26 +813,26 @@ fn the_copy_command_copies_into_the_database_at_an_address() {
     assert_eq!(held(&db), everything());
 }
 
-/// One board read out of each database is one document, byte for byte: what was copied into
-/// SurrealDB, written out, copied into PostgreSQL from that and written out again.
+/// A board read out, copied into another board and read out again is one document, byte for
+/// byte.
 #[test]
-fn board_out_is_the_same_document_from_either_database() {
+fn board_out_copied_into_another_board_reads_out_as_the_same_document() {
     for board in [everything(), many_words(), a_big_board()] {
-        let surreal = Fixture::new(Backend::SurrealDb, Seed { dump: board });
-        let env = board_env(&surreal.other_database());
-        let (code, from_surreal, err) = copied(&["--board", "--out"], &env, b"");
+        let first = Fixture::new(Seed { dump: board });
+        let env = board_env(&first.other_database());
+        let (code, from_first, err) = copied(&["--board", "--out"], &env, b"");
         assert_eq!((code, err.as_str()), (0, ""));
-        let postgres = Backend::PostgreSql.database();
-        let env = board_env(&postgres);
-        let (code, _, err) = copied(&["--board"], &env, from_surreal.as_bytes());
+        let second = database();
+        let env = board_env(&second);
+        let (code, _, err) = copied(&["--board"], &env, from_first.as_bytes());
         assert_eq!((code, err.as_str()), (0, ""));
-        let (code, from_postgres, err) = copied(&["--board", "--out"], &env, b"");
+        let (code, from_second, err) = copied(&["--board", "--out"], &env, b"");
         assert_eq!((code, err.as_str()), (0, ""));
         assert!(
-            from_postgres == from_surreal,
+            from_second == from_first,
             "the two documents differ ({} and {} bytes)",
-            from_surreal.len(),
-            from_postgres.len()
+            from_first.len(),
+            from_second.len()
         );
     }
 }
@@ -1064,8 +954,8 @@ fn board_takes_no_address_and_out_needs_board() {
     let usage = "❌ tasks-copy: usage: tasks-copy ADDR [DATABASE] < dump.json, or tasks-copy --board [--out]\n";
     for args in [
         vec!["--out".to_string()],
-        vec!["--board".to_string(), server_addr()],
-        vec![server_addr(), "--board".to_string()],
+        vec!["--board".to_string(), database().addr()],
+        vec![database().addr(), "--board".to_string()],
         vec![
             "--board".to_string(),
             "--out".to_string(),

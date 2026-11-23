@@ -1,8 +1,9 @@
-//! Search finds and ranks alike on either database: the search tests' boards
-//! (`tests/cli/search.rs`), made on each through the store, answer each of their queries, and a
-//! few more, with the same tasks in the same order, each score the same to the bit, and the same
-//! text for each one's excerpt. A score is SurrealDB's BM25, and a write's words are searched
-//! from that write on, a changed text's old ones no longer.
+//! Search finds and ranks as it did when it was checked against SurrealDB's: the search tests'
+//! boards (`tests/cli/search.rs`), made through the store, answer each of their queries, and a few
+//! more, with the tasks, the order, each score to the bit and each one's excerpt pinned then
+//! (`search-answers.txt`), and the analyzer splits and folds the Latin blocks into the terms it did
+//! (`latin-terms.txt`). A score is SurrealDB's BM25, and a write's words are searched from that
+//! write on, a changed text's old ones no longer.
 
 use crate::common::{Fixture, Seed};
 use serde_json::json;
@@ -122,21 +123,25 @@ pub fn answered(store: &Store, query: &str) -> Answer {
     (hits, sources)
 }
 
+/// What the search tests' board answers each of [`queries`], one line a query: `[query, hits,
+/// excerpts]`, as [`answered`] reads them.
+const ANSWERS: &str = include_str!("search-answers.txt");
+
 #[test]
-fn each_search_tests_query_finds_and_ranks_alike_on_both_databases() {
-    let (surreal, postgres) = (
-        Fixture::empty(),
-        Fixture::new(Backend::PostgreSql, Seed::default()),
-    );
-    board(&surreal.store);
-    board(&postgres.store);
-    for query in queries() {
-        let there = answered(&surreal.store, &query);
-        assert_eq!(answered(&postgres.store, &query), there, "{query:?}");
+fn each_search_tests_query_finds_and_ranks_as_pinned() {
+    let f = Fixture::new(Seed::default());
+    board(&f.store);
+    let pinned: Vec<(String, Answer)> = (ANSWERS.lines())
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let asked: Vec<&String> = pinned.iter().map(|(query, _)| query).collect();
+    assert_eq!(asked, queries().iter().collect::<Vec<_>>());
+    for (query, answer) in &pinned {
+        assert_eq!(&answered(&f.store, query), answer, "{query:?}");
     }
-    // What SurrealDB answers, as the search tests read it.
+    // What it answers, as the search tests read it.
     let slugs = |query: &str| -> Vec<String> {
-        let hits = surreal.store.search(query).unwrap();
+        let hits = f.store.search(query).unwrap();
         hits.into_iter().map(|hit| hit.slug).collect()
     };
     // "A needle task" is three terms, "Needle..." four.
@@ -248,11 +253,8 @@ fn a_writes_words_are_searched_from_that_write_on() {
 /// Uncommon Latin letters still match their ASCII spelling. Decomposition must not leave ø
 /// behind in ǿ, or change the spelling of ŉ and the long s. Both query directions are checked.
 #[test]
-fn latin_letters_beyond_extended_a_find_and_rank_alike() {
-    let (surreal, postgres) = (
-        Fixture::empty(),
-        Fixture::new(Backend::PostgreSql, Seed::default()),
-    );
+fn latin_letters_beyond_extended_a_find_their_ascii_spelling() {
+    let f = Fixture::new(Seed::default());
     let cases = [
         ("ƒoo", "foo"),
         ("ƀar", "bar"),
@@ -270,60 +272,58 @@ fn latin_letters_beyond_extended_a_find_and_rank_alike() {
     ];
     for (n, (title, _)) in cases.iter().enumerate() {
         let slug = format!("latin/{n}");
-        create(&surreal.store, &slug, title, "");
-        create(&postgres.store, &slug, title, "");
+        create(&f.store, &slug, title, "");
     }
-    create(&surreal.store, "latin/apostrophe", "ŉame", "");
-    create(&postgres.store, "latin/apostrophe", "ŉame", "");
+    create(&f.store, "latin/apostrophe", "ŉame", "");
     for (n, (title, ascii)) in cases.iter().enumerate() {
         for query in [title, ascii] {
-            let expected = answered(&surreal.store, query);
+            let found = answered(&f.store, query);
             assert!(
-                expected
+                found
                     .0
                     .iter()
                     .any(|(slug, _)| *slug == format!("latin/{n}")),
                 "{query:?}"
             );
-            assert_eq!(answered(&postgres.store, query), expected, "{query:?}");
         }
     }
     // ascii folding follows tokenization: ŉame becomes one term "'name", while the ASCII
-    // query 'name is two terms. These do not match even on SurrealDB.
+    // query 'name is two terms. These do not match, as they did not on SurrealDB.
     for query in ["ŉame", "'name", "name"] {
-        let expected = answered(&surreal.store, query);
-        assert_eq!(expected.0.len(), usize::from(query == "ŉame"), "{query}");
-        assert_eq!(answered(&postgres.store, query), expected, "{query}");
+        let found = answered(&f.store, query);
+        assert_eq!(found.0.len(), usize::from(query == "ŉame"), "{query}");
     }
 }
 
-/// Compare the analyzer itself across the Latin blocks, including every letter in Extended-B,
-/// IPA, phonetic extensions, Extended Additional/C/D/E, the ligatures and fullwidth forms.
-/// These ranges are independent of the implementation's exception data.
+/// The terms the analyzer gives each letter of a Latin block, as `analyzed` reads them.
+fn analyzed(f: &Fixture, letters: &str) -> serde_json::Value {
+    use symphony_board::pg::Step;
+    let text = letters.chars().map(|c| format!("{c} ")).collect::<String>();
+    let param = json!({"text": text}).to_string();
+    let terms = "SELECT coalesce(jsonb_agg(term ORDER BY at), '[]') \
+                 FROM board_terms($1::jsonb ->> 'text')";
+    let here = f
+        .postgresql()
+        .request(&[Step::with(terms, &param)])
+        .unwrap();
+    serde_json::from_str(here[0].value().unwrap()).unwrap()
+}
+
+/// The analyzer itself across the Latin blocks, including every letter in Extended-B, IPA,
+/// phonetic extensions, Extended Additional/C/D/E, the ligatures and fullwidth forms, gives the
+/// terms SurrealDB's analyzer gave them, pinned a line a block (`latin-terms.txt`). These ranges
+/// are independent of the implementation's exception data.
 #[test]
-fn the_analyzer_agrees_over_latin_blocks() {
-    use symphony_board::{Database, pg::Step};
-    let (surreal, postgres) = (
-        Fixture::empty(),
-        Fixture::new(Backend::PostgreSql, Seed::default()),
-    );
-    let Database::PostgreSql(pg) = postgres.other_database() else {
-        unreachable!()
-    };
+fn the_analyzer_folds_the_latin_blocks_as_pinned() {
+    let f = Fixture::new(Seed::default());
     // Named Latin alphabetic characters in Unicode 14's blocks, not the implementation's
     // folding table; phonetic Greek/Cyrillic letters in the same blocks are outside this contract.
-    for letters in include_str!("latin-letters.txt").lines() {
-        let text = letters.chars().map(|c| format!("{c} ")).collect::<String>();
-        let there = surreal
-            .other_client()
-            .query(
-                "RETURN search::analyze('task_words', $text);",
-                json!({"text": text}),
-            )
-            .unwrap();
-        let param = json!({"text": text}).to_string();
-        let here = pg.request(&[Step::with("SELECT coalesce(jsonb_agg(term ORDER BY at), '[]') FROM board_terms($1::jsonb ->> 'text')", &param)]).unwrap();
-        let here: serde_json::Value = serde_json::from_str(here[0].value().unwrap()).unwrap();
-        assert_eq!(here, there[0], "Latin block {letters}");
+    let blocks: Vec<&str> = include_str!("latin-letters.txt").lines().collect();
+    let pinned: Vec<serde_json::Value> = (include_str!("latin-terms.txt").lines())
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(pinned.len(), blocks.len());
+    for (letters, terms) in blocks.into_iter().zip(pinned) {
+        assert_eq!(analyzed(&f, letters), terms, "Latin block {letters}");
     }
 }

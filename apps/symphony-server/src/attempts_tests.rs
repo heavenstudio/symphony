@@ -75,7 +75,7 @@ impl Served {
         );
         let fake = Arc::new(Fake::default());
         let mut hub = Hub::new(&root, &root.join("build/client"));
-        let board = f.other_client();
+        let board = f.other_database();
         hub.connect_reader = Box::new(move |_| Ok(store_on(&board)));
         hub.providers = Providers::of(vec![Provider::new(
             CONFIGURATION,

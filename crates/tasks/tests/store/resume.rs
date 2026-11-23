@@ -1,4 +1,4 @@
-//! Dependency completion resumes only explicit task blocks, on both stores and native delivery; a
+//! Dependency completion resumes only explicit task blocks, on the store and native delivery; a
 //! block a server judged over ([`symphony_board::Store::resume_judged`]) ends the same way, once, and
 //! a move in between wins.
 

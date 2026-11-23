@@ -1,4 +1,4 @@
-//! Execution attempts through the `Coordinator` a host runs, on each database, against a
+//! Execution attempts through the `Coordinator` a host runs, against a
 //! deterministic provider ([`fake`]): admission once per request key and lane, intent recorded
 //! before the provider hears of it, an ambiguous start reconciled by its key, a lease the
 //! database's clock times, answers fenced on it, cancels that race a start, bounded recovery,
@@ -979,10 +979,7 @@ fn viewless() -> Profile {
 
 #[test]
 fn pacing_profiles_and_admissions_are_checked_before_anything_is_written() {
-    let f = Fixture::new(
-        Backend::SurrealDb,
-        Seed::default().task(TASK, "ready").task("sim/done", "done"),
-    );
+    let f = Fixture::new(Seed::default().task(TASK, "ready").task("sim/done", "done"));
     let fake = Fake::default();
     let millis = std::time::Duration::from_millis;
     let paced = |change: &dyn Fn(&mut Pacing)| {

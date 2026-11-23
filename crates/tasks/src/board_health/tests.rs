@@ -473,29 +473,26 @@ fn an_age_reads_in_seconds_minutes_or_hours() {
 
 #[test]
 fn every_client_of_a_board_counts_its_requests_in_the_boards_one_log() {
-    let client = crate::store_fixture::client();
-    let other = Client::new(client.addr(), "sf", client.database());
-    let elsewhere = crate::store_fixture::client();
+    let client = crate::store_fixture::postgresql();
+    let other = client.another();
+    let elsewhere = crate::store_fixture::postgresql();
     assert!(Arc::ptr_eq(&client.queries(), &other.queries()));
     assert!(!Arc::ptr_eq(&client.queries(), &elsewhere.queries()));
 
+    // The database is made through the server's maintenance one, whose log is its own.
+    client.make_database().unwrap();
     let before = crate::sweep::trigger::now();
-    // Every test's database is defined in the shared server's one namespace, and SurrealDB
-    // answers a conflict to one of two defined there at once: the write is sent again, as the
-    // store's opening sends its own, and each time it was sent is a request the log counts.
-    let mut sent = 0u64;
-    let until = crate::store_fixture::conflicts_deadline();
-    crate::store_fixture::retry_conflicts(until, || {
-        sent += 1;
-        client.define_then("CREATE thing SET n = 1 RETURN NONE;", json!({}))
-    })
-    .unwrap();
-    other.query("SELECT * FROM thing;", json!({})).unwrap();
+    client
+        .simple("CREATE TABLE thing (n integer); INSERT INTO thing VALUES (1)")
+        .unwrap();
+    other
+        .request(&[crate::pg::Step::bare("SELECT n FROM thing")])
+        .unwrap();
     let (requests, writes) = client.queries().report(crate::sweep::trigger::now());
     assert_eq!(
         (requests.count, requests.failed, writes.count),
-        (sent + 1, 0, sent),
-        "one read, and the write each time it was sent"
+        (2, 0, 1),
+        "one read and one write"
     );
     let slowest = requests.slowest.unwrap();
     assert!(

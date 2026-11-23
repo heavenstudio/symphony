@@ -10,7 +10,7 @@ use crate::red::{FILER, SERIES, filed};
 use crate::store::statement::Statement;
 use serde_json::{Value, json};
 
-/// [`sql::FILED`]'s variables for `actor`.
+/// [`crate::store::postgres::work::FILED`]'s variables for `actor`.
 pub(super) fn filing(actor: &str) -> Value {
     json!({
         "filer": FILER,

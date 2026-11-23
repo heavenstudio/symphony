@@ -1510,7 +1510,7 @@ Each step ends in one of three:
   `release: refresh-ID the project's to finish`), the run's record (the step named in
   `refreshed.theirs`, its line in `refreshed.said`) and `--status`.
 - **Red**: the refresh's own work failed. The registry cannot be read; a board's database is not
-  running, could be replaced by the move, or its schema or writers cannot be read; a snapshot or a
+  running or is still SurrealDB's, or its schema or writers cannot be read; a snapshot or a
   migrate fails, or a board ends short of the release's schema. A refusal met once the run's time
   was up or it was told to stop is red, as the run's own.
 

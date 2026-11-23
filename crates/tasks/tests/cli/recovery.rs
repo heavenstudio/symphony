@@ -1,9 +1,9 @@
 //! `tasks recovery`: the board's recovery binding said, revoked and made again, on the board of a
-//! fixture repository of its own outside this one (no `TASKS_SERVER`), its server started by its
-//! first command that opens it and stopped when the case ends.
+//! fixture repository of its own outside this one (no `TASKS_SERVER`), its PostgreSQL started by
+//! its first command that opens it and stopped when the case ends.
 
-use crate::common::{NOW, surreal};
-use crate::{git, repository, run, scratch};
+use crate::common::NOW;
+use crate::{git, project_file, repository, run, scratch};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use symphony_board::cli::Env;
@@ -20,7 +20,7 @@ impl Alpha {
     pub(crate) fn new(name: &str) -> Alpha {
         let dir = scratch(name);
         let root = repository(&dir.join("alpha"));
-        std::fs::write(root.join("symphony.toml"), "[project]\nid = \"alpha\"\n").unwrap();
+        std::fs::write(root.join("symphony.toml"), project_file("alpha", "")).unwrap();
         let machine = dir.join("machine");
         std::fs::create_dir_all(&machine).unwrap();
         Alpha { root, machine }
@@ -28,7 +28,6 @@ impl Alpha {
 
     pub(crate) fn env(&self) -> Env {
         let vars: BTreeMap<String, String> = [
-            ("SYMPHONY_SURREAL", surreal().display().to_string()),
             ("SYMPHONY_MACHINE_DIR", self.machine.display().to_string()),
             ("TASKS_NOW", NOW.to_string()),
             ("TASKS_SWEEP", "off".to_string()),
@@ -43,7 +42,7 @@ impl Alpha {
     }
 
     fn home(&self) -> Home {
-        Home::in_common(&self.root.join(".git"), Some(&surreal()))
+        Home::in_common(&self.root.join(".git"))
     }
 
     pub(crate) fn run(&self, args: &[&str]) -> (i32, String, String) {
@@ -54,7 +53,7 @@ impl Alpha {
 
 impl Drop for Alpha {
     fn drop(&mut self) {
-        let _ = self.home().stop();
+        let _ = self.home().stop_board();
     }
 }
 
@@ -64,7 +63,7 @@ fn a_board_is_bound_revoked_and_bound_again_and_its_bound_writes_follow() {
     let (code, _, err) = alpha.run(&["recovery", "revoke"]);
     assert_eq!((code, err.as_str()), (0, ""));
     assert!(
-        alpha.home().recorded().is_none(),
+        alpha.home().board_server(&alpha.root, false).is_err(),
         "a revoke starts no database"
     );
 

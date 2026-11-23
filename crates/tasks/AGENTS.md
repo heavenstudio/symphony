@@ -122,21 +122,19 @@ a newer board, and a change keeps what it reads:
 - A new meaning goes in a field older binaries ignore and keep, beside the old one, which keeps
   its meaning (an orchestrator's `seen`, `statuses` and PULL entries), and an old column keeps
   its old reading (a launch record's `claude_session` holds Claude ids as before, and Codex ids
-  prefixed `codex:`). Callback addresses, chat ownership,
-  delivery state and bindings live in the schemaless callback tables, not on `session`.
+  prefixed `codex:`). Callback addresses, chat ownership, delivery state and bindings live in the
+  open callback tables, each row whole in its `doc`, not on `session`.
 - With an older dispatcher interleaving, no entry an orchestrator hears is lost and no line is
   said twice (`store/pull_account.rs`; `tests/store/mixed_dispatchers.rs`,
   `pull_acknowledgements.rs`, `pending_pull.rs`); a new kind of line that names a task takes its
   test of whom to tell from `store/queued_lines.rs`.
 - An in-process binding never registers a callback or takes over a handle with a native
   registration.
-- A counter an older reader caches is retired where it refuses it, never removed
-  (`schema::BOARD_MARKER`). A table nothing writes any more keeps its definition, as removing one
-  is a schema move (the search-by-meaning tables,
-  [their card](../../docs/engineering/analysis/code-review-2026-11.md#board-search-by-meaning)).
-- The `writer` table stays schemaless with no event, its line written without the schema guard,
-  and the Symphony, which opens its board to read, stays uncounted (`store/writers.rs`;
-  `tests/store/writers.rs`).
+- A counter an older reader caches is retired where it refuses it, never removed. A table nothing
+  writes any more keeps its definition, as removing one is a schema move.
+- The `writer` table stays open, each line whole in its `doc`, with no trigger, its line written
+  without the schema guard, and the Symphony, which opens its board to read, stays uncounted
+  (`store/writers.rs`; `tests/store/writers.rs`).
 - Each schema's definitions are committed
   (`tests/store/catalogue/postgresql-VERSION.txt` and `.STEPS.txt`, written with
   `TASKS_CATALOGUE=write`), and `tests/store/catalogue.rs` holds a step to what it may add. Which

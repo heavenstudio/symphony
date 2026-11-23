@@ -140,11 +140,11 @@ impl Store {
         }
     }
 
-    /// The variables a bound write's fence reads (`surreal::recovery::FENCED` and its twin), for
-    /// the task `slug` at `expected`: refused before anything is sent when the token is of
-    /// another shape, the store has no authority, or the authority binds the board to none or to
-    /// another generation than the token's. The fence then holds the board to that generation in
-    /// the write's transaction.
+    /// The variables a bound write's fence reads (`postgres::recovery::FENCED`), for the task
+    /// `slug` at `expected`: refused before anything is sent when the token is of another shape,
+    /// the store has no authority, or the authority binds the board to none or to another
+    /// generation than the token's. The fence then holds the board to that generation in the
+    /// write's transaction.
     pub(crate) fn bound_vars(&self, slug: &str, expected: &Bound) -> Result<Value, Error> {
         if expected.compat != COMPAT {
             return Err(refused(format!(

@@ -1,16 +1,15 @@
-//! What a read of tasks is handed in each database's language: its variables ([`vars`]), with the
-//! bounds of the Codex registrations' presence ([`native_bounds`]), and the health a native
-//! registration gives a session ([`native_health`]).
+//! What a read of tasks is handed: its variables ([`vars`]), with the bounds of the Codex
+//! registrations' presence ([`native_bounds`]), and the health a native registration gives a
+//! session ([`native_health`]).
 
 use super::{EXECUTING, PULLABLE, Which, cap};
 use crate::health::{self, Health};
 use crate::rows::SessionRow;
 use serde_json::{Value, json};
 
-/// The variables of a read of `which`, which each database's statements name alike
-/// (`surreal::reading::reading`, `postgres::reading::reading`): what it picks its tasks by, the
-/// cap's where it reads the slots an orchestrator holds, the statuses that execute and the
-/// presence bounds.
+/// The variables of a read of `which`, which its statements name (`postgres::reading::reading`):
+/// what it picks its tasks by, the cap's where it reads the slots an orchestrator holds, the
+/// statuses that execute and the presence bounds.
 pub(super) fn vars(which: &Which) -> Value {
     let mut vars = match which {
         Which::All | Which::SlotHoldings => json!({}),

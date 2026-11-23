@@ -189,19 +189,19 @@ fn the_worktree_running_the_sweep_keeps_itself() {
     assert!(out.contains("removed 0 of 2 worktrees"), "{out}");
 }
 
+/// The socket folder of a board no server answers: a connection to it is refused at once.
+const UNREACHED: &str = "/nonexistent/symphony-unreached";
+
 #[test]
 fn a_board_it_cannot_reach_removes_nothing() {
     let r = Repo::new();
     let wt = r.detached("unknowable");
     r.idle(&[]);
     let (code, out, err) = run(&r, &r.root, &["sweep"], |vars| {
-        vars.insert("TASKS_SERVER".into(), "127.0.0.1:1".into());
+        vars.insert("TASKS_SERVER".into(), format!("postgresql:{UNREACHED}"));
     });
     assert_eq!(code, 2, "{out}");
-    assert!(
-        err.starts_with("✖ ") && err.contains("127.0.0.1:1"),
-        "{err}"
-    );
+    assert!(err.starts_with("✖ ") && err.contains(UNREACHED), "{err}");
     r.assert_kept(&wt, &out);
 }
 

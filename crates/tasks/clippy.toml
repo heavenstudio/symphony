@@ -21,7 +21,7 @@ allow-print-in-tests = true
 
 # Names `doc_markdown` would otherwise want in backticks: the products and formats the docs name as
 # words. `..` keeps clippy's own list (JavaScript, GitHub, macOS and the rest).
-doc-valid-idents = ["SurrealDB", "SurrealKV", "SQLite", "GDScript", "CBOR", ".."]
+doc-valid-idents = ["SurrealDB", "SQLite", "GDScript", "CBOR", ".."]
 
 # No code waits a length of time and then looks or acts (RULES.md `code/no-timed-waits`): it waits
 # for the thing itself (a message, a signal, a child's end, a watcher's event) and acts at once. A

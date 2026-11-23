@@ -3,7 +3,7 @@
 use super::Pg;
 
 /// Every channel of a session that has not left, with its session and whether its agent's
-/// binding is an in-process one (`super::super::surreal::callbacks::REGISTRATIONS`).
+/// binding is an in-process one.
 pub(in crate::store) fn registrations() -> Pg<'static> {
     Pg::read(format!(
         "coalesce((SELECT jsonb_agg(jsonb_strip_nulls(jsonb_build_object(

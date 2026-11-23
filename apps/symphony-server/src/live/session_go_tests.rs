@@ -240,7 +240,7 @@ impl Served {
         .unwrap();
         let f = Fixture::new(seed);
         let mut hub = Hub::new(&root, &root.join("build/client"));
-        let board = f.other_client();
+        let board = f.other_database();
         hub.connect_reader = Box::new(move |_| Ok(store_on(&board)));
         if let Some(kept) = kept {
             let handed = kept.clone();

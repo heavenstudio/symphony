@@ -38,7 +38,7 @@ use symphony_api::Front;
 use symphony_board::server::Home;
 
 use super::board::{self, Reds};
-use super::refresh::{Against, End, Ended, SERVER_LOG, UNSET, surreal_for};
+use super::refresh::{Against, End, Ended, SERVER_LOG, UNSET};
 
 /// What a refresh found once it settled the boards, `current` and the server.
 pub(crate) struct Look<'a> {
@@ -161,7 +161,7 @@ fn read<'a>(look: &'a Look<'a>) -> Vec<Seen<'a>> {
         if !common.join(symphony_board::server::FOLDER).is_dir() {
             continue;
         }
-        let home = Home::in_common(&common, Some(&surreal_for(&common, look.against.surreal)));
+        let home = Home::in_common(&common);
         let end = (look.ends.iter())
             .find(|ended| ended.id == entry.id)
             .map(|ended| &ended.end);
@@ -608,7 +608,7 @@ fn board_of(look: &Look<'_>, boards: &dyn Boards, task: &Task) -> Option<Box<dyn
         .iter()
         .find(|e| e.id == task.project)?;
     let common = symphony_board::git::checkout_common_dir(&entry.root)?;
-    let home = Home::in_common(&common, Some(&surreal_for(&common, look.against.surreal)));
+    let home = Home::in_common(&common);
     let live = home.schema(symphony_board::DATABASE).ok().flatten()?;
     let tasks = writer(look.against.machine, live)?;
     Some(boards.theirs(&entry.root, &tasks))

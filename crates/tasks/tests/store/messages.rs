@@ -8,7 +8,7 @@ mod questions;
 use crate::common::{Fixture, HOST, NOW, Seed, chain, in_review, refused, under};
 use std::collections::BTreeSet;
 use symphony_board::health::LIVE_SECONDS;
-use symphony_board::{Health, LANDS_FROM, Message, NewLaunch, NewTask, Store};
+use symphony_board::{Health, LANDS_FROM, Message, NewLaunch, NewTask, Opening, Store};
 
 fn texts(messages: Vec<Message>) -> Vec<String> {
     messages.into_iter().map(|m| m.text).collect()
@@ -106,11 +106,12 @@ fn a_line_from_a_clock_far_ahead_does_not_date_the_lines_after_it() {
     let f = Fixture::empty();
     let a = f.session("worker");
     f.task("sim/jump");
-    let ahead = Store::with(
-        f.other_client(),
+    let ahead = Store::opening_on(
+        f.other_database(),
         Box::new(|| NOW + 86_400.0),
         Box::new(|_| false),
         HOST,
+        &Opening::write(),
     )
     .unwrap();
     ahead.say("sim/jump", &a, "ahead", None).unwrap();

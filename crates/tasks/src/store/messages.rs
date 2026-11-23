@@ -671,53 +671,51 @@ mod tests {
     }
     #[test]
     fn pooled_inbox_and_cursor_read_the_same_unacknowledged_suffix() {
-        use crate::store_fixture::{Backend, Fixture, Seed};
-        for backend in [Backend::SurrealDb, Backend::PostgreSql] {
-            let f = Fixture::new(Seed::default());
-            let worker = f.session("worker");
-            f.task("work");
-            f.store.claim("work", &worker).unwrap();
-            let first = f
-                .store
-                .say("work", "owner", "first", Some(&worker))
-                .unwrap();
-            let acked = f
-                .store
-                .say("work", "owner", "acked", Some(&worker))
-                .unwrap();
-            let last = f.store.say("work", "owner", "last", Some(&worker)).unwrap();
-            f.store.ack(&worker, &[acked.id]).unwrap();
-            let rows = f.store.messages_after(first.id, last.id).unwrap();
-            assert_eq!(
-                rows.iter().map(|m| m.id).collect::<Vec<_>>(),
-                [acked.id, last.id]
-            );
-            let pool: Vec<Value> = rows
-                .iter()
-                .map(|m| {
-                    json!({"sid":m.id,"slug":m.slug,
-                "sender":m.sender,"recipient":m.recipient,"kind":m.kind,"ts":m.ts})
-                })
-                .collect();
-            let direct = f.store.inbox_read(&worker, Some(first.id), None).unwrap();
-            let pooled = f
-                .store
-                .inbox_read(&worker, Some(first.id), Some(json!(pool)))
-                .unwrap();
-            assert_eq!(direct, [last]);
-            assert_eq!(pooled, direct);
-            assert!(
-                f.store
-                    .inbox_read(&worker, Some(0), Some(json!([])))
-                    .unwrap()
-                    .is_empty()
-            );
-            assert!(
-                f.store
-                    .messages_after(first.id, first.id)
-                    .unwrap()
-                    .is_empty()
-            );
-        }
+        use crate::store_fixture::{Fixture, Seed};
+        let f = Fixture::new(Seed::default());
+        let worker = f.session("worker");
+        f.task("work");
+        f.store.claim("work", &worker).unwrap();
+        let first = f
+            .store
+            .say("work", "owner", "first", Some(&worker))
+            .unwrap();
+        let acked = f
+            .store
+            .say("work", "owner", "acked", Some(&worker))
+            .unwrap();
+        let last = f.store.say("work", "owner", "last", Some(&worker)).unwrap();
+        f.store.ack(&worker, &[acked.id]).unwrap();
+        let rows = f.store.messages_after(first.id, last.id).unwrap();
+        assert_eq!(
+            rows.iter().map(|m| m.id).collect::<Vec<_>>(),
+            [acked.id, last.id]
+        );
+        let pool: Vec<Value> = rows
+            .iter()
+            .map(|m| {
+                json!({"sid":m.id,"slug":m.slug,
+            "sender":m.sender,"recipient":m.recipient,"kind":m.kind,"ts":m.ts})
+            })
+            .collect();
+        let direct = f.store.inbox_read(&worker, Some(first.id), None).unwrap();
+        let pooled = f
+            .store
+            .inbox_read(&worker, Some(first.id), Some(json!(pool)))
+            .unwrap();
+        assert_eq!(direct, [last]);
+        assert_eq!(pooled, direct);
+        assert!(
+            f.store
+                .inbox_read(&worker, Some(0), Some(json!([])))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            f.store
+                .messages_after(first.id, first.id)
+                .unwrap()
+                .is_empty()
+        );
     }
 }

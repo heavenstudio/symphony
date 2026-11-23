@@ -294,8 +294,8 @@ fn a_visit_with_no_holdings_observation_has_no_holdings_to_read() {
 /// upgrade, and nothing queued; a visit with no holdings observation plans none.
 #[test]
 fn a_due_pull_is_queued_first_and_upgraded_for_a_legacy_observer() {
-    use crate::store_fixture::{Backend, Fixture, Seed};
-    let fixture = Fixture::new(Backend::SurrealDb, Seed::default().task("p/ready", "ready"));
+    use crate::store_fixture::{Fixture, Seed};
+    let fixture = Fixture::new(Seed::default().task("p/ready", "ready"));
     let store = &fixture.store;
     let handle = fixture.session("orchestrator");
     let (board, _) = store.callback_board().unwrap();

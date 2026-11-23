@@ -1,4 +1,4 @@
-//! The recovery generation and the writes bound to it (`store/recovery.rs`), on both databases:
+//! The recovery generation and the writes bound to it (`store/recovery.rs`):
 //! a token read before a copy of the whole board, or before a rebind, is refused after it, with
 //! nothing written, though the copy gave the same number and version to that task or another.
 

@@ -848,8 +848,9 @@ async fn the_list_says_calmly_that_a_project_with_no_board_has_none() {
         &starter.root.join("build/client"),
     ));
     assert!(starter.api.set(hub.clone()).is_ok());
-    let missing =
-        symphony_board::server::ServerError::NoSurreal(machine.tree.path("surreal")).to_string();
+    let missing = "the alpha board is not made yet, and a reader never makes a board: nothing was \
+                   made or started; `just tasks list` in alpha makes it, on PostgreSQL"
+        .to_string();
     assert!(
         hub.reconnect(&mut |_: &Path| Err(missing.clone()))
             .is_none()
@@ -938,9 +939,11 @@ fn the_blocked_part_counts_the_blocked_and_those_waiting_on_the_owners_decision(
     );
 }
 
+/// A board still on SurrealDB is refused, naming how it moves, and is a board all the same: the
+/// list warns under it.
 #[tokio::test]
-async fn the_list_warns_under_a_project_whose_store_cannot_be_served_and_never_calls_it_boardless()
-{
+async fn the_list_warns_under_a_project_whose_board_is_still_on_surrealdb_and_never_calls_it_boardless()
+ {
     let machine = Machine::new();
     let starter = &machine.projects.starter;
     let hub = Arc::new(crate::live::Hub::new(
@@ -948,13 +951,11 @@ async fn the_list_warns_under_a_project_whose_store_cannot_be_served_and_never_c
         &starter.root.join("build/client"),
     ));
     assert!(starter.api.set(hub.clone()).is_ok());
-    // The SurrealDB that served the board is gone, as after a version bump before the new one is
-    // fetched; its store is still there.
-    let unserved = symphony_board::server::ServerError::Unserved {
-        surreal: machine.tree.path("surreal"),
-        data: machine.tree.path("symphony/tasks/data"),
-    }
-    .to_string();
+    let unserved = format!(
+        "the board in {} is on SurrealDB, which this build serves no more: {}. Nothing was started",
+        starter.root.join(".git/symphony/tasks").display(),
+        symphony_board::server::GONE
+    );
     assert!(
         hub.reconnect(&mut |_: &Path| Err(unserved.clone()))
             .is_none()
@@ -1117,7 +1118,7 @@ async fn the_list_says_queued_work_no_live_orchestrator_staffs_and_counts_the_bl
     use crate::testing::board::{Fixture, GONE, HOST, NOW, Seed, task};
     use std::panic::Location;
     use std::sync::atomic::AtomicUsize;
-    use symphony_board::board_health::{Query, QueryLog, queries_of};
+    use symphony_board::board_health::{Query, QueryLog};
     use symphony_board::rows::{SessionRow, TaskRow};
     use symphony_board::waits_on::{BLOCKED, Blocked as Block};
     let machine = Machine::new();
@@ -1157,7 +1158,12 @@ async fn the_list_says_queued_work_no_live_orchestrator_staffs_and_counts_the_bl
         }
         row
     };
-    let board = Fixture::new(
+    // Its database made first, as the board's command line makes it, in a process of its own: a
+    // read of a database not made yet fails, and the hub's process never made its board.
+    let database = crate::testing::board::postgresql();
+    database.make_database().unwrap();
+    let board = Fixture::in_database(
+        database.into(),
         Seed::default()
             .session_row(SessionRow {
                 handle: "amber-heron".into(),
@@ -1185,21 +1191,20 @@ async fn the_list_says_queued_work_no_live_orchestrator_staffs_and_counts_the_bl
                 Some("tools/card"),
             )),
     );
-    let client = board.store.client();
-    hub.health
-        .reading(queries_of(client.addr(), "sf", client.database()));
+    hub.health.reading(board.store.database().queries());
     // The hub's reader, the way it reads the board for a page, opens this board, counted: a read
     // through it is a request this board's count holds.
     let connects = Arc::new(AtomicUsize::new(0));
     hub.connect_reader = {
-        let (counted, client) = (Arc::clone(&connects), board.other_client());
+        let (counted, db) = (Arc::clone(&connects), board.other_database());
         Box::new(move |_| {
             counted.fetch_add(1, Ordering::SeqCst);
-            symphony_board::Store::with(
-                symphony_board::rpc::Client::new(client.addr(), "sf", client.database()),
+            symphony_board::Store::opening_on(
+                db.another(),
                 Box::new(|| NOW),
                 Box::new(|_| false),
                 HOST,
+                &symphony_board::Opening::write(),
             )
             .map_err(|e| e.to_string())
         })

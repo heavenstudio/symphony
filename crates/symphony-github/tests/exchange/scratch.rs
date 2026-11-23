@@ -21,21 +21,6 @@ use symphony_github::transport::{Curl, Transport};
 
 const NOW: &str = "1800000000";
 
-/// The pinned `surreal`: `SYMPHONY_SURREAL`, else the one `tools/surreal.sh` fetches.
-fn surreal() -> PathBuf {
-    if let Some(named) = symphony_env::SURREAL.os() {
-        return named.into();
-    }
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/surreal.sh");
-    let found = Command::new("bash").arg(script).output().unwrap();
-    assert!(
-        found.status.success(),
-        "tools/surreal.sh found no SurrealDB server: {}",
-        String::from_utf8_lossy(&found.stderr)
-    );
-    PathBuf::from(String::from_utf8(found.stdout).unwrap().trim())
-}
-
 fn git(dir: &Path, args: &[&str]) {
     let done = Command::new("git")
         .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
@@ -98,7 +83,6 @@ impl Scratch {
         let machine = dir.0.join("machine");
         std::fs::create_dir_all(&machine).unwrap();
         let vars: BTreeMap<String, String> = [
-            ("SYMPHONY_SURREAL", surreal().display().to_string()),
             ("SYMPHONY_MACHINE_DIR", machine.display().to_string()),
             ("TASKS_NOW", NOW.to_string()),
             ("TASKS_SWEEP", "off".to_string()),
@@ -176,10 +160,11 @@ impl Scratch {
     }
 }
 
+/// The board's PostgreSQL, which its first call made and started, stopped with the scratch
+/// repository.
 impl Drop for Scratch {
     fn drop(&mut self) {
-        let home =
-            symphony_board::server::Home::in_common(&self.root.join(".git"), Some(&surreal()));
+        let home = symphony_board::server::Home::in_common(&self.root.join(".git"));
         let _ = home.stop_board();
     }
 }

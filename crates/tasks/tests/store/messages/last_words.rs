@@ -333,36 +333,6 @@ fn a_word_given_another_sender_moves_to_that_sender() {
     agrees(&board, "given back", &other, Some("from the other"));
 }
 
-/// A board written before `said` was (its version older) has each sender's last word named once
-/// the next store opens it, and only then: a board that names any keeps its names.
-#[test]
-fn a_board_from_before_the_last_words_were_kept_has_them_once_opened() {
-    let board = Fixture::empty();
-    let (writer, other) = (board.session("worker"), board.session("worker"));
-    board.task("sim/jump");
-    board.store.say("sim/jump", &writer, "first", None).unwrap();
-    board
-        .store
-        .say("sim/jump", &other, "from the other", None)
-        .unwrap();
-    board
-        .store
-        .say("sim/jump", &writer, "second", None)
-        .unwrap();
-    agrees(&board, "the posts", &writer, Some("second"));
-    let was = last_words(&board);
-    board.store.raw().table("said").delete().unwrap();
-    (board.store.raw().row("meta", "schema"))
-        .set(json!({"version": 12}))
-        .unwrap();
-    assert_eq!(
-        last_words(&board),
-        BTreeMap::new(),
-        "the board as an older store left it"
-    );
-    assert_eq!(board.other().last_messages().unwrap(), was);
-}
-
 /// A copy over a board replaces every message, and the last words with them.
 #[test]
 fn a_copy_over_a_board_names_the_copied_senders_last_words() {

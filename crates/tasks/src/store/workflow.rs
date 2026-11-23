@@ -6,8 +6,8 @@
 //! Nothing but this module writes them, and the schema's fences hold every writer to that: a
 //! task's position, or the status of a task that has one, changes only in the write that records
 //! its transition, a position goes only in the return that retires it, and a recorded
-//! definition, activation, transition or receipt is never changed (`crate::schema`'s
-//! `workflow_position`, `workflow_history` and `workflow_active`, and their PostgreSQL twins).
+//! definition, activation, transition or receipt is never changed (the triggers `task_workflow`
+//! and `workflow_history` of `store/postgres/schema.rs`).
 //! No fence reads a deletion, which the whole-board copy makes of the table: that the active
 //! generation goes only in a return's write ([`Store::return_to_default`]) is this module's and
 //! `Store::raw`'s refusal of the table to hold. `Store::set_field` refuses the board's own
@@ -989,10 +989,10 @@ fn decoded<T: serde::de::DeserializeOwned>(body: Value, what: &str) -> Result<Op
         .map_err(|e| Error::Db(format!("a {what} not in the board's shape: {e}")))
 }
 
-/// The order of two workflow record keys, the parts of their ids, as SurrealDB orders compound
-/// ids: part by part, a number by its value and a text by its bytes, a shorter key first where
-/// one is the start of the other. PostgreSQL's jsonb orders arrays by length first, so the dump
-/// sorts by this, and a board's export is one text in either database.
+/// The order of two workflow record keys, the parts of their ids: part by part, a number by its
+/// value and a text by its bytes, a shorter key first where one is the start of the other.
+/// PostgreSQL's jsonb orders arrays by length first, so the dump sorts by this, the order a
+/// board's export has always held its keys in, so the same board's export is one text.
 pub(crate) fn key_order(a: &Value, b: &Value) -> Ordering {
     match (a, b) {
         (Value::Array(a), Value::Array(b)) => {
@@ -1009,7 +1009,7 @@ pub(crate) fn key_order(a: &Value, b: &Value) -> Ordering {
             x.partial_cmp(&y).unwrap_or(Ordering::Equal)
         }
         (Value::String(x), Value::String(y)) => x.cmp(y),
-        // Numbers before texts before anything else, as SurrealDB sorts kinds apart.
+        // Kinds apart, in `rank`'s order: null, booleans, numbers, texts, arrays, objects.
         (x, y) => rank(x).cmp(&rank(y)),
     }
 }

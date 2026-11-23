@@ -497,7 +497,7 @@ fn an_open_tables_row_reads_past_a_field_it_does_not_know_and_reads_alone_refuse
         read::<Dump>(&deep[4]).unwrap().roles,
         [rows[0].clone(), rows[0].clone()]
     );
-    // An alias the struct names is handed to it: SurrealDB's `sid` for a task's `id`.
+    // An alias the struct names is handed to it: the row's `sid` for a task's `id`.
     let task = json!({"sid": 7, "slug": "sim/jump", "title": "Jump", "status": "ready",
         "created_by": "owner", "created": 1.0, "updated": 2.0, "fixture_note": "x"});
     let read_task: TaskRow = read(&task).unwrap();

@@ -1,4 +1,4 @@
-//! The bound edit (`Store::edit_bound`), on both databases: a task's title and brief rewritten
+//! The bound edit (`Store::edit_bound`): a task's title and brief rewritten
 //! only on the task its token names, in one transaction with the fence, and a refusal that
 //! writes nothing of it.
 

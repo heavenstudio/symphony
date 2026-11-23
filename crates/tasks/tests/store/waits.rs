@@ -298,7 +298,7 @@ fn overlapping_duplicate_preserves_the_committed_occurrence_and_its_time() {
         f.other_database(),
         Box::new(move || first_at),
         Box::new(|_| false),
-        super::super::common::HOST,
+        crate::common::HOST,
         &symphony_board::Opening::write(),
     );
     f.advance(1.0);
@@ -334,7 +334,7 @@ fn independent_occurrences_at_one_time_keep_separate_ends() {
         f.other_database(),
         Box::new(move || first_at),
         Box::new(|_| false),
-        super::super::common::HOST,
+        crate::common::HOST,
         &symphony_board::Opening::write(),
     );
     // A slow caller reads its earlier time, then another writer commits at a later time. logged

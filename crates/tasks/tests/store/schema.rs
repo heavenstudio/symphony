@@ -3,14 +3,13 @@
 //! writer, its steps and version in one transaction, and refused to a reader after that one read,
 //! nothing defined or written; a newer one is refused to a writer before any write and read by a
 //! reader one version behind, whose writes are refused; and a store that opened before a newer
-//! build migrated is refused at its next write. On either database: a newer build's steps are
-//! written in each language (`Schema::then_each`).
+//! build migrated is refused at its next write. A newer build's steps are PostgreSQL's
+//! (`Schema::then_each`).
 
-use crate::common::{HOST, NOW, conflicts_deadline, database, refused, retry_conflicts};
+use crate::common::{HOST, NOW, database, refused};
 use serde_json::json;
 use symphony_board::pg::Step;
 use symphony_board::rows::Dump;
-use symphony_board::rpc::Client;
 use symphony_board::{Database, Error, NewTask, Opening, Program, Raw, Schema, Store};
 
 /// The store `how` opens on `db`, its clock at `NOW` and no process alive.
@@ -29,11 +28,9 @@ fn again(db: &Database) -> Database {
 }
 
 #[test]
-fn a_postgresql_write_with_a_snapshot_before_a_migration_cannot_commit_after_it() {
-    let db = board(Backend::PostgreSql);
-    let Database::PostgreSql(writer) = again(&db) else {
-        unreachable!()
-    };
+fn a_write_with_a_snapshot_before_a_migration_cannot_commit_after_it() {
+    let db = board();
+    let Database::PostgreSql(writer) = again(&db);
     writer
         .simple("BEGIN ISOLATION LEVEL REPEATABLE READ; SELECT version FROM meta;")
         .unwrap();
@@ -58,41 +55,27 @@ fn version(db: &Database) -> Option<i64> {
 
 /// The tables the database holds.
 fn tables(db: &Database) -> Vec<String> {
-    let found = match db {
-        Database::SurrealDb(client) => (client)
-            .query("RETURN object::keys((INFO FOR DB).tables);", json!({}))
-            .unwrap()
-            .last()
-            .cloned()
-            .unwrap(),
-        Database::PostgreSql(client) => {
-            let listed = client
-                .request(&[Step::bare(
-                    "SELECT coalesce(jsonb_agg(table_name::text ORDER BY table_name), '[]')::text \
-                     FROM information_schema.tables WHERE table_schema = 'public'",
-                )])
-                .unwrap();
-            serde_json::from_str(listed[0].value().unwrap()).unwrap()
-        }
-    };
-    serde_json::from_value(found).unwrap()
+    let Database::PostgreSql(client) = db;
+    let listed = client
+        .request(&[Step::bare(
+            "SELECT coalesce(jsonb_agg(table_name::text ORDER BY table_name), '[]')::text \
+             FROM information_schema.tables WHERE table_schema = 'public'",
+        )])
+        .unwrap();
+    serde_json::from_str(listed[0].value().unwrap()).unwrap()
 }
 
-/// A table of the test's own, named `name`, as a schema step in each database's language.
-fn table_step(name: &str) -> (String, String) {
-    (
-        format!("DEFINE TABLE IF NOT EXISTS {name} SCHEMALESS;"),
-        format!("CREATE TABLE IF NOT EXISTS {name} (id jsonb PRIMARY KEY, doc jsonb);"),
-    )
+/// A table of the test's own, named `name`, as a schema step.
+fn table_step(name: &str) -> String {
+    format!("CREATE TABLE IF NOT EXISTS {name} (id jsonb PRIMARY KEY, doc jsonb);")
 }
 
 /// A newer build's schema: this one's, then a table of its own.
 fn newer() -> Schema {
-    let (surreal, postgres) = table_step("fixture_next");
-    Schema::this_build().then_each(&surreal, &postgres)
+    Schema::this_build().then_each(&table_step("fixture_next"))
 }
 
-/// A board made at this build's version on `backend`, holding the task `old/one`: its database.
+/// A board made at this build's version, holding the task `old/one`: its database.
 fn board() -> Database {
     let db = database();
     let store = opened(again(&db), &Opening::write()).unwrap();
@@ -123,42 +106,21 @@ fn a_database_not_made_yet_is_defined_and_brought_to_the_version_once() {
     store
         .create(&NewTask::new("new/one", "On a board made now", "owner"))
         .unwrap();
-    // On SurrealDB, a namespace no one made is defined with its database.
-    if let Database::SurrealDb(fresh) = Backend::SurrealDb.database() {
-        let elsewhere = || Database::from(Client::new(fresh.addr(), fresh.database(), "tasks"));
-        opened(elsewhere(), &Opening::write()).unwrap();
-        assert_eq!(version(&elsewhere()), Some(Schema::this_build().version()));
-    }
 }
 
 /// Why a request in `db`'s database fails, which the test expects it to.
 fn fails(db: &Database) -> String {
-    let failed = match db {
-        Database::SurrealDb(client) => (client)
-            .query(
-                "RETURN (SELECT VALUE version FROM ONLY meta:schema);",
-                json!({}),
-            )
-            .err(),
-        Database::PostgreSql(client) => client.request(&[Step::bare("SELECT 1")]).err(),
-    };
+    let Database::PostgreSql(client) = db;
+    let failed = client.request(&[Step::bare("SELECT 1")]).err();
     failed
         .map(|why| format!("{why:?}"))
         .expect("the request fails")
 }
 
-/// `db`'s database made on its server, and nothing in it; on SurrealDB again when its definition
-/// meets another test's at once in the shared namespace (`Conflict`), until the fixture's backstop.
+/// `db`'s database made on its server, and nothing in it.
 fn made_empty(db: &Database) {
-    match db {
-        Database::SurrealDb(client) => {
-            let defined = retry_conflicts(conflicts_deadline(), || {
-                client.define_then("RETURN NONE;", json!({}))
-            });
-            drop(defined.unwrap())
-        }
-        Database::PostgreSql(client) => client.make_database().unwrap(),
-    }
+    let Database::PostgreSql(client) = db;
+    client.make_database().unwrap()
 }
 
 #[test]
@@ -295,7 +257,6 @@ fn a_reader_of_a_newer_build_never_moves_an_older_board_forward_but_refuses_it()
 fn a_newer_build_migrates_an_older_board_once_its_steps_and_version_together() {
     let client = board();
     let runs = Schema::this_build().then_each(
-        "DEFINE TABLE IF NOT EXISTS fixture_run SCHEMALESS; CREATE fixture_run RETURN NONE;",
         "CREATE TABLE IF NOT EXISTS fixture_run (id jsonb PRIMARY KEY, doc jsonb); \
              INSERT INTO fixture_run (id, doc) VALUES (to_jsonb(gen_random_uuid()::text), '{}');",
     );
@@ -323,7 +284,6 @@ fn a_newer_build_migrates_an_older_board_once_its_steps_and_version_together() {
 fn a_migration_cut_short_before_its_commit_leaves_the_board_as_it_was_for_the_next_to_migrate() {
     let client = board();
     let cut = Schema::this_build().then_each(
-        "DEFINE TABLE IF NOT EXISTS fixture_half SCHEMALESS; THROW 'cut short';",
         "CREATE TABLE IF NOT EXISTS fixture_half (id jsonb PRIMARY KEY); \
              DO $$ BEGIN RAISE EXCEPTION 'cut short'; END $$;",
     );
@@ -359,10 +319,7 @@ fn an_older_writer_is_refused_a_migrated_board_before_any_write_naming_the_proje
     );
     // The refusal came from the one read: the board is the newer build's as it left it.
     assert_eq!(version(&client), Some(newer().version()));
-    let unnamed = match again(&client) {
-        Database::SurrealDb(older) => refused(Store::open(older).map(drop)),
-        older => refused(opened(older, &Opening::write()).map(drop)),
-    };
+    let unnamed = refused(opened(again(&client), &Opening::write()).map(drop));
     assert!(unnamed.starts_with("this board is at schema"), "{unnamed}");
     assert!(
         unnamed.contains("`just symphony` in its project"),
@@ -407,8 +364,7 @@ fn a_reader_one_version_behind_reads_a_newer_board_and_is_refused_every_write() 
 #[test]
 fn a_reader_more_than_one_version_behind_is_refused_before_it_reads() {
     let client = board();
-    let (surreal, postgres) = table_step("fixture_later");
-    let two_on = newer().then_each(&surreal, &postgres);
+    let two_on = newer().then_each(&table_step("fixture_later"));
     opened(again(&client), &Opening::write().at(two_on)).unwrap();
     let why = refused(opened(again(&client), &Opening::read().of(Some("alpha"))).map(drop));
     let this = Schema::this_build().version();
@@ -464,8 +420,9 @@ fn an_older_build_brings_a_board_to_its_own_version_and_this_one_migrates_it_on(
         .unwrap();
 }
 
-/// Schema 19 could hold implicit reservations on SurrealDB; its PostgreSQL schema lacked the
-/// table. The normal version migration must both add missing storage and preserve earlier rows.
+/// Schema 19's PostgreSQL schema lacked the reservations' table, which a board moved from
+/// SurrealDB could hold rows of. The normal version migration must both add missing storage and
+/// preserve earlier rows.
 #[test]
 fn schema_19_gains_reservation_storage_and_keeps_existing_reservations() {
     for existed in [false, true] {
@@ -479,17 +436,9 @@ fn schema_19_gains_reservation_storage_and_keeps_existing_reservations() {
                 }))
                 .unwrap();
         } else {
-            // DDL is engine-specific: emulate the predecessor's catalogue, not a row mutation.
-            match &db {
-                Database::SurrealDb(client) => {
-                    client
-                        .query("REMOVE TABLE unanswered_restore;", json!({}))
-                        .unwrap();
-                }
-                Database::PostgreSql(client) => {
-                    client.simple("DROP TABLE unanswered_restore").unwrap();
-                }
-            }
+            // The predecessor's catalogue, not a row mutation.
+            let Database::PostgreSql(client) = &db;
+            client.simple("DROP TABLE unanswered_restore").unwrap();
         }
         raw.row("meta", "schema")
             .set(json!({"version": 19}))
@@ -523,51 +472,31 @@ fn schema_19_gains_reservation_storage_and_keeps_existing_reservations() {
 }
 
 /// Schema 25's workflow table took six kinds; this build's step adds `authority` and `admission`
-/// to the board's check, keeps what the board held, and on PostgreSQL alters the check no more
-/// once it holds every kind, as each alter takes the table's exclusive lock.
+/// to the board's check, keeps what the board held, and alters the check no more once it holds
+/// every kind, as each alter takes the table's exclusive lock.
 #[test]
 fn schema_26_gains_the_guards_kinds_and_alters_the_check_once() {
     let db = board();
     let six = "'active', 'definition', 'activation', 'event', 'receipt', 'intent'";
-    let authority = |db: &Database| -> Result<(), symphony_board::db::DbError> {
-        match db {
-            Database::SurrealDb(client) => client
-                .query(
-                    "CREATE workflow:['authority', 'approvals'] CONTENT { kind: 'authority', \
-                     body: { epoch: 'e1', generation: 1, state: 's1' }, at: 1.0 } RETURN NONE;",
-                    json!({}),
-                )
-                .map(drop),
-            Database::PostgreSql(client) => client
-                .simple(
-                    "INSERT INTO workflow (id, kind, body, at) VALUES \
-                     ('[\"authority\", \"approvals\"]', 'authority', \
-                     '{\"epoch\": \"e1\", \"generation\": 1, \"state\": \"s1\"}', 1.0)",
-                )
-                .map(drop),
-        }
+    let Database::PostgreSql(client) = &db;
+    let authority = || -> Result<(), symphony_board::db::DbError> {
+        client
+            .simple(
+                "INSERT INTO workflow (id, kind, body, at) VALUES \
+                 ('[\"authority\", \"approvals\"]', 'authority', \
+                 '{\"epoch\": \"e1\", \"generation\": 1, \"state\": \"s1\"}', 1.0)",
+            )
+            .map(drop)
     };
     // The predecessor's catalogue: its check of six kinds.
-    match &db {
-        Database::SurrealDb(client) => {
-            client
-                .query(
-                    &format!("DEFINE FIELD OVERWRITE kind ON workflow TYPE string ASSERT $value IN [{six}];"),
-                    json!({}),
-                )
-                .unwrap();
-        }
-        Database::PostgreSql(client) => {
-            client
-                .simple(&format!(
-                    "ALTER TABLE workflow DROP CONSTRAINT workflow_kind_check, \
-                     ADD CONSTRAINT workflow_kind_check CHECK (kind IN ({six}))"
-                ))
-                .unwrap();
-        }
-    }
+    client
+        .simple(&format!(
+            "ALTER TABLE workflow DROP CONSTRAINT workflow_kind_check, \
+             ADD CONSTRAINT workflow_kind_check CHECK (kind IN ({six}))"
+        ))
+        .unwrap();
     assert!(
-        authority(&db).is_err(),
+        authority().is_err(),
         "the predecessor's check refuses the kind"
     );
     let this = Schema::this_build().version();
@@ -580,31 +509,29 @@ fn schema_26_gains_the_guards_kinds_and_alters_the_check_once() {
     behind();
     let upgraded = opened(again(&db), &Opening::write()).unwrap();
     assert_eq!(version(&db), Some(this));
-    authority(&db).unwrap();
+    authority().unwrap();
     assert_eq!(
         upgraded.get("old/one").unwrap().title,
         "Made at this version"
     );
-    if let Database::PostgreSql(client) = &db {
-        let check = || {
-            client
-                .simple(
-                    "SELECT oid::text FROM pg_constraint \
-                     WHERE conrelid = 'workflow'::regclass AND conname = 'workflow_kind_check'",
-                )
-                .unwrap()[0]
-                .value()
-                .unwrap()
-                .to_string()
-        };
-        let first = check();
-        behind();
-        opened(again(&db), &Opening::write()).unwrap();
-        assert_eq!(version(&db), Some(this));
-        assert_eq!(
-            check(),
-            first,
-            "a check holding every kind is not made again"
-        );
-    }
+    let check = || {
+        client
+            .simple(
+                "SELECT oid::text FROM pg_constraint \
+                 WHERE conrelid = 'workflow'::regclass AND conname = 'workflow_kind_check'",
+            )
+            .unwrap()[0]
+            .value()
+            .unwrap()
+            .to_string()
+    };
+    let first = check();
+    behind();
+    opened(again(&db), &Opening::write()).unwrap();
+    assert_eq!(version(&db), Some(this));
+    assert_eq!(
+        check(),
+        first,
+        "a check holding every kind is not made again"
+    );
 }

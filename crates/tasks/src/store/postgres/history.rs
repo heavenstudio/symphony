@@ -30,7 +30,7 @@ fn step(more: &str) -> String {
 }
 
 /// The lines since `since` that may say a status changed, a change to what a task's landing waits
-/// on and a move in the tree among them (`super::super::surreal::history::STATUS_LINES`).
+/// on and a move in the tree among them.
 pub(in crate::store) fn status_lines() -> Pg<'static> {
     Pg::read(format!(
         "coalesce((SELECT jsonb_agg({LINE} ORDER BY m.slug, m.sid) FROM message m \

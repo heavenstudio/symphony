@@ -4,7 +4,7 @@
 //! project's login kept out of another's database.
 
 use crate::cluster::{self, MAJORS, Project, environment, settings};
-use crate::store::{Backend, Fixture, HOST, NOW, Seed};
+use crate::store::{Fixture, HOST, NOW, Seed};
 use symphony_board::pg::hosted::Client;
 use symphony_board::{Error, NewTask, Opening, Program, Schema, Store};
 
@@ -198,7 +198,7 @@ fn the_same_work_is_answered_alike_on_hosted_16_hosted_18_and_the_local_board() 
             .session("amber-heron")
             .session("brisk-finch")
     };
-    let local = worked(&Fixture::new(Backend::PostgreSql, seed()).store);
+    let local = worked(&Fixture::new(seed()).store);
     assert!(local.contains("ecole: [\"sim/jump@"), "{local}");
     assert!(
         local.contains("(\"sim/jump\", \"in_progress\")") && local.contains("\"amber-heron\""),
@@ -221,10 +221,8 @@ fn the_same_work_is_answered_alike_on_hosted_16_hosted_18_and_the_local_board() 
 #[test]
 fn a_writer_behind_holds_the_migration_and_a_board_moved_on_refuses_it() {
     let newer = || {
-        Schema::this_build().then_each(
-            "DEFINE TABLE IF NOT EXISTS fixture_next SCHEMALESS;",
-            "CREATE TABLE IF NOT EXISTS fixture_next (id jsonb PRIMARY KEY, doc jsonb);",
-        )
+        Schema::this_build()
+            .then_each("CREATE TABLE IF NOT EXISTS fixture_next (id jsonb PRIMARY KEY, doc jsonb);")
     };
     for major in MAJORS {
         let project = cluster::cluster(major).project();

@@ -1,4 +1,4 @@
-//! PostgreSQL twin of `store/guard.rs`'s statements (`super::super::surreal::guard`).
+//! The statements of `store/guard.rs` on PostgreSQL.
 
 use super::Pg;
 use super::workflow::ATTESTERS;

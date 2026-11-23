@@ -135,9 +135,10 @@ fn assigned(
     set
 }
 
-/// Whether a raw task assignment changes its document as SurrealDB compares it: numeric
-/// equality alone is a no-op there. Evaluate this with the pure setter, before `board_fields`
-/// records any explicit replacement. A change to another column makes all assignments land.
+/// Whether a raw task assignment changes its document as `jsonb` compares it: a number equal in
+/// value is no change, and an assignment of none writes nothing. Evaluate this with the pure
+/// setter, before `board_fields` records any explicit replacement. A change to another column
+/// makes all assignments land.
 fn changed(table: &str, fields: &Map<String, Value>) -> Option<String> {
     if table != "task"
         || !fields

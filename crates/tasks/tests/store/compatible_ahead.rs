@@ -1,7 +1,7 @@
 //! A store opened to read writes a board one schema ahead of it only when that schema's step says
 //! it keeps a Symphony one schema behind writing (`schema::COMPATIBLE`), by the record a migration
 //! writes beside the version (`meta:schema`'s `writable_from`), which the guard reads in each
-//! write's own transaction. On either database:
+//! write's own transaction:
 //!
 //! - every migration writes the record with the version, for a step declared and one that is not,
 //!   and for a move of two steps at once;
@@ -68,18 +68,11 @@ fn record(db: &Database) -> (Option<i64>, Value) {
     (row["version"].as_i64(), row["writable_from"].clone())
 }
 
-/// A table of the test's own, named `name`, as a schema step in each database's language.
-fn table_step(name: &str) -> (String, String) {
-    (
-        format!("DEFINE TABLE IF NOT EXISTS {name} SCHEMALESS;"),
-        format!("CREATE TABLE IF NOT EXISTS {name} (id jsonb PRIMARY KEY, doc jsonb);"),
-    )
-}
-
 /// `schema` and then a step adding the table `name` alone: a newer build's, declaring nothing.
 fn then_table(schema: &Schema, name: &str) -> Schema {
-    let (surreal, postgres) = table_step(name);
-    schema.then_each(&surreal, &postgres)
+    schema.then_each(&format!(
+        "CREATE TABLE IF NOT EXISTS {name} (id jsonb PRIMARY KEY, doc jsonb);"
+    ))
 }
 
 /// The next build's schema, its step declared to keep the Symphony one behind writing.
@@ -92,7 +85,7 @@ fn unlisted() -> Schema {
     then_table(&Schema::this_build(), "fixture_next")
 }
 
-/// A board made at this build's version on `backend`, holding the task `old/one`: its database.
+/// A board made at this build's version, holding the task `old/one`: its database.
 fn board() -> Database {
     let db = database();
     moved(&db, Schema::this_build())
@@ -125,36 +118,17 @@ fn refused_at(store: &Store, found: i64) -> String {
 }
 
 /// `db`'s record of the oldest schema whose Symphony may write it replaced by `from`, a value no
-/// build writes: the field, or column, retyped to hold it. The database itself says it holds no
-/// integer there, as a read back through the fixture gives a whole float as an integer. SurrealDB
-/// takes a whole float for the integer already there and writes nothing, so the field is unset
-/// first.
+/// build writes: the column retyped to hold it.
 fn malformed(db: &Database, from: &Value) {
-    match db {
-        Database::SurrealDb(client) => {
-            let held = client
-                .query(
-                    "DEFINE FIELD OVERWRITE writable_from ON meta TYPE any;
-                     UPDATE meta:schema SET writable_from = NONE RETURN NONE;
-                     UPDATE meta:schema SET writable_from = IF $float { <float> $from } ELSE { $from }
-                         RETURN NONE;
-                     RETURN type::is_int((SELECT VALUE writable_from FROM ONLY meta:schema));",
-                    json!({ "from": from, "float": from.is_f64() }),
-                )
-                .unwrap();
-            assert_eq!(held.last(), Some(&json!(false)), "{from}");
-        }
-        Database::PostgreSql(client) => drop(
-            client
-                .simple(&format!(
-                    "ALTER TABLE meta ALTER COLUMN writable_from TYPE jsonb \
-                     USING to_jsonb(writable_from);
-                     UPDATE meta SET writable_from = '{}'::jsonb;",
-                    from.to_string().replace('\'', "''")
-                ))
-                .unwrap(),
-        ),
-    }
+    let Database::PostgreSql(client) = db;
+    client
+        .simple(&format!(
+            "ALTER TABLE meta ALTER COLUMN writable_from TYPE jsonb \
+             USING to_jsonb(writable_from);
+             UPDATE meta SET writable_from = '{}'::jsonb;",
+            from.to_string().replace('\'', "''")
+        ))
+        .unwrap();
 }
 
 #[test]
@@ -427,16 +401,13 @@ fn a_bound_write_is_fenced_on_the_generation_one_ahead_and_a_rebind_is_refused_t
     assert_eq!(reading.recovery_generation().unwrap(), generation);
 }
 
-/// A write that began its transaction before a migration, on PostgreSQL, meets the record the
-/// migration wrote, never the one its snapshot held: undeclared, it is refused; declared, it
+/// A write that began its transaction before a migration meets the record the migration wrote, never the one its snapshot held: undeclared, it is refused; declared, it
 /// writes after the move, under the record that lets it.
 #[test]
-fn a_postgresql_readers_write_with_a_snapshot_before_a_migration_meets_the_record_it_wrote() {
+fn a_readers_write_with_a_snapshot_before_a_migration_meets_the_record_it_wrote() {
     for (schema, writes) in [(unlisted(), false), (listed(), true)] {
-        let db = board(Backend::PostgreSql);
-        let Database::PostgreSql(client) = db.another() else {
-            unreachable!()
-        };
+        let db = board();
+        let Database::PostgreSql(client) = db.another();
         client
             .simple("BEGIN ISOLATION LEVEL REPEATABLE READ; SELECT version FROM meta;")
             .unwrap();

@@ -448,15 +448,15 @@ fn a_reused_reviewer_whose_launch_is_not_recorded_lets_its_role_go() {
     in_review(&f, "sim/jump", false);
     // Once the reused reviewer holds the role, before its launch is recorded, the board starts
     // refusing a record of its terminal.
-    let (probe, client, refusing) = (f.other(), f.other_client(), AtomicBool::new(false));
+    let (probe, client, refusing) = (f.other(), f.postgresql(), AtomicBool::new(false));
     let store = f.busy(move || {
         let holds = probe
             .get("sim/jump")
             .is_ok_and(|t| t.holders("reviewer") == [FRESH]);
         if holds && !refusing.swap(true, SeqCst) {
-            let refuse = "DEFINE FIELD OVERWRITE pane ON task_session TYPE string \
-                ASSERT $value != 't1';";
-            client.query(refuse, serde_json::json!({})).unwrap();
+            let refuse = "ALTER TABLE task_session ADD CONSTRAINT task_session_pane_check \
+                CHECK (pane <> 't1')";
+            client.simple(refuse).unwrap();
         }
     });
     let hc = ReusedTerminal::answering("started");

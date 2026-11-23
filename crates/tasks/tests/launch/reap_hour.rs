@@ -277,7 +277,7 @@ fn a_tool_call_in_the_hour_or_a_change_of_its_tasks_status_starts_the_hour_again
     let started = w.f.now();
     w.sweep();
     // It worked between two sweeps, each finding it at its prompt: its agent beat half an hour in.
-    Raw::on(&w.f.other_client())
+    Raw::of(&w.f.other_database())
         .row("session", json!(executor))
         .set(json!({"last_tool": started + IDLE_HOUR / 2.0}))
         .unwrap();
@@ -414,7 +414,7 @@ fn a_tool_call_a_post_or_a_move_while_the_close_looks_keeps_the_terminal_its_rec
                 }
                 match meanwhile {
                     Meanwhile::ToolCall => {
-                        Raw::on(&w.f.other_client())
+                        Raw::of(&w.f.other_database())
                             .row("session", json!(handle))
                             .set(json!({"last_tool": w.f.now()}))
                             .unwrap();

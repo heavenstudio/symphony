@@ -19,16 +19,16 @@
 //!   schema ([`writers::lagging`]). A line on this host whose program is gone from its path, or
 //!   that is no build its project runs now and has not run for longer than its bound, is not
 //!   counted, and said. A board whose writers lag is named with each writer to rebuild, the
-//!   project's to finish; one whose database does not run, or whose move could put it on a newer
-//!   SurrealDB, is red (a board on PostgreSQL runs the machine's own, which a release neither pins
-//!   nor replaces). A board below schema [`symphony_board::WRITERS_SINCE`], from before the writer
-//!   record, is behind every release and never moved here: its own `just tasks migrate` brings it
-//!   up. Each board is judged and moved alone: snapshotted through its running database just before
-//!   its own move (`Home::export`: SurrealDB's export, or `pg_dump`'s of a board on PostgreSQL),
-//!   then moved by the release's own `tasks migrate` in its project's main checkout, the one
-//!   command that moves a project's board. A board that lags, red or its project's to finish, holds
-//!   neither another board nor `current`: it stays at its schema, its update failed
-//!   ([`super::updates`]).
+//!   project's to finish; one whose database does not run, or that is still on SurrealDB (refused,
+//!   naming how it moves: `symphony_board::server::GONE`), is red. A board runs the machine's own
+//!   PostgreSQL, which a release neither pins nor replaces. A board below schema
+//!   [`symphony_board::WRITERS_SINCE`], from before the writer record, is behind every release and
+//!   never moved here: its own `just tasks migrate` brings it up. Each board is judged and moved
+//!   alone: snapshotted through its running database just before its own move (`Home::export`,
+//!   `pg_dump`'s text), then moved by the release's own `tasks migrate` in its project's main
+//!   checkout, the one command that moves a project's board. A board that lags, red or its
+//!   project's to finish, holds neither another board nor `current`: it stays at its schema, its
+//!   update failed ([`super::updates`]).
 //! - **`current`**, pointed at the release ([`install::point`]), which every recipe of a project
 //!   with no build of its own then runs; one that cannot be pointed is the install's red, `current`
 //!   as it was. A board left behind is moved by a later refresh, or by the machine's server once
@@ -50,11 +50,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use symphony_api::Front;
-use symphony_board::server::{Engine, Home, ServerError};
+use symphony_board::server::{Home, ServerError};
 
 use super::board;
 use super::checks::{Ran, Step};
-use super::git::git;
 use super::group::{Bound, Failed, output_until};
 use super::install::{self, Installed};
 use super::record::{Refresh, TAKES, THEIRS};
@@ -82,22 +81,18 @@ const LOG_READ: u64 = 256 * 1024;
 /// The variables no command run in a project keeps ([`moving::UNSET`]).
 pub(crate) use symphony::machine::moving::UNSET;
 
-/// What a refresh runs against: the Symphony's repository (its checkout, which holds the release's
-/// commit, and its git common dir), the machine folder, the release and its commit, where the
-/// steps' logs go, the `surreal` a snapshot falls back to, and its time.
+/// What a refresh runs against: the Symphony's repository (its main checkout and its git common
+/// dir), the machine folder, the release, where the steps' logs go, and its time.
 pub(crate) struct Against<'a> {
     /// The run's id, which an update's failure names.
     pub(crate) run: &'a str,
     /// The Symphony's main checkout, whose board an update's task is filed on when no project's own
     /// board takes it.
     pub(crate) main: &'a Path,
-    pub(crate) root: &'a Path,
     pub(crate) ours: &'a Path,
     pub(crate) machine: &'a Path,
     pub(crate) tag: &'a str,
-    pub(crate) commit: &'a str,
     pub(crate) logs: &'a Path,
-    pub(crate) surreal: Option<&'a Path>,
     pub(crate) until: Bound<'a>,
 }
 
@@ -304,7 +299,7 @@ fn boards(
             Err(Some(line)) if !reconciling => say(refresh, out, line),
             Err(_) => {}
             // A release current serves already judges only a board read behind it.
-            Ok(common) if reconciling && !behind(&common, target, against) => {}
+            Ok(common) if reconciling && !behind(&common, target) => {}
             Ok(common) => judged.push(judge(entry, &common, target, against)),
         }
     }
@@ -351,11 +346,11 @@ fn boards(
 
 /// Whether the board in the git common dir `common` reads behind `target`: a board left behind a
 /// release current already serves. One not read (no board, its database not running) is not.
-fn behind(common: &Path, target: i64, against: &Against<'_>) -> bool {
+fn behind(common: &Path, target: i64) -> bool {
     if !common.join(symphony_board::server::FOLDER).is_dir() {
         return false;
     }
-    let home = Home::in_common(common, Some(&surreal_for(common, against.surreal)));
+    let home = Home::in_common(common);
     matches!(home.schema(symphony_board::DATABASE), Ok(Some(live)) if live < target)
 }
 
@@ -484,7 +479,7 @@ fn judge(entry: &Entry, common: &Path, target: i64, against: &Against<'_>) -> Ju
         against.tag
     ));
     let folder = common.join(symphony_board::server::FOLDER);
-    let home = Home::in_common(common, Some(&surreal_for(common, against.surreal)));
+    let home = Home::in_common(common);
     let mut judged = Judged {
         id: entry.id.clone(),
         root: entry.root.clone(),
@@ -553,46 +548,11 @@ fn verdict(board: &Judged, against: &Against<'_>) -> Verdict {
         return Verdict::Theirs(lagging.holding(live, against.tag, target, now));
     }
     // The release's migrate reads the lines again, and would refuse for one not counted here.
-    let moving = Verdict::Move {
+    Verdict::Move {
         live,
         leave: lagging.leaves(),
         gone: lagging.not_counted(now),
-    };
-    // A release pins no PostgreSQL: the board's is the machine's own, which no move replaces.
-    match board.home.backend() {
-        Ok(Engine::PostgreSql) => return moving,
-        Ok(Engine::SurrealDb) => {}
-        Err(error) => return Verdict::Red(format!("{error}: nothing was moved")),
     }
-    // Fails closed: a version that cannot be read could be one the move replaces the server for.
-    let Some(pinned) = surreal_at(against.root, against.commit) else {
-        return Verdict::Red(format!(
-            "the SurrealDB {} pins cannot be read (crates/tasks/src/server.rs there names no \
-             SURREAL_VERSION), so the move might replace its board's database and the refresh stops \
-             none: nothing was moved",
-            against.tag
-        ));
-    };
-    let running = match board.home.recorded() {
-        Some(running) if !running.version.trim().is_empty() => running.version,
-        _ => {
-            return Verdict::Red(format!(
-                "the SurrealDB its board's database runs cannot be read (its record in {} names no \
-                 version), so the move might replace that database and the refresh stops none: \
-                 nothing was moved",
-                board.folder.display()
-            ));
-        }
-    };
-    if moving::older(&running, &pinned) {
-        return Verdict::Red(format!(
-            "its board's database runs SurrealDB {running} and {} pins {pinned}: moving its schema \
-             would replace that server, and the refresh stops no board's database, so nothing was \
-             moved",
-            against.tag
-        ));
-    }
-    moving
 }
 
 /// The time a writer's line is read by: this machine's clock, as the line is written by.
@@ -603,14 +563,10 @@ pub(crate) fn seen_now() -> f64 {
 }
 
 /// `board`'s store exported through its running database just before its move, into
-/// `snapshots/before-schema-TARGET-RELEASE.surql` in its folder, or `.sql` for a board on
-/// PostgreSQL (`pg_dump`'s text), the newest [`KEPT_SNAPSHOTS`] kept: kept in `board`, or why it
-/// failed.
+/// `snapshots/before-schema-TARGET-RELEASE.sql` in its folder (`pg_dump`'s text), the newest
+/// [`KEPT_SNAPSHOTS`] kept: kept in `board`, or why it failed.
 fn snapshot(board: &mut Judged, against: &Against<'_>) -> Result<(), String> {
-    let engine = board.home.backend().map_err(|e| {
-        format!("the snapshot of its store failed, so its board was not moved: {e}")
-    })?;
-    let snapshot = moving::snapshot_file(&board.folder, board.target, against.tag, engine);
+    let snapshot = moving::snapshot_file(&board.folder, board.target, against.tag);
     board
         .home
         .export(symphony_board::DATABASE, &snapshot)
@@ -676,27 +632,6 @@ fn moved(
             snapshot.display()
         )),
     }
-}
-
-/// The `surreal` a snapshot of the board in the git common dir `common` runs
-/// ([`moving::surreal_for`]).
-pub(crate) fn surreal_for(common: &Path, fallback: Option<&Path>) -> PathBuf {
-    moving::surreal_for(common, fallback)
-}
-
-/// The SurrealDB version the board's source pins at `commit` of the repository at `root`.
-fn surreal_at(root: &Path, commit: &str) -> Option<String> {
-    let text = git(
-        root,
-        &["show", &format!("{commit}:crates/tasks/src/server.rs")],
-    )
-    .ok()?;
-    (text.lines()).find_map(|line| {
-        let rest = line
-            .trim()
-            .strip_prefix("pub const SURREAL_VERSION: &str = \"")?;
-        rest.split_once('"').map(|(version, _)| version.to_string())
-    })
 }
 
 /// What the machine's server does with the release `current` now names, said: the server this

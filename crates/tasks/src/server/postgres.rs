@@ -1,11 +1,11 @@
-//! The board's PostgreSQL, beside its SurrealDB ([`Postgres`]): the machine's own, installed by its
-//! package manager, from the folder of programs the project file names (`[board] postgresql`)
-//! or found on `PATH` ([`discover_programs`];
+//! The board's PostgreSQL ([`Postgres`]): the machine's own, installed by its package manager,
+//! from the folder of programs the project file names (`[board] postgresql`) or found on `PATH`
+//! ([`discover_programs`];
 //! [its card](../../../../docs/operations/analysis/postgresql-binary-source.md#postgresql-binary-source)).
-//! It serves the board whose
-//! home's durable engine identity names it ([`Home::board_server`]), and a board not made yet,
-//! whose first start writes that identity before it makes the data ([`Postgres::make`]); a
-//! board on SurrealDB becomes PostgreSQL's by the move alone ([`super::moving`]).
+//! It serves the board whose home's durable engine identity names it ([`Home::board_server`]), and
+//! a board not made yet, whose first start writes that identity before it makes the data
+//! ([`Postgres::make`]); a board still on SurrealDB is refused, naming how it moves
+//! ([`super::GONE`]).
 //!
 //! Its data is `postgresql/` in the board's folder, made by `initdb` at the first start in a folder
 //! beside it and renamed into place, so an `initdb` cut short never leaves a half-made one where a
@@ -18,17 +18,16 @@
 //! ([`socket_folder`]), private to this user: macOS refuses a socket path over 103 bytes, which a
 //! board's folder under a checkout passes. Its server runs under a supervisor of its own session
 //! ([`SUPERVISED`]), which writes the server's log and says when the server is ready to accept
-//! connections. A board's in a scratch place ends once the starter's [`Lifeline`] reads its end,
-//! a scratch SurrealDB's rule; any other board's outlives its starter, as its SurrealDB does, and
-//! ends at a stop or a hold. A start waits for the supervisor's word, never polls; a stop is
-//! PostgreSQL's fast shutdown, waited for by `pg_ctl`, and a stop that meets a server ending on
-//! its own, gone by the time `pg_ctl` reads its record, waits for its end
-//! ([`Postgres::stop_failed`]). Both take the board's starters' lock, as
-//! SurrealDB's do. A start that finds a server of the data on its way out, as a scratch board's
-//! is in the moment after the command that started it ended, waits for that server's end
-//! ([`Postgres::outgoing_ended`]) and then starts its own: one whose record says it is stopping,
-//! and one whose record still says it is ready though its starter has ended ([`STARTER`]), as it
-//! does until its watchdog's signal reaches it.
+//! connections. A board's in a scratch place ends once the starter's [`Lifeline`] reads its end;
+//! any other board's outlives its starter and ends at a stop or a hold. A start waits for the
+//! supervisor's word, never polls; a stop is PostgreSQL's fast shutdown, waited for by `pg_ctl`,
+//! and a stop that meets a server ending on its own, gone by the time `pg_ctl` reads its record,
+//! waits for its end ([`Postgres::stop_failed`]). Both take the board's starters' lock. A start
+//! that finds a server of the data on its way out, as a scratch board's is in the moment after the
+//! command that started it ended, waits for that server's end ([`Postgres::outgoing_ended`]) and
+//! then starts its own: one whose record says it is stopping, and one whose record still says it
+//! is ready though its starter has ended ([`STARTER`]), as it does until its watchdog's signal
+//! reaches it.
 
 use super::scratch::{Lifeline, scratch};
 use super::starters::Doing;
@@ -131,7 +130,7 @@ pub struct Postgres {
 
 impl Home {
     /// This board's PostgreSQL, served by the programs in the folder `programs` (`[board]
-    /// postgresql`, [`programs`]): beside its SurrealDB in its folder, under its starters' lock.
+    /// postgresql`, [`programs`]): in its folder, under its starters' lock.
     pub fn postgresql(&self, programs: &Path) -> Postgres {
         Postgres {
             home: self.clone(),

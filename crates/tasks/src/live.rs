@@ -261,8 +261,9 @@ fn named_by_record(addr: &str, cwd: &Path, machine: Option<&Path>) -> Option<Liv
     names_address(&common, addr, false).then(|| live(&common, named(&common, machine)))
 }
 
-/// PostgreSQL's socket is derived from the canonical board data path, not a TCP port or the
-/// SurrealDB record. Following links also recognizes `/private/tmp` on macOS.
+/// Whether `addr` names `common`'s board: a PostgreSQL socket by the canonical path of the board's
+/// data, never by a TCP port or the server record, following links so `/private/tmp` on macOS is
+/// recognized too; any other address by the port the record names ([`recorded`]).
 fn names_address(common: &Path, addr: &str, strict: bool) -> bool {
     if let Some(socket) = addr.strip_prefix("postgresql:") {
         let expected = server::postgres::socket_folder(

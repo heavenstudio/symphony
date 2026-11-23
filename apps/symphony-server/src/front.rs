@@ -73,7 +73,7 @@ pub struct Shared {
     stopped: watch::Sender<bool>,
     pub(crate) lifecycle: Mutex<()>,
     /// What the stop wakes ([`Shared::wake_at_stop`]). Never taken with `lifecycle`, which hub
-    /// startup holds across SurrealDB calls.
+    /// startup holds across its board's calls.
     stop_wakers: Wakers,
     /// The write ends of the pipes whose read ends see their end at the stop
     /// ([`Shared::stop_pipe`]): a wait on a descriptor ends there.

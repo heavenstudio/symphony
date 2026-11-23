@@ -4452,7 +4452,6 @@ dependencies = [
  "serde_json",
  "symphony-api",
  "symphony-board",
- "symphony-env",
  "tao",
  "test-time",
  "tray-icon",
@@ -4477,7 +4476,6 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "symphony-board",
- "symphony-env",
  "toml 1.1.7+spec-1.1.0",
 ]
 

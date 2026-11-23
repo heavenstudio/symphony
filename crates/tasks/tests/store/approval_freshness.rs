@@ -112,7 +112,7 @@ fn uncertain_samples(f: &Fixture, orch: &str, worker: &str, before: &[Value]) {
 
 #[test]
 fn pane_task_and_supported_counter_advances_reach_the_native_recipient() {
-    if !paired_child(
+    if !in_child_with_hc(
         "blocked_panes::freshness::pane_task_and_supported_counter_advances_reach_the_native_recipient",
     ) {
         return;
@@ -175,7 +175,7 @@ fn pane_task_and_supported_counter_advances_reach_the_native_recipient() {
 
 #[test]
 fn pending_rows_keep_uncertainty_and_retire_only_proven_obsolete_observations() {
-    if !paired_child(
+    if !in_child_with_hc(
         "blocked_panes::freshness::pending_rows_keep_uncertainty_and_retire_only_proven_obsolete_observations",
     ) {
         return;
@@ -247,7 +247,7 @@ fn pending_rows_keep_uncertainty_and_retire_only_proven_obsolete_observations() 
 
 #[test]
 fn legacy_nonclock_transport_preserves_unrelated_prose() {
-    if !paired_child(
+    if !in_child_with_hc(
         "blocked_panes::freshness::legacy_nonclock_transport_preserves_unrelated_prose",
     ) {
         return;
@@ -302,7 +302,7 @@ fn legacy_nonclock_transport_preserves_unrelated_prose() {
 
 #[test]
 fn a_direct_coordinator_reaches_its_parent_owner_without_exposing_delegated_workers() {
-    if !paired_child(
+    if !in_child_with_hc(
         "blocked_panes::freshness::a_direct_coordinator_reaches_its_parent_owner_without_exposing_delegated_workers",
     ) {
         return;
@@ -369,7 +369,7 @@ fn a_direct_coordinator_reaches_its_parent_owner_without_exposing_delegated_work
 
 #[test]
 fn delayed_clock_samples_cannot_rewind_newer_blocked_or_resolved_evidence() {
-    if !paired_child(
+    if !in_child_with_hc(
         "blocked_panes::freshness::delayed_clock_samples_cannot_rewind_newer_blocked_or_resolved_evidence",
     ) {
         return;
@@ -437,7 +437,7 @@ fn delayed_clock_samples_cannot_rewind_newer_blocked_or_resolved_evidence() {
 
 #[test]
 fn an_old_named_pane_cannot_rewind_a_newer_observed_launch() {
-    if !paired_child(
+    if !in_child_with_hc(
         "blocked_panes::freshness::an_old_named_pane_cannot_rewind_a_newer_observed_launch",
     ) {
         return;

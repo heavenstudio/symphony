@@ -33,10 +33,9 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 [dev-dependencies]
 # Waits on a condition with a backstop only a stall reaches (RULES.md `tests/no-test-fails-on-load`).
 test-time = { path = "../../crates/test-time" }
-# The real server's test (tests/real_server.rs) runs on a board of its own: a SurrealDB server the
-# board's keeper starts in a scratch folder, the pinned one `SYMPHONY_SURREAL` names, and its store.
+# The real server's test (tests/real_server.rs) runs on a board of its own: the machine's PostgreSQL,
+# which the board's keeper starts in a scratch folder, and its store.
 symphony-board = { path = "../../crates/tasks", version = "=0.2.0" }
-symphony-env = { path = "../../crates/symphony-env", version = "1.0.0" }
 
 [lints]
 workspace = true

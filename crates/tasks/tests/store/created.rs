@@ -1,4 +1,4 @@
-//! A task made on either database: what it is made with (its parent, links, the tasks it waits on,
+//! A task made on the board: what it is made with (its parent, links, the tasks it waits on,
 //! its reservation and its marks), the line that says so, and the refusals before anything is
 //! written; a body and a line of a megabyte, as each was given.
 
@@ -15,8 +15,8 @@ fn board() -> Fixture {
     )
 }
 
-/// What a test reads of a task: everything but its times and number, which each database gives
-/// its own.
+/// What a test reads of a task: everything but its times and number, which the board gives its
+/// own.
 fn shape(task: &Task) -> serde_json::Value {
     json!({
         "slug": task.slug, "title": task.title, "body": task.body, "status": task.status,
@@ -211,7 +211,7 @@ fn a_task_is_refused_before_anything_is_written() {
 #[test]
 fn a_long_body_and_a_long_line_are_written_and_read_back_whole() {
     let f = board();
-    let what = format!("a task and a line of {LONG:?} bytes each, on {backend:?}");
+    let what = format!("a task and a line of {LONG:?} bytes each");
     bounded(&what, Duration::from_secs(10), move || {
         for (at, bytes) in LONG.into_iter().enumerate() {
             let slug = format!("tools/long-{at}");

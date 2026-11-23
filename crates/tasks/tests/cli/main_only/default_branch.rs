@@ -4,7 +4,7 @@
 //! board by no writer.
 
 use super::{Held, Live, before, refused, this};
-use crate::git;
+use crate::{git, project_file};
 use symphony_board::live::SOURCE;
 
 #[test]
@@ -25,7 +25,7 @@ fn a_branch_the_main_checkout_has_out_is_no_default_branch_unless_the_project_na
     // A project whose default branch is `topic`, and says so, has this build for its own.
     std::fs::write(
         live.main.join("symphony.toml"),
-        "[project]\nid = \"live\"\ndefault_branch = \"topic\"\n",
+        project_file("live", "default_branch = \"topic\"\n"),
     )
     .unwrap();
     let ran = live.tasks(&live.wt, &["list"]);
@@ -51,7 +51,7 @@ fn a_default_branch_that_cannot_be_read_is_moved_by_no_writer_not_even_migrate()
     let names = |branch: &str| {
         std::fs::write(
             live.main.join("symphony.toml"),
-            format!("[project]\nid = \"live\"\ndefault_branch = \"{branch}\"\n"),
+            project_file("live", &format!("default_branch = \"{branch}\"\n")),
         )
         .unwrap();
     };

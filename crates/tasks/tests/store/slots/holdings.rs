@@ -4,10 +4,8 @@ use super::{F, K, O, P, W, capped, sessions, with};
 use crate::common::{Fixture, HOST, NOW, Seed, refused, task};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
-use std::net::TcpListener;
-use std::time::Duration;
 use symphony_board::rows::TaskRow;
-use symphony_board::{Error, Health, NewLaunch, NewTask, Store, rpc};
+use symphony_board::{Error, Health, NewLaunch, NewTask, Opening, Store, pg};
 
 fn holdings(rows: &[(&str, &[&str])]) -> BTreeMap<String, BTreeSet<String>> {
     rows.iter()
@@ -144,18 +142,19 @@ fn unknown_owners_retain_valid_held_slots_exactly_as_the_admission_view_does() {
 fn an_empty_observation_succeeds_but_a_failed_store_read_remains_an_error() {
     let f = Fixture::new(Seed::default());
     assert_eq!(f.store.slot_holdings().unwrap(), BTreeMap::new());
-    // Own the port, without a server answering it: no unrelated service can answer this read.
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap().to_string();
-    let store = Store::unchecked(
-        rpc::Client::new(&address, "sf", "holdings").waiting(Duration::from_millis(30)),
+    // A socket folder of the test's own, with no server in it: nothing can answer this read.
+    let nowhere = std::env::temp_dir().join(format!("no-pg-holdings-{}", std::process::id()));
+    let store = Store::unchecked_on(
+        pg::Client::new(&nowhere, "holdings").into(),
         Box::new(|| NOW),
         Box::new(|_| false),
         HOST,
+        &Opening::write(),
     );
     let error = store.slot_holdings().unwrap_err();
     assert!(matches!(error, Error::Db(_)), "{error}");
-    assert!(error.to_string().contains(&address), "{error}");
+    let socket = nowhere.display().to_string();
+    assert!(error.to_string().contains(&socket), "{error}");
 }
 
 #[test]

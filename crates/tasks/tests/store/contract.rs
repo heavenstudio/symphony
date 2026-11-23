@@ -22,24 +22,17 @@ const OWN: i64 = schema::ADDITIONS;
 /// The first fixture step: the table `fixture_tag`, and the optional field `fixture_note` on every
 /// open table.
 fn one_on() -> Schema {
-    let (mut surreal, mut postgres) = (
-        "DEFINE TABLE IF NOT EXISTS fixture_tag SCHEMAFULL;
-         DEFINE FIELD IF NOT EXISTS name ON fixture_tag TYPE string;"
-            .to_string(),
-        "CREATE TABLE IF NOT EXISTS fixture_tag (id jsonb PRIMARY KEY, doc jsonb);".to_string(),
-    );
+    let mut postgres =
+        "CREATE TABLE IF NOT EXISTS fixture_tag (id jsonb PRIMARY KEY, doc jsonb);".to_string();
     for table in OPEN {
-        surreal +=
-            &format!("\nDEFINE FIELD IF NOT EXISTS fixture_note ON {table} TYPE option<string>;");
         postgres += &format!("\nALTER TABLE {table} ADD COLUMN IF NOT EXISTS fixture_note text;");
     }
-    Schema::this_build().then_additive(&surreal, &postgres, &["fixture_tag"])
+    Schema::this_build().then_additive(&postgres, &["fixture_tag"])
 }
 
 /// The second fixture step, after the first: the table `fixture_mark`.
 fn two_on() -> Schema {
     one_on().then_additive(
-        "DEFINE TABLE IF NOT EXISTS fixture_mark SCHEMALESS;",
         "CREATE TABLE IF NOT EXISTS fixture_mark (id jsonb PRIMARY KEY, doc jsonb);",
         &["fixture_mark"],
     )
@@ -332,12 +325,7 @@ fn a_breaking_step_refuses_builds_on_the_other_side_and_alone_holds_the_writers_
     open(&db, &Opening::write().at(two_on()).migrating());
     assert_eq!(additions(&db), Some(OWN + 2));
     // A breaking one is held by it, before any write.
-    let breaking = || {
-        two_on().then_each(
-            "DEFINE FIELD OVERWRITE title ON task TYPE option<string>;",
-            "ALTER TABLE task ALTER COLUMN title DROP NOT NULL;",
-        )
-    };
+    let breaking = || two_on().then_each("ALTER TABLE task ALTER COLUMN title DROP NOT NULL;");
     let why = refused(opened(&db, &Opening::write().at(breaking()).migrating()).map(drop));
     assert!(
         why.starts_with(&format!(
@@ -379,7 +367,7 @@ fn a_breaking_step_refuses_builds_on_the_other_side_and_alone_holds_the_writers_
 #[test]
 fn a_board_not_made_yet_has_no_additive_step_and_the_read_of_them_makes_nothing() {
     // `tasks migrate` reads the steps a board has before it opens it to write, on a board that
-    // may not be made: SurrealDB answers no record, PostgreSQL no table.
+    // may not be made: the database answers no table.
     let db = database();
     let reader = Store::unchecked_on(
         db.another(),
@@ -409,8 +397,7 @@ fn the_rule_before_the_contract_keeps_its_names_and_works_beside_additive_steps(
     let _: i64 = WRITABLE_FROM_SINCE;
     let _: fn(Schema) -> Schema = Schema::keeping_writes;
     let _: fn(&Schema) -> i64 = Schema::writable_from;
-    let _: fn(&Schema, &str) -> Schema = Schema::then;
-    let _: fn(&Schema, &str, &str) -> Schema = Schema::then_each;
+    let _: fn(&Schema, &str) -> Schema = Schema::then_each;
     let _: fn(&Schema) -> Schema = Schema::before;
     let _: fn(Option<i64>, &Value, i64, bool) -> bool = schema::writes;
     let _: fn(&Store) -> Result<Standing, Error> = Store::board_standing;
@@ -418,7 +405,7 @@ fn the_rule_before_the_contract_keeps_its_names_and_works_beside_additive_steps(
     // The contract's, beside them.
     let _: (i64, i64) = (schema::ADDITIONS, VERSION);
     let _: fn(&Schema) -> i64 = Schema::additions;
-    let _: fn(&Schema, &str, &str, &[&str]) -> Schema = Schema::then_additive;
+    let _: fn(&Schema, &str, &[&str]) -> Schema = Schema::then_additive;
     let _: fn(i64) -> Schema = Schema::of_this_contract;
     let _: fn(&Store) -> Result<i64, Error> = Store::additions;
     // What they say of this build: no step of it declares itself, and a schema a step on or
@@ -431,7 +418,7 @@ fn the_rule_before_the_contract_keeps_its_names_and_works_beside_additive_steps(
     assert_eq!(this.clone().keeping_writes().writable_from(), VERSION - 1);
     for (moved, version) in [
         (this.before(), VERSION - 1),
-        (two_on().then("RETURN NONE;"), VERSION + 1),
+        (two_on().then_each("SELECT 1;"), VERSION + 1),
     ] {
         assert_eq!((moved.version(), moved.additions()), (version, 0));
     }
@@ -456,13 +443,9 @@ fn the_rule_before_the_contract_keeps_its_names_and_works_beside_additive_steps(
     // A step declared to keep a Symphony one behind writing still does, whatever additive
     // steps the newer contract then has.
     let next = two_on()
-        .then_each(
-            "DEFINE TABLE IF NOT EXISTS fixture_next SCHEMALESS;",
-            "CREATE TABLE IF NOT EXISTS fixture_next (id jsonb PRIMARY KEY, doc jsonb);",
-        )
+        .then_each("CREATE TABLE IF NOT EXISTS fixture_next (id jsonb PRIMARY KEY, doc jsonb);")
         .keeping_writes()
         .then_additive(
-            "DEFINE TABLE IF NOT EXISTS fixture_later SCHEMALESS;",
             "CREATE TABLE IF NOT EXISTS fixture_later (id jsonb PRIMARY KEY, doc jsonb);",
             &["fixture_later"],
         );

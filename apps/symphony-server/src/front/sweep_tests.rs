@@ -343,12 +343,10 @@ fn each_sweep_is_recorded_in_the_boards_health_failed_with_its_error_or_ok() {
 
 #[test]
 fn a_sweep_that_finds_no_board_is_not_counted_failed() {
-    let script = format!(
-        "if [ ! -f failed ]; then touch failed; echo 'tasks: SurrealDB {} is not at /nowhere/surreal, \
-         where `SYMPHONY_SURREAL` names it' >&2; exit 1; fi",
-        symphony_board::server::SURREAL_VERSION
-    );
-    let mut fixture = SweepFixture::without_hub(&script);
+    let script = "if [ ! -f failed ]; then touch failed; echo 'tasks: the main board is not made \
+                  yet, and a reader never makes a board: nothing was made or started; `just tasks \
+                  list` in main makes it, on PostgreSQL' >&2; exit 1; fi";
+    let mut fixture = SweepFixture::without_hub(script);
     let (hub, clock) = clocked_hub(&fixture);
     let at = clock.now();
     let sweep = TestClock::new();
@@ -369,16 +367,19 @@ fn a_sweep_that_finds_no_board_is_not_counted_failed() {
     assert_eq!(*hub.server_notice.borrow(), "");
 }
 
+/// A board still on SurrealDB is refused, naming how it moves, and is a board all the same: a sweep
+/// that meets it failed.
 #[test]
-fn a_sweep_whose_board_store_cannot_be_served_is_counted_failed() {
+fn a_sweep_whose_board_is_still_on_surrealdb_is_counted_failed() {
     let mut fixture = SweepFixture::without_hub(
         "if [ ! -f failed ]; then touch failed; printf 'tasks: ' >&2; cat unserved >&2; exit 1; fi",
     );
-    let unserved = symphony_board::server::ServerError::Unserved {
-        surreal: "/nowhere/surreal".into(),
-        data: fixture.root.join(".git/symphony/tasks/data"),
-    };
-    std::fs::write(fixture.root.join("unserved"), unserved.to_string()).unwrap();
+    let unserved = format!(
+        "the board in {} is on SurrealDB, which this build serves no more: {}. Nothing was started",
+        fixture.root.join(".git/symphony/tasks").display(),
+        symphony_board::server::GONE
+    );
+    std::fs::write(fixture.root.join("unserved"), &unserved).unwrap();
     let (hub, clock) = clocked_hub(&fixture);
     let at = clock.now();
     let sweep = TestClock::new();
@@ -481,7 +482,7 @@ fn a_failed_sweeps_long_error_is_kept_on_one_short_line_in_the_record() {
 
 #[test]
 fn a_held_lifecycle_lock_does_not_stall_the_sweep_rounds() {
-    // Hub startup holds the lifecycle lock across SurrealDB calls; the rounds must go on.
+    // Hub startup holds the lifecycle lock across its board's calls; the rounds must go on.
     let mut fixture = SweepFixture::new(
         "if [ ! -f started ]; then printf first > started; exit 0; fi\nprintf again > retried",
     );
@@ -517,7 +518,7 @@ fn a_project_is_maintained_only_once_its_hub_has_read_a_board_there() {
     assert_eq!(sweep.waited(1), [AFTER_A_SLEEP]);
     assert_eq!(lines(&fixture, "calls"), Vec::<String>::new());
 
-    // Its hub's reach found no board: no store, and no SurrealDB here to serve one. That read
+    // Its hub's reach found no board: none is made yet, and a reader never makes one. That read
     // wakes the sweep, which looks and waits again.
     let hub = Arc::new(crate::live::Hub::new(
         &fixture.root,
@@ -525,8 +526,9 @@ fn a_project_is_maintained_only_once_its_hub_has_read_a_board_there() {
     ));
     hub.wake_at_board(fixture.shared.board_wakers.clone());
     assert!(fixture.shared.api.set(hub.clone()).is_ok());
-    let missing =
-        symphony_board::server::ServerError::NoSurreal(fixture.root.join("surreal")).to_string();
+    let missing = "the main board is not made yet, and a reader never makes a board: nothing was \
+                   made or started; `just tasks list` in main makes it, on PostgreSQL"
+        .to_string();
     assert!(
         hub.reconnect(&mut |_: &Path| Err(missing.clone()))
             .is_none()

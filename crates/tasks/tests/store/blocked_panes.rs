@@ -79,14 +79,6 @@ fn in_child_with_hc(name: &str) -> bool {
     false
 }
 
-fn paired_child(name: &str) -> bool {
-    let suffix = match backend {
-        Backend::PostgreSql => "postgresql",
-        Backend::SurrealDb => "surrealdb",
-    };
-    in_child_with_hc(&format!("{name}::{suffix}"))
-}
-
 /// What hc answers from now on: these terminals, or, given None, a state it cannot read, which it
 /// refuses as hc does when it cannot be asked.
 fn panes(terminals: Option<Value>) {
@@ -137,7 +129,7 @@ fn launch(f: &Fixture, slug: &str, handle: &str, pane: &str) {
 
 #[test]
 fn a_blocked_pane_reaches_the_orchestrator_of_its_work_once_an_episode() {
-    if !paired_child(
+    if !in_child_with_hc(
         "blocked_panes::a_blocked_pane_reaches_the_orchestrator_of_its_work_once_an_episode",
     ) {
         return;
@@ -212,7 +204,8 @@ fn a_blocked_pane_reaches_the_orchestrator_of_its_work_once_an_episode() {
 
 #[test]
 fn hc_failing_is_said_once_and_a_known_block_is_not_repeated() {
-    if !paired_child("blocked_panes::hc_failing_is_said_once_and_a_known_block_is_not_repeated") {
+    if !in_child_with_hc("blocked_panes::hc_failing_is_said_once_and_a_known_block_is_not_repeated")
+    {
         return;
     }
     let f = Fixture::new(crate::common::Seed::default());
@@ -264,7 +257,7 @@ fn hc_failing_is_said_once_and_a_known_block_is_not_repeated() {
 
 #[test]
 fn with_no_session_launched_into_a_pane_there_is_nothing_to_watch() {
-    if !paired_child(
+    if !in_child_with_hc(
         "blocked_panes::with_no_session_launched_into_a_pane_there_is_nothing_to_watch",
     ) {
         return;
@@ -311,7 +304,7 @@ fn waiting_worker(f: &Fixture) -> (String, String, super::callbacks::Listener) {
 
 #[test]
 fn two_clocks_on_one_board_say_an_episode_once() {
-    if !paired_child("blocked_panes::two_clocks_on_one_board_say_an_episode_once") {
+    if !in_child_with_hc("blocked_panes::two_clocks_on_one_board_say_an_episode_once") {
         return;
     }
     let f = Fixture::new(crate::common::Seed::default());
@@ -333,7 +326,7 @@ fn two_clocks_on_one_board_say_an_episode_once() {
 
 #[test]
 fn a_tick_asks_hc_once_for_its_watch_its_pull_and_its_agents_view() {
-    if !paired_child(
+    if !in_child_with_hc(
         "blocked_panes::a_tick_asks_hc_once_for_its_watch_its_pull_and_its_agents_view",
     ) {
         return;
@@ -361,7 +354,7 @@ fn a_tick_asks_hc_once_for_its_watch_its_pull_and_its_agents_view() {
 
 #[test]
 fn a_block_waiting_out_an_outage_is_not_said_once_a_hand_over_took_its_task_away() {
-    if !paired_child(
+    if !in_child_with_hc(
         "blocked_panes::a_block_waiting_out_an_outage_is_not_said_once_a_hand_over_took_its_task_away",
     ) {
         return;
@@ -387,7 +380,7 @@ fn a_block_waiting_out_an_outage_is_not_said_once_a_hand_over_took_its_task_away
 
 #[test]
 fn a_reviewers_delayed_notice_follows_the_current_owner_instead_of_its_parent() {
-    if !paired_child(
+    if !in_child_with_hc(
         "blocked_panes::a_reviewers_delayed_notice_follows_the_current_owner_instead_of_its_parent",
     ) {
         return;
@@ -465,7 +458,7 @@ fn a_reviewers_delayed_notice_follows_the_current_owner_instead_of_its_parent() 
 
 #[test]
 fn a_quiet_child_at_its_prompt_whose_listener_answers_is_said_idle_once_across_wakes() {
-    if !paired_child(
+    if !in_child_with_hc(
         "blocked_panes::a_quiet_child_at_its_prompt_whose_listener_answers_is_said_idle_once_across_wakes",
     ) {
         return;
@@ -571,7 +564,7 @@ fn idle_once(worker: &str) -> [String; 2] {
 #[test]
 fn a_quiet_child_with_no_terminal_whose_listener_answers_is_said_idle_once_and_again_after_a_tool_call()
  {
-    if !paired_child(
+    if !in_child_with_hc(
         "blocked_panes::a_quiet_child_with_no_terminal_whose_listener_answers_is_said_idle_once_and_again_after_a_tool_call",
     ) {
         return;
@@ -668,7 +661,7 @@ fn a_quiet_child_with_no_terminal_whose_listener_answers_is_said_idle_once_and_a
 
 #[test]
 fn a_session_that_never_made_a_tool_call_rests_from_when_it_connected() {
-    if !paired_child(
+    if !in_child_with_hc(
         "blocked_panes::a_session_that_never_made_a_tool_call_rests_from_when_it_connected",
     ) {
         return;
@@ -707,7 +700,7 @@ fn an_older_pass_forgets(f: &Fixture, orch: &str, worker: &str) {
 
 #[test]
 fn an_older_dispatchers_pass_forgets_the_idle_entry_and_the_beat_told_keeps_it_said_once() {
-    if !paired_child(
+    if !in_child_with_hc(
         "blocked_panes::an_older_dispatchers_pass_forgets_the_idle_entry_and_the_beat_told_keeps_it_said_once",
     ) {
         return;
@@ -797,7 +790,7 @@ fn an_older_pass_forgets_nothing_it_lacks(f: &Fixture, orch: &str, worker: &str)
 
 #[test]
 fn hc_unanswered_is_said_for_an_outage_of_the_clocks_awake_time_never_a_slow_answer() {
-    if !paired_child(
+    if !in_child_with_hc(
         "blocked_panes::hc_unanswered_is_said_for_an_outage_of_the_clocks_awake_time_never_a_slow_answer",
     ) {
         return;

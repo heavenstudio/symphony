@@ -1,4 +1,4 @@
-//! The board's marker on either database: it moves with every commit a reader can see, its own
+//! The board's marker: it moves with every commit a reader can see, its own
 //! writer's or another's, and with nothing else: no read, no refused write, and no writer's line.
 
 use crate::common::{Fixture, Seed, refused};

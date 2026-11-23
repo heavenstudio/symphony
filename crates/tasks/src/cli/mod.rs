@@ -871,7 +871,7 @@ mod tests {
     /// Only a live board opened to write follows its project's committed workflow.
     #[test]
     fn a_live_board_opened_to_write_follows_its_committed_workflow_and_nothing_else_does() {
-        use crate::store_fixture::{Backend, Fixture, Seed};
+        use crate::store_fixture::{Fixture, Seed};
         use crate::workflow::activate::tests::{MAPPED, TWO};
         let repo = crate::workflow::tests::Scratch::new("following");
         std::fs::write(repo.0.join("symphony.toml"), format!("{TWO}{MAPPED}")).unwrap();
@@ -880,10 +880,7 @@ mod tests {
             project: "demo".into(),
             common: repo.0.join(".git"),
         };
-        let f = Fixture::new(
-            Backend::SurrealDb,
-            Seed::default().task("sim/ready", "ready"),
-        );
+        let f = Fixture::new(Seed::default().task("sim/ready", "ready"));
         let write = crate::Opening::write();
         for how in [
             write.clone(),

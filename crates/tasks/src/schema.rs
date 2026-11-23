@@ -144,14 +144,14 @@ pub const OPEN: [&str; 11] = [
 /// so a schema bump that writes nothing here keeps the older Symphony read-only on the board it
 /// moved, until a release at its schema serves it.
 ///
-/// A step is listed only when it changes no table that existed before it, on either engine: no
-/// column, index, trigger, function or check added to or changed on one. The
-/// store's catalogue test holds a listed version to that on the database (`tests/store/catalogue.rs`,
-/// over the committed definitions of each version); what it cannot see, a rule held in code that
-/// the older Symphony's writes would skip, is its reviewer's to read against the line
-/// ([CHECKS](../../../docs/workflow/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). The schema
-/// that brought this list and the record it writes ([`WRITABLE_FROM_SINCE`]) changed `meta` and is
-/// not listed.
+/// A step is listed only when it changes no table that existed before it: no column, index,
+/// trigger, function or check added to or changed on one. The store's catalogue test holds a
+/// listed version to that on the database (`tests/store/catalogue.rs`, over the committed
+/// definitions of each version); what it cannot see, a rule held in code that the older
+/// Symphony's writes would skip, is its reviewer's to read against the line
+/// ([CHECKS](../../../docs/workflow/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). The
+/// schema that brought this list and the record it writes ([`WRITABLE_FROM_SINCE`]) changed `meta`
+/// and is not listed.
 pub const COMPATIBLE: &[(i64, &str)] = &[];
 
 /// The schema whose step brought `meta`'s `writable_from`: a Symphony below it never reads

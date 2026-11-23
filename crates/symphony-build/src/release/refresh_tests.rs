@@ -1,8 +1,8 @@
-//! The refresh's parts that need no board or server: the SurrealDB a release pins, how a command
-//! it runs fails and what the server's reload said. The writer rule, the snapshots kept and the
-//! SurrealDB a move never replaces are the library's
-//! (`symphony::machine::writers`, `symphony::machine::moving`). The whole refresh, on scratch
-//! boards and a stand-in server, is `tests/release/refresh.rs`.
+//! The refresh's parts that need no stand-in server: how a command it runs fails, what the server's
+//! reload said, and how a board on PostgreSQL, or one still on SurrealDB, is judged. The writer
+//! rule and the snapshots kept are the library's (`symphony::machine::writers`,
+//! `symphony::machine::moving`). The whole refresh, on scratch boards and a stand-in server, is
+//! `tests/release/refresh.rs`.
 
 use super::*;
 use crate::test_tree::Tree;
@@ -19,37 +19,6 @@ fn a_release_at_currents_schema_or_behind_it_says_which_and_moves_only_a_board_l
         "release-2 serves board schema 18, behind the release current names, which serves 19: none \
          moves back, and only a board left behind 18 moves"
     );
-}
-
-#[test]
-fn the_pinned_surreal_is_read_from_the_boards_source_at_the_commit() {
-    let tree = Tree::new();
-    let root = tree.path("repo");
-    fs::create_dir_all(root.join("crates/tasks/src")).unwrap();
-    fs::write(
-        root.join("crates/tasks/src/server.rs"),
-        "//! The server.\n\n/// Pinned.\npub const SURREAL_VERSION: &str = \"3.3.0\";\n",
-    )
-    .unwrap();
-    let run = |args: &[&str]| {
-        git(
-            &root,
-            &[
-                &["-c", "user.name=t", "-c", "user.email=t@example.com"][..],
-                args,
-            ]
-            .concat(),
-        )
-        .unwrap()
-    };
-    run(&["init", "-q", "-b", "main"]);
-    run(&["add", "-A"]);
-    run(&["commit", "-q", "-m", "first"]);
-    assert_eq!(surreal_at(&root, "HEAD").as_deref(), Some("3.3.0"));
-    fs::write(root.join("crates/tasks/src/server.rs"), "// none\n").unwrap();
-    run(&["commit", "-q", "-am", "none"]);
-    assert_eq!(surreal_at(&root, "HEAD"), None);
-    assert_eq!(surreal_at(&root, "nowhere"), None);
 }
 
 #[test]
@@ -155,11 +124,10 @@ fn what_the_reload_said_is_its_last_line_since_current_moved_or_its_last_before_
 }
 
 /// A board on PostgreSQL is judged and snapshotted as it runs, by the machine's own PostgreSQL:
-/// a release pins none, so its move waits on no SurrealDB version, and its snapshot is
-/// `pg_dump`'s text.
+/// a release pins none, and its snapshot is `pg_dump`'s text.
 #[test]
 fn a_board_on_postgresql_is_judged_by_its_writers_alone_and_snapshotted_with_pg_dump() {
-    use symphony_board::server::postgres;
+    use symphony_board::server::{Engine, postgres};
     let dir = std::env::temp_dir().join(format!("refresh-pg-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     let root = dir.join("alpha");
@@ -175,7 +143,7 @@ fn a_board_on_postgresql_is_judged_by_its_writers_alone_and_snapshotted_with_pg_
         ),
     )
     .unwrap();
-    let home = Home::in_common(&common, Some(Path::new("/no/surreal")));
+    let home = Home::in_common(&common);
     home.initialize_backend(Engine::PostgreSql).unwrap();
     let pg = home.project_postgresql(&root).unwrap();
     let serving = pg.ensure().unwrap();
@@ -200,19 +168,7 @@ fn a_board_on_postgresql_is_judged_by_its_writers_alone_and_snapshotted_with_pg_
     .unwrap();
     let logs = dir.join("logs");
     fs::create_dir_all(&logs).unwrap();
-    let against = Against {
-        run: "2026-11-20T1000-1",
-        main: &dir,
-        // No repository: the SurrealDB a release pins cannot be read, and is not asked for.
-        root: &dir,
-        ours: &dir,
-        machine: &dir.join("machine"),
-        tag: "release-2026-11-20",
-        commit: "0000000",
-        logs: &logs,
-        surreal: None,
-        until: super::super::waits::far(),
-    };
+    let against = against(&dir, &logs);
     let schema = symphony_board::SCHEMA;
     let at = judge(&entry, &common, schema, &against);
     assert!(
@@ -226,7 +182,7 @@ fn a_board_on_postgresql_is_judged_by_its_writers_alone_and_snapshotted_with_pg_
     let mut moving = judge(&entry, &common, schema + 1, &against);
     assert!(
         matches!(&moving.verdict, Verdict::Move { live, leave: false, .. } if *live == schema),
-        "no writer behind, and no SurrealDB pin to wait on"
+        "no writer behind"
     );
     snapshot(&mut moving, &against).unwrap();
     let kept = common.join(format!(
@@ -253,4 +209,56 @@ fn a_board_on_postgresql_is_judged_by_its_writers_alone_and_snapshotted_with_pg_
     );
     assert!(pg.current().unwrap().is_none());
     fs::remove_dir_all(&dir).unwrap();
+}
+
+/// What a judge runs against in `dir`, its steps' logs in `logs`: no repository of the Symphony's
+/// is read.
+fn against<'a>(dir: &'a Path, logs: &'a Path) -> Against<'a> {
+    Against {
+        run: "2026-11-20T1000-1",
+        main: dir,
+        ours: dir,
+        machine: dir,
+        tag: "release-2026-11-20",
+        logs,
+        until: super::super::waits::far(),
+    }
+}
+
+/// A board still on SurrealDB, as an earlier release kept it, is red, naming how it moves, and
+/// nothing is read, made or started: no PostgreSQL is asked for it.
+#[test]
+fn a_board_still_on_surrealdb_is_red_naming_how_it_moves() {
+    let tree = Tree::new();
+    let root = tree.path("alpha");
+    let common = root.join(".git");
+    let folder = common.join(symphony_board::server::FOLDER);
+    fs::create_dir_all(folder.join("data")).unwrap();
+    let entry: Entry = serde_json::from_value(serde_json::json!({
+        "id": "alpha", "name": "alpha", "root": root, "pin": 1,
+    }))
+    .unwrap();
+    let logs = tree.path("logs");
+    fs::create_dir_all(&logs).unwrap();
+    let dir = tree.path("");
+    let judged = judge(
+        &entry,
+        &common,
+        symphony_board::SCHEMA,
+        &against(&dir, &logs),
+    );
+    assert!(
+        matches!(&judged.verdict, Verdict::Red(why) if why.contains(symphony_board::server::GONE)),
+        "{:?}",
+        match &judged.verdict {
+            Verdict::Red(why) | Verdict::Done(why) | Verdict::Theirs(why) => why.as_str(),
+            Verdict::Move { .. } => "a move",
+        }
+    );
+    assert!(
+        !judged.down,
+        "its database is not said down: it is on another engine"
+    );
+    assert!(!folder.join("postgresql").exists(), "nothing was made");
+    assert!(!folder.join("backend.json").exists(), "nor named");
 }

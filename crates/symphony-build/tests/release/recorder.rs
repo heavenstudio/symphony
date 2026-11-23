@@ -15,9 +15,9 @@
 //! run that stopped fails by what it said and not by a wait for a record no check would make.
 
 use std::fs;
-use std::net::TcpListener;
 use std::os::unix::fs::PermissionsExt as _;
-use std::path::Path;
+use std::os::unix::net::UnixListener;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde_json::Value;
@@ -139,20 +139,48 @@ fn each_check_is_recorded_by_the_boards_recorder_as_a_test_of_its_own() {
     }
 }
 
+/// A board's PostgreSQL that never answers: a socket where a board's server keeps its own, under
+/// `/tmp` ([`symphony_board::server::postgres::socket_folder`]), that takes a connection and says
+/// nothing on it. Its folder is removed with it.
+struct Silent {
+    folder: PathBuf,
+    _socket: UnixListener,
+}
+
+impl Silent {
+    /// The silent board of a server on the data `data` would serve.
+    fn at(data: &Path) -> Silent {
+        let folder = symphony_board::server::postgres::socket_folder(data);
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(&folder).unwrap();
+        let socket = folder.join(symphony_board::server::postgres::SOCKET_FILE);
+        Silent {
+            _socket: UnixListener::bind(&socket).unwrap(),
+            folder,
+        }
+    }
+}
+
+impl Drop for Silent {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.folder);
+    }
+}
+
 /// A recorder still asking a board that never answers which task its check was for, for longer
 /// than the run gives a process to leave its checkout (5 s; the wait is 20 s at [`SCALE`]), stops
 /// no run: the next check runs, and both are kept once their recorders gave the board up.
 #[test]
 fn a_recorder_that_outlives_its_check_never_holds_the_runs_checkout() {
     let fixture = Fixture::new();
-    // Accepts a connection and says nothing on it: the board's answer never comes.
-    let silent = TcpListener::bind("127.0.0.1:0").unwrap();
+    // Takes a connection and says nothing on it: the board's answer never comes.
+    let silent = Silent::at(&fixture.root.join("silent"));
     let recorder = fixture.root.join("recorder-of-a-silent-board");
     fs::write(
         &recorder,
         format!(
-            "#!/bin/sh\n[ \"$2\" = --probe ] || export TASKS_SERVER={}\nexec '{}' \"$@\"\n",
-            silent.local_addr().unwrap(),
+            "#!/bin/sh\n[ \"$2\" = --probe ] || export TASKS_SERVER=postgresql:{}\nexec '{}' \"$@\"\n",
+            silent.folder.display(),
             common::tasks_binary()
         ),
     )

@@ -3,7 +3,7 @@
 //! task's round, and read back by task and by session; and a board of schema 18 gaining the table
 //! with its rows kept.
 
-use crate::common::{Fixture, NOW, RawWrite, Seed};
+use crate::common::{Fixture, NOW, Seed};
 use serde_json::json;
 use symphony_board::rows::UsageRow;
 use symphony_board::usage::{Cost, Prices, Spent, Tally, Tokens};
@@ -268,26 +268,25 @@ fn an_open_tasks_execution_comes_before_its_review_before_a_reservation_and_a_fi
     assert_eq!(spends_on(&[done]), on("", "worker"));
 }
 
-// SurrealDB alone: reconstructs schema 18 without the usage table.
 #[test]
 fn a_board_of_schema_18_gains_the_usage_table_with_every_row_kept_and_a_beat_then_spends() {
-    let f = working(Backend::SurrealDb);
+    let f = working();
     let original = f.store.dump().unwrap();
     assert!(original.usages.is_empty());
     // The board as schema 18 left it: every table but `usage`, which it never had.
-    f.store
-        .client()
-        .write(
-            "BEGIN TRANSACTION; REMOVE TABLE usage; UPDATE meta:schema SET version = 18; COMMIT TRANSACTION;",
-            json!({}),
-        )
+    let client = f.postgresql();
+    client.simple("DROP TABLE usage").unwrap();
+    (f.store.raw().row("meta", "schema"))
+        .set(json!({"version": 18}))
         .unwrap();
-    let tables = |store: &symphony_board::Store| -> Vec<String> {
-        let found = store
-            .client()
-            .query("RETURN object::keys((INFO FOR DB).tables);", json!({}))
+    let tables = |_: &symphony_board::Store| -> Vec<String> {
+        let listed = client
+            .request(&[symphony_board::pg::Step::bare(
+                "SELECT coalesce(jsonb_agg(table_name::text ORDER BY table_name), '[]')::text \
+                 FROM information_schema.tables WHERE table_schema = current_schema()",
+            )])
             .unwrap();
-        serde_json::from_value(found.last().cloned().unwrap()).unwrap()
+        serde_json::from_str(listed[0].value().unwrap()).unwrap()
     };
     assert!(!tables(&f.store).contains(&"usage".to_string()));
     let upgraded = f.other();
@@ -306,10 +305,9 @@ fn a_board_of_schema_18_gains_the_usage_table_with_every_row_kept_and_a_beat_the
     assert_eq!(read, [("amber-heron", "executor", 1, tokens(2))]);
 }
 
-// SurrealDB alone until tools/board-pg-search-and-copy supplies the copy/dump twin.
 #[test]
 fn a_copy_carries_the_rows_and_the_dump_reads_them_back() {
-    let f = working(Backend::SurrealDb);
+    let f = working();
     beat(&f, "exec", &[opus(3)]);
     let dump = f.store.dump().unwrap();
     assert_eq!(dump.usages.len(), 1);
