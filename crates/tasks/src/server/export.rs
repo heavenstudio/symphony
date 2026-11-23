@@ -23,20 +23,13 @@ pub const EXPORT_LIMIT: Duration = Duration::from_secs(5 * 60);
 
 impl Home {
     /// This board's PostgreSQL and its server's record, when the home names that engine and its
-    /// server runs: none for a SurrealDB board. Nothing is started.
+    /// server runs: none for a SurrealDB board, nor for a board not made yet, which has no server
+    /// at all and is refused as one whose server records none. Nothing is started.
     fn postgresql_now(&self) -> Result<Option<(Postgres, Running)>, ServerError> {
-        if self.backend()? != Engine::PostgreSql {
+        if self.backend()? != Engine::PostgreSql || self.unmade()? {
             return Ok(None);
         }
-        let root = crate::sweep::trigger::main_checkout(&self.within).ok_or_else(|| {
-            ServerError::Io(format!(
-                "the board in {} is on PostgreSQL, and {} is no main checkout's git folder to \
-                 read its project's PostgreSQL programs from",
-                self.dir.display(),
-                self.within.display()
-            ))
-        })?;
-        let postgres = self.project_postgresql(root)?;
+        let postgres = self.project_postgresql(self.project_root()?)?;
         let Some(serving) = postgres.current()? else {
             return Err(ServerError::NotUp(format!(
                 "the board's PostgreSQL in {} is not running: nothing is read or exported, and \
@@ -181,7 +174,7 @@ impl Home {
         let partial = folder.join(format!(".{name}.{}.partial", std::process::id()));
         let (mut export, program, running) = match served {
             (Some(postgres), running) => {
-                assert!(rpc::plain(database), "a database is a plain name");
+                assert!(crate::db::plain(database), "a database is a plain name");
                 let program = postgres.program("pg_dump");
                 let mut export = command(&program);
                 export

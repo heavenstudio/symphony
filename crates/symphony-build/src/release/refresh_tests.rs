@@ -1,31 +1,11 @@
-//! The refresh's parts that need no board or server: what holds the release, the SurrealDB a
-//! release pins, how a command it runs fails and what the server's reload said. The writer rule,
-//! the snapshots kept and the SurrealDB a move never replaces are the library's
+//! The refresh's parts that need no board or server: the SurrealDB a release pins, how a command
+//! it runs fails and what the server's reload said. The writer rule, the snapshots kept and the
+//! SurrealDB a move never replaces are the library's
 //! (`symphony::machine::writers`, `symphony::machine::moving`). The whole refresh, on scratch
 //! boards and a stand-in server, is `tests/release/refresh.rs`.
 
 use super::*;
 use crate::test_tree::Tree;
-
-#[test]
-fn what_holds_the_release_is_a_lagging_writer_or_the_refreshs_own_red_and_never_an_old_board() {
-    let theirs = |holds| Verdict::Theirs {
-        why: String::new(),
-        holds,
-    };
-    assert!(theirs(true).holds());
-    assert!(!theirs(false).holds(), "a board below the writer record");
-    assert!(Verdict::Red(String::new()).holds());
-    assert!(!Verdict::Done(String::new()).holds());
-    assert!(
-        !Verdict::Move {
-            live: 18,
-            leave: true,
-            gone: String::new(),
-        }
-        .holds()
-    );
-}
 
 #[test]
 fn a_release_at_currents_schema_or_behind_it_says_which_and_moves_only_a_board_left_behind() {
@@ -241,7 +221,7 @@ fn a_board_on_postgresql_is_judged_by_its_writers_alone_and_snapshotted_with_pg_
     );
     // This test's own line among the writers is behind the next schema, and holds the move.
     let held = judge(&entry, &common, schema + 1, &against);
-    assert!(matches!(&held.verdict, Verdict::Theirs { holds: true, .. }));
+    assert!(matches!(&held.verdict, Verdict::Theirs(_)));
     store.raw().table("writer").delete().unwrap();
     let mut moving = judge(&entry, &common, schema + 1, &against);
     assert!(
@@ -271,6 +251,46 @@ fn a_board_on_postgresql_is_judged_by_its_writers_alone_and_snapshotted_with_pg_
         matches!(&stopped.verdict, Verdict::Red(why) if why.contains("is not running")),
         "a board whose PostgreSQL does not run"
     );
+    assert!(stopped.down, "its project starts it");
     assert!(pg.current().unwrap().is_none());
     fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A board's folder its board was never made in, holding only what a session's heartbeat wrote
+/// there, is a board not made yet: nothing to move, as before PostgreSQL made a new board, and
+/// not a database down that its project should start. Nothing is made or started by the read.
+#[test]
+fn a_board_folder_with_no_board_made_in_it_is_nothing_to_move_and_not_down() {
+    let tree = Tree::new();
+    let root = tree.path("alpha");
+    let common = root.join(".git");
+    let folder = common.join(symphony_board::server::FOLDER);
+    fs::create_dir_all(folder.join("keys")).unwrap();
+    let entry: Entry = serde_json::from_value(serde_json::json!({
+        "id": "alpha", "name": "alpha", "root": root, "pin": 1,
+    }))
+    .unwrap();
+    let logs = tree.path("logs");
+    fs::create_dir_all(&logs).unwrap();
+    let dir = tree.path("");
+    let against = Against {
+        run: "2026-11-22T2200-1",
+        main: &dir,
+        root: &dir,
+        ours: &dir,
+        machine: &dir.join("machine"),
+        tag: "release-2026-11-22",
+        commit: "0000000",
+        logs: &logs,
+        surreal: None,
+        until: super::super::waits::far(),
+    };
+    let judged = judge(&entry, &common, symphony_board::SCHEMA, &against);
+    let Verdict::Done(said) = &judged.verdict else {
+        panic!("a board not made yet is judged done");
+    };
+    assert_eq!(said, "alpha: its board is not made yet: nothing to move");
+    assert!(!judged.down);
+    assert!(judged.home.unmade().unwrap(), "nothing was made");
+    assert_eq!(tree.names("alpha/.git/symphony/tasks"), ["keys"]);
 }

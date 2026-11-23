@@ -5,12 +5,12 @@
 //! the look-parity fixture's, each executed by `example`. A changed task is sent as its changed
 //! fields alone, so the agents page reads a task it lists no record of when it now shows it, and
 //! merges that read into what it drew.
-use super::{SHOWN, chrome, chrome::Chrome, common, dist, look_parity, site::Site, wait_for_feed};
+use super::{SHOWN, chrome, chrome::Chrome, look_parity, site::Site, wait_for_feed};
 use serde_json::{Value, json};
 
 /// The board fixture at its version, with the look-parity tasks, task page and thread.
 fn site() -> Site {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let content = look_parity::responses();
     for path in ["/api/task-board", "/api/task-page", "/api/task-history"] {
         site.set_json(path, &content[path]);
@@ -78,10 +78,7 @@ fn opened(page: &mut Chrome, site: &Site, path: &str) -> usize {
 
 /// The board's cards span stages on a wide screen; on a phone only Review mounts initially.
 fn opened_board(page: &mut Chrome, site: &Site) {
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1600,"height":1000,"deviceScaleFactor":1,"mobile":false}),
-    );
+    page.viewport(1600, 1000, false);
     page.open(&site.url("/tasks"));
     page.reveal("#column-review");
     assert!(page.wait_for(
@@ -255,6 +252,12 @@ fn a_live_update_to_one_card_draws_only_that_card_and_its_column() {
         "the page's React tree was never heard"
     );
     let from = page.eval("window.__commits.length");
+    // The stand-in answers each column's read with its one listing, which never carries the rename
+    // as the server's would, and a column read replays only the events heard since it began: one
+    // that begins after the delta (a column that mounts near the screen late, or a read tried
+    // again) draws the card back with its old title. Held until the delta's commit is read, so only
+    // the delta draws the card and its new title stays.
+    site.hold_route("/api/task-board", true);
     push_fields(
         &site,
         4183,
@@ -273,6 +276,7 @@ fn a_live_update_to_one_card_draws_only_that_card_and_its_column() {
         "{:?}",
         page.eval(&format!("window.__commits.slice({from})"))
     );
+    site.hold_route("/api/task-board", false);
     // The stable column action still opens Cancelled after a live update and returns to stages.
     page.reveal("#column-done");
     page.eval(
@@ -350,7 +354,7 @@ const LOST_SHOWN: &str =
 /// is drawn, as the feed waits on each read it starts.
 #[test]
 fn the_agents_page_merges_what_the_feed_brings_in_and_keeps_its_lost_list() {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let agents = [agent("orch-agent", "live"), agent("work-agent", "live")];
     site.set_json("/api/agent-page", &agent_page(&agents, &[]));
     site.set_json(

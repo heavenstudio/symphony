@@ -1,6 +1,6 @@
 //! A session's web address: where Go to session links for an agent that runs on the web (a cloud
 //! agent, a Claude Code session with a remote link), set at `register --session-url` or later with
-//! `callback --session-url` (docs/TASKS.md, "Going to a session"). The board keeps it off the
+//! `callback --session-url` (docs/workflow/TASKS.md, "Going to a session"). The board keeps it off the
 //! `session` row, which an older reader refuses once a row carries a field it does not know, in the
 //! schemaless `callback_state` as `['session_url', HANDLE]`; `leave` deletes it.
 

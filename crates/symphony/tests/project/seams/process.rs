@@ -1,23 +1,27 @@
 //! A plugin answering from a process of its own (`[plugins.process]`): the seam tests' plugin
 //! served by the `symphony-test-plugin` binary, asked as a project's plugins are and answering as
-//! it does linked; its process killed, a call after the pause starts it again (the lib's
+//! it does linked, its gates kept as a linked plugin's are; its process killed, a call after the
+//! pause starts it again (the lib's
 //! `plugins::process` tests show the calls meanwhile, with a pause longer than the test); its
-//! process ending with its input whatever its calls do; and what its calls cost linked, through
-//! the loopback and from its process, and what a register read costs linked, card by card from its
-//! process and in one request.
+//! process ending with its input whatever its calls do; and what its calls cost linked and from its
+//! process, and what a register read costs linked, card by card from its process and in one
+//! request.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read as _, Write as _};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use symphony::gates::{Asked, Kept, theirs};
 use symphony::plugins::Plugins;
 use symphony::plugins::process::{self, PAUSE};
 use symphony::project::{PluginCalls, PluginProcess, Project};
 use symphony::render::Render;
 use symphony_plugin::protocol::{Envelope, PageData, Request};
-use symphony_plugin::vocabulary::{Block, Span};
-use symphony_plugin::{CardKind, Command, Docs, File, Page, Renderer, Submission, TaskRef};
+use symphony_plugin::vocabulary::{Block, Gate, GateState, Span};
+use symphony_plugin::{
+    CardKind, Command, Docs, File, Gates, Page, Plugin as _, Renderer, Submission, TaskRef,
+};
 
 use super::Tree;
 use super::calls::{lines, median, with_card};
@@ -510,6 +514,368 @@ fn a_plugins_process_warms_and_forgets_its_watch_as_it_does_linked() {
         ]
     );
     assert!(record.iter().all(|line| line.get("failed").is_none()));
+}
+
+/// The task each gates test asks of: a branch's, in review.
+const TASK: TaskRef<'static> = TaskRef {
+    slug: "tools/a",
+    status: "review",
+    branch: "tools/a-2",
+};
+
+/// The gates `answerers` give [`TASK`] at `tip` in the project at `root`, read through `kept` as
+/// the task's page reads them.
+fn read(
+    kept: &Kept,
+    root: &Path,
+    answerers: &[(&str, &'static dyn Gates)],
+    tip: Option<&str>,
+) -> Vec<Gate> {
+    let asked = Asked {
+        slug: TASK.slug.into(),
+        status: TASK.status.into(),
+        branch: TASK.branch.into(),
+        tip: tip.map(str::to_string),
+    };
+    theirs(kept, root, answerers, &asked)
+}
+
+/// A wait only a stall outlasts, for a call that is answered.
+const PATIENT: Duration = test_time::backstop(process::WAIT);
+
+/// What `ask` gives once it gives something, asked again while it gives nothing: a call in a test's
+/// short wait may have no answer in it on a loaded machine, and only a stall leaves it none past
+/// [`PATIENT`].
+fn answered<T>(what: &str, ask: impl FnMut() -> Option<T>) -> T {
+    test_time::until(what, PATIENT, ask).unwrap_or_else(|stall| panic!("{stall}"))
+}
+
+/// The seam tests' plugin's gates answerers linked, each with its plugin's name.
+fn linked_answerers() -> Vec<(&'static str, &'static dyn Gates)> {
+    PIPED.gates().into_iter().map(|g| ("every", g)).collect()
+}
+
+/// A worktree of the checkout at `tree`, as git links one, with the same `symphony.toml`.
+fn worktree(tree: &Tree) -> std::path::PathBuf {
+    tree.write(".git/worktrees/wt/commondir", "../..\n");
+    tree.write(
+        "wt/.git",
+        &format!("gitdir: {}\n", tree.path(".git/worktrees/wt").display()),
+    );
+    let file = std::fs::read_to_string(tree.path(symphony::project::FILE)).unwrap();
+    tree.write("wt/symphony.toml", &file);
+    tree.path("wt")
+}
+
+#[test]
+fn a_plugins_process_answers_its_gates_as_it_does_linked_for_a_checkout_and_its_branches() {
+    let tree = Tree::checkout();
+    let (_, _, project) = linked_and_piped(&tree, false);
+    let root = tree.root.as_path();
+    let ours = symphony::gates::answerers(&project, root);
+    let names: Vec<(&str, &str)> = ours.iter().map(|(p, g)| (*p, g.name())).collect();
+    assert_eq!(names, [("every", "every"), ("every", "slow")]);
+    // A task on a branch at its tip, and one whose branch the repository does not hold.
+    for ((_, far), (_, near)) in ours.iter().zip(linked_answerers()) {
+        for tip in [Some("c0ffee"), None] {
+            assert_eq!(
+                far.answer(root, &TASK, tip),
+                near.answer(root, &TASK, tip),
+                "{} {tip:?}",
+                near.name()
+            );
+        }
+        assert_eq!(far.kept_while(root, &TASK), near.kept_while(root, &TASK));
+    }
+    // With no branch, `every`'s own error, as it said it.
+    assert_eq!(
+        ours[0].1.answer(root, &TASK, None),
+        Err("tools/a-2 has no branch".into())
+    );
+    // A branch's checkout is answered by its main checkout's process, each call naming the
+    // branch's checkout, which `every` reads.
+    let branch = worktree(&tree);
+    let in_branch = symphony::gates::answerers(&Project::of(&branch), &branch);
+    let answering = process::remote(Plugins::of(&branch).list()[0]).unwrap();
+    assert_ne!(answering.process().root, branch);
+    let tip = Some("c0ffee");
+    assert_eq!(
+        in_branch[0].1.answer(&branch, &TASK, tip),
+        linked_answerers()[0].1.answer(&branch, &TASK, tip)
+    );
+    assert_eq!(
+        in_branch[0].1.kept_while(&branch, &TASK),
+        linked_answerers()[0].1.kept_while(&branch, &TASK)
+    );
+}
+
+#[test]
+fn a_plugins_process_gates_are_kept_as_a_linked_ones_are_each_asked_once_a_tip() {
+    let tree = Tree::new();
+    let (_, _, project) = linked_and_piped(&tree, true);
+    let root = tree.root.as_path();
+    let ours = symphony::gates::answerers(&project, root);
+    // An error kept as long as only a stall outlasts, so what is asked is a count alone.
+    let kept_until_asked_again = || {
+        Kept::new(symphony::gates::Limits {
+            retry: PATIENT,
+            ..symphony::gates::Limits::default()
+        })
+    };
+    let (kept, kept_linked) = (kept_until_asked_again(), kept_until_asked_again());
+    for tip in [Some("c0ffee"), Some("c0ffee"), Some("decade"), None, None] {
+        assert_eq!(
+            read(&kept, root, &ours, tip),
+            read(&kept_linked, root, &linked_answerers(), tip),
+            "{tip:?}"
+        );
+    }
+    // With no branch, `every`'s error stands in for the gate it answered before, as it said it.
+    let none = read(&kept, root, &ours, None);
+    assert_eq!(
+        (
+            none[0].name.as_str(),
+            none[0].state,
+            none[0].detail.as_str()
+        ),
+        ("certificate", GateState::Unknown, "tools/a-2 has no branch")
+    );
+    // Each answerer was asked once a tip, its error kept, and what it is kept while at each read.
+    let record = lines(&symphony::plugins::record(&project, root));
+    let asked = |call: &str, name: &str| {
+        let what = |line: &&serde_json::Value| {
+            line["seam"] == "gates" && line["call"] == call && line["name"] == name
+        };
+        record.iter().filter(what).count()
+    };
+    for name in ["every", "slow"] {
+        assert_eq!(asked("answer", name), 3, "{name}");
+        assert_eq!(asked("kept_while", name), 6, "{name}");
+    }
+    assert!(record.iter().all(|line| line.get("failed").is_none()));
+}
+
+#[test]
+fn a_plugins_process_that_fails_mid_answer_reads_unknown_and_never_as_a_pass() {
+    let tree = Tree::new();
+    let (_, piped, project) = linked_and_piped(&tree, false);
+    let root = tree.root.as_path();
+    let remote = process::remote(piped.list()[0]).unwrap();
+    let slow = vec![symphony::gates::answerers(&project, root)[1]];
+    let kept = Kept::default();
+    let met = read(&kept, root, &slow, Some("c0ffee"));
+    assert_eq!(
+        (met[0].name.as_str(), met[0].state),
+        ("slow", GateState::Met)
+    );
+    let pid = remote.pid().unwrap();
+    // At the next tip its answer hangs, and its process is killed while the call is in it.
+    let failed = std::thread::scope(|scope| {
+        let reading = scope.spawn(|| read(&kept, root, &slow, Some("hang")));
+        until("the call is in the plugin", || {
+            tree.path(super::every::HANGING).exists()
+        });
+        let killed = std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .status()
+            .unwrap();
+        assert!(killed.success());
+        reading.join().unwrap()
+    });
+    assert_eq!(
+        (
+            failed[0].name.as_str(),
+            failed[0].state,
+            failed[0].by.as_deref()
+        ),
+        ("slow", GateState::Unknown, Some("slow"))
+    );
+    assert_eq!(
+        failed[0].detail,
+        format!("plugin every: its process {pid} was killed by signal 9")
+    );
+}
+
+#[test]
+fn a_slow_gates_answer_of_a_plugins_process_is_kept_as_a_linked_ones_and_leaves_its_calls_a_worker()
+{
+    use symphony_plugin::authority::{Operation, Snapshot};
+    use symphony_plugin::execution::{Principal, PrincipalKind};
+    let tree = Tree::new();
+    let root = tree.root.as_path();
+    let process = PluginProcess {
+        command: vec![PLUGIN.into()],
+        root: tree.root.clone(),
+        log: tree.path("artifacts/plugins/every.log"),
+    };
+    // A call's wait far shorter than its answers are held, and a cancel's only a stall outlasts, so
+    // a call a loaded machine leaves unanswered in that wait ends nothing.
+    let wait = Duration::from_millis(50);
+    let limits = process::Limits {
+        wait,
+        cancel: PATIENT,
+        declare: PATIENT,
+        ..process::Limits::default()
+    };
+    let remote = process::Remote::leaked(
+        "every",
+        process.clone(),
+        process::spawning(&process),
+        limits,
+    );
+    let fifo = tree.path(super::every::HELD);
+    let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+    assert!(made.unwrap().success());
+    let slow: Vec<(&str, &'static dyn Gates)> = vec![("every", remote.gates()[1])];
+    let linked_slow = vec![linked_answerers()[1]];
+    let pid = remote.pid().unwrap();
+    let kept = Kept::new(symphony::gates::Limits {
+        wait,
+        retry: PATIENT,
+        ceiling: PATIENT,
+        ..symphony::gates::Limits::default()
+    });
+    let asked = |n: usize| Asked {
+        slug: format!("tools/held-{n}"),
+        status: "review".into(),
+        branch: format!("tools/held-{n}"),
+        tip: Some(format!("held-{n}")),
+    };
+    let held_since = Instant::now();
+    // Four tasks read, each answer held: unknown while it goes on, as a linked one's slow answer.
+    for n in 1..=4 {
+        let read = answered("its answer is asked", || {
+            let gates = theirs(&kept, root, &slow, &asked(n));
+            (gates[0].detail == "slow gave no answer within 0.05 s").then_some(gates)
+        });
+        assert_eq!(
+            (read[0].name.as_str(), read[0].state),
+            ("slow", GateState::Unknown)
+        );
+    }
+    // Three are in the plugin, holding three of its four workers; the fourth waits in the host.
+    let marks = || {
+        let held = |n: &usize| tree.path(&format!("{}-{n}", super::every::HELD)).exists();
+        (1..=4).filter(held).count()
+    };
+    until("three answers are in the plugin", || marks() == 3);
+    // Its other calls answer on the worker left: its authority, what an answer is kept while, a
+    // component.
+    let operation = Operation::new(
+        "sim".into(),
+        "sim/a".into(),
+        "accept".into(),
+        "approved".into(),
+        Snapshot::new("d1".into(), 2, 3, "verify".into(), "awaiting".into()),
+        BTreeMap::new(),
+        Principal::new(PrincipalKind::Human, "local".into(), "owner".into()),
+    );
+    let within = Duration::from_millis(2500);
+    let attested = answered("its authority attests", || {
+        remote.authorities()[0]
+            .attest(root, &operation, within)
+            .ok()
+    });
+    assert_eq!(
+        Ok(attested),
+        PIPED.authorities()[0].attest(root, &operation, within)
+    );
+    let told = answered("what an answer is kept while is told", || {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            slow[0].1.kept_while(root, &TASK)
+        }))
+        .ok()
+    });
+    assert_eq!(told, linked_slow[0].1.kept_while(root, &TASK));
+    let page = Page::new(root, "docs/A.md");
+    let drawn = answered("a component draws", || {
+        remote.components()[0].render(&page, "lantern", None).ok()
+    });
+    assert_eq!(
+        Ok(drawn),
+        PIPED.components()[0].render(&page, "lantern", None)
+    );
+    // The held answers outlast a call's wait, none given up, and the fourth still waits its turn:
+    // each of the four reads above gave up only once its own wait had passed.
+    assert!(
+        held_since.elapsed() > wait * 4,
+        "{:?}",
+        held_since.elapsed()
+    );
+    assert_eq!(marks(), 3);
+    // Let go, a byte for each held: the three answer, then the fourth in its turn, at once with the
+    // FIFO gone.
+    let before = kept.answered();
+    let mut letting_go = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&fifo)
+        .unwrap();
+    std::fs::remove_file(&fifo).unwrap();
+    std::io::Write::write_all(&mut letting_go, &[0; 3]).unwrap();
+    until("the four answers came", || kept.answered() == before + 4);
+    // Each is kept, and read as a linked answer for its task, with no answer asked again.
+    let kept_linked = Kept::default();
+    for n in 1..=4 {
+        let ours = answered("its kept answer is read", || {
+            let gates = theirs(&kept, root, &slow, &asked(n));
+            (gates[0].state != GateState::Unknown).then_some(gates)
+        });
+        assert_eq!(
+            ours,
+            theirs(&kept_linked, root, &linked_slow, &asked(n)),
+            "{n}"
+        );
+    }
+    assert_eq!(kept.answered(), before + 4);
+    // The process was never ended: the one started first answered throughout.
+    assert_eq!(remote.pid(), Some(pid));
+    let log = std::fs::read_to_string(&process.log).unwrap();
+    assert!(!log.contains("was ended"), "{log}");
+    assert!(!log.contains("gates.answer"), "{log}");
+}
+
+#[test]
+fn a_plugins_process_declaring_gates_commands_and_an_authority_is_accepted_and_each_answers() {
+    use symphony_plugin::authority::{Operation, Snapshot};
+    use symphony_plugin::execution::{Principal, PrincipalKind};
+    let tree = Tree::new();
+    let (linked, piped, project) = linked_and_piped(&tree, false);
+    let declared = process::remote(piped.list()[0])
+        .unwrap()
+        .declaration()
+        .unwrap();
+    assert_eq!(declared.gates, ["every", "slow"]);
+    assert_eq!(declared.authorities, ["every"]);
+    let commands: Vec<&str> = declared.commands.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(commands, ["every"]);
+    assert_eq!(symphony::plugins::problems(&project), Vec::<String>::new());
+    // Its command is the project's, as `symphony NAME` finds it.
+    let found = symphony::plugins::command("every", Some(&tree.root)).unwrap();
+    assert!(std::ptr::addr_eq(found, piped.list()[0].commands()[0]));
+    // Its authority attests as linked, found by its adapter as the owner's take finds it.
+    let operation = Operation::new(
+        "sim".into(),
+        "sim/a".into(),
+        "accept".into(),
+        "approved".into(),
+        Snapshot::new("d1".into(), 2, 3, "verify".into(), "awaiting".into()),
+        BTreeMap::new(),
+        Principal::new(PrincipalKind::Human, "local".into(), "owner".into()),
+    );
+    for within in [Duration::from_millis(2500), Duration::ZERO] {
+        let attested = |plugins: &Plugins| {
+            let authority = plugins.authority("every").unwrap();
+            authority.attest(&tree.root, &operation, within)
+        };
+        assert_eq!(attested(&piped), attested(&linked), "{within:?}");
+    }
+    let signed = piped.authority("every").unwrap().attest(
+        &tree.root,
+        &operation,
+        Duration::from_millis(2500),
+    );
+    assert!(signed.is_ok(), "{signed:?}");
 }
 
 #[test]
@@ -1068,25 +1434,24 @@ fn by_call_and_name(path: &Path, key: &str) -> BTreeMap<String, Vec<f64>> {
     found
 }
 
-/// What each call of a component and a card kind costs linked, through the loopback and from the
-/// plugin's own process: a measurement, not a check. Run alone, it prints each call's medians in
-/// microseconds: linked (the call timed alone), the loopback's round trip, the process's (the
-/// host's wait for its answer) and the plugin's own time there, and the bytes of the process's
-/// two lines; how much more a call costs from the process than linked, over every call; the
-/// render of `slow`, which spends [`SPENT`] in the plugin, so each meter is seen to move by it;
-/// and a page of ten components drawn linked and from the process, neither recorded. Best in a
-/// release build on a quiet machine, run twice (docs/PLUGIN_PROTOCOL.md says the command).
+/// What each call of a component and a card kind costs linked and from the plugin's own process:
+/// a measurement, not a check. Run alone, it prints each call's medians in microseconds: linked
+/// (the call timed alone), the process's (the host's wait for its answer) and the plugin's own
+/// time there, and the bytes of the process's two lines; how much more a call costs from the
+/// process than linked, over every call; the render of `slow`, which spends [`SPENT`] in the
+/// plugin, so each meter is seen to move by it; and a page of ten components drawn linked and from
+/// the process, neither recorded. Best in a release build on a quiet machine, run twice
+/// (docs/engineering/PLUGIN_PROTOCOL.md says the command).
 #[test]
 #[ignore = "a measurement, not a check: run it alone with --ignored --nocapture"]
-fn the_cost_of_a_plugins_calls_linked_through_the_loopback_and_from_its_process() {
+fn the_cost_of_a_plugins_calls_linked_and_from_its_process() {
     const ROUNDS: usize = 1_000;
     const PAGES: usize = 200;
     let tree = Tree::new();
     let root = tree.root.as_path();
-    let (timed_record, looped_record) = (tree.path("timed.jsonl"), tree.path("looped.jsonl"));
-    let calls = |timing, loopback| PluginCalls { timing, loopback };
-    let timed = Plugins::new(vec![&PIPED]).measured(calls(true, false), &timed_record);
-    let looped = Plugins::new(vec![&PIPED]).measured(calls(false, true), &looped_record);
+    let timed_record = tree.path("timed.jsonl");
+    let timing = PluginCalls { timing: true };
+    let timed = Plugins::new(vec![&PIPED]).measured(timing, &timed_record);
     let recorded = project(&tree, "timing = true\n");
     let piped = Plugins::at(&recorded, root);
     let piped_record = symphony::plugins::record(&recorded, root);
@@ -1100,14 +1465,12 @@ fn the_cost_of_a_plugins_calls_linked_through_the_loopback_and_from_its_process(
     // Interleaved, so the machine's load weighs on each alike.
     for _ in 0..ROUNDS {
         component_and_kind_calls(&timed, root);
-        component_and_kind_calls(&looped, root);
         component_and_kind_calls(&piped, root);
     }
     let median_of = |table: &BTreeMap<String, Vec<f64>>, name: &str| {
         median(&mut table.get(name).cloned().unwrap_or_default())
     };
     let linked_us = by_call_and_name(&timed_record, "us");
-    let looped_trip = by_call_and_name(&looped_record, "round_trip_us");
     let (piped_trip, piped_us) = (
         by_call_and_name(&piped_record, "round_trip_us"),
         by_call_and_name(&piped_record, "us"),
@@ -1117,15 +1480,14 @@ fn the_cost_of_a_plugins_calls_linked_through_the_loopback_and_from_its_process(
         by_call_and_name(&piped_record, "answer_bytes"),
     );
     println!(
-        "{ROUNDS} rounds; medians in microseconds\n{:<38} {:>9} {:>9} {:>9} {:>9} {:>7} {:>7}",
-        "call", "linked", "loopback", "process", "in it", "req B", "ans B"
+        "{ROUNDS} rounds; medians in microseconds\n{:<38} {:>9} {:>9} {:>9} {:>7} {:>7}",
+        "call", "linked", "process", "in it", "req B", "ans B"
     );
     let mut more = Vec::new();
     for name in linked_us.keys() {
         let (linked, process) = (median_of(&linked_us, name), median_of(&piped_trip, name));
         println!(
-            "{name:<38} {linked:>9.3} {:>9.3} {process:>9.3} {:>9.3} {:>7} {:>7}",
-            median_of(&looped_trip, name),
+            "{name:<38} {linked:>9.3} {process:>9.3} {:>9.3} {:>7} {:>7}",
             median_of(&piped_us, name),
             median_of(&asked, name),
             median_of(&answered, name),
@@ -1199,7 +1561,7 @@ fn the_cost_of_a_plugins_calls_linked_through_the_loopback_and_from_its_process(
 /// card, and from its process in one request (`card_kinds.read`): a measurement, not a check. Run
 /// alone, it prints each read's median in milliseconds over registers of 50 and 500 cards, the
 /// reads interleaved and none recorded, and the bytes of the batch's lines. Best in a release
-/// build on a quiet machine (docs/PLUGIN_PROTOCOL.md says the command).
+/// build on a quiet machine (docs/engineering/PLUGIN_PROTOCOL.md says the command).
 #[test]
 #[ignore = "a measurement, not a check: run it alone with --ignored --nocapture"]
 fn the_cost_of_a_register_read_linked_card_by_card_from_its_process_and_batched() {

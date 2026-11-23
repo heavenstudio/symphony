@@ -197,11 +197,6 @@ export function WaitCard({ task, now }: { task: Task; now: number }) {
       </a>
       <div className="waiting-slug">
         <code>{shown(task.slug)}</code>
-        {cost !== undefined && (
-          <span className="card-cost" title={cost.title}>
-            {cost.said}
-          </span>
-        )}
         <span className="prio">{`p${task.priority}`}</span>
         <button
           type="button"
@@ -217,7 +212,20 @@ export function WaitCard({ task, now }: { task: Task; now: number }) {
         <span className="on" title={waitLabel(task)}>
           {shown(finished ? (task.status === "done" ? "Done" : "Cancelled") : waitLabel(task))}
         </span>
-        <span className={old ? "age old" : "age"}>{waitAge(since, now)}</span>
+        <span className={old ? "age old" : "age"}>
+          {/* The task's estimated cost, where it took tokens, before its time. */}
+          {cost !== undefined && (
+            <>
+              <span className="card-cost" title={cost.title}>
+                {cost.said}
+              </span>
+              <span className="card-cost-dot" aria-hidden="true">
+                ·
+              </span>
+            </>
+          )}
+          {waitAge(since, now)}
+        </span>
         <span className="why" title={why}>
           {shown(why)}
         </span>
@@ -226,6 +234,21 @@ export function WaitCard({ task, now }: { task: Task; now: number }) {
   );
 }
 
+/**
+ * How many tasks wait to start, of the board's `ready` ones where it knows them: never fewer
+ * ready than wait, as a total read before a live change may be.
+ */
+export function waitingToStart(unstarted: number, ready: number | undefined): string {
+  return ready === undefined || ready < unstarted ? `${unstarted}` : `${unstarted} of the ${ready}`;
+}
+
+/**
+ * The banner the board shows while no orchestrator is live and ready tasks wait to start.
+ * `unstarted` is the board's, whatever the listing selects; `ready` is the listing's ready total,
+ * which a wait or a search makes the filter's, so the board leaves it out then. The banner says
+ * the last total it was given instead, so its words, and the strip under it, stay as they were
+ * when a chip is pressed or a search typed.
+ */
 export function OrchestratorBanner({
   orchestrators,
   unstarted,
@@ -235,6 +258,8 @@ export function OrchestratorBanner({
   unstarted: number;
   ready?: number | undefined;
 }) {
+  const [seen, setSeen] = useState(ready);
+  if (ready !== undefined && ready !== seen) setSeen(ready);
   if (unstarted === 0 || orchestrators.some((one) => one.health === "live")) return null;
   const stale = orchestrators.some((one) => one.health === "stale");
   const holders = orchestrators
@@ -243,8 +268,8 @@ export function OrchestratorBanner({
   return (
     <p className={`orchestrator-banner${stale ? " warn" : ""}`}>
       <strong>No live orchestrator.</strong>
-      {holders && ` ${holders}`} · {unstarted}
-      {ready === undefined ? "" : ` of the ${ready}`} ready tasks wait to start
+      {holders && ` ${holders}`} · {waitingToStart(unstarted, ready ?? seen)}
+      {" ready tasks wait to start"}
     </p>
   );
 }

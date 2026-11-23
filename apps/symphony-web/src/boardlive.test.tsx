@@ -13,7 +13,17 @@ import {
   withListed,
 } from "./boardlive";
 import { ReadCursor } from "./journal";
-import { aMachine, anOperation, aTask, aWork, CASES, memoryStorage } from "./testing";
+import {
+  aListing,
+  aMachine,
+  anOperation,
+  fakeAnswer as answer,
+  aTask,
+  aWork,
+  CASES,
+  feedEvent as event,
+  memoryStorage,
+} from "./testing";
 import type { MachineWork, Task, TaskListing } from "./wire";
 import { statusNotice } from "./words";
 import { NO_WORK } from "./work";
@@ -36,30 +46,9 @@ vi.mock("react-dom", async (original) => ({
 /** The wall clock the board reads: a task updated before it by more than its window is old. */
 const NOW = 1_800_000_000_000;
 
-/** A response as the page reads one: its status, its tag and its JSON body. */
-function answer(status: number, body: unknown = null, etag = ""): Response {
-  return {
-    status,
-    ok: status >= 200 && status < 300,
-    headers: { get: (name: string) => (name === "ETag" && etag !== "" ? etag : null) },
-    json: async () => body,
-  } as unknown as Response;
-}
-
 /** A listing of `tasks`, counted as `counts`, and whatever else `more` says. */
 function listing(tasks: Task[], counts: [string, number][] = [], more: Partial<TaskListing> = {}) {
-  return {
-    machine_work: NO_WORK,
-    tasks,
-    statuses: [],
-    signoff: [],
-    counts,
-    lifecycle_counts: [],
-    next: null,
-    orchestrators: [],
-    unstarted: 0,
-    ...more,
-  };
+  return aListing(tasks, counts, { orchestrators: [], unstarted: 0, ...more });
 }
 
 type Route = (url: string, etag: string) => Response | Promise<Response>;
@@ -119,12 +108,6 @@ function later<T>(): { promise: Promise<T>; settle: (value: T) => void } {
   return { promise, settle };
 }
 
-/** A feed event of `changes`, each a region and its data. */
-const event = (...changes: [string, unknown][]) => ({
-  version: 1,
-  changes: changes.map(([region, data]) => ({ region, data })),
-});
-
 const building = (slug: string, state: "queued" | "running" = "running"): MachineWork =>
   aWork([aMachine("alpha", [anOperation("alpha", "b", "build", state, { task: slug })])]);
 
@@ -149,14 +132,13 @@ describe("a feed event's changes", () => {
         ["task-fields", CASES.samples.taskChange],
         ["session", { key: "amber", value: { health: "stale" } }],
         ["message", {}],
-        ["task-signoff", ["w/a"]],
         ["task-counts", {}],
         ["task-recent-counts", {}],
         ["workflow", { generation: 2 }],
         ["tasks-status", { available: false, slow: true }],
         ["queue", {}],
+        ["task-signoff", "unread"],
       ),
-      false,
     );
     expect(changes?.map((change) => change.region)).toEqual([
       "machine-work",
@@ -164,32 +146,24 @@ describe("a feed event's changes", () => {
       "task-fields",
       "session",
       "message",
-      "task-signoff",
       "counts",
       "counts",
       "counts",
       "tasks-status",
     ]);
     expect(changes?.[3]).toEqual({ region: "session", key: "amber", health: "stale" });
-    expect(changes?.[5]).toEqual({ region: "task-signoff", slugs: ["w/a"] });
-    expect(changes?.[9]).toEqual({ region: "tasks-status", available: false, slow: true });
+    expect(changes?.[8]).toEqual({ region: "tasks-status", available: false, slow: true });
   });
 
   it("say a session gone, and a board's state not said, as none", () => {
-    expect(readChanges(event(["session", { key: "amber" }]), false)).toEqual([
+    expect(readChanges(event(["session", { key: "amber" }]))).toEqual([
       { region: "session", key: "amber", health: null },
     ]);
-    expect(readChanges(event(["session", {}]), false)).toEqual([
+    expect(readChanges(event(["session", {}]))).toEqual([
       { region: "session", key: "", health: null },
     ]);
-    expect(readChanges(event(["tasks-status", { available: "yes" }]), false)).toEqual([
+    expect(readChanges(event(["tasks-status", { available: "yes" }]))).toEqual([
       { region: "tasks-status", available: undefined, slow: false },
-    ]);
-  });
-
-  it("leave the owner's sign-off to be read again while searching", () => {
-    expect(readChanges(event(["task-signoff", "unreadable"]), true)).toEqual([
-      { region: "task-signoff", slugs: null },
     ]);
   });
 
@@ -197,13 +171,12 @@ describe("a feed event's changes", () => {
     ["machines' work", ["machine-work", { machines: "none" }]],
     ["task", ["task", { value: 1 }]],
     ["task's fields", ["task-fields", { key: 1 }]],
-    ["sign-off", ["task-signoff", "w/a"]],
   ] as [string, [string, unknown]][])("are none for a %s it cannot read", (_, change) => {
-    expect(readChanges(event(["message", {}], change), false)).toBeNull();
+    expect(readChanges(event(["message", {}], change))).toBeNull();
   });
 
   it("are none in an event without any", () => {
-    expect(readChanges({ version: 1 }, false)).toEqual([]);
+    expect(readChanges({ version: 1 })).toEqual([]);
   });
 });
 
@@ -340,7 +313,6 @@ describe("the live board's device copy", () => {
     expect(asked).toEqual([]);
     expect(d.ready).toBe(true);
     expect(d.counts).toEqual(counts);
-    expect(d.statuses).toEqual(["in_progress", "review"]);
     expect(d.tasks.map((task) => task.slug)).toEqual(["w/a", "w/b"]);
     expect(d.drawn).toEqual(["in_progress", "review"]);
     expect(d.fromDevice).toEqual(["w/a", "w/b"]);
@@ -394,7 +366,6 @@ describe("the live board's counts", () => {
     await board.counts();
     expect(d.ready).toBe(true);
     expect(d.counts).toEqual([["ready", 3]]);
-    expect(d.signoff).toEqual(["w/a"]);
     expect(d.counted).toBe(1);
     expect(store.keep).toHaveBeenCalledWith(
       expect.any(Number),
@@ -510,6 +481,20 @@ describe("the live board's counts", () => {
     await board.machineWork();
     expect(localStorage.getItem(SHAPE)).toBe(
       "concept 0\ndesign 0\nready 2\nin_progress 0\nbuild 0\ntest 0\nreview 0\ndone 0",
+    );
+  });
+
+  it("keep that a custom workflow held the board, so its phone ghost reserves no row it lacks", async () => {
+    const waiting = { kinds: [], columns: [], workflow: 2 };
+    const { board } = live((url) =>
+      url === "/api/machine-work"
+        ? answer(200, NO_WORK)
+        : answer(200, listing([], [["ready", 2]], { statuses: ["ready"], waiting })),
+    );
+    await board.counts();
+    await board.machineWork();
+    expect(localStorage.getItem(SHAPE)).toBe(
+      "concept 0\ndesign 0\nready 2\nin_progress 0\nbuild 0\ntest 0\nreview 0\ndone 0\nworkflow",
     );
   });
 
@@ -903,10 +888,10 @@ describe("a column of the live board", () => {
     d.waiting = false;
     void board.column("ready", false, "", 1);
     await pass(250);
-    board.apply(event(["task-signoff", ["w/a"]]));
-    held.settle(answer(200, listing(ready, [["ready", 2]], { signoff: [] })));
+    board.apply(event(["task", { key: "w/z", value: aTask("w/z") }]));
+    held.settle(answer(200, listing(ready, [["ready", 3]])));
     await pass();
-    expect(d.signoff).toEqual(["w/a"]);
+    expect(d.tasks.map((task) => task.slug)).toEqual(["w/a", "w/b", "w/z"]);
     expect(d.journal.events).toEqual([]);
   });
 
@@ -1377,17 +1362,13 @@ describe("a feed event on the live board", () => {
     expect(host.redraw).toHaveBeenCalledTimes(1); // refresh the complete orchestrator metadata
   });
 
-  it("reads again for a message, the sign-off or the counts only where they move the view", () => {
+  it("reads again for a message or the counts only where they move the view", () => {
     const { board, d } = live();
     expect(board.apply(event(["message", {}]))).toBe(false);
-    expect(board.apply(event(["task-signoff", ["w/a"]]))).toBe(false);
-    expect(d.signoff).toEqual(["w/a"]);
     expect(board.apply(event(["task-counts", {}]))).toBe(true);
     expect(board.apply(event(["task-recent-counts", {}]))).toBe(true);
     d.query = "lamp";
     expect(board.apply(event(["message", {}]))).toBe(true);
-    expect(board.apply(event(["task-signoff", ["w/b"]]))).toBe(true);
-    expect(d.signoff).toEqual(["w/a"]);
   });
 
   it("says when the board is unavailable, and reads again once it is back", () => {
@@ -1406,12 +1387,12 @@ describe("a feed event on the live board", () => {
     board.apply(event(["message", {}]));
     expect(d.journal.events).toEqual([]);
     const cursor = new ReadCursor(d.journal);
-    const said = event(["task-signoff", ["w/a"]]);
+    const said = event(["tasks-status", { available: false, slow: false }]);
     board.apply(said);
     expect(cursor.events()).toEqual([said]);
-    d.signoff = [];
+    d.error = "";
     board.replay(cursor);
-    expect(d.signoff).toEqual(["w/a"]);
+    expect(d.error).toBe("The task board is unavailable. Reconnecting…");
     cursor.release();
   });
 
@@ -1595,7 +1576,6 @@ describe("the task board's page", () => {
     const { board, d } = live();
     vi.stubGlobal("innerWidth", 1280);
     d.ready = true;
-    d.statuses = ["ready"];
     d.counts = [["ready", 2]];
     let html = view(board);
     expect(html).toMatch(/^<main data-ready="board" data-feed="live" aria-busy="false">/);
@@ -1623,6 +1603,19 @@ describe("the task board's page", () => {
     expect(html).toContain("The task board could not be read");
     expect(html).not.toContain("ghost-kanban");
     expect(html).not.toContain('role="alert"');
+  });
+
+  it("opens a phone's ghost with the row of work under way the board it kept draws", () => {
+    vi.stubGlobal("innerWidth", 390);
+    const storage = memoryStorage();
+    vi.stubGlobal("localStorage", storage);
+    vi.stubGlobal("document", { getElementById: () => null });
+    storage.setItem(SHAPE, "ready 2");
+    expect(renderToStaticMarkup(<TasksPage scope="" />)).toContain('<div class="under-way"></div>');
+    storage.setItem(SHAPE, "ready 2\nworkflow");
+    const held = renderToStaticMarkup(<TasksPage scope="" />);
+    expect(held).not.toContain("under-way");
+    expect(held).toContain('<nav class="wait-strip"');
   });
 
   it("opens on the shape this browser kept of the board", () => {

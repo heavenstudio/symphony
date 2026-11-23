@@ -78,7 +78,7 @@ fn loopback_hosts_refuse_foreign_names_and_incomplete_authorities() {
 
 #[test]
 fn idle_session_maintenance_starts_only_for_the_shared_installation() {
-    let gate = Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now));
+    let gate = crate::testing::open_gate();
     let home = Path::new("/private-preview-fixture");
     let shared = Shared::new(1, 1, home, Some(home), gate);
     // Stop is sticky, so a started worker exits before any wait or external command.
@@ -101,13 +101,74 @@ fn idle_session_maintenance_starts_only_for_the_shared_installation() {
 }
 
 #[test]
+fn a_server_of_its_own_sweeps_where_its_project_asks_in_its_main_checkout_on_the_folders_board() {
+    let none = |_: &str| false;
+    let tree = crate::testing::Tree::new();
+    // The project `lantern`: its main checkout and a linked worktree, whose files ask nothing.
+    let (main, linked) = crate::testing::layouts::repository(&tree.root);
+    let bare = tree.path("bare");
+    std::fs::create_dir_all(&bare).unwrap();
+    assert!(!sweeps_of_its_own(&bare, none), "no project file");
+    assert_eq!(own_sweep_line(&bare, false), None, "no project, no line");
+    assert!(!sweeps_of_its_own(&main, none), "a file that does not ask");
+    let unasked = own_sweep_line(&main, false).unwrap();
+    assert!(
+        unasked.contains("runs no idle-session sweep") && unasked.contains("own_sweep = true"),
+        "{unasked}"
+    );
+    // The machine's one server sweeps the project when it serves it, whatever this one does.
+    assert!(
+        unasked.contains("the machine's one server sweeps the project if it serves it; if not,"),
+        "{unasked}"
+    );
+    // A preview's, where the key would change nothing, says nothing.
+    assert_eq!(own_sweep_line(&linked, false), None);
+    let asks = "[project]\nid = \"lantern\"\n\n[board]\nown_sweep = true\n";
+    for checkout in [&main, &linked] {
+        std::fs::write(checkout.join(symphony_board::project::FILE), asks).unwrap();
+    }
+    assert!(sweeps_of_its_own(&main, none), "the project asks");
+    assert!(
+        own_sweep_line(&main, true)
+            .unwrap()
+            .contains("runs the idle-session sweep"),
+        "the line of a server that sweeps"
+    );
+    // A linked worktree runs branch code, a preview's: it never sweeps, and says why.
+    assert!(!sweeps_of_its_own(&linked, none), "a linked worktree");
+    let refused = own_sweep_line(&linked, false).unwrap();
+    assert!(
+        refused.contains("though [board] own_sweep asks") && refused.contains("linked worktree"),
+        "{refused}"
+    );
+    // A board its environment names is not the folder's: a copy's terminals are another board's.
+    for other in OTHER_BOARD {
+        assert!(!sweeps_of_its_own(&main, |name| name == other), "{other}");
+    }
+    // Asked, a server of its own in the main checkout gets the worker the one server gets, and
+    // one in a linked worktree none. Stop is sticky, so a started worker exits before any wait.
+    let started = |root: &Path| {
+        let shared = Shared::new(1, 1, root, None, crate::testing::open_gate());
+        shared.stop();
+        session_maintenance_where(&shared, None, MachineClock, none)
+            .map(|worker| worker.join().unwrap())
+            .is_some()
+    };
+    assert!(
+        started(&main),
+        "a server of its own whose project asks starts its reaper"
+    );
+    assert!(!started(&linked), "a linked worktree's starts none");
+}
+
+#[test]
 fn leaving_the_server_scope_joins_its_owned_workers() {
     let shared = Shared::new(
         1,
         1,
         Path::new("/background-scope-fixture"),
         None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+        crate::testing::open_gate(),
     );
     // Each wait on an event here; only a stall reaches this backstop.
     const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(30));

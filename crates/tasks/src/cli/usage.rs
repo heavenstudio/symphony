@@ -129,6 +129,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "the limits and models in force here, and where each came from",
             ),
             (
+                "settings",
+                "the preferences the board keeps: list, set KEY VALUE, remove KEY",
+            ),
+            (
                 "stamps",
                 "the stamps a land can require, and what a task needs of them",
             ),
@@ -513,11 +517,11 @@ options:
         r#"usage: just tasks workflow [-h] [--as ACTOR] [--revision N] [--key KEY] [--input NAME=TEXT] [--accept SLUG=OUTPUT] [--json] ACTION [SLUG] [EDGE]
 
 A custom workflow the board activated from the project's default branch
-(docs/WORKFLOW.md). `show` prints its revision, positions and edges, or says
-none is active. `actions SLUG` prints where the task stands, its workflow
-revision, and each edge that leaves it with what stops you taking it now: a
-preview, never a permit, and the accepted outputs it gives and takes. `apply
-SLUG EDGE --revision N` takes the edge as you, through the board's one
+(docs/workflow/WORKFLOW.md). `show` prints its revision, positions and edges,
+or says none is active. `actions SLUG` prints where the task stands, its
+workflow revision, and each edge that leaves it with what stops you taking it
+now: a preview, never a permit, and the accepted outputs it gives and takes.
+`apply SLUG EDGE --revision N` takes the edge as you, through the board's one
 admission, from the revision you read: a task moved since is refused as
 stale_task, so read its actions again. An edge depending on accepted outputs
 takes the one you name of each task it depends on (--accept): one superseded
@@ -567,10 +571,43 @@ edit to the file holds from the next command, and on a running server from
 its next read. symphony.local.toml beside it, which git does not version,
 is read after it: a key of [agents] launch, [agents.models] or [limits] it
 writes holds in the committed one's place, named with that file and its line.
+The board's store (just tasks settings) is read between the two: a setting it
+holds is named as the store's, with the committed value it stands over.
 
 options:
   -h, --help  show this help message and exit
   --as ACTOR
+"#,
+    ),
+    (
+        "settings",
+        r#"usage: just tasks settings [-h] [--as ACTOR] [--json] ACTION [KEY] [VALUE]
+"#,
+        r#"usage: just tasks settings [-h] [--as ACTOR] [--json] ACTION [KEY] [VALUE]
+
+The preferences the board keeps for its project, read after the committed
+symphony.toml and before symphony.local.toml. `list` prints each entry with
+every change made to it: the value before and after, when, and who wrote it.
+`set KEY VALUE` stores a value, in force from the next read of the settings.
+`remove KEY` removes the entry, so the files' value holds again; its record
+stays. A key is the setting's table and key as the project file names them,
+joined by dots: limits.low_volume, agents.launch.default, agents.launch.model,
+agents.launch.effort, agents.models.reviewer, agents.panes. The store holds
+those preferences alone: a setting that holds a command or decides what lands
+is refused by name, as symphony.local.toml refuses it, and a value is judged
+as the project file's is (a limit a whole number in its range, a launch agent
+one the board starts). A refusal names the key and why, and writes nothing.
+just tasks limits names the store for each value it gives.
+
+positional arguments:
+  ACTION      list, set or remove
+  KEY         the setting (set, remove)
+  VALUE       the value to store (set)
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR  who the change is recorded as made by (set, remove)
+  --json      the entries as JSON (list)
 "#,
     ),
     (
@@ -1011,22 +1048,24 @@ options:
     ),
     (
         "say",
-        r#"usage: just tasks say [-h] [--as ACTOR] [--to TO] slug text
+        r#"usage: just tasks say [-h] [--as ACTOR] [--to TO] [--file FILE] slug [text]
 "#,
-        r#"usage: just tasks say [-h] [--as ACTOR] [--to TO] slug text
+        r#"usage: just tasks say [-h] [--as ACTOR] [--to TO] [--file FILE] slug [text]
 
 Post a line on a task's thread. Only an addressed line is pushed to anyone; an
 unaddressed one stays on the thread, for `just tasks show SLUG` and the app.
 
 positional arguments:
   slug
-  text
+  text         the line, unless --file gives it
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help   show this help message and exit
   --as ACTOR
-  --to TO     owner, a role on the task (@orchestrator, @executor, @reviewer,
-              @reserved), or a session's HANDLE
+  --to TO      owner, a role on the task (@orchestrator, @executor, @reviewer,
+               @reserved), or a session's HANDLE
+  --file FILE  read the line from this file, or stdin for -: a long post needs
+               no shell quoting
 "#,
     ),
     ("launch", launch::USAGE, launch::HELP),
@@ -1102,8 +1141,8 @@ outside the database. A live board that reads below it went back: its store
 lost what was written since, and every command that opens it refuses it,
 `tasks migrate` included (exit 1 here). The owner, and only the owner,
 accepts a board older on purpose (a fresh store, a restore they chose) with
---accept, naming the schema it holds: docs/TASKS.md, A board that went back,
-says how to recover one first.
+--accept, naming the schema it holds: docs/operations/BOARD_OPERATIONS.md, A
+board that went back, says how to recover one first.
 
 options:
   -h, --help         show this help message and exit
@@ -1132,7 +1171,7 @@ after an unclean end, before a replay, or of a store that went back) is kept
 until the owner removes it (rm -rf its folder); of the others the newest 3 are
 kept. Each grows towards the whole store's size as the store moves on, and the
 room a reclaim frees comes back only once the snapshots of the old store are
-removed: docs/TASKS.md, Snapshots.
+removed: docs/operations/BOARD_OPERATIONS.md, The store and its server.
 
 options:
   -h, --help  show this help message and exit
@@ -1276,9 +1315,9 @@ options:
     ),
     (
         "land",
-        r#"usage: just tasks land [-h] [--as ACTOR] slug
+        r#"usage: just tasks land [-h] [--as ACTOR] [--dispatch] [--watch] [slug]
 "#,
-        r#"usage: just tasks land [-h] [--as ACTOR] slug
+        r#"usage: just tasks land [-h] [--as ACTOR] [--dispatch] [--watch] [slug]
 
 Land the task's branch, named as its slug, on the default branch once every
 stamp it needs stands on the branch's tip: its assessment's on the tip it read,
@@ -1291,7 +1330,8 @@ worktree of its own, main's side of each generated path kept, and checked by
 origin (unless [land] push = false), the task closes with its `landed` line,
 and the regenerator starts. It runs only as `just land SLUG`, whose recipe
 sets the marker it needs, and never where the project's own `land` recipe
-replaces it.
+replaces it. Under [land] delivery the host merges by a pull request instead:
+the task's move to review dispatches it, and the watcher closes it once merged.
 
 positional arguments:
   slug
@@ -1299,6 +1339,11 @@ positional arguments:
 options:
   -h, --help  show this help message and exit
   --as ACTOR
+  --dispatch  publish the task's head and its evidence to its pull request and
+              arm the host's merge of it, whatever the evidence says; a move to
+              review starts it detached under [land] delivery
+  --watch     read every task armed at the host each [land] watch_seconds,
+              closing what merged, until none is armed; a dispatch starts it
 "#,
     ),
     (

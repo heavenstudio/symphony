@@ -1,5 +1,9 @@
 //! One bounded staffing pass. The Symphony already calls `reap` every five minutes; that command
 //! runs this first, so an idle agent can take work before the idle sweep closes its pane.
+//!
+//! It starts no agent turned off (`[agents.launch.on]`), nor one whose program this machine lacks
+//! ([`super::off`]): a job whose launch or resume would start one is refused, said in a dry run
+//! too, and an idle agent turned off is given no new work, though it keeps what it has.
 
 use super::hc::{self, Binary, Hc, text_of};
 use super::{Ask, Defaults, Machine, Resolved, launch, prompt_text};
@@ -324,7 +328,7 @@ fn pass_inner(
     let machine = Machine::of(env);
     // What a launch here starts: the project's `[agents] launch`, on the model `[agents.models]`
     // names for the role, else the board's own.
-    let defaults = Defaults::configured(&machine.root).map_err(refused)?;
+    let defaults = Defaults::configured_with(&machine.root, &store.stored()).map_err(refused)?;
     let mut candidates = store.board()?.tasks;
     // The custom workflow by whose edges the tasks it holds are staffed, read once for the pass.
     let operating = store.operating_for(&candidates)?;
@@ -378,20 +382,24 @@ fn pass_inner(
         };
         // A review whose recorded reviewer still runs fails here as its launch would, in a dry run
         // too.
-        let job = job_for(
-            store,
-            &hc,
-            &view.agents,
-            &board,
+        let wanted = Job {
+            board: &board,
             task,
             role,
-            &used,
-            &held,
-            operating.as_ref(),
-        );
+            held: &held,
+            operating: operating.as_ref(),
+            defaults: &defaults,
+        };
+        let job = job_for(store, &hc, &view.agents, &used, &wanted);
         let (resuming, idle) = job
             .as_ref()
             .map_or((None, None), |(resuming, idle)| (resuming.clone(), *idle));
+        let refusal = starting_refused(
+            (resuming.as_ref(), idle),
+            &launching,
+            &defaults,
+            machine.path.as_deref(),
+        );
         let memory = free_memory_gib()?;
         let machine_agents = store.limits().machine_agents;
         let blocked = if idle.is_none() && live >= config.max_sessions {
@@ -411,6 +419,8 @@ fn pass_inner(
         let mut dispatched = false;
         let action = if let Err(problem) = &job {
             format!("staff {}: failed: {problem}", task.slug)
+        } else if let Some(why) = refusal {
+            format!("staff {}: refused: {why}", task.slug)
         } else if let Some(why) = blocked {
             format!("staff {}: deferred ({why})", task.slug)
         } else if dry_run {
@@ -422,7 +432,7 @@ fn pass_inner(
                     a.handle,
                     a.pane.as_deref().unwrap_or_default()
                 )
-            } else if let Some(handle) = &resuming {
+            } else if let Some((handle, _)) = &resuming {
                 projected += 1;
                 format!("staff {}: would resume {handle} as {role}", task.slug)
             } else {
@@ -477,16 +487,21 @@ fn pass_inner(
 /// pane, of the role's kind, with no open work, orchestrating nothing and alone in its checkout;
 /// for a review one detached, holding no role on the task and a fresh reviewer of it ([`fresh`],
 /// `held` its [`Store::ever_held`]), as the board takes the role and the verdict from no other; for
-/// work one detached for an instruction, else on the task's branch.
+/// work one detached for an instruction, else on the task's branch. Never one whose agent is
+/// turned off (the job's `defaults`, [`Defaults::off`]).
 fn idle_for<'a>(
     agents: &'a [agents::Agent],
-    board: &Board,
-    task: &Task,
-    role: &str,
     used: &HashSet<String>,
-    held: &Held,
-    operating: Option<&Operating>,
+    job: &Job<'_>,
 ) -> Option<&'a agents::Agent> {
+    let Job {
+        board,
+        task,
+        role,
+        held,
+        operating,
+        defaults,
+    } = *job;
     // Open work by its recorded facts: a task a custom workflow holds until its position is
     // terminal, one the board does not show by its status.
     let open = |t: &agents::Held| match board.tasks.iter().find(|task| task.slug == t.slug) {
@@ -497,7 +512,7 @@ fn idle_for<'a>(
         !used.contains(&a.handle)
             && a.state == "idle"
             && a.pane.is_some()
-            && a.agent.is_some()
+            && (a.agent.as_deref()).is_some_and(|agent| defaults.off(agent).is_none())
             && a.kind
                 == if role == "reviewer" {
                     "reviewer"
@@ -528,34 +543,57 @@ fn idle_for<'a>(
     })
 }
 
-/// Who a job on `task` as `role` goes to: a review to the task's recorded reviewer that its launch
+/// One job of a pass, as the pass read it: the task on its board, the role it is staffed as, who
+/// held it ([`Store::ever_held`], for a review), the custom workflow that holds it, if any, and
+/// the launch settings in force, whose agents turned off it goes to none of.
+struct Job<'a> {
+    board: &'a Board,
+    task: &'a Task,
+    role: &'a str,
+    held: &'a Held,
+    operating: Option<&'a Operating>,
+    defaults: &'a Defaults,
+}
+
+/// A recorded reviewer a launch resumes: its handle and its agent.
+type Resumed = (String, &'static str);
+
+/// Who `job` goes to, none of `used`: a review to the task's recorded reviewer that its launch
 /// resumes, by the launch's own rule ([`super::restore::reviewer_to_resume`]), never another idle
-/// one, and refused, as the launch is, while that reviewer still runs; else the idle agent
-/// [`idle_for`] picks, if any. Neither: a launch.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one job of the pass, named by what it reads"
-)]
+/// one, and refused, as the launch is, while that reviewer still runs, named with its agent; else
+/// the idle agent [`idle_for`] picks, if any. Neither: a launch.
 fn job_for<'a>(
     store: &Store,
     hc: &dyn Hc,
     agents: &'a [agents::Agent],
-    board: &Board,
-    task: &Task,
-    role: &str,
     used: &HashSet<String>,
-    held: &Held,
-    operating: Option<&Operating>,
-) -> Result<(Option<String>, Option<&'a agents::Agent>), Error> {
-    if role == "reviewer"
-        && let Some(record) = super::restore::reviewer_to_resume(store, hc, &task.slug)?
+    job: &Job<'_>,
+) -> Result<(Option<Resumed>, Option<&'a agents::Agent>), Error> {
+    if job.role == "reviewer"
+        && let Some(record) = super::restore::reviewer_to_resume(store, hc, &job.task.slug)?
     {
-        return Ok((Some(record.handle), None));
+        let agent = super::agent_of(&record.claude_session);
+        return Ok((Some((record.handle, agent)), None));
     }
-    Ok((
-        None,
-        idle_for(agents, board, task, role, used, held, operating),
-    ))
+    Ok((None, idle_for(agents, used, job)))
+}
+
+/// Why a job going to `to` (the recorded reviewer it resumes, with its agent, or the idle agent it
+/// pings; neither, a launch of `launching`) may not start what it would, under `defaults` on a
+/// machine whose search path is `path` ([`super::off::refusing`]): none for an idle agent, which
+/// runs already.
+fn starting_refused(
+    to: (Option<&Resumed>, Option<&agents::Agent>),
+    launching: &Resolved,
+    defaults: &Defaults,
+    path: Option<&std::ffi::OsStr>,
+) -> Option<String> {
+    let agent = match to {
+        (_, Some(_)) => return None,
+        (Some((_, agent)), None) => agent,
+        (None, None) => launching.agent,
+    };
+    super::off::refusing(defaults, path, agent)
 }
 
 /// Whether `handle` is a fresh reviewer of `task`, `held` its [`Store::ever_held`]: one that
@@ -668,7 +706,11 @@ fn reuse(
         pane: pane.into(),
         claude_session: format!(
             "{}{}",
-            if kind == "codex" { "codex:" } else { "" },
+            if kind == "codex" {
+                crate::launch::CODEX
+            } else {
+                ""
+            },
             agent.session_id.as_deref().unwrap_or_default()
         ),
         worktree: agent.worktree.clone(),

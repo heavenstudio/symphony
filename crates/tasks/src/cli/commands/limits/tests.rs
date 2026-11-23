@@ -16,6 +16,7 @@ fn shown(text: &str, running: Option<Result<usize, Error>>) -> Vec<String> {
         Some(&models),
         running,
         None,
+        &Stored::default(),
     )
 }
 
@@ -120,7 +121,7 @@ fn a_bad_value_shows_the_default_in_force() {
 fn outside_a_repository_and_with_no_models_read_it_says_so() {
     let read = Read::default();
     assert_eq!(
-        lines(None, "", &read, None, None, None),
+        lines(None, "", &read, None, None, None, &Stored::default()),
         [
             "LIMITS: no project file outside a repository, so every default",
             "orchestrator_slots       none    default",
@@ -165,6 +166,7 @@ low_volume = 2
             Some(&models),
             None,
             Some(&local),
+            &Stored::default(),
         ),
         [
             "LIMITS from /repo/symphony.toml",
@@ -193,6 +195,7 @@ low_volume = 2
         Some(&Defaults::parse(PATH, text).unwrap()),
         None,
         Some(&quiet),
+        &Stored::default(),
     );
     assert_eq!(shown[9], "MODELS of codex");
     assert_eq!(
@@ -216,9 +219,215 @@ low_volume = 2
         Some(&Defaults::default().over(&launch)),
         None,
         Some(&launch),
+        &Stored::default(),
     );
     assert_eq!(
         shown[11],
         "executor                 gpt-next symphony.local.toml [agents] launch model, line 2"
+    );
+}
+
+/// What the store's `entries` (key and value) write, each judged.
+fn stored(entries: &[(&str, serde_json::Value)]) -> Stored {
+    let entries: Vec<settings::Entry> = (entries.iter())
+        .map(|(key, value)| settings::Entry {
+            key: (*key).into(),
+            value: Some(value.clone()),
+            ..settings::Entry::default()
+        })
+        .collect();
+    Stored::of(&entries)
+}
+
+/// What `limits` prints of `text` with `stored` over it and, when given, a local file over both.
+fn shown_over(text: &str, stored: &Stored, local: Option<&str>) -> Vec<String> {
+    let local = local.map(|local| {
+        crate::local::parse(&PathBuf::from("/repo/symphony.local.toml"), local).unwrap()
+    });
+    let read = limits::over(
+        limits::over_stored(limits::parse(PATH, text), stored),
+        Ok(local.clone()),
+    );
+    let mut models = Defaults::parse(PATH, text).unwrap().over(&stored.held);
+    if let Some(local) = &local {
+        models = models.over(local);
+    }
+    lines(
+        Some(&PathBuf::from(PATH)),
+        text,
+        &read,
+        Some(&models),
+        None,
+        local.as_ref(),
+        stored,
+    )
+}
+
+const COMMITTED: &str = "\
+[agents]
+panes = \"none\"
+launch = { default = \"codex\", model = \"gpt\" }
+
+[agents.models]
+reviewer = \"sonnet\"
+
+[limits]
+low_volume = 2
+";
+
+#[test]
+fn a_store_with_no_entry_in_force_prints_what_the_files_alone_do() {
+    let files = shown(COMMITTED, None);
+    assert_eq!(shown_over(COMMITTED, &Stored::default(), None), files);
+    // An entry that is not read changes no row either.
+    let refused = stored(&[("land.check", serde_json::json!(false))]);
+    assert_eq!(refused.problems.len(), 1);
+    assert_eq!(shown_over(COMMITTED, &refused, None), files);
+}
+
+#[test]
+fn a_stored_setting_names_the_store_and_the_committed_value_it_stands_over() {
+    let json = |value: &str| serde_json::json!(value);
+    let held = stored(&[
+        ("limits.low_volume", serde_json::json!(0)),
+        ("limits.machine_agents", serde_json::json!(6)),
+        ("agents.launch.default", json("claude")),
+        ("agents.launch.model", json("fable")),
+        ("agents.models.reviewer", json("opus")),
+        ("agents.models.orchestrator", json("fable")),
+        ("agents.panes", json("hc")),
+    ]);
+    assert_eq!(
+        shown_over(COMMITTED, &held, None),
+        [
+            "LIMITS from /repo/symphony.toml",
+            "STORED over it 7 settings the board keeps (just tasks settings list)",
+            "orchestrator_slots       none    default",
+            "orchestrator_tasks       16      default",
+            "low_volume               0       the board's store [limits] low_volume, over 2 ([limits] low_volume, line 9)",
+            "machine_agents           6       the board's store [limits] machine_agents, over its default, none",
+            "review_alarm_ratio       2       default",
+            "review_alarm_hours       4       default",
+            "review_alarm_clear_hours 1       default",
+            "MODELS of claude, from the board's store [agents] launch default, over \"codex\" ([agents] launch default, line 3)",
+            "orchestrator             fable   the board's store [agents.models] orchestrator, over none written",
+            "executor                 fable   the board's store [agents] launch model, over \"gpt\" ([agents] launch model, line 3)",
+            "reviewer                 opus    the board's store [agents.models] reviewer, over \"sonnet\" ([agents.models] reviewer, line 6)",
+            "assessor                 haiku   the smallest claude offers",
+            "panes                    hc      the board's store [agents] panes, over \"none\" ([agents] panes, line 2)",
+        ]
+    );
+    // One setting stored says so in the singular, and panes with none committed is over none.
+    let one = shown_over("", &stored(&[("agents.panes", json("hc"))]), None);
+    assert_eq!(
+        one[1],
+        "STORED over it 1 setting the board keeps (just tasks settings list)"
+    );
+    assert_eq!(
+        one.last().unwrap(),
+        "panes                    hc          the board's store [agents] panes, over none written"
+    );
+}
+
+#[test]
+fn a_local_files_value_wins_over_a_stored_one_and_is_named_as_before() {
+    let json = |value: &str| serde_json::json!(value);
+    let held = stored(&[
+        ("limits.low_volume", serde_json::json!(0)),
+        ("agents.launch.default", json("claude")),
+        ("agents.launch.model", json("fable")),
+        ("agents.models.reviewer", json("opus")),
+    ]);
+    let local = "[agents]\nlaunch = { default = \"codex\", model = \"mine\" }\n\n\
+                 [agents.models]\nreviewer = \"local\"\n\n[limits]\nlow_volume = 9\n";
+    let shown = shown_over(COMMITTED, &held, Some(local));
+    assert_eq!(
+        [&shown[1], &shown[2]],
+        [
+            "STORED over it 4 settings the board keeps (just tasks settings list)",
+            "LOCAL  over it /repo/symphony.local.toml, which git does not version",
+        ]
+    );
+    assert_eq!(
+        shown[5],
+        "low_volume               9       symphony.local.toml [limits] low_volume, line 8"
+    );
+    assert_eq!(
+        shown[10],
+        "MODELS of codex, from symphony.local.toml [agents] launch default, line 2"
+    );
+    assert_eq!(
+        shown[12],
+        "executor                 mine    symphony.local.toml [agents] launch model, line 2"
+    );
+    assert_eq!(
+        shown[13],
+        "reviewer                 local   symphony.local.toml [agents.models] reviewer, line 5"
+    );
+}
+
+#[test]
+fn a_project_that_writes_no_switch_prints_no_agents() {
+    let lines = shown("[agents.launch]\ndefault = \"claude\"\n", None);
+    assert!(
+        !lines.iter().any(|line| line.starts_with("AGENTS")),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn each_agents_switch_is_a_row_with_where_it_was_written() {
+    let lines = shown(
+        "[agents.launch]\ndefault = \"claude\"\n\n[agents.launch.on]\ncodex = false\n",
+        None,
+    );
+    let at = lines
+        .iter()
+        .position(|line| line.starts_with("AGENTS"))
+        .unwrap();
+    assert_eq!(
+        lines[at..],
+        [
+            "AGENTS a launch may start, each by its switch ([agents.launch.on])",
+            "codex                    off     [agents.launch.on] codex, line 5",
+            "claude                   on      the launch default",
+        ]
+    );
+}
+
+#[test]
+fn a_switch_turning_off_the_default_in_another_place_is_said_not_to_hold() {
+    let text = "[agents.launch]\ndefault = \"codex\"\n";
+    let read = limits::parse(PATH, text);
+    let mut models = Defaults::parse(PATH, text).unwrap();
+    models.on[0] = Some(crate::launch::defaults::Switch {
+        on: false,
+        at: limits::Written {
+            at: "the board's store [agents.launch.on] codex".into(),
+            line: None,
+        },
+    });
+    let lines = lines(
+        Some(&PathBuf::from(PATH)),
+        text,
+        &read,
+        Some(&models),
+        None,
+        None,
+        &Stored::default(),
+    );
+    let at = lines
+        .iter()
+        .position(|line| line.starts_with("AGENTS"))
+        .unwrap();
+    assert_eq!(
+        lines[at + 1],
+        "codex                    on          [agents.launch.on] codex turns off codex (the \
+         board's store [agents.launch.on] codex), which does not hold: codex is the launch \
+         default, which wins; pick another default to turn it off"
+    );
+    assert_eq!(
+        lines[at + 2],
+        "claude                   on          default"
     );
 }

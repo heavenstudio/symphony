@@ -31,6 +31,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use symphony_api::run_day;
+use symphony_board::lock::Recovered as _;
 
 /// The windows a hub keeps the answers of, the one read longest ago going first: a page asks for
 /// one at a time, of the few its controls offer, while `days` is the asker's to name.
@@ -89,7 +90,7 @@ pub(crate) struct Kept {
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|e| e.into_inner())
+    mutex.lock().recover()
 }
 
 fn stamp(path: &Path) -> Option<Stamp> {

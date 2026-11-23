@@ -4,8 +4,8 @@
 
 use crate::common::{bounded, postgresql};
 use std::time::Duration;
+use symphony_board::db::DbError;
 use symphony_board::pg::{self, Answer, Step};
-use symphony_board::rpc::DbError;
 
 /// A client of a database of its own, made, holding the table `t` and its one row `(1, 0)`.
 fn with_a_row() -> pg::Client {
@@ -283,7 +283,15 @@ fn ended_marker_writers(client: &pg::Client) -> Vec<i64> {
             .unwrap();
         pids.push(marker_value(marker_client(&writer), "pg_backend_pid()"));
     }
-    let encoded = serde_json::to_string(&pids).unwrap();
+    await_ended(client, &pids);
+    pids
+}
+
+/// Wait until the server lists none of `pids`, its processes for connections now closed: a fold
+/// takes the rows of ended connections alone, and a server ends one some time after its client
+/// closed it, later the busier the machine.
+fn await_ended(client: &pg::Client, pids: &[i64]) {
+    let encoded = serde_json::to_string(pids).unwrap();
     test_time::until_true(
         "the committed writers' own connections have ended",
         test_time::backstop(Duration::from_secs(5)),
@@ -299,7 +307,6 @@ fn ended_marker_writers(client: &pg::Client) -> Vec<i64> {
         },
     )
     .unwrap();
-    pids
 }
 
 fn marker_rows(client: &pg::Client) -> i64 {
@@ -367,7 +374,9 @@ fn ended_marker_rows_fold_without_moving_the_sum_and_active_writers_keep_advanci
         .unwrap();
     let committed = active.marker().unwrap();
     assert!(committed > was);
+    let ended = marker_value(marker_client(&refreshed), "pg_backend_pid()");
     drop(refreshed);
+    await_ended(&client, &[ended]);
     refresh_marker(&client, "fold-markers-again");
     assert_eq!(
         active.marker().unwrap(),

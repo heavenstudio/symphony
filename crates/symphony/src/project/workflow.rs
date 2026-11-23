@@ -1,5 +1,5 @@
 //! Strict candidate reader and immutable delivery-workflow definitions, re-exported from the
-//! board, which runs them (`symphony_board::workflow`, docs/WORKFLOW.md). Ordinary project reads
+//! board, which runs them (`symphony_board::workflow`, docs/workflow/WORKFLOW.md). Ordinary project reads
 //! accept a custom workflow the local host supports, which the board activates once the project's
 //! default branch commits it, and refuse one it does not, naming what it needs.
 

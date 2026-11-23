@@ -1,11 +1,12 @@
 //! The installation token of a GitHub App, made here where the settings name the App's
-//! installation and private key beside a token file (docs/GITHUB.md, "Tokens it makes").
+//! installation and private key beside a token file (docs/operations/GITHUB.md, "Tokens it makes").
 //!
 //! A token file the settings give no App is read as it is ([`credential::read`]): its token is
 //! sent, and one GitHub expired is answered 401. A token file they give an App is the program's
-//! own. It holds the token on its first line and `expires_at` with GitHub's time on its second,
-//! and [`token`] makes a new one when the file is absent, expired, within [`MARGIN`] of expiring,
-//! or holds no expiry this program wrote: a JSON Web Token signed by the App's key, sent to
+//! own. It holds the token on its first line, `expires_at` with GitHub's time on its second and
+//! the permissions it was asked for on its third ([`asked`]), and [`token`] makes a new one when
+//! the file is absent, expired, within [`MARGIN`] of expiring, holds no expiry this program
+//! wrote, or was made for permissions other than the settings ask for now: a JSON Web Token signed by the App's key, sent to
 //! `POST /app/installations/ID/access_tokens`, asking for the one repository the settings name
 //! and the permissions of [`permissions`] alone.
 //!
@@ -17,10 +18,10 @@
 //! ones. A failure writes nothing, leaves the file as it was, and names what to put right
 //! without a key, a JWT or a token.
 
-use crate::config::{App, Config, PullRequests, Releases, Role};
+use crate::config::{App, Config, PullRequests, Releases, Verification};
 use crate::credential::{self, Secret};
 use crate::reconcile::Context;
-use crate::transport::{Failure, Request};
+use crate::transport::{Failure, Request, rate_limited};
 use data_encoding::BASE64URL_NOPAD;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -79,7 +80,7 @@ impl Expiry {
 }
 
 /// Seconds since 1970 of `YYYY-MM-DDTHH:MM:SSZ`.
-fn seconds(text: &str) -> Option<i64> {
+pub(crate) fn seconds(text: &str) -> Option<i64> {
     let bytes = text.as_bytes();
     let shape = bytes.len() == 20
         && (bytes.iter().enumerate()).all(|(at, byte)| match at {
@@ -117,8 +118,13 @@ pub enum Held {
     Absent,
     /// No token and expiry this program wrote: a token kept by hand, or nothing that reads.
     Unknown,
-    /// A token and when GitHub expires it.
-    Token { token: Secret, expires: Expiry },
+    /// A token, when GitHub expires it, and the permissions it was asked for ([`asked`]), where
+    /// the file says them: a file an older build wrote does not.
+    Token {
+        token: Secret,
+        expires: Expiry,
+        permissions: Option<String>,
+    },
 }
 
 impl Held {
@@ -127,17 +133,38 @@ impl Held {
     pub fn current(&self, now: i64) -> bool {
         matches!(self, Held::Token { expires, .. } if expires.at - now > MARGIN)
     }
+
+    /// Whether its token holds for [`MARGIN`] past `now` and was asked for `asked`, the
+    /// permissions the settings ask for now ([`asked`]): one made for others is made again.
+    #[must_use]
+    pub fn serves(&self, now: i64, asked: &str) -> bool {
+        self.current(now)
+            && matches!(self, Held::Token { permissions: Some(made), .. } if made == asked)
+    }
 }
 
-/// What the file's `text` holds: its token on the first line, `expires_at TIME` on the second.
+/// What the file's `text` holds: its token on the first line, `expires_at TIME` on the second,
+/// and `permissions ASKED` on a third where the file says them.
 fn held(text: &str) -> Held {
     let mut lines = text.lines();
-    let (Some(token), Some(expires), None) = (lines.next(), lines.next(), lines.next()) else {
+    let (Some(token), Some(expires)) = (lines.next(), lines.next()) else {
         return Held::Unknown;
+    };
+    let permissions = match (lines.next(), lines.next()) {
+        (None, _) => None,
+        (Some(line), None) => match line.strip_prefix("permissions ") {
+            Some(asked) if !asked.is_empty() => Some(asked.to_string()),
+            _ => return Held::Unknown,
+        },
+        (Some(_), Some(_)) => return Held::Unknown,
     };
     let expires = expires.strip_prefix("expires_at ").and_then(Expiry::parse);
     match (Secret::new(token), expires) {
-        (Ok(token), Some(expires)) => Held::Token { token, expires },
+        (Ok(token), Some(expires)) => Held::Token {
+            token,
+            expires,
+            permissions,
+        },
         _ => Held::Unknown,
     }
 }
@@ -200,92 +227,97 @@ fn kept(real: &Path, key: &str) -> Result<Held, Stop> {
     Ok(held(&text))
 }
 
-/// What `file`, the token file of `role`, holds now, read and never made, for `tokens` to say:
+/// What `file`, the token file, holds now, read and never made, for `tokens` to say:
 /// [`Held::Unknown`] where the settings give it no App and its token reads.
 ///
 /// # Errors
 ///
 /// The file is refused, as a run that uses it would refuse it.
-pub fn standing(
-    ctx: &Context<'_>,
-    config: &Config,
-    role: Role,
-    file: &Path,
-) -> Result<Held, String> {
+pub fn standing(ctx: &Context<'_>, config: &Config, file: &Path) -> Result<Held, String> {
     let folders: Vec<&Path> = ctx.repository.iter().map(PathBuf::as_path).collect();
-    if config.app_of(role).is_none() {
+    if config.app().is_none() {
         return credential::read(file, &folders).map(|_| Held::Unknown);
     }
-    let real = place(file, &folders, role.file_key()).map_err(Stop::said)?;
-    kept(&real, role.file_key()).map_err(Stop::said)
+    let real = place(file, &folders, TOKEN_FILE).map_err(Stop::said)?;
+    kept(&real, TOKEN_FILE).map_err(Stop::said)
 }
 
-/// The permissions `role`'s token is asked for, each the least the calls it is sent with need
-/// (docs/GITHUB.md, "The token").
+/// The settings' key of the file the token is kept in.
+pub const TOKEN_FILE: &str = "token_file";
+
+/// The permissions the token is asked for, each the least the calls it is sent with need
+/// (docs/operations/GITHUB.md, "The token"): a delivery's pushes, pull requests and checks, a release's
+/// contents, a hosted verification's workflow run, and the issues the exchange reads or writes.
 #[must_use]
-pub fn permissions(config: &Config, role: Role) -> BTreeMap<&'static str, &'static str> {
+pub fn permissions(config: &Config) -> BTreeMap<&'static str, &'static str> {
     let mut asked = BTreeMap::new();
-    match role {
-        Role::Checks => {
-            asked.insert("checks", "write");
-        }
-        Role::Policy => {
-            asked.insert("administration", "write");
-        }
-        Role::Landing => {
-            if config.pull_requests == PullRequests::Publish {
-                asked.insert("contents", "write");
-                asked.insert("pull_requests", "write");
-            }
-            if config.releases == Releases::Publish {
-                asked.insert("contents", "write");
-            }
-            if config.issues.exports() || config.close_issues {
-                asked.insert("issues", "write");
-            } else if config.issues.imports() {
-                asked.insert("issues", "read");
-            }
-            if asked.is_empty() {
-                asked.insert("metadata", "read");
-            }
-        }
+    if config.pull_requests == PullRequests::Publish {
+        asked.insert("contents", "write");
+        asked.insert("pull_requests", "write");
+        asked.insert("checks", "write");
+    }
+    if config.releases == Releases::Publish {
+        asked.insert("contents", "write");
+    }
+    if config.verification == Verification::Hosted {
+        asked.insert("actions", "write");
+    }
+    if config.issues.exports() || config.close_issues {
+        asked.insert("issues", "write");
+    } else if config.issues.imports() {
+        asked.insert("issues", "read");
+    }
+    if asked.is_empty() {
+        asked.insert("metadata", "read");
     }
     asked
 }
 
-/// The token `role`'s file holds, made first where the settings give that file an App and the
-/// token it holds is not current: absent, expired, within [`MARGIN`] of expiring, or of no
-/// expiry this program wrote. A file they give no App is read as it is.
+/// The [`permissions`] the settings ask for, as the token file says them:
+/// `checks=write,contents=write,pull_requests=write`, each `NAME=ACCESS` in name order.
+#[must_use]
+pub fn asked(config: &Config) -> String {
+    (permissions(config).iter())
+        .map(|(name, access)| format!("{name}={access}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// The token `token_file` holds, made first where the settings give it an App and the
+/// token it holds is not current: absent, expired, within [`MARGIN`] of expiring, of no
+/// expiry this program wrote, or asked for permissions other than the settings ask for now
+/// ([`Held::serves`]). A file they give no App is read as it is.
 ///
 /// # Errors
 ///
 /// What a person must put right ([`Stop::Refused`]), or GitHub gave no token now
 /// ([`Stop::Unavailable`]); the file is then as it was.
-pub fn token(ctx: &Context<'_>, config: &Config, role: Role) -> Result<Secret, Stop> {
-    let key = role.file_key();
-    let file = (config.file_of(role))
+pub fn token(ctx: &Context<'_>, config: &Config) -> Result<Secret, Stop> {
+    let key = TOKEN_FILE;
+    let file = (config.token_file.as_deref())
         .ok_or_else(|| Stop::Refused(format!("the settings name no {key}")))?;
     let folders: Vec<&Path> = ctx.repository.iter().map(PathBuf::as_path).collect();
-    let Some(app) = config.app_of(role) else {
+    let Some(app) = config.app() else {
         return credential::read(file, &folders).map_err(Stop::Refused);
     };
     let real = place(file, &folders, key)?;
     let held = kept(&real, key)?;
+    let asked = asked(config);
     if let Held::Token { token, .. } = &held
-        && held.current(ctx.now)
+        && held.serves(ctx.now, &asked)
     {
         return Ok(token.clone());
     }
-    let key_file = key_file(&app, &folders, role, &real)?;
-    let (token, expires) = make(ctx, config, role, &app, &key_file)?;
-    write(&real, &token, &expires, key)?;
+    let key_file = key_file(&app, &folders, &real)?;
+    let (token, expires) = make(ctx, config, &app, &key_file)?;
+    write(&real, &token, &expires, &asked, key)?;
     Ok(token)
 }
 
 /// The App's key file, held as a token file is: outside the repository, a plain file that only
 /// its owner may read, and never the token file `token_file` it makes the token of.
-fn key_file(app: &App, folders: &[&Path], role: Role, token_file: &Path) -> Result<PathBuf, Stop> {
-    let key = format!("{}_key_file", role.prefix());
+fn key_file(app: &App, folders: &[&Path], token_file: &Path) -> Result<PathBuf, Stop> {
+    let key = "key_file";
     let named = app.key_file.display();
     let refused = |why: String| Stop::Refused(format!("{key} {named}{why}"));
     let real = (app.key_file.canonicalize()).map_err(|error| refused(format!(": {error}")))?;
@@ -293,8 +325,7 @@ fn key_file(app: &App, folders: &[&Path], role: Role, token_file: &Path) -> Resu
         .map_err(|()| refused(" is inside the repository; keep it outside".into()))?;
     if real == token_file {
         return Err(refused(format!(
-            " is {}: a token made would be written over the key",
-            role.file_key()
+            " is {TOKEN_FILE}: a token made would be written over the key"
         )));
     }
     let meta = fs::metadata(&real).map_err(|error| refused(format!(": {}", error.kind())))?;
@@ -372,28 +403,20 @@ fn sign(openssl: &str, key_file: &Path, input: &[u8], key: &str) -> Result<Vec<u
 }
 
 /// A token of `app` made by GitHub now, for the one repository the settings name and the
-/// permissions `role` is asked for, with its expiry.
+/// permissions the settings ask for ([`permissions`]), with its expiry.
 fn make(
     ctx: &Context<'_>,
     config: &Config,
-    role: Role,
     app: &App,
     key_file: &Path,
 ) -> Result<(Secret, Expiry), Stop> {
-    let prefix = role.prefix();
-    let key = role.file_key();
+    let key = TOKEN_FILE;
     let repository = (config.repository.as_ref())
         .ok_or_else(|| Stop::Refused("the settings name no repository".into()))?;
-    let jwt = jwt(
-        ctx.openssl,
-        app.id,
-        key_file,
-        ctx.now,
-        &format!("{prefix}_key_file"),
-    )?;
+    let jwt = jwt(ctx.openssl, app.id, key_file, ctx.now, "key_file")?;
     let jwt = Secret::new(&jwt).map_err(Stop::Refused)?;
     let transport = (ctx.connect)(jwt.clone()).map_err(Stop::Unavailable)?;
-    let asked = permissions(config, role);
+    let asked = permissions(config);
     let request = Request {
         method: "POST",
         path: format!("/app/installations/{}/access_tokens", app.installation),
@@ -414,12 +437,7 @@ fn make(
             .collect();
         jwt.redact(&said)
     };
-    let limited = response
-        .headers
-        .get("x-ratelimit-remaining")
-        .map(String::as_str)
-        == Some("0")
-        || response.headers.contains_key("retry-after");
+    let limited = rate_limited(&response).is_some();
     match response.status {
         201 => {
             let token = (value["token"].as_str())
@@ -435,15 +453,15 @@ fn make(
             Ok((token, expires))
         }
         401 => Err(Stop::Refused(format!(
-            "{making}: GitHub refused the App's JWT (401: {}): {prefix}_key_file is not App {}'s \
-             private key, {prefix}_app_id is not that App's number, or this machine's clock is \
+            "{making}: GitHub refused the App's JWT (401: {}): key_file is not App {}'s \
+             private key, app_id is not that App's number, or this machine's clock is \
              more than a minute ahead of GitHub's or nine minutes behind it",
             message(),
             app.id
         ))),
         404 => Err(Stop::Refused(format!(
             "{making}: GitHub found no installation {} of App {} (404): \
-             {prefix}_installation_id is not its number, or the App is not installed",
+             installation_id is not its number, or the App is not installed",
             app.installation, app.id
         ))),
         422 | 403 if !limited => Err(Stop::Refused(format!(
@@ -465,9 +483,15 @@ fn make(
     }
 }
 
-/// `token` and its expiry written to the token file at `real`: to a file of its own beside it,
-/// readable by its owner alone, then renamed over it.
-fn write(real: &Path, token: &Secret, expires: &Expiry, key: &str) -> Result<(), Stop> {
+/// `token`, its expiry and the permissions it was `asked` for written to the token file at
+/// `real`: to a file of its own beside it, readable by its owner alone, then renamed over it.
+fn write(
+    real: &Path,
+    token: &Secret,
+    expires: &Expiry,
+    asked: &str,
+    key: &str,
+) -> Result<(), Stop> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let named = real.display();
     let refused = |error: std::io::Error| {
@@ -491,7 +515,12 @@ fn write(real: &Path, token: &Secret, expires: &Expiry, key: &str) -> Result<(),
             .create_new(true)
             .mode(0o600)
             .open(&beside)?;
-        write!(file, "{}\nexpires_at {}\n", token.expose(), expires.text)?;
+        write!(
+            file,
+            "{}\nexpires_at {}\npermissions {asked}\n",
+            token.expose(),
+            expires.text
+        )?;
         file.sync_all()?;
         fs::rename(&beside, real)
     })();

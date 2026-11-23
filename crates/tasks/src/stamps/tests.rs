@@ -44,7 +44,9 @@ fn a_change_of_settings_values_skips_review_for_the_settings_check_as_tests() {
         tests.applies
     );
     assert!(
-        tests.applies.contains("no name judged against a list"),
+        tests
+            .applies
+            .contains("no model or recipe judged against a list"),
         "{}",
         tests.applies
     );
@@ -60,6 +62,7 @@ fn a_change_of_settings_values_skips_review_for_the_settings_check_as_tests() {
         "[project] cargo and default_branch",
         "[plugins] crates and process",
         "[verdicts], [land], [releases], [stamps]",
+        "the workflow's [workflow], [[workflow_mappings]] and [[workflow_authorities]]",
         "[board] on_review, on_land, machine_work_reader, postgresql, external_postgresql and \
          assessments",
     ] {
@@ -278,4 +281,14 @@ fn the_threads_line_says_the_stamps_the_tip_read_what_it_needed_before_and_who()
         "needs none from the brief (was none): documents only; by able-otter"
     );
     assert_eq!(short("abc"), "abc");
+}
+
+#[test]
+fn a_commit_is_named_by_its_first_seven_characters_and_other_text_is_never_cut_inside_one() {
+    assert_eq!(short("0123456789abcdef"), "0123456");
+    assert_eq!(short("0123456"), "0123456");
+    assert_eq!(short(""), "");
+    // Byte 7 falls inside the `é`: the text whole, where a slice by index would panic.
+    assert_eq!(short("abcdefé"), "abcdefé");
+    assert_eq!(short("abcdeéf"), "abcdeé");
 }

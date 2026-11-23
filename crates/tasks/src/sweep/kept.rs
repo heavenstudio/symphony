@@ -86,7 +86,7 @@ impl Record {
     pub fn read(path: &Path) -> Record {
         std::fs::read_to_string(path)
             .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
+            .and_then(crate::objects::parse)
             .unwrap_or_default()
     }
 

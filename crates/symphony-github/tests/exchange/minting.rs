@@ -1,10 +1,9 @@
 //! A GitHub App's installation token made by the program where the settings name the App's
 //! installation and key (src/mint.rs). GitHub's side of the Apps is held here: it answers
 //! `POST /app/installations/ID/access_tokens` to a JWT whose signature it verifies by `openssl`
-//! with the public half of the App's key, as GitHub does with the one it keeps. Every test signs
-//! with `openssl`, so it holds [`crate::starting`].
+//! with the public half of the App's key, as GitHub does with the one it keeps.
 
-use crate::deliver::{APP, As, CHECKS, Connect, Delivery, HEAD, LANDING, POLICY, READER, snapshot};
+use crate::deliver::{APP, As, Connect, Delivery, HEAD, snapshot};
 use crate::github::{Fake, Fault};
 use crate::{Settings, TOKEN};
 use data_encoding::BASE64URL_NOPAD;
@@ -16,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex, MutexGuard, OnceLock};
-use symphony_github::config::{self, Role};
+use symphony_github::config;
 use symphony_github::credential::Secret;
 use symphony_github::mint::{self, MARGIN};
 use symphony_github::reconcile::Context;
@@ -27,16 +26,8 @@ fn installation(app: i64) -> i64 {
     app + 100
 }
 
-/// The App each token file's token is of.
-fn app(role: Role) -> i64 {
-    match role {
-        Role::Landing => LANDING,
-        Role::Checks => APP,
-        Role::Policy => READER,
-    }
-}
-
-/// The private keys of the three Apps and of one that is none of theirs (`stranger`), each beside
+/// The private keys of the App, of two others and of one that is none of theirs (`stranger`),
+/// each beside
 /// its public half: made by `openssl` once and kept for every later run, as making them takes
 /// longer than the tests that use them.
 fn keys() -> &'static Path {
@@ -95,18 +86,16 @@ fn clock(at: i64) -> String {
     )
 }
 
-/// The settings that give each of `roles` its App's installation and key.
-fn makers(roles: &[Role]) -> String {
-    roles.iter().fold(String::new(), |mut text, role| {
-        let prefix = role.prefix();
-        let _ = writeln!(
-            text,
-            "{prefix}_installation_id = {}\n{prefix}_key_file = \"{}\"",
-            installation(app(*role)),
-            key(&app(*role).to_string()).display()
-        );
-        text
-    })
+/// The settings that give the App its installation and key.
+fn maker() -> String {
+    let mut text = String::new();
+    let _ = writeln!(
+        text,
+        "installation_id = {}\nkey_file = \"{}\"",
+        installation(APP),
+        key(&APP.to_string()).display()
+    );
+    text
 }
 
 /// What GitHub's side of the Apps was asked and made.
@@ -126,6 +115,8 @@ struct Made {
 enum Planted {
     /// This status and body.
     Answer(u16, Value),
+    /// This status and body, under these headers.
+    Headed(u16, &'static [(&'static str, &'static str)], Value),
     /// None: the connection ends with no answer.
     Lost,
 }
@@ -248,6 +239,12 @@ impl Apps {
         if let Some(planted) = made.planted.take() {
             return match planted {
                 Planted::Answer(status, body) => Ok(respond(status, body)),
+                Planted::Headed(status, headers, body) => Ok(Response {
+                    headers: (headers.iter())
+                        .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+                        .collect(),
+                    ..respond(status, body)
+                }),
                 Planted::Lost => Err(Failure::Unknown(format!(
                     "the connection ended with no answer to Bearer {jwt}"
                 ))),
@@ -284,15 +281,7 @@ impl Apps {
                 return Ok(Box::new(Minting(Arc::clone(&apps), text)));
             }
             let made = (apps.tokens().into_iter()).find(|(made, _)| *made == text);
-            let app = made.map_or_else(
-                || match text.as_str() {
-                    CHECKS => APP,
-                    TOKEN => LANDING,
-                    POLICY => READER,
-                    _ => 0,
-                },
-                |(_, app)| app,
-            );
+            let app = made.map_or_else(|| if text == TOKEN { APP } else { 0 }, |(_, app)| app);
             Ok(Box::new(As(Arc::clone(&github), app)))
         })
     }
@@ -307,23 +296,15 @@ impl Transport for Minting {
     }
 }
 
-/// A delivery whose three Apps' installations and keys are set, with `more` settings, and its
-/// requests made through GitHub's side of them.
-fn delivery(name: &str, roles: &[Role], more: &str) -> (Delivery, Arc<Apps>) {
-    let mut d = Delivery::new(name, &format!("{}{more}", makers(roles)));
+/// A delivery whose App's installation and key are set where `made` says, with `more` settings,
+/// and its requests made through GitHub's side of the Apps.
+fn delivery(name: &str, made: bool, more: &str) -> (Delivery, Arc<Apps>) {
+    let maker = if made { maker() } else { String::new() };
+    let mut d = Delivery::unverified(name, &format!("{maker}{more}"));
     let apps = Apps::new(d.rig.now.get());
     d.connect = apps.connect(&d.rig.github);
-    d.starts = true;
+    d.verify().ok();
     (d, apps)
-}
-
-/// Each token file of a delivery, by its role.
-fn files(d: &Delivery) -> [(Role, PathBuf); 3] {
-    [
-        (Role::Landing, d.rig.token_file.clone()),
-        (Role::Checks, d.checks_file()),
-        (Role::Policy, d.policy_file()),
-    ]
 }
 
 fn write(file: &Path, text: &str) {
@@ -331,13 +312,17 @@ fn write(file: &Path, text: &str) {
     std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600)).unwrap();
 }
 
-/// The permissions each App's token is asked for in a delivery.
-fn permissions(role: Role) -> Value {
-    match role {
-        Role::Landing => json!({"contents": "write", "pull_requests": "write"}),
-        Role::Checks => json!({"checks": "write"}),
-        Role::Policy => json!({"administration": "write"}),
-    }
+/// The permissions the App's token is asked for in a delivery: never administration.
+fn permissions() -> Value {
+    json!({"checks": "write", "contents": "write", "pull_requests": "write"})
+}
+
+/// Those permissions as the token file says them.
+const ASKED: &str = "checks=write,contents=write,pull_requests=write";
+
+/// A token file as the program writes it: `token`, expiring at `at`, made for [`ASKED`].
+fn made(token: &str, at: i64) -> String {
+    format!("{token}\nexpires_at {}\npermissions {ASKED}\n", clock(at))
 }
 
 /// The delivery answered published, and each request to the repository carried the token of
@@ -348,14 +333,12 @@ fn published(d: &Delivery, answer: &Value) {
     let checks = d.rig.github.checks(HEAD);
     assert!(
         checks.iter().all(|(.., app)| *app == APP),
-        "every check by the checks App: {checks:?}"
+        "every check by the App: {checks:?}"
     );
-    for app in [APP, LANDING, READER] {
-        assert!(
-            !d.rig.github.asked_as(app).is_empty(),
-            "nothing asked as {app}"
-        );
-    }
+    assert!(
+        !d.rig.github.asked_as(APP).is_empty(),
+        "nothing asked as {APP}"
+    );
     assert!(
         d.rig.github.asked_as(0).is_empty(),
         "nothing asked with no App's token"
@@ -363,49 +346,41 @@ fn published(d: &Delivery, answer: &Value) {
 }
 
 #[test]
-fn an_absent_token_is_made_once_for_each_app_and_the_delivery_goes_on() {
-    let _alone = crate::starting();
-    let (d, apps) = delivery("mint-absent", &Role::ALL, "");
-    for (_, file) in files(&d) {
-        std::fs::remove_file(file).unwrap();
-    }
+fn an_absent_token_is_made_once_and_the_delivery_goes_on() {
+    let (d, apps) = delivery("mint-absent", true, "");
+    let file = d.rig.token_file.clone();
+    std::fs::remove_file(&file).unwrap();
     let answer = d.publish(&snapshot(HEAD, "met", "r1"));
     published(&d, &answer);
     let asked = apps.asked();
-    assert_eq!(asked.len(), 3, "{asked:?}");
-    for (role, file) in files(&d) {
-        let app = app(role);
-        let (_, path, body) = (asked.iter())
-            .find(|(by, ..)| *by == app)
-            .unwrap_or_else(|| panic!("no token asked as {app}: {asked:?}"));
-        assert_eq!(
-            *path,
-            format!("/app/installations/{}/access_tokens", installation(app))
-        );
-        assert_eq!(
-            *body,
-            json!({"repositories": ["n"], "permissions": permissions(role)})
-        );
-        let (token, _) = (apps.tokens().into_iter())
-            .find(|(_, by)| *by == app)
-            .unwrap();
-        assert_eq!(
-            std::fs::read_to_string(&file).unwrap(),
-            format!("{token}\nexpires_at {}\n", clock(d.rig.now.get() + 3_600))
-        );
-        let mode = std::fs::metadata(&file).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o600, "{}", file.display());
-    }
-    // Nothing is left beside the files but the files.
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    let (by, path, body) = &asked[0];
+    assert_eq!(*by, APP);
+    assert_eq!(
+        *path,
+        format!("/app/installations/{}/access_tokens", installation(APP))
+    );
+    assert_eq!(
+        *body,
+        json!({"repositories": ["n"], "permissions": permissions()})
+    );
+    let (token, _) = apps.tokens().remove(0);
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        made(&token, d.rig.now.get() + 3_600)
+    );
+    let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o600, "{}", file.display());
+    // Nothing is left beside the file but the file.
     let beside: Vec<_> = std::fs::read_dir(d.rig.dir.0.join("secret"))
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect();
-    assert_eq!(beside.len(), 3, "{beside:?}");
-    // Current now, each token is used again and none is asked for.
+    assert_eq!(beside, ["token"]);
+    // Current now, the token is used again and none is asked for.
     let again = d.publish(&snapshot(HEAD, "met", "r1"));
     assert_eq!(again, answer);
-    assert_eq!(apps.asked().len(), 3);
+    assert_eq!(apps.asked().len(), 1);
     d.assert_none_of(
         &apps
             .secrets()
@@ -416,35 +391,41 @@ fn an_absent_token_is_made_once_for_each_app_and_the_delivery_goes_on() {
 }
 
 #[test]
-fn an_expired_a_nearly_expired_and_an_unknown_token_are_each_made_again_once() {
-    let _alone = crate::starting();
+fn an_expired_a_nearly_expired_an_unknown_and_an_other_token_are_each_made_again_once() {
     let now = 2_000;
     for (case, kept) in [
-        (
-            "expired",
-            format!("ghs_old\nexpires_at {}\n", clock(now - 1)),
-        ),
-        (
-            "expiring",
-            format!("ghs_old\nexpires_at {}\n", clock(now + MARGIN)),
-        ),
+        ("expired", made("ghs_old", now - 1)),
+        ("expiring", made("ghs_old", now + MARGIN)),
         ("by hand", "ghs_old\n".to_string()),
+        // Current, but made before the settings asked for checks: a land would get 403 on them.
+        (
+            "made for less",
+            format!(
+                "ghs_old\nexpires_at {}\npermissions contents=write,pull_requests=write\n",
+                clock(now + 3_600)
+            ),
+        ),
+        (
+            "of an older build",
+            format!("ghs_old\nexpires_at {}\n", clock(now + 3_600)),
+        ),
     ] {
-        let (d, apps) = delivery("mint-again", &Role::ALL, "");
+        let (d, apps) = delivery("mint-again", true, "");
         d.rig.now.set(now);
         apps.now.store(now, Ordering::SeqCst);
-        for (_, file) in files(&d) {
-            write(&file, &kept);
-        }
+        write(&d.rig.token_file, &kept);
         let answer = d.publish(&snapshot(HEAD, "met", "r1"));
         published(&d, &answer);
-        assert_eq!(apps.asked().len(), 3, "{case}: one token for each App");
-        for (_, file) in files(&d) {
-            let text = std::fs::read_to_string(file).unwrap();
-            assert!(text.starts_with("ghs_minted"), "{case}: {text}");
-        }
+        assert_eq!(apps.asked().len(), 1, "{case}: one token");
+        let text = std::fs::read_to_string(&d.rig.token_file).unwrap();
+        assert!(text.starts_with("ghs_minted"), "{case}: {text}");
+        assert!(
+            text.ends_with(&format!("\npermissions {ASKED}\n")),
+            "{case}: {text}"
+        );
+        assert_eq!(apps.asked()[0].2["permissions"], permissions(), "{case}");
         d.publish(&snapshot(HEAD, "met", "r1"));
-        assert_eq!(apps.asked().len(), 3, "{case}: made once");
+        assert_eq!(apps.asked().len(), 1, "{case}: made once");
         d.assert_none_of(
             &apps
                 .secrets()
@@ -457,24 +438,18 @@ fn an_expired_a_nearly_expired_and_an_unknown_token_are_each_made_again_once() {
 
 #[test]
 fn a_current_token_makes_no_call() {
-    let _alone = crate::starting();
-    let (d, apps) = delivery("mint-current", &Role::ALL, "");
-    let until = clock(d.rig.now.get() + MARGIN + 1);
-    for (role, file) in files(&d) {
-        let token = match role {
-            Role::Landing => TOKEN,
-            Role::Checks => CHECKS,
-            Role::Policy => POLICY,
-        };
-        write(&file, &format!("{token}\nexpires_at {until}\n"));
-    }
+    let (d, apps) = delivery("mint-current", true, "");
+    write(
+        &d.rig.token_file,
+        &made(TOKEN, d.rig.now.get() + MARGIN + 1),
+    );
     let answer = d.publish(&snapshot(HEAD, "met", "r1"));
     published(&d, &answer);
     assert_eq!(apps.asked().len(), 0, "{:?}", apps.asked());
     d.assert_no_token();
 }
 
-/// A delivery whose landing App makes its token, the file holding an expired one, refused for
+/// A delivery whose App makes its token, the file holding an expired one, refused for
 /// `why` with the file as it was and nothing pushed or written to the repository.
 fn refused(d: &Delivery, apps: &Apps, why: &[&str]) -> Value {
     let file = &d.rig.token_file;
@@ -505,21 +480,20 @@ fn refused(d: &Delivery, apps: &Apps, why: &[&str]) -> Value {
 
 #[test]
 fn a_loose_key_file_is_refused_before_anything_is_asked() {
-    let _alone = crate::starting();
     let loose =
         std::env::temp_dir().join(format!("symphony-github-loose-{}.pem", std::process::id()));
-    std::fs::copy(key("43"), &loose).unwrap();
+    std::fs::copy(key("42"), &loose).unwrap();
     std::fs::set_permissions(&loose, std::fs::Permissions::from_mode(0o644)).unwrap();
     let more = format!(
-        "landing_installation_id = {}\nlanding_key_file = \"{}\"\n",
-        installation(LANDING),
+        "installation_id = {}\nkey_file = \"{}\"\n",
+        installation(APP),
         loose.display()
     );
-    let (d, apps) = delivery("mint-loose", &[], &more);
+    let (d, apps) = delivery("mint-loose", false, &more);
     refused(
         &d,
         &apps,
-        &["landing_key_file", "is readable by others; chmod 600 it"],
+        &["key_file", "is readable by others; chmod 600 it"],
     );
     assert_eq!(apps.asked().len(), 0, "{:?}", apps.asked());
     let _ = std::fs::remove_file(&loose);
@@ -527,21 +501,19 @@ fn a_loose_key_file_is_refused_before_anything_is_asked() {
 
 #[test]
 fn a_key_of_another_app_is_refused_by_github_and_said_so() {
-    let _alone = crate::starting();
     let more = format!(
-        "landing_installation_id = {}\nlanding_key_file = \"{}\"\n",
-        installation(LANDING),
+        "installation_id = {}\nkey_file = \"{}\"\n",
+        installation(APP),
         key("stranger").display()
     );
-    let (d, apps) = delivery("mint-stranger", &[], &more);
+    let (d, apps) = delivery("mint-stranger", false, &more);
     refused(
         &d,
         &apps,
         &[
             "GitHub refused the App's JWT (401: A JSON web token could not be decoded)",
-            "landing_key_file is not App 43's private key, landing_app_id is not that App's \
-             number, or this machine's clock is more than a minute ahead of GitHub's or nine \
-             minutes behind it",
+            "key_file is not App 42's private key, app_id is not that App's number, or this \
+             machine's clock is more than a minute ahead of GitHub's or nine minutes behind it",
         ],
     );
     assert_eq!(apps.asked().len(), 1, "asked once, and refused");
@@ -549,8 +521,7 @@ fn a_key_of_another_app_is_refused_by_github_and_said_so() {
 
 #[test]
 fn a_jwt_github_reads_as_of_another_time_says_its_words_and_the_clock() {
-    let _alone = crate::starting();
-    let (d, apps) = delivery("mint-clock", &[Role::Landing], "");
+    let (d, apps) = delivery("mint-clock", true, "");
     apps.plant(Planted::Answer(
         401,
         json!({"message": "'Issued at' claim ('iat') must be an Integer representing a time in the past"}),
@@ -568,12 +539,11 @@ fn a_jwt_github_reads_as_of_another_time_says_its_words_and_the_clock() {
 
 #[test]
 fn a_release_run_asks_its_token_for_contents_write_and_publishes() {
-    let _alone = crate::starting();
     let rig = crate::Rig::off("mint-release");
     std::fs::remove_file(&rig.token_file).unwrap();
     rig.enable(&format!(
-        "releases = \"publish\"\nlanding_app_id = {LANDING}\n{}",
-        makers(&[Role::Landing])
+        "releases = \"publish\"\napp_id = {APP}\n{}",
+        maker()
     ));
     rig.github.tag("release-2026-11-19", HEAD);
     let apps = Apps::new(rig.now.get());
@@ -607,8 +577,8 @@ fn a_release_run_asks_its_token_for_contents_write_and_publishes() {
         json!({"repositories": ["n"], "permissions": {"contents": "write"}})
     );
     assert!(
-        !rig.github.asked_as(LANDING).is_empty(),
-        "the release made as the landing App"
+        !rig.github.asked_as(APP).is_empty(),
+        "the release made as the App"
     );
     for secret in apps.secrets() {
         assert!(!ran.out.contains(&secret) && !ran.err.contains(&secret));
@@ -617,7 +587,6 @@ fn a_release_run_asks_its_token_for_contents_write_and_publishes() {
 
 #[test]
 fn a_file_that_is_no_key_is_refused_and_nothing_of_it_is_said() {
-    let _alone = crate::starting();
     let marker = "MARKERaaaaBEGINprivateKEYzzzz";
     let planted =
         std::env::temp_dir().join(format!("symphony-github-nokey-{}.pem", std::process::id()));
@@ -626,8 +595,8 @@ fn a_file_that_is_no_key_is_refused_and_nothing_of_it_is_said() {
         &format!("-----BEGIN RSA PRIVATE KEY-----\n{marker}\n-----END RSA PRIVATE KEY-----\n"),
     );
     let more = format!(
-        "landing_installation_id = {}\nlanding_key_file = \"{}\"\n",
-        installation(LANDING),
+        "installation_id = {}\nkey_file = \"{}\"\n",
+        installation(APP),
         planted.display()
     );
     // The openssl on PATH, and one that says the key back on both its outputs before it fails.
@@ -639,9 +608,9 @@ fn a_file_that_is_no_key_is_refused_and_nothing_of_it_is_said() {
     std::fs::set_permissions(&echo, std::fs::Permissions::from_mode(0o700)).unwrap();
     let echo: &'static str = Box::leak(echo.display().to_string().into_boxed_str());
     for openssl in ["openssl", echo] {
-        let (mut d, apps) = delivery("mint-nokey", &[], &more);
+        let (mut d, apps) = delivery("mint-nokey", false, &more);
         d.openssl = openssl;
-        let answer = refused(&d, &apps, &["could not sign with landing_key_file", "PEM"]);
+        let answer = refused(&d, &apps, &["could not sign with key_file", "PEM"]);
         assert!(!answer.to_string().contains(marker), "{answer}");
         assert_eq!(apps.asked().len(), 0, "{:?}", apps.asked());
     }
@@ -651,8 +620,7 @@ fn a_file_that_is_no_key_is_refused_and_nothing_of_it_is_said() {
 
 #[test]
 fn no_openssl_is_refused_naming_what_to_install() {
-    let _alone = crate::starting();
-    let (mut d, apps) = delivery("mint-no-openssl", &[Role::Landing], "");
+    let (mut d, apps) = delivery("mint-no-openssl", true, "");
     d.openssl = "/nowhere/openssl";
     refused(
         &d,
@@ -667,8 +635,7 @@ fn no_openssl_is_refused_naming_what_to_install() {
 
 #[test]
 fn github_refusing_the_token_says_its_words_and_what_to_fix() {
-    let _alone = crate::starting();
-    let (d, apps) = delivery("mint-422", &[Role::Landing], "");
+    let (d, apps) = delivery("mint-422", true, "");
     apps.plant(Planted::Answer(
         422,
         json!({"message": "The permissions requested are not granted to this installation."}),
@@ -677,38 +644,72 @@ fn github_refusing_the_token_says_its_words_and_what_to_fix() {
         &d,
         &apps,
         &[
-            "GitHub refused a token for o/n with contents write, pull_requests write",
+            "GitHub refused a token for o/n with checks write, contents write, pull_requests write",
             "422: The permissions requested are not granted to this installation.",
-            "give App 43 those permissions and install it on that repository",
+            "give App 42 those permissions and install it on that repository",
         ],
     );
+    // A refusal is one whatever it says of the rate limit: a 422 is never the limit, though the
+    // last request a window allows says none remains, and neither is a 403 with requests left.
+    let refusals: [(u16, &'static [(&str, &str)]); 4] = [
+        (422, &[("x-ratelimit-remaining", "0")]),
+        (422, &[("retry-after", "30")]),
+        (403, &[("x-ratelimit-remaining", "12")]),
+        (403, &[]),
+    ];
+    for (status, headers) in refusals {
+        let (d, apps) = delivery("mint-refused-headed", true, "");
+        apps.plant(Planted::Headed(
+            status,
+            headers,
+            json!({"message": "Resource not accessible by integration"}),
+        ));
+        refused(
+            &d,
+            &apps,
+            &[
+                &format!("{status}: Resource not accessible by integration"),
+                "give App 42 those permissions and install it on that repository",
+            ],
+        );
+    }
     // An installation that is not the App's.
     let more = format!(
-        "landing_installation_id = 999\nlanding_key_file = \"{}\"\n",
-        key("43").display()
+        "installation_id = 999\nkey_file = \"{}\"\n",
+        key("42").display()
     );
-    let (d, apps) = delivery("mint-404", &[], &more);
+    let (d, apps) = delivery("mint-404", false, &more);
     refused(
         &d,
         &apps,
         &[
-            "GitHub found no installation 999 of App 43 (404)",
-            "landing_installation_id is not its number, or the App is not installed",
+            "GitHub found no installation 999 of App 42 (404)",
+            "installation_id is not its number, or the App is not installed",
         ],
     );
 }
 
 #[test]
 fn github_not_answering_is_unavailable_and_the_old_file_kept() {
-    let _alone = crate::starting();
     for planted in [
         Planted::Answer(502, json!({"message": "Bad Gateway"})),
         Planted::Answer(429, json!({"message": "slow down"})),
+        // The rate limit as a 403: no request remains, or a wait is named.
+        Planted::Headed(
+            403,
+            &[("x-ratelimit-remaining", "0"), ("x-ratelimit-reset", "900")],
+            json!({"message": "API rate limit exceeded"}),
+        ),
+        Planted::Headed(
+            403,
+            &[("retry-after", "30")],
+            json!({"message": "You have exceeded a secondary rate limit."}),
+        ),
         Planted::Answer(201, json!({"expires_at": clock(9_000)})),
         Planted::Answer(201, json!({"token": "ghs_odd", "expires_at": "tomorrow"})),
         Planted::Lost,
     ] {
-        let (d, apps) = delivery("mint-unavailable", &[Role::Landing], "");
+        let (d, apps) = delivery("mint-unavailable", true, "");
         let old = format!("ghs_old\nexpires_at {}\n", clock(d.rig.now.get() - 1));
         write(&d.rig.token_file, &old);
         apps.plant(planted.clone());
@@ -718,7 +719,7 @@ fn github_not_answering_is_unavailable_and_the_old_file_kept() {
             answer["why"]
                 .as_str()
                 .unwrap()
-                .starts_with("making token_file's token as App 43: "),
+                .starts_with("making token_file's token as App 42: "),
             "{answer}"
         );
         assert_eq!(std::fs::read_to_string(&d.rig.token_file).unwrap(), old);
@@ -735,12 +736,9 @@ fn github_not_answering_is_unavailable_and_the_old_file_kept() {
 
 #[test]
 fn unset_a_token_file_is_read_as_it_is_and_an_expired_one_is_unavailable() {
-    let _alone = crate::starting();
-    let (d, apps) = delivery("mint-unset", &[], "");
-    let before: Vec<Vec<u8>> = (files(&d).iter())
-        .map(|(_, file)| std::fs::read(file).unwrap())
-        .collect();
-    // The landing token, expired: GitHub answers it 401, and nothing makes another.
+    let (d, apps) = delivery("mint-unset", false, "");
+    let before = std::fs::read(&d.rig.token_file).unwrap();
+    // The token, expired: GitHub answers it 401, and nothing makes another.
     d.rig
         .github
         .fault("GET", "/repos/o/n", Fault::Status(401, Vec::new()));
@@ -751,15 +749,10 @@ fn unset_a_token_file_is_read_as_it_is_and_an_expired_one_is_unavailable() {
         "{answer}"
     );
     assert_eq!(apps.asked().len(), 0, "{:?}", apps.asked());
-    let after: Vec<Vec<u8>> = (files(&d).iter())
-        .map(|(_, file)| std::fs::read(file).unwrap())
-        .collect();
+    let after = std::fs::read(&d.rig.token_file).unwrap();
     assert_eq!(before, after, "no file is written");
     // A file of the shape the program writes is one token too many where it makes none.
-    write(
-        &d.rig.token_file,
-        &format!("{TOKEN}\nexpires_at {}\n", clock(5_000)),
-    );
+    write(&d.rig.token_file, &made(TOKEN, 5_000));
     let answer = d.publish(&snapshot(HEAD, "met", "r1"));
     assert_eq!(answer["state"], "refused", "{answer}");
     assert!(
@@ -775,13 +768,9 @@ fn unset_a_token_file_is_read_as_it_is_and_an_expired_one_is_unavailable() {
 
 #[test]
 fn two_runs_at_once_leave_one_valid_token_and_no_torn_file() {
-    let _alone = crate::starting();
-    let (d, apps) = delivery("mint-together", &[Role::Landing], "");
+    let (d, apps) = delivery("mint-together", true, "");
     let file = d.rig.token_file.clone();
-    let text = crate::settings(
-        &file,
-        &format!("landing_app_id = {LANDING}\n{}", makers(&[Role::Landing])),
-    );
+    let text = crate::settings(&file, &format!("app_id = {APP}\n{}", maker()));
     let config = config::load(&text).unwrap().config;
     let github = Arc::clone(&d.rig.github);
     let (now, state, repository) = (
@@ -806,10 +795,11 @@ fn two_runs_at_once_leave_one_valid_token_and_no_torn_file() {
                             now,
                             repository: vec![repository.clone()],
                             openssl: "openssl",
+                            gh: "gh",
                             rest: &|_| {},
                         };
                         starts.wait();
-                        let token = mint::token(&ctx, &config, Role::Landing).unwrap();
+                        let token = mint::token(&ctx, &config).unwrap();
                         token.expose().to_string()
                     })
                 })
@@ -823,15 +813,21 @@ fn two_runs_at_once_leave_one_valid_token_and_no_torn_file() {
             "{kept} is one of {made:?}"
         );
         assert!(apps.tokens().iter().any(|(made, _)| made == token));
-        assert_eq!(rest, format!("expires_at {}\n", clock(now + 3_600)));
+        // Settings that publish nothing ask for metadata alone.
+        assert_eq!(
+            rest,
+            format!(
+                "expires_at {}\npermissions metadata=read\n",
+                clock(now + 3_600)
+            )
+        );
         let beside = std::fs::read_dir(file.parent().unwrap()).unwrap().count();
-        assert_eq!(beside, 3, "no file left half made beside it");
+        assert_eq!(beside, 1, "no file left half made beside it");
     }
 }
 
 #[test]
 fn the_exchange_asks_its_token_for_the_issues_permission_alone() {
-    let _alone = crate::starting();
     for (issues, close, permissions) in [
         ("import", false, json!({"issues": "read"})),
         ("export", false, json!({"issues": "write"})),
@@ -841,8 +837,8 @@ fn the_exchange_asks_its_token_for_the_issues_permission_alone() {
         std::fs::remove_file(&rig.token_file).unwrap();
         rig.enable(&format!(
             "issues = \"{issues}\"\nimport_labels = [\"symphony\"]\nclose_issues = {close}\n\
-             landing_app_id = {LANDING}\n{}",
-            makers(&[Role::Landing])
+             app_id = {APP}\n{}",
+            maker()
         ));
         let apps = Apps::new(rig.now.get());
         let connect = apps.connect(&rig.github);
@@ -868,69 +864,79 @@ fn the_exchange_asks_its_token_for_the_issues_permission_alone() {
 }
 
 #[test]
-fn tokens_says_whether_each_is_current_and_never_the_token() {
-    let _alone = crate::starting();
-    let (d, apps) = delivery("mint-tokens", &[Role::Checks, Role::Policy], "");
+fn tokens_says_whether_the_token_is_current_and_never_the_token() {
+    let (d, apps) = delivery("mint-tokens", true, "");
     let now = 3_000;
     d.rig.now.set(now);
-    write(
-        &d.checks_file(),
-        &format!("{CHECKS}\nexpires_at {}\n", clock(now + 2_820)),
-    );
-    std::fs::remove_file(d.policy_file()).unwrap();
+    let file = d.rig.token_file.display().to_string();
+    write(&d.rig.token_file, &made(TOKEN, now + 2_820));
     let ran = d.run(&["tokens"]);
-    let (token_file, checks, policy) = (
-        d.rig.token_file.display(),
-        d.checks_file().display().to_string(),
-        d.policy_file().display().to_string(),
+    assert_eq!(
+        ran.out,
+        format!("token_file {file}: current until 1970-01-01T01:37:00Z (in 47 min)\n")
     );
+    assert_eq!(ran.code, 0, "{ran:?}");
+    // Made for other permissions, expiring, expired, of no expiry, and absent.
+    for (kept, said) in [
+        (
+            Some(format!(
+                "{TOKEN}\nexpires_at {}\npermissions contents=write\n",
+                clock(now + 2_820)
+            )),
+            "current until 1970-01-01T01:37:00Z (in 47 min), made for permissions contents=write \
+             where the settings ask for checks=write,contents=write,pull_requests=write; App 42 \
+             makes another at its next use",
+        ),
+        (
+            Some(format!("{TOKEN}\nexpires_at {}\n", clock(now + 2_820))),
+            "current until 1970-01-01T01:37:00Z (in 47 min), made for permissions it does not \
+             record where the settings ask for checks=write,contents=write,pull_requests=write; \
+             App 42 makes another at its next use",
+        ),
+        (
+            Some(format!("{TOKEN}\nexpires_at {}\n", clock(now + 240))),
+            "expires at 1970-01-01T00:54:00Z (in 4 min); App 42 makes another at its next use",
+        ),
+        (
+            Some(format!("{TOKEN}\nexpires_at {}\n", clock(now - 60))),
+            "expired at 1970-01-01T00:49:00Z; App 42 makes another at its next use",
+        ),
+        (
+            Some(format!("{TOKEN}\n")),
+            "holds no expiry this program wrote; App 42 makes another at its next use",
+        ),
+        (None, "absent; App 42 makes one at its next use"),
+    ] {
+        match &kept {
+            Some(kept) => write(&d.rig.token_file, kept),
+            None => std::fs::remove_file(&d.rig.token_file).unwrap(),
+        }
+        let ran = d.run(&["tokens"]);
+        assert_eq!(ran.out, format!("token_file {file}: {said}\n"), "{ran:?}");
+        assert_eq!(ran.code, 0);
+    }
+    write(&d.rig.token_file, &format!("{TOKEN}\n"));
+    std::fs::set_permissions(&d.rig.token_file, std::fs::Permissions::from_mode(0o640)).unwrap();
+    let ran = d.run(&["tokens"]);
     assert_eq!(
         ran.out,
         format!(
-            "token_file {token_file}: kept by hand: when it expires is not known here\n\
-             checks_token_file {checks}: current until 1970-01-01T01:37:00Z (in 47 min)\n\
-             policy_token_file {policy}: absent; App {READER} makes one at its next use\n"
-        )
-    );
-    assert_eq!(ran.code, 0, "{ran:?}");
-    // Expiring, expired, of no expiry, and refused.
-    for (kept, said, code) in [
-        (
-            format!("{CHECKS}\nexpires_at {}\n", clock(now + 240)),
-            "expires at 1970-01-01T00:54:00Z (in 4 min); App 42 makes another at its next use"
-                .to_string(),
-            0,
+            "token_file {file}: refused: token_file {file} is readable by others; chmod 600 it\n"
         ),
-        (
-            format!("{CHECKS}\nexpires_at {}\n", clock(now - 60)),
-            "expired at 1970-01-01T00:49:00Z; App 42 makes another at its next use".to_string(),
-            0,
-        ),
-        (
-            format!("{CHECKS}\n"),
-            "holds no expiry this program wrote; App 42 makes another at its next use".to_string(),
-            0,
-        ),
-    ] {
-        write(&d.checks_file(), &kept);
-        let ran = d.run(&["tokens"]);
-        assert!(
-            ran.out
-                .contains(&format!("checks_token_file {checks}: {said}\n")),
-            "{ran:?}"
-        );
-        assert_eq!(ran.code, code);
-    }
-    std::fs::set_permissions(d.checks_file(), std::fs::Permissions::from_mode(0o640)).unwrap();
-    let ran = d.run(&["tokens"]);
-    assert!(
-        ran.out.contains(&format!(
-            "checks_token_file {checks}: refused: checks_token_file {checks} is readable by \
-             others; chmod 600 it\n"
-        )),
         "{ran:?}"
     );
     assert_eq!(ran.code, 1);
+    // A token no App the settings give makes is kept by hand.
+    let (by_hand, _) = delivery("mint-tokens-by-hand", false, "");
+    let ran = by_hand.run(&["tokens"]);
+    assert_eq!(
+        ran.out,
+        format!(
+            "token_file {}: kept by hand: when it expires is not known here\n",
+            by_hand.rig.token_file.display()
+        )
+    );
+    assert_eq!(ran.code, 0);
     // Settings that do not read, and settings that name no token file.
     d.rig.settings.set(Some("enabled = maybe\n".into()));
     let ran = d.run(&["tokens"]);
@@ -949,10 +955,7 @@ fn tokens_says_whether_each_is_current_and_never_the_token() {
     // It reads no remote and writes nothing.
     assert_eq!(apps.asked().len(), 0, "{:?}", apps.asked());
     assert_eq!(d.rig.github.asked().len(), 0);
-    assert!(!d.policy_file().exists());
     for text in [&ran.out, &ran.err] {
-        for secret in [TOKEN, CHECKS, POLICY] {
-            assert!(!text.contains(secret), "{text}");
-        }
+        assert!(!text.contains(TOKEN), "{text}");
     }
 }

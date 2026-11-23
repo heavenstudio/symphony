@@ -20,11 +20,12 @@ use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{LazyLock, Mutex, PoisonError};
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use regex::{Captures, Regex};
 use sha2::{Digest, Sha256};
+use symphony_board::lock::Recovered as _;
 use symphony_board::sys::{Command, Stdio};
 
 use crate::markup::{normpath, quote, unquote};
@@ -72,11 +73,7 @@ fn mtime_ns(meta: &std::fs::Metadata) -> i64 {
 pub fn file_size(path: &Path) -> Option<(u32, u32)> {
     let meta = std::fs::metadata(path).ok()?;
     let key = (path.to_path_buf(), mtime_ns(&meta), meta.len());
-    if let Some(known) = SIZES
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get(&key)
-    {
+    if let Some(known) = SIZES.lock().recover().get(&key) {
         return *known;
     }
     let mut head = [0u8; 24];
@@ -84,10 +81,7 @@ pub fn file_size(path: &Path) -> Option<(u32, u32)> {
         .and_then(|mut file| file.read(&mut head))
         .ok()?;
     let size = png_size(&head[..read]);
-    SIZES
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .insert(key, size);
+    SIZES.lock().recover().insert(key, size);
     size
 }
 

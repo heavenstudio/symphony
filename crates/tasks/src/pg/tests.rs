@@ -208,6 +208,14 @@ fn one(fake: &Fake) -> Result<Vec<Answer>, DbError> {
     fake.client().request(&[Step::bare("SELECT 1")])
 }
 
+/// What the board's health `log` holds of the requests of the last hour: how many were sent, how
+/// many got no answer, and whether the slowest got none.
+fn recorded(log: &crate::board_health::QueryLog) -> (u64, u64, Option<bool>) {
+    let (queries, _) = log.report(crate::sweep::trigger::now());
+    let slowest = queries.slowest.map(|slowest| slowest.failed);
+    (queries.count, queries.failed, slowest)
+}
+
 #[test]
 fn a_fake_collects_the_clients_last_bytes_whichever_side_ends_first() {
     bounded("a fake and its client ending in either order", || {
@@ -465,9 +473,15 @@ fn a_connection_that_breaks_mid_answer_is_dropped_and_the_next_request_makes_ano
         panic!("a cut answer is a failure");
     };
     assert!(said.starts_with("the board's PostgreSQL at "), "{said}");
+    assert!(
+        !crate::rpc::slow(&said),
+        "a broken connection is not slow: {said}"
+    );
     let (_, first) = fake.sent();
     assert!(!first.is_empty());
     assert!(client.request(&[Step::bare("SELECT 1")]).is_ok());
+    let (count, failed, _) = recorded(&client.queries());
+    assert_eq!((count, failed), (2, 1), "the cut one alone went unanswered");
 }
 
 #[test]
@@ -529,8 +543,7 @@ fn a_server_that_takes_none_of_a_request_and_says_nothing_fails_it_at_the_client
         let _ = finished.recv();
         drop(stream);
     });
-    let wait = Duration::from_millis(50);
-    let client = Client::new(dir.path(), "board").waiting(wait);
+    let client = started_then_waiting(&dir, Duration::from_millis(50));
     let failed = bounded("a request the server takes none of", move || {
         let failed = client.request(&[Step::with("SELECT $1", &megabyte())]);
         (failed, client.connection.lock().unwrap().is_none())
@@ -539,7 +552,181 @@ fn a_server_that_takes_none_of_a_request_and_says_nothing_fails_it_at_the_client
     let (Err(DbError::Failed(said)), true) = failed else {
         panic!("a request the server never takes fails, and its connection goes: {failed:?}");
     };
-    assert!(said.starts_with("the board's PostgreSQL at "), "{said}");
+    // Its write or its read meets the wait first, and the side that did says it.
+    let slow = format!(
+        "the board's PostgreSQL at {} is slow: no answer within 50ms: ",
+        dir.path().display()
+    );
+    let why = said
+        .strip_prefix(&slow)
+        .and_then(|rest| rest.strip_suffix(MAY_HAVE_RUN))
+        .unwrap_or_else(|| panic!("{said}"));
+    assert!(
+        [eagain(), format!("sending a request: {}", eagain())].contains(&why.to_string()),
+        "{said}"
+    );
+    assert!(crate::rpc::slow(&said), "{said}");
+}
+
+/// A client of the server in `dir` whose connection is made at the client's default wait, then
+/// waits `wait` on each write and read of a request: a request's wait that no slow startup, on a
+/// loaded machine, meets first.
+fn started_then_waiting(dir: &Dir, wait: Duration) -> Client {
+    let mut client = Client::new(dir.path(), "board");
+    let connection = client.connect().unwrap().unwrap();
+    connection.writer.set_write_timeout(Some(wait)).unwrap();
+    connection
+        .stream
+        .get_ref()
+        .set_read_timeout(Some(wait))
+        .unwrap();
+    *client.connection.get_mut().unwrap() = Some(connection);
+    client.waiting(wait)
+}
+
+/// What a request that went out on a connection that worked and met the client's wait ends with.
+const MAY_HAVE_RUN: &str = "; the request may have run there, so it was not sent again";
+
+/// The system's words for a socket's wait run out: `EAGAIN`'s.
+fn eagain() -> String {
+    std::io::Error::from_raw_os_error(libc::EAGAIN).to_string()
+}
+
+#[test]
+fn a_request_the_server_takes_and_never_answers_says_it_is_slow_at_the_clients_wait() {
+    let (done, finished) = mpsc::channel::<()>();
+    // It reads the whole request and answers nothing, until the client has given up.
+    let dir = serving(move |mut stream| {
+        while wire::read(&mut stream).unwrap().kind != b'S' {}
+        let _ = finished.recv();
+        drop(stream);
+    });
+    let client = started_then_waiting(&dir, Duration::from_millis(50));
+    let log = client.queries();
+    let failed = bounded("a request the server never answers", move || {
+        let failed = client.request(&[Step::bare("SELECT 1")]);
+        (failed, client.connection.lock().unwrap().is_none())
+    });
+    done.send(()).unwrap();
+    let (Err(DbError::Failed(said)), true) = failed else {
+        panic!("a request the server never answers fails, and its connection goes: {failed:?}");
+    };
+    assert_eq!(
+        said,
+        format!(
+            "the board's PostgreSQL at {} is slow: no answer within 50ms: {}{MAY_HAVE_RUN}",
+            dir.path().display(),
+            eagain()
+        )
+    );
+    // As the store says it, and the page's read takes it: slow, not unreachable.
+    assert!(
+        crate::rpc::slow(&format!("the board's database: {said}")),
+        "{said}"
+    );
+    assert_eq!(
+        recorded(&log),
+        (1, 1, Some(true)),
+        "a request with no answer"
+    );
+}
+
+#[test]
+fn a_startup_the_server_never_answers_says_it_is_slow_and_that_no_request_was_sent() {
+    let dir = Dir::new();
+    let listener =
+        UnixListener::bind(dir.path().join(crate::server::postgres::SOCKET_FILE)).unwrap();
+    let (done, finished) = mpsc::channel::<()>();
+    // It takes the connection and its startup, and says nothing, until the client has given up.
+    thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        startup(&mut stream);
+        let _ = finished.recv();
+    });
+    let client = Client::new(dir.path(), "board").waiting(Duration::from_millis(50));
+    let log = client.queries();
+    let failed = bounded("a startup the server never answers", move || {
+        let failed = client.request(&[Step::bare("SELECT 1")]);
+        (failed, client.connection.lock().unwrap().is_none())
+    });
+    done.send(()).unwrap();
+    let (Err(DbError::Failed(said)), true) = failed else {
+        panic!("a startup never answered fails, and leaves no connection: {failed:?}");
+    };
+    assert_eq!(
+        said,
+        format!(
+            "the board's PostgreSQL at {} is slow: no answer within 50ms to the connection's \
+             startup on {}: {}; the request was not sent",
+            dir.path().display(),
+            dir.path()
+                .join(crate::server::postgres::SOCKET_FILE)
+                .display(),
+            eagain()
+        )
+    );
+    assert!(crate::rpc::slow(&said), "{said}");
+    assert_eq!(
+        recorded(&log),
+        (1, 1, Some(true)),
+        "a request with no answer"
+    );
+}
+
+#[test]
+fn a_socket_no_server_listens_on_refuses_the_connection_which_is_not_slow() {
+    let dir = Dir::new();
+    // The socket's file stays when its listener goes: a connection to it is refused, as one past a
+    // full backlog is on macOS (Linux blocks that one instead, or says EAGAIN without blocking).
+    drop(UnixListener::bind(dir.path().join(crate::server::postgres::SOCKET_FILE)).unwrap());
+    let client = Client::new(dir.path(), "board");
+    let Err(DbError::Failed(said)) = client.request(&[Step::bare("SELECT 1")]) else {
+        panic!("a refused connection is a failure");
+    };
+    assert_eq!(
+        said,
+        format!(
+            "the board's PostgreSQL is not answering on {}: {}",
+            dir.path()
+                .join(crate::server::postgres::SOCKET_FILE)
+                .display(),
+            std::io::Error::from_raw_os_error(libc::ECONNREFUSED)
+        )
+    );
+    assert!(!crate::rpc::slow(&said), "{said}");
+    assert_eq!(
+        recorded(&client.queries()),
+        (1, 1, Some(true)),
+        "a request with no answer"
+    );
+}
+
+#[test]
+fn a_wait_run_out_is_a_socket_timeout_and_no_other_failure() {
+    use std::io::{Error, ErrorKind};
+    for why in [
+        Error::from_raw_os_error(libc::EAGAIN),
+        Error::from_raw_os_error(libc::EWOULDBLOCK),
+        Error::from_raw_os_error(libc::ETIMEDOUT),
+        Error::from(ErrorKind::WouldBlock),
+        Error::from(ErrorKind::TimedOut),
+        sending(Error::from_raw_os_error(libc::EAGAIN)),
+    ] {
+        assert!(waited_out(&why), "{why}");
+    }
+    for why in [
+        Error::from_raw_os_error(libc::ECONNREFUSED),
+        Error::from_raw_os_error(libc::ENOENT),
+        Error::from_raw_os_error(libc::EPIPE),
+        Error::from_raw_os_error(libc::ECONNRESET),
+        Error::from_raw_os_error(libc::EBADF),
+        Error::from_raw_os_error(libc::EINTR),
+        Error::from(ErrorKind::UnexpectedEof),
+        Error::from(ErrorKind::InvalidData),
+        sending(Error::from_raw_os_error(libc::EPIPE)),
+    ] {
+        assert!(!waited_out(&why), "{why}");
+    }
 }
 
 #[test]
@@ -569,6 +756,10 @@ fn a_server_gone_after_an_answer_fails_the_next_request_and_drops_its_connection
             dir.path().display()
         )),
         "{said}"
+    );
+    assert!(
+        !crate::rpc::slow(&said),
+        "a server gone is not slow: {said}"
     );
 }
 
@@ -644,6 +835,7 @@ fn no_server_on_the_socket_is_a_failure_naming_it() {
         said.contains("is not answering on") && said.contains(".s.PGSQL.5432"),
         "{said}"
     );
+    assert!(!crate::rpc::slow(&said), "no server is not slow: {said}");
 }
 
 #[test]
@@ -759,7 +951,7 @@ fn a_bounded_client_waits_the_shorter_of_its_own_wait_and_the_bound_and_keeps_it
 }
 
 #[test]
-fn request_telemetry_counts_reads_writes_and_failures_once_and_is_shared_by_board() {
+fn request_telemetry_counts_reads_writes_and_unanswered_requests_once_and_is_shared_by_board() {
     let fake = Fake::new(vec![Script {
         started: STARTED,
         answers: vec![JSONB_AND_NULL, NOTICE, SYNTAX],
@@ -774,12 +966,96 @@ fn request_telemetry_counts_reads_writes_and_failures_once_and_is_shared_by_boar
             "DO $$ BEGIN UPDATE task SET title = 'new'; END $$",
         )])
         .unwrap();
+    // The server answered it: an error, and no request that went unanswered.
     assert!(client.simple("SELECT 'x' FROM").is_err());
     let (queries, writes) = log.report(crate::sweep::trigger::now());
-    assert_eq!((queries.count, queries.failed, writes.count), (3, 1, 1));
+    assert_eq!((queries.count, queries.failed, writes.count), (3, 0, 1));
     assert_eq!(client.requests(), 3);
     drop(client);
     fake.sent();
+}
+
+/// An error the server answered is an answer, which the board's health never counts as a request
+/// that went unanswered: a raised exception, a conflict, any other error, and a startup it
+/// refused, for a database it does not hold or with a password asked for.
+#[test]
+fn an_error_the_server_answered_is_no_unanswered_request() {
+    let thrown = |said: &Result<Vec<Answer>, DbError>| matches!(said, Err(DbError::Thrown(_)));
+    let conflict = |said: &Result<Vec<Answer>, DbError>| said == &Err(DbError::Conflict);
+    let failed = |said: &Result<Vec<Answer>, DbError>| matches!(said, Err(DbError::Failed(_)));
+    type Judged = fn(&Result<Vec<Answer>, DbError>) -> bool;
+    let cases: [(&str, &'static str, Vec<&'static str>, Judged); 5] = [
+        (
+            "a raised exception",
+            STARTED,
+            vec![RAISED_AFTER_ONE],
+            thrown,
+        ),
+        (
+            "a serialization failure",
+            STARTED,
+            vec![SERIALIZATION, ROLLED_BACK],
+            conflict,
+        ),
+        ("a syntax error", STARTED, vec![SYNTAX], failed),
+        ("a database not there", NO_SUCH_DATABASE, vec![], failed),
+        ("a password asked for", PASSWORD, vec![], failed),
+    ];
+    for (case, started, answers, judged) in cases {
+        let fake = Fake::new(vec![Script { started, answers }]);
+        let client = fake.client();
+        let said = client.request(&[Step::bare("SELECT 1")]);
+        assert!(judged(&said), "{case}: {said:?}");
+        assert_eq!(recorded(&client.queries()), (1, 0, Some(false)), "{case}");
+        drop(client);
+        fake.sent();
+    }
+}
+
+/// Neither of a connection's two descriptors reaches a child forked beside it, even before its
+/// exec, so no child can close a copy of its socket and drain it (macOS fails a draining socket's
+/// every wait with EBADF); std's socket, as a control, reaches one. Each is close-on-exec, and the
+/// connection serves the next request.
+#[cfg(target_vendor = "apple")]
+#[test]
+fn a_connections_socket_never_reaches_a_forked_child() {
+    use std::os::fd::AsRawFd as _;
+    let fake = Fake::new(vec![Script {
+        started: STARTED,
+        answers: vec![JSONB_AND_NULL, JSONB_AND_NULL],
+    }]);
+    let client = fake.client();
+    client.request(&[Step::bare("SELECT 1")]).unwrap();
+    {
+        let held = client.connection.lock().unwrap();
+        let connection = held.as_ref().expect("a connection kept");
+        let reader = connection.stream.get_ref().as_raw_fd();
+        let writer = connection.writer.as_raw_fd();
+        assert_ne!(reader, writer, "two descriptors");
+        for (side, fd) in [("reader", reader), ("writer", writer)] {
+            assert!(
+                !crate::sys::a_forked_child_holds(fd),
+                "the {side} reached a forked child"
+            );
+            // SAFETY: F_GETFD reads the flags of a descriptor the connection keeps open.
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+            assert_eq!(flags & libc::FD_CLOEXEC, libc::FD_CLOEXEC, "the {side}");
+        }
+    }
+    let (control, _peer) = UnixStream::pair().unwrap();
+    assert!(
+        crate::sys::a_forked_child_holds(control.as_raw_fd()),
+        "std's socket reaches a forked child"
+    );
+    let next = client.request(&[Step::bare("SELECT 1")]).unwrap();
+    assert_eq!(next[0].rows, [[Some("{\"a\": 1}".to_string()), None]]);
+    drop(client);
+    let (_, after) = fake.sent();
+    assert_eq!(
+        kinds(&after),
+        b"PBESPBESX",
+        "both requests on the one connection"
+    );
 }
 
 #[test]

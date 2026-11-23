@@ -2,11 +2,11 @@
 //! store reads them, and a connection lost before or after its commit told apart and never
 //! sent again.
 
-use crate::cluster::{self, MAJORS, Project, refused};
+use crate::cluster::{self, MAJORS, Project, environment, refused, settings};
 use std::time::Duration;
+use symphony_board::db::DbError;
 use symphony_board::pg::Step;
-use symphony_board::pg::hosted::Counts;
-use symphony_board::rpc::DbError;
+use symphony_board::pg::hosted::{Client, Counts};
 
 const READY: Duration = test_time::backstop(Duration::from_secs(10));
 
@@ -379,6 +379,128 @@ fn a_script_the_server_ends_or_does_not_answer_is_unknown_and_is_not_sent_again(
             (client.requests(), hasty.requests()),
             (1, 1),
             "each sent once"
+        );
+    }
+}
+
+/// The board's health counts a request as unanswered only when it got no answer, a session the
+/// server ended or a wait run out, never for an error the server answered: a raised exception, a
+/// row a constraint refused, a column the client does not read.
+#[test]
+fn only_a_request_that_got_no_answer_is_unanswered_in_the_boards_health() {
+    let unanswered = |client: &symphony_board::pg::hosted::Client| {
+        let (queries, _) = client
+            .queries()
+            .report(symphony_board::sweep::trigger::now());
+        (queries.count, queries.failed)
+    };
+    for major in MAJORS {
+        let project = cluster::cluster(major).project();
+        table(&project);
+        let client = project.client("web");
+        let before = unanswered(&client).0;
+        let thrown = client.request(&[Step::bare(
+            "DO $$ BEGIN RAISE EXCEPTION 'the board says no'; END $$",
+        )]);
+        assert_eq!(thrown, Err(DbError::Thrown("the board says no".into())));
+        refused(client.request(&[Step::bare("INSERT INTO t VALUES (1, 1)")]));
+        refused(client.request(&[Step::bare("SELECT now()")]));
+        assert_eq!(
+            unanswered(&client),
+            (before + 3, 0),
+            "PostgreSQL {major}: each answered"
+        );
+        refused(client.request(&[Step::bare("SELECT pg_terminate_backend(pg_backend_pid())")]));
+        let operator = project.cluster.operator(&project.name);
+        operator.simple("SELECT pg_advisory_lock(4245)").unwrap();
+        let hasty = client.bounded(Duration::from_millis(500));
+        let late = refused(hasty.request(&[Step::bare("SELECT pg_advisory_xact_lock(4245)")]));
+        assert!(
+            late.contains("the server did not answer in time"),
+            "PostgreSQL {major}: {late}"
+        );
+        test_time::wait::until_true("the cancelled session to end", READY, || {
+            project.cluster.sessions(&project.name) == 0
+        })
+        .unwrap();
+        operator.simple("SELECT pg_advisory_unlock(4245)").unwrap();
+        assert_eq!(
+            unanswered(&client),
+            (before + 5, 2),
+            "PostgreSQL {major}: the ended session and the wait run out went unanswered"
+        );
+    }
+}
+
+/// A connection the server refused is answered in the board's health, as the socket client counts
+/// a startup the server refused: a login it does not let in, a database it does not hold, and a
+/// certificate this side does not take. Each is refused in its own words and leaves no session.
+#[test]
+fn a_connection_the_server_refused_is_no_unanswered_request() {
+    for major in MAJORS {
+        let project = cluster::cluster(major).project();
+        let wrong = project.url().replace(
+            &cluster::escaped(&project.password),
+            "not-the-password-41414141",
+        );
+        let elsewhere = format!(
+            "{}never_made",
+            project.url().strip_suffix(project.name.as_str()).unwrap()
+        );
+        let ca = project.cluster.ca.display().to_string();
+        let other_ca = project.cluster.other_ca.display().to_string();
+        for (case, url, ca, said) in [
+            (
+                "a wrong password",
+                wrong,
+                &ca,
+                "the server refused the login",
+            ),
+            (
+                "a database not there",
+                elsewhere,
+                &ca,
+                "the database is not there",
+            ),
+            (
+                "a certificate of another authority",
+                project.url(),
+                &other_ca,
+                "not one the deployment's authority signed",
+            ),
+        ] {
+            let vars = [
+                ("URL", url),
+                ("CA", ca.clone()),
+                ("CLASS", "web".to_string()),
+            ];
+            let client = Client::connect(&settings(""), environment(&vars)).unwrap();
+            let (before, _) = client
+                .queries()
+                .report(symphony_board::sweep::trigger::now());
+            let refusal = refused(client.request(&[Step::bare("SELECT 1")]));
+            assert!(
+                refusal.contains(said),
+                "PostgreSQL {major}, {case}: {refusal}"
+            );
+            let (after, _) = client
+                .queries()
+                .report(symphony_board::sweep::trigger::now());
+            assert_eq!(
+                (after.count - before.count, after.failed - before.failed),
+                (1, 0),
+                "PostgreSQL {major}, {case}: one request, answered"
+            );
+            assert_eq!(
+                client.counts(),
+                Counts::default(),
+                "PostgreSQL {major}, {case}"
+            );
+        }
+        assert_eq!(
+            project.cluster.sessions(&project.name),
+            0,
+            "PostgreSQL {major}"
         );
     }
 }

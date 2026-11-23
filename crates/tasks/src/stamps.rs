@@ -1,4 +1,4 @@
-//! The stamps a project's land can require (docs/analysis/needed-stamps.md), and what a task needs
+//! The stamps a project's land can require (docs/workflow/analysis/needed-stamps.md), and what a task needs
 //! of them.
 //!
 //! The catalogue ([`Catalogue`]) is one list: the project's `[stamps]`, a table a stamp, read as
@@ -27,6 +27,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+pub mod posted;
 pub mod read;
 
 /// The stamps the Symphony has a reader for, by name, in the order the catalogue is listed.
@@ -62,7 +63,7 @@ const OWN: [Own; 4] = [
                   are what proves it works; a change of the values the project file gives its \
                   settings, which the settings check proves alone (`symphony settings-check`, \
                   recorded as a test run: every table and key known, each value of its type, no \
-                  name judged against a list), with no other suite",
+                  model or recipe judged against a list), with no other suite",
         skips: "documents and guides alone; pictures and other files nothing tests; a hotfix whose \
                 break no test shows in the time it has, its tests coming with its postmortem",
     },
@@ -82,11 +83,11 @@ const OWN: [Own; 4] = [
                   agent follows; a setting the Symphony does not read yet or reads another way, \
                   which is code; a value of the project file that is a command or a program the \
                   Symphony runs or that decides what lands ([project] cargo and default_branch, \
-                  [plugins] crates and process, [verdicts], [land], [releases], [stamps], [board] \
-                  on_review, on_land, machine_work_reader, postgresql, external_postgresql and \
-                  assessments); a change \
-                  that does \
-                  more than one thing, or one the assessor cannot place",
+                  [plugins] crates and process, [verdicts], [land], [releases], [stamps], the \
+                  workflow's [workflow], [[workflow_mappings]] and [[workflow_authorities]], \
+                  [board] on_review, on_land, machine_work_reader, postgresql, \
+                  external_postgresql and assessments); a change that does more than one thing, \
+                  or one the assessor cannot place",
         skips: "documents alone (a design, a reference page, a record); the values the project \
                 file gives settings the Symphony already reads (a model, an agent, a limit, a \
                 count, a name), written, changed or removed, with the guide's and the rules' \
@@ -420,7 +421,7 @@ impl Needs {
     /// What a task's `fields` record of its needs, when they record any.
     pub fn of(fields: &BTreeMap<String, BTreeMap<String, Value>>) -> Option<Needs> {
         let value = fields.get(crate::red::FIELDS)?.get(NEEDS)?;
-        serde_json::from_value(value.clone()).ok()
+        crate::objects::read(value).ok()
     }
 
     /// Where the assessment stands: `at 1a2b3c4`, or `from the brief` when it read no tip; with

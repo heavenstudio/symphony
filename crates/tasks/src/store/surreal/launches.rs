@@ -2,6 +2,13 @@
 
 use super::logged;
 
+/// A launch record `$row` written by its named fields, so a field of an additive step this build
+/// does not know is kept on the row ([`crate::schema::OPEN`]).
+const LAUNCH_ROW: &str = "slug = $row.slug, handle = $row.handle, role = $row.role, \
+     claude_session = $row.claude_session, worktree = $row.worktree, branch = $row.branch, \
+     pane = $row.pane, model = $row.model, started = $row.started, closed = $row.closed, \
+     closed_why = $row.closed_why, restore = $row.restore";
+
 /// The conversation a write of a record of `$handle` keeps, as `$conversation` (`$session` is
 /// SurrealDB's own): the one `$given`, but a Codex one whose thread is not known yet (`codex:`) takes
 /// the thread the handle's callback registered (`codex:THREAD`), so the thread is kept whichever was
@@ -78,7 +85,7 @@ pub(in crate::store) fn record_launch(log: bool) -> String {
 IF !record::exists(type::record('session', $handle)) {{ THROW $no_session }};
 {SETTLED}
 LET $said_conversation = IF $conversation = '' {{ 'unknown' }} ELSE {{ $conversation }};
-UPSERT type::record('task_session', [$slug, $handle]) CONTENT $row RETURN NONE;
+UPSERT type::record('task_session', [$slug, $handle]) SET {LAUNCH_ROW} RETURN NONE;
 UPDATE type::record('task_session', [$slug, $handle]) SET claude_session = $conversation RETURN NONE;
 {line}
 RETURN $conversation;"
@@ -110,6 +117,10 @@ pub(in crate::store) fn open_sessions() -> String {
     task_sessions("WHERE closed = NONE ORDER BY started, slug, handle")
 }
 
+/// The task sessions whose conversation is a Codex thread (`$prefix` and more), open or closed, as
+/// that conversation, its terminal and whether it is open, and no other field.
+pub(in crate::store) const CODEX_LAUNCHES: &str = "RETURN SELECT claude_session, pane, closed = NONE AS open FROM task_session WHERE string::starts_with(claude_session, $prefix) AND claude_session != $prefix;";
+
 /// The record of `$slug` and `$handle` closed at `$now` ([`closing`], unguarded): true. Needs
 /// `$why`, `$restore`, `$said`, `$lost` and `$unrecorded`.
 pub(in crate::store) fn close() -> String {
@@ -137,7 +148,7 @@ IF type::record('task_session', [$slug, $handle]).pane = $row.pane {{ RETURN NON
 LET $given = $row.claude_session;
 {SETTLED}
 {CLOSURE_LINE}
-UPSERT type::record('task_session', [$slug, $handle]) CONTENT $row RETURN NONE;
+UPSERT type::record('task_session', [$slug, $handle]) SET {LAUNCH_ROW} RETURN NONE;
 UPDATE type::record('task_session', [$slug, $handle]) SET claude_session = $conversation RETURN NONE;
 {}
 RETURN $conversation;",

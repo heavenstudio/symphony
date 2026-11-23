@@ -1,4 +1,4 @@
-//! A release's GitHub Release (docs/RELEASES.md, "A GitHub Release"): asked of the command
+//! A release's GitHub Release (docs/workflow/RELEASES.md, "A GitHub Release"): asked of the command
 //! `[releases] github` names, the GitHub adapter's `symphony-github release`, and of nothing
 //! while the project names none. No package here builds with the adapter: it is run as a program,
 //! `COMMAND… --request FILE`, in the main checkout, and answers one line of JSON.

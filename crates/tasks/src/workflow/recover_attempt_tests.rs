@@ -3,7 +3,8 @@
 //! actions, and every ending refused.
 
 use super::*;
-use crate::workflow::activate::tests::custom;
+use crate::store_fixture::pair;
+use crate::workflow::activate::tests::{context, custom};
 use crate::workflow::{Custom, TaskPosition, board_service};
 use symphony_api::workflow::Role;
 
@@ -18,21 +19,6 @@ pub(crate) fn attempts(stay: bool) -> String {
         r#"{ target = { phase = "build", state = "available" }, manual = false, slot = "release", release_role = true, release_reservation = true }"#
     };
     TEXT.replace("@FAILURE@", failure)
-}
-
-fn pair(phase: &str, state: &str) -> Pair {
-    Pair {
-        phase: phase.into(),
-        state: state.into(),
-    }
-}
-
-fn context(custom: &Custom) -> Context<'_> {
-    Context {
-        definition: custom.definition.definition(),
-        revision: &custom.revision,
-        generation: 2,
-    }
 }
 
 /// `sim/a` at `phase/state`, workflow revision 6, with `roles`.

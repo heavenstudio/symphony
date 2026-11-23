@@ -25,7 +25,7 @@ typescript = ["dep:ts-rs", "symphony-blocks/typescript"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 # The plugin kit's block vocabulary, which these types carry: re-exported under the names it has here.
-symphony-blocks = { path = "../symphony-blocks", version = "1.1.0" }
+symphony-blocks = { path = "../symphony-blocks", version = "1.2.0" }
 ts-rs = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -33,7 +33,7 @@ repository-read = { path = "../repository-read" }
 # The features the server's build unifies on serde_json (symphony-board asks for all four, crates/symphony
 # and crates/symphony-schema for arbitrary_precision and preserve_order, axum for raw_value), so this
 # package's own tests read and write JSON as the server, the `tasks` binary and the workspace's run do
-# (docs/CHECKS.md). A dev-dependency, as this package links no serde_json of its own: the client, which
+# (docs/workflow/CHECKS.md). A dev-dependency, as this package links no serde_json of its own: the client, which
 # links it, reads the wire without serde_json's parser, and a dev-dependency's features never reach it.
 serde_json = { version = "1", features = ["arbitrary_precision", "float_roundtrip", "preserve_order", "raw_value"] }
 

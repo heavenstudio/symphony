@@ -4,8 +4,10 @@
 //! No shell sits between Cargo and the library image, so macOS keeps its dynamic-library paths.
 
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::io::Write;
-use std::os::unix::process::CommandExt as _;
+
+use crate::replace::replace;
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -50,7 +52,7 @@ pub(super) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
             match selected.iter().find(|artifact| artifact.binary == *binary) {
                 Some(Artifact { shared: false, .. }) => 0,
                 Some(Artifact { shared: true, .. }) => {
-                    let error = std::process::Command::new(binary).args(rest).exec();
+                    let error = replace(OsStr::new(binary), rest, &[]);
                     let _ = writeln!(err, "exec-test-binary: cannot execute {binary}: {error}");
                     2
                 }

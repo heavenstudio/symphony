@@ -1,18 +1,18 @@
-//! Each plugin call measured: timed into the project's record, and through the JSON loopback
-//! answering as the plugin does linked, seam by seam, with a value that does not survive JSON
-//! named loudly.
+//! Each plugin call measured: timed into the project's record, answering as the plugin does
+//! linked, seam by seam.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use symphony::plugins::{Plugins, Reply};
 use symphony::project::{PluginCalls, Project};
-use symphony_plugin::vocabulary::{FieldValue, Gate};
-use symphony_plugin::{
-    BoardField, Card, Docs, FieldKind, File, Gates, Page, Plugin, Submission, TaskRef, ThreadLine,
-};
+use symphony_plugin::authority::{Operation, Snapshot};
+use symphony_plugin::execution::{Principal, PrincipalKind};
+use symphony_plugin::vocabulary::FieldValue;
+use symphony_plugin::{Card, Docs, File, Page, Plugin, Submission, TaskRef, ThreadLine};
 
 use super::Tree;
 use super::compiled::naming;
@@ -27,14 +27,11 @@ pub(super) fn lines(path: &Path) -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// The loopback alone.
-const LOOPBACK: PluginCalls = PluginCalls {
-    timing: false,
-    loopback: true,
-};
+/// Each call timed.
+const TIMING: PluginCalls = PluginCalls { timing: true };
 
 /// Every call of every seam, as the record names it (`seam.call`).
-const EVERY_CALL: [&str; 28] = [
+const EVERY_CALL: [&str; 30] = [
     "components.render",
     "components.resolve",
     "components.cache_version",
@@ -54,6 +51,8 @@ const EVERY_CALL: [&str; 28] = [
     "board_fields.validate",
     "gates.answer",
     "gates.kept_while",
+    "authorities.attest",
+    "describers.describe",
     "watches.changed",
     "watches.forget",
     "doc_checks.check",
@@ -79,52 +78,37 @@ fn recorded_calls(path: &Path) -> BTreeSet<String> {
         .collect()
 }
 
-/// `plugins` linked and the same measured, its record read as each call writes it.
+/// `plugins` linked and the same timed, its record read as each call writes it.
 struct Both {
     linked: Plugins,
-    looped: Plugins,
+    timed: Plugins,
     record: PathBuf,
     /// The record's lines already read.
     read: Mutex<usize>,
 }
 
 impl Both {
-    /// `plugin` linked and through the loopback.
+    /// `plugin` linked and timed.
     fn new(plugin: &'static dyn Plugin, tree: &Tree) -> Both {
-        Both::measured(plugin, tree, LOOPBACK)
-    }
-
-    /// `plugin` linked and measured as `calls` says.
-    fn measured(plugin: &'static dyn Plugin, tree: &Tree, calls: PluginCalls) -> Both {
         let record = tree.path("artifacts/plugin-calls.jsonl");
         Both {
             linked: Plugins::new(vec![plugin]),
-            looped: Plugins::new(vec![plugin]).measured(calls, &record),
+            timed: Plugins::new(vec![plugin]).measured(TIMING, &record),
             read: Mutex::new(lines(&record).len()),
             record,
         }
     }
 
-    /// That `call` answers the same measured as linked, every value read back as it was written:
-    /// a call whose value did not survive JSON fails, naming it.
+    /// That `call` answers the same timed as linked, and that it was recorded.
     fn same<T: PartialEq + Debug>(&self, what: &str, call: impl Fn(&Plugins) -> T) {
         let linked = call(&self.linked);
-        let looped = call(&self.looped);
+        let timed = call(&self.timed);
         let lines = lines(&self.record);
         let mut read = self.read.lock().unwrap();
         let written = &lines[*read..];
         *read = lines.len();
         assert!(!written.is_empty(), "{what}: no call was recorded");
-        for line in written {
-            assert!(
-                line.get("lost").is_none(),
-                "{what}: {}.{} did not survive JSON: {}",
-                line["seam"].as_str().unwrap(),
-                line["call"].as_str().unwrap(),
-                line["lost"]
-            );
-        }
-        assert_eq!(linked, looped, "{what}");
+        assert_eq!(linked, timed, "{what}");
     }
 }
 
@@ -154,27 +138,56 @@ pub(super) fn with_card<R>(text: &str, read: impl FnOnce(&Card<'_>) -> R) -> R {
     })
 }
 
-#[test]
-fn every_seam_answers_the_same_linked_and_through_the_loopback() {
-    let tree = Tree::new();
-    let both = Both::new(&EVERY, &tree);
-    every_seam_answers_the_same(&both, &tree);
-    // Every call of every seam went through the loopback, and the plugin's declaration once.
-    let mut every: BTreeSet<String> = EVERY_CALL.into_iter().map(String::from).collect();
-    every.insert("plugin.declare".into());
-    assert_eq!(recorded_calls(&both.record), every);
+/// An operation `principal` takes on sim/jump from `snapshot`, binding `revisions`.
+fn operation(principal: Principal, snapshot: Snapshot, revisions: &[(&str, &str)]) -> Operation {
+    Operation::new(
+        "symphony".into(),
+        "sim/jump".into(),
+        "accept · ✅".into(),
+        "approved \"twice\"".into(),
+        snapshot,
+        revisions
+            .iter()
+            .map(|(input, revision)| (input.to_string(), revision.to_string()))
+            .collect(),
+        principal,
+    )
+}
+
+/// The operations [`EVERY`]'s authority is asked to attest: each kind of principal, the largest
+/// numbers a snapshot holds and none, input revisions and none.
+fn operations() -> Vec<Operation> {
+    vec![
+        operation(
+            Principal::new(PrincipalKind::Human, "local".into(), "owner ✅".into()),
+            Snapshot::new(
+                "sha256:d1".into(),
+                u64::MAX,
+                u64::MAX,
+                "verify".into(),
+                "awaiting".into(),
+            ),
+            &[("brief", "r7"), ("diff ü", "")],
+        ),
+        operation(
+            Principal::new(PrincipalKind::Agent, "board".into(), "amber-heron".into()),
+            Snapshot::new(String::new(), 0, 0, String::new(), String::new()),
+            &[],
+        ),
+        operation(
+            Principal::new(PrincipalKind::Service, String::new(), "ci\t1".into()),
+            Snapshot::new("d2".into(), 2, 3, "land".into(), "ready".into()),
+            &[("tip", "c0ffee")],
+        ),
+    ]
 }
 
 #[test]
 fn every_seam_answers_the_same_linked_and_timed_and_its_line_holds_its_time_alone() {
     let tree = Tree::new();
-    let timing = PluginCalls {
-        timing: true,
-        loopback: false,
-    };
-    let both = Both::measured(&EVERY, &tree, timing);
+    let both = Both::new(&EVERY, &tree);
     every_seam_answers_the_same(&both, &tree);
-    // Every call of every seam was timed, and nothing was sent through JSON: not the declaration.
+    // Every call of every seam was timed, and the declaration was not: it is no call.
     let every: BTreeSet<String> = EVERY_CALL.into_iter().map(String::from).collect();
     assert_eq!(recorded_calls(&both.record), every);
     for line in lines(&both.record) {
@@ -202,7 +215,8 @@ fn every_seam_answers_the_same(both: &Both, tree: &Tree) {
     tree.write("docs/A.md", "# A\n\nevery word\n");
     tree.write("docs/B.md", "# B\n");
     let root = tree.root.as_path();
-    // An artifacts folder of its own, so one lost on the wire reads otherwise.
+    // An artifacts folder of its own, so a wrapper that handed the plugin another page answers
+    // otherwise.
     let page = || Page::new(root, "docs/ünï code.md").in_artifacts("out/ä");
     for (argument, option) in [("lantern", Some("wide")), ("", None), ("bad", None)] {
         both.same("render", |p| p.render(&page(), "every", argument, option));
@@ -285,6 +299,24 @@ fn every_seam_answers_the_same(both: &Both, tree: &Tree) {
             p.list()[0].gates()[0].kept_while(root, &task)
         });
     }
+    // The authority as the host finds it for a guard's adapter; no time at all it refuses.
+    for operation in operations() {
+        for within in [
+            Duration::from_secs(10),
+            Duration::from_millis(1),
+            Duration::ZERO,
+        ] {
+            both.same("attest", |p| {
+                p.authority("every")
+                    .unwrap()
+                    .attest(root, &operation, within)
+            });
+        }
+    }
+    // Each describer, the one that cannot say among them.
+    for at in 0..2 {
+        both.same("describe", |p| p.describers()[at].1.describe(root));
+    }
     for value in [
         FieldValue::Text(" 3.5 ".into()),
         FieldValue::Number(0.1 + 0.2),
@@ -330,133 +362,18 @@ fn what_a_measured_plugin_declares_is_the_plugins_own() {
     let tree = Tree::new();
     let both = Both::new(&EVERY, &tree);
     let declared = |p: &Plugins| symphony_plugin::protocol::Declaration::of(p.list()[0]);
-    assert_eq!(declared(&both.linked), declared(&both.looped));
+    assert_eq!(declared(&both.linked), declared(&both.timed));
     assert_eq!(
-        symphony::landing::with_plugins(&Project::plain(&tree.root), &both.looped),
+        symphony::landing::with_plugins(&Project::plain(&tree.root), &both.timed),
         symphony::landing::with_plugins(&Project::plain(&tree.root), &both.linked)
     );
-    assert_eq!(both.looped.nav(), EVERY.nav());
-    assert_eq!(both.looped.theme("every"), EVERY.theme());
-    assert_eq!(both.looped.component_names(), ["task", "every", "again"]);
+    assert_eq!(both.timed.nav(), EVERY.nav());
+    assert_eq!(both.timed.theme("every"), EVERY.theme());
+    assert_eq!(both.timed.component_names(), ["task", "every", "again"]);
     assert_eq!(
-        symphony::renderers::content_type(&both.looped, "/a.every"),
+        symphony::renderers::content_type(&both.timed, "/a.every"),
         Some("model/every")
     );
-}
-
-#[test]
-fn a_pages_components_share_what_they_load_through_the_loopback_as_linked() {
-    let tree = Tree::new();
-    let both = Both::new(&EVERY, &tree);
-    let loads = |plugins: &Plugins| {
-        let page = Page::new(&tree.root, "docs/A.md");
-        let loaded = || {
-            let loads = EVERY.loads.lock().unwrap();
-            loads.iter().filter(|loaded| **loaded == tree.root).count()
-        };
-        let before = loaded();
-        plugins.render(&page, "every", "a", None);
-        plugins.render(&page, "again", "b", None);
-        plugins.cache_version(&page);
-        loaded() - before
-    };
-    assert_eq!(loads(&both.linked), 1);
-    assert_eq!(loads(&both.looped), 1);
-}
-
-/// A plugin whose answers hold numbers JSON cannot carry: a field validated to infinity, and a
-/// gate whose time is not a number.
-struct Lossy;
-
-static LOSSY: Lossy = Lossy;
-
-impl Plugin for Lossy {
-    fn name(&self) -> &str {
-        "lossy"
-    }
-    fn board_fields(&self) -> Vec<&dyn BoardField> {
-        vec![self]
-    }
-    fn gates(&self) -> Vec<&dyn Gates> {
-        vec![self]
-    }
-}
-
-impl BoardField for Lossy {
-    fn name(&self) -> &str {
-        "effort"
-    }
-    fn kind(&self) -> FieldKind {
-        FieldKind::Number
-    }
-    fn validate(&self, _: &FieldValue) -> Result<FieldValue, String> {
-        Ok(FieldValue::Number(f64::INFINITY))
-    }
-}
-
-impl Gates for Lossy {
-    fn name(&self) -> &str {
-        "lossy"
-    }
-    fn answer(&self, _: &Path, _: &TaskRef<'_>, _: Option<&str>) -> Result<Vec<Gate>, String> {
-        Ok(vec![Gate {
-            name: "certificate".into(),
-            at: Some(f64::NEG_INFINITY),
-            ..Gate::default()
-        }])
-    }
-}
-
-#[test]
-#[should_panic(expected = "validate: board_fields.validate did not survive JSON: \"the answer: ")]
-fn an_answer_that_does_not_read_back_fails_the_comparison_loudly_though_the_answers_agree() {
-    let tree = Tree::new();
-    let both = Both::new(&LOSSY, &tree);
-    // The loopback keeps the plugin's own answer when JSON cannot carry it, so the two agree: the
-    // record is what tells.
-    both.same("validate", |p| {
-        p.board_field("lossy", "effort")
-            .unwrap()
-            .validate(&FieldValue::Number(1.0))
-    });
-}
-
-#[test]
-#[should_panic(
-    expected = "answer: gates.answer did not survive JSON: \"the answer read back otherwise\""
-)]
-fn an_answer_that_reads_back_otherwise_fails_the_comparison_loudly() {
-    let tree = Tree::new();
-    let both = Both::new(&LOSSY, &tree);
-    let task = TaskRef {
-        slug: "a/b",
-        status: "review",
-        branch: "a/b",
-    };
-    both.same("answer", |p| {
-        p.list()[0].gates()[0].answer(&tree.root, &task, None)
-    });
-}
-
-#[test]
-fn a_lost_value_is_named_on_its_line_and_the_seam_answers_what_came_back() {
-    let tree = Tree::new();
-    let both = Both::new(&LOSSY, &tree);
-    let task = TaskRef {
-        slug: "a/b",
-        status: "review",
-        branch: "a/b",
-    };
-    let gates = both.looped.list()[0].gates()[0]
-        .answer(&tree.root, &task, None)
-        .unwrap();
-    // A time JSON writes as null reads back as no time.
-    assert_eq!(gates[0].at, None);
-    let lost: Vec<String> = lines(&both.record)
-        .iter()
-        .filter_map(|line| Some(format!("{} {}", line["call"], line.get("lost")?)))
-        .collect();
-    assert_eq!(lost, ["\"answer\" \"the answer read back otherwise\""]);
 }
 
 #[test]
@@ -496,14 +413,14 @@ fn timing_records_each_call_with_its_plugin_seam_object_and_time() {
 }
 
 #[test]
-fn the_record_goes_under_the_projects_artifacts_folder_and_the_loopback_records_both_times() {
+fn the_record_goes_under_the_projects_artifacts_folder() {
     let tree = naming(&["first"]);
     tree.write(
         symphony::project::FILE,
-        "[project]\nartifacts = \"out/kept\"\n\n[plugins]\ncrates = [\"first\"]\nloopback = true\n",
+        "[project]\nartifacts = \"out/kept\"\n\n[plugins]\ncrates = [\"first\"]\ntiming = true\n",
     );
     let project = Project::of(&tree.root);
-    assert_eq!(project.plugin_calls, LOOPBACK);
+    assert_eq!(project.plugin_calls, TIMING);
     assert_eq!(
         symphony::plugins::record(&project, &tree.root),
         tree.path("out/kept/plugin-calls.jsonl")
@@ -519,13 +436,35 @@ fn the_record_goes_under_the_projects_artifacts_folder_and_the_loopback_records_
         .find(|line| line["seam"] == "routes")
         .expect("the route's call is recorded");
     assert_eq!(serve["call"], "serve");
-    assert!(serve["round_trip_us"].as_f64().unwrap() >= serve["us"].as_f64().unwrap());
-    assert!(serve["request_bytes"].as_u64().unwrap() > 0);
+    assert!(serve["us"].as_f64().unwrap() >= 0.0, "{serve}");
     assert!(!tree.path("artifacts").exists());
 }
 
 #[test]
-fn neither_setting_is_on_unless_the_file_says_so_and_then_nothing_is_recorded() {
+fn a_project_whose_file_writes_the_retired_loopback_times_as_its_timing_says() {
+    // The project runs with the key left out, as any unknown one, and the rest read.
+    for (file, timing) in [
+        ("[plugins]\ncrates = [\"first\"]\nloopback = true\n", false),
+        (
+            "[plugins]\ncrates = [\"first\"]\ntiming = true\nloopback = true\n",
+            true,
+        ),
+    ] {
+        let tree = naming(&["first"]);
+        tree.write(symphony::project::FILE, file);
+        let project = Project::of(&tree.root);
+        assert_eq!(project.plugin_calls, PluginCalls { timing }, "{file}");
+        let plugins = Plugins::of(&tree.root);
+        plugins.render(&Page::new(&tree.root, "docs/A.md"), "word", "x", None);
+        let lines = lines(&tree.path("artifacts/plugin-calls.jsonl"));
+        let paths: Vec<&serde_json::Value> = lines.iter().map(|line| &line["path"]).collect();
+        let expected: &[&str] = if timing { &["linked"] } else { &[] };
+        assert_eq!(paths, expected, "{file}");
+    }
+}
+
+#[test]
+fn timing_is_off_unless_the_file_says_so_and_then_nothing_is_recorded() {
     assert_eq!(
         Project::parse(Path::new("/r"), "").unwrap().plugin_calls,
         PluginCalls::default()
@@ -542,13 +481,7 @@ fn neither_setting_is_on_unless_the_file_says_so_and_then_nothing_is_recorded() 
     plugins.watches()[0].changed(&tree.root);
     assert!(!tree.path("artifacts").exists());
     let timed = Project::parse(Path::new("/r"), "[plugins]\ntiming = true\n").unwrap();
-    assert_eq!(
-        timed.plugin_calls,
-        PluginCalls {
-            timing: true,
-            loopback: false
-        }
-    );
+    assert_eq!(timed.plugin_calls, TIMING);
     assert!(timed.plugin_calls.recorded());
     assert!(
         Project::parse(Path::new("/r"), "[plugins]\ntiming = \"yes\"\n").is_err(),
@@ -573,7 +506,11 @@ fn a_plugin_command_is_measured_as_the_project_it_runs_in_says() {
     assert_eq!(run(None), said);
     assert_eq!(run(Some(&tree.root)), said);
     assert!(!tree.path("artifacts").exists());
+    // The retired loopback turns nothing on.
     tree.write(symphony::project::FILE, "[plugins]\nloopback = true\n");
+    assert_eq!(run(Some(&tree.root)), said);
+    assert!(!tree.path("artifacts").exists());
+    tree.write(symphony::project::FILE, "[plugins]\ntiming = true\n");
     assert_eq!(run(Some(&tree.root)), said);
     let lines = lines(&tree.path("artifacts/plugin-calls.jsonl"));
     let run_line = lines
@@ -582,7 +519,6 @@ fn a_plugin_command_is_measured_as_the_project_it_runs_in_says() {
         .expect("the command's run is recorded");
     assert_eq!(run_line["call"], "run");
     assert_eq!(run_line["name"], "every");
-    assert!(run_line.get("lost").is_none());
     // No plugin adds it, and none failed to say what it adds.
     assert_eq!(
         symphony::plugins::command("nobody", Some(&tree.root)).err(),
@@ -591,12 +527,12 @@ fn a_plugin_command_is_measured_as_the_project_it_runs_in_says() {
 }
 
 /// The environment variable naming the project the child of
-/// [`with_both_settings_off_a_plugin_command_loads_no_project_and_says_nothing_of_its_file`] runs
-/// its command in.
+/// [`with_timing_off_a_plugin_command_loads_no_project_and_says_nothing_of_its_file`] runs its
+/// command in.
 const QUIET_ROOT: &str = "SYMPHONY_TEST_QUIET_COMMAND_ROOT";
 
 #[test]
-fn with_both_settings_off_a_plugin_command_loads_no_project_and_says_nothing_of_its_file() {
+fn with_timing_off_a_plugin_command_loads_no_project_and_says_nothing_of_its_file() {
     if let Some(root) = std::env::var_os(QUIET_ROOT) {
         // The child: the command found and run as `symphony NAME` finds and runs it.
         naming(&[]);
@@ -612,7 +548,7 @@ fn with_both_settings_off_a_plugin_command_loads_no_project_and_says_nothing_of_
         let done = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "seams::calls::with_both_settings_off_a_plugin_command_loads_no_project_and_says_nothing_of_its_file",
+                "seams::calls::with_timing_off_a_plugin_command_loads_no_project_and_says_nothing_of_its_file",
                 "--nocapture",
             ])
             .env(QUIET_ROOT, &tree.root)
@@ -628,7 +564,14 @@ fn with_both_settings_off_a_plugin_command_loads_no_project_and_says_nothing_of_
     let (said, recorded) = run("[plugins]\ncolour = \"red\"\n");
     assert!(!said.contains("colour"), "{said}");
     assert!(!recorded);
-    // With a setting on, the project is loaded as the server loads it, and its file named.
+    // The retired loopback is no setting: with it alone the file is not loaded, so not named.
+    let (said, recorded) = run("[plugins]\ncolour = \"red\"\nloopback = true\n");
+    assert!(
+        !said.contains("colour") && !said.contains("loopback"),
+        "{said}"
+    );
+    assert!(!recorded);
+    // With timing on, the project is loaded as the server loads it, and its file named.
     let (said, recorded) = run("[plugins]\ncolour = \"red\"\ntiming = true\n");
     assert!(
         said.contains("colour") && said.contains("left out"),
@@ -638,7 +581,7 @@ fn with_both_settings_off_a_plugin_command_loads_no_project_and_says_nothing_of_
 }
 
 #[test]
-fn the_two_settings_are_read_alone_and_any_file_they_cannot_be_read_from_turns_neither_on() {
+fn the_timing_is_read_alone_and_any_file_it_cannot_be_read_from_leaves_it_off() {
     let tree = Tree::new();
     let read = |file: &str| {
         tree.write(symphony::project::FILE, file);
@@ -648,19 +591,16 @@ fn the_two_settings_are_read_alone_and_any_file_they_cannot_be_read_from_turns_n
     assert_eq!(PluginCalls::read(&tree.root), off, "no file");
     assert_eq!(read(""), off);
     assert_eq!(
-        read("[project]\nlost = 1\n[plugins]\ncolour = \"red\"\nloopback = true\n"),
-        LOOPBACK
+        read("[project]\nlost = 1\n[plugins]\ncolour = \"red\"\ntiming = true\n"),
+        TIMING
     );
-    assert_eq!(
-        read("[plugins]\ntiming = true\nloopback = true\n"),
-        PluginCalls {
-            timing: true,
-            loopback: true
-        }
-    );
+    // The retired loopback is read no more, whatever it holds.
+    assert_eq!(read("[plugins]\nloopback = true\n"), off);
+    assert_eq!(read("[plugins]\nloopback = \"yes\"\n"), off);
+    assert_eq!(read("[plugins]\ntiming = true\nloopback = true\n"), TIMING);
     assert_eq!(read("[plugins]\ntiming = \"yes\"\n"), off);
     assert_eq!(read("[plugins\ntiming = true\n"), off);
-    // With both off, a project's plugins and a plugin command are the plugins' own.
+    // With it off, a project's plugins and a plugin command are the plugins' own.
     let tree = naming(&["every"]);
     let project = Project::of(&tree.root);
     assert!(std::ptr::eq(
@@ -824,12 +764,14 @@ fn a_seam_trait_the_source_reading_misses_is_named_with_the_file_to_add() {
 
 /// The method a seam's declared entry is the answer of, where the entry is that answer alone: a
 /// component declared by its name, a route by its path…
-const DECLARED_BY: [(&str, &str); 8] = [
+const DECLARED_BY: [(&str, &str); 10] = [
     ("components", "name"),
     ("routes", "path"),
     ("home_regions", "id"),
     ("board_actions", "name"),
     ("gates", "name"),
+    ("authorities", "adapter"),
+    ("describers", "id"),
     ("watches", "paths"),
     ("prose_rules", "name"),
     ("transports", "name"),
@@ -840,6 +782,9 @@ fn every_method_of_every_seam_is_a_call_or_declared_and_the_wrapper_measures_eac
     let mut seams_traits = traits(include_str!("../../../../symphony-plugin/src/lib.rs"));
     seams_traits.extend(traits(include_str!(
         "../../../../symphony-plugin/src/renderer.rs"
+    )));
+    seams_traits.extend(traits(include_str!(
+        "../../../../symphony-plugin/src/authority.rs"
     )));
     seams_traits.extend(traits(include_str!(
         "../../../../symphony-docs/src/check.rs"
@@ -1006,6 +951,13 @@ fn every_call(plugins: &Plugins, root: &Path, docs: &Docs) {
     let _ = black_box(field.map(|f| f.validate(&FieldValue::Text(" 3.5 ".into()))));
     let _ = black_box(plugin.gates()[0].answer(root, &task, Some("c0ffee")));
     let _ = black_box(plugin.gates()[0].kept_while(root, &task));
+    let operation = &operations()[0];
+    let _ = black_box(
+        plugins
+            .authority("every")
+            .map(|a| a.attest(root, operation, Duration::from_secs(10))),
+    );
+    let _ = black_box(plugins.describers()[0].1.describe(root));
     let _ = black_box(plugins.watches()[0].changed(root));
     plugins.watches()[0].forget(root);
     let _ = black_box(plugins.doc_checks()[0].check(docs));
@@ -1043,46 +995,27 @@ pub(super) fn by_call(path: &Path, key: &str) -> std::collections::BTreeMap<Stri
     found
 }
 
-/// What each call of the test plugin costs, timed alone and through the loopback: a measurement,
-/// not a check. Run alone, it prints for each call the median of its calls' `us` timed alone, and
-/// through the loopback its `us`, its `round_trip_us` and the JSON's bytes, best in a release build:
+/// What each call of the test plugin costs, timed linked: a measurement, not a check. Run alone, it
+/// prints for each call the median of its calls' `us`, best in a release build:
 /// `just test-rs --release -p symphony-app --test project the_cost_of_each -- --ignored --nocapture`.
 #[test]
 #[ignore = "a measurement, not a check: run it alone with --ignored --nocapture"]
-fn the_cost_of_each_call_timed_and_through_the_loopback() {
+fn the_cost_of_each_call_timed() {
     const ROUNDS: usize = 1_000;
     let tree = Tree::new();
     tree.write("docs/A.md", "# A\n\nevery word\n");
     tree.write("docs/B.md", "# B\n");
     let docs = Docs::read(&tree.root);
-    let (timed_record, looped_record) = (tree.path("timed.jsonl"), tree.path("looped.jsonl"));
-    let calls = |timing, loopback| PluginCalls { timing, loopback };
-    let timed = Plugins::new(vec![&EVERY]).measured(calls(true, false), &timed_record);
-    let looped = Plugins::new(vec![&EVERY]).measured(calls(false, true), &looped_record);
-    // Interleaved, so the machine's load weighs on both alike.
+    let timed_record = tree.path("timed.jsonl");
+    let timed = Plugins::new(vec![&EVERY]).measured(TIMING, &timed_record);
     for _ in 0..ROUNDS {
         every_call(&timed, &tree.root, &docs);
-        every_call(&looped, &tree.root, &docs);
     }
-    let call = by_call(&looped_record, "us");
-    let trip = by_call(&looped_record, "round_trip_us");
-    let asked = by_call(&looped_record, "request_bytes");
-    let answered = by_call(&looped_record, "answer_bytes");
-    let median_of = |table: &std::collections::BTreeMap<String, Vec<f64>>, name: &str| {
-        median(&mut table.get(name).cloned().unwrap_or_default())
-    };
     println!(
-        "{ROUNDS} rounds; medians in microseconds\n{:<34} {:>9} {:>9} {:>11} {:>9} {:>8} {:>8}",
-        "call", "timed", "looped", "round trip", "json", "req B", "ans B"
+        "{ROUNDS} rounds; medians in microseconds\n{:<34} {:>9}",
+        "call", "timed"
     );
     for (name, mut times) in by_call(&timed_record, "us") {
-        let (looped_us, round_trip) = (median_of(&call, &name), median_of(&trip, &name));
-        println!(
-            "{name:<34} {:>9.3} {looped_us:>9.3} {round_trip:>11.3} {:>9.3} {:>8} {:>8}",
-            median(&mut times),
-            round_trip - looped_us,
-            median_of(&asked, &name),
-            median_of(&answered, &name),
-        );
+        println!("{name:<34} {:>9.3}", median(&mut times));
     }
 }

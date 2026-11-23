@@ -1,4 +1,4 @@
-//! An execution attempt under a custom workflow, on each database (docs/WORKFLOW.md, "Attempts"):
+//! An execution attempt under a custom workflow, on each database (docs/workflow/WORKFLOW.md, "Attempts"):
 //! activation waits for a task's live attempt to drain or be cancelled, never rebinding it; the
 //! attempt keeps where its task stood when it was admitted, and its ending, proposed by the
 //! coordinator as the board's recovery service, moves the task from there alone: by the
@@ -7,6 +7,7 @@
 //! and a repeat of an observation, move nothing more.
 
 use super::*;
+use crate::common::pair;
 use std::collections::BTreeMap;
 use symphony_api::workflow::{
     Definition, Dependency, OperationRequest, Pair, RecoveryAction, Slot, Source,
@@ -135,13 +136,6 @@ fn unanswered(f: &Fixture, slug: &str, id: &str) -> Vec<String> {
     (recoveries(f, slug).into_iter())
         .filter(|line| line.contains(&format!("attempt {id} ")) && line.contains("nothing answers"))
         .collect()
-}
-
-fn pair(phase: &str, state: &str) -> Pair {
-    Pair {
-        phase: phase.into(),
-        state: state.into(),
-    }
 }
 
 fn at(f: &Fixture, slug: &str) -> Pair {

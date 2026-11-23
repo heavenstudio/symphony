@@ -1,6 +1,6 @@
 //! The attestations the owner's workflow operation is taken with when its payload gives none: each
 //! guard of its edge asked of the approval authority a plugin the project selects answers for that
-//! guard's adapter ([`symphony_plugin::Authority`], docs/WORKFLOW.md, "Guards"), for the
+//! guard's adapter ([`symphony_plugin::Authority`], docs/workflow/WORKFLOW.md, "Guards"), for the
 //! operation's own snapshot and the principal the host bound. What an authority answers goes to
 //! the board unchanged, which verifies it as it verifies a pushed one (the committed key, the
 //! operation and principal it names, the accepted generation, its time): nothing here decides a
@@ -13,13 +13,13 @@ use std::path::Path;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
 
-use symphony_api::workflow::{OperationRequest, RefusalCode, Signed};
+use symphony_api::workflow::{GuardRefusal, GuardWhy, OperationRequest, RefusalCode, Signed};
 use symphony_board::workflow::admit::Refusal;
 use symphony_plugin::Authority;
 use symphony_plugin::authority::{Operation, Snapshot};
 use symphony_plugin::execution::Principal;
 
-use super::Failure;
+use super::{Failure, Refused};
 use crate::plugins::Plugins;
 
 /// How long an authority is given to answer: as long as any plugin's call
@@ -37,8 +37,32 @@ pub(super) fn fetched(
     root: &Path,
     request: &OperationRequest,
     principal: &Principal,
-) -> Result<Vec<Signed>, Failure> {
+) -> Result<Vec<Signed>, Refused> {
     fetched_within(store, plugins, root, request, principal, WITHIN)
+}
+
+/// Whether `refused`, the board's answer to an operation, is a refusal a guard gives
+/// ([`symphony_board`]'s `guard::check`): its code, the first word of its words as the board
+/// writes a [`Refusal`], is a guard's. The words after the code are never read, and a board that
+/// could not be reached refused nothing.
+pub(super) fn guards(refused: &symphony_board::Error) -> bool {
+    let symphony_board::Error::Refused(refusal) = refused else {
+        return false;
+    };
+    [
+        RefusalCode::GuardUnavailable,
+        RefusalCode::StaleInput,
+        RefusalCode::Unauthorized,
+    ]
+    .iter()
+    .any(|code| {
+        let word = serde_json::to_value(code).unwrap_or_default();
+        (word.as_str()).is_some_and(|word| {
+            refusal
+                .strip_prefix(word)
+                .is_some_and(|rest| rest.starts_with(':'))
+        })
+    })
 }
 
 fn fetched_within(
@@ -48,8 +72,8 @@ fn fetched_within(
     request: &OperationRequest,
     principal: &Principal,
     within: Duration,
-) -> Result<Vec<Signed>, Failure> {
-    let Some(read) = store.workflow_read()? else {
+) -> Result<Vec<Signed>, Refused> {
+    let Some(read) = store.workflow_read().map_err(Failure::from)? else {
         return Ok(Vec::new());
     };
     let definition = &read.definition;
@@ -67,7 +91,10 @@ fn fetched_within(
     }
     // The project an attestation names is the one the active activation recorded, its committed
     // `[project] id`; with none, no authority is committed and the board refuses the guard.
-    let Some(project) = store.workflow_authorities_of(read.activation_generation)?.0 else {
+    let recorded = store
+        .workflow_authorities_of(read.activation_generation)
+        .map_err(Failure::from)?;
+    let Some(project) = recorded.0 else {
         return Ok(Vec::new());
     };
     (asked.into_iter())
@@ -79,7 +106,17 @@ fn fetched_within(
                     request.edge,
                     authority.adapter()
                 );
-                Failure::from(Refusal::new(RefusalCode::GuardUnavailable, said).to_string())
+                Refused {
+                    failure: Refusal::new(RefusalCode::GuardUnavailable, said)
+                        .to_string()
+                        .into(),
+                    guard: Some(Box::new(GuardRefusal {
+                        guard: guard.into(),
+                        adapter: authority.adapter().into(),
+                        why: GuardWhy::Unanswered,
+                        record: None,
+                    })),
+                }
             })?;
             Ok(Signed {
                 payload: signed.payload,
@@ -152,3 +189,7 @@ fn answer(
 #[cfg(test)]
 #[path = "attest_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "guards_tests.rs"]
+mod guards_tests;

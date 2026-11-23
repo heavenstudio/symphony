@@ -5,9 +5,16 @@ use std::ops::Range;
 
 use super::{is_fence, is_space};
 
-/// Where a page's register begins and ends; a card outside it is prose.
+/// Where a page's register begins and ends: the cards between them are regrouped by each save. A
+/// card is read wherever it sits ([`cards`]), in a region or inline at the place its document
+/// says what it decides.
 pub const REGION_START: &str = "<!-- register:start -->";
 pub const REGION_END: &str = "<!-- register:end -->";
+
+/// A card's first line as git's extended pattern (`git grep -E`): the shape [`card_line`] reads, a
+/// list item at the left margin, one of its marks and a name in bold. It finds the documents worth
+/// reading and decides nothing: [`card_line`] reads each line found.
+pub const CARD_LINE: &str = r"^-[[:space:]]+\[[ xX?r~a-]\][[:space:]]+\*\*";
 
 /// A card line, `^-\s+\[(mark)\]\s+\*\*(slug)\*\*\s*(?:[—–-]\s*)?(text)$`: its mark, slug and text as
 /// written (the caller strips them).
@@ -151,6 +158,19 @@ pub fn cards<L: AsRef<str>>(lines: &[L]) -> Vec<Card> {
         index += 1;
     }
     found
+}
+
+/// For each of `lines`, whether it is a card's own ([`cards`]): the card's line or a line under it,
+/// wherever the card sits. A card's lines are the page's record, never its prose.
+pub fn carded<L: AsRef<str>>(lines: &[L]) -> Vec<bool> {
+    let mut own = vec![false; lines.len()];
+    for card in cards(lines) {
+        let first = card.line - 1;
+        for line in own.iter_mut().skip(first).take(1 + card.raw.len()) {
+            *line = true;
+        }
+    }
+    own
 }
 
 /// The start of the hidden line under a card that pairs an owner entry with an agent reply written

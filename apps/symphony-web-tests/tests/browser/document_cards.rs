@@ -5,7 +5,7 @@
 //! button and fills even opened below a short window's fold, callouts are as wide as cards, a
 //! comment's colour its own, and a folded card opened by a click draws the picture in its history.
 use super::components::key;
-use super::{SHOWN, chrome, chrome::Chrome, common, dist, focus_on, site::Site};
+use super::{SHOWN, chrome, chrome::Chrome, focus_on, site::Site};
 use serde_json::{Value, json};
 
 const DOC: &str = "docs/PROBE.md";
@@ -52,7 +52,7 @@ const COMMENT_TITLE: &str = "141 lamps: the count includes the two prototype lam
 /// its history and a link to its own section, and an approved card waiting for the owner to
 /// confirm it.
 fn probe_site() -> Site {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let link = json!({"type":"link","href":"/docs/PROBE.md#lamps","target":{"path":DOC,"anchor":"lamps"},"title":"","spans":[text("Lamps")]});
     let (alpha, pending) = card(
         "alpha",
@@ -111,20 +111,6 @@ fn probe_site() -> Site {
     site
 }
 
-fn scheme(page: &mut Chrome, mode: &str) {
-    page.call(
-        "Emulation.setEmulatedMedia",
-        json!({"features":[{"name":"prefers-color-scheme","value":mode}]}),
-    );
-}
-
-fn viewport(page: &mut Chrome, width: u32, height: u32) {
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":height,"deviceScaleFactor":1,"mobile":width < 600}),
-    );
-}
-
 /// Opens the card `slug`'s editor with its own button and waits for its form.
 fn open_editor(page: &mut Chrome, slug: &str) {
     let toggle = format!("[data-doc-key=\"card:{slug}\"] .doc-actions button");
@@ -149,7 +135,7 @@ fn open_editor(page: &mut Chrome, slug: &str) {
 fn document_card_verdict_form_fits_a_phone_card() {
     let site = probe_site();
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 390, 844);
+    page.viewport(390, 844, true);
     page.open(&site.url(&format!("/{DOC}")));
     open_editor(&mut page, "alpha");
     // Every control of the form lies inside it, and the form inside its card.
@@ -200,7 +186,7 @@ fn the_open_versions_and_a_diff_keep_the_page_the_windows_width() {
     );
     let Some(mut page) = chrome() else { return };
     for (width, height) in [(1425, 900), (390, 844)] {
-        viewport(&mut page, width, height);
+        page.viewport(width, height, width < 600);
         page.open(&site.url(&format!("/{DOC}")));
         assert!(page.wait_for(
             "document.querySelector('details.versions > summary') !== null",
@@ -236,7 +222,7 @@ fn the_open_versions_and_a_diff_keep_the_page_the_windows_width() {
 fn document_card_history_keeps_an_agents_paragraphs() {
     let site = probe_site();
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1280, 900);
+    page.viewport(1280, 900, false);
     page.open(&site.url(&format!("/{DOC}")));
     let entry = "[data-doc-key=\"card:alpha\"] .history .entry";
     assert!(page.wait_for(
@@ -289,8 +275,8 @@ fn verdict_form(page: &mut Chrome, slug: &str) -> Value {
 fn document_card_verdict_buttons_rank_by_what_the_owner_does_next() {
     let site = probe_site();
     let Some(mut page) = chrome() else { return };
-    scheme(&mut page, "light");
-    viewport(&mut page, 1280, 900);
+    page.scheme("light");
+    page.viewport(1280, 900, false);
     page.open(&site.url(&format!("/{DOC}")));
     open_editor(&mut page, "alpha");
     let approve = "[data-doc-key=\"card:alpha\"] form.verdict .v-approved";
@@ -330,7 +316,7 @@ fn document_card_verdict_buttons_rank_by_what_the_owner_does_next() {
 fn document_card_escape_closes_the_editor_and_returns_focus_to_its_opener() {
     let site = probe_site();
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1280, 900);
+    page.viewport(1280, 900, false);
     page.open(&site.url(&format!("/{DOC}")));
     open_editor(&mut page, "alpha");
     let card = "[data-doc-key=\"card:alpha\"]";
@@ -409,7 +395,7 @@ fn document_card_later_and_undo_keep_the_focus_on_their_button() {
         &json!({"ok":true,"changed":false,"next":null}),
     );
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1280, 900);
+    page.viewport(1280, 900, false);
     page.open(&site.url(&format!("/{DOC}")));
     open_editor(&mut page, "alpha");
     let later = "[data-doc-key=\"card:alpha\"] .verdict-choices .postpone-controls button";
@@ -518,7 +504,7 @@ fn focus_ring(page: &mut Chrome, selector: &str) -> Value {
 fn document_card_focus_ring_is_the_pages_not_the_cards_colour() {
     let site = probe_site();
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1280, 900);
+    page.viewport(1280, 900, false);
     page.open(&site.url(&format!("/{DOC}")));
     open_editor(&mut page, "alpha");
     let card = "[data-doc-key=\"card:alpha\"]";
@@ -533,7 +519,7 @@ fn document_card_focus_ring_is_the_pages_not_the_cards_colour() {
         "the card's thread is drawn"
     );
     for mode in ["light", "dark"] {
-        scheme(&mut page, mode);
+        page.scheme(mode);
         // A paragraph's + comment, outside any card: the page's ring.
         let page_ring = focus_ring(&mut page, "[data-doc-key=\"intro\"] > .add");
         assert_eq!(
@@ -641,7 +627,7 @@ const PARAGRAPHS: &str = r#"(() => {
 fn document_card_link_opens_its_excerpt_beside_its_button_and_closes_it_again() {
     let site = probe_site();
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1280, 900);
+    page.viewport(1280, 900, false);
     page.open(&site.url(&format!("/{DOC}#alpha")));
     let show = "[data-doc-key=\"card:alpha\"] .section-prose .show-link";
     assert!(page.wait_for(
@@ -724,14 +710,14 @@ const PLACE_OF_SHOW: &str = r#"(() => {
 fn document_card_excerpt_opened_below_a_short_windows_fold_fills_without_a_scroll() {
     let site = probe_site();
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 756, 469);
+    page.viewport(756, 469, false);
     // Room above the card, so its button can sit at the window's bottom edge.
     page.call("Page.addScriptToEvaluateOnNewDocument", json!({"source":
         "const observer = new MutationObserver(() => { if (document.head) { const style = document.createElement('style'); style.textContent = '[data-doc-key=\"intro\"] { margin-bottom: 900px }'; document.head.append(style); observer.disconnect(); } }); observer.observe(document, {childList: true, subtree: true});"
     }));
     page.open(&site.url(&format!("/{DOC}#alpha")));
     let show = "[data-doc-key=\"card:alpha\"] .section-prose .show-link";
-    // The address names the card, so the page lands on it (`land`, assets/shell.js) once its
+    // The address names the card, so the page lands on it (`land`, shell/shell.ts) once its
     // section has drawn, in an effect that runs after the button is in the page: a scroll made
     // before it is taken back to the card. So the reader's scroll waits for the landing, and is a
     // wheel, the reader's own input, which ends the landing whatever still draws around the card.
@@ -796,9 +782,9 @@ fn document_callouts_are_as_wide_as_cards_and_a_comment_is_not_a_decision() {
         SHOWN
     ));
     for mode in ["light", "dark"] {
-        scheme(&mut page, mode);
+        page.scheme(mode);
         for (width, height) in [(1280, 900), (390, 844)] {
-            viewport(&mut page, width, height);
+            page.viewport(width, height, width < 600);
             let look = page.eval(
                 r#"(() => {
                 const width = e => e.getBoundingClientRect().width, edge = e => getComputedStyle(e).borderLeftColor;
@@ -843,7 +829,7 @@ fn document_callout_title_stops_short_of_its_sections_comment_button() {
     ));
     let mut seen = Vec::new();
     for (width, height) in [(1280, 900), (390, 844)] {
-        viewport(&mut page, width, height);
+        page.viewport(width, height, width < 600);
         seen.push((width, page.eval(TITLE_BESIDE_ADD)));
     }
     // Open, the comment editor leaves the button showing, under its longer label.
@@ -853,7 +839,7 @@ fn document_callout_title_stops_short_of_its_sections_comment_button() {
         SHOWN
     ));
     for (width, height) in [(1280, 900), (390, 844)] {
-        viewport(&mut page, width, height);
+        page.viewport(width, height, width < 600);
         seen.push((width, page.eval(TITLE_BESIDE_ADD)));
     }
     for (width, look) in &seen {
@@ -877,7 +863,7 @@ const FOLDED: &str = "docs/FOLDED.md";
 const FOLDED_PICTURE: &str = "/docs/analysis/split.svg";
 
 fn folded_card_site() -> (Site, Value) {
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let question = "Where do the pictures a card shows live? A: the ignored folder. F: committed beside the card. Recommended: F.";
     let code = |words: &str| json!({"type":"code","text":words});
     let list = |items: Vec<Vec<Value>>| {
@@ -993,7 +979,7 @@ const SUMMARY_HOLDS_STILL: &str = r#"(() => {
 fn document_card_folded_and_opened_by_a_click_draws_its_picture() {
     let (site, opened) = folded_card_site();
     let Some(mut page) = chrome() else { return };
-    viewport(&mut page, 1440, 900);
+    page.viewport(1440, 900, false);
     page.open(&site.url(&format!("/{FOLDED}")));
     let summary = "details#folded-picture > summary";
     assert!(

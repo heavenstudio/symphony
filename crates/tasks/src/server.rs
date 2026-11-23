@@ -32,9 +32,10 @@
 //! `artifacts/`) is a fixture's: its server is not detached but supervised ([`OWNED_START`]), and
 //! ends when the process that started it ends, however it ends.
 //!
-//! Beside SurrealDB, the board's PostgreSQL ([`postgres`]) starts and stops for a board in a
-//! scratch place alone, under the same starters' lock. The home's durable engine identity selects
-//! what repository discovery and the machine server read ([`Home::board_server`]).
+//! Beside SurrealDB, the board's PostgreSQL ([`postgres`]) starts and stops under the same
+//! starters' lock. The home's durable engine identity selects what repository discovery and the
+//! machine server read ([`Home::board_server`]); a home with none is SurrealDB's while it holds a
+//! SurrealDB store, and a board not made yet is made on PostgreSQL ([`backend`]).
 
 use crate::port::{self, NotStarted, Start};
 use crate::rpc;
@@ -126,31 +127,38 @@ pub fn surreal_fetch(surreal: &Path, os: &str, arch: &str) -> Option<String> {
     fetch_line(surreal, build, sha, os)
 }
 
-/// [`surreal_fetch`] of SurrealDB's build `build`, whose tarball's SHA-256 is `sha`, on `os`.
+/// [`surreal_fetch`] of SurrealDB's build `build`, whose tarball's SHA-256 is `sha`, on `os`. The
+/// line names `surreal`'s folder once, as the shell variable `d` every step reads, so it stays short
+/// enough to read and to paste whole at any path depth.
 fn fetch_line(surreal: &Path, build: &str, sha: &str, os: &str) -> Option<String> {
     let folder = surreal.parent()?;
-    let quote = |path: &Path| format!("'{}'", path.display().to_string().replace('\'', "'\\''"));
-    let tarball = folder.join(format!("surreal-v{SURREAL_VERSION}.{build}.tgz"));
+    // Read inside the double quotes of `"$d/NAME"`: a name the shell would read there is no build's.
+    let name = surreal.file_name()?.to_str().filter(|name| {
+        name.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+    })?;
+    let folder = format!("'{}'", folder.display().to_string().replace('\'', "'\\''"));
     let check = if os == "macos" {
         "shasum -a 256 -c"
     } else {
         "sha256sum -c"
     };
-    // In the same folder as `surreal`, so the move is a rename.
-    let unpack = folder.join(format!(".surreal-v{SURREAL_VERSION}.unpack"));
+    // The tarball and the unpack folder are in the same folder as `surreal`, so the move is a
+    // rename.
     Some(format!(
-        "mkdir -p {folder} && curl -fsSLo {tgz} \
+        "d={folder} && mkdir -p \"$d\" && curl -fsSLo \"$d/{TARBALL}\" \
          https://download.surrealdb.com/v{SURREAL_VERSION}/surreal-v{SURREAL_VERSION}.{build}.tgz \
-         && printf '%s  %s\\n' {sha} {tgz} | {check} && mkdir -p {unpack} && tar -xzf {tgz} -C \
-         {unpack} surreal && mv -f {unpacked} {surreal}; s=$?; rm -f {tgz} {unpacked}; rmdir \
-         {unpack} 2>/dev/null; [ $s -eq 0 ]",
-        folder = quote(folder),
-        tgz = quote(&tarball),
-        unpack = quote(&unpack),
-        unpacked = quote(&unpack.join("surreal")),
-        surreal = quote(surreal),
+         && printf '%s  %s\\n' {sha} \"$d/{TARBALL}\" | {check} && mkdir -p \"$d/{UNPACK}\" && tar \
+         -xzf \"$d/{TARBALL}\" -C \"$d/{UNPACK}\" surreal && mv -f \"$d/{UNPACK}/surreal\" \
+         \"$d/{name}\"; s=$?; rm -f \"$d/{TARBALL}\" \"$d/{UNPACK}/surreal\"; rmdir \
+         \"$d/{UNPACK}\" 2>/dev/null; [ $s -eq 0 ]",
     ))
 }
+
+/// The fetch's tarball and the folder it unpacks in, beside the `surreal` it installs
+/// ([`fetch_line`]); neither outlasts the fetch.
+const TARBALL: &str = "surreal.tgz";
+const UNPACK: &str = ".unpack";
 
 /// The board's folder in the git common dir.
 pub const FOLDER: &str = crate::folders::TASKS;
@@ -527,7 +535,7 @@ impl Home {
     /// [`Home::ensure`] when the server does not answer.
     pub fn recorded(&self) -> Option<Running> {
         let text = fs::read_to_string(self.dir.join(ADDRESS)).ok()?;
-        serde_json::from_str(&text).ok()
+        crate::objects::parse(&text)
     }
 
     /// The board's server, answering: the recorded one, else one started now. The recorded one counts only

@@ -719,7 +719,7 @@ fn a_plugin_of_another_major_is_refused_killed_and_not_started_again_until_its_p
     let refused = remote.declaration().unwrap_err();
     assert_eq!(
         refused,
-        "its process is refused: the plugin speaks protocol 1.0 and this Symphony 0.4: install a \
+        "its process is refused: the plugin speaks protocol 1.0 and this Symphony 0.5: install a \
          Symphony that speaks protocol 1; it is not started again until its program or the \
          project's settings change"
     );
@@ -765,17 +765,18 @@ fn a_plugin_declaring_another_name_or_a_seam_a_process_does_not_answer_is_refuse
         "its process is refused: it declares the plugin \"old\", not \"tiny\", which the project \
          names; it is not started again until its program or the project's settings change"
     );
-    // A seam a process answers beside one it does not: refused, naming only the one.
+    // Seams a process answers beside ones it does not: refused, naming only those.
     let mut wider = tiny_declared();
     wider.routes = vec!["/x".into()];
     wider.gates = vec!["landing".into()];
     wider.prose_rules = vec!["plain".into()];
+    wider.transports = vec!["mail".into()];
     wider.theme = Some(symphony_plugin::Theme::default());
     assert_eq!(
         refused(wider),
-        "its process is refused: it declares gates, prose rules, which a plugin's process does \
-         not answer: link the plugin, or serve one without them; it is not started again until \
-         its program or the project's settings change"
+        "its process is refused: it declares prose rules, transports, which a plugin's process \
+         does not answer: link the plugin, or serve one without them; it is not started again \
+         until its program or the project's settings change"
     );
 }
 
@@ -807,13 +808,7 @@ fn the_seams_a_process_does_not_answer_are_each_named() {
     every.theme = Some(symphony_plugin::Theme::default());
     assert_eq!(
         unanswered(&every),
-        [
-            "board fields",
-            "gates",
-            "prose rules",
-            "generators",
-            "transports"
-        ]
+        ["board fields", "prose rules", "generators", "transports"]
     );
 }
 
@@ -839,6 +834,7 @@ fn wide_declared() -> Declaration {
     }];
     declared.home_regions = vec!["progress".into()];
     declared.board_actions = vec!["land".into()];
+    declared.gates = vec!["landing".into()];
     declared.watches = vec![
         vec!["data".into()],
         vec!["models".into(), "pictures".into()],
@@ -876,6 +872,7 @@ fn a_seam_whose_process_does_not_answer_is_shown_where_its_answer_goes() {
     assert_eq!(remote.routes()[0].path(), "shelf");
     assert_eq!(remote.home_regions()[0].id(), "progress");
     assert_eq!(remote.board_actions()[0].name(), "land");
+    assert_eq!(remote.gates()[0].name(), "landing");
     let watched: Vec<Vec<String>> = remote.watches().iter().map(|w| w.paths()).collect();
     assert_eq!(watched, wide_declared().watches);
     assert_eq!(remote.doc_checks()[0].inputs(), ["data/links.json"]);
@@ -915,6 +912,16 @@ fn a_seam_whose_process_does_not_answer_is_shown_where_its_answer_goes() {
     assert_eq!(
         action.submit(&tree.root, &task, &submission),
         Err(format!("plugin tiny: {down}"))
+    );
+    // A gates answer is the answerer's error, and what it is kept while unwinds with it.
+    let gates = remote.gates()[0];
+    assert_eq!(
+        gates.answer(&tree.root, &task, Some("c0ffee")),
+        Err(format!("plugin tiny: {down}"))
+    );
+    assert_eq!(
+        untold(gates, &tree.root, &task),
+        format!("plugin tiny: {down}")
     );
     // A watch's warming says so in the server's log, and its forgetting says nothing.
     let watch = remote.watches()[1];
@@ -1243,7 +1250,7 @@ fn an_answer_after_its_call_was_given_up_is_logged_and_dropped_and_the_process_k
     let (let_go, held) = mpsc::channel::<()>();
     let held = Mutex::new(Some(held));
     let respond: Respond = Arc::new(move |id, _| {
-        if let Some(held) = lock(&held).take() {
+        if let Some(held) = held.lock().recover().take() {
             // Until the test lets it go, or lets go of its end.
             let _ = held.recv();
             return Said::Lines(vec![answering(id, &rendered("late"))]);
@@ -1681,11 +1688,11 @@ fn a_real_process_that_stops_reading_is_ended_in_the_wait_and_holds_no_other_cal
     let (x_failed, y_failed) = std::thread::scope(|scope| {
         // Neither call's wait begins before both calls wait: each queues its line, which begins
         // its wait, only once the test lets go of the queue.
-        let queue = lock(&connection.queue);
+        let queue = connection.queue.lock().recover();
         let xs = scope.spawn(|| failed(&x));
         let ys = scope.spawn(|| failed(&y));
         until("both calls wait", || {
-            lock(&connection.waiting).calls.len() == 2
+            connection.waiting.lock().recover().calls.len() == 2
         });
         drop(queue);
         (xs.join().unwrap(), ys.join().unwrap())
@@ -1725,7 +1732,9 @@ fn every_call_that_finds_its_process_ending_is_told_how_the_first_ended_it() {
     let released = Arc::new(AtomicBool::new(false));
     let lingering = released.clone();
     let start: Start = Box::new(move || {
-        let input = lock(&declares)
+        let input = declares
+            .lock()
+            .recover()
             .take()
             .ok_or_else(|| io::Error::other("it is started once"))?;
         Ok(Spawned {
@@ -1745,7 +1754,9 @@ fn every_call_that_finds_its_process_ending_is_told_how_the_first_ended_it() {
     std::thread::scope(|scope| {
         // One call ends it, and its process is not seen ended until the test lets it.
         scope.spawn(|| remote.end(&connection, Some("the first call's reason".into())));
-        until("it is ending", || lock(&connection.waiting).ending);
+        until("it is ending", || {
+            connection.waiting.lock().recover().ending
+        });
         // Another call ends it meanwhile, which leaves the first's reason standing.
         remote.end(&connection, Some("the second call's reason".into()));
         released.store(true, Ordering::SeqCst);
@@ -1760,7 +1771,7 @@ fn every_call_that_finds_its_process_ending_is_told_how_the_first_ended_it() {
         "a".into(),
         None,
     );
-    let sent = remote.sent_within(&connection, request.into(), WAIT, &mut |_| Ok(()));
+    let sent = remote.sent_within(&connection, request.into(), WAIT, None, &mut |_| Ok(()));
     assert_eq!(sent.err().as_deref(), Some(first));
     assert_eq!(
         remote
@@ -1928,7 +1939,7 @@ fn a_call_with_no_answer_is_recorded_with_why_and_without_the_plugins_time() {
         (&line["seam"], &line["call"]),
         (&"card_kinds".into(), &"recognises".into())
     );
-    for absent in ["us", "request_bytes", "answer_bytes", "lost"] {
+    for absent in ["us", "request_bytes", "answer_bytes"] {
         assert!(line.get(absent).is_none(), "{absent}: {line}");
     }
     assert!(line["round_trip_us"].as_f64().is_some(), "{line}");
@@ -2616,4 +2627,551 @@ fn a_plugins_process_answers_its_authorities_as_it_does_linked_and_shows_a_panic
                 .into()
         )
     );
+}
+
+/// A project's Settings page describers: `lamp` describes the root it is asked of, `shelf` cannot
+/// say, `broken` panics.
+struct Lamp(&'static str);
+
+static LAMPS: Lamps = Lamps;
+
+struct Lamps;
+
+impl Plugin for Lamps {
+    fn name(&self) -> &str {
+        "lamps"
+    }
+    fn describers(&self) -> Vec<&dyn symphony_plugin::Describer> {
+        static EACH: [Lamp; 3] = [Lamp("lamp"), Lamp("shelf"), Lamp("broken")];
+        EACH.iter()
+            .map(|d| -> &dyn symphony_plugin::Describer { d })
+            .collect()
+    }
+}
+
+impl symphony_plugin::Describer for Lamp {
+    fn id(&self) -> &str {
+        self.0
+    }
+    fn describe(&self, root: &Path) -> Result<symphony_plugin::vocabulary::SettingsEntry, String> {
+        match self.0 {
+            "lamp" => Ok(symphony_plugin::vocabulary::SettingsEntry {
+                id: "lamp".into(),
+                name: "Lamp".into(),
+                about: root.display().to_string(),
+                state: None,
+                needs: Vec::new(),
+                settings: Vec::new(),
+                source: None,
+            }),
+            "shelf" => Err("shelf.toml does not read".into()),
+            _ => panic!("the lamp's file is gone"),
+        }
+    }
+}
+
+#[test]
+fn a_plugins_process_answers_its_describers_as_it_does_linked_and_shows_a_panic_as_its_refusal() {
+    let tree = Tree::new();
+    let remote = Remote::leaked(
+        "lamps",
+        process_in(&tree, "lamps"),
+        peer(&LAMPS, Arc::default()),
+        patient(),
+    );
+    assert_eq!(
+        remote.declaration().map(|d| d.describers.clone()),
+        Ok(vec!["lamp".into(), "shelf".into(), "broken".into()])
+    );
+    let (remote_ones, linked_ones) = (remote.describers(), LAMPS.describers());
+    for (far, near) in remote_ones.iter().zip(&linked_ones).take(2) {
+        assert_eq!(far.id(), near.id());
+        assert_eq!(far.describe(&tree.root), near.describe(&tree.root));
+    }
+    assert_eq!(
+        remote_ones[0].describe(&tree.root).map(|entry| entry.about),
+        Ok(tree.root.display().to_string())
+    );
+    assert_eq!(
+        remote_ones[2].describe(&tree.root),
+        Err(
+            "plugin lamps: it refused describers.describe: lamps panicked: the lamp's file is gone"
+                .into()
+        )
+    );
+}
+
+#[test]
+fn a_describer_declared_under_a_minor_before_the_call_is_never_sent_it() {
+    use symphony_plugin::protocol::Describe;
+    let tree = Tree::new();
+    let seen = Seen::default();
+    let mut declared = Declaration::of(&LAMPS);
+    declared.protocol = Version::new(PROTOCOL.major, Describe::SINCE - 1);
+    let remote = Remote::leaked(
+        "lamps",
+        process_in(&tree, "lamps"),
+        serving_as(&LAMPS, declared, seen.clone()),
+        patient(),
+    );
+    let said = remote.describers()[0].describe(&tree.root).unwrap_err();
+    assert!(
+        said.contains("it speaks protocol 0.4, which has no describers.describe"),
+        "{said}"
+    );
+    let heard = seen.heard();
+    assert!(
+        !heard.iter().any(|line| line.contains(Describe::TAG)),
+        "{heard:?}"
+    );
+}
+
+/// What `gates` unwinds [`Gates::kept_while`] with for `task` at `root`: why it has no answer.
+fn untold(gates: &dyn Gates, root: &Path, task: &symphony_plugin::TaskRef<'_>) -> String {
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        gates.kept_while(root, task)
+    }))
+    .expect_err("kept_while had an answer");
+    match unwound.downcast::<crate::gates::Untold>() {
+        Ok(untold) => untold.0,
+        Err(_) => panic!("kept_while unwound with something other than why it has no answer"),
+    }
+}
+
+/// A project's gates answerers: `landing` meets its gate at the tip it is asked and says it is
+/// kept while the task's status holds, `closed` cannot say, `broken` panics in both calls.
+struct Landing(&'static str);
+
+static LANDINGS: Landings = Landings;
+
+struct Landings;
+
+impl Plugin for Landings {
+    fn name(&self) -> &str {
+        "landings"
+    }
+    fn gates(&self) -> Vec<&dyn Gates> {
+        static EACH: [Landing; 3] = [Landing("landing"), Landing("closed"), Landing("broken")];
+        EACH.iter().map(|g| -> &dyn Gates { g }).collect()
+    }
+}
+
+impl Gates for Landing {
+    fn name(&self) -> &str {
+        self.0
+    }
+    fn answer(
+        &self,
+        root: &Path,
+        task: &symphony_plugin::TaskRef<'_>,
+        tip: Option<&str>,
+    ) -> Result<Vec<symphony_plugin::vocabulary::Gate>, String> {
+        use symphony_plugin::vocabulary::{Gate, GateState};
+        match self.0 {
+            "landing" => Ok(vec![Gate {
+                name: "certificate".into(),
+                state: if tip.is_some() {
+                    GateState::Met
+                } else {
+                    GateState::Missing
+                },
+                by: Some(task.slug.into()),
+                at: Some(0.1 + 0.2),
+                commit: tip.map(str::to_string),
+                detail: root.display().to_string(),
+                ..Gate::default()
+            }]),
+            "closed" => Err(format!("{} has no certificate yet", task.branch)),
+            _ => panic!("the certificate's file is gone"),
+        }
+    }
+    fn kept_while(&self, root: &Path, task: &symphony_plugin::TaskRef<'_>) -> String {
+        match self.0 {
+            "broken" => panic!("the stamp's file is gone"),
+            _ => format!("{} {} in {}", self.0, task.status, root.display()),
+        }
+    }
+}
+
+/// The task each gates test asks of.
+const TASK: symphony_plugin::TaskRef<'static> = symphony_plugin::TaskRef {
+    slug: "tools/a",
+    status: "review",
+    branch: "tools/a-2",
+};
+
+#[test]
+fn a_plugins_process_answers_its_gates_as_it_does_linked_and_shows_a_refusal_as_its_error() {
+    let tree = Tree::new();
+    let remote = Remote::leaked(
+        "landings",
+        process_in(&tree, "landings"),
+        peer(&LANDINGS, Arc::default()),
+        patient(),
+    );
+    // Declared, it is not refused, and its answerers stand for it in its order.
+    assert_eq!(
+        remote.declaration().map(|d| d.gates.clone()),
+        Ok(vec!["landing".into(), "closed".into(), "broken".into()])
+    );
+    let (remote_ones, linked_ones) = (remote.gates(), LANDINGS.gates());
+    // On a branch at its tip and with none, its gates or its own error, as it said them.
+    for (far, near) in remote_ones.iter().zip(&linked_ones).take(2) {
+        assert_eq!(far.name(), near.name());
+        for tip in [Some("c0ffee"), None] {
+            assert_eq!(
+                far.answer(&tree.root, &TASK, tip),
+                near.answer(&tree.root, &TASK, tip),
+                "{} {tip:?}",
+                far.name()
+            );
+        }
+        assert_eq!(
+            far.kept_while(&tree.root, &TASK),
+            near.kept_while(&tree.root, &TASK)
+        );
+    }
+    assert_eq!(
+        remote_ones[1].answer(&tree.root, &TASK, Some("c0ffee")),
+        Err("tools/a-2 has no certificate yet".into())
+    );
+    // A panic in the plugin is its refusal, said as the answerer's error in both calls.
+    assert_eq!(
+        remote_ones[2].answer(&tree.root, &TASK, Some("c0ffee")),
+        Err(
+            "plugin landings: it refused gates.answer: landings panicked: the certificate's file \
+             is gone"
+                .into()
+        )
+    );
+    assert_eq!(
+        untold(remote_ones[2], &tree.root, &TASK),
+        "plugin landings: it refused gates.kept_while: landings panicked: the stamp's file is gone"
+    );
+}
+
+#[test]
+fn a_plugins_gates_are_kept_and_read_as_a_linked_ones_are_its_refusal_unknown() {
+    use crate::gates::{Asked, Kept, theirs};
+    use symphony_plugin::vocabulary::GateState;
+    let tree = Tree::new();
+    let remote = Remote::leaked(
+        "landings",
+        process_in(&tree, "landings"),
+        peer(&LANDINGS, Arc::default()),
+        patient(),
+    );
+    let answerers = |plugin: &'static dyn Plugin| -> Vec<(&'static str, &'static dyn Gates)> {
+        plugin
+            .gates()
+            .into_iter()
+            .map(|g| ("landings", g))
+            .collect()
+    };
+    let (far, near) = (answerers(remote), answerers(&LANDINGS));
+    let (kept_far, kept_near) = (Kept::default(), Kept::default());
+    let asked = |tip: Option<&str>| Asked {
+        slug: TASK.slug.into(),
+        status: TASK.status.into(),
+        branch: TASK.branch.into(),
+        tip: tip.map(str::to_string),
+    };
+    // The two that answer read alike; the one that panics is unknown in its place either way.
+    for tip in [Some("c0ffee"), Some("c0ffee"), Some("decade"), None] {
+        let (from_far, from_near) = (
+            theirs(&kept_far, &tree.root, &far, &asked(tip)),
+            theirs(&kept_near, &tree.root, &near, &asked(tip)),
+        );
+        assert_eq!(from_far[..2], from_near[..2], "{tip:?}");
+        assert_eq!(
+            (from_far[2].name.as_str(), from_far[2].state),
+            ("broken", GateState::Unknown),
+            "{tip:?}"
+        );
+        assert_eq!(
+            from_far[2].detail,
+            "plugin landings: it refused gates.kept_while: landings panicked: the stamp's file is \
+             gone"
+        );
+    }
+    // The error `closed` said, kept as it said it.
+    let read = theirs(&kept_far, &tree.root, &far, &asked(Some("c0ffee")));
+    assert_eq!(
+        (
+            read[1].name.as_str(),
+            read[1].state,
+            read[1].detail.as_str()
+        ),
+        (
+            "closed",
+            GateState::Unknown,
+            "tools/a-2 has no certificate yet"
+        )
+    );
+}
+
+#[test]
+fn a_kept_pass_is_not_used_once_the_process_cannot_tell_what_it_is_kept_while() {
+    use crate::gates::{Asked, Kept, theirs};
+    use symphony_plugin::vocabulary::GateState;
+    let tree = Tree::new();
+    // It answers as its plugin does until its third call, then ends; a pause longer than the test,
+    // so each call after finds it down.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let respond: Respond = Arc::new(move |id, request| {
+        if calls.fetch_add(1, Ordering::SeqCst) >= 2 {
+            return Said::End;
+        }
+        let line = format!("{{\"id\":{id},\"request\":{request}}}\n");
+        let mut answered = Vec::new();
+        symphony_plugin::serve_on(&LANDINGS, line.as_bytes(), &mut answered).unwrap();
+        Said::Bytes(answered)
+    });
+    let remote = Remote::leaked(
+        "landings",
+        process_in(&tree, "landings"),
+        hand_made(
+            Declaration::of(&LANDINGS),
+            respond,
+            Seen::default(),
+            "was killed by signal 9",
+        ),
+        limits(PATIENT, Duration::from_secs(600)),
+    );
+    let landing: Vec<(&str, &'static dyn Gates)> = vec![("landings", remote.gates()[0])];
+    let kept = Kept::default();
+    let asked = Asked {
+        slug: TASK.slug.into(),
+        status: TASK.status.into(),
+        branch: TASK.branch.into(),
+        tip: Some("c0ffee".into()),
+    };
+    // What it is kept while, then its answer: met, and kept.
+    let met = theirs(&kept, &tree.root, &landing, &asked);
+    assert_eq!(
+        (met[0].name.as_str(), met[0].state),
+        ("certificate", GateState::Met)
+    );
+    // The next read finds what it is kept while has no answer: the gate it met is unknown, its why
+    // the detail, and never the pass kept for the same task and tip.
+    let read = theirs(&kept, &tree.root, &landing, &asked);
+    assert_eq!(
+        (
+            read[0].name.as_str(),
+            read[0].state,
+            read[0].detail.as_str()
+        ),
+        (
+            "certificate",
+            GateState::Unknown,
+            "plugin landings: its process was killed by signal 9"
+        )
+    );
+    until("the remote is down", || remote.down().is_some());
+    let read = theirs(&kept, &tree.root, &landing, &asked);
+    assert_eq!(
+        (read[0].state, read[0].detail.as_str()),
+        (
+            GateState::Unknown,
+            "plugin landings: its process was killed by signal 9; it starts again in a moment"
+        )
+    );
+}
+
+#[test]
+fn gates_of_an_older_minor_are_asked_and_a_minor_before_the_calls_never_sent_them() {
+    use symphony_plugin::protocol::{AnswerGates, KeptWhile};
+    // Both calls are 0.1's: a plugin of 0.1 is asked them and answers as linked.
+    assert_eq!((AnswerGates::SINCE, KeptWhile::SINCE), (1, 1));
+    let tree = Tree::new();
+    let mut declared = Declaration::of(&LANDINGS);
+    declared.protocol = Version::new(PROTOCOL.major, 1);
+    let remote = Remote::leaked(
+        "landings",
+        process_in(&tree, "landings"),
+        serving_as(&LANDINGS, declared, Seen::default()),
+        patient(),
+    );
+    let (far, near) = (remote.gates()[0], LANDINGS.gates()[0]);
+    assert_eq!(
+        far.answer(&tree.root, &TASK, Some("c0ffee")),
+        near.answer(&tree.root, &TASK, Some("c0ffee"))
+    );
+    assert!(far.answer(&tree.root, &TASK, Some("c0ffee")).is_ok());
+    assert_eq!(
+        far.kept_while(&tree.root, &TASK),
+        near.kept_while(&tree.root, &TASK)
+    );
+    // Under a minor before them, its answer is refused naming the protocol it speaks and what it is
+    // kept while is the trait's default, neither sent.
+    let tree = Tree::new();
+    let seen = Seen::default();
+    let mut declared = Declaration::of(&LANDINGS);
+    declared.protocol = Version::new(PROTOCOL.major, 0);
+    let remote = Remote::leaked(
+        "landings",
+        process_in(&tree, "landings"),
+        serving_as(&LANDINGS, declared, seen.clone()),
+        patient(),
+    );
+    let gates = remote.gates()[0];
+    assert_eq!(
+        gates.answer(&tree.root, &TASK, Some("c0ffee")),
+        Err("plugin landings: it speaks protocol 0.0, which has no gates.answer".into())
+    );
+    assert_eq!(gates.kept_while(&tree.root, &TASK), "");
+    let heard = seen.heard();
+    assert_eq!(heard.len(), 1, "{heard:?}");
+    assert!(heard[0].contains("\"plugin.declare\""), "{heard:?}");
+}
+
+#[test]
+fn a_gates_answer_waits_its_turn_among_those_asked_at_once_and_says_so_past_its_bound() {
+    let tree = Tree::new();
+    let remote = Remote::leaked(
+        "landings",
+        process_in(&tree, "landings"),
+        peer(&LANDINGS, Arc::default()),
+        patient(),
+    );
+    let gates = remote.gates()[0];
+    let linked = LANDINGS.gates()[0].answer(&tree.root, &TASK, Some("c0ffee"));
+    // Asked while every turn is taken, an answer is asked and answered once one is given back.
+    let mut turns: Vec<GatesTurn> = (0..GATES_AT_ONCE)
+        .map(|_| remote.gates_turn().unwrap())
+        .collect();
+    let answered = std::thread::scope(|scope| {
+        let asking = scope.spawn(|| gates.answer(&tree.root, &TASK, Some("c0ffee")));
+        turns.pop();
+        asking.join().unwrap()
+    });
+    assert_eq!(answered, linked);
+    assert_eq!(*remote.gates_asked.lock().unwrap(), GATES_AT_ONCE - 1);
+    // With every turn taken, an answer waits in the host for one, and past its bound is not asked
+    // and says why.
+    let tree = Tree::new();
+    let mut limits = patient();
+    limits.gates = Duration::from_millis(50);
+    let remote = Remote::leaked(
+        "landings",
+        process_in(&tree, "landings"),
+        peer(&LANDINGS, Arc::default()),
+        limits,
+    );
+    let _turns: Vec<GatesTurn> = (0..GATES_AT_ONCE)
+        .map(|_| remote.gates_turn().unwrap())
+        .collect();
+    assert_eq!(
+        remote.gates()[0].answer(&tree.root, &TASK, Some("c0ffee")),
+        Err(format!(
+            "plugin landings: the {GATES_AT_ONCE} gates answers it is asked at once ran for 50ms, \
+             so this one was not asked"
+        ))
+    );
+}
+
+/// A remote of [`LANDINGS`] served by a hand-made peer that answers each gates answer as `respond`
+/// says and keeps what `seen` sees: a gates answer given up after 50 ms, and a call given up
+/// waited for as long as only a stall outlasts, so only a late answer or the test resolves its
+/// cancel.
+fn holding_gates(tree: &Tree, respond: Respond, seen: Seen) -> &'static Remote {
+    let declared = Declaration::of(&LANDINGS);
+    Remote::leaked(
+        "landings",
+        process_in(tree, "landings"),
+        hand_made(declared, respond, seen, "exited with code 0"),
+        Limits {
+            gates: Duration::from_millis(50),
+            ..patient()
+        },
+    )
+}
+
+/// How many gates answers `remote` asks now, in their turns.
+fn gates_asked(remote: &Remote) -> usize {
+    *remote.gates_asked.lock().unwrap()
+}
+
+#[test]
+fn a_gates_answer_given_up_holds_its_turn_until_its_late_answer_comes() {
+    let tree = Tree::new();
+    let seen = Seen::default();
+    // Its gates answer runs on until the test lets it go, past its cancel, as the SDK's worker
+    // runs one on.
+    let (let_go, held) = mpsc::channel::<()>();
+    let held = Mutex::new(held);
+    let respond: Respond = Arc::new(move |id, _| {
+        let _ = held.lock().recover().recv();
+        let late: Answered<Result<Vec<symphony_plugin::vocabulary::Gate>, String>> =
+            Answered::Answer(Ok(Vec::new()));
+        Said::Lines(vec![answering(id, &serde_json::to_string(&late).unwrap())])
+    });
+    let remote = holding_gates(&tree, respond, seen.clone());
+    // The other turns taken, the answer asked in the last is given up at its bound and holds it.
+    let _others: Vec<GatesTurn> = (1..GATES_AT_ONCE)
+        .map(|_| remote.gates_turn().unwrap())
+        .collect();
+    assert_eq!(
+        remote.gates()[0].answer(&tree.root, &TASK, Some("c0ffee")),
+        Err("plugin landings: no answer in 50ms".into())
+    );
+    assert_eq!(gates_asked(remote), GATES_AT_ONCE);
+    // So another answer waits in the host while the plugin still runs it, and past its bound is
+    // not asked.
+    assert!(remote.gates_turn().is_err());
+    assert_eq!(gates_asked(remote), GATES_AT_ONCE);
+    // Answered late, its cancel resolved: its turn is given back, and the process kept.
+    let_go.send(()).unwrap();
+    until("the late answer was read", || {
+        tree.read("artifacts/plugins/landings.log")
+            .contains("was answered after it was given up: dropped")
+    });
+    assert_eq!(gates_asked(remote), GATES_AT_ONCE - 1);
+    drop(remote.gates_turn().unwrap());
+    assert_eq!(remote.down(), None);
+    assert_eq!(seen.kills(), 0);
+    // The call it gave up was the one cancelled: the peer reads the cancel only once it has
+    // written its late answer.
+    until("the cancel was heard", || seen.heard().len() == 3);
+    let heard = seen.heard();
+    let asked: Raw = serde_json::from_str(&heard[1]).unwrap();
+    assert!(
+        (asked.request).is_some_and(|r| r.get().contains("gates.answer")),
+        "{heard:?}"
+    );
+    assert_eq!(heard[2], format!("{{\"id\":{},\"cancel\":{{}}}}", asked.id));
+}
+
+#[test]
+fn a_gates_answer_given_up_holds_its_turn_until_its_silent_process_is_ended() {
+    let tree = Tree::new();
+    let seen = Seen::default();
+    // Its gates answers never come, and its cancel is not answered.
+    let remote = holding_gates(
+        &tree,
+        Arc::new(|_, _| Said::Lines(Vec::new())),
+        seen.clone(),
+    );
+    let gates = remote.gates()[0];
+    let connection = remote.connection().unwrap();
+    assert_eq!(
+        gates.answer(&tree.root, &TASK, Some("c0ffee")),
+        Err("plugin landings: no answer in 50ms".into())
+    );
+    assert_eq!(gates_asked(remote), 1);
+    until("the cancel was sent", || seen.heard().len() == 3);
+    assert_eq!(gates_asked(remote), 1);
+    let asked: Raw = serde_json::from_str(&seen.heard()[1]).unwrap();
+    // Still unanswered once the wait after its cancel has run out, its process is ended, which
+    // gives the turn back.
+    remote.after_cancel(&connection, asked.id);
+    assert_eq!(gates_asked(remote), 0);
+    assert_eq!(
+        remote.down(),
+        Some(format!(
+            "its process was ended: call {} had no answer {PATIENT:?} after it was cancelled",
+            asked.id
+        ))
+    );
+    assert_eq!(seen.kills(), 1);
 }

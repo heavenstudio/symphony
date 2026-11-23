@@ -3,8 +3,7 @@ use super::*;
 const WANTED: Wanted<'static> = Wanted {
     repository: 77,
     base: "main",
-    checks_app: 42,
-    landing_app: 43,
+    app: 42,
     operation: Operation::Task,
 };
 
@@ -16,8 +15,7 @@ fn repository() -> Value {
     })
 }
 
-/// The rules a delivery needs: those nobody bypasses from ruleset 1, the update restriction
-/// from ruleset 2.
+/// The rules a delivery needs, from ruleset 1, which nobody bypasses.
 fn rules() -> Vec<Value> {
     vec![
         json!({"type": "pull_request", "ruleset_id": 1,
@@ -26,7 +24,6 @@ fn rules() -> Vec<Value> {
             "required_status_checks": [{"context": ELIGIBLE, "integration_id": 42}]}}),
         json!({"type": "non_fast_forward", "ruleset_id": 1}),
         json!({"type": "deletion", "ruleset_id": 1}),
-        json!({"type": "update", "ruleset_id": 2}),
     ]
 }
 
@@ -59,10 +56,10 @@ fn another_repository_or_one_that_says_nothing_of_itself_is_not_the_one_bound() 
     );
     // An answer that holds none of what is read is missed on every count, never passed.
     let missing = judge(&json!({}), &rules(), &bypasses(), &WANTED);
-    assert_eq!(missing.len(), 6, "{missing:?}");
-    assert!(missing[2].starts_with("the repository is archived, or does not say it is not"));
-    assert!(missing[3].starts_with("whether the merging token administers the repository is not"));
-    assert!(missing[4].starts_with("auto-merge is allowed, or the repository's merge settings"));
+    assert_eq!(missing.len(), 5, "{missing:?}");
+    assert!(missing[0].starts_with("whether the App's token administers the repository is not"));
+    assert!(missing[3].starts_with("the repository is archived, or does not say it is not"));
+    assert!(missing[4].starts_with("the repository's merge methods are not shown"));
 }
 
 #[test]
@@ -76,7 +73,7 @@ fn a_token_is_no_administrator_only_where_the_repository_says_so() {
     assert_eq!(
         judged(json!(true)),
         [
-            "the merging token administers the repository: what merges must not be able to change \
+            "the App's token administers the repository: what merges must not be able to change \
           the rules it is held to"
         ]
     );
@@ -91,7 +88,7 @@ fn a_token_is_no_administrator_only_where_the_repository_says_so() {
         assert_eq!(
             judged(admin.clone()),
             [
-                "whether the merging token administers the repository is not shown: the repository \
+                "whether the App's token administers the repository is not shown: the repository \
               does not say it does not"
             ],
             "{admin}"
@@ -117,12 +114,56 @@ fn a_rule_of_a_ruleset_never_read_holds_nobody() {
         judge(&repository(), &rules, &bypasses(), &WANTED),
         ["the rule that blocks a force push holds not everyone on main: ruleset 5 was not read"]
     );
-    rules[2] = json!({"type": "non_fast_forward", "ruleset_id": 1});
-    rules[4] = json!({"type": "update"});
-    let missing = judge(&repository(), &rules, &bypasses(), &WANTED);
-    assert!(
-        missing[0].ends_with("one from no ruleset read"),
-        "{missing:?}"
+}
+
+#[test]
+fn a_rule_that_restricts_updates_is_refused_whoever_it_lets_through() {
+    // GitHub's auto-merge, armed by the App, merges only where no rule asks for a bypass, and the
+    // check alone holds a merge to its evidence (docs/operations/GITHUB.md).
+    for (rule, named) in [
+        (json!({"type": "update", "ruleset_id": 2}), "ruleset 2"),
+        (json!({"type": "update", "ruleset_id": 1}), "ruleset 1"),
+        (json!({"type": "update"}), "one from no ruleset named"),
+    ] {
+        let mut rules = rules();
+        rules.push(rule);
+        assert_eq!(
+            judge(&repository(), &rules, &bypasses(), &WANTED),
+            [format!(
+                "a rule restricts updates of main ({named}): a pull request whose {ELIGIBLE} is \
+                 green merges only past it, and the check alone holds a merge to its evidence"
+            )]
+        );
+    }
+    let mut two = rules();
+    two.push(json!({"type": "update", "ruleset_id": 2}));
+    two.push(json!({"type": "update", "ruleset_id": 1}));
+    assert!(judge(&repository(), &two, &bypasses(), &WANTED)[0].contains("(ruleset 1, ruleset 2)"));
+}
+
+#[test]
+fn auto_merge_allowed_or_not_is_no_part_of_the_policy() {
+    let mut repository = repository();
+    for allowed in [json!(true), json!(false), json!(null)] {
+        repository["allow_auto_merge"] = allowed;
+        assert_eq!(
+            judge(&repository, &rules(), &bypasses(), &WANTED),
+            Vec::<String>::new()
+        );
+    }
+}
+
+#[test]
+fn a_read_made_by_who_administers_is_judged_on_its_rules_alone() {
+    let mut administered = repository();
+    administered["permissions"]["admin"] = json!(true);
+    assert_eq!(
+        judge(&administered, &rules(), &bypasses(), &WANTED).len(),
+        1
+    );
+    assert_eq!(
+        judge_rules(&administered, &rules(), &bypasses(), &WANTED),
+        Vec::<String>::new()
     );
 }
 
@@ -209,7 +250,7 @@ struct Kept {
     answer: (u16, String),
 }
 
-impl Transport for Kept {
+impl crate::transport::Transport for Kept {
     fn send(
         &self,
         request: &crate::transport::Request,
@@ -223,61 +264,138 @@ impl Transport for Kept {
     }
 }
 
-fn reading(status: u16, body: &Value) -> (Result<Bypass, Value>, Vec<crate::transport::Request>) {
+/// Ruleset 2 as verified of repository 77 when GitHub said it last changed at 04:03:25.191Z,
+/// said as gh says it, in another zone, and bypassed by `bypass`.
+fn verified(bypass: &[(&str, Option<i64>, &str)]) -> Verified {
+    Verified {
+        repository: 77,
+        updated_at: "2026-11-20T05:03:25.191+01:00".into(),
+        bypass: (bypass.iter())
+            .map(|(kind, id, mode)| ((*kind).into(), *id, (*mode).into()))
+            .collect(),
+        at: 1,
+    }
+}
+
+/// What a ruleset that shows no time it last changed is.
+const SHOWS_NO_TIME: &str =
+    "it shows no time it last changed that reads, so its verification cannot be held to it";
+
+/// Ruleset 2 as the App's token reads it.
+fn ruleset(updated_at: &str, can: &str) -> Value {
+    json!({"id": 2, "enforcement": "active", "updated_at": updated_at,
+           "current_user_can_bypass": can, "rules": []})
+}
+
+fn reading(
+    status: u16,
+    body: &Value,
+    verified: Option<&Verified>,
+) -> (Result<Bypass, Value>, Vec<crate::transport::Request>) {
     let kept = Kept {
         asked: std::cell::RefCell::default(),
         answer: (status, body.to_string()),
     };
-    let repository = Repository {
-        owner: "o".into(),
-        name: "n".into(),
+    let host = Host {
+        transport: &kept,
+        repository: crate::config::Repository {
+            owner: "o".into(),
+            name: "n".into(),
+        },
     };
-    let read = Reader::new(&kept, repository).bypass(2);
+    let read = bypass(&host, verified, 2, &WANTED);
     (read, kept.asked.into_inner())
 }
 
+const AT: &str = "2026-11-20T04:03:25.191Z";
+
 #[test]
-fn the_policy_token_is_sent_with_one_read_of_one_ruleset_and_nothing_else() {
-    let landing = json!([{"actor_type": "Integration", "actor_id": 43, "bypass_mode": "always"}]);
-    for (status, body, read) in [
+fn who_bypasses_a_ruleset_is_what_was_verified_while_it_is_unchanged() {
+    let none = verified(&[]);
+    let team = verified(&[("Team", Some(7), "pull_request")]);
+    let unknown = |why: &str| Bypass::Unknown(why.into());
+    let never = format!("it was never verified: {VERIFY}");
+    let elsewhere = Verified {
+        repository: 78,
+        ..none.clone()
+    };
+    let own = verified(&[("Integration", Some(42), "pull_request")]);
+    for (status, body, verified, read) in [
+        // The same instant, whichever zone it is said in.
         (
             200,
-            json!({"id": 2, "enforcement": "active", "bypass_actors": landing}),
-            Bypass::Actors(vec![("Integration".into(), Some(43), "always".into())]),
-        ),
-        (
-            200,
-            json!({"id": 2, "enforcement": "active", "bypass_actors": []}),
+            ruleset(AT, "never"),
+            Some(&none),
             Bypass::Actors(Vec::new()),
         ),
-        // A list left out is not an empty one, whoever asks.
         (
             200,
-            json!({"id": 2, "enforcement": "active"}),
-            Bypass::Unknown("its bypass list is not shown to the policy token".into()),
+            ruleset(AT, "never"),
+            Some(&team),
+            Bypass::Actors(vec![("Team".into(), Some(7), "pull_request".into())]),
+        ),
+        // The App's own bypass is read, whatever was verified.
+        (
+            200,
+            ruleset(AT, "always"),
+            Some(&none),
+            Bypass::Actors(vec![("Integration".into(), Some(42), "always".into())]),
         ),
         (
             200,
-            json!({"id": 2, "enforcement": "disabled", "bypass_actors": []}),
-            Bypass::Unknown("it does not read as active".into()),
+            ruleset(AT, "pull_requests_only"),
+            Some(&own),
+            Bypass::Actors(vec![(
+                "Integration".into(),
+                Some(42),
+                "pull_request".into(),
+            )]),
         ),
         (
             200,
-            json!({"id": 3, "enforcement": "active", "bypass_actors": []}),
-            Bypass::Unknown("it does not read as active".into()),
+            json!({"id": 2, "enforcement": "active", "updated_at": AT}),
+            Some(&none),
+            unknown("whether the App bypasses it is not shown"),
+        ),
+        // Changed since: an actor added or taken out, its enforcement, anything.
+        (
+            200,
+            ruleset("2026-11-20T04:05:05.939Z", "never"),
+            Some(&none),
+            unknown(&format!(
+                "it changed at 2026-11-20T04:05:05.939Z after it was verified as last changed at \
+                 2026-11-20T05:03:25.191+01:00: {VERIFY}"
+            )),
+        ),
+        // Never verified, or verified of another repository: not known, never empty.
+        (200, ruleset(AT, "never"), None, unknown(&never)),
+        (200, ruleset(AT, "never"), Some(&elsewhere), unknown(&never)),
+        (
+            200,
+            json!({"id": 2, "enforcement": "disabled", "updated_at": AT}),
+            Some(&none),
+            unknown("it does not read as active"),
+        ),
+        (
+            200,
+            json!({"id": 3, "enforcement": "active", "updated_at": AT}),
+            Some(&none),
+            unknown("it does not read as active"),
         ),
         (
             404,
             json!({"message": "Not Found"}),
-            Bypass::Unknown("GitHub answered 404 to the policy token".into()),
+            Some(&none),
+            unknown("GitHub answered 404 to the App's token"),
         ),
         (
             403,
             json!({"message": "Resource not accessible by integration"}),
-            Bypass::Unknown("GitHub answered 403 to the policy token".into()),
+            Some(&none),
+            unknown("GitHub answered 403 to the App's token"),
         ),
     ] {
-        let (answer, asked) = reading(status, &body);
+        let (answer, asked) = reading(status, &body, verified);
         assert_eq!(answer, Ok(read), "{body}");
         // One request, a read, of the ruleset and of nothing else, with nothing sent in it.
         assert_eq!(
@@ -289,9 +407,41 @@ fn the_policy_token_is_sent_with_one_read_of_one_ruleset_and_nothing_else() {
             }]
         );
     }
-    // No answer to judge is unavailable, never a list.
+}
+
+#[test]
+fn a_ruleset_or_a_record_with_no_time_it_last_changed_holds_nobody() {
+    let timeless = Verified {
+        updated_at: String::new(),
+        ..verified(&[])
+    };
+    for (body, verified, why) in [
+        (
+            json!({"id": 2, "enforcement": "active", "current_user_can_bypass": "never"}),
+            verified(&[]),
+            SHOWS_NO_TIME.to_string(),
+        ),
+        (
+            ruleset("yesterday", "never"),
+            verified(&[]),
+            SHOWS_NO_TIME.to_string(),
+        ),
+        (
+            ruleset(AT, "never"),
+            timeless,
+            format!("its verification kept no time it last changed that reads: {VERIFY}"),
+        ),
+    ] {
+        let (answer, _) = reading(200, &body, Some(&verified));
+        assert_eq!(answer, Ok(Bypass::Unknown(why)), "{body}");
+    }
+}
+
+#[test]
+fn a_ruleset_github_gives_no_answer_for_is_unavailable_and_of_the_policy() {
+    // No answer to judge is unavailable, never a list, and of the policy.
     for status in [401, 429, 500] {
-        let (answer, asked) = reading(status, &json!({}));
+        let (answer, asked) = reading(status, &json!({}), Some(&verified(&[])));
         let stopped = answer.unwrap_err();
         assert_eq!(
             (&stopped["state"], &stopped["kind"]),
@@ -299,9 +449,8 @@ fn the_policy_token_is_sent_with_one_read_of_one_ruleset_and_nothing_else() {
             "{status}"
         );
         assert!(
-            (stopped["why"].as_str().unwrap()).starts_with(
-                "who bypasses ruleset 2 was not read with the policy token (policy_token_file): "
-            ),
+            (stopped["why"].as_str().unwrap())
+                .starts_with("ruleset 2 was not read with the App's token: "),
             "{stopped}"
         );
         assert_eq!(asked.len(), 1);
@@ -309,17 +458,32 @@ fn the_policy_token_is_sent_with_one_read_of_one_ruleset_and_nothing_else() {
 }
 
 #[test]
-fn a_policy_token_that_is_not_there_refuses_as_a_policy_that_does_not_hold() {
-    let answer = unread(&WANTED, "token_file /secrets/policy: No such file");
-    assert_eq!(
-        (&answer["state"], &answer["kind"]),
-        (&json!("refused"), &json!("policy"))
-    );
-    assert_eq!(
-        answer["missing"],
-        json!([
-            "who bypasses the rules of main cannot be read, policy_token_file not being usable: \
-             token_file /secrets/policy: No such file"
-        ])
-    );
+fn githubs_times_read_as_one_instant_whichever_zone_says_them() {
+    let at = instant(AT).unwrap();
+    for same in [
+        "2026-11-20T05:03:25.191+01:00",
+        "2026-11-19T23:33:25.191-04:30",
+        "2026-11-20T04:03:25.19100Z",
+    ] {
+        assert_eq!(instant(same), Some(at), "{same}");
+    }
+    assert_eq!(instant("2026-11-20T04:03:25Z"), Some(at - 191));
+    assert_eq!(instant("2026-11-20T04:03:25.5Z"), Some(at - 191 + 500));
+    assert_eq!(instant("1970-01-01T00:00:00Z"), Some(0));
+    assert_ne!(instant("2026-11-20T04:03:25.192Z"), Some(at));
+    for wrong in [
+        "",
+        "2026-11-20",
+        "2026-11-20T04:03:25",
+        "2026-11-20T04:03:25.Z",
+        "2026-11-20T04:03:25.191",
+        "2026-11-20T04:03:25.191+0100",
+        "2026-11-20T04:03:25.191+24:00",
+        "2026-11-20T04:03:25.191 01:00",
+        "2026-11-20T04:03:25.1234567890Z",
+        "2026-13-20T04:03:25Z",
+        "2026-11-20T04:03:25.191Zjunk",
+    ] {
+        assert_eq!(instant(wrong), None, "{wrong:?}");
+    }
 }

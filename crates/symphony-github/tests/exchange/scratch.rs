@@ -180,13 +180,12 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         let home =
             symphony_board::server::Home::in_common(&self.root.join(".git"), Some(&surreal()));
-        let _ = home.stop();
+        let _ = home.stop_board();
     }
 }
 
 #[test]
 fn only_what_main_commits_turns_it_on() {
-    let _starts = crate::starting();
     let dir = Dir::new("committed");
     let root = dir.0.join("project");
     std::fs::create_dir_all(&root).unwrap();
@@ -195,8 +194,13 @@ fn only_what_main_commits_turns_it_on() {
     let source = Committed { main: root.clone() };
     let enabled = crate::settings(&dir.token_file(), "issues = \"export\"");
 
-    // No file: turned off.
-    assert!(!source.load().unwrap().config.enabled);
+    // No file: turned off, read where the default branch would commit it.
+    let absent = source.load().unwrap();
+    assert!(!absent.config.enabled);
+    assert_eq!(
+        (absent.text, absent.place.as_str()),
+        (None, "symphony-github.toml on main")
+    );
 
     // A file in the working tree, and one a branch commits, enable nothing.
     std::fs::write(root.join("symphony-github.toml"), &enabled).unwrap();
@@ -236,6 +240,8 @@ fn only_what_main_commits_turns_it_on() {
     git(&root, &["merge", "-q", "feature"]);
     let first = source.load().unwrap();
     assert!(first.config.enabled);
+    assert_eq!(first.text.as_deref(), Some(enabled.as_str()));
+    assert_eq!(first.place, "symphony-github.toml on main");
     std::fs::write(
         root.join("symphony-github.toml"),
         format!("{enabled}# again\n"),
@@ -263,11 +269,21 @@ fn only_what_main_commits_turns_it_on() {
     assert!(source.load().unwrap_err().contains("no branch trunk"));
     git(&root, &["branch", "trunk", "feature"]);
     assert!(source.load().unwrap().config.enabled);
+
+    // A project file HEAD commits that does not read names no branch: the refusal names it, by
+    // the TOML message alone.
+    std::fs::write(root.join("symphony.toml"), "[project\n").unwrap();
+    git(&root, &["commit", "-q", "-am", "broken project"]);
+    let unread = source.load().unwrap_err();
+    let message = unread.strip_prefix("symphony.toml: ").unwrap_or_default();
+    assert!(
+        !message.is_empty() && !message.contains("symphony"),
+        "{unread}"
+    );
 }
 
 #[test]
 fn a_token_file_inside_the_repository_is_refused_before_any_request() {
-    let _starts = crate::starting();
     let scratch = Scratch::new("token-inside");
     let inside = scratch.root.join("token");
     std::fs::write(&inside, TOKEN).unwrap();
@@ -301,7 +317,6 @@ fn a_token_file_inside_the_repository_is_refused_before_any_request() {
     reason = "one board's life in order, each step on what the one before left"
 )]
 fn issues_are_exchanged_with_a_real_board_through_its_api_and_curl() {
-    let _starts = crate::starting();
     let scratch = Scratch::new("board");
     let mut said = String::new();
 

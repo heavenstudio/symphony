@@ -47,9 +47,19 @@ impl Terminals {
         fs::create_dir_all(&repo).unwrap();
         git(&repo, &["init", "-q", "-b", "main"]);
         git(&repo, &["commit", "-q", "--allow-empty", "-m", "x"]);
+        // The agents' programs a launch looks for, stand-ins found first: no case passes or fails
+        // by what this machine has installed.
+        let agents = dir.join("agents-bin");
+        crate::stand_ins::stand_ins(&agents, &["claude", "codex"]);
+        let path = std::env::join_paths(std::iter::once(agents).chain(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        )))
+        .unwrap()
+        .into_string()
+        .unwrap();
         let mut env = env();
         for (key, value) in [
-            ("PATH", std::env::var("PATH").unwrap_or_default()),
+            ("PATH", path),
             ("HC_BIN", FAKE.to_string()),
             ("HERDR_APP_BIN", format!("'{FAKE}' app")),
             ("FAKE_HC_STATE", dir.join("hc.json").display().to_string()),
@@ -455,6 +465,40 @@ fn a_launch_takes_the_model_agents_models_names_for_its_role_and_flags_win_over_
         assert_eq!(
             (started.as_str(), started_model.as_str()),
             (agent, model),
+            "{name}"
+        );
+        assert_eq!(s.model, model, "{name}");
+    }
+}
+
+#[test]
+fn a_launch_takes_the_model_the_boards_store_holds_over_the_files_and_under_the_local_files() {
+    let manifest = "[agents]\nlaunch = { default = \"claude\", model = \"opus\" }\n\n\
+                    [agents.models]\nexecutor = \"sonnet\"\n";
+    for (name, local, model) in [
+        ("stored", None, "fable"),
+        (
+            "local",
+            Some("[agents.models]\nexecutor = \"haiku\"\n"),
+            "haiku",
+        ),
+    ] {
+        let p = Terminals::new(&format!("stored-model-{name}"));
+        p.manifest(manifest);
+        if let Some(local) = local {
+            fs::write(p.env.cwd.join("symphony.local.toml"), local).unwrap();
+        }
+        let orch = p.orchestrator();
+        let set = p.as_(
+            &orch,
+            &["settings", "set", "agents.models.executor", "fable"],
+        );
+        assert_eq!(set.code, 0, "{}", set.err);
+        let (_, s) = p.launch_with(&orch, &[]);
+        let (started, started_model, _) = p.started_agent();
+        assert_eq!(
+            (started.as_str(), started_model.as_str()),
+            ("claude", model),
             "{name}"
         );
         assert_eq!(s.model, model, "{name}");

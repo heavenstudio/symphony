@@ -145,10 +145,7 @@ fn a_changed_file_gets_a_new_version_and_a_missing_one_none() {
 /// status, its `Cache-Control` and `ETag`, and its body.
 async fn served(root: &Path, url: &str, headers: &[(&str, &str)]) -> (u16, String, String, String) {
     let path = url.strip_prefix("/lantern").expect("a path under the base");
-    let gate = crate::gate::Gate::new(
-        std::sync::Arc::new(|_| Ok(None)),
-        std::sync::Arc::new(std::time::Instant::now),
-    );
+    let gate = crate::testing::open_gate();
     let shared = crate::front::Shared::project(1, 1234, root, None, gate, "/lantern");
     let mut request = axum::http::Request::builder().uri(path);
     for (name, value) in headers {

@@ -12,10 +12,11 @@
 //!
 //! Every wait is bounded by the browser's own work, not the wall: the CPU its recorded process
 //! group spends, and the observation turns it completes (a scheduler delay spends nothing). A wait
-//! on the page under test counts only the turns that page took part in, answering a probe of its
-//! own renderer: a loaded machine can leave that renderer without a single turn for seconds while
-//! the rest of the browser runs on, and such a stall spends nothing. A wall-clock backstop, several
-//! times the wait's allowance, still ends every wait, with an error naming the stall.
+//! on the page under test counts only the turns that page took part in, drawing a frame for a
+//! probe of its own renderer: a loaded machine can leave that renderer without a single task, or
+//! its page without a single frame while its main thread runs on, for seconds while the rest of
+//! the browser runs on, and such a stall spends nothing. A wall-clock backstop, several times the
+//! wait's allowance, still ends every wait, with an error naming the stall.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -38,6 +39,9 @@ mod tests;
 
 const POLL: Duration = Duration::from_millis(25);
 const PROTOCOL_CPU: Duration = Duration::from_secs(60);
+/// What [`Chrome::rooted`] asks: `null` of a document with no root element, else the time the
+/// document began, which no two documents of a page share.
+const ROOTED: &str = "document.documentElement === null ? null : performance.timeOrigin";
 const CLEANUP_CPU: Duration = Duration::from_secs(1);
 /// A wait ends at the latest this many times its allowance after it started, on the wall clock,
 /// and never sooner than [`BACKSTOP_FLOOR`]: the stalls of a page's renderer seen on a loaded
@@ -54,6 +58,13 @@ const LAUNCH_BACKSTOP: Duration = PROTOCOL_CPU.saturating_mul(BACKSTOP_TIMES);
 /// A probe of the page under test unanswered this long goes again, so no reply lost to a
 /// navigation leaves the page's turns uncounted.
 const PROBE_AGAIN: Duration = Duration::from_secs(1);
+/// What a probe of the page under test evaluates ([`Chrome::page_probe`]): a promise its next
+/// frame keeps, so its reply proves the page drew one, which its main thread answering a task
+/// does not. A loaded machine left a page without a frame for over thirty seconds while its main
+/// thread answered every task (a release run's landing test, its page frozen one commit after
+/// its last frame), and nothing the frames run (`requestAnimationFrame`, an
+/// `IntersectionObserver`'s callbacks, the browser's own scroll anchoring) ran meanwhile.
+const FRAME_PROBE: &str = "new Promise(drew => requestAnimationFrame(() => drew(0)))";
 
 /// What Chrome answers an evaluation the page's navigation took from it, or one that found no
 /// document to run in, each the `message` of its error reply: nothing was evaluated, and the
@@ -101,6 +112,8 @@ pub struct Error {
     stalled: bool,
     /// An evaluation's reply was one of [`LOST_TO_NAVIGATION`]'s.
     navigated: bool,
+    /// An evaluation's expression threw.
+    threw: bool,
 }
 
 impl Error {
@@ -110,6 +123,7 @@ impl Error {
             past_deadline: false,
             stalled: false,
             navigated: false,
+            threw: false,
         }
     }
 
@@ -119,6 +133,7 @@ impl Error {
             past_deadline: true,
             stalled: false,
             navigated: false,
+            threw: false,
         }
     }
 
@@ -128,6 +143,7 @@ impl Error {
             past_deadline: false,
             stalled: true,
             navigated: false,
+            threw: false,
         }
     }
 
@@ -174,9 +190,10 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 /// Browser work and completed observations share one allowance. Socket timeouts and
 /// scheduler delays spend nothing; an observer reply proves the browser had a turn. On a wait on
 /// the page under test ([`WaitBudget::on_page`]) an observer turn counts only once that page has
-/// answered a probe since the last turn counted, so a stalled renderer spends nothing while the
-/// observer runs on. A caller's deadline, when there is one, ends the wait too, however little
-/// the browser has spent, and the wall-clock backstop ends it at the latest.
+/// answered a probe since the last turn counted, drawing a frame ([`FRAME_PROBE`]), so a stalled
+/// renderer, or a page that draws no frame, spends nothing while the observer runs on. A caller's
+/// deadline, when there is one, ends the wait too, however little the browser has spent, and the
+/// wall-clock backstop ends it at the latest.
 struct WaitBudget {
     cpu: process::Budget,
     polls: u128,
@@ -382,6 +399,13 @@ impl WaitBudget {
             Some(End::Allowance) | None => Error::new(spent),
         }
     }
+}
+
+/// Whether `targets`, a `Target.getTargets` answer, lists the target `id`.
+fn listed(targets: &Value, id: &str) -> bool {
+    targets["targetInfos"]
+        .as_array()
+        .is_some_and(|infos| infos.iter().any(|info| info["targetId"] == id))
 }
 
 const CHROMES: [&str; 4] = [
@@ -683,6 +707,11 @@ fn chrome_args(profile: &Path) -> Vec<String> {
         // left page Chrome keeps for Back still gets a new frame. Chrome takes only the last
         // --disable-features given, so every feature turned off is in this one.
         "--disable-features=Translate,OptimizationHints,MediaRouter,RenderDocument",
+        // Motion as a page asks for it, whatever the machine's own setting: Chrome otherwise
+        // reads the system's "reduce motion" (on, on a hosted macOS runner) into
+        // `prefers-reduced-motion`, and a page is drawn and measured one way here and another
+        // there. A caller that wants the reduced page emulates it (`Emulation.setEmulatedMedia`).
+        "--force-prefers-no-reduced-motion",
         "--remote-debugging-port=0",
     ]
     .into_iter()
@@ -1311,11 +1340,35 @@ impl Chrome {
             }
             (None, Some(page)) => {
                 self.browser_call("Target.closeTarget", json!({"targetId": page}))?;
+                self.wait_closed(&page)?;
             }
             (None, None) => {}
         }
         self.forget_events();
         Ok(())
+    }
+
+    /// Wait until the browser lists no target `page`: `Target.closeTarget` answers once the close
+    /// is asked for, and the page goes after it, later the busier the machine. A context's
+    /// disposal answers only once its pages are gone.
+    fn wait_closed(&mut self, page: &str) -> Result<()> {
+        let mut budget = self.budget(PROTOCOL_CPU)?;
+        loop {
+            let targets = self.browser_call("Target.getTargets", json!({}))?;
+            if !listed(&targets, page) {
+                return Ok(());
+            }
+            if budget.poll(&self.owner.members()?) {
+                let what = format!("the closed page {page}");
+                return Err(budget.ended(
+                    &what,
+                    format!("{what}: still a target after {}", budget.spent()),
+                ));
+            }
+            // A turn of the browser's between two looks, as a wait on a page takes: looks back
+            // to back would spend the allowance in a second and take the browser from the close.
+            self.pump(POLL)?;
+        }
     }
 
     /// From now on, every call and wait here ends by `deadline` at the latest, whatever its own
@@ -1531,23 +1584,38 @@ impl Chrome {
             }
             let result = &value["result"];
             if let Some(exception) = result.get("exceptionDetails") {
-                return Err(Error::new(format!("{expression} threw: {exception}")));
+                return Err(Error {
+                    threw: true,
+                    ..Error::new(format!("{expression} threw: {exception}"))
+                });
             }
             Ok(Some(result["result"]["value"].clone()))
         })
     }
 
     /// Wait until `expression` is truthy, bounded by browser CPU and the page's completed turns,
-    /// including observer turns while an evaluation's promise is still pending. A page whose
-    /// renderer stalls until the wall-clock backstop is an error naming the stall, not a false
-    /// condition: it never had the turns to make the condition true. An evaluation the page's
-    /// navigation took from it ([`LOST_TO_NAVIGATION`]) is a turn whose condition is not met yet,
-    /// and the document the page went to is asked again; any other error reply ends the wait. A
-    /// page that closed, or whose renderer crashed, before the wait or under it, ends it at once
-    /// with an error saying which ([`Gone`]): Chrome answers none of its evaluations then.
+    /// including observer turns while an evaluation's promise is still pending, each one the page
+    /// drew a frame in ([`FRAME_PROBE`]): a promise its frames keep (one that counts them, say)
+    /// spends nothing while the page draws none. A page whose renderer stalls until the wall-clock
+    /// backstop is an error naming the stall, not a false condition: it never had the turns to
+    /// make the condition true. An evaluation the page's navigation took from it
+    /// ([`LOST_TO_NAVIGATION`]) is a turn whose condition is not met yet, and the document the page
+    /// went to is asked again, and so is a condition that threw on a document not known to have
+    /// had its element when it was asked ([`Chrome::rooted`]): one with none yet, or one first seen
+    /// with it only after the throw, which may have got it in between. A throw on a document seen
+    /// with its element before the ask is the condition's own and ends the wait, as any other
+    /// error reply does. A page that closed, or whose renderer crashed, before the wait or under
+    /// it, ends it at once with an error saying which ([`Gone`]): Chrome answers none of its
+    /// evaluations then.
     pub fn wait_for(&mut self, expression: &str, cpu: Duration) -> Result<bool> {
         let mut budget = self.page_budget(cpu)?;
+        // The document a throw of the condition was last followed by its element on.
+        let mut rooted: Option<Value> = None;
+        // The last answer, where it was a throw the wait asked again on such a document: the
+        // wait's answer if its allowance ends there, as a throw is never a false condition.
+        let mut thrown: Option<Error>;
         let state = loop {
+            thrown = None;
             if let Some(gone) = self.gone {
                 return Err(Error::gone(expression, gone));
             }
@@ -1561,6 +1629,15 @@ impl Chrome {
                 ),
                 Ok(None) => break "evaluation still pending",
                 Err(error) if error.navigated => (false, "evaluation lost to a navigation"),
+                Err(error) if error.threw => match self.rooted(&mut budget)? {
+                    None => (false, "the document has no element yet"),
+                    Some(document) if rooted.as_ref() == Some(&document) => return Err(error),
+                    Some(document) => {
+                        rooted = Some(document);
+                        thrown = Some(error);
+                        (false, "the condition threw")
+                    }
+                },
                 Err(error) => return Err(error),
             };
             if met {
@@ -1576,8 +1653,26 @@ impl Chrome {
         if budget.stalled() {
             return Err(Error::stall(expression, &budget));
         }
+        if let Some(error) = thrown {
+            return Err(error);
+        }
         eprintln!("Chrome {state} after {}: {expression}", budget.spent());
         Ok(false)
+    }
+
+    /// The page's document, by the time it began (`performance.timeOrigin`, each document's
+    /// own), once it has its root element; `None` while it has none, or as the page went on while
+    /// it was asked: a document the page has just gone to and not begun to read, which a busy
+    /// machine leaves so for a while. A condition that reads the root
+    /// (`document.documentElement.dataset`) throws there, and says nothing of the page it waits
+    /// for. This is asked after the throw, so a document it names may have got its element in
+    /// between: only a second throw on the document it named says the element was there.
+    fn rooted(&mut self, budget: &mut WaitBudget) -> Result<Option<Value>> {
+        match self.evaluate(ROOTED, budget, true) {
+            Ok(document) => Ok(document.filter(|document| !document.is_null())),
+            Err(error) if error.navigated => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     /// Observe protocol events while the real browser is paused at a fixture boundary: those of
@@ -2160,12 +2255,13 @@ impl Chrome {
         )
     }
 
-    /// A probe of the page under test: a reply to it proves the page's renderer ran a task. It
-    /// evaluates a constant, so the page's own code sees nothing of it.
+    /// A probe of the page under test ([`FRAME_PROBE`]): a reply to it proves the page drew a
+    /// frame. Its page's own code sees nothing of it but one more frame asked for, as a page
+    /// asks for frames itself.
     fn page_probe(&mut self) -> Result<u64> {
         self.send(
             "Runtime.evaluate",
-            json!({"expression": "0", "returnByValue": true}),
+            json!({"expression": FRAME_PROBE, "returnByValue": true, "awaitPromise": true}),
             self.session.clone(),
         )
     }

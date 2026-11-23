@@ -325,7 +325,7 @@ fn parse_each(text: &str, named: impl Fn(&str) -> Option<String>) -> Vec<(Commit
 /// What each commit on `read`'s line of first parents brought to the branch, oldest first: a
 /// commit there itself, a merge the commits of what it merged that no commit before it on the line
 /// brought (walked back from its other parents through [`Read::all`]). The commits are looked up by
-/// a scan, where a map would cost the server's binary its own (docs/CHECKS.md, size budgets): 8 ms
+/// a scan, where a map would cost the server's binary its own (docs/workflow/CHECKS.md, size budgets): 8 ms
 /// in a debug build for this repository's two days to 2026-11-13 (941 commits, 151 of them on the
 /// line), at load 40.
 pub fn reached(read: &Read) -> Vec<Reached> {

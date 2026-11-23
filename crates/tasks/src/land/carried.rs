@@ -1,5 +1,5 @@
 //! An approve that stands over the one merge of the default branch made on the commit it names
-//! ([TASKS](../../../../docs/TASKS.md#the-default-landing)): the merge an executor makes to
+//! ([TASKS](../../../../docs/workflow/TASKS.md#the-default-landing)): the merge an executor makes to
 //! settle a land's conflict in documents, which no reviewer reads again.
 //!
 //! It stands at the tip T when all of these hold ([`over`]):
@@ -175,7 +175,11 @@ fn regular(dir: &Path, tip: &str, paths: &[String]) -> Result<Vec<String>, Strin
 /// Git's own merge of `ours` and `theirs` in `dir`, nothing checked out: its tree, which holds
 /// conflict markers where both changed a text and one side's version of any other conflict, and
 /// the paths it leaves in conflict, sorted, each once.
-fn merged(dir: &Path, ours: &str, theirs: &str) -> Result<(String, Vec<String>), String> {
+pub(crate) fn merged(
+    dir: &Path,
+    ours: &str,
+    theirs: &str,
+) -> Result<(String, Vec<String>), String> {
     let args = [
         "merge-tree",
         "--write-tree",

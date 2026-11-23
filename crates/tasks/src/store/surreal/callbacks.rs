@@ -3,6 +3,7 @@
 use super::launches::HOLDS;
 use super::logged;
 use super::write::{ACT, FENCE_RECIPIENT};
+use std::sync::LazyLock;
 
 /// `$actor`'s line `$text` queued in `$handle`'s outbox, and its key: refused for a recipient unknown
 /// or left, or with no native channel (`$no_channel`), and an empty key for a line to itself. Needs
@@ -155,11 +156,22 @@ pub(in crate::store) const TAKE_LEASE: &str = "LET $s = (SELECT address, lease, 
 /// `$handle`'s lease let go, while it is still revision `$revision`.
 pub(in crate::store) const RELEASE_LEASE: &str = "UPDATE type::record('callback_lease', $handle) SET until = 0 WHERE revision = $revision RETURN NONE; RETURN NONE;";
 
-/// `$handle`'s callback state, when its PULL was last checked and the lines still queued for it that
-/// a hand-over can take back (a `Stored`).
-pub(in crate::store) const STORED: &str = "RETURN { state: (SELECT * OMIT id FROM ONLY type::record('callback_state', $handle)), checked_pull: type::record('callback_lease', $handle).pull ?? 0,
-                    queued: (SELECT key, text, sequence, pull_entries, pull_withheld, pull_said FROM callback_event WHERE handle = $handle AND delivered != true
-                        AND (string::starts_with(key, 'pull-') OR string::starts_with(key, 'event-') OR (string::starts_with(key, 'pane-') AND string::starts_with(text, 'BLOCKED ')))) };";
+/// Each of `$recipients`' callback state (each recipient `{handle, chat}`), when its PULL was last
+/// checked and the lines still queued for it that a hand-over can take back, with `more`: a
+/// `Stored` each, in their order, all of them in one read.
+fn stored(more: &str) -> String {
+    format!("RETURN SELECT handle, (SELECT * OMIT id FROM ONLY type::record('callback_state', $parent.handle)) AS state,
+                    type::record('callback_lease', handle).pull ?? 0 AS checked_pull,
+                    (SELECT key, text, sequence, pull_entries, pull_withheld, pull_said FROM callback_event WHERE handle = $parent.handle AND delivered != true
+                        AND (string::starts_with(key, 'pull-') OR string::starts_with(key, 'event-') OR (string::starts_with(key, 'pane-') AND string::starts_with(text, 'BLOCKED ')))) AS queued{more}
+                FROM $recipients;")
+}
+/// Each of `$recipients`' stored state ([`stored`]), as a visit under its lease reads its own.
+pub(in crate::store) static STORED: LazyLock<String> = LazyLock::new(|| stored(""));
+/// Each of `$recipients`' stored state ([`stored`]) with whether a line of its outbox is due at
+/// `$now` ([`PENDING`]), as a pass's plans read every recipient's.
+pub(in crate::store) static STORED_DUE: LazyLock<String> =
+    LazyLock::new(|| stored(&format!(",\n                    {DUE_LINE} AS pending")));
 
 /// The owner's undelivered chat events `$handle`'s outbox holds no line of yet, in their order.
 pub(in crate::store) const UNQUEUED_CHAT: &str = "RETURN SELECT key, text FROM chat_event WHERE delivered = false
@@ -171,7 +183,7 @@ pub(in crate::store) const PULL_CHECKED: &str = "UPDATE type::record('callback_l
 /// One recipient's observation written with the events it queued, while the dispatcher holds
 /// `$handle`'s lease (`$revision`) and the PULLs it read as waiting (`$waiting`) still wait: whether
 /// each held, and the board marker before and after (an `Accounted`). Its variables are the
-/// observation's (`Store::dispatch_one`).
+/// observation's (`Store::dispatch_leased`).
 pub(in crate::store) fn account() -> String {
     format!("LET $marker = {board_marker};
              LET $held = type::record('callback_lease', $handle).revision = $revision;
@@ -219,9 +231,16 @@ pub(in crate::store) fn account() -> String {
              RETURN {{ held: $held, current: $current, marker: {{ before: $marker, after: {board_marker} }} }};", board_marker = crate::schema::BOARD_MARKER)
 }
 
-/// Whether an outbox line of `$handle`'s is due at `$now`, the owner's chat events only when `$chat`.
-pub(in crate::store) const PENDING: &str = "RETURN array::len(SELECT key FROM callback_event WHERE handle = $handle AND delivered != true AND attempts < 3 AND (retry_at = NONE OR retry_at <= $now)
-                AND (!string::starts_with(key, 'chat-') OR ($chat AND type::record('chat_event', string::slice(key, 5)).delivered != true)) LIMIT 1) > 0;";
+/// Whether a line of the outbox of the recipient `$parent` (`{handle, chat}`) is due at `$now`, the
+/// owner's chat events only when its `chat`.
+const DUE_LINE: &str = "array::len(SELECT key FROM callback_event WHERE handle = $parent.handle AND delivered != true AND attempts < 3 AND (retry_at = NONE OR retry_at <= $now)
+                AND (!string::starts_with(key, 'chat-') OR ($parent.chat AND type::record('chat_event', string::slice(key, 5)).delivered != true)) LIMIT 1) > 0";
+
+/// Whether a line of each of `$recipients`' outboxes is due at `$now` (each recipient `{handle,
+/// chat}`, the owner's chat events only when its `chat`): `{handle, pending}` each, in their order,
+/// all of them in one read.
+pub(in crate::store) static PENDING: LazyLock<String> =
+    LazyLock::new(|| format!("RETURN SELECT handle, {DUE_LINE} AS pending FROM $recipients;"));
 
 /// `$handle`'s lease renewed for `$lease_seconds` from `$now` and its outbox lines due then, in their
 /// order, the owner's chat events only when `$chat`: none once the lease is no longer revision

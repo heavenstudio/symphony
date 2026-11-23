@@ -6,7 +6,6 @@
 
 use super::Hub;
 use crate::front::{Shared, router};
-use crate::gate::Gate;
 use crate::testing::{Tree, board::surreal, git, repository_at};
 use axum::body::{Body, to_bytes};
 use axum::extract::ConnectInfo;
@@ -14,9 +13,10 @@ use axum::http::Request;
 use serde_json::{Value, json};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError, mpsc};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::Duration;
 use symphony_board::cli::Env;
+use symphony_board::lock::Recovered as _;
 use symphony_board::rpc::Client;
 use symphony_board::server::Home;
 use symphony_board::{NewTask, Opening, Program, Schema, Store};
@@ -86,7 +86,7 @@ impl Project {
             crate::backstop::PERIOD,
             move |root| {
                 // Held through the reach, so a case that closes the gate waits out one under way.
-                let open = gate.lock().unwrap_or_else(PoisonError::into_inner);
+                let open = gate.lock().recover();
                 if !*open {
                     return Err(UNREACHED.to_string());
                 }
@@ -225,7 +225,19 @@ fn pinned(root: &Path, now: &str) -> Env {
 
 /// The board of `root`'s project, opened to write as its command line opens it.
 pub(super) fn writer(root: &Path) -> Store {
+    on_surreal(root);
     symphony_board::cli::connect(&env(root)).unwrap()
+}
+
+/// The board of `root`'s project, when it is not made yet, named SurrealDB's: these cases start,
+/// stop and read the record of its SurrealDB server, and its first command would otherwise make
+/// it on PostgreSQL. A board that is made, or named another engine, is left as it is.
+pub(super) fn on_surreal(root: &Path) {
+    let home = Home::in_common(&root.join(".git"), Some(&surreal()));
+    if home.unmade().unwrap() {
+        home.initialize_backend(symphony_board::server::Engine::SurrealDb)
+            .unwrap();
+    }
 }
 
 #[test]
@@ -253,13 +265,7 @@ fn a_machine_hub_starts_its_selected_postgresql_board_and_keeps_its_reader_read_
     let pg = home.project_postgresql(&project.root).unwrap();
     assert!(pg.current().unwrap().is_some());
     assert!(!home.dir().join("data").exists());
-    let shared = Shared::new(
-        1,
-        1234,
-        &project.root,
-        None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
+    let shared = Shared::new(1, 1234, &project.root, None, crate::testing::open_gate());
     assert!(shared.api.set(project.hub.clone()).is_ok());
     let (status, body) = answer(&shared, asked("GET", "/api/tasks", None));
     assert_eq!(status, 200, "{body}");
@@ -294,7 +300,8 @@ fn a_machine_hub_starts_its_selected_postgresql_board_and_keeps_its_reader_read_
 /// line it writes (a build at schema 18 or later keeps one) is that of the migrate run here after,
 /// which leaves it out.
 fn older_writer(root: &Path) -> Store {
-    let reached = symphony_board::cli::board(&env(root)).unwrap();
+    on_surreal(root);
+    let reached = symphony_board::cli::writable_board(&env(root)).unwrap();
     Store::opening(
         reached.client,
         Box::new(|| 1_000_000.0),
@@ -485,7 +492,7 @@ struct Stopped(Home);
 
 impl Drop for Stopped {
     fn drop(&mut self) {
-        let _ = self.0.stop();
+        let _ = self.0.stop_board();
     }
 }
 
@@ -651,13 +658,7 @@ impl Gitless {
     /// What the project's route answers `request` once front's check that its folder holds it has
     /// passed: the save or the read itself, as `front::answer` calls it after that check.
     fn past_the_check(&self, request: Request<Body>) -> (u16, Value) {
-        let shared = Shared::new(
-            1,
-            1234,
-            &self.inner.root,
-            None,
-            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-        );
+        let shared = Shared::new(1, 1234, &self.inner.root, None, crate::testing::open_gate());
         assert!(shared.api.set(self.inner.hub.clone()).is_ok());
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -847,13 +848,7 @@ fn a_pages_save_or_read_on_a_project_emptied_under_its_server_reaches_no_board_a
 
         let inner = Project::made_in(&tree, "outer/artifacts/scratch/inner", "inner", writer);
         inner.reads(&["inner/one"]);
-        let shared = Shared::new(
-            1,
-            1234,
-            &inner.root,
-            None,
-            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-        );
+        let shared = Shared::new(1, 1234, &inner.root, None, crate::testing::open_gate());
         assert!(shared.api.set(inner.hub.clone()).is_ok());
         let save = |slug: &str| json!({ "slug": slug, "priority": (before + 1) % 5 });
         let save = |slug: &str| asked("POST", "/api/task-priority", Some(&save(slug)));

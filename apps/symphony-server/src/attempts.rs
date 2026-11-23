@@ -1,5 +1,5 @@
 //! A task's execution attempts through the server's routes
-//! ([`docs/EXECUTION_ATTEMPTS.md`](../../../docs/EXECUTION_ATTEMPTS.md#on-a-tasks-page)): their
+//! ([`docs/engineering/EXECUTION_ATTEMPTS.md`](../../../docs/engineering/EXECUTION_ATTEMPTS.md#on-a-tasks-page)): their
 //! history ([`symphony_api::TASK_ATTEMPTS_PATH`]), a cancel, a stop or a resume of one
 //! ([`symphony_api::ATTEMPT_CONTROL_ROUTE`]) and a view of its resource
 //! ([`symphony_api::ATTEMPT_VIEW_ROUTE`]).
@@ -119,12 +119,7 @@ fn on_board<T>(
         .get(slug)
         .map_err(crate::api::task_failure)
         .and_then(|_| work(&store));
-    if let Err((status, _)) = &done
-        && [StatusCode::SERVICE_UNAVAILABLE, StatusCode::GATEWAY_TIMEOUT].contains(status)
-    {
-        hub.reader_failed(&store);
-    }
-    done
+    hub.read_on(&store, done)
 }
 
 /// What `attempt` may be asked here, by the local owner: its controls as its state, its pinned

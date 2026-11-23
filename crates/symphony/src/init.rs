@@ -43,6 +43,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::builds;
+use symphony_board::server::Engine;
 
 /// Where the skills live in a project, and where Claude Code loads them from.
 const SKILLS: &str = ".agents/skills";
@@ -1045,9 +1046,34 @@ impl Machine<'_> {
     }
 }
 
+/// The engine the board of the checkout at `root` runs on, read from its home without starting
+/// anything ([`symphony_board::server::Home::backend`]): SurrealDB for a board that holds its
+/// store, PostgreSQL for one whose home names it and for a board not made yet, which is made on
+/// it. None outside a checkout, or for a home a board command refuses, which says why itself.
+fn board_engine(root: &Path, named: Option<&Path>) -> Option<Engine> {
+    let common = symphony_board::git::checkout_common_dir(root)?;
+    symphony_board::server::Home::in_common(&common, named)
+        .backend()
+        .ok()
+}
+
+/// The step that makes a board not made yet.
+const MAKE_BOARD: &str = "make the board: the first board command makes it, on PostgreSQL \
+                          (`just tasks list`); the Symphony only reads a board and never makes one";
+
+/// The step for the PostgreSQL the board runs on, which discovery did not find as `why` says:
+/// the machine's own, 18 or later, by the project file's `[board] postgresql` or `PATH`
+/// ([`symphony_board::server::postgres::discover_programs`]), whose refusal carries its setup.
+fn postgresql_step(why: &str) -> String {
+    format!(
+        "have PostgreSQL {} or later for the board, which runs on the machine's own: {why}",
+        symphony_board::server::postgres::OLDEST_MAJOR
+    )
+}
+
 /// The SurrealDB the board of the checkout at `root` would start, when it is not there to run:
 /// `named` (`SYMPHONY_SURREAL`), else the pinned one in the repository's common dir. None outside a
-/// checkout.
+/// checkout. Asked only of a board on SurrealDB ([`board_engine`]).
 fn missing_surreal(root: &Path, named: Option<&Path>) -> Option<PathBuf> {
     let common = symphony_board::git::checkout_common_dir(root)?;
     let home = symphony_board::server::Home::in_common(&common, named);
@@ -1070,8 +1096,9 @@ fn in_git_dir(root: &Path, common: &Path) -> bool {
 
 /// Whether the board of the checkout at `root`, its server run from `named` (`SYMPHONY_SURREAL`)
 /// or the pinned one, is not made yet, read without starting anything: by the server's answer
-/// while one runs (the Symphony's reads start it, and never make the board), else by its store not
-/// being there, as before any server ran on it. False outside a checkout.
+/// while one runs (a board's server may run before its board is made), else by its home holding
+/// neither engine's data ([`symphony_board::server::Home::unmade`]): a stopped board, on either
+/// engine, is made. False outside a checkout.
 fn unmade_board(root: &Path, named: Option<&Path>) -> bool {
     let Some(common) = symphony_board::git::checkout_common_dir(root) else {
         return false;
@@ -1079,13 +1106,13 @@ fn unmade_board(root: &Path, named: Option<&Path>) -> bool {
     let home = symphony_board::server::Home::in_common(&common, named);
     match home.schema(symphony_board::DATABASE) {
         Ok(schema) => schema.is_none(),
-        Err(_) => !home.has_store(),
+        Err(_) => home.unmade().unwrap_or(false),
     }
 }
 
 /// The builds a project runs: the hooks' first (they run `symphony`, whose heartbeat runs `tasks`),
 /// then the other ones [`RUNS`] names. These are the binaries the workspace delivers, each held to
-/// a size budget (`symphony-build size-budget`, docs/CHECKS.md "Size budgets"). The workspace's
+/// a size budget (`symphony-build size-budget`, docs/workflow/CHECKS.md "Size budgets"). The workspace's
 /// `symphony-build`, the commands only its own build and release run use, is none of them.
 pub const BUILDS: [&str; 4] = ["symphony", "tasks", "agent-send", "symphony-server"];
 
@@ -1145,11 +1172,11 @@ const HEARTBEAT_BUILDS: [&str; 2] = ["symphony", "tasks"];
 /// Where a Symphony checkout's `cargo build --release` leaves its builds.
 const RELEASE: &str = ".target/release";
 
-/// The reference of the project file's tables and keys, docs/PROJECT_FILE.md, where a project
+/// The reference of the project file's tables and keys, docs/operations/PROJECT_FILE.md, where a project
 /// that has no Symphony checkout reads it: in the Symphony's repository.
 pub const PROJECT_FILE_REFERENCE: &str = concat!(
     env!("CARGO_PKG_REPOSITORY"),
-    "/blob/main/docs/PROJECT_FILE.md"
+    "/blob/main/docs/operations/PROJECT_FILE.md"
 );
 
 /// What is left for the owner to do after a run at `root`, each one line: what init cannot do for
@@ -1227,26 +1254,34 @@ pub(crate) fn steps_within(
                 .to_string(),
         );
     }
-    if let Some(surreal) = missing_surreal(root, machine.surreal) {
-        let fetch = machine.surreal.is_none().then(|| {
-            symphony_board::server::surreal_fetch(
-                &surreal,
-                std::env::consts::OS,
-                std::env::consts::ARCH,
-            )
-        });
-        steps.push(surreal_step(
-            &surreal,
-            machine.surreal.is_some(),
-            fetch.flatten(),
-        ));
+    match board_engine(root, machine.surreal) {
+        Some(Engine::SurrealDb) => {
+            if let Some(surreal) = missing_surreal(root, machine.surreal) {
+                let fetch = machine.surreal.is_none().then(|| {
+                    symphony_board::server::surreal_fetch(
+                        &surreal,
+                        std::env::consts::OS,
+                        std::env::consts::ARCH,
+                    )
+                });
+                steps.push(surreal_step(
+                    &surreal,
+                    machine.surreal.is_some(),
+                    fetch.flatten(),
+                ));
+            }
+        }
+        Some(Engine::PostgreSql) => {
+            if let Err(why) =
+                symphony_board::server::postgres::discover_with_path(root, machine.path)
+            {
+                steps.push(postgresql_step(&why));
+            }
+        }
+        None => {}
     }
     if unmade_board(root, machine.surreal) {
-        steps.push(
-            "make the board: the first board command makes it (`just tasks list`); the Symphony \
-             only reads a board and never makes one"
-                .to_string(),
-        );
+        steps.push(MAKE_BOARD.to_string());
     }
     if let Some(folder) = machine.folder {
         let registered = registered(root, folder);

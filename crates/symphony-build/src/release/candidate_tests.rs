@@ -57,21 +57,10 @@ fn run(id: &str, commit: &str, checks: Vec<Ran>) -> Run {
         started_at: NOW,
         ended_at: NOW + 60.0,
         result: if green { "green" } else { "red" }.into(),
-        error: None,
-        previous: None,
         checks,
-        tag: None,
-        pushed: false,
         board: Told::default(),
         remote: "origin".into(),
-        unpushed: None,
-        cause: None,
-        refreshed: None,
-        published: None,
-        rerun: None,
-        slept: 0.0,
-        inputs: None,
-        environment: None,
+        ..Run::default()
     }
 }
 

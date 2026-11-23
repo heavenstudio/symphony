@@ -16,9 +16,10 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, mpsc};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, mpsc};
 use std::time::Duration;
 use symphony_board::cbor;
+use symphony_board::lock::Recovered as _;
 use symphony_board::rpc::{Client, Kind};
 
 /// The wait of a client over a relay that holds an answer, which that answer outlasts.
@@ -190,13 +191,13 @@ impl Drop for Relay {
 impl Shared {
     /// The state, even after a test's assertion failed holding it, so the relay still ends.
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+        self.state.lock().recover()
     }
 
     fn until(&self, done: impl Fn(&State) -> bool) -> MutexGuard<'_, State> {
         self.changed
             .wait_while(self.lock(), |state| !done(state))
-            .unwrap_or_else(PoisonError::into_inner)
+            .recover()
     }
 
     /// The state once every connection taken has said something or ended, every held one has been

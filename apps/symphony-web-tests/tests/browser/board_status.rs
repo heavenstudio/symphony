@@ -36,12 +36,12 @@ fn the_tasks_page_says_a_late_board_is_slow_and_a_refused_one_unavailable() {
     let cases = [
         Case {
             version: 4183,
-            status: json!({"available":false,"slow":true,"error":"SurrealDB: the server at 127.0.0.1:1 is slow: no answer within 3s"}),
+            status: json!({"available":false,"slow":true,"error":"the board's database: the server at 127.0.0.1:1 is slow: no answer within 3s"}),
             alert: "The task board is slow to answer. Retrying…",
         },
         Case {
             version: 4184,
-            status: json!({"available":false,"slow":false,"error":"SurrealDB: cannot connect to 127.0.0.1:1: Connection refused (os error 61)"}),
+            status: json!({"available":false,"slow":false,"error":"the board's database: cannot connect to 127.0.0.1:1: Connection refused (os error 61)"}),
             alert: "The task board is unavailable. Reconnecting…",
         },
         Case {

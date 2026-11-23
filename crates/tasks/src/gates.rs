@@ -1,4 +1,4 @@
-//! A task's gate decisions (docs/TASKS.md, "Gate decisions"): a quality gate given way for one
+//! A task's gate decisions (docs/workflow/TASKS.md, "Gate decisions"): a quality gate given way for one
 //! task by a recorded decision, read by its assessor, its reviewer and its land.
 //!
 //! A decision is one of two kinds ([`Kind`]):
@@ -101,7 +101,7 @@ impl Decision {
 pub fn of(fields: &BTreeMap<String, BTreeMap<String, Value>>) -> Vec<Decision> {
     (fields.get(crate::red::FIELDS))
         .and_then(|board| board.get(GATES))
-        .and_then(|value| serde_json::from_value(value.clone()).ok())
+        .and_then(|value| crate::objects::read(value).ok())
         .unwrap_or_default()
 }
 

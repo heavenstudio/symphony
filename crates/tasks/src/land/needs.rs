@@ -1,4 +1,4 @@
-//! What a land requires of a task (docs/analysis/needed-stamps.md, "The land's check"): the stamps
+//! What a land requires of a task (docs/workflow/analysis/needed-stamps.md, "The land's check"): the stamps
 //! it needs at its branch's tip, each read there by the board's own reader ([`crate::stamps::read`]),
 //! never a copy of one.
 //!
@@ -20,7 +20,7 @@ use crate::cli::machine_work::recorded::{self, Record};
 use crate::gates::{self, Decision, Kind, Limit, grouped};
 use crate::stamps::{Catalogue, Needs, family, read, said};
 use crate::{Message, Store, Task};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The stamp the land's own approval check reads: a fresh reviewer's approve covering the tip.
 pub const REVIEW: &str = "review";
@@ -215,6 +215,9 @@ pub struct Evidence<'a> {
     pub ours: Vec<String>,
     /// The task's artifacts folder, where its pictures go ([`read::folder`]).
     pub folder: String,
+    /// The main checkout, where the `owner` stamp reads the cards the task's branch posted
+    /// ([`read::owner_at`]).
+    pub main: PathBuf,
 }
 
 impl<'a> Evidence<'a> {
@@ -244,6 +247,7 @@ impl<'a> Evidence<'a> {
             runs,
             ours,
             folder: read::folder(&artifacts, slug),
+            main: main.to_path_buf(),
         }
     }
 }
@@ -298,7 +302,7 @@ pub fn standing(
                 evidence.ours.iter().any(|ours| ours == task)
             }),
             PICTURES => read::pictures(evidence.thread, tip, &evidence.folder),
-            OWNER => read::owner(evidence.thread, tip),
+            OWNER => read::owner_at(evidence.thread, tip, &evidence.main),
             _ => continue,
         };
         if reading.met {

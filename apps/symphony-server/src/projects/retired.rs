@@ -5,7 +5,8 @@
 //! Once stopped, the server serves the projects it stopped as they were, whatever the registry
 //! says after, so no state starts after that close.
 
-use std::sync::{Arc, PoisonError, Weak};
+use std::sync::{Arc, Weak};
+use symphony_board::lock::Recovered as _;
 
 use super::Projects;
 use crate::front::Shared;
@@ -18,7 +19,7 @@ impl Projects {
     pub(crate) fn stop(&self) -> Vec<Stopped> {
         // A panic while reading leaves the lists before it whole ([`Projects::served`]).
         let (served, gone) = {
-            let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut held = self.held.lock().recover();
             held.stopped = true;
             (held.served.clone(), std::mem::take(&mut held.retired))
         };

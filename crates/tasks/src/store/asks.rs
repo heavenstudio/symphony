@@ -24,7 +24,7 @@ pub type Ask = AskRow;
 pub const ASK_KINDS: [&str; 5] = ["verdict", "message", "comment", "chat", "task"];
 
 /// How long an open ask waits before it shows as late, in seconds: the design's ten minutes, the same
-/// for every kind until the owner says otherwise (docs/analysis/owner-asks.md, Open questions).
+/// for every kind until the owner says otherwise (docs/product/analysis/owner-asks.md, Open questions).
 pub const LATE_SECONDS: f64 = symphony_api::ASK_LATE_SECONDS as f64;
 
 /// The most characters of the owner's words an ask keeps: enough to say what it is, never the post.
@@ -176,7 +176,7 @@ impl Store {
             "block": named(&new.block), "tree": named(&new.tree), "task": task,
             "thread": named(&new.thread), "words": words,
             "at": new.at.unwrap_or_else(|| self.now()),
-            "no_task": thrown(format!("no task {}", repr(task.as_deref().unwrap_or("")))),
+            "no_task": thrown(super::work::no_task(task.as_deref().unwrap_or("")).to_string()),
         }))
     }
 

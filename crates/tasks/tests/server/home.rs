@@ -16,7 +16,9 @@ use symphony_board::NewTask;
 use symphony_board::cli::connect;
 use symphony_board::port::{ATTEMPTS, Start, in_use, listens, start_on_free_port};
 use symphony_board::rpc;
-use symphony_board::server::{FOLDER, Home, Running, SURREAL_VERSION, ServerError, scratch};
+use symphony_board::server::{
+    Engine, FOLDER, Home, Running, SURREAL_VERSION, ServerError, scratch,
+};
 use symphony_board::sys::{self, Command, pid_alive};
 
 /// How long a case's `Home` waits for a server to answer, where that wait is no part of the case:
@@ -182,6 +184,10 @@ fn a_server_on_this_boards_data_that_was_never_recorded_is_found() {
 #[test]
 fn a_scratch_boards_unrecorded_server_is_found_and_used_at_once_never_its_supervisor() {
     let repo = Repository::in_scratch("scratch-unrecorded");
+    // A board on SurrealDB, whose server this case is about, named before its first command.
+    Home::in_common(&repo.common(), Some(repo.surreal()))
+        .initialize_backend(Engine::SurrealDb)
+        .unwrap();
     let store = connect(&repo.env()).unwrap();
     store
         .create(&NewTask::new("sim/found", "Found again", "owner"))

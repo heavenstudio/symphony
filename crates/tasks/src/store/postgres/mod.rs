@@ -48,6 +48,7 @@ pub(in crate::store) mod snapshot;
 pub(in crate::store) mod spending;
 pub(in crate::store) mod stage_lines;
 pub(in crate::store) mod stamp;
+pub(in crate::store) mod stored_settings;
 pub(in crate::store) mod thread_window;
 pub(in crate::store) mod unanswered;
 pub(in crate::store) mod waits;
@@ -57,6 +58,7 @@ pub(in crate::store) mod workflow_events;
 pub(in crate::store) mod write;
 pub(in crate::store) mod writers;
 
+use super::RuleParts;
 use std::borrow::Cow;
 
 /// The slugs of every task, or of those in `v ->> 'status'` when `by_status`
@@ -80,16 +82,18 @@ pub(in crate::store) fn claimable() -> Pg<'static> {
 /// written (`blocked`), the move's `reason` posted after its line, the task's `needs` and its
 /// `gates` written, its mark of an approve not landed set or lifted (`unlanded`), a change of
 /// status (`moved`, whether to cancelled) settling its hold and its dependants, and the slot
-/// counters it `holds` guarded.
-pub(in crate::store) fn rule(
-    reason: bool,
-    (needs, gates): (bool, bool),
-    unlanded: bool,
-    blocked: bool,
-    moved: Option<bool>,
-    holds: bool,
-    placed: bool,
-) -> Pg<'static> {
+/// counters it `holds` guarded ([`RuleParts`]).
+pub(in crate::store) fn rule(parts: RuleParts) -> Pg<'static> {
+    let RuleParts {
+        placed,
+        reason,
+        blocked,
+        needs,
+        gates,
+        unlanded,
+        moved,
+        holds,
+    } = parts;
     // Twin of `super::surreal::rule`'s placement first.
     let mut body = if placed {
         format!("{}\n", workflow::REOPEN_PLACED)
@@ -429,13 +433,16 @@ $board$"
 /// greater than this store's version ([`crate::schema::writes`]). The record is read from the row
 /// as JSON, so a board whose `meta` has no such column yet (one a build before it made) reads as
 /// none. The shared row lock meets a migration's version update, including from an older
-/// repeatable-read snapshot.
+/// repeatable-read snapshot: every migration writes that row, a move of additive steps alone too.
+/// On a board of the store's own contract, it then raises (`board_additions_*`) unless the board's
+/// additive steps are within what the write takes ([`crate::schema::Steps`]).
 pub(in crate::store) const GUARD: &str = "DO $guard$
 DECLARE
     v jsonb := current_setting('board.vars')::jsonb;
     own_ bigint := (v ->> 'board_schema')::bigint;
     found_ bigint;
     from_ jsonb;
+    additions_ bigint;
 BEGIN
     SELECT m.version, to_jsonb(m) -> 'writable_from' INTO found_, from_
         FROM meta m WHERE m.id = '\"schema\"' FOR SHARE;
@@ -447,6 +454,15 @@ BEGIN
     ) THEN
         RAISE EXCEPTION '%', (v ->> 'board_schema_before') || coalesce(found_::text, 'NONE')
             || (v ->> 'board_schema_after');
+    END IF;
+    SELECT m.version INTO additions_ FROM meta m WHERE m.id = '\"additions\"';
+    additions_ := coalesce(additions_, 0);
+    IF found_ IS NOT DISTINCT FROM own_ AND (
+        additions_ < coalesce((v ->> 'board_additions_least')::numeric, 0)
+        OR additions_ > coalesce((v ->> 'board_additions_most')::numeric, 0)
+    ) THEN
+        RAISE EXCEPTION '%', (v ->> 'board_additions_before') || additions_::text
+            || (v ->> 'board_additions_after');
     END IF;
 END
 $guard$";
@@ -522,6 +538,9 @@ pub(in crate::store) fn rows(alias: &str, from: &str, order: &str) -> String {
         row(alias)
     )
 }
+
+#[cfg(test)]
+mod planned_tests;
 
 #[cfg(test)]
 mod tests {
@@ -771,7 +790,17 @@ mod tests {
 
     /// `rule`'s block, which a rule's write is.
     fn ruled(reason: bool, needs: bool, blocked: bool, moved: Option<bool>, holds: bool) -> String {
-        match rule(reason, (needs, needs), needs, blocked, moved, holds, false) {
+        let parts = RuleParts {
+            reason,
+            needs,
+            gates: needs,
+            unlanded: needs,
+            blocked,
+            moved,
+            holds,
+            placed: false,
+        };
+        match rule(parts) {
             Pg::Script(block, None) => block.into_owned(),
             other => panic!("a rule is a block answering its own: {other:?}"),
         }

@@ -1,4 +1,4 @@
-// The page's route as the shell routes it: shell.js owns the browser's links and history for the
+// The page's route as the shell routes it: shell.ts owns the browser's links and history for the
 // whole page, and says `review:navigate` once it has moved; a page reads its route again then.
 
 import { useEffect, useState } from "react";
@@ -45,7 +45,7 @@ export function parseRoute(view: ProjectView, pathname: string): Route | null {
   const route = named.endsWith("/") ? named.slice(0, -1) : named;
   const answered =
     route === "" ||
-    ["tasks", "queue", "reports", "runs", "agents"].includes(route) ||
+    ["tasks", "queue", "reports", "settings", "runs", "agents"].includes(route) ||
     route.startsWith("task/") ||
     document;
   return answered ? { path: route, scope, document, folder } : null;
@@ -77,6 +77,49 @@ export function anchor(): string {
 }
 
 /**
+ * The id the renderer gives a heading of `text` (crates/symphony/src/edit.rs `heading_anchor`,
+ * Python-Markdown's toc slug): accents folded (NFKD, then ASCII only), punctuation dropped, the
+ * spaces at its ends trimmed, each run of spaces and hyphens one `-`. The shell lands an address by
+ * the same rule (shell/shell.ts, which a test keeps word for word).
+ */
+export function headingAnchor(text: string): string {
+  const space = (c: string) =>
+    (c >= "\t" && c <= "\r") || c === " " || (c >= "\x1c" && c <= "\x1f");
+  const kept = [...text.normalize("NFKD")].filter((c) => /^[A-Za-z0-9_-]$/.test(c) || space(c));
+  while (space(kept[0] ?? "")) kept.shift();
+  while (space(kept[kept.length - 1] ?? "")) kept.pop();
+  let anchor = "";
+  let joining = false;
+  for (const c of kept) {
+    const joins = c === "-" || space(c);
+    if (!joins) anchor += c.toLowerCase();
+    else if (!joining) anchor += "-";
+    joining = joins;
+  }
+  return anchor;
+}
+
+/**
+ * The ids the fragment `target` may name, in the order a page looks for them: its own, then, read
+ * as a heading's text (a task's link to a heading stores its text: `#The order`), that heading's
+ * id (`headingAnchor`). None for no fragment.
+ */
+export function anchorIds(target: string): string[] {
+  if (target === "") return [];
+  const heading = headingAnchor(target);
+  return heading === "" || heading === target ? [target] : [target, heading];
+}
+
+/** The element the address's fragment names (`anchorIds`), if one is on the page. */
+export function anchorElement(): HTMLElement | null {
+  for (const id of anchorIds(anchor())) {
+    const element = document.getElementById(id);
+    if (element) return element;
+  }
+  return null;
+}
+
+/**
  * The address's fragment, read again each time it changes (`hashchange`) and each time the shell
  * says the page moved: a move from card to card changes the fragment alone, and the page stays.
  */
@@ -93,17 +136,15 @@ export function useAnchor(): string {
 }
 
 /**
- * Bring the element the address's fragment names into view, opening every `details` around it.
- * The shell lands it (`reviewLand`, assets/shell.js), once for each navigation: it holds it there
- * while the page draws around it, as a section drawn above it once the scroll brings it near would
- * push it down, and does nothing once that hold has ended (quiet, or scrolled away). Without a
- * fragment it does nothing: the shell owns the guarded top reset, and a late load must not undo a
- * scroll made since.
+ * Bring the element the address's fragment names (`anchorElement`) into view, opening every
+ * `details` around it. The shell lands it (`reviewLand`, shell/shell.ts), once for each
+ * navigation: it holds it there while the page draws around it, as a section drawn above it once
+ * the scroll brings it near would push it down, and does nothing once that hold has ended (quiet,
+ * or scrolled away). Without a fragment it does nothing: the shell owns the guarded top reset, and
+ * a late load must not undo a scroll made since.
  */
 export function scrollAnchor(): void {
-  const id = anchor();
-  if (id === "") return;
-  const element = document.getElementById(id);
+  const element = anchorElement();
   if (!element) return;
   const land = (globalThis as { reviewLand?: (element: Element) => void }).reviewLand;
   if (land) {

@@ -449,6 +449,7 @@ pub(super) fn finished_branches_follow_the_board() {
         ],
         sessions: vec![session("silver", "worktree-one")],
         latest_message: 0,
+        workflow_generation: None,
     };
     // Every done task's own branch is finished too, `b/one` among them; `tools/live`,
     // `tools/reused` and `worktree-two` are not.
@@ -478,4 +479,148 @@ pub(super) fn finished_branches_follow_the_board() {
     ] {
         assert_eq!(names[branch], task, "{branch}");
     }
+}
+
+/// A reference document whose cards sit inline, each under the section it decides, with no
+/// register region in the file.
+fn lamps(count: &str, finishes: &str) -> String {
+    format!(
+        "# Lamps\n\n## How many\n\nThere are 141 lamps.\n\n{count}\nThree sizes.\n\n## Finishes\n\nBrass and steel.\n\n{finishes}"
+    )
+}
+
+pub(super) fn inline_cards_are_the_branchs_only_when_it_posted_them() {
+    isolated(
+        "an_inline_card_a_branch_posted_is_its_own_and_mains_inline_cards_stay_mains",
+        |_| {
+            const LAMPS: &str = "docs/LAMPS.md";
+            let tree = repository();
+            let main_card = card("main-inline", ' ', "");
+            tree.write(LAMPS, &lamps(&main_card, ""));
+            commit(&tree.root, "base", 1);
+
+            // The branch rewrites a paragraph of the page and posts a card under another section.
+            let posted = branch(&tree, "docs/inline", "inline");
+            let branch_card = card("branch-inline", ' ', "");
+            std::fs::write(
+                posted.join(LAMPS),
+                lamps(&main_card, &branch_card)
+                    .replace("Brass and steel.", "Brass, steel and tin."),
+            )
+            .unwrap();
+            commit(&posted, "post an inline card", 2);
+
+            let shown = shown(&tree.root, &BTreeSet::new());
+            assert_eq!(shown.waiting, ["branch-inline", "main-inline"]);
+            assert_eq!(shown.counts.0, 2, "each card counts once");
+            let queued = |slug: &str| {
+                shown
+                    .snapshot
+                    .queue
+                    .waiting
+                    .iter()
+                    .find(|card| card.slug == slug)
+                    .unwrap()
+            };
+            // Main's card is main's: no task proposes it, and its place is main's page.
+            assert_eq!(queued("main-inline").task, None);
+            assert_eq!(queued("main-inline").href(), "/docs/LAMPS.md#main-inline");
+            // The branch's card is read from its page, at the place it sits.
+            assert_eq!(
+                queued("branch-inline").href(),
+                "/@docs~inline/docs/LAMPS.md#branch-inline"
+            );
+            let cards = branches::scan(&tree.root, &BTreeSet::new());
+            assert_eq!(
+                cards
+                    .iter()
+                    .map(|c| c.card.slug.as_str())
+                    .collect::<Vec<_>>(),
+                ["branch-inline"],
+                "the branch posted one card, not every card of the page it changed"
+            );
+        },
+    );
+}
+
+/// The whole of an inline card's life on main, as a card in a register has it: read on its page at
+/// the place it sits, queued with a link to that place, answered from the page and resolved.
+pub(super) fn an_inline_card_lives_as_a_registers_does() {
+    isolated(
+        "an_inline_card_is_read_queued_answered_from_its_page_and_resolved_where_it_sits",
+        |_| {
+            const LAMPS: &str = "docs/guide/LAMPS.md";
+            let tree = repository();
+            let text = lamps(&card("lamp-count", ' ', ""), "");
+            tree.write(LAMPS, &text);
+            commit(&tree.root, "base", 1);
+
+            // Read: the page draws the card as a section of its own between the two paragraphs
+            // around it, where the file holds it.
+            let render = Render::new(&tree.root);
+            let page = docview::document(&render, LAMPS, "", &[]).unwrap();
+            let at = page
+                .sections
+                .iter()
+                .position(|section| section.key == "card:lamp-count")
+                .expect("the card is a section of its page");
+            assert_eq!((page.sections[at].start, page.sections[at].end), (7, 8));
+            assert!(page.sections[at - 1].html.contains("There are 141 lamps."));
+            assert!(page.sections[at + 1].html.contains("Three sizes."));
+            assert!(
+                page.sections[at].html.contains("id=\"lamp-count\""),
+                "the queue's link lands on the card: {}",
+                page.sections[at].html
+            );
+            assert_eq!(page.waiting, ["lamp-count"]);
+            assert_eq!(page.cards[0].group, "decide");
+
+            // Queued, its link to its place and its category its document's folder.
+            let shown_before = shown(&tree.root, &BTreeSet::new());
+            assert_eq!(shown_before.waiting, ["lamp-count"]);
+            let queued = &shown_before.snapshot.queue.waiting[0];
+            assert_eq!(queued.href(), "/docs/guide/LAMPS.md#lamp-count");
+            assert_eq!(symphony_api::queue_category(&queued.doc), "guide");
+
+            // Answered from the page: the verdict is written under the card, nothing else moves.
+            let saves = symphony::save::Saves::start(&tree.root);
+            super::post(
+                &saves,
+                "",
+                "/api/decision",
+                serde_json::json!({"path":LAMPS, "slug":"lamp-count", "state":"approved", "note":""}),
+            );
+            saves.close();
+            let saved = tree.read(LAMPS);
+            let line = saved
+                .lines()
+                .find(|line| line.contains("owner · approved"))
+                .expect("the owner's line")
+                .to_string();
+            assert_eq!(
+                saved,
+                text.replace("- [ ] **lamp-count**", "- [x] **lamp-count**")
+                    .replace("agent — Posted.\n", &format!("agent — Posted.\n{line}\n"))
+            );
+            assert!(shown(&tree.root, &BTreeSet::new()).waiting.is_empty());
+
+            // Resolved by the tidy, where it sits.
+            let (mut out, mut err) = (Vec::new(), Vec::new());
+            let code =
+                symphony::board::tidy(&tree.root, Some("2026-11-22 08:00"), &mut out, &mut err);
+            assert_eq!(code, 0, "{}", String::from_utf8_lossy(&err));
+            assert_eq!(
+                tree.read(LAMPS),
+                saved
+                    .replace("- [x] **lamp-count**", "- [r] **lamp-count**")
+                    .replace(
+                        &line,
+                        &format!("{line}\n  [2026-11-22 08:00] agent · resolved")
+                    )
+            );
+            let page = docview::document(&Render::new(&tree.root), LAMPS, "", &[]).unwrap();
+            assert_eq!(page.cards[0].group, "resolved");
+            assert!(page.waiting.is_empty());
+        },
+    );
 }

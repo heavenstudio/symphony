@@ -1,4 +1,4 @@
-//! A plugin that answers from a process of its own (`[plugins.process]`, docs/PLUGIN_PROTOCOL.md):
+//! A plugin that answers from a process of its own (`[plugins.process]`, docs/engineering/PLUGIN_PROTOCOL.md):
 //! the host's side of the protocol. Its project names it in `[plugins] crates` as a linked plugin
 //! is named, and its command in `[plugins.process]`; [`made`] gives the one [`Remote`] for that
 //! name, command and checkout in this process, kept for the process's life, which stands in the
@@ -25,31 +25,37 @@
 //! this process, which ends it (the SDK's `serve` at most its `ENDING` after).
 //!
 //! **Its seams.** What the plugin declared stands for it here: its components, card kinds,
-//! renderers, routes, home regions, board actions, watches and doc checks ([`seams`]), each
-//! forwarding its calls; its navigation and theme, which are declaration alone; and its commands,
-//! each run as its program ([`seams::RemoteCommand`]). A plugin declaring any other seam is refused,
-//! naming it ([`unanswered`]). A call newer than the agreed minor is not sent: the seam's own
-//! default answers it. A call that gets no answer (the process down, no answer in time, a refusal,
-//! an answer that does not read) is shown where its answer would go: a component's in its place on
-//! the page ([`super::error`]), a card kind's as the kind's default, as if the plugin said nothing
-//! of the card, and each other seam's as [`seams`] says. A page's components share their `once`
-//! values in the plugin as they do linked: every call of one [`Page`] names its render
-//! ([`PageData::render`]). A register read asks every card kind of every card in one request
-//! ([`Remote::read_cards`], [`ReadCards`]), its answers kept for that read.
+//! renderers, routes, home regions, board actions, gates answerers, approval authorities, Settings
+//! page describers, watches and doc checks ([`seams`]), each forwarding its calls; its navigation
+//! and theme, which are declaration alone; and its commands, each run as its program
+//! ([`seams::RemoteCommand`]). A plugin declaring any other seam is refused, naming it
+//! ([`unanswered`]). A call newer than the agreed minor is not sent: the seam's own
+//! default answers it. A gates answer is waited for as long as a linked one may run, the gates'
+//! ceiling ([`Limits::gates`]), not a call's wait, and at most [`GATES_AT_ONCE`] are asked at once,
+//! so a slow answer never holds the worker the plugin's other calls are answered on
+//! ([`seams::RemoteGates`]): one given up holds its turn until its cancel resolves, as the SDK's
+//! worker runs it on until then ([`GatesTurn`]). A call that gets no answer (the process down, no
+//! answer in time, a refusal, an answer that does not read) is shown where its answer would go: a
+//! component's in its place on the page ([`super::error`]), a card kind's as the kind's default, as
+//! if the plugin said nothing of the card, and each other seam's as [`seams`] says. A page's
+//! components share their `once` values in the plugin as they do linked: every call of one [`Page`]
+//! names its render ([`PageData::render`]). A register read asks every card kind of every card in
+//! one request ([`Remote::read_cards`], [`ReadCards`]), its answers kept for that read.
 //!
-//! **Measured.** Under `[plugins] timing` or `loopback` each call writes its line to the project's
+//! **Measured.** Under `[plugins] timing` each call writes its line to the project's
 //! record ([`super::measure`]) as a process call: the plugin's own time, as it says it, the host's
 //! whole wait for the answer, and the bytes of the two lines.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::{self, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, Condvar, LazyLock, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Condvar, LazyLock, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::value::RawValue;
+use symphony_board::lock::Recovered as _;
 use symphony_plugin::protocol::{
     Answered, ApprovalNeedsAgent, Ask, AutoApprovable, CacheVersion, CardData, CardGates, Chosen,
     Declaration, Declare, Envelope, KindAnswers, LINE_MAX, Lined, Member, PROTOCOL, PageData,
@@ -58,15 +64,15 @@ use symphony_plugin::protocol::{
 };
 use symphony_plugin::vocabulary::{Block, NavItem, Picture};
 use symphony_plugin::{
-    Authority, BoardAction, Card, CardKind, Command, Component, DocCheck, HomeRegion, Page, Plugin,
-    Renderer, Route, Theme, Watch,
+    Authority, BoardAction, Card, CardKind, Command, Component, Describer, DocCheck, Gates,
+    HomeRegion, Page, Plugin, Renderer, Route, Theme, Watch,
 };
 
 use super::measure::{self, Line, Record};
 use crate::project::{PluginProcess, Project, Stamp};
 use seams::{
-    RemoteAction, RemoteAuthority, RemoteCheck, RemoteCommand, RemoteRegion, RemoteRenderer,
-    RemoteRoute, RemoteWatch,
+    RemoteAction, RemoteAuthority, RemoteCheck, RemoteCommand, RemoteDescriber, RemoteGates,
+    RemoteRegion, RemoteRenderer, RemoteRoute, RemoteWatch,
 };
 
 /// How long a call waits for its answer, as the gates seam waits for its answerers.
@@ -90,6 +96,10 @@ pub const LOG_MAX: u64 = 4 * 1024 * 1024;
 /// The host's lines queued for a process's stdin at most: one more, with none of them taken, ends
 /// it.
 pub const QUEUED: usize = 256;
+/// How many gates answers a process is asked at once: one fewer than the SDK's workers, so a slow
+/// answer, which may start a landing binary, never holds the worker its plugin's other calls are
+/// answered on. Another waits in the host for one of them to end.
+pub const GATES_AT_ONCE: usize = symphony_plugin::WORKERS - 1;
 /// What the log shows of a line of the plugin's that answers no call: its first bytes.
 const SHOWN: usize = 256;
 /// The longest line of a process's stderr its log takes whole: a longer one goes in pieces.
@@ -107,6 +117,9 @@ pub struct Limits {
     /// How long a call given up and sent a `cancel` may still be answered: a process that has not
     /// answered it by then is ended.
     pub cancel: Duration,
+    /// How long a gates answer waits for its turn among [`GATES_AT_ONCE`], and then for its
+    /// answer: the gates' ceiling, as long as a linked answer may run before a read asks again.
+    pub gates: Duration,
     /// The longest line either way, its newline aside.
     pub line: usize,
     /// The size past which its log is rolled.
@@ -120,6 +133,7 @@ impl Default for Limits {
             wait: WAIT,
             declare: WAIT,
             cancel: WAIT,
+            gates: crate::gates::CEILING,
             line: LINE_MAX,
             log: LOG_MAX,
         }
@@ -130,7 +144,7 @@ impl Default for Limits {
 /// process holds for that name, command and checkout, made at the first ask.
 pub fn made(name: &str, process: &PluginProcess) -> &'static Remote {
     static MADE: LazyLock<Mutex<Vec<&'static Remote>>> = LazyLock::new(|| Mutex::new(Vec::new()));
-    let mut made = lock(&MADE);
+    let mut made = MADE.lock().recover();
     if let Some(found) = made.iter().find(|remote| {
         remote.name == name
             && remote.process.command == process.command
@@ -138,15 +152,16 @@ pub fn made(name: &str, process: &PluginProcess) -> &'static Remote {
     }) {
         return found;
     }
-    let started = process.clone();
-    let remote = Remote::leaked(
-        name,
-        process.clone(),
-        Box::new(move || spawn(&started)),
-        Limits::default(),
-    );
+    let remote = Remote::leaked(name, process.clone(), spawning(process), Limits::default());
     made.push(remote);
     remote
+}
+
+/// The start of `process` as a project's plugin is started: its program in its checkout, without
+/// the session, its three streams piped.
+pub fn spawning(process: &PluginProcess) -> Start {
+    let started = process.clone();
+    Box::new(move || spawn(&started))
 }
 
 /// The process answering for the plugin `name` of the checkout `own` is written for (`own.root`):
@@ -166,14 +181,18 @@ pub fn answering(name: &str, own: &PluginProcess) -> Option<PluginProcess> {
 /// linked worktree: [`answering`]) has not declared: what a load it refused waits for.
 pub fn undeclared(root: &Path) -> bool {
     let answers = crate::builds::main_checkout(root).unwrap_or_else(|| root.to_path_buf());
-    lock(&REMOTES)
+    REMOTES
+        .lock()
+        .recover()
         .iter()
         .any(|remote| remote.process.root == answers && remote.declared.get().is_none())
 }
 
 /// The remote `plugin` is, when it is one: a plugin of a project answering from its own process.
 pub fn remote(plugin: &dyn Plugin) -> Option<&'static Remote> {
-    lock(&REMOTES)
+    REMOTES
+        .lock()
+        .recover()
         .iter()
         .copied()
         .find(|remote| std::ptr::addr_eq(*remote, plugin))
@@ -181,11 +200,6 @@ pub fn remote(plugin: &dyn Plugin) -> Option<&'static Remote> {
 
 /// Every remote made in this process, made by [`made`] or a test's peer.
 static REMOTES: LazyLock<Mutex<Vec<&'static Remote>>> = LazyLock::new(|| Mutex::new(Vec::new()));
-
-/// `mutex` held, whatever a thread that panicked holding it left.
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
 
 /// A process started, as the host speaks with it and ends it.
 pub struct Spawned {
@@ -343,7 +357,6 @@ fn unanswered(declaration: &Declaration) -> Vec<&'static str> {
     let d = declaration;
     [
         ("board fields", d.board_fields.is_empty()),
-        ("gates", d.gates.is_empty()),
         ("prose rules", d.prose_rules.is_empty()),
         ("generators", d.generators.is_empty()),
         ("transports", d.transports.is_empty()),
@@ -371,6 +384,25 @@ pub struct Remote {
     ids: AtomicU64,
     /// Where its calls are recorded, when the project's settings say so.
     record: Mutex<Option<&'static Record>>,
+    /// How many of its gates answers are asked now, [`GATES_AT_ONCE`] at most, and told when one
+    /// ends.
+    gates_asked: Mutex<usize>,
+    gates_ended: Condvar,
+}
+
+/// A gates answer's turn among the [`GATES_AT_ONCE`] a remote asks at once, given back when it is
+/// dropped. Its call holds it until the call resolves: answered or failed, or given up and its
+/// cancel resolved, by a late answer or the process's end ([`Remote::after_cancel`]). The SDK
+/// runs a call given up on its worker until it answers, as it takes no cancel, so a turn given
+/// back with the call would let another answer take the worker the plugin's other calls are
+/// answered on.
+pub(super) struct GatesTurn(&'static Remote);
+
+impl Drop for GatesTurn {
+    fn drop(&mut self) {
+        *self.0.gates_asked.lock().recover() -= 1;
+        self.0.gates_ended.notify_one();
+    }
 }
 
 enum State {
@@ -413,12 +445,13 @@ struct Connection {
     ended: Condvar,
 }
 
-/// The calls a connection's answers go to, by id; the ones given up whose answers may still come;
-/// whether it is ending, and once it has ended, when and how.
+/// The calls a connection's answers go to, by id; the ones given up whose answers may still come,
+/// each with the gates turn it holds until then; whether it is ending, and once it has ended, when
+/// and how.
 #[derive(Default)]
 struct Waiting {
     calls: BTreeMap<u64, mpsc::Sender<Result<Reply, String>>>,
-    given_up: BTreeSet<u64>,
+    given_up: BTreeMap<u64, Option<GatesTurn>>,
     ending: bool,
     ended: Option<(Instant, String)>,
 }
@@ -431,17 +464,17 @@ impl Connection {
 
     /// When and how it ended, once it has.
     fn ended(&self) -> Option<(Instant, String)> {
-        lock(&self.waiting).ended.clone()
+        self.waiting.lock().recover().ended.clone()
     }
 
     /// Why it takes no call: how it ended, waited for while another call ends it, or that it is
     /// ending still past [`ENDS_IN`].
     fn closed(&self) -> String {
-        let waiting = lock(&self.waiting);
+        let waiting = self.waiting.lock().recover();
         let (waiting, _) = self
             .ended
             .wait_timeout_while(waiting, ENDS_IN, |waiting| waiting.ended.is_none())
-            .unwrap_or_else(PoisonError::into_inner);
+            .recover();
         waiting
             .ended
             .clone()
@@ -540,9 +573,11 @@ impl Remote {
             declared: OnceLock::new(),
             ids: AtomicU64::new(1),
             record: Mutex::new(None),
+            gates_asked: Mutex::new(0),
+            gates_ended: Condvar::new(),
         }));
         let _ = remote.me.set(remote);
-        lock(&REMOTES).push(remote);
+        REMOTES.lock().recover().push(remote);
         remote
     }
 
@@ -560,12 +595,12 @@ impl Remote {
 
     /// Its calls recorded into `record`, or none.
     pub(super) fn record_into(&self, record: Option<&'static Record>) {
-        *lock(&self.record) = record;
+        *self.record.lock().recover() = record;
     }
 
     /// Its process's id while it runs.
     pub fn pid(&self) -> Option<u32> {
-        match &*lock(&self.state) {
+        match &*self.state.lock().recover() {
             State::Running(connection) if connection.ended().is_none() => connection.pid,
             State::Idle | State::Running(_) | State::Down { .. } | State::Refused { .. } => None,
         }
@@ -573,7 +608,7 @@ impl Remote {
 
     /// Why it is down, while it is.
     pub fn down(&self) -> Option<String> {
-        match &*lock(&self.state) {
+        match &*self.state.lock().recover() {
             State::Running(connection) => connection.ended().map(|(_, why)| why),
             State::Down { why, .. } | State::Refused { why, .. } => Some(why.clone()),
             State::Idle => None,
@@ -610,7 +645,7 @@ impl Remote {
     /// the other's; a log that would grow past its bound is rolled to `NAME.1.log` first.
     fn append(&self, text: &str) {
         static LOGS: Mutex<()> = Mutex::new(());
-        let _one = lock(&LOGS);
+        let _one = LOGS.lock().recover();
         let log = &self.process.log;
         if let Some(folder) = log.parent() {
             let _ = std::fs::create_dir_all(folder);
@@ -643,7 +678,7 @@ impl Remote {
 
     /// The connection to its running process, started when it is not and may be.
     fn connection(&self) -> Result<Arc<Connection>, String> {
-        let mut state = lock(&self.state);
+        let mut state = self.state.lock().recover();
         let ended = match &*state {
             State::Running(connection) => match connection.ended() {
                 None => return Ok(connection.clone()),
@@ -663,7 +698,7 @@ impl Remote {
             }
             State::Idle | State::Running(_) | State::Down { .. } | State::Refused { .. } => {}
         }
-        let mut starts = lock(&self.starts);
+        let mut starts = self.starts.lock().recover();
         while starts.front().is_some_and(|at| at.elapsed() >= WINDOW) {
             starts.pop_front();
         }
@@ -835,7 +870,7 @@ impl Remote {
             if let Err(why) = input.write_all(&line).and_then(|()| input.flush()) {
                 drop(input);
                 let deadline = Instant::now() + GRACE;
-                while !lock(&connection.waiting).ending && Instant::now() < deadline {
+                while !connection.waiting.lock().recover().ending && Instant::now() < deadline {
                     #[expect(
                         clippy::disallowed_methods,
                         reason = "no-timed-waits baseline: looks again for a flag another thread sets, where a condvar is the event"
@@ -899,7 +934,7 @@ impl Remote {
                 return;
             }
         };
-        let mut waiting = lock(&connection.waiting);
+        let mut waiting = connection.waiting.lock().recover();
         if let Some(call) = waiting.calls.remove(&id) {
             drop(waiting);
             let bytes = line.len() + 1;
@@ -908,8 +943,10 @@ impl Remote {
                 us,
                 bytes,
             }));
-        } else if waiting.given_up.remove(&id) {
+        } else if let Some(turn) = waiting.given_up.remove(&id) {
             drop(waiting);
+            // Its cancel resolved: the gates turn it held is given back.
+            drop(turn);
             self.log(&format!(
                 "call {id} was answered after it was given up: dropped"
             ));
@@ -941,21 +978,21 @@ impl Remote {
     /// call waiting on it failed with why. The remote is down from then on.
     fn end(&self, connection: &Connection, reason: Option<String>) {
         {
-            let mut waiting = lock(&connection.waiting);
+            let mut waiting = connection.waiting.lock().recover();
             if waiting.ending {
                 return;
             }
             waiting.ending = true;
         }
-        lock(&connection.queue).take();
+        connection.queue.lock().recover().take();
         let how = {
-            let mut process = lock(&connection.process);
+            let mut process = connection.process.lock().recover();
             if reason.is_some() {
                 process.kill();
             }
             reaped(&mut **process)
         };
-        if let Some(errors) = lock(&connection.errors).take() {
+        if let Some(errors) = connection.errors.lock().recover().take() {
             let _ = errors.recv_timeout(GRACE);
         }
         let pid = connection.pid();
@@ -964,12 +1001,16 @@ impl Remote {
             None => format!("its process{pid} {how}"),
         };
         self.log(&why);
-        let calls = {
-            let mut waiting = lock(&connection.waiting);
+        let (calls, given_up) = {
+            let mut waiting = connection.waiting.lock().recover();
             waiting.ended = Some((Instant::now(), why.clone()));
-            waiting.given_up.clear();
-            std::mem::take(&mut waiting.calls)
+            (
+                std::mem::take(&mut waiting.calls),
+                std::mem::take(&mut waiting.given_up),
+            )
         };
+        // Their cancels resolved with it: the gates turns its calls given up held are given back.
+        drop(given_up);
         connection.ended.notify_all();
         for call in calls.into_values() {
             let _ = call.send(Err(why.clone()));
@@ -981,22 +1022,63 @@ impl Remote {
     /// body for every call ([`Self::asked`]), so each seam a process answers adds little to the
     /// binary.
     pub fn ask<A: Ask>(&self, name: &str, request: A) -> Result<A::Answer, Failure> {
+        self.ask_within(name, request, self.limits.wait, None)
+    }
+
+    /// [`Self::ask`], its answer waited for `wait` rather than a call's wait, holding `turn`, a
+    /// gates answer's, until the call resolves ([`GatesTurn`]).
+    pub(super) fn ask_within<A: Ask>(
+        &self,
+        name: &str,
+        request: A,
+        wait: Duration,
+        turn: Option<GatesTurn>,
+    ) -> Result<A::Answer, Failure> {
         let mut answer = None;
-        self.asked(name, Call::of::<A>(), request.into(), &mut |raw| {
-            answer = Some(answer_of(A::TAG, raw)?);
-            Ok(())
-        })?;
+        self.asked(
+            name,
+            Call::of::<A>(),
+            request.into(),
+            wait,
+            turn,
+            &mut |raw| {
+                answer = Some(answer_of(A::TAG, raw)?);
+                Ok(())
+            },
+        )?;
         answer.ok_or_else(|| Failure::Down(format!("its answer to {} was not read", A::TAG)))
     }
 
-    /// [`Self::ask`] of every call: `request` sent as `call`, recorded, and its answer handed to
-    /// `read`; nothing once `read` took it, or why there is no answer.
+    /// A gates answer's turn among the [`GATES_AT_ONCE`] it asks at once, waited for
+    /// [`Limits::gates`] at most; why there is none once that passed.
+    pub(super) fn gates_turn(&self) -> Result<GatesTurn, String> {
+        let asked = self.gates_asked.lock().recover();
+        let (mut asked, _) = self
+            .gates_ended
+            .wait_timeout_while(asked, self.limits.gates, |asked| *asked >= GATES_AT_ONCE)
+            .recover();
+        if *asked >= GATES_AT_ONCE {
+            return Err(format!(
+                "the {GATES_AT_ONCE} gates answers it is asked at once ran for {:?}, so this one \
+                 was not asked",
+                self.limits.gates
+            ));
+        }
+        *asked += 1;
+        Ok(GatesTurn(self.this()))
+    }
+
+    /// [`Self::ask`] of every call: `request` sent as `call`, recorded, its answer waited for
+    /// `wait` and handed to `read`, `turn` held until the call resolves; nothing once `read` took
+    /// it, or why there is no answer.
     #[inline(never)]
     fn asked(
         &self,
         name: &str,
         call: Call,
         request: Request,
+        wait: Duration,
+        turn: Option<GatesTurn>,
         read: ReadAnswer<'_>,
     ) -> Result<(), Failure> {
         if !call.piped {
@@ -1013,7 +1095,7 @@ impl Remote {
                     return Err(Failure::Newer(agreed));
                 }
                 // How the process ended is in its log already, once.
-                self.sent_within(&connection, request, self.limits.wait, read)
+                self.sent_within(&connection, request, wait, turn, read)
                     .inspect_err(|why| {
                         if !why.starts_with("its process") {
                             self.log(&format!("{} of {name}: {why}", call.tag));
@@ -1023,7 +1105,7 @@ impl Remote {
             Err(why) => Err(why),
         };
         let round_trip = started.elapsed();
-        let record = *lock(&self.record);
+        let record = *self.record.lock().recover();
         if let Some(record) = record {
             let (seam, call) = call.names;
             let (us, request_bytes, answer_bytes, failed) = match &asked {
@@ -1042,7 +1124,6 @@ impl Remote {
                 round_trip_us: Some(measure::micros(round_trip)),
                 request_bytes,
                 answer_bytes,
-                lost: None,
                 failed,
             });
         }
@@ -1053,7 +1134,7 @@ impl Remote {
     fn declaration_on(&self, connection: &Arc<Connection>) -> Result<Declaration, String> {
         let mut declared = None;
         let asked = Declare::new(PROTOCOL).into();
-        self.sent_within(connection, asked, self.limits.declare, &mut |raw| {
+        self.sent_within(connection, asked, self.limits.declare, None, &mut |raw| {
             declared = Some(answer_of(Declare::TAG, raw)?);
             Ok(())
         })?;
@@ -1061,12 +1142,14 @@ impl Remote {
     }
 
     /// `request` sent on `connection` and its answer handed to `read` within `wait`: the request
-    /// line's bytes and the reply; or why there is none.
+    /// line's bytes and the reply; or why there is none. `turn` is held until the call resolves: a
+    /// call given up hands it to the connection until its cancel does ([`Self::given_up`]).
     fn sent_within(
         &self,
         connection: &Arc<Connection>,
         request: Request,
         wait: Duration,
+        turn: Option<GatesTurn>,
         read: ReadAnswer<'_>,
     ) -> Result<(usize, Reply), String> {
         let id = self.ids.fetch_add(1, Ordering::Relaxed);
@@ -1083,7 +1166,7 @@ impl Remote {
         let bytes = line.len();
         let (answer, answered) = mpsc::channel();
         {
-            let mut waiting = lock(&connection.waiting);
+            let mut waiting = connection.waiting.lock().recover();
             if waiting.ending {
                 drop(waiting);
                 return Err(connection.closed());
@@ -1091,18 +1174,19 @@ impl Remote {
             waiting.calls.insert(id, answer);
         }
         let sent = self.queued(connection, line).inspect_err(|_| {
-            lock(&connection.waiting).calls.remove(&id);
+            connection.waiting.lock().recover().calls.remove(&id);
         })?;
         let reply = match answered.recv_timeout(wait) {
             Ok(reply) => reply?,
-            Err(mpsc::RecvTimeoutError::Timeout) => match self.given_up(connection, id, sent, wait)
-            {
-                // Answered, or failed, as it was given up.
-                None => answered
-                    .recv()
-                    .map_err(|_| "its answers stopped".to_string())??,
-                Some(why) => return Err(why),
-            },
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                match self.given_up(connection, id, sent, wait, turn) {
+                    // Answered, or failed, as it was given up.
+                    None => answered
+                        .recv()
+                        .map_err(|_| "its answers stopped".to_string())??,
+                    Some(why) => return Err(why),
+                }
+            }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 return Err("its answers stopped".into());
             }
@@ -1115,7 +1199,7 @@ impl Remote {
     /// A queue full, its lines not taken, ends the connection.
     fn queued(&self, connection: &Connection, line: Vec<u8>) -> Result<u64, String> {
         {
-            let held = lock(&connection.queue);
+            let held = connection.queue.lock().recover();
             let Some(queue) = held.as_ref() else {
                 drop(held);
                 return Err(connection.closed());
@@ -1141,17 +1225,20 @@ impl Remote {
     /// no answer, or none when it was answered or failed meanwhile. A process that did not take
     /// even its request in that wait reads no more and is ended. Else the call is cancelled, and a
     /// process that has not answered it [`Limits::cancel`] later is ended ([`Self::after_cancel`]).
+    /// The gates `turn` it holds stays with it until then: a late answer or the process's end
+    /// gives it back.
     fn given_up(
         &self,
         connection: &Arc<Connection>,
         id: u64,
         sent: u64,
         wait: Duration,
+        turn: Option<GatesTurn>,
     ) -> Option<String> {
         {
-            let mut waiting = lock(&connection.waiting);
+            let mut waiting = connection.waiting.lock().recover();
             waiting.calls.remove(&id)?;
-            waiting.given_up.insert(id);
+            waiting.given_up.insert(id, turn);
         }
         if connection.written.load(Ordering::SeqCst) < sent {
             self.end(
@@ -1179,7 +1266,8 @@ impl Remote {
     /// The call `id`, given up and sent a `cancel`, once [`Limits::cancel`] has passed since: a
     /// process that has not answered it is ended, and one that has is kept.
     fn after_cancel(&self, connection: &Connection, id: u64) {
-        if lock(&connection.waiting).given_up.contains(&id) {
+        let unanswered = (connection.waiting.lock().recover().given_up).contains_key(&id);
+        if unanswered {
             let cancel = self.limits.cancel;
             self.end(
                 connection,
@@ -1245,11 +1333,22 @@ impl Plugin for Remote {
                 .collect()
         })
     }
+    fn gates(&self) -> Vec<&dyn Gates> {
+        self.each(|d| d.gates.iter().map(|g| -> &dyn Gates { g }).collect())
+    }
     fn authorities(&self) -> Vec<&dyn Authority> {
         self.each(|d| {
             d.authorities
                 .iter()
                 .map(|a| -> &dyn Authority { a })
+                .collect()
+        })
+    }
+    fn describers(&self) -> Vec<&dyn Describer> {
+        self.each(|d| {
+            d.describers
+                .iter()
+                .map(|d| -> &dyn Describer { d })
                 .collect()
         })
     }
@@ -1281,7 +1380,9 @@ struct Declared {
     routes: Vec<RemoteRoute>,
     home_regions: Vec<RemoteRegion>,
     board_actions: Vec<RemoteAction>,
+    gates: Vec<RemoteGates>,
     authorities: Vec<RemoteAuthority>,
+    describers: Vec<RemoteDescriber>,
     watches: Vec<RemoteWatch>,
     doc_checks: Vec<RemoteCheck>,
     commands: Vec<RemoteCommand>,
@@ -1347,12 +1448,28 @@ impl Declared {
                     name: name.clone(),
                 })
                 .collect(),
+            gates: declaration
+                .gates
+                .iter()
+                .map(|name| RemoteGates {
+                    remote,
+                    name: name.clone(),
+                })
+                .collect(),
             authorities: declaration
                 .authorities
                 .iter()
                 .map(|adapter| RemoteAuthority {
                     remote,
                     adapter: adapter.clone(),
+                })
+                .collect(),
+            describers: declaration
+                .describers
+                .iter()
+                .map(|id| RemoteDescriber {
+                    remote,
+                    id: id.clone(),
                 })
                 .collect(),
             watches: declaration

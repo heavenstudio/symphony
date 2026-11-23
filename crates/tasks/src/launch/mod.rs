@@ -25,7 +25,8 @@
 //! Each launch, restore and close is recorded as an execution attempt as well, hc its provider
 //! ([`attempts`]), beside the records above, which no attempt replaces.
 //! For a command an agent ran unasked (`just tasks`), a launch and a restore start an agent only in
-//! the project, and a launch's first message is its skill's alone ([`Bounds`]).
+//! the project, and a launch's first message is its skill's alone ([`Bounds`]). Neither starts an
+//! agent turned off (`[agents.launch.on]`), nor one whose program this machine lacks ([`off`]).
 //!
 //! A terminal is closed only when all of these hold: it is this board's (`symphony.board`); its
 //! agent is idle (or it is a shell with nothing in it, or its program ended), its foreground is the
@@ -51,6 +52,7 @@ mod close;
 pub mod defaults;
 pub mod go;
 pub mod hc;
+pub mod off;
 mod place;
 mod recover;
 mod restore;
@@ -66,7 +68,7 @@ mod startup;
 mod uuid;
 
 pub use bounds::{Bounds, may_bind, own_thread};
-pub use cleanup::{Closure, cleanup, cleanup_as, finish};
+pub use cleanup::{Closure, NOT_LANDED, approved, cleanup, cleanup_as, finish, landed};
 pub use close::close;
 pub use defaults::{Defaults, Resolved};
 use place::{name_place, place, stream};
@@ -137,6 +139,9 @@ pub struct Machine {
     /// For a command run under the unasked recipes' marker, where the agents it starts may run
     /// ([`Bounds`]); none for the binary run by itself, which starts them anywhere.
     pub bounds: Option<Bounds>,
+    /// The search path an agent's program is looked for in before it starts ([`off`]): the
+    /// caller's `PATH`.
+    pub path: Option<std::ffi::OsString>,
 }
 
 impl Machine {
@@ -161,7 +166,16 @@ impl Machine {
             processes: procs::table(env),
             mode: PERMISSION_MODE.into(),
             board_env: board_env(env),
+            path: env.var("PATH").map(std::ffi::OsString::from),
         }
+    }
+
+    /// Why `agent` may not start here now ([`off::refusing`]), under the settings in force read
+    /// as a launch reads them, refused with why where they cannot be read.
+    pub(crate) fn refusing(&self, store: &Store, agent: &str) -> Result<Option<String>, Error> {
+        let defaults =
+            Defaults::configured_with(&self.root, &store.stored()).map_err(Error::Refused)?;
+        Ok(off::refusing(&defaults, self.path.as_deref(), agent))
     }
 
     /// The Herdr app space the board's terminals show in: the main checkout's folder name.
@@ -326,6 +340,12 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
             );
         }
     }
+    // An agent turned off, or whose program this machine lacks, starts nowhere: refused before
+    // anything is made for it.
+    let agent = agent_kind(ask);
+    if let Some(why) = m.refusing(store, agent)? {
+        return Err(Error::Refused(format!("no launch: {why}")));
+    }
     let dashed = slug.replace('/', "-");
     let made_worktree = ask.worktree.is_none();
     let detach = ask.detached || ((role == "reviewer" || task.instruction) && ask.branch.is_none());
@@ -470,7 +490,7 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
         )?;
         let claude_session = if agent == "codex" {
             // The thread is known once the agent registers its callback (`just tasks callback`).
-            "codex:".to_string()
+            CODEX.to_string()
         } else {
             conversation
         };
@@ -568,9 +588,20 @@ pub(super) fn prompt_text(
     }
 }
 
+/// What starts a Codex agent's conversation in a launch record, and its callback's address, before
+/// its thread (`codex:ID`); alone, a Codex agent whose thread is not known yet, as it is from its
+/// launch until it registers its callback.
+pub(crate) const CODEX: &str = "codex:";
+
+/// Whether a launch record's `conversation` is one an agent can be found or resumed by: any but
+/// none, and but a Codex agent's whose thread was never recorded.
+pub(crate) fn resumable(conversation: &str) -> bool {
+    !conversation.is_empty() && conversation != CODEX
+}
+
 /// The agent whose conversation a record names: Codex's ids are kept as `codex:ID`.
 pub(super) fn agent_of(conversation: &str) -> &'static str {
-    if conversation.starts_with("codex:") {
+    if conversation.starts_with(CODEX) {
         "codex"
     } else {
         "claude"
@@ -679,6 +710,10 @@ fn open(
     let place = place(hc, &m.project(), start.stream)?;
     let mut argv = vec!["env".to_string(), format!("TASKS_SESSION={}", start.handle)];
     argv.extend(m.board_env.iter().map(|(k, v)| format!("{k}={v}")));
+    if start.agent == "codex" {
+        // Its shell sees what `codex_args` sets, and the terminal, known only once it runs.
+        argv.extend(hc::IN_ITS_TERMINAL.map(String::from));
+    }
     argv.push(start.agent.into());
     argv.extend(start.args.iter().cloned());
     let labels = [
@@ -832,4 +867,27 @@ fn checked_out_in(root: &Path, branch: &str) -> Result<Option<String>, LaunchErr
         .into_iter()
         .find(|tree| tree.branch.as_ref() == Some(&wanted));
     Ok(held.map(|tree| tree.path.to_string_lossy().into_owned()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CODEX, agent_of, resumable};
+
+    /// A record's conversation is one to resume by unless it is none or a Codex agent's whose
+    /// thread was never recorded; a Codex thread and a Claude session both are.
+    #[test]
+    fn a_conversation_is_resumable_unless_empty_or_a_codex_agent_without_its_thread() {
+        assert!(!resumable(""));
+        assert!(!resumable(CODEX));
+        assert!(resumable("codex:0abc-12"));
+        assert!(resumable("3f2a-claude-session"));
+        // Only the prefix itself is a thread not known yet: a word that merely looks like it is
+        // a conversation of its own.
+        assert!(resumable("codex"));
+        assert!(resumable("codex: "));
+        assert_eq!(agent_of(CODEX), "codex");
+        assert_eq!(agent_of("codex:0abc-12"), "codex");
+        assert_eq!(agent_of("codex"), "claude");
+        assert_eq!(agent_of(""), "claude");
+    }
 }

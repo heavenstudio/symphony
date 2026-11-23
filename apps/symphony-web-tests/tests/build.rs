@@ -21,7 +21,7 @@ use std::process::{Command, Output, Stdio};
 /// `src/styles/boardwait.css`; the agents page has none. Their common styles
 /// (`src/styles/board.css`) are in the shared file. The menus (`overlay`) and the chat (`panel`)
 /// are no page's but the shell's persistent kinds.
-const KINDS: [(&str, &[&str]); 10] = [
+const KINDS: [(&str, &[&str]); 11] = [
     ("agents", &[]),
     ("board", &["board"]),
     ("docs", &["media-layer", "docs"]),
@@ -31,6 +31,7 @@ const KINDS: [(&str, &[&str]); 10] = [
     ("reports", &["reports"]),
     ("review", &["media-layer"]),
     ("runs", &["runs"]),
+    ("settings", &["settings"]),
     ("task", &["media-layer", "task"]),
 ];
 
@@ -169,8 +170,8 @@ fn a_build_publishes_every_kind_over_one_shared_stylesheet_into_out_as_named_fro
     assert!(body.contains("symphonyCache"), "the client cache's store");
     assert!(body.contains("reviewShell"), "the shell");
     bundled_notices(&public, &body);
-    let source = fs::read_to_string(web().join("shell/shell.js")).unwrap();
-    let store = fs::read_to_string(web().join("shell/cache.js")).unwrap();
+    let source = fs::read_to_string(web().join("shell/shell.ts")).unwrap();
+    let store = fs::read_to_string(web().join("shell/cache.ts")).unwrap();
     assert!(
         body.len() * 2 < source.len() + store.len(),
         "the shell is minified: {} bytes of {}",
@@ -853,14 +854,18 @@ fn a_build_with_no_manifest_shared_stylesheet_or_kind_is_refused_and_publishes_n
     }
 }
 
-/// The minifier refuses a script it cannot read, so a shell half minified is never published.
+/// The minifier strips each TypeScript file it is named on its own and minifies them joined, in
+/// their order, stdin where one is `-`; it refuses a file it cannot read or strip and a join that is
+/// no module, so a shell half minified is never published.
 #[test]
-fn the_shells_minifier_refuses_a_script_it_cannot_read() {
+fn the_shells_minifier_joins_its_files_stripped_and_refuses_one_it_cannot_read() {
     use std::io::Write;
-    let minify = |source: &str| {
+    let scratch = Scratch::new("minify");
+    let minify = |files: &[&Path], stdin: &str| {
         let mut child = Command::new("bash")
             .arg(web().join("npm.sh"))
-            .args(["run", "--silent", "minify"])
+            .args(["run", "--silent", "minify", "--"])
+            .args(files)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -870,12 +875,19 @@ fn the_shells_minifier_refuses_a_script_it_cannot_read() {
             .stdin
             .take()
             .unwrap()
-            .write_all(source.as_bytes())
+            .write_all(stdin.as_bytes())
             .unwrap();
         child.wait_with_output().unwrap()
     };
-    let done =
-        minify("const longName = 1;\nexport function shown() {\n    return longName + 1;\n}\n");
+    let first = scratch.write(
+        "first.ts",
+        "const longName: number = 1;\nexport function shown(): number {\n    return longName + 1;\n}\n",
+    );
+    let stdin = Path::new("-");
+    let done = minify(
+        &[&first, stdin],
+        "const said: string = `${shown()}`;\nconsole.log(said);\n",
+    );
     succeeded(&done, "the minifier");
     let small = String::from_utf8(done.stdout).unwrap();
     assert!(
@@ -883,16 +895,154 @@ fn the_shells_minifier_refuses_a_script_it_cannot_read() {
         "{small}"
     );
     assert!(
-        small.contains("shown") && !small.contains("longName"),
+        small.contains("shown") && small.contains("console.log") && !small.contains("longName"),
         "{small}"
     );
-    let done = minify("const = ;\n");
-    assert!(!done.status.success(), "{done:?}");
-    assert!(done.stdout.is_empty(), "{done:?}");
     assert!(
-        String::from_utf8_lossy(&done.stderr).contains("symphony-web: the shell does not minify: "),
-        "{done:?}"
+        !small.contains(": number") && !small.contains(": string"),
+        "{small}"
     );
+
+    let refused = |done: Output, said: &str| {
+        assert_eq!(done.status.code(), Some(1), "{done:?}");
+        assert!(done.stdout.is_empty(), "{done:?}");
+        let stderr = String::from_utf8_lossy(&done.stderr);
+        assert!(stderr.starts_with(said), "{said}: {stderr}");
+    };
+    let missing = scratch.0.join("missing.ts");
+    refused(
+        minify(&[&first, &missing], ""),
+        &format!(
+            "symphony-web: the shell's {} cannot be read: ",
+            missing.display()
+        ),
+    );
+    refused(
+        minify(&[stdin], "const = ;\n"),
+        "symphony-web: the shell's stdin does not strip: ",
+    );
+    refused(
+        minify(&[stdin], "enum Kind { Board }\n"),
+        "symphony-web: the shell's stdin does not strip: ",
+    );
+    let again = scratch.write("again.ts", "const longName = 2;\n");
+    refused(
+        minify(&[&first, &again], ""),
+        "symphony-web: the shell is no module: Identifier `longName` has already been declared",
+    );
+    let done = minify(&[], "");
+    assert_eq!(done.status.code(), Some(2), "{done:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&done.stderr),
+        "usage: node shell/minify.ts FILE…\n"
+    );
+}
+
+/// typescript-only.sh over a repository of the case's own, holding `files` (path, tracked): its
+/// output and status.
+fn typescript_only(scratch: &Scratch, files: &[(&str, bool)]) -> Output {
+    let tree = scratch.0.join("checkout with spaces");
+    let git = |args: &[&str]| {
+        let done = Command::new("git")
+            .arg("-C")
+            .arg(&tree)
+            .args(args)
+            .output()
+            .expect("run git");
+        succeeded(&done, "git");
+    };
+    fs::create_dir_all(&tree).unwrap();
+    git(&["init", "--quiet"]);
+    fs::write(tree.join(".gitignore"), "node_modules/\n").unwrap();
+    for (path, tracked) in files {
+        let at = tree.join(path);
+        fs::create_dir_all(at.parent().unwrap()).unwrap();
+        fs::write(&at, "export {};\n").unwrap();
+        if *tracked {
+            git(&["add", path]);
+        }
+    }
+    Command::new("bash")
+        .arg(web().join("typescript-only.sh"))
+        .arg(&tree)
+        .output()
+        .expect("run typescript-only.sh")
+}
+
+/// The checkout's hand-written code is TypeScript: its JavaScript is the client's distribution, and
+/// an ignored folder's is no one's.
+#[test]
+fn typescript_only_passes_javascript_built_or_ignored() {
+    let scratch = Scratch::new("typescript-only-passes");
+    let done = typescript_only(
+        &scratch,
+        &[
+            (
+                "apps/symphony-server/client/public/assets/shell-0123.js",
+                true,
+            ),
+            (
+                "apps/symphony-server/client/public/assets/overlay-4567.mjs",
+                false,
+            ),
+            ("apps/symphony-web/node_modules/vite/index.js", false),
+            ("apps/symphony-web/shell/shell.ts", true),
+            ("docs/analysis/board.html", true),
+        ],
+    );
+    succeeded(&done, "typescript-only.sh");
+    assert!(done.stdout.is_empty() && done.stderr.is_empty(), "{done:?}");
+}
+
+/// A JavaScript file anywhere else is refused, each named, whether git tracks it yet or not, in any
+/// case of its extension, in a folder named like the exception or where the experiments were.
+#[test]
+fn typescript_only_refuses_javascript_anywhere_else_naming_each() {
+    let scratch = Scratch::new("typescript-only-refuses");
+    let done = typescript_only(
+        &scratch,
+        &[
+            (
+                "apps/symphony-server/client/public/assets/shell-0123.js",
+                true,
+            ),
+            ("apps/symphony-web/shell/shell.js", true),
+            ("apps/symphony-server/client/publicity/notice.cjs", true),
+            ("experiments/keyed-reads/src/read.mjs", false),
+            ("docs/analysis/board-design/BOARD.JS", true),
+            ("tools/page.jsx", false),
+        ],
+    );
+    assert_eq!(done.status.code(), Some(1), "{done:?}");
+    assert!(done.stdout.is_empty(), "{done:?}");
+    let said = String::from_utf8(done.stderr).unwrap();
+    let mut named: Vec<&str> = said.lines().skip(1).map(str::trim).collect();
+    named.sort_unstable();
+    assert_eq!(
+        named,
+        [
+            "apps/symphony-server/client/publicity/notice.cjs",
+            "apps/symphony-web/shell/shell.js",
+            "docs/analysis/board-design/BOARD.JS",
+            "experiments/keyed-reads/src/read.mjs",
+            "tools/page.jsx",
+        ],
+        "{said}"
+    );
+    assert!(
+        said.starts_with("typescript-only: hand-written code here is TypeScript"),
+        "{said}"
+    );
+}
+
+/// The checkout itself holds no hand-written JavaScript.
+#[test]
+fn the_checkouts_hand_written_code_is_typescript() {
+    let done = Command::new("bash")
+        .arg(web().join("typescript-only.sh"))
+        .output()
+        .expect("run typescript-only.sh");
+    succeeded(&done, "typescript-only.sh");
 }
 
 fn executable(path: &Path, script: &str) {
@@ -1015,8 +1165,9 @@ fn an_install_that_fails_says_all_it_said_and_runs_nothing() {
 
 /// The justfile's own recipes: `symphony-ui-dist` runs the client's build script with OUT as
 /// given, from the workspace, and `lint-rs` runs Cargo's checks (the wire types' TypeScript feature
-/// and the hosted board's feature among them), the build's two readings of the branch (its consumer
-/// notes, its published packages) and then the client's, with no wasm32 pass.
+/// and the hosted board's feature among them, then the board tests' raw-statement fence), the
+/// build's two readings of the branch (its consumer notes, its published packages) and then the
+/// client's, with no wasm32 pass.
 #[test]
 fn the_justfile_builds_the_client_with_its_script_and_lints_it_with_its_checks() {
     let scratch = Scratch::new("recipes");
@@ -1076,6 +1227,7 @@ fn the_justfile_builds_the_client_with_its_script_and_lints_it_with_its_checks()
                 "cwd={0}\narg=clippy\narg=--workspace\narg=--all-targets\narg=--locked\narg=--\narg=-D\narg=warnings\n",
                 "cwd={0}\narg=clippy\narg=-p\narg=symphony-api\narg=--features\narg=typescript\narg=--all-targets\narg=--locked\narg=--\narg=-D\narg=warnings\n",
                 "cwd={0}\narg=clippy\narg=-p\narg=symphony-board\narg=--features\narg=hosted-postgresql\narg=--all-targets\narg=--locked\narg=--\narg=-D\narg=warnings\n",
+                "cwd={0}\narg=test\narg=-p\narg=symphony-board\narg=--test\narg=raw_fence\narg=--locked\n",
                 "bin cwd={0}\narg=symphony-build\narg=consumer-notes\narg=--check\n",
                 "bin cwd={0}\narg=symphony-build\narg=crates-check\narg=--branch\narg=.\n",
                 "client-lint cwd={0}\n"
@@ -1113,10 +1265,10 @@ fn the_clients_key_is_one_line_of_the_web_packages_hash() {
 
 #[test]
 fn the_shell_keys_storage_by_the_clients_rule() {
-    let shell = fs::read_to_string(web().join("shell/shell.js")).unwrap();
+    let shell = fs::read_to_string(web().join("shell/shell.ts")).unwrap();
     assert!(
         shell.contains("return id ? `${id}:${key}` : key;"),
-        "shell.js's stored takes the project's id first, as the client's `stored` does"
+        "shell.ts's stored takes the project's id first, as the client's `stored` does"
     );
     assert!(
         !shell.contains("localStorage.getItem(\"") && !shell.contains("localStorage.setItem(\""),
@@ -1126,11 +1278,11 @@ fn the_shell_keys_storage_by_the_clients_rule() {
 
 #[test]
 fn the_shell_yields_the_same_routes_to_the_symphony_as_the_server() {
-    let shell = fs::read_to_string(web().join("shell/shell.js")).unwrap();
+    let shell = fs::read_to_string(web().join("shell/shell.ts")).unwrap();
     // The list as the formatter writes it: a quoted route a line, between `[` and `];`.
     let (_, rest) = shell
         .split_once("const SYMPHONY_ROUTES = [")
-        .expect("shell.js names the Symphony's routes");
+        .expect("shell.ts names the Symphony's routes");
     let (list, _) = rest.split_once("];").expect("the routes' list ends");
     let routes: Vec<&str> = list
         .split(',')

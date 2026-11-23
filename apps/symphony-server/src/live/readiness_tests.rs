@@ -3,7 +3,6 @@
 
 use super::Hub;
 use crate::front::{Shared, router};
-use crate::gate::Gate;
 use crate::testing::{Tree, board::surreal, repository};
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -15,7 +14,7 @@ struct Board(symphony_board::server::Home);
 
 impl Drop for Board {
     fn drop(&mut self) {
-        let _ = self.0.stop();
+        let _ = self.0.stop_board();
     }
 }
 
@@ -59,7 +58,10 @@ async fn board_json_recovers_after_external_migration_at_the_existing_retry_dead
         vars: [("SYMPHONY_SURREAL".into(), surreal().display().to_string())].into(),
         cwd: root.clone(),
     };
-    let reached = symphony_board::cli::board(&env).unwrap();
+    // On SurrealDB, which the older writer's statements here are written for, named before its
+    // first reach: an installed writer's command makes the board, never the Symphony's read.
+    super::boards_tests::on_surreal(&root);
+    let reached = symphony_board::cli::writable_board(&env).unwrap();
     // An installed writer two versions behind the already-running reader.
     let before = Schema::this_build().before().before();
     let writer = Store::open_as(reached.client, &Opening::write().at(before.clone())).unwrap();
@@ -93,13 +95,7 @@ async fn board_json_recovers_after_external_migration_at_the_existing_retry_dead
         .await
         .unwrap();
     let port = listener.local_addr().unwrap().port();
-    let shared = Shared::new(
-        7,
-        port,
-        &root,
-        None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
+    let shared = Shared::new(7, port, &root, None, crate::testing::open_gate());
     assert!(shared.api.set(hub.clone()).is_ok());
     let app = router(shared.clone());
     let (stop, stopped) = tokio::sync::oneshot::channel();

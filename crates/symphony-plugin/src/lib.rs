@@ -4,7 +4,7 @@
 //! vocabulary of `symphony-blocks`, re-exported in [`vocabulary`]), never a Symphony library type,
 //! so a plugin can answer from a process of its own as well as linked: each seam's call is the line
 //! protocol's data in [`protocol`], and a plugin's binary whose `main` is [`serve`]`(&PLUGIN)`
-//! answers it on its stdin and stdout (docs/PLUGIN_PROTOCOL.md).
+//! answers it on its stdin and stdout (docs/engineering/PLUGIN_PROTOCOL.md).
 //!
 //! The client holds no plugin code: a component renders to [`vocabulary::Block`]s, which every
 //! project's client draws with the same generic components.
@@ -16,7 +16,7 @@
 //! checks, [`DocCheck`], the docs' syntax they read, and the text and markup rules a plugin reads
 //! and writes by). The kit's crates depend on no other workspace crate but each other, so a plugin
 //! built on the kit links nothing of the Symphony's library, board or server
-//! (docs/PLUGIN_PROTOCOL.md, "The kit").
+//! (docs/engineering/PLUGIN_PROTOCOL.md, "The kit").
 
 #![forbid(unsafe_code)]
 
@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 /// The block vocabulary a plugin renders to, and the data its seams return: `symphony-blocks`
 /// re-exported whole, so every word a block carries is named from here. Everything public in that
 /// crate is the kit's public vocabulary, and a type added there is a published addition, under the
-/// kit's version rules (docs/PLUGIN_PROTOCOL.md, *Versions*).
+/// kit's version rules (docs/engineering/PLUGIN_PROTOCOL.md, *Versions*).
 pub mod vocabulary {
     pub use symphony_blocks::*;
 }
@@ -52,7 +52,8 @@ pub use serve::{ENDING, WORKERS, serve, serve_on};
 pub mod testing;
 
 use vocabulary::{
-    Block, FieldValue, Gate, InlineKind, NavItem, Picture, Presentation, Region, Span, TaskOffer,
+    Block, FieldValue, Gate, InlineKind, NavItem, Picture, Presentation, Region, SettingsEntry,
+    Span, TaskOffer,
 };
 
 /// What a host shows in a component's place for its error `problem`: one span of the class
@@ -113,6 +114,10 @@ pub trait Plugin: Send + Sync {
     }
     /// The project's approval authorities it answers for, one per adapter ([`Authority`]).
     fn authorities(&self) -> Vec<&dyn Authority> {
+        Vec::new()
+    }
+    /// The entries it adds to the project's Settings page, one per describer ([`Describer`]).
+    fn describers(&self) -> Vec<&dyn Describer> {
         Vec::new()
     }
     fn watches(&self) -> Vec<&dyn Watch> {
@@ -431,6 +436,34 @@ pub trait Gates: Send + Sync {
     }
 }
 
+/// An entry a plugin adds to its project's Settings page, in the one shape the Symphony's own
+/// entries take ([`SettingsEntry`]): its name, what it is for, its state and why, what it needs
+/// and whether this machine has it, and its settings, each a preference or reviewed. The page
+/// draws it with the component that draws the Symphony's own, after them, and knows it by no name;
+/// only the plugins a project selects (`[plugins] crates`) describe for it.
+///
+/// A description declares: it runs nothing, writes nothing and reaches no outside service. It
+/// cannot lower a setting's class: a setting the Symphony would run or that decides what lands
+/// (a key the local settings file refuses) is shown reviewed whatever the describer says, and a
+/// describer may mark a setting of its own reviewed. Nor can it take the board's scope
+/// ([`SettingScope::Board`](vocabulary::SettingScope::Board)): the board's store keeps the
+/// Symphony's own preferences alone, so the page shows a description's setting without it. A
+/// linked plugin and one answering from its process describe alike (`describers.describe`,
+/// protocol 0.5).
+pub trait Describer: Send + Sync {
+    /// Its id, unique among the plugin's describers: its entry's anchor on the page is the
+    /// plugin's name and this, whatever id the entry it answers gives, counted on where an entry
+    /// before took it.
+    fn id(&self) -> &str;
+    /// The entry for the project at `root`, or why it cannot say, which the page shows in the
+    /// entry's place.
+    fn describe(&self, root: &Path) -> Result<SettingsEntry, String>;
+}
+
+#[cfg(test)]
+#[path = "describer_tests.rs"]
+mod describer_tests;
+
 /// What a board field holds.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -553,7 +586,8 @@ pub struct Theme {
     /// The name shown in the header and the tab.
     pub name: String,
     pub icon: Option<String>,
-    /// Token names (`accent`, `bg`, `fg`, `font`, …) and their CSS values.
+    /// Token names (`primary`, `background`, `foreground`, `font-sans`, …) and their CSS values
+    /// (docs/engineering/PLUGIN_WRITING.md lists them).
     pub tokens: BTreeMap<String, String>,
     /// Stylesheets appended after the tokens, project-relative.
     pub stylesheets: Vec<String>,

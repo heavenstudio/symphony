@@ -95,11 +95,12 @@ fn namespace(before: &str) -> Option<&str> {
 }
 
 /// What a failure says of a server that took the request on a connection that worked and gave no
-/// whole answer within the wait.
-const SLOW: &str = " is slow: no answer within ";
+/// whole answer within the wait: SurrealDB's client's and PostgreSQL's ([`crate::pg`]) alike.
+pub(crate) const SLOW: &str = " is slow: no answer within ";
 
-/// Whether `error` is a request's failure ([`Client::query`]) on a server that was slow, not
-/// unreachable: the connection worked and the answer was late. Whatever wraps it keeps its words.
+/// Whether `error` is a request's failure ([`Client::query`], or [`crate::pg::Client`]'s on a
+/// request or a startup) on a server that was slow, not unreachable: the connection worked and the
+/// answer was late. Whatever wraps it keeps its words.
 pub fn slow(error: &str) -> bool {
     error.contains(SLOW)
 }
@@ -300,7 +301,7 @@ mod tests {
                     socket after 4 completed requests: Resource temporarily unavailable (os error 35); \
                     the request may have run there, so it was not sent again";
         assert!(slow(late), "{late}");
-        let wrapped = format!("SurrealDB: {late}");
+        let wrapped = format!("the board's database: {late}");
         assert!(slow(&wrapped), "{wrapped}");
         for other in [
             "the server at 127.0.0.1:1 did not answer: connect failed on a freshly opened socket after 0 completed requests: Connection refused (os error 61); the request was not sent",

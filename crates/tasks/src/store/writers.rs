@@ -17,7 +17,6 @@ use super::statement::both;
 use super::surreal::writers as sql;
 use super::{Failure, Store};
 use crate::board_health::ago;
-use crate::rpc::DbError;
 use crate::schema::{Access, Schema};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -115,16 +114,19 @@ pub(super) fn opening_vars(program: &Program, host: &str) -> Value {
     json!({"host": host, "path": program.path})
 }
 
-/// The board's version and the line [`sql::OPENING`] answered with.
-pub(super) fn opened(answer: &[Value]) -> (Option<i64>, Line) {
-    let pair = answer.last().and_then(Value::as_array);
-    let found = pair.and_then(|pair| pair.first()).and_then(Value::as_i64);
-    let line = match pair.and_then(|pair| pair.get(1)) {
+/// The board's version, the line and the board's additive steps [`sql::OPENING`] answered with.
+pub(super) fn opened(answer: &[Value]) -> (Option<i64>, Line, i64) {
+    let read = answer.last().and_then(Value::as_array);
+    let found = read.and_then(|read| read.first()).and_then(Value::as_i64);
+    let line = match read.and_then(|read| read.get(1)) {
         Some(Value::Bool(false)) => Line::NoTable,
-        Some(kept) => Line::Held(serde_json::from_value(kept.clone()).ok()),
+        Some(kept) => Line::Held(crate::objects::read(kept).ok()),
         None => Line::NoTable,
     };
-    (found, line)
+    let additions = (read.and_then(|read| read.get(2)))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    (found, line, additions)
 }
 
 /// Whether a writer of `schema` whose line is `line` writes it again at `now`.
@@ -195,15 +197,12 @@ impl Store {
 
     fn writer_lines(&self) -> Result<Vec<Writer>, Failure> {
         let lines = both(sql::LINES, super::postgres::writers::LINES);
-        let found = match self.request(lines, json!({})) {
-            Ok(found) => found,
-            Err(DbError::Failed(said)) if self.db.undefined(&said) => {
-                return Ok(Vec::new());
-            }
-            Err(other) => return Err(other.into()),
+        let read = self.request(lines, json!({})).map(Some);
+        let Some(found) = self.absent_board(read, None)? else {
+            return Ok(Vec::new());
         };
         let lines = found.last().cloned().unwrap_or(Value::Null);
-        serde_json::from_value(lines)
+        crate::objects::read(&lines)
             .map_err(|e| Failure::Stop(super::Error::Db(format!("a writer's line: {e}"))))
     }
 

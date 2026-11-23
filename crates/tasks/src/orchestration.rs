@@ -4,7 +4,7 @@
 //! A task is its orchestrator's when that session holds the role on it, or on the nearest task
 //! above it that has one, and is live, stale or of unknown liveness ([`crate::Health::holds`]).
 //! The board gives the role wherever a task would be left without ([`Pool`], [`unowned_tops`],
-//! [`orphaned`]; docs/TASKS.md, "Every open task has an orchestrator"), to an orchestrator holding
+//! [`orphaned`]; docs/workflow/TASKS.md, "Every open task has an orchestrator"), to an orchestrator holding
 //! fewer open tasks than the limit (`[limits] orchestrator_tasks`, [`counted`], [`at_limit`]) but
 //! for a red. A task with none on it or above it is unowned for the moment before the board gives
 //! it, or while no orchestrator that stays is under the limit, when it waits for the first to come
@@ -353,7 +353,7 @@ pub fn at_limit(handle: &str, held: usize, limit: usize) -> Option<String> {
 }
 
 /// The orchestrators the board gives a task to, each with the open tasks it holds the role on
-/// ([`counted`]): rule 4 of docs/TASKS.md, "Every open task has an orchestrator", among those that
+/// ([`counted`]): rule 4 of docs/workflow/TASKS.md, "Every open task has an orchestrator", among those that
 /// show they stay and hold fewer than the limit ([`Pool::within`]). Each pick is the one holding
 /// fewest, ties by handle, and counts the task it gave, so a pass of several spreads them and fills
 /// none past the limit.
@@ -471,6 +471,20 @@ pub fn unowned_tops(tasks: &[Task]) -> Vec<&Task> {
     tops(tasks, &unowned)
 }
 
+/// `tops` with the tasks that wait on nothing first, each group in the order it came: a task whose
+/// every dependency on `tasks` is done ([`crate::waits_on::Look::free`], as the digest's
+/// `ready_unstaffed` reads it) can be worked on now, so where the limit on the open tasks an
+/// orchestrator holds leaves places for only some, they go to those before a task that still waits
+/// on another, which nobody can start whoever orchestrates it. A partition, not a sort by the
+/// key: a stable sort links some 33 KB of code into each binary for a two-valued key.
+pub fn first_free<'t>(tasks: &[Task], tops: Vec<&'t Task>) -> Vec<&'t Task> {
+    let look = crate::waits_on::Look::new(tasks, &[]);
+    let (mut free, waiting): (Vec<&Task>, Vec<&Task>) =
+        tops.into_iter().partition(|top| look.free(top));
+    free.extend(waiting);
+    free
+}
+
 /// What a read of the whole board says of the board's give, before anything else is read: none to
 /// make (`None`: every open task has an orchestrator, and no waiting mark is left to lift), or the
 /// work there is, which `pool` then decides ([`give_due`]).
@@ -493,8 +507,9 @@ pub fn give_due(tasks: &[Task], tops: &[&Task], pool: &Pool) -> bool {
 }
 
 /// The tasks somebody answers for ([`owed`]) that are somebody's on `tasks` and would be nobody's
-/// were each role `gone` says dropped: the topmost of each tree they make, in the board's order. What a leave gives
-/// ([`crate::Store::leave`]) and what a release of the role is refused for.
+/// were each role `gone` says dropped: the topmost of each tree they make, in the board's order.
+/// What a leave gives ([`crate::Store::leave`]), those that wait on nothing first ([`first_free`]),
+/// and what a release of the role is refused for.
 pub fn orphaned(tasks: &[Task], gone: impl Fn(&Task, &crate::Role) -> bool) -> Vec<&Task> {
     tops(tasks, &orphans(tasks, gone))
 }
@@ -585,6 +600,7 @@ mod tests {
             tasks,
             sessions: Vec::<Session>::new(),
             latest_message: 0,
+            workflow_generation: None,
         }
     }
 
@@ -1062,6 +1078,43 @@ mod tests {
             .map(|t| t.slug.clone())
             .collect();
         assert_eq!(found, ["finished/open"], "a finished task is given nothing");
+    }
+
+    #[test]
+    fn the_give_takes_first_the_tops_that_wait_on_nothing_each_group_in_its_order() {
+        let on = |slug: &str, depends: &[&str]| Task {
+            depends: depends.iter().map(|d| d.to_string()).collect(),
+            ..task(slug, None, Vec::new())
+        };
+        let tasks = vec![
+            at(task("landed", None, Vec::new()), "done"),
+            at(task("dropped", None, Vec::new()), "cancelled"),
+            task("open", None, Vec::new()),
+            on("on-open", &["open"]),
+            on("on-landed", &["landed"]),
+            on("on-dropped", &["dropped"]),
+            on("on-elsewhere", &["not-on-the-board"]),
+            on("on-landed-and-open", &["landed", "open"]),
+            task("on-none", None, Vec::new()),
+        ];
+        let slugs =
+            |found: Vec<&Task>| -> Vec<String> { found.iter().map(|t| t.slug.clone()).collect() };
+        let tops: Vec<&Task> = tasks.iter().skip(2).collect();
+        // A cancelled dependency is never met, as no open one is; one the board does not hold
+        // holds nothing up.
+        assert_eq!(
+            slugs(first_free(&tasks, tops)),
+            [
+                "open",
+                "on-landed",
+                "on-elsewhere",
+                "on-none",
+                "on-open",
+                "on-dropped",
+                "on-landed-and-open",
+            ]
+        );
+        assert!(first_free(&tasks, Vec::new()).is_empty());
     }
 
     #[test]

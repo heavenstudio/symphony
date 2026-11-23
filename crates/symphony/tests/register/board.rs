@@ -226,6 +226,83 @@ fn tidy_refuses_to_write_a_register_that_would_lose_a_card_line() {
 }
 
 #[test]
+fn a_tidy_that_cannot_tidy_one_file_writes_none_of_them() {
+    // The whole tidy is worked out before a file is written: the register it reaches first, and
+    // the comment it would archive, stay as they were when a later register cannot be tidied.
+    let tree = decision_tree();
+    let first =
+        "# D\n\n<!-- register:start -->\n### T\n\n- [x] **done** — plain.\n<!-- register:end -->\n";
+    tree.write("docs/DECISIONS.md", first);
+    let later = "# L\n\n<!-- register:start -->\n### T\n\n- [ ] **new** — proposal.\n  [2026-09-26 08:00] agent — one\n\n    | t |\n<!-- register:end -->\n";
+    tree.write("docs/LATER.md", later);
+    let notes = "# N\n\n> [!comment] Odd\n> > [!resolved] Fixed.\n";
+    tree.write("docs/NOTES.md", notes);
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = tidy_with(
+        &tree.root,
+        Some("2026-09-26 08:00"),
+        drop_the_table,
+        &mut out,
+        &mut err,
+    );
+    let err = String::from_utf8(err).unwrap();
+    assert_eq!(code, 1);
+    assert!(err.starts_with("✖ docs/LATER.md not tidied: "), "{err}");
+    assert_eq!(String::from_utf8(out).unwrap(), "");
+    assert_eq!(tree.read("docs/DECISIONS.md"), first);
+    assert_eq!(tree.read("docs/LATER.md"), later);
+    assert_eq!(tree.read("docs/NOTES.md"), notes);
+    assert_eq!(tree.names("docs"), ["DECISIONS.md", "LATER.md", "NOTES.md"]);
+}
+
+#[test]
+fn a_tidy_that_cannot_write_a_file_names_it_and_says_nothing_of_it() {
+    let tree = Tree::new();
+    let register =
+        "# D\n\n<!-- register:start -->\n### T\n\n- [x] **done** — plain.\n<!-- register:end -->\n";
+    // A register whose name is 253 bytes of the 255 a name may have: the file written beside it
+    // (`.NAME.PID.review-tmp`) cannot be named, so it cannot be made by any user, root included,
+    // which a folder's permissions would not keep out.
+    let name = format!("{}.md", "D".repeat(250));
+    let rel = format!("docs/{name}");
+    tree.write(&rel, register);
+    let (code, out, err) = status(&tree.root, &["--tidy", "--now", "2026-09-26 08:00"]);
+    assert_eq!(code, 1, "{out}");
+    assert_eq!(out, "");
+    assert!(err.starts_with(&format!("✖ {rel} not tidied: ")), "{err}");
+    // The planning step says the same prefix: the OS's own error is the write's.
+    assert!(err.contains("] File name too long: "), "{err}");
+    assert_eq!(tree.read(&rel), register);
+    assert_eq!(tree.names("docs"), [name]);
+}
+
+#[test]
+fn a_register_holding_an_answered_comment_is_tidied_and_archived_in_one_pass() {
+    // The archive reads the register as its tidy left it, so the file takes both.
+    let tree = decision_tree();
+    tree.write(
+        "docs/DECISIONS.md",
+        "# D\n\n> [!comment] Odd\n> > [!resolved] Fixed.\n\n<!-- register:start -->\n### T\n\n- [x] **done** — plain.\n<!-- register:end -->\n",
+    );
+    let out = status_ok(&tree.root, &["--tidy", "--now", "2026-09-26 08:00"]);
+    assert_eq!(
+        out,
+        "resolved: done\nregrouped docs/DECISIONS.md\narchived: docs/DECISIONS.md (1)\n"
+    );
+    let text = tree.read("docs/DECISIONS.md");
+    assert!(!text.contains("[!comment] Odd"), "{text}");
+    assert!(
+        text.contains("- [r] **done** — plain.\n  [2026-09-26 08:00] agent · resolved"),
+        "{text}"
+    );
+    let ledger = tree.read("docs/history/review-ledger.md");
+    assert!(
+        ledger.contains("## 2026-09-26 08:00 · docs/DECISIONS.md"),
+        "{ledger}"
+    );
+}
+
+#[test]
 fn tidy_moves_answered_callouts_into_the_ledger() {
     let tree = decision_tree();
     tree.write(
@@ -359,7 +436,7 @@ fn tidy_leaves_a_maker_pages_picture_slot_to_the_app() {
 }
 
 #[test]
-fn tidy_covers_every_register_file_under_docs() {
+fn tidy_covers_every_document_holding_cards_under_docs() {
     let tree = decision_tree();
     tree.write(
         "docs/pictures/lamps.md",
@@ -376,7 +453,12 @@ fn tidy_covers_every_register_file_under_docs() {
         "{text}"
     );
     assert!(text.contains("- [r] **rep-a**"), "{text}");
-    assert_eq!(tree.read("docs/notes.md"), plain);
+    // A card outside any region is inline: resolved where it sits, nothing around it moved.
+    assert!(out.contains("tidied docs/notes.md"), "{out}");
+    assert_eq!(
+        tree.read("docs/notes.md"),
+        "# Notes\n\n- [r] **not-a-register** — outside any region.\n  [2026-09-26 08:00] agent · resolved\n"
+    );
 }
 
 #[test]

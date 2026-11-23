@@ -1,0 +1,14 @@
+
+# The theme the product specs' pictures of a project's own look are taken with
+# (tools/product-pictures.sh, from the `=theme` line of docs/product/pictures.txt on).
+[theme]
+name = "Orchard Kitchen"
+
+[theme.tokens]
+primary = "#0f766e"
+background = "#f6f3ea"
+card = "#fffdf7"
+foreground = "#1f2a28"
+border = "#d8d2c2"
+font-sans = "Georgia, serif"
+radius = "0.125rem"

@@ -468,7 +468,10 @@ pub fn may_move(
     own: i64,
     scratch: &str,
 ) -> Result<(), String> {
-    let committed = committed(&live.common, default_branch(live.main()).as_deref());
+    let committed = match named_branch(live) {
+        Ok(named) => committed(&live.common, named.as_deref()),
+        Err(refused) => refused,
+    };
     judged(live, &committed, this_build, migrating, found, own, scratch)
 }
 
@@ -483,7 +486,10 @@ pub fn may_move_postgresql(
     own: i64,
     scratch: &str,
 ) -> Result<(), String> {
-    let named = default_branch(live.main());
+    let named = match named_branch(live) {
+        Ok(named) => named,
+        Err(refused) => return judged(live, &refused, this_build, migrating, found, own, scratch),
+    };
     let branch = named.as_deref().unwrap_or(MAIN);
     // Resolve the branch once: both schema blobs must come from the same commit even if a land
     // moves the branch while this command reads them.
@@ -606,15 +612,40 @@ pub enum Source {
 pub const MAIN: &str = "main";
 
 /// The branch `[project] default_branch` names in a main checkout's `symphony.toml`, the key the
-/// Symphony and the land read: none where it names none, the file does not read, or there is no
-/// main checkout, when the default branch is [`MAIN`].
-pub fn default_branch(main: Option<&Path>) -> Option<String> {
-    main.and_then(|main| std::fs::read_to_string(main.join("symphony.toml")).ok())
-        .and_then(|text| text.parse::<toml::Table>().ok())
-        .and_then(|file| {
-            let branch = file.get("project")?.get("default_branch")?.as_str()?.trim();
-            (!branch.is_empty()).then(|| branch.to_string())
-        })
+/// Symphony and the land read, by their one rule ([`project::default_branch`]): as written, never
+/// trimmed. None where it names none, the file does not read, it is no text, or there is no main
+/// checkout, when the default branch is [`MAIN`].
+///
+/// # Errors
+///
+/// For a branch that rule refuses (a blank one), which the Symphony and the land refuse too, as it
+/// says it.
+pub fn default_branch(main: Option<&Path>) -> Result<Option<String>, String> {
+    let written = written_branch(main);
+    project::default_branch(written.as_deref()).map(|named| named.map(str::to_string))
+}
+
+/// The text `[project] default_branch` is in a main checkout's `symphony.toml`, as written: none
+/// where [`default_branch`] reads none.
+fn written_branch(main: Option<&Path>) -> Option<String> {
+    let text = std::fs::read_to_string(main?.join(project::FILE)).ok()?;
+    let file = text.parse::<toml::Table>().ok()?;
+    Some(
+        file.get("project")?
+            .get("default_branch")?
+            .as_str()?
+            .to_string(),
+    )
+}
+
+/// The default branch [`default_branch`] reads in `live`'s main checkout, else what was refused:
+/// the branch as written, and the source it leaves unreadable ([`Source::Unreadable`]), so the
+/// board is not moved by a build the project's default branch never named.
+fn named_branch(live: &Live) -> Result<Option<String>, Committed> {
+    default_branch(live.main()).map_err(|why| Committed {
+        branch: written_branch(live.main()).unwrap_or_default(),
+        source: Source::Unreadable(why),
+    })
 }
 
 /// The board's source ([`SOURCE`]) as the default branch commits it in the repository whose common

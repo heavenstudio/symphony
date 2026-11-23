@@ -39,8 +39,9 @@ impl Theme {
     /// The table as written: its paths inside the project, its tokens and layouts each one the
     /// client reads, a blank name or package refused.
     pub(super) fn from_file(file: FileTheme) -> Result<Theme, String> {
-        let inside =
-            |key: &str, path: Option<String>| path.map(|path| super::inside(key, path)).transpose();
+        let inside = |key: &str, path: Option<String>| {
+            path.map(|path| super::inside(key, &path)).transpose()
+        };
         let named = |key: &str, value: Option<String>| match value {
             Some(value) if value.trim().is_empty() => Err(format!("[theme] {key} is empty")),
             value => Ok(value),

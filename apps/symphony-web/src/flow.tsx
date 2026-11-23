@@ -1,4 +1,4 @@
-// A custom workflow on the task board (docs/WORKFLOW.md, "The app"): a chunk of its own, which the
+// A custom workflow on the task board (docs/workflow/WORKFLOW.md, "The app"): a chunk of its own, which the
 // board loads only once its listing says a workflow is active (`waiting.workflow`, its activation
 // generation), so a board its own writers keep fetches none of it. It reads the active definition
 // (`/api/workflow`) and gives the board its lanes (the phases that are columns, by their order,
@@ -126,13 +126,22 @@ export function readDefinition(value: unknown): Definition | null | undefined {
 /** The lanes and tabs of the board its own writers keep: its pipeline's and the phone's. */
 export type Lanes = [readonly string[], readonly string[]];
 
+/** What the machines' Build and Test lanes read as on a board a workflow holds, whose phases
+ * may be named alike (a phase named Build): the board's own reads Build and Test. */
+export const MACHINE_NAMES: [string, string][] = [
+  ["build", "Machine build"],
+  ["test", "Machine test"],
+];
+
 /**
  * Fill `names` (the board's `NAMES`) with what `definition`'s IDs read as: each phase's column
- * key its label, each state's facet its label, and each pair a task can be at its phase's and
- * state's, as its card names its place. What an older definition named goes.
+ * key its label, each state's facet its label, each pair a task can be at its phase's and
+ * state's, as its card names its place, and the machines' lanes as [`MACHINE_NAMES`] names them.
+ * What an older definition named goes.
  */
 export function name(definition: Definition, names: Map<string, string>): void {
   names.clear();
+  for (const [lane, label] of MACHINE_NAMES) names.set(lane, label);
   const label = (named: Named[], id: string) => named.find((one) => one.id === id)?.label ?? id;
   for (const phase of definition.phases) names.set(`${PHASE}${phase.id}`, phase.label);
   for (const state of definition.states) names.set(`${STATE}${state.id}`, state.label);
@@ -213,6 +222,7 @@ export function Strip({
   if (shown.length === 0 && off.length === 0) return null;
   return (
     <nav className="wait-strip state-strip scroll-row" aria-label="Filter tasks by their state">
+      <span className="strip-label">Workflow</span>
       {off.map((phase) => {
         const key = `${PHASE}${phase.id}`;
         const column = columns.find((one) => one.status === key);

@@ -1421,7 +1421,7 @@ fn a_fresh_project_is_told_every_step_it_has_left() {
         [
             "write symphony.toml to name the project (until then it is `lamp-shop`, after its \
              folder) and to set its agents, verdicts and board: \
-             https://github.com/heavenstudio/symphony/blob/main/docs/PROJECT_FILE.md lists its \
+             https://github.com/heavenstudio/symphony/blob/main/docs/operations/PROJECT_FILE.md lists its \
              tables and keys",
             "make docs/ for the documents the Symphony serves at /lamp-shop/docs/, or name the \
              folders it serves with [[entrypoints]] in symphony.toml",
@@ -1432,10 +1432,6 @@ fn a_fresh_project_is_told_every_step_it_has_left() {
         ]
     );
 }
-
-/// The step that makes a board not made yet.
-const MAKE_BOARD: &str = "make the board: the first board command makes it (`just tasks list`); \
-                          the Symphony only reads a board and never makes one";
 
 #[test]
 fn every_checkout_layout_is_a_checkout_and_a_git_dir_is_none() {
@@ -1488,7 +1484,8 @@ fn every_checkout_layout_is_a_checkout_and_a_git_dir_is_none() {
 fn a_checkout_is_told_to_make_its_board_until_its_store_is_there() {
     let tree = Tree::new();
     tree.write("Lamp Shop/.git/HEAD", "ref: refs/heads/main\n");
-    // After the SurrealDB the board's server runs, before the registration the Symphony reads it by.
+    // After the PostgreSQL a new board is made on, before the registration the Symphony reads it
+    // by; and no SurrealDB is asked for.
     let steps = left(&tree, "");
     let at = |start: &str| {
         steps
@@ -1497,14 +1494,97 @@ fn a_checkout_is_told_to_make_its_board_until_its_store_is_there() {
             .unwrap_or_else(|| panic!("{start}: {steps:?}"))
     };
     assert_eq!(steps[at("make the board")], MAKE_BOARD);
-    assert_eq!(at("fetch SurrealDB") + 1, at("make the board"), "{steps:?}");
+    assert!(MAKE_BOARD.contains("on PostgreSQL"), "{MAKE_BOARD}");
+    assert_eq!(at("have PostgreSQL") + 1, at("make the board"), "{steps:?}");
     assert_eq!(at("make the board") + 1, at("register "), "{steps:?}");
-    // A store a server left: a board, as far as the folder tells with nothing running.
+    assert!(
+        steps.iter().all(|step| !step.contains("SurrealDB")),
+        "{steps:?}"
+    );
+    // A store a server left: a board, as far as the folder tells with nothing running, on
+    // SurrealDB, whose server is asked for in place of PostgreSQL.
     tree.write("Lamp Shop/.git/symphony/tasks/data/manifest", "");
-    assert!(!left(&tree, "").contains(&MAKE_BOARD.to_string()));
+    let steps = left(&tree, "");
+    assert!(!steps.contains(&MAKE_BOARD.to_string()), "{steps:?}");
+    assert!(
+        steps.iter().any(|step| step.starts_with("fetch SurrealDB")),
+        "{steps:?}"
+    );
+    assert!(
+        steps.iter().all(|step| !step.contains("PostgreSQL")),
+        "{steps:?}"
+    );
+    // A stopped PostgreSQL board is made too: its cluster is there, its server is not.
+    std::fs::remove_dir_all(tree.path("Lamp Shop/.git/symphony/tasks/data")).unwrap();
+    tree.write(
+        "Lamp Shop/.git/symphony/tasks/backend.json",
+        r#"{"format":1,"engine":"postgresql"}"#,
+    );
+    tree.write(
+        "Lamp Shop/.git/symphony/tasks/postgresql/PG_VERSION",
+        "18\n",
+    );
+    let steps = left(&tree, "");
+    assert!(!steps.contains(&MAKE_BOARD.to_string()), "{steps:?}");
+    assert!(
+        steps.iter().any(|step| step.starts_with("have PostgreSQL")),
+        "{steps:?}"
+    );
     // Outside a checkout no board is asked for.
     let outside = Tree::new();
     assert!(!unmade_board(&outside.root, None));
+    assert_eq!(board_engine(&outside.root, None), None);
+}
+
+#[test]
+fn a_board_on_postgresql_is_told_the_setup_of_postgresql_until_discovery_finds_it() {
+    let tree = Tree::new();
+    tree.write("Lamp Shop/.git/HEAD", "ref: refs/heads/main\n");
+    let asked = |path: &str| {
+        left(&tree, path)
+            .into_iter()
+            .filter(|step| step.contains("PostgreSQL") && step != MAKE_BOARD)
+            .collect::<Vec<_>>()
+    };
+    let told = asked("");
+    assert_eq!(told.len(), 1, "{told:?}");
+    let why = symphony_board::server::postgres::discover_with_path(
+        &tree.path("Lamp Shop"),
+        Some(std::ffi::OsStr::new(
+            &tree.path("tools").display().to_string(),
+        )),
+    )
+    .unwrap_err();
+    assert_eq!(told[0], postgresql_step(&why));
+    assert!(
+        told[0].starts_with("have PostgreSQL 18 or later for the board"),
+        "{told:?}"
+    );
+    // The setup line, as the board's own refusal says it.
+    assert!(told[0].contains("brew install postgresql@18"), "{told:?}");
+    assert!(told[0].contains("[board] postgresql"), "{told:?}");
+    // Found on the search path, it is asked for no more, and the board is still to be made.
+    for tool in ["initdb", "pg_ctl", "psql", "postgres"] {
+        program(&tree, &format!("pg/{tool}"));
+    }
+    let release = |said: &str| {
+        tree.write(
+            "pg/postgres",
+            &format!("#!/bin/sh\necho 'postgres (PostgreSQL) {said}'\n"),
+        )
+    };
+    let programs = tree.path("pg").display().to_string();
+    release("18.7");
+    assert_eq!(asked(&programs), Vec::<String>::new());
+    assert!(left(&tree, &programs).contains(&MAKE_BOARD.to_string()));
+    // An older PostgreSQL is no PostgreSQL for the board: its refusal is the step.
+    release("17.2");
+    let told = asked(&programs);
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(
+        told[0].contains("is PostgreSQL 17.2; the board runs on 18 or later"),
+        "{told:?}"
+    );
 }
 
 #[test]
@@ -2239,6 +2319,8 @@ fn the_binaries_init_looks_for_are_the_ones_the_installed_recipes_run() {
 fn a_checkout_is_told_where_its_boards_surrealdb_goes_until_one_is_there() {
     let tree = Tree::new();
     tree.write("Lamp Shop/.git/HEAD", "ref: refs/heads/main\n");
+    // A board whose store is SurrealDB's, as a board made before PostgreSQL was a new board's.
+    tree.write("Lamp Shop/.git/symphony/tasks/data/manifest", "");
     let root = tree.path("Lamp Shop");
     let pinned = root
         .canonicalize()

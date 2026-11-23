@@ -9,11 +9,10 @@
 
 use super::Hub;
 use crate::front::{Shared, router};
-use crate::gate::Gate;
 use crate::testing::{
     Tree,
     board::{Fixture, HOST, NOW, Seed},
-    git, repository,
+    git, repository, store_on,
 };
 use axum::body::{Body, to_bytes};
 use axum::extract::connect_info::MockConnectInfo;
@@ -25,7 +24,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_board::rpc::Client;
 use tower::ServiceExt;
 
@@ -700,13 +699,7 @@ pub(super) fn served_with(
     root: &Path,
     hub: Hub,
 ) -> (Arc<Shared>, impl Fn(&str, Headers<'_>) -> Answer + use<>) {
-    let shared = Shared::new(
-        1,
-        1,
-        root,
-        None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
+    let shared = Shared::new(1, 1, root, None, crate::testing::open_gate());
     assert!(shared.api.set(Arc::new(hub)).is_ok());
     let app = router(shared.clone()).layer(MockConnectInfo(
         "127.0.0.1:2".parse::<SocketAddr>().unwrap(),
@@ -739,17 +732,6 @@ pub(super) fn served_with(
         })
     };
     (shared, send)
-}
-
-/// A store on `client`'s board at the fixture's time and host.
-pub(super) fn store_on(client: &Client) -> symphony_board::Store {
-    symphony_board::Store::with(
-        Client::new(client.addr(), "sf", client.database()),
-        Box::new(|| NOW),
-        Box::new(|_| false),
-        HOST,
-    )
-    .unwrap()
 }
 
 #[test]
@@ -835,43 +817,47 @@ fn a_task_pages_reads_share_one_store_of_the_board_and_the_agents_pages_read_no_
 
 #[test]
 fn a_store_the_board_failed_is_dropped_and_the_next_read_opens_the_board_anew() {
-    let tree = Tree::new();
-    let root = repository(&tree);
-    let f = Fixture::new(Seed::default().task("tools/open", "ready"));
-    let mut hub = Hub::new(&root, &root.join("build/client"));
-    let connects = Arc::new(AtomicUsize::new(0));
-    let (counted, board) = (Arc::clone(&connects), f.other_client());
-    hub.connect_reader = Box::new(move |_| {
-        if counted.fetch_add(1, Ordering::SeqCst) == 0 {
-            // A server that went after the store was opened: nothing listens where it was.
-            let gone = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            let addr = gone.local_addr().unwrap().to_string();
-            drop(gone);
-            return Ok(symphony_board::Store::unchecked(
-                Client::new(&addr, "sf", "gone").waiting(Duration::from_secs(1)),
-                Box::new(|| NOW),
-                Box::new(|_| false),
-                HOST,
-            ));
-        }
-        Ok(store_on(&board))
-    });
-    hub.refresh_page("", &root).unwrap();
-    observe(&hub, &f.store, &[]);
-    let (shared, ask) = served(&root, hub);
+    // A task page's history and its diff, each read on the store the task pages share.
+    for route in ["/api/task-history", symphony_api::TASK_DIFF_PATH] {
+        let tree = Tree::new();
+        let root = repository(&tree);
+        let f = Fixture::new(Seed::default().task("tools/open", "ready"));
+        let mut hub = Hub::new(&root, &root.join("build/client"));
+        let connects = Arc::new(AtomicUsize::new(0));
+        let (counted, board) = (Arc::clone(&connects), f.other_client());
+        hub.connect_reader = Box::new(move |_| {
+            if counted.fetch_add(1, Ordering::SeqCst) == 0 {
+                // A server that went after the store was opened: nothing listens where it was.
+                let gone = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                let addr = gone.local_addr().unwrap().to_string();
+                drop(gone);
+                return Ok(symphony_board::Store::unchecked(
+                    Client::new(&addr, "sf", "gone").waiting(Duration::from_secs(1)),
+                    Box::new(|| NOW),
+                    Box::new(|_| false),
+                    HOST,
+                ));
+            }
+            Ok(store_on(&board))
+        });
+        hub.refresh_page("", &root).unwrap();
+        observe(&hub, &f.store, &[]);
+        let (shared, ask) = served(&root, hub);
 
-    let (status, body) = ask("/api/task-history?slug=tools/open");
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
-    for _ in 0..2 {
-        let (status, body) = ask("/api/task-history?slug=tools/open");
-        assert_eq!(status, StatusCode::OK, "{body}");
+        let asked = format!("{route}?slug=tools/open");
+        let (status, body) = ask(&asked);
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{route}: {body}");
+        for _ in 0..2 {
+            let (status, body) = ask(&asked);
+            assert_eq!(status, StatusCode::OK, "{route}: {body}");
+        }
+        assert_eq!(
+            connects.load(Ordering::SeqCst),
+            2,
+            "{route}: the failed store is opened anew once, then kept"
+        );
+        shared.stop();
     }
-    assert_eq!(
-        connects.load(Ordering::SeqCst),
-        2,
-        "the failed store is opened anew once, then kept"
-    );
-    shared.stop();
 }
 
 /// The slugs a task board read answered with.

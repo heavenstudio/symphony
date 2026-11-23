@@ -1,5 +1,5 @@
 //! A release candidate's rerun carries the green of each step and lane whose inputs its fixes left
-//! alone (docs/RELEASES.md, "The rerun"): the tree says what each reads (`tools/check-inputs.sh`),
+//! alone (docs/workflow/RELEASES.md, "The rerun"): the tree says what each reads (`tools/check-inputs.sh`),
 //! a green stands with the digest it was green on, and the rerun runs what was red, what a fix
 //! changed and what it cannot tell the inputs of, and names each green it carried with its commit,
 //! its run and its digest, in its record and in the release's message. A first run carries nothing.

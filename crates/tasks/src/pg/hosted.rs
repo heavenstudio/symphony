@@ -26,10 +26,11 @@ pub use session::SUPPORTED;
 
 use super::external::{Settings, Share, TABLE};
 use super::{Answer, Step};
-use crate::rpc::DbError;
+use crate::db::DbError;
+use crate::lock::Recovered as _;
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, Weak, mpsc};
+use std::sync::{Arc, Mutex, Weak, mpsc};
 use std::time::{Duration, Instant};
 
 /// Why a hosted board did not answer, by kind.
@@ -121,18 +122,42 @@ fn correlation(backend: i32) -> String {
     format!("backend {backend} at {now}")
 }
 
-/// How a request ended without its answers: what the store is told, and whether the connection
-/// may be lent again.
+/// How a request ended without its answers: what the store is told, whether the connection
+/// may be lent again, and whether the server answered it, with what `said` says (the board's
+/// health counts a request with no answer as failed, never one the server refused).
 struct Ended {
     said: DbError,
     clean: bool,
+    answered: bool,
 }
 
 impl Ended {
+    /// A request the server did not answer: no connection for it, or one that ended, or whose
+    /// wait ran out, before the server answered it.
     fn broken(refusal: Refusal) -> Ended {
         Ended {
             said: refusal.into(),
             clean: false,
+            answered: false,
+        }
+    }
+
+    /// A request whose connection was not made: answered unless nothing answered there
+    /// ([`session::silent`]), as the socket client counts a startup the server refused.
+    fn unconnected(refusal: Refusal) -> Ended {
+        Ended {
+            answered: !session::silent(&refusal),
+            ..Ended::broken(refusal)
+        }
+    }
+
+    /// A request the server answered with an error, the connection `clean` once its transaction
+    /// is rolled back.
+    fn refused(said: DbError, clean: bool) -> Ended {
+        Ended {
+            said,
+            clean,
+            answered: true,
         }
     }
 }
@@ -216,37 +241,30 @@ impl Hosting {
         if target.identity != self.identity {
             return Err(Refusal::Configuration("url_env", MOVED));
         }
-        *self
-            .generation
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = target.generation;
+        *self.generation.lock().recover() = target.generation;
         Ok(target)
     }
 }
 
 impl pool::Connector for Hosting {
     type Connection = Arc<session::Session>;
-    type Error = Refusal;
+    type Error = Ended;
 
-    fn connect(&self, within: Duration) -> Result<Arc<session::Session>, Refusal> {
-        let target = self.read()?;
+    fn connect(&self, within: Duration) -> Result<Arc<session::Session>, Ended> {
+        let target = self.read().map_err(Ended::broken)?;
         let share = self.share.clone();
         let connecting = async move {
             match tokio::time::timeout(within, session::Session::connect(target, share)).await {
                 Ok(connected) => connected,
-                Err(_) => Err(Refusal::Unavailable("the server did not answer in time")),
+                Err(_) => Err(Refusal::Unavailable(session::UNANSWERED)),
             }
         };
-        self.driver.run(connecting)?.map(Arc::new)
+        let connected = self.driver.run(connecting).map_err(Ended::broken)?;
+        connected.map(Arc::new).map_err(Ended::unconnected)
     }
 
     fn usable(&self, connection: &Arc<session::Session>) -> bool {
-        connection.open()
-            && connection.generation
-                == *self
-                    .generation
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
+        connection.open() && connection.generation == *self.generation.lock().recover()
     }
 
     fn close(&self, connection: Arc<session::Session>) {
@@ -315,7 +333,7 @@ impl Client {
             timeout: seconds(settings.request_timeout_seconds),
             requests: AtomicUsize::new(0),
         };
-        let mut pools = POOLS.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut pools = POOLS.lock().recover();
         pools.retain(|(_, pool)| pool.strong_count() > 0);
         let key = (target.identity.clone(), class.clone());
         if let Some(shared) = pools
@@ -415,40 +433,40 @@ impl Client {
 
     /// The server's major version, read from a connection of the pool.
     pub fn server_major(&self) -> Result<u32, DbError> {
-        let mut lease = self.lease()?;
+        let mut lease = self.lease().map_err(|ended| ended.said)?;
         let major = lease.connection().major;
         lease.keep();
         Ok(major)
     }
 
-    fn lease(&self) -> Result<pool::Lease<'_, Hosting>, DbError> {
+    /// A connection of the pool for one request, or how the request ended without one: a
+    /// connection the server refused is answered, one nothing answered and the pool's own
+    /// refusals are not ([`Ended::unconnected`]).
+    fn lease(&self) -> Result<pool::Lease<'_, Hosting>, Ended> {
         // A rotation is seen before the pool looks at its idle connections; a reading that
         // fails leaves them as they are, and the next connection made says why. But a secret
         // that names another board is refused at once: an idle connection to the board it no
         // longer names is not the one this process is now told to use.
         if let Err(moved @ Refusal::Configuration(_, MOVED)) = self.shared.pool.connector().read() {
-            return Err(moved.into());
+            return Err(Ended::broken(moved));
         }
+        let capacity = |why| Ended::broken(Refusal::Capacity(why));
         self.shared
             .pool
             .acquire(self.acquire, self.connect)
-            .map_err(|refused| {
-                DbError::from(match refused {
-                    pool::Refused::LineFull => {
-                        Refusal::Capacity("as many requests wait as the pool's line holds")
-                    }
-                    pool::Refused::Deadline => {
-                        Refusal::Capacity("none came free within the wait for one")
-                    }
-                    pool::Refused::Closed => Refusal::Capacity("the pool is shut down"),
-                    pool::Refused::Forked => Refusal::Capacity(
-                        "this process is a fork of the one that connected, and makes its own",
-                    ),
-                    pool::Refused::Nested => Refusal::Capacity(
-                        "this thread holds one already, and would wait behind itself",
-                    ),
-                    pool::Refused::Connect(refusal) => refusal,
-                })
+            .map_err(|refused| match refused {
+                pool::Refused::LineFull => {
+                    capacity("as many requests wait as the pool's line holds")
+                }
+                pool::Refused::Deadline => capacity("none came free within the wait for one"),
+                pool::Refused::Closed => capacity("the pool is shut down"),
+                pool::Refused::Forked => {
+                    capacity("this process is a fork of the one that connected, and makes its own")
+                }
+                pool::Refused::Nested => {
+                    capacity("this thread holds one already, and would wait behind itself")
+                }
+                pool::Refused::Connect(ended) => ended,
             })
     }
 
@@ -476,8 +494,10 @@ impl Client {
         })
     }
 
-    /// `work` on a connection of the pool, counted once in the board's telemetry: the
-    /// connection returned to the pool only when the work left it clean.
+    /// `work` on a connection of the pool, counted once in the board's telemetry, failed only when
+    /// it got no answer (no connection made or lent, one lost, a wait run out), never for an error
+    /// the server answered, a connection it refused included: the connection returned to the pool
+    /// only when the work left it clean.
     #[track_caller]
     fn measured<F, W>(&self, write: bool, work: F) -> Result<Vec<Answer>, DbError>
     where
@@ -487,7 +507,7 @@ impl Client {
         let source = std::panic::Location::caller();
         self.requests.fetch_add(1, Ordering::SeqCst);
         let began = Instant::now();
-        let answered = (|| {
+        let sent = (|| -> Result<Vec<Answer>, Ended> {
             let mut lease = self.lease()?;
             let session = Arc::clone(lease.connection());
             let driver = &self.shared.pool.connector().driver;
@@ -500,9 +520,9 @@ impl Client {
                     if ended.clean {
                         lease.keep();
                     }
-                    Err(ended.said)
+                    Err(ended)
                 }
-                Err(refusal) => Err(refusal.into()),
+                Err(refusal) => Err(Ended::broken(refusal)),
             }
         })();
         self.shared.log.record(crate::board_health::Query {
@@ -510,9 +530,9 @@ impl Client {
             ms: began.elapsed().as_secs_f64() * 1000.0,
             source,
             write,
-            failed: answered.is_err(),
+            failed: sent.as_ref().is_err_and(|ended| !ended.answered),
         });
-        answered
+        sent.map_err(|ended| ended.said)
     }
 }
 
@@ -654,6 +674,15 @@ mod tests {
             "the hosted board's PostgreSQL: the server cannot be reached"
         );
         assert_eq!(client.requests(), 1);
+        let unanswered = |client: &Client| {
+            let (queries, _) = client.queries().report(crate::sweep::trigger::now());
+            (queries.count, queries.failed)
+        };
+        assert_eq!(
+            unanswered(&client),
+            (1, 1),
+            "nothing answered the connection"
+        );
         assert_eq!(
             client.counts(),
             Counts::default(),
@@ -664,5 +693,117 @@ mod tests {
             panic!("the pool is shut down");
         };
         assert!(closed.contains("the pool is shut down"), "{closed}");
+        assert_eq!(unanswered(&client), (2, 2), "nor the pool, shut down");
+    }
+
+    /// A connection that was not made is a request the server answered unless nothing answered
+    /// there: the line the refusal of a host's addresses draws ([`session::silent`]).
+    #[test]
+    fn a_connection_not_made_is_answered_unless_nothing_answered_there() {
+        let server = Refusal::Server {
+            state: "57P03".into(),
+            at: "backend 0 at 1700000000".into(),
+        };
+        for (refusal, answered) in [
+            (Refusal::Unavailable(session::UNREACHED), false),
+            (Refusal::Unavailable(session::UNANSWERED), false),
+            (Refusal::Unavailable(session::CUT), false),
+            (Refusal::Unavailable(session::LOGIN_REFUSED), true),
+            (Refusal::Unavailable(session::NO_TLS), true),
+            (Refusal::Unavailable(session::EXPIRED), true),
+            (Refusal::Capacity(session::NO_CONNECTION_LEFT), true),
+            (Refusal::Unsupported(session::NOT_UTF8.into()), true),
+            (server, true),
+        ] {
+            let said = DbError::from(refusal.clone());
+            let ended = Ended::unconnected(refusal.clone());
+            assert_eq!(ended.answered, answered, "{refusal}");
+            assert_eq!(ended.said, said, "{refusal}");
+            assert!(!ended.clean, "{refusal}: no connection to lend again");
+            assert!(!Ended::broken(refusal.clone()).answered, "{refusal}");
+        }
+    }
+
+    /// What answers the one connection a board's address takes, after PostgreSQL's request for
+    /// TLS: the server's `N`, or its `S` and then the client's hello read and the connection ended
+    /// with no word of TLS, by a close or by a reset.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Handshake {
+        TurnedDown,
+        Closed,
+        Reset,
+    }
+
+    /// The port of an address where one connection is taken and answered as `handshake` says, on
+    /// a thread of its own.
+    fn answering(handshake: Handshake) -> (u16, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let answering = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 8];
+            stream.read_exact(&mut request).unwrap();
+            assert_eq!(request, [0, 0, 0, 8, 4, 210, 22, 47], "the request for TLS");
+            if handshake == Handshake::TurnedDown {
+                stream.write_all(b"N").unwrap();
+                return;
+            }
+            stream.write_all(b"S").unwrap();
+            // The hello is one TLS record: its header, then the length the header gives.
+            let mut header = [0; 5];
+            stream.read_exact(&mut header).unwrap();
+            let mut hello = vec![0; usize::from(u16::from_be_bytes([header[3], header[4]]))];
+            stream.read_exact(&mut hello).unwrap();
+            if handshake == Handshake::Reset {
+                // Closed with no time to linger, the connection is reset rather than closed.
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_io()
+                    .build()
+                    .unwrap();
+                let _entered = runtime.enter();
+                stream.set_nonblocking(true).unwrap();
+                let stream = tokio::net::TcpStream::from_std(stream).unwrap();
+                stream.set_zero_linger().unwrap();
+            }
+        });
+        (port, answering)
+    }
+
+    /// A server that turns TLS down answered the connection. One cut in the middle of the
+    /// handshake it agreed to, closed or reset with no alert, said nothing of the server: nothing
+    /// answered there ([`session::silent`]), as nothing answers a port nothing listens on.
+    #[test]
+    fn a_connection_cut_in_its_tls_handshake_is_unanswered_and_tls_turned_down_is_answered() {
+        let dir = secret::tests::temp("handshake");
+        for (handshake, said, failed) in [
+            (Handshake::TurnedDown, session::NO_TLS, 0),
+            (Handshake::Closed, session::CUT, 1),
+            (Handshake::Reset, session::CUT, 1),
+        ] {
+            let (port, answering) = answering(handshake);
+            let url = format!("postgresql://board:hunter2@127.0.0.1:{port}/board_h");
+            let client = Client::connect(
+                &secret::tests::settings("connect_timeout_seconds = 5"),
+                secret::tests::env(&dir, &[("URL", &url)]),
+            )
+            .unwrap();
+            let Err(DbError::Failed(refused)) = client.request(&[Step::bare("SELECT 1")]) else {
+                panic!("{handshake:?}: no connection is made");
+            };
+            assert_eq!(
+                refused,
+                format!("the hosted board's PostgreSQL: {said}"),
+                "{handshake:?}"
+            );
+            answering.join().unwrap();
+            let (queries, _) = client.queries().report(crate::sweep::trigger::now());
+            assert_eq!(
+                (queries.count, queries.failed),
+                (1, failed),
+                "{handshake:?}"
+            );
+            assert!(client.shut_down(Duration::from_secs(5)), "{handshake:?}");
+        }
     }
 }

@@ -1,5 +1,5 @@
 //! What an open task waits on, why in a few words and since when: the one line a card of the board
-//! ends in (docs/TASKS.md, "What a task waits on"), read from the board alone: its roles' health,
+//! ends in (docs/workflow/TASKS.md, "What a task waits on"), read from the board alone: its roles' health,
 //! its dependencies and the tasks under it, what its block names ([`Blocked`]) and what its
 //! landing lacks ([`crate::alarm::WAITS`]). Who is there is the PULL digest's rule ([`Look`]),
 //! which the digest calls, so the board and PULL never disagree on it.
@@ -148,7 +148,7 @@ impl Blocked {
             return None;
         }
         let kept = fields.get(crate::red::FIELDS)?.get(BLOCKED)?;
-        serde_json::from_value(kept.clone()).ok()
+        crate::objects::read(kept).ok()
     }
 
     /// The record as the board writes it.

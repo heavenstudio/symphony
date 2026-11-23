@@ -1,6 +1,8 @@
 //! `symphony.toml`'s `[board]` table: the guide, what a review starts, the cap on an
-//! orchestrator's open tasks, when the pipeline alarm raises, the cap on the evidence the sweep
-//! sets aside and the folder of the machine's PostgreSQL, each key's default and what it refuses.
+//! orchestrator's open tasks, when the pipeline alarm raises, the ignored paths that go with a
+//! merged worktree, whether a server of its own sweeps idle sessions, the cap on the evidence the
+//! sweep sets aside and the folder of the machine's PostgreSQL, each key's default and what it
+//! refuses.
 
 use super::manifest::{parsed, refused};
 
@@ -30,15 +32,27 @@ fn the_board_table_names_the_open_tasks_an_orchestrator_may_hold_and_none_caps_n
         Some(8)
     );
     assert_eq!(parsed("").unwrap().board.orchestrator_slots, None);
-    assert!(
-        refused("[board]\norchestrator_slots = 0\n")
-            .contains("orchestrator_slots is 0; an orchestrator needs at least one slot")
+    assert_eq!(
+        parsed("[board]\norchestrator_slots = 4294967295\n")
+            .unwrap()
+            .board
+            .orchestrator_slots,
+        Some(u32::MAX)
     );
-    for text in [
-        "[board]\norchestrator_slots = -1\n",
-        "[board]\norchestrator_slots = \"8\"\n",
+    // Refused as the board says it, which reads it as no cap.
+    for (value, why) in [
+        ("0", "an orchestrator needs at least one slot"),
+        ("-1", "an orchestrator needs at least one slot"),
+        ("\"8\"", "not a whole number"),
+        ("4294967296", "past what it can be"),
     ] {
-        assert!(refused(text).contains("orchestrator_slots"), "{text}");
+        assert_eq!(
+            refused(&format!("[board]\norchestrator_slots = {value}\n")),
+            format!(
+                "symphony.toml: [board] orchestrator_slots (line 2) is {value}; {why}; no cap on \
+                 an orchestrator's open tasks applies"
+            )
+        );
     }
 }
 
@@ -84,6 +98,66 @@ fn the_board_table_names_when_the_pipeline_alarm_raises_and_none_takes_the_board
 }
 
 #[test]
+fn the_board_table_takes_the_disposable_paths_the_sweep_takes_and_refuses_the_rest() {
+    // The board reads the patterns itself; the project refuses what the board would not take.
+    let tree = super::Tree::new();
+    let text = "[board]\nsweep_disposable = [\"node_modules/\", \"*/dist/\"]\n";
+    assert!(parsed(text).is_ok(), "{text}");
+    tree.write("symphony.toml", text);
+    assert_eq!(
+        symphony_board::project::disposable(&tree.root),
+        ["node_modules/", "*/dist/"]
+    );
+    for (value, why) in [
+        ("[\"*\"]", "names nothing of its own"),
+        ("[\"/dist/\"]", "starts with `/`"),
+        ("[\"../dist/\"]", "`.` or `..` part"),
+        ("[\"dist/\", \"\"]", "is empty"),
+        ("[\"a\\\\b\"]", "backslash"),
+    ] {
+        let text = format!("[board]\nsweep_disposable = {value}\n");
+        let said = refused(&text);
+        assert!(
+            said.contains("[board] sweep_disposable: "),
+            "{text}: {said}"
+        );
+        assert!(said.contains(why), "{text}: {said}");
+        // And the board, reading the same file, takes none of it.
+        tree.write("symphony.toml", &text);
+        assert!(
+            symphony_board::project::disposable(&tree.root).is_empty(),
+            "{text}"
+        );
+    }
+    assert!(refused("[board]\nsweep_disposable = \"dist/\"\n").contains("sweep_disposable"));
+}
+
+#[test]
+fn the_board_table_holds_whether_a_server_of_its_own_sweeps_to_a_boolean_as_the_server_reads_it() {
+    // The server reads the key itself; the project refuses what is no boolean.
+    let tree = super::Tree::new();
+    for (text, sweeps) in [
+        ("[board]\nown_sweep = true\n", true),
+        ("[board]\nown_sweep = false\n", false),
+        ("", false),
+    ] {
+        assert!(parsed(text).is_ok(), "{text}");
+        tree.write("symphony.toml", text);
+        assert_eq!(
+            symphony_board::project::own_sweep(&tree.root),
+            sweeps,
+            "{text}"
+        );
+    }
+    for value in ["\"true\"", "1"] {
+        let text = format!("[board]\nown_sweep = {value}\n");
+        assert!(refused(&text).contains("own_sweep"), "{text}");
+        tree.write("symphony.toml", &text);
+        assert!(!symphony_board::project::own_sweep(&tree.root), "{text}");
+    }
+}
+
+#[test]
 fn the_board_table_takes_the_cap_on_what_the_sweep_sets_aside_as_the_board_reads_it() {
     // The board reads the cap itself; the project takes what it takes and refuses what it refuses.
     for (text, gb) in [
@@ -109,6 +183,36 @@ fn the_board_table_takes_the_cap_on_what_the_sweep_sets_aside_as_the_board_reads
     assert!(
         refused("[board]\nswept_cap_gb = 0\n")
             .contains("[board] swept_cap_gb is 0; it is a number of gigabytes over 0")
+    );
+}
+
+#[test]
+fn the_board_table_takes_the_hours_a_build_no_longer_run_holds_a_move_as_the_writer_rule_reads_them()
+ {
+    // The writer rule reads the bound itself; the project takes what it takes and refuses what it
+    // refuses, the rule reading anything it refuses as its default.
+    let tree = super::Tree::new();
+    let root = tree.root.clone();
+    for (text, hours) in [
+        ("", symphony::machine::writers::UNUSED_HOURS),
+        ("[board]\nstale_writer_hours = 48\n", 48),
+        ("[board]\nstale_writer_hours = 1\n", 1),
+    ] {
+        assert!(parsed(text).is_ok(), "{text}");
+        std::fs::write(root.join("symphony.toml"), text).unwrap();
+        assert_eq!(
+            symphony::machine::writers::Runs::of(&root).hours,
+            hours,
+            "{text}"
+        );
+    }
+    for value in ["0", "-1", "1.5", "\"24\""] {
+        let text = format!("[board]\nstale_writer_hours = {value}\n");
+        assert!(refused(&text).contains("stale_writer_hours"), "{text}");
+    }
+    assert!(
+        refused("[board]\nstale_writer_hours = 0\n")
+            .contains("[board] stale_writer_hours is 0; it is a whole number of hours over 0")
     );
 }
 

@@ -1,9 +1,9 @@
-//! A release installed on the machine (docs/RELEASES.md, "The install"): a folder of its own in the
-//! machine folder, `releases/NAME/`, holding the four binaries every project runs (`bin/`), one
-//! build of the client (`client/HASH/`, which a server built the release's way serves from beside
-//! it) and `manifest.json` ([`Manifest`]): the release and its commit, the board schema, the plugin
-//! protocol and the `tasks api` version its binaries said they serve, and each artifact's path and
-//! size.
+//! A release installed on the machine (docs/workflow/RELEASES.md, "The install"): a folder of its own in the
+//! machine folder, `releases/NAME/`, holding the four binaries every project runs and the one that
+//! moves a board's store (`bin/`), one build of the client (`client/HASH/`, which a server built
+//! the release's way serves from beside it) and `manifest.json` ([`Manifest`]): the release and its
+//! commit, the board schema, the plugin protocol and the `tasks api` version its binaries said they
+//! serve, and each artifact's path and size.
 //!
 //! An install ([`install`]) is written under a temporary name beside it and renamed into place
 //! whole, so a release folder is either all there or not there: a failed install leaves none. A
@@ -30,8 +30,12 @@ pub const MANIFEST: &str = "manifest.json";
 /// `## release-NAME` heading a release ([`noted`]).
 pub const NOTES: &str = "notes.md";
 /// The binaries a release holds, in `bin/`: the server, the board's commands, the messages between
-/// agents and the document command line.
-pub const BINARIES: [&str; 4] = [SERVER, "tasks", "agent-send", "symphony"];
+/// agents and the document command line, which every project runs by its recipes, and the move of
+/// a board's store to the other engine (`tasks-move`), a program apart from `tasks` that a project
+/// on the release runs by its path there, as no recipe reaches it.
+pub const BINARIES: [&str; 5] = [SERVER, "tasks", "agent-send", "symphony", MOVE];
+/// The move of a board's store, the one of its [`BINARIES`] no recipe runs.
+pub const MOVE: &str = "tasks-move";
 /// A release's server, the first of its [`BINARIES`].
 pub const SERVER: &str = "symphony-server";
 /// What a client build must hold to be one.
@@ -44,12 +48,17 @@ pub struct Version {
     pub minor: u32,
 }
 
-/// What a release's own binaries say they serve: the board schema they write, the plugin protocol
-/// its server speaks, the `tasks api` its board answers and the Symphony pin its server is at
-/// ([`super::PIN`]), which the host rule reads before a start runs the release's server.
+/// What a release's own binaries say they serve: the board schema they write, its additive steps
+/// on that contract, the plugin protocol its server speaks, the `tasks api` its board answers and
+/// the Symphony pin its server is at ([`super::PIN`]), which the host rule reads before a start
+/// runs the release's server.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Serves {
     pub schema: i64,
+    /// Its additive steps on `schema` (`symphony_board::schema::ADDITIONS`): 0 from a release whose
+    /// server did not say, as every release before the contract had none.
+    #[serde(default)]
+    pub additions: i64,
     pub protocol: Version,
     pub tasks_api: Version,
     /// 0 from a release whose server did not say: older than every project's pin, so no start

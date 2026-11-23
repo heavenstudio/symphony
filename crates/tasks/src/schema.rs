@@ -62,10 +62,12 @@
 //! this one no longer does: the board it moved, when, and a hash of every row the move left. The
 //! table stays defined, so a board that holds the record keeps it and every board keeps its shape.
 //!
-//! `meta:schema` names the version defined, so opening a board already in this shape writes nothing,
-//! and from schema 25 `writable_from`, the oldest schema whose Symphony may write the board
-//! ([`Schema::writable_from`]), written in the migration's one transaction beside the version. A
-//! board moved by a build before schema 25 has none, which lets no older Symphony write it.
+//! `meta:schema` names the board's contract ([`VERSION`]), so opening a board already in this shape
+//! writes nothing, and from schema 25 `writable_from`, the oldest schema whose Symphony may write
+//! the board ([`Schema::writable_from`]), written in the migration's one transaction beside the
+//! version. A board moved by a build before schema 25 has none, which lets no older Symphony write
+//! it. `meta:additions` counts the additive steps on that contract the board has ([`ADDED`]), in
+//! the `version` field `meta` already defines: no record is none.
 //!
 //! `recovery:board` names the board's recovery generation, from schema 22: a text the database
 //! makes, replaced in the transaction of every copy of the whole board and by a rebind
@@ -78,32 +80,58 @@
 //! schemaless and with no event, as no reader caches them.
 //!
 //! `workflow:[KIND, …]` is a custom delivery workflow's record, from schema 24 (`store/workflow.rs`,
-//! docs/WORKFLOW.md): the active generation (`['active']`), an immutable definition by its digest,
+//! docs/workflow/WORKFLOW.md): the active generation (`['active']`), an immutable definition by its digest,
 //! an activation by its generation, a task's transition by its slug and workflow revision, a
 //! receipt by its principal and key, and an external intent; and, from schema 26, for its guards
 //! (`workflow/guard.rs`), the state the board accepted from each approval authority
 //! (`['authority', ADAPTER]`) and each guarded edge's admission (`['admission', SLUG, REVISION]`).
 //! A task the workflow holds keeps its position in `fields._board.workflow`. Two events are the
 //! fence every writer meets, whatever it is: a task's position, or the status of a task that has
-//! one, changes only beside the transition recorded for it (`workflow_position`), and a recorded
-//! definition, activation, transition, receipt or admission is never changed, nor an authority's
-//! accepted generation lowered within its epoch (`workflow_history`). A board with no custom
-//! workflow holds no such record and meets neither.
+//! one, changes only beside the transition recorded for it (`workflow_position`), and from schema
+//! 27 a position goes only beside the transition made by an activation recorded as a return to the
+//! board's writers; and a recorded definition, activation, transition, receipt or admission is
+//! never changed, nor an authority's accepted generation lowered within its epoch
+//! (`workflow_history`). No event reads a record's deletion: the whole-board copy replaces the
+//! table. A board with no custom workflow holds no such record and meets neither.
+//!
+//! `setting:⟨key⟩` is a stored preference, from the first additive step on schema 28
+//! ([`ADDED`], `crate::settings`): the setting's key, the value it holds, its revision and every
+//! change of it. Schemaless and with no event: its readers read it at each read of the settings.
+//! The second additive step on schema 28 is PostgreSQL's index of `session` by `handle`
+//! (`session_handle`), where a session is read by its handle rather than by its id.
 //!
 //! `writer:[host, path]` is a program that opens the board to write, the schema it was built at and
 //! when it was last seen (`store/writers.rs`), from schema 18: schemaless and with no event, as
 //! builds of other schemas write it and a line written moves no marker.
 //!
-//! The rule for writers of different versions on one board ([`decide`]): a build opens a board for
-//! writing only at its own version. A board at an older version, or none, is migrated forward once
-//! by the first newer build to open it for writing: the analyzer, then the version's steps and its
-//! record in one transaction that first checks the version it read is still the board's, before any
-//! other write. A project's live board is moved forward only by a build its main checkout says is
-//! its own ([`crate::live`]). An older build refuses a newer board before any mutation, naming the
-//! project, the program to rebuild and `just symphony`; a reader one version behind reads it. A reader never moves a board
-//! forward or makes one: a board behind it, or none, it refuses before it reads, naming `just tasks`.
-//! Every write transaction starts with the [`guard`], so a store opened before a newer build migrated
-//! stops at its next write.
+//! The board is a contract between the builds that read and write it (docs/workflow/TASKS.md, where it
+//! lives). Its version, [`VERSION`], is raised by a breaking step alone; an additive step ([`ADDED`])
+//! leaves it as it is, so every build of one contract reads and writes every board of it, whatever
+//! additive steps either has. What an additive step may be is held by the store's catalogue test
+//! (`tests/store/catalogue.rs`): tables of its own, definitions of the database's own, an index
+//! that is not unique, and an optional field on a table every read and write of which keeps a field
+//! it does not know ([`OPEN`]). Anything else is breaking.
+//!
+//! The rule for writers of different contracts on one board ([`decide`]): a build opens a board for
+//! writing only at its own contract. A board at an older contract, or none, is migrated forward once
+//! by the first newer build to open it for writing: the analyzer, then the steps and the records in
+//! one transaction that first checks the version and the additive steps it read are still the
+//! board's, before any other write. A project's live board is moved forward only by a build its main
+//! checkout says is its own ([`crate::live`]). An older build refuses a newer board before any
+//! mutation, naming the project, the program to rebuild and `just symphony`; a reader one version
+//! behind reads it. A reader never moves a board forward or makes one: a board behind it, or none,
+//! it refuses before it reads, naming `just tasks`. Every write transaction starts with the
+//! [`GUARD`], so a store opened before a newer build migrated stops at its next write.
+//!
+//! On a board of its own contract, a writer that has additive steps the board lacks adds them in
+//! the same way, but only where it may move the board, and holds no writer: every build of the
+//! contract keeps writing it. Where it may not (a project's live board it is not the build of), it
+//! and every reader use the board as it is: the guard refuses, before anything is written, a write
+//! that names a table of a step the board lacks; the database refuses a field it does not define;
+//! and a SurrealDB board is STRICT, so no write makes a table it does not define. A whole-board
+//! copy, its staging and a recovery's rebind are held to the build's own additive steps exactly,
+//! and so is the whole-board read a copy is made from ([`crate::Store::dump`]): a board with steps
+//! the build lacks would lose what they hold, one lacking its steps could not hold its rows.
 //!
 //! One exception, for the Symphony alone ([`COMPATIBLE`]): a store opened to read, by the rule
 //! ([`Access::Read`]), writes a board one schema ahead of its own whose `writable_from` names its
@@ -112,13 +140,82 @@
 
 use crate::store::Program;
 
-/// Bumped when `DEFINE` gains a table, field, index or event: a board at an older version runs
-/// `DEFINE` once, and its `IF NOT EXISTS` adds what is new but leaves every definition already there
-/// as it was. Changing one (a field's type, an assertion, an index) also needs `DEFINE … OVERWRITE`
-/// for it. Protocol changes can require a wider version step and retirement of old read tokens:
-/// an already-open store does not repeat its opening check. A version listed in [`COMPATIBLE`]
-/// says its step keeps a Symphony one schema behind writing.
-pub const VERSION: i64 = 26;
+/// The board's contract: raised by a breaking step alone, one whose `DEFINE` changes or removes
+/// what a build of the contract before reads or writes, or whatever else [`ADDED`] may not hold. A
+/// board at an older version runs `DEFINE` once, and its `IF NOT EXISTS` adds what is new but leaves
+/// every definition already there as it was. Changing one (a field's type, an assertion, an index)
+/// also needs `DEFINE … OVERWRITE` for it. Protocol changes can require a wider version step and
+/// retirement of old read tokens: an already-open store does not repeat its opening check. A
+/// version listed in [`COMPATIBLE`] says its step keeps a Symphony one schema behind writing.
+///
+/// 28 is the contract's first: builds before it read a board's rows as no field more than they
+/// know and replace some rows whole, so no step of theirs could be declared additive. From it on,
+/// every build reads and writes past what it does not know ([`OPEN`]).
+pub const VERSION: i64 = 28;
+
+/// An additive step on the contract [`VERSION`]: its definitions, run after [`DEFINE`] and the
+/// steps before it, and the board's `meta:additions` counts it once a build that may move the board
+/// has run them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Addition {
+    /// Its definitions on SurrealDB, each `IF NOT EXISTS`.
+    pub surreal: &'static str,
+    /// Its definitions on PostgreSQL, each `IF NOT EXISTS`.
+    pub postgres: &'static str,
+    /// The tables its step defines: a write naming one is refused on a board without the step.
+    pub tables: &'static [&'static str],
+    /// Why it is additive: what it adds, and how a build without it reads and writes around it,
+    /// what no catalogue shows (docs/workflow/CHECKS.md, a schema step).
+    pub why: &'static str,
+}
+
+/// This build's additive steps on [`VERSION`], in order: a breaking step empties it, its
+/// definitions going into [`DEFINE`] and the PostgreSQL tables, as what they added is then the
+/// contract's.
+pub const ADDED: &[Addition] = &[
+    Addition {
+        surreal: "DEFINE TABLE IF NOT EXISTS setting SCHEMALESS;",
+        postgres: "CREATE TABLE IF NOT EXISTS setting (id jsonb PRIMARY KEY, \
+                   doc jsonb NOT NULL CHECK (jsonb_typeof(doc) = 'object'));",
+        tables: &["setting"],
+        why: "the table setting, the board's store of preferences (crate::settings): a build \
+              without it never reads or writes the table and reads every setting from the files \
+              alone, so a stored value holds only for builds that have the step, and no rule on a \
+              table there before reads it",
+    },
+    Addition {
+        surreal: "",
+        postgres: "CREATE INDEX IF NOT EXISTS session_handle ON session (handle);",
+        tables: &[],
+        why: "an index of session by handle on PostgreSQL, where a write's actor, an inbox's \
+              reader and a channel's session are read by handle, not by the row's id: a build \
+              without it reads the same rows by scanning the table, and writes them as it did; \
+              SurrealDB reads a session by its record id and has nothing to add",
+    },
+];
+
+/// How many additive steps this build has on its contract: [`ADDED`]'s length.
+pub const ADDITIONS: i64 = {
+    assert!(ADDED.len() < 1 << 32);
+    ADDED.len() as i64
+};
+
+/// The tables an additive step may give an optional field: every read of their rows ignores a
+/// field it does not know, and every write of them keeps one, on both engines
+/// (`tests/store/contract.rs`). The rest are closed: a field on one is a breaking step.
+pub const OPEN: [&str; 11] = [
+    "task",
+    "link",
+    "session",
+    "role",
+    "message",
+    "delivery",
+    "delivery_key",
+    "barred_key",
+    "task_session",
+    "ask",
+    "usage",
+];
 
 /// The schema versions whose step keeps a Symphony one schema behind writing the board, each with
 /// one line saying why: what the step added, and why no rule in code that writes a table older than
@@ -131,7 +228,7 @@ pub const VERSION: i64 = 26;
 /// store's catalogue test holds a listed version to that on the database (`tests/store/catalogue.rs`,
 /// over the committed definitions of each version); what it cannot see, a rule held in code that
 /// the older Symphony's writes would skip, is its reviewer's to read against the line
-/// ([CHECKS](../../../docs/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). The schema
+/// ([CHECKS](../../../docs/workflow/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). The schema
 /// that brought this list and the record it writes ([`WRITABLE_FROM_SINCE`]) changed `meta` and is
 /// not listed.
 pub const COMPATIBLE: &[(i64, &str)] = &[];
@@ -150,10 +247,13 @@ pub fn keeps_writes(version: i64) -> bool {
 /// The separate structural record keeps the retired legacy scalar outside this identity.
 pub const BOARD_MARKER: &str = "((SELECT VALUE last FROM ONLY counter:board_structure) ?? 0) + ((SELECT VALUE math::sum(last) FROM session_revision GROUP ALL)[0] ?? 0)";
 
-/// A board schema: its version, and the steps that bring a board of any older version to it.
+/// A board schema: its contract, its additive steps on it, and the steps that bring a board of any
+/// older version to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Schema {
     version: i64,
+    /// The tables each of its additive steps on `version` defines, in order ([`ADDED`]).
+    added: Vec<Vec<String>>,
     /// What its steps run after [`DEFINE`]: nothing for this build's own schema. Held apart from
     /// it, so a program that opens a board without ever migrating one (a reader) links and
     /// copies none of `DEFINE`'s text.
@@ -168,16 +268,41 @@ pub struct Schema {
 impl Schema {
     /// This build's: [`VERSION`], by [`DEFINE`], and on PostgreSQL by its own tables.
     pub fn this_build() -> Schema {
-        Schema {
+        Schema::of_this_contract(ADDITIONS)
+    }
+
+    /// This build's contract with its first `steps` additive steps ([`ADDED`]), all of them past
+    /// their count: a build of the same contract before the rest.
+    pub fn of_this_contract(steps: i64) -> Schema {
+        let contract = Schema {
             version: VERSION,
+            added: Vec::new(),
             after: String::new(),
             postgres: String::new(),
             keeps: keeps_writes(VERSION),
-        }
+        };
+        let taken = usize::try_from(steps.max(0)).unwrap_or(usize::MAX);
+        (ADDED.iter().take(taken)).fold(contract, |schema, step| {
+            schema.then_additive(step.surreal, step.postgres, step.tables)
+        })
     }
 
+    /// Its contract.
     pub fn version(&self) -> i64 {
         self.version
+    }
+
+    /// How many additive steps it has on its contract.
+    pub fn additions(&self) -> i64 {
+        i64::try_from(self.added.len()).unwrap_or(i64::MAX)
+    }
+
+    /// Each table its additive steps define, with the number of the step that defines it.
+    pub(crate) fn added_tables(&self) -> Vec<(String, i64)> {
+        (1..)
+            .zip(&self.added)
+            .flat_map(|(step, tables)| tables.iter().map(move |table| (table.clone(), step)))
+            .collect()
     }
 
     /// The oldest schema whose Symphony may write a board this schema's build moved: the version
@@ -193,6 +318,7 @@ impl Schema {
     pub fn then_each(&self, surreal: &str, postgres: &str) -> Schema {
         Schema {
             version: self.version + 1,
+            added: Vec::new(),
             after: format!("{}\n{surreal}", self.after),
             postgres: format!("{}\n{postgres}", self.postgres),
             keeps: false,
@@ -203,6 +329,20 @@ impl Schema {
     /// PostgreSQL: a newer build's.
     pub fn then(&self, step: &str) -> Schema {
         self.then_each(step, "")
+    }
+
+    /// This contract with one additive step more, `surreal` run after this one's steps on SurrealDB
+    /// and `postgres` on PostgreSQL, defining `tables`: a build of the same contract with a step
+    /// this one lacks ([`ADDED`]).
+    pub fn then_additive(&self, surreal: &str, postgres: &str, tables: &[&str]) -> Schema {
+        let mut added = self.added.clone();
+        added.push(tables.iter().map(|table| (*table).into()).collect());
+        Schema {
+            added,
+            after: format!("{}\n{surreal}", self.after),
+            postgres: format!("{}\n{postgres}", self.postgres),
+            ..self.clone()
+        }
     }
 
     /// This schema, its step declared to keep a Symphony one schema behind writing: a newer
@@ -219,6 +359,7 @@ impl Schema {
     pub fn before(&self) -> Schema {
         Schema {
             version: self.version - 1,
+            added: Vec::new(),
             keeps: false,
             ..self.clone()
         }
@@ -330,6 +471,8 @@ impl Named {
 /// A write's refusal around the board's version, which only the [`guard`] reads at the write.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Refusal {
+    /// The board, as a refusal names it.
+    pub board: String,
     pub before: String,
     pub after: String,
 }
@@ -339,6 +482,7 @@ impl Refusal {
     pub(crate) fn of(project: Option<&str>, own: i64, program: &Program) -> Refusal {
         let named = Named::of(project);
         Refusal {
+            board: named.board.clone(),
             before: format!("{} is at schema ", named.board),
             after: format!(
                 ", and this build writes only a board at its own schema, {own}: nothing was \
@@ -354,20 +498,102 @@ impl Refusal {
 /// [`guard_vars`]) unless the board is at this store's version, or, for a write that may
 /// (`$board_schema_ahead`), one version ahead with a `writable_from` that is a number no greater
 /// than this store's version ([`writes`]), before the write's own statements. `NONE` sorts below
-/// every number, so the record is held to be an integer before it is compared.
+/// every number, so the record is held to be an integer before it is compared. On a board of its
+/// own contract it then throws (`$board_additions_*`) unless the board's additive steps are
+/// within what the write takes ([`Steps`]): no fewer than the step of a table it names, and for a
+/// whole-board copy or a rebind, exactly the store's own.
 pub(crate) const GUARD: &str = "LET $board_schema_meta = (SELECT version, writable_from FROM ONLY meta:schema);
 LET $board_schema_found = $board_schema_meta.version;
 LET $board_schema_from = $board_schema_meta.writable_from;
-IF $board_schema_found != $board_schema AND !($board_schema_ahead = true AND $board_schema_found = $board_schema + 1 AND type::is_int($board_schema_from) AND $board_schema_from <= $board_schema) { THROW string::concat($board_schema_before, <string> $board_schema_found, $board_schema_after) };";
+IF $board_schema_found != $board_schema AND !($board_schema_ahead = true AND $board_schema_found = $board_schema + 1 AND type::is_int($board_schema_from) AND $board_schema_from <= $board_schema) { THROW string::concat($board_schema_before, <string> $board_schema_found, $board_schema_after) };
+LET $board_additions_found = (SELECT VALUE version FROM ONLY meta:additions) ?? 0;
+IF $board_schema_found = $board_schema AND ($board_additions_found < $board_additions_least OR $board_additions_found > $board_additions_most) { THROW string::concat($board_additions_before, <string> $board_additions_found, $board_additions_after) };";
+
+/// What a write takes of the board's additive steps on its contract, which the [`GUARD`] holds it
+/// to: no fewer than `least`, no more than `most`, refused in the words `before`, the board's
+/// count, then `after`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Steps {
+    pub least: i64,
+    pub most: i64,
+    pub before: String,
+    pub after: String,
+}
+
+impl Steps {
+    /// An ordinary write that names a table of no step: any count.
+    pub(crate) fn any() -> Steps {
+        Steps {
+            least: 0,
+            most: i64::MAX,
+            before: String::new(),
+            after: String::new(),
+        }
+    }
+
+    /// An ordinary write that names `table`, of the step `step`, on `board` (as a refusal names
+    /// it), by a build of contract `own`.
+    pub(crate) fn naming(table: &str, step: i64, board: &str, own: i64) -> Steps {
+        Steps {
+            least: step,
+            most: i64::MAX,
+            before: format!("{board} has "),
+            after: format!(
+                " of schema {own}'s additive steps, and this write names `{table}`, which step \
+                 {step} defines: nothing was written; the board takes the step when a build that \
+                 may move it runs (`just tasks migrate` in its main checkout)"
+            ),
+        }
+    }
+
+    /// A whole-board copy, its staging or a recovery's rebind by a build of contract `own` with
+    /// `steps` additive steps, on `board`: exactly its own.
+    pub(crate) fn exactly(steps: i64, board: &str, own: i64) -> Steps {
+        Steps {
+            least: steps,
+            most: steps,
+            before: format!("{board} has "),
+            after: format!(
+                " of schema {own}'s additive steps and this build has {steps}: a whole-board copy \
+                 or a recovery's rebind runs only on a board with the build's own, as it would \
+                 lose what steps it lacks hold, or write rows a board without its own cannot \
+                 hold; nothing was written; run it with a build at the board's steps"
+            ),
+        }
+    }
+}
+
+/// The highest of the additive steps `added` (each table with the step that defines it) whose table
+/// `sql` names, with that table: a whole word of it, however it is quoted (`table`, 'table',
+/// `` `table` ``, ⟨table⟩) and wherever it is, in a statement nested in another or in a
+/// subquery. Case is not looked at, so a word that only might be the table counts.
+pub(crate) fn needs<'a>(sql: &str, added: &'a [(String, i64)]) -> Option<(&'a str, i64)> {
+    if added.is_empty() {
+        return None;
+    }
+    let mut needed: Option<(&str, i64)> = None;
+    for word in sql.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+        if word.is_empty() {
+            continue;
+        }
+        for (table, step) in added {
+            if table.eq_ignore_ascii_case(word) && needed.is_none_or(|(_, most)| *step > most) {
+                needed = Some((table, *step));
+            }
+        }
+    }
+    needed
+}
 
 /// [`GUARD`]'s variables, for a store of version `own` refusing in `refusal`'s words, which takes a
-/// board one ahead whose record lets it when `ahead`: added to a write's own (`vars`, an object, or
-/// nothing).
+/// board one ahead whose record lets it when `ahead`, and the additive steps `steps` on its own:
+/// added to a write's own (`vars`, an object, or nothing).
 pub(crate) fn guard_vars(
     vars: &mut serde_json::Value,
     own: i64,
     ahead: bool,
     refusal: &Refusal,
+    steps: &Steps,
     refused: &str,
 ) {
     if !vars.is_object() {
@@ -377,6 +603,10 @@ pub(crate) fn guard_vars(
     vars["board_schema_ahead"] = ahead.into();
     vars["board_schema_before"] = format!("{refused}{}", refusal.before).into();
     vars["board_schema_after"] = refusal.after.clone().into();
+    vars["board_additions_least"] = steps.least.into();
+    vars["board_additions_most"] = steps.most.into();
+    vars["board_additions_before"] = format!("{refused}{}", steps.before).into();
+    vars["board_additions_after"] = steps.after.clone().into();
 }
 
 /// Whether a write of a store of version `own` passes the [`GUARD`] on a board at `found` (none:
@@ -398,6 +628,8 @@ const MUTATING: [&str; 10] = [
 
 /// Whether `sql` can change the database: it names one of the statements that do, as a whole word in
 /// any case. The board's statements are this crate's own text, every value a variable beside it.
+/// The PostgreSQL clients count a request by it; the store says what its statements do, and a
+/// debug build holds what it says to this (the store's `Statement::disagreement`).
 pub(crate) fn mutates(sql: &str) -> bool {
     sql.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .any(|word| {
@@ -573,6 +805,7 @@ DEFINE FIELD OVERWRITE kind ON workflow TYPE string
     ASSERT $value IN ['active', 'definition', 'activation', 'event', 'receipt', 'intent', 'authority', 'admission'];
 DEFINE FIELD IF NOT EXISTS body ON workflow TYPE object FLEXIBLE;
 DEFINE FIELD IF NOT EXISTS at ON workflow TYPE float;
+-- Schema 27: a position goes beside a return's transition (`Store::return_to_default`).
 DEFINE EVENT OVERWRITE workflow_position ON task
     WHEN $event != 'DELETE' AND (($before.fields._board.workflow ?? NONE) != ($after.fields._board.workflow ?? NONE)
         OR (($before.fields._board.workflow ?? NONE) != NONE AND $before.status != $after.status)
@@ -589,18 +822,25 @@ DEFINE EVENT OVERWRITE workflow_position ON task
         IF $was != NONE AND $w = $was {
             THROW string::concat('refused: explicit_action_required: the status of ', $after.slug, ' follows its workflow position, which only its workflow edges move (just tasks workflow actions ', $after.slug, ')');
         };
-        IF $w = NONE { THROW string::concat('refused: workflow: ', $after.slug, ' keeps its workflow position: only an activation returns a task to the board writers'); };
-        IF $was != NONE AND $w.revision != $was.revision + 1 {
-            THROW string::concat('refused: workflow: ', $after.slug, ' moves from workflow revision ', <string>$was.revision, ' only to the next');
-        };
-        IF $was = NONE AND (SELECT VALUE kind FROM ONLY type::record('workflow', ['event', $after.slug, $w.revision + 1])) != NONE {
-            THROW string::concat('refused: workflow: ', $after.slug, ' moved on from workflow revision ', <string>$w.revision, '; it never returns to a position it left');
-        };
-        LET $e =(SELECT VALUE body FROM ONLY type::record('workflow', ['event', $after.slug, $w.revision]));
-        IF $e = NONE OR $e.slug != $after.slug OR $e.revision != $w.revision
-            OR $e.to != { phase: $w.phase, state: $w.state } OR ($e.resume ?? NONE) != ($w.resume ?? NONE)
-            OR $e.generation != $w.generation OR $e.digest != $w.digest OR $e.status != $after.status {
-            THROW string::concat('refused: workflow: ', $after.slug, ' is at a workflow position only beside the transition recorded for it');
+        IF $w = NONE {
+            LET $r = (SELECT VALUE body FROM ONLY type::record('workflow', ['event', $after.slug, $was.revision + 1]));
+            IF $r = NONE OR $r.status != $after.status OR ($r.activation ?? NONE) = NONE
+                OR (SELECT VALUE body.returned FROM ONLY type::record('workflow', ['activation', $r.activation])) != true {
+                THROW string::concat('refused: workflow: ', $after.slug, ' keeps its workflow position: only an activation that returns the board to its own writers retires it, beside the transition recorded for it');
+            };
+        } ELSE {
+            IF $was != NONE AND $w.revision != $was.revision + 1 {
+                THROW string::concat('refused: workflow: ', $after.slug, ' moves from workflow revision ', <string>$was.revision, ' only to the next');
+            };
+            IF $was = NONE AND (SELECT VALUE kind FROM ONLY type::record('workflow', ['event', $after.slug, $w.revision + 1])) != NONE {
+                THROW string::concat('refused: workflow: ', $after.slug, ' moved on from workflow revision ', <string>$w.revision, '; it never returns to a position it left');
+            };
+            LET $e =(SELECT VALUE body FROM ONLY type::record('workflow', ['event', $after.slug, $w.revision]));
+            IF $e = NONE OR $e.slug != $after.slug OR $e.revision != $w.revision
+                OR $e.to != { phase: $w.phase, state: $w.state } OR ($e.resume ?? NONE) != ($w.resume ?? NONE)
+                OR $e.generation != $w.generation OR $e.digest != $w.digest OR $e.status != $after.status {
+                THROW string::concat('refused: workflow: ', $after.slug, ' is at a workflow position only beside the transition recorded for it');
+            };
         };
     };
 };

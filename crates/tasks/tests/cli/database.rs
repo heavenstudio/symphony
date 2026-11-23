@@ -1,13 +1,14 @@
 //! `tasks database`: the board's database said, held stopped with every board command refused
 //! naming the hold, and released, on the board of a fixture repository of its own outside this one
-//! (no `TASKS_SERVER`), its server started by its first command and stopped when the case ends.
+//! (no `TASKS_SERVER`), on SurrealDB, its server started by its first command and stopped when the
+//! case ends.
 
 use crate::common::{NOW, surreal};
 use crate::{repository, run, scratch};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use symphony_board::cli::Env;
-use symphony_board::server::{Home, Running};
+use symphony_board::server::{Engine, Home, Running};
 use symphony_board::sys::pid_alive;
 
 /// A fixture project, `alpha`, its machine folder its own: its board's hold released and its server
@@ -24,7 +25,11 @@ impl Alpha {
         std::fs::write(root.join("symphony.toml"), "[project]\nid = \"alpha\"\n").unwrap();
         let machine = dir.join("machine");
         std::fs::create_dir_all(&machine).unwrap();
-        Alpha { root, machine }
+        let alpha = Alpha { root, machine };
+        // A board on SurrealDB, whose server, store and replays these cases are about: named
+        // before its first command, which would otherwise make it on PostgreSQL.
+        alpha.home().initialize_backend(Engine::SurrealDb).unwrap();
+        alpha
     }
 
     fn env(&self) -> Env {
@@ -385,7 +390,7 @@ fn a_replay_whose_server_cannot_be_told_is_said_as_such_and_refuses_the_next_com
          server it names has ended and `ps` lists no server on the data. The next command asks \
          again, and settles the record once `ps` can tell. Should it never, remove the record by \
          hand once `ps -ww -axo pid,command` lists no `surreal start` on surrealkv://{data} \
-         (docs/TASKS.md, Stuck servers)",
+         (docs/operations/BOARD_OPERATIONS.md, Stuck servers)",
         record.display()
     );
     let (code, out, _) = alpha.run(&["database"]);
@@ -599,7 +604,6 @@ impl Drop for Stopped<'_> {
 #[test]
 fn a_board_is_moved_between_engines_and_a_snapshot_restored_over_it_by_the_command() {
     use symphony_board::NewTask;
-    use symphony_board::server::Engine;
     let alpha = Alpha::new("database-move");
     let _stopped = Stopped(&alpha);
     std::fs::write(
@@ -702,6 +706,98 @@ fn a_board_is_moved_between_engines_and_a_snapshot_restored_over_it_by_the_comma
     assert_eq!(alpha.run(&["database", "release", "--as", "mover"]).0, 0);
     let (_, out, _) = alpha.run(&["list"]);
     assert!(out.contains("sim/one"), "{out}");
+}
+
+/// A release as its install lays it in `machine` (`releases/NAME/bin/`, `current` naming it),
+/// holding this build's `tasks` and `tasks-move`: each a link to the file Cargo built, which
+/// has run before, where a copy would be a new file macOS assesses under the case's clock.
+fn released(machine: &Path) {
+    let bin = machine.join("releases/release-2026-11-21/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    for (name, built) in [
+        ("tasks", env!("CARGO_BIN_EXE_tasks")),
+        ("tasks-move", env!("CARGO_BIN_EXE_tasks-move")),
+    ] {
+        std::os::unix::fs::symlink(built, bin.join(name)).unwrap();
+    }
+    std::os::unix::fs::symlink("releases/release-2026-11-21", machine.join("current")).unwrap();
+}
+
+/// The release's `name` in `alpha`'s machine folder, found as a recipe finds it past a
+/// checkout's links, run with `args` in the project: its code, what it said and what it refused.
+fn installed(alpha: &Alpha, name: &str, args: &[&str]) -> (i32, String, String) {
+    assert!(
+        symphony_board::builds::link(&alpha.root, name).is_none(),
+        "the project has no build of its own"
+    );
+    let beyond = symphony_board::builds::Beyond {
+        machine: Some(alpha.machine.clone()),
+        path: None,
+    };
+    let binary = beyond
+        .find(name)
+        .unwrap_or_else(|| panic!("the release holds no {name}"));
+    assert!(binary.starts_with(alpha.machine.join("current/bin")));
+    let mut vars = alpha.env().vars;
+    vars.extend(std::env::var("PATH").map(|path| ("PATH".to_string(), path)));
+    // A locale, as a shell has one: macOS's PostgreSQL does not start in an environment
+    // naming none ("postmaster became multithreaded during startup").
+    vars.insert("LC_ALL".to_string(), "C".to_string());
+    let done = symphony_board::sys::output(
+        symphony_board::sys::command_with(&binary, &vars)
+            .args(args)
+            .current_dir(&alpha.root),
+    )
+    .unwrap();
+    (
+        done.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&done.stdout).into_owned(),
+        String::from_utf8_lossy(&done.stderr).into_owned(),
+    )
+}
+
+/// A project with no build of its own, on the release the machine runs, moves its seeded board
+/// to PostgreSQL and back with what the release installed alone: its `tasks-move` beside its
+/// `tasks`, each run by its path under `current`.
+#[test]
+fn a_project_on_the_installed_release_moves_its_board_with_the_releases_own_program() {
+    let alpha = Alpha::new("database-move-released");
+    let _stopped = Stopped(&alpha);
+    released(&alpha.machine);
+    std::fs::write(
+        alpha.root.join("symphony.toml"),
+        format!(
+            "[project]\nid = \"alpha\"\n[board]\npostgresql = {:?}\n",
+            programs().display().to_string()
+        ),
+    )
+    .unwrap();
+    let listed = |engine: Engine| {
+        assert_eq!(alpha.home().backend().unwrap(), engine);
+        let (code, out, err) = installed(&alpha, "tasks", &["list"]);
+        assert_eq!(code, 0, "{err}");
+        assert!(out.contains("sim/one") && out.contains("sim/two"), "{out}");
+    };
+    let (code, out, err) = installed(&alpha, "tasks", &["register", "--kind", "orchestrator"]);
+    assert_eq!(code, 0, "{err}");
+    let handle = out.trim();
+    for slug in ["sim/one", "sim/two"] {
+        let (code, _, err) =
+            installed(&alpha, "tasks", &["create", slug, "A task", "--as", handle]);
+        assert_eq!(code, 0, "{err}");
+    }
+    listed(Engine::SurrealDb);
+
+    let (code, out, err) = installed(&alpha, "tasks-move", &["postgresql", "--as", "mover"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("✔ the board is on PostgreSQL"), "{out}");
+    assert!(out.contains("rows compared with what was read"), "{out}");
+    listed(Engine::PostgreSql);
+
+    let (code, out, err) = installed(&alpha, "tasks-move", &["surrealdb", "--as", "mover"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("✔ the board is on SurrealDB"), "{out}");
+    listed(Engine::SurrealDb);
 }
 
 /// Under the marker the board recipes set, a board outside a scratch place is not moved or

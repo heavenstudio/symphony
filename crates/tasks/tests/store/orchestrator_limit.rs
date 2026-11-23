@@ -267,6 +267,37 @@ fn the_boards_give_fills_none_past_the_limit_and_a_waiting_task_is_any_takers(ba
 }
 
 on_both! {
+fn a_place_under_the_limit_goes_to_a_task_that_waits_on_nothing_before_one_that_still_waits(backend: Backend) {
+    // In the board's order: one that waits on open work, one on work that is done, one on none.
+    let seed = Seed::default()
+        .task("tools/landed", "done")
+        .task("tools/open", "ready")
+        .task("tools/waits", "ready")
+        .link("tools/waits", "dep", "tools/open")
+        .task("tools/after", "ready")
+        .link("tools/after", "dep", "tools/landed")
+        .task("tools/free", "ready");
+    let f = Fixture::on(backend, seed);
+    let store = limited(&f, 3);
+    let amber = f.session("orchestrator");
+    store
+        .take_role("tools/open", &amber, "orchestrator")
+        .unwrap();
+    settle(&f, &[&amber]);
+    // Two places: they go to the two that can be worked on now, and the one nobody can start waits.
+    let given = store.give_unowned(None).unwrap();
+    assert_eq!(
+        given.gave,
+        [
+            ("tools/after".to_string(), amber.clone()),
+            ("tools/free".to_string(), amber.clone())
+        ]
+    );
+    assert_eq!(given.waiting, ["tools/waits"]);
+}
+}
+
+on_both! {
 fn a_red_with_none_under_the_limit_goes_to_one_that_stays_whatever_it_holds(backend: Backend) {
     let f = Fixture::on(backend, Seed::default());
     let store = limited(&f, 1);
@@ -296,6 +327,33 @@ fn a_leavers_work_goes_only_as_far_as_the_others_limits_and_the_rest_waits(backe
     assert_eq!(orchestrators_of(&f, "tools/a/0"), [cobalt.as_str()]);
     assert!(orchestrators_of(&f, "tools/a/1").is_empty());
     let task = f.store.get("tools/a/1").unwrap();
+    assert!(symphony_board::orchestration::waiting(&task.fields).is_some());
+}
+}
+
+on_both! {
+fn a_leavers_task_that_waits_on_nothing_takes_the_place_before_one_that_still_waits(backend: Backend) {
+    // In the board's order, the one that waits on open work comes first, by its slug and its filing.
+    let seed = Seed::default()
+        .task("tools/open", "ready")
+        .task("tools/a-waits", "ready")
+        .link("tools/a-waits", "dep", "tools/open")
+        .task("tools/b-free", "ready");
+    let f = Fixture::on(backend, seed);
+    let store = limited(&f, 2);
+    let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
+    store
+        .take_role("tools/open", &cobalt, "orchestrator")
+        .unwrap();
+    for slug in ["tools/a-waits", "tools/b-free"] {
+        store.take_role(slug, &amber, "orchestrator").unwrap();
+    }
+    settle(&f, &[&amber, &cobalt]);
+    // Cobalt has one place: the task that can be worked on now takes it, and the other waits.
+    store.leave(&amber).unwrap();
+    assert_eq!(orchestrators_of(&f, "tools/b-free"), [cobalt.as_str()]);
+    assert!(orchestrators_of(&f, "tools/a-waits").is_empty());
+    let task = f.store.get("tools/a-waits").unwrap();
     assert!(symphony_board::orchestration::waiting(&task.fields).is_some());
 }
 }
@@ -391,6 +449,27 @@ fn a_take_written_between_a_gives_read_and_its_write_has_it_decide_again(backend
     assert!(given.gave.is_empty(), "{given:?}");
     assert_eq!(given.waiting, ["tools/free"]);
     assert_eq!(orchestrators_of(&f, "tools/raced"), [amber.as_str()]);
+    assert!(orchestrators_of(&f, "tools/free").is_empty());
+}
+}
+
+on_both! {
+fn a_receiver_leaving_between_a_gives_read_and_its_write_has_it_decide_again(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
+    let store = limited(&f, 2);
+    let amber = f.session("orchestrator");
+    orchestrating(&f, &store, &amber, "tools/a", 1);
+    f.task("tools/free");
+    settle(&f, &[&amber]);
+    // While the pass decides on the board it read, amber, whom it gives the task to, leaves.
+    let (leaver, handle) = (f.other(), amber.clone());
+    let late = f.late(move || leaver.leave(&handle).unwrap()).limiting(Limits {
+        orchestrator_tasks: 2,
+        ..Limits::default()
+    });
+    let given = late.give_unowned(None).unwrap();
+    assert!(given.gave.is_empty(), "{given:?}");
+    assert!(given.waiting.contains(&"tools/free".to_string()), "{given:?}");
     assert!(orchestrators_of(&f, "tools/free").is_empty());
 }
 }

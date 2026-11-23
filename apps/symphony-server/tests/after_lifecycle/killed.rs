@@ -15,8 +15,9 @@ use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
+use symphony_board::lock::Recovered as _;
 use symphony_server::sys::Taken;
 
 /// The most lines one section of a capture keeps: its last ones.
@@ -76,7 +77,7 @@ pub fn note(pid: i64, signal: i32, why: &str) {
     };
     JOURNAL
         .lock()
-        .unwrap_or_else(PoisonError::into_inner)
+        .recover()
         .push(sent);
 }
 
@@ -84,7 +85,7 @@ pub fn note(pid: i64, signal: i32, why: &str) {
 fn sent_to(pid: i64) -> Vec<String> {
     JOURNAL
         .lock()
-        .unwrap_or_else(PoisonError::into_inner)
+        .recover()
         .iter()
         .filter(|sent| sent.pid == pid)
         .map(|sent| {

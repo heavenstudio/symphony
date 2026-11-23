@@ -390,7 +390,7 @@ fn no_start_replaces_a_release_and_each_lack_says_what_serves_the_project() {
         "the running Symphony is the release release-1, which serves a plugin only from its \
          process: shelf-project names the plugin shelf linked, and no start replaces a release's \
          server: a [plugins.process] command for shelf in /work/shelf-project/symphony.toml lets \
-         it serve shelf-project (docs/PLUGIN_PROTOCOL.md)"
+         it serve shelf-project (docs/engineering/PLUGIN_PROTOCOL.md)"
     );
     for (bumped, lacks) in [
         (
@@ -461,6 +461,7 @@ fn a_release_build_is_its_manifest_and_a_running_one_its_front() {
         commit: "abc".into(),
         serves: super::super::release::Serves {
             schema: 6,
+            additions: 0,
             protocol: version,
             tasks_api: version,
             pin: 2,

@@ -1,4 +1,4 @@
-//! The optional exchange of selected tasks with GitHub issues (docs/GITHUB.md): turned off
+//! The optional exchange of selected tasks with GitHub issues (docs/operations/GITHUB.md): turned off
 //! unless the project's default branch commits `symphony-github.toml` and it says otherwise.
 //!
 //! It is a program of its own. It reaches the board through `tasks api` ([`board`]), GitHub
@@ -7,8 +7,10 @@
 //! nothing runs it but an operator: `preview` shows what a reconcile would do, and `reconcile`
 //! does the preview it is handed by digest ([`reconcile`]). `deliver` answers a land delivered by
 //! a pull request (`[land] delivery`, [`deliver`]), which the land runs and no one else, and
-//! reads the repository's protection before it does ([`preflight`]). `release` answers the release
-//! run with a GitHub Release for a tag it pushed ([`release`]).
+//! reads the repository's protection before it does ([`preflight`]); `rulesets` verifies who
+//! bypasses it, with the gh CLI of someone who administers the repository ([`rulesets`]). `release` answers the release
+//! run with a GitHub Release for a tag it pushed ([`release`]), and `verify` with its commit's
+//! verification run on GitHub's machines ([`verify`]).
 
 #![forbid(unsafe_code)]
 
@@ -17,14 +19,17 @@ pub mod cli;
 pub mod config;
 pub mod credential;
 pub mod deliver;
+pub mod describe;
 pub mod github;
 pub mod mint;
 pub mod plan;
 pub mod preflight;
 pub mod reconcile;
 pub mod release;
+pub mod rulesets;
 pub mod state;
 pub mod transport;
+pub mod verify;
 
 /// The integration's name: its state folder's, `symphony/integrations/github`.
 pub const NAME: &str = "github";

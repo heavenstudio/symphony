@@ -1,20 +1,20 @@
 # The most bytes each binary this workspace delivers may weigh, built as `cargo install` builds it
 # (the workspace's release profile) for aarch64-apple-darwin, and the most the client distribution
 # the server embeds may weigh. `just size-check` builds the binaries and checks every line
-# (`symphony-build size-budget`, docs/CHECKS.md "Size budgets"); the release run's `just verify`
+# (`symphony-build size-budget`, docs/workflow/CHECKS.md "Size budgets"); the release run's `just verify`
 # runs it.
 #
 # A line is its size plus 4 %, rounded down to a multiple of 10,000 bytes. The commit of a reduction
 # sets it, lowering it to that (as `symphony-build size-budget` prints it). A binary past its line is
 # taken back under by a reduction first; a line is raised only by its task's orchestrator's decision
-# (`just tasks gate SLUG tools/size-budget.toml:NAME --raise NEW`, docs/TASKS.md "Gate decisions"),
+# (`just tasks gate SLUG tools/size-budget.toml:NAME --raise NEW`, docs/workflow/TASKS.md "Gate decisions"),
 # in a commit of its own that names the growth and why no reduction will do, to the size plus 4 %
-# and never higher, on a fresh reviewer's approve (docs/CHECKS.md, "Where a line stands" and "A red
+# and never higher, on a fresh reviewer's approve (docs/workflow/CHECKS.md, "Where a line stands" and "A red
 # at the size check").
 
 # The builds `symphony-build publish-client` keeps under apps/symphony-server/client/public, which
 # the server's build script embeds: each build whole, a file two builds share counted for each, and
-# index.html and builds.json once (docs/CHECKS.md "Size budgets"). At c0d5409's distribution that is
+# index.html and builds.json once (docs/workflow/CHECKS.md "Size budgets"). At c0d5409's distribution that is
 # 2,272,465 bytes: builds of 756,886, 754,713 and 755,142 and 5,724 of page; the line is that plus
 # 4 %. It replaces 1,530,000, a line on every file once (1,568,481 there), which moved with how many
 # files the builds share and not with what they weigh: the builds grew 2,173 bytes, while the
@@ -29,7 +29,22 @@
 # 2,360,000, where main's own folder had some 19,300 left. No reduction holds: a cut of 4,681
 # would drop a part the task's brief names, and every later build carries the same pages while
 # three builds are kept. The line is that size plus 4 %, by the orchestrator's gate decision.
-client = 2_450_000
+# The landings of 2026-11-22 took the folder past that line together
+# (tests/release-red-verify-size-check-10): 2,406,959 at the last green run's f9e9fb427 (builds of
+# 800,223, 800,212 and 800,215, and 6,309 of page), 2,473,846 at 2422e906e and on main at
+# 7f651be42 (832,908, 830,999 and 803,392, and 6,547 of page). The newest build grew 32,685
+# bytes, by file: the workflow guard panel's nextactions chunk 14,126 (app/workflow-guard-panel,
+# whose guards.tsx is 11.6 KB of it, and app/workflow-pages-follow-ups 1,112), the Settings page
+# 10,393 (settings.js 6,646 and settings.css 3,747, app/settings-page-reads), flow.js 3,153,
+# board.js 1,434, docs.js 1,045, the shared chunks 834, the shell 809, board.css 617, and 274 in
+# eight other files. No reduction holds: an attribution of every byte of the build by its source
+# maps finds no module in two chunks and nothing unminified, and the growth is those two pages
+# themselves. The one structural cut, a shared reader for the 549 hand-written wire field checks,
+# takes back some 3 to 4 KB a build, where the line holds three builds of 814,484 each and main's
+# newest is 18,424 past that; and as three builds are kept, the folder after this landing and the
+# next one would be green only with a build of about 775,700, a cut of 59 KB. Measured 2,473,846;
+# the line is that plus 4 %, rounded down to 10,000, by the orchestrator's gate decision.
+client = 2_570_000
 
 # Each binary's file; symphony-server's less the client above, which it embeds.
 [binaries]
@@ -59,7 +74,26 @@ client = 2_450_000
 # provider's worker by a server that does not hold the provider; what is left is the history read,
 # which no reduction removes short of a lighter record type in the board. Measured 17,494,750 at
 # 2876f8465; the line is that plus 4%, rounded down to 10,000. Independent review is required.
-symphony-server = 18_190_000
+# The landings of 2026-11-22 and 2026-11-23 took the server past that line together
+# (tests/release-red-verify-size-check-11): 17,699,893 at the last green run's f9e9fb427,
+# 18,209,318 at the release candidate 2f05880cd, chiefly the Settings page's read and writes
+# (settings::page_with 35,672, settings::described 19,436, workflow_apply 15,560 and setting
+# 15,292 in its link map, with their serde instantiations). Taken back first, 33,040 bytes of each
+# binary: the give's first_free put the tops that wait on nothing first by a stable sort on a
+# bool, which linked a driftsort of its own, where a partition gives the same order (18,176,278 at
+# 2f05880cd with it, under the line). Main's landings since added 145,160 more, by the two link
+# maps: the delivery journal's pending replies (commit::OutputJob::open 16,040 and commit::pending
+# 5,532, tools/chat-replies-under-delivery), the plugin process's answers to gates (ask_within
+# 7,860, tools/plugin-process-answers-gates), the dispatch pass's reads of every recipient at once
+# (Store::stored_states 16,196 and queued_panes 14,096, perf/dispatch-pass-round-trips),
+# serde_json's slow float path newly reached (6,760) and deserializer instantiations, with unwind
+# and except tables in proportion (about 14 KB). No further reduction is code that changes no
+# behaviour: under the line the server needs 116,192 bytes less text at least, eight of its 16 KB
+# pages, and what is left is those landed features; the dispatch reads read by field are a
+# follow-up of their own. Measured 18,321,438 at 32be4eb34 (main at 99fe9a7b3 with the cut); the
+# line is that plus 4 %, rounded down to 10,000, by the orchestrator's gate decision. Independent
+# review is required.
+symphony-server = 19_050_000
 # Scratch PostgreSQL startup (+33,104 bytes) and main's release-notes/retired-key paths
 # (+33,056) each fit the former symphony line alone; together they weigh 11,914,192.
 # The combined line is that size plus 4%, rounded down to 10,000; independent review is required.
@@ -80,7 +114,14 @@ symphony-server = 18_190_000
 # own: encoding_rs (its Big5 tables and encoder, about 72 KB), which gix-filter brings with gix's
 # attributes, and the symphony.toml decoder (project::file::File, 73.5 KB). Measured 12,393,664 at
 # c1b839b53; the line is that plus 4%, rounded down to 10,000. Independent review is required.
-symphony = 12_880_000
+# The board's store reads every answer with each struct from an object alone
+# (perf/board-derived-readers-size), which links no sequence reader beside each struct's map reader:
+# 12,492,992 on main at b6e55fd59, 12,360,880 with it (-132,112). Measured 12,360,880 at 6831be39d;
+# the line is that plus 4%, rounded down to 10,000.
+# Every other read of JSON the board holds as a value, and of text it drops when it cannot read
+# it, through that one reader (perf/board-derived-readers-step-two) took back more. Measured
+# 12,278,240 at 01987f0d9; the line is that plus 4%, rounded down to 10,000.
+symphony = 12_760_000
 # PostgreSQL board selection and lifecycle add 66,176 bytes to tasks and 49,632 to agent-send.
 # agent-send links no snapshot/recovery command body. Canonical four-binary
 # measurement: 6,479,680 / 3,037,536 bytes; each line is that plus 4%, rounded down to 10,000.
@@ -133,7 +174,28 @@ symphony = 12_880_000
 # write for every closure, readers by field of the attempt record) are
 # perf/board-derived-readers-size's. Measured 8,265,760; the line is that plus 4%, rounded down
 # to 10,000. Independent review is required.
-tasks = 8_590_000
+# Those cuts (perf/board-derived-readers-size, then perf/board-derived-readers-step-two: every
+# read of JSON the board holds through one reader, a struct from an object alone, and one fenced
+# write for every attempt decision) took back 413,184 bytes, while tools/workflow-return-to-default
+# added 99,200: 8,580,160 on main at 8804e5c5f, 8,332,128 at 01987f0d9. That plus 4% rounds above
+# this line, which stays; it comes down once tasks is under 8,259,615.
+# The landings of 2026-11-23 took tasks past that line (tests/release-red-verify-size-check-11):
+# 8,564,112 at the release candidate 2f05880cd, 8,514,576 with the give's partition the server's
+# line names (-49,536), and 8,597,248 at 32be4eb34, main at 99fe9a7b3 with it (+82,672). Of that,
+# the board's code in the server's link maps grew 51,859, chiefly the dispatch pass's reads of
+# every recipient at once (Store::stored_states 16,196 and queued_panes 14,096 with their
+# closures, perf/dispatch-pass-round-trips); the rest, about 31 KB, is board code the server does
+# not link, by the commits' sources chiefly the reconciles of the launch, the sweep and the cards
+# (tools/reconcile-launch-changes, tools/reconcile-sweep-changes,
+# tools/reconcile-cli-and-card-changes). No further reduction is code that changes no behaviour:
+# tasks needs 7,480 bytes less text to drop its last page, which the dispatch reads read by field
+# through the one value reader may give, a follow-up of its own. Measured 8,597,248 at 32be4eb34;
+# the line was that plus 4 %, rounded down to 10,000, by the orchestrator's gate decision.
+# Independent review is required. Those reads read by field through that reader, with no reader
+# of a list of rows, of a row or of a map of their own (perf/dispatch-reads-by-field), took back
+# 33,056: 8,630,288 on main at 8df10be2b, 8,597,232 with them. Measured 8,580,752 at e60f9dc8e;
+# the line is that plus 4 %, rounded down to 10,000.
+tasks = 8_920_000
 # The board's operations on tasks a workflow holds (tools/workflow-operations) add 264,656 bytes to
 # agent-send: 3,087,168 at the runtime's d7e3b719d, 3,351,824 with them. agent-send delivers what
 # it sends itself (send_agent, then the recipient's dispatch), and that dispatch composes an
@@ -150,5 +212,11 @@ tasks = 8_590_000
 # task. Measured 3,351,824; the line was that plus 4%, rounded down to 10,000. Taken back since,
 # 33,056 bytes: a held task's position, the transitions and the cap's positions read by field from
 # their values, with no decoder, sort or list reader of their own (a4c15da2e, c1b839b53). Measured
-# 3,318,768 at c1b839b53; the line is that plus 4%, rounded down to 10,000.
-agent-send = 3_450_000
+# 3,318,768 at c1b839b53; the line is that plus 4%, rounded down to 10,000. The store reading every
+# answer with each struct from an object alone (perf/board-derived-readers-size) took back 115,600
+# more: 3,352,016 on main at b6e55fd59, 3,236,416 with it. Measured 3,236,416 at 6831be39d; the
+# line was that plus 4%, rounded down to 10,000. Every other read of JSON the board holds as a
+# value, and of text it drops when it cannot read it, through that reader
+# (perf/board-derived-readers-step-two) took back more. Measured 3,170,256 at 01987f0d9; the line
+# is that plus 4%, rounded down to 10,000.
+agent-send = 3_290_000

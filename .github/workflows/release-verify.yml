@@ -1,0 +1,113 @@
+# The release's verification of one commit on GitHub's macOS runners: that commit's own
+# `just verify`, a job for each step its tools/verify.sh names (docs/workflow/RELEASES.md, "On GitHub's
+# runners"). Started by a dispatch alone, for a full commit: a person's, or `just release`'s where
+# the project turns that on. It is given no secret and its token reads the repository and nothing
+# more, so it tags, pushes and publishes nothing; what reads its result tags and publishes on the
+# machine that asked. crates/symphony-build/tests/hosted_workflow.rs holds it to those bounds, and
+# the release run reads its plan job's name, its jobs' names and its artifacts' names and folder
+# (crates/symphony-build/src/release/hosted.rs).
+name: Release verification
+run-name: Release verification of ${{ inputs.commit }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: The commit to verify, its 40 hexadecimal digits
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: The commit's steps
+    runs-on: ubuntu-24.04
+    outputs:
+      steps: ${{ steps.names.outputs.steps }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+      # A branch, a tag or a short commit names no one commit: the run is of the commit it names.
+      - name: The input is the full commit checked out
+        env:
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          head="$(git rev-parse HEAD)"
+          if [ "$COMMIT" != "$head" ]; then
+            printf '::error::the input is not the full commit it checked out, %s: give the 40 hexadecimal digits of the commit to verify\n' "$head"
+            exit 1
+          fi
+      # Every step but nextest-setup, which `just verify tests` runs first.
+      - name: The steps its tools/verify.sh names
+        id: names
+        run: |
+          steps="$(bash tools/verify.sh justfile --inputs | cut -f1 | sed 's|/.*||' | awk '!seen[$0]++' | grep -vx nextest-setup | jq -Rnc '[inputs]')"
+          printf 'steps=%s\n' "$steps" >>"$GITHUB_OUTPUT"
+          printf 'steps: %s\n' "$steps"
+
+  verify:
+    name: ${{ matrix.step }}
+    needs: plan
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        step: ${{ fromJSON(needs.plan.outputs.steps) }}
+    env:
+      # No board answers here: each recipe runs its command as it is.
+      TASKS_RECORDER: "off"
+      SYMPHONY_CHROME: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          # Every commit: the lint reads the branch against the default branch.
+          fetch-depth: 0
+          persist-credentials: false
+      # just, fnm for the Node tools/node.sh runs, and PostgreSQL 18 for the board's tests and 16
+      # for the hosted check, as docs/operations/PROJECT_FILE.md and docs/operations/POSTGRESQL.md install them, and
+      # OpenSSL 3 first on PATH for that check's certificates: the image's own `openssl` is 1.1.1,
+      # whose authority's certificate repeats an extension and is read by no client.
+      - name: The tools no pin of the tree holds
+        run: |
+          brew install just fnm postgresql@18 postgresql@16 openssl@3
+          printf '%s/bin\n' "$(brew --prefix postgresql@18)" >>"$GITHUB_PATH"
+          printf '%s/bin\n' "$(brew --prefix openssl@3)" >>"$GITHUB_PATH"
+      - name: The toolchain and Node the tree pins
+        run: |
+          cargo --version
+          bash tools/node.sh node --version
+      - name: The machine and the versions no pin holds
+        run: |
+          sw_vers
+          sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize
+          "$SYMPHONY_CHROME" --version
+          postgres --version
+          "$(brew --prefix postgresql@16)/bin/postgres" --version
+          command -v openssl
+          openssl version
+          just --version
+          df -h .
+      - name: just verify
+        env:
+          STEP: ${{ matrix.step }}
+        run: just verify "$STEP"
+      # Whether the step fit the runner: the swap used and the pages swapped out since it started,
+      # the disk left, and the build folder's size, what handing it to another job would move.
+      - name: Memory, swap and disk after it
+        if: always()
+        run: |
+          sysctl vm.swapusage
+          vm_stat | grep -E 'Pageouts|Swapins|Swapouts'
+          df -h .
+          du -sh .target || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: verify-${{ matrix.step }}
+          path: build/verify/
+          if-no-files-found: warn

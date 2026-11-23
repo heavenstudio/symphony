@@ -1,10 +1,13 @@
-//! A custom workflow in the real client, wide and on a phone (docs/WORKFLOW.md, "The app"). The
+//! A custom workflow in the real client, wide and on a phone (docs/workflow/WORKFLOW.md, "The app"). The
 //! board's columns are its phases by their order (Build, then two review stages, Review and
 //! Verify), a phone's tabs the phases by their phone order, each held card names its place, and a
 //! state chip filters the board by it. The task page offers the server's next actions, one of them
 //! unavailable naming whom it needs. It sends a task back from its first review with its reason
 //! and the snapshot it read, and a stale refusal prompts a refresh that reads the actions again.
-//! The timeline draws the phases and states the task went through beside its stages.
+//! The timeline draws the phases and states the task went through beside its stages. A task whose
+//! workflow guards an edge draws the guards that let it in and the guards its action needs, takes
+//! the action when the host asks its authority, and keeps the refusal's guard under it; the page
+//! has nothing that approves.
 //!
 //! The stand-in server answers with the wire types' own serializations (`wire.cases.json`, written
 //! by `crates/symphony-api/examples/typescript.rs`), extended by a task waiting in Verify. A scratch
@@ -13,25 +16,22 @@
 //! (`apps/symphony-server/src/live/workflow_tests.rs`). With `SYMPHONY_WORKFLOW_SHOTS` naming a
 //! folder, the flow saves its pictures there.
 
-use super::{SHOWN, chrome::Chrome, common, dist, look_parity, site::Site};
+use super::{
+    NO_STORE, SHOWN, assets::module, chrome::Chrome, dist, look_parity, open, samples, site::Site,
+    texts,
+};
 use serde_json::{Value, json};
 use std::time::{SystemTime, UNIX_EPOCH};
 use symphony_api::TASK_TIMELINE_PATH;
-use symphony_api::workflow::{WORKFLOW_ACTIONS_PATH, WORKFLOW_APPLY_ROUTE, WORKFLOW_PATH};
+use symphony_api::workflow::{
+    WORKFLOW_ACTIONS_PATH, WORKFLOW_APPLY_ROUTE, WORKFLOW_GUARDS_PATH, WORKFLOW_PATH,
+};
 
 /// The task sent back from its first review.
 const SLUG: &str = "w/b";
 
 /// The server's words for an edge taken from a revision the task has left.
 const STALE: &str = "stale_task: the task is at revision 8, not 7";
-
-/// The wire's samples (`wire.cases.json`'s `samples`).
-fn samples() -> Value {
-    let cases: Value =
-        serde_json::from_str(include_str!("../../../symphony-web/src/wire.cases.json"))
-            .expect("the wire's cases");
-    cases["samples"].clone()
-}
 
 /// The time now, in the server's seconds.
 fn now() -> f64 {
@@ -118,7 +118,7 @@ fn timeline() -> Value {
 /// and its next actions, an edge taken answered with the sample's result.
 fn site() -> (Site, Value) {
     let samples = samples();
-    let site = Site::start(dist(), &common::fixture("board.json"));
+    let site = crate::site();
     let listing = listing(&samples);
     site.set_json("/api/task-board", &listing);
     site.set_json(WORKFLOW_PATH, &samples["workflow"]);
@@ -141,34 +141,16 @@ fn site() -> (Site, Value) {
     (site, samples)
 }
 
-/// A page of `width` (a phone's, touch and all, at 390), over the stand-in's `path`.
-fn open(page: &mut Chrome, site: &Site, path: &str, width: u32) {
-    let phone = width <= 760;
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width": width, "height": if phone { 844 } else { 900 }, "deviceScaleFactor": 1, "mobile": phone}),
-    );
-    page.open(&site.url(path));
-}
-
 /// The page as its fonts and two frames leave it, saved as `NAME.png` in the folder
 /// `SYMPHONY_WORKFLOW_SHOTS` names; nothing without one.
 fn shot(page: &mut Chrome, name: &str) {
     let Some(folder) = std::env::var_os("SYMPHONY_WORKFLOW_SHOTS") else {
         return;
     };
-    page.eval("document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))");
+    page.frames_with_fonts();
     let folder = std::path::PathBuf::from(folder);
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(folder.join(format!("{name}.png")), page.screenshot()).unwrap();
-}
-
-/// The text of what `selector` matches, in order.
-fn texts(page: &mut Chrome, selector: &str) -> Value {
-    page.eval(&format!(
-        "[...document.querySelectorAll({})].map(one => one.textContent.trim())",
-        json!(selector)
-    ))
 }
 
 /// Where the card `slug` stands: its column's key and the place its mark names.
@@ -200,7 +182,7 @@ fn the_board_draws_the_workflows_phases_as_columns_and_tabs_and_filters_by_a_sta
         "the phases that are columns, by their order"
     );
     assert_eq!(
-        texts(&mut page, ".column[data-status^=\"phase:\"] > h2")
+        json!(texts(&mut page, ".column[data-status^=\"phase:\"] > h2"))
             .as_array()
             .unwrap()
             .iter()
@@ -240,12 +222,12 @@ fn the_board_draws_the_workflows_phases_as_columns_and_tabs_and_filters_by_a_sta
         json!(["phase:verify", "Verify · Awaiting review"])
     );
     assert_eq!(
-        texts(&mut page, ".state-strip .phase-open"),
+        json!(texts(&mut page, ".state-strip .phase-open")),
         json!(["Parked 0"]),
         "a phase that is no column opens as a list of its own"
     );
     assert_eq!(
-        texts(&mut page, ".state-strip .k-state"),
+        json!(texts(&mut page, ".state-strip .k-state")),
         json!(["Working 1", "Blocked 1", "Awaiting review 2"]),
         "a chip for each state with open tasks, in the definition's order"
     );
@@ -276,7 +258,7 @@ fn the_board_draws_the_workflows_phases_as_columns_and_tabs_and_filters_by_a_sta
         "document.querySelectorAll('.stage-tabs button').length > 0 && document.querySelector('[data-slug]') !== null",
         SHOWN
     ));
-    let tabs: Vec<String> = texts(&mut page, ".stage-tabs button")
+    let tabs: Vec<String> = json!(texts(&mut page, ".stage-tabs button"))
         .as_array()
         .unwrap()
         .iter()
@@ -299,7 +281,143 @@ fn the_board_draws_the_workflows_phases_as_columns_and_tabs_and_filters_by_a_sta
         json!(true),
         "no sideways scroll on a phone"
     );
+    // A workflow's lanes are phases: its board draws no row of work under way.
+    assert_eq!(
+        page.eval("document.querySelector('.under-way')"),
+        Value::Null,
+        "a custom workflow's board draws no row of work under way"
+    );
     shot(&mut page, "board-phone");
+
+    // The phone keeps the phase's tab it chose, and the ghost of its next visit draws that phase,
+    // with the count it last had: Review's one card, not the board's own first tab. Nor does that
+    // ghost reserve the row of work under way, from the board this device kept. With the store
+    // off the visit keeps no copy of the board, which would be drawn in the ghost's place, and the
+    // board's read is held while the ghost shows.
+    page.eval("[...document.querySelectorAll('.stage-tabs button')].find(tab => tab.textContent.startsWith('Review')).click()");
+    assert!(page.wait_for(
+        "document.querySelector('.stage-tabs [aria-current=page]')?.textContent.startsWith('Review')",
+        SHOWN
+    ));
+    assert!(
+        page.wait_for(
+            "Object.keys(localStorage).some(key => key.endsWith('board-waiting-shape') && localStorage.getItem(key).endsWith('\\nworkflow'))",
+            SHOWN
+        ),
+        "the board this device kept is no workflow's: {}",
+        page.eval("JSON.stringify(localStorage)")
+    );
+    page.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({ "source": NO_STORE }),
+    );
+    site.hold_route("/api/task-board", true);
+    open(&mut page, &site, "/tasks", 390);
+    assert!(
+        page.wait_for(
+            "document.querySelector('.waiting-ghost .wait-strip') !== null",
+            SHOWN
+        ),
+        "no ghost of the board"
+    );
+    assert!(page.wait_for(
+        "document.querySelector('.waiting-ghost .ghost-column') !== null",
+        SHOWN
+    ));
+    shot(&mut page, "board-phone-ghost");
+    assert_eq!(
+        page.eval("[...document.querySelectorAll('.waiting-ghost .ghost-column')].map(column => [column.dataset.for, column.querySelectorAll('.waiting-card-ghost').length])"),
+        json!([["phase:review", 1]])
+    );
+    assert_eq!(
+        page.eval("document.querySelector('.under-way')"),
+        Value::Null,
+        "the ghost of a custom workflow's board reserves no row of work under way"
+    );
+    site.hold_route("/api/task-board", false);
+    assert!(page.wait_for(
+        "document.querySelector('.stage-tabs [aria-current=page]')?.textContent.startsWith('Review')",
+        SHOWN
+    ));
+}
+
+/// The file of the workflow's chunk (`flow.tsx`) the board this build serves imports, as the page
+/// asks for it: the build's folder keeps its earlier builds' chunks beside its own.
+fn flow_chunk() -> String {
+    let board = module(dist(), "board").script;
+    let script = std::fs::read_to_string(dist().join(board.trim_start_matches('/')))
+        .expect("the board's script");
+    // A chunk's name alone, `flow-` and its hash then `.js`: a class name such as `flow-failed`,
+    // a stylesheet of the chunk's or a word ending in `flow` (`workflow-…`) is passed over.
+    let named = |start: usize| {
+        if start > 0 && script.as_bytes()[start - 1].is_ascii_alphanumeric() {
+            return None;
+        }
+        let rest = &script[start + "flow-".len()..];
+        let hash = rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+            .unwrap_or(rest.len());
+        (hash > 0 && rest[hash..].starts_with(".js"))
+            .then(|| &script[start..start + "flow-".len() + hash + ".js".len()])
+    };
+    let chunk = (script.match_indices("flow-"))
+        .find_map(|(start, _)| named(start))
+        .expect("the board imports the workflow's chunk");
+    format!("/assets/{chunk}")
+}
+
+#[test]
+fn a_workflow_chunk_that_does_not_load_is_said_and_retried_into_its_phases() {
+    let (site, _) = site();
+    let Some(mut page) = super::chrome() else {
+        panic!("Chrome is required for the workflow's acceptance")
+    };
+    let chunk = flow_chunk();
+    site.retire(&chunk);
+    open(&mut page, &site, "/tasks", 1440);
+    let notice = ".flow-failed[role=alert]";
+    assert!(
+        page.wait_for(
+            &format!("document.querySelector('{notice}') !== null"),
+            SHOWN
+        ),
+        "{:?}",
+        page.eval("document.querySelector('main')?.innerText")
+    );
+    assert_eq!(
+        texts(&mut page, notice),
+        ["The workflow's phases could not be loaded. Retry"]
+    );
+    assert_eq!(
+        page.eval("document.querySelector('.column[data-status^=\"phase:\"]') === null && document.querySelector('.column[data-status=ready]') !== null"),
+        json!(true),
+        "the board draws its own lanes meanwhile"
+    );
+    shot(&mut page, "board-flow-failed");
+
+    // A later load works: the retry asks for the chunk again, and the phases are drawn.
+    site.restore(&chunk);
+    page.eval(&format!(
+        "document.querySelector('{notice} button').click()"
+    ));
+    assert!(
+        page.wait_for(
+            "document.querySelector('.column[data-status=\"phase:verify\"] [data-slug=\"w/d\"]') !== null",
+            SHOWN
+        ),
+        "the retry never drew the phases: {:?}",
+        site.requests()
+    );
+    assert_eq!(
+        page.eval(&format!("document.querySelector('{notice}') === null")),
+        json!(true)
+    );
+    let asked = site
+        .requests()
+        .iter()
+        .filter(|r| r.contains(&chunk))
+        .count();
+    assert_eq!(asked, 2, "{:?}", site.requests());
 }
 
 #[test]
@@ -320,11 +438,11 @@ fn the_task_page_sends_back_with_its_snapshot_and_a_stale_refusal_asks_for_a_ref
         page.eval("document.querySelector('article.task, main')?.innerText")
     );
     assert_eq!(
-        texts(&mut page, ".flow-place"),
+        json!(texts(&mut page, ".flow-place")),
         json!(["At Review · Awaiting review"])
     );
     assert_eq!(
-        texts(&mut page, ".flow-manual"),
+        json!(texts(&mut page, ".flow-manual")),
         json!(["sable-finch, its reviewer, was lost: it waits on you to move it on"]),
     );
     assert_eq!(
@@ -332,7 +450,7 @@ fn the_task_page_sends_back_with_its_snapshot_and_a_stale_refusal_asks_for_a_ref
         json!(true)
     );
     assert_eq!(
-        texts(&mut page, ".flow-actions [data-edge=pass] .flow-why"),
+        json!(texts(&mut page, ".flow-actions [data-edge=pass] .flow-why")),
         json!(["not the owner's to take: needs the reviewer"]),
         "an unavailable action names whom it needs"
     );
@@ -441,7 +559,7 @@ fn the_task_page_sends_back_with_its_snapshot_and_a_stale_refusal_asks_for_a_ref
         "{:?}",
         page.eval("document.getElementById('timeline')?.innerText")
     );
-    let totals = texts(&mut page, ".tl-totals");
+    let totals = json!(texts(&mut page, ".tl-totals"));
     let totals: Vec<&str> = totals
         .as_array()
         .unwrap()
@@ -473,4 +591,246 @@ fn the_task_page_sends_back_with_its_snapshot_and_a_stale_refusal_asks_for_a_ref
         "the actions fit a phone's width"
     );
     shot(&mut page, "task-phone");
+}
+
+/// [`site`] with a workflow that guards Pass review: the definition declares the guards, the
+/// preview lists Pass review as held by its guard alone, and the task's guards are the sample's
+/// (a fake authority, `ledger`, which this host asks for `release` and cannot for `design`).
+fn guarded_site() -> (Site, Value) {
+    let (site, samples) = site();
+    let mut workflow = samples["workflow"].clone();
+    workflow["workflow"]["definition"]["guards"] = json!([
+        {"id": "design_signoff", "adapter": "design"},
+        {"id": "release_signoff", "adapter": "release"},
+    ]);
+    site.set_json(WORKFLOW_PATH, &workflow);
+    let mut next = samples["nextActions"].clone();
+    next["actions"][0]["unavailable"] = json!(["guard_unavailable"]);
+    site.set_json(WORKFLOW_ACTIONS_PATH, &next);
+    site.set_json(WORKFLOW_GUARDS_PATH, &samples["taskGuards"]);
+    (site, samples)
+}
+
+/// The states of the guards' rows drawn in the box `of` names (an edge, or `entry`), by guard.
+fn guard_states(page: &mut Chrome, of: &str) -> Value {
+    page.eval(&format!(
+        "[...document.querySelectorAll('[data-guards={of}] [data-guard]')].map(row => [row.dataset.guard, row.dataset.state])"
+    ))
+}
+
+#[test]
+fn the_task_page_names_each_guard_its_authority_and_the_last_refusal_and_approves_nothing() {
+    let (site, samples) = guarded_site();
+    let Some(mut page) = super::chrome() else {
+        panic!("Chrome is required for the workflow's acceptance")
+    };
+    let error = "guard_unavailable: edge pass is guarded by release_signoff, which ledger refuses";
+    site.refuse_with(
+        WORKFLOW_APPLY_ROUTE,
+        &json!({"error": error, "guard": samples["guardRefusal"]}),
+    );
+    let pass = ".flow-actions [data-edge=pass]";
+    for width in [1280, 390] {
+        open(&mut page, &site, &format!("/task/{SLUG}"), width);
+        assert!(
+            page.wait_for(
+                "document.querySelector('[data-guards=pass] [data-guard]') !== null",
+                SHOWN
+            ),
+            "{:?}",
+            page.eval("document.querySelector('.flow-task')?.innerText")
+        );
+        // What let it in, over the actions: the guard, that it no longer stands and why, its
+        // authority and the generation and epoch the board accepts.
+        assert_eq!(
+            guard_states(&mut page, "entry"),
+            json!([["design_signoff", "decided again"]])
+        );
+        assert!(
+            texts(&mut page, "[data-guards=entry] .guard-head")
+                .first()
+                .is_some_and(|head| head.starts_with("Let in by Submit · revision 7 · ")),
+        );
+        let entry = texts(&mut page, "[data-guards=entry] .guard")
+            .first()
+            .cloned()
+            .unwrap_or_default();
+        for said in [
+            "design signoff",
+            "Met at generation 11",
+            "ledger has decided again since (generation 12 now)",
+            "accepted gen 12 · 2026",
+        ] {
+            assert!(entry.contains(said), "{said}: {entry}");
+        }
+        // What Pass review needs, under it: no word yet, from an authority this host asks, so the
+        // action is the owner's to take.
+        assert_eq!(
+            guard_states(&mut page, "pass"),
+            json!([["release_signoff", "no word yet"]])
+        );
+        assert_eq!(
+            json!(texts(&mut page, "[data-guards=pass] .guard-by")),
+            json!(["ledger · releaseaccepted gen 41 · 2026"])
+        );
+        assert_eq!(
+            page.eval(&format!(
+                "document.querySelector('{pass} > button').disabled"
+            )),
+            json!(false)
+        );
+        assert_eq!(
+            page.eval("document.querySelector('[data-guards=rework]')"),
+            json!(null),
+            "an action no guard holds draws no box"
+        );
+        shot(&mut page, &format!("guards-before-{width}"));
+
+        // The take is refused by the authority: the guard's row says so, with its reasons as
+        // links, and the name opens what the board read.
+        page.eval(&format!(
+            "document.querySelector('{pass} > button').click()"
+        ));
+        assert!(
+            page.wait_for(
+                "document.querySelector('[data-guards=pass] [data-state=refused]') !== null",
+                SHOWN
+            ),
+            "{:?}",
+            page.eval("document.querySelector('.flow-task')?.innerText")
+        );
+        assert_eq!(
+            json!(texts(&mut page, ".flow-task [role=status]")),
+            json!(["Pass review was not taken: release signoff holds it"])
+        );
+        assert_eq!(
+            page.eval("[...document.querySelectorAll('[data-guards=pass] .guard-why a')].map(link => [link.textContent, link.getAttribute('href'), link.target])"),
+            json!([
+                ["task w/a", "/task/w/a", ""],
+                ["the release check failed", "https://ci.example/runs/7", "_blank"],
+            ])
+        );
+        let open_record = "document.querySelector('[data-guards=pass] .guard-open')";
+        assert_eq!(
+            page.eval(&format!("{open_record}.getAttribute('aria-expanded')")),
+            json!("false")
+        );
+        page.eval(&format!("{open_record}.click()"));
+        assert!(page.wait_for(
+            "document.querySelector('[data-guards=pass] .guard-record') !== null",
+            SHOWN
+        ));
+        assert_eq!(
+            json!(texts(&mut page, "[data-guards=pass] .guard-record dt")),
+            json!([
+                "ledger's word",
+                "Its reasons",
+                "Its time",
+                "Covers",
+                "Signature",
+                "From ledger",
+                "Admitted on it",
+                "Asked from here"
+            ])
+        );
+        assert_eq!(
+            page.eval(&format!(
+                "[{open_record}.getAttribute('aria-expanded'), document.getElementById({open_record}.getAttribute('aria-controls')) !== null]"
+            )),
+            json!(["true", true])
+        );
+        // The authority's name is the link to its ledger's page for the guard.
+        assert_eq!(
+            page.eval(
+                "document.querySelector('[data-guards=pass] .guard-by a').getAttribute('href')"
+            ),
+            json!("/docs/LEDGER.md#w/a:release_signoff")
+        );
+        // Nothing in the panel approves, grants or takes a file: its only buttons open records.
+        assert_eq!(
+            page.eval("[...document.querySelectorAll('.guard-box button, .guard-box input, .guard-box textarea, .guard-box form')].map(one => one.className)"),
+            json!(["guard-open", "guard-open"])
+        );
+        assert_eq!(
+            page.eval("document.documentElement.scrollWidth <= innerWidth"),
+            json!(true),
+            "no sideways scroll at {width}"
+        );
+        assert_eq!(
+            page.eval("[...document.querySelectorAll('.guard-box')].every(box => { const r = box.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth; })"),
+            json!(true),
+            "the guards fit the page at {width}"
+        );
+        // A phone's picture is of the action and its guards, which the page's head would hide.
+        if width <= 760 {
+            page.eval("document.querySelector('.flow-actions').scrollIntoView()");
+        }
+        shot(&mut page, &format!("guards-after-{width}"));
+    }
+    let posts = site.posts();
+    let (route, body) = posts.last().expect("the edge sent");
+    assert_eq!(route, WORKFLOW_APPLY_ROUTE);
+    assert_eq!(body["request"]["edge"], json!("pass"));
+    assert!(
+        body["request"].get("attestations").is_none() && body.get("attestations").is_none(),
+        "the page sends no attestation: the host asks the authority"
+    );
+
+    // An authority this host cannot ask: the action waits, and its row says what would let it go
+    // from here, with no command, as the command line takes no edge as the owner.
+    let mut apart = samples["taskGuards"].clone();
+    apart["authorities"][1]["asked_here"] = json!(false);
+    site.set_json(WORKFLOW_GUARDS_PATH, &apart);
+    open(&mut page, &site, &format!("/task/{SLUG}"), 1280);
+    assert!(page.wait_for(
+        "document.querySelector('[data-guards=pass] [data-guard]') !== null",
+        SHOWN
+    ));
+    assert_eq!(
+        guard_states(&mut page, "pass"),
+        json!([["release_signoff", "not from here"]]),
+        "a reload forgets the refusal, and the row is the board's records again"
+    );
+    assert_eq!(
+        page.eval(&format!(
+            "document.querySelector('{pass} > button').disabled"
+        )),
+        json!(true)
+    );
+    assert_eq!(
+        json!(texts(&mut page, "[data-guards=pass] .guard-why")),
+        json!([
+            "This app cannot ask ledger: no plugin of this project answers for its adapter, release. Pass review goes from here once one does."
+        ])
+    );
+    assert_eq!(
+        page.eval("document.querySelector('[data-guards=pass] code')"),
+        json!(null)
+    );
+    shot(&mut page, "guards-not-from-here-1280");
+}
+
+#[test]
+fn a_task_of_a_workflow_with_no_guards_reads_and_draws_none() {
+    let (site, _) = site();
+    let Some(mut page) = super::chrome() else {
+        panic!("Chrome is required for the workflow's acceptance")
+    };
+    open(&mut page, &site, &format!("/task/{SLUG}"), 1280);
+    assert!(page.wait_for(
+        "document.querySelector('.flow-actions [data-edge=rework] button') !== null",
+        SHOWN
+    ));
+    assert_eq!(
+        page.eval("document.querySelector('.guard-box')"),
+        json!(null)
+    );
+    assert!(
+        !site
+            .targets()
+            .iter()
+            .any(|target| target.starts_with(WORKFLOW_GUARDS_PATH)),
+        "a workflow that declares no guard reads none: {:?}",
+        site.targets()
+    );
 }

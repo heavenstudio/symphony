@@ -566,6 +566,8 @@ async fn route_query_and_body_aliases_cannot_choose_another_scope() {
         "/api/projects",
         "/api/machine-work",
         "/api/schema-updates",
+        "/api/settings",
+        "/api/setting",
         "/api/agent-focus",
         "/api/agent-screen",
         "/api/task-offer",
@@ -600,6 +602,14 @@ async fn route_query_and_body_aliases_cannot_choose_another_scope() {
             "{json}"
         );
     }
+    // A hosted visitor never writes a setting: the Settings page's write is not served there.
+    let write = r#"{"key":"limits.low_volume","action":"store","value":1}"#;
+    let status = harness(&fake)
+        .oneshot(post(symphony_api::SETTING_WRITE_PATH, write))
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(fake.visited.lock().unwrap().is_empty());
 }
 
@@ -938,13 +948,16 @@ async fn next_actions_are_the_local_owners_never_a_hosted_visitors() {
         ),
     );
     let fake = Fake::new();
-    let mut req = axum::http::Request::builder()
-        .uri("/api/workflow-actions?slug=tools/x")
-        .body(())
-        .unwrap();
-    req.extensions_mut().insert(lease(&fake).await);
-    let response = crate::api::answer(&shared, req).await.unwrap();
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    // A task's guards are read with its actions, and are the local owner's as they are.
+    for uri in [
+        "/api/workflow-actions?slug=tools/x",
+        "/api/workflow-guards?slug=tools/x",
+    ] {
+        let mut req = axum::http::Request::builder().uri(uri).body(()).unwrap();
+        req.extensions_mut().insert(lease(&fake).await);
+        let response = crate::api::answer(&shared, req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{uri}");
+    }
     assert!(shared.api.get().is_none(), "no hub was started");
     shared.stop();
 }
@@ -1054,13 +1067,7 @@ async fn real_upload_conditional_and_head_reads_are_private_and_revocation_prece
     tree.write("symphony.toml", "[project]\nid = \"fixture\"\n");
     let upload = symphony::uploads::store(&tree.root, "evidence.txt", b"project evidence").unwrap();
     let path = format!("/artifacts/uploads/{}.txt", upload.sha);
-    let shared = Shared::new(
-        1,
-        1,
-        &tree.root,
-        None,
-        crate::gate::Gate::new(Arc::new(|_| Ok(None)), Arc::new(std::time::Instant::now)),
-    );
+    let shared = Shared::new(1, 1, &tree.root, None, crate::testing::open_gate());
     let fake = Fake::new();
     let app = router(shared.clone(), config(), fake.clone())
         .unwrap()
@@ -1135,13 +1142,7 @@ fn feed_fixture(fake: &Arc<Fake>) -> (crate::testing::Tree, Arc<crate::live::Hub
     }
     hub.server_notice
         .send_replace("secret diagnostic /private/path".into());
-    let shared = Shared::new(
-        1,
-        1,
-        &tree.root,
-        None,
-        crate::gate::Gate::new(Arc::new(|_| Ok(None)), Arc::new(std::time::Instant::now)),
-    );
+    let shared = Shared::new(1, 1, &tree.root, None, crate::testing::open_gate());
     assert!(shared.api.set(hub.clone()).is_ok());
     let app = router(shared, config(), fake.clone()).unwrap().layer(
         axum::extract::connect_info::MockConnectInfo(

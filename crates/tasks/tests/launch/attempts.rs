@@ -82,6 +82,29 @@ fn kinds(facts: &[Value]) -> Vec<&str> {
         .collect()
 }
 
+/// `facts` from the binding of `terminal`, the terminal hc answered the start with, on. The start
+/// settles on that terminal by its own answer or, where that answer came after the call's bound
+/// (a loaded machine's slow hc), by the reconcile it then owes, which finds the terminal: how long
+/// hc took decides which, and never what follows.
+fn after_its_start<'f>(facts: &'f [Value], terminal: &str) -> &'f [Value] {
+    let evidence = format!("hc run answered terminal {terminal}");
+    assert_eq!(
+        kinds(&facts[..4]),
+        ["admitted", "intent", "sent", "answer"],
+        "{facts:?}"
+    );
+    let settled = if facts[3]["outcome"]["Unknown"] == "Deadline" {
+        assert_eq!(kinds(&facts[4..6]), ["sent", "answer"], "{facts:?}");
+        assert_eq!(facts[4]["reconcile"], true, "{facts:?}");
+        assert_eq!(facts[5]["outcome"]["Found"]["evidence"], evidence);
+        6
+    } else {
+        assert_eq!(facts[3]["outcome"]["Accepted"]["evidence"], evidence);
+        4
+    };
+    &facts[settled..]
+}
+
 /// The address of the terminal bound to `attempt`.
 fn terminal_of(attempt: &Attempt) -> &str {
     &attempt.state.resource.as_ref().expect("a terminal").id
@@ -262,22 +285,22 @@ fn a_first_message_refusal_cancels_the_attempt_by_closing_its_terminal_with_the_
         (&None, &None)
     );
     let facts = facts(&w, &attempt.id);
+    let ending = after_its_start(&facts, &terminal);
     assert_eq!(
-        kinds(&facts),
+        kinds(ending),
         [
-            "admitted", "intent", "sent", "answer", "bound", "asked", "intent", "sent", "answer",
-            "answer", "ended"
+            "bound", "asked", "intent", "sent", "answer", "answer", "ended"
         ],
         "{facts:?}"
     );
     // The cancel was sent as the terminate that closed the terminal, the refusal its evidence.
-    assert_eq!(facts[5]["cancel"], true);
-    assert_eq!(facts[6]["operation"], "Stop");
+    assert_eq!(ending[1]["cancel"], true);
+    assert_eq!(ending[2]["operation"], "Stop");
     assert_eq!(
-        facts[8]["outcome"]["Accepted"]["evidence"],
+        ending[4]["outcome"]["Accepted"]["evidence"],
         format!("terminal {terminal} closed: {problem}")
     );
-    assert_eq!(facts[9]["outcome"]["Observed"]["state"], "Destroyed");
+    assert_eq!(ending[5]["outcome"]["Observed"]["state"], "Destroyed");
     // The terminal was closed once, by that stop, and nothing else of the launch is left.
     assert!(!w.has_terminal(&terminal));
     assert_eq!(w.calls_of(&["kill", &terminal]).len(), 1);

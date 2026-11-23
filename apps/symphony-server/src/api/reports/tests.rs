@@ -864,13 +864,7 @@ async fn the_route_refuses_a_bad_ask_first_and_answers_the_hubs_folders_at_its_c
     use std::sync::Arc;
     let tree = Tree::new();
     let root = crate::testing::repository(&tree);
-    let shared = crate::front::Shared::new(
-        1,
-        1234,
-        &root,
-        None,
-        crate::gate::Gate::new(Arc::new(|_| Ok(None)), Arc::new(std::time::Instant::now)),
-    );
+    let shared = crate::front::Shared::new(1, 1234, &root, None, crate::testing::open_gate());
     let ask = |uri: &str, tag: Option<&str>| {
         let shared = shared.clone();
         let mut request = axum::http::Request::builder()

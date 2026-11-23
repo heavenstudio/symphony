@@ -73,7 +73,9 @@ describe("a read", () => {
   it("says the server's own error with its status", async () => {
     fetched.mockResolvedValue(answer(400, { error: "No such card." }));
     await expect(getJson("/api/x", STAYS)).rejects.toEqual(
-      new Failure("known", "No such card (the server answered 400)", "No such card."),
+      new Failure("known", "No such card (the server answered 400)", "No such card.", {
+        error: "No such card.",
+      }),
     );
   });
 
@@ -316,7 +318,8 @@ describe("a post", () => {
   it("says the server's own words alone, or its status", async () => {
     fetched.mockResolvedValue(answer(409, { error: "The card moved." }));
     await expect(post("/api/postpone", {})).rejects.toEqual(
-      new Failure("known", "The card moved."),
+      // The refusal's body goes with it, for a page that reads more of it than its error.
+      new Failure("known", "The card moved.", "The card moved.", { error: "The card moved." }),
     );
     fetched.mockResolvedValue(answer(500));
     await expect(post("/api/postpone", {})).rejects.toEqual(

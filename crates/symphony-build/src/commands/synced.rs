@@ -54,7 +54,7 @@ the pages: no server is started, stopped or changed.
 positional arguments:
   BASE                 the project's address (http://127.0.0.1:8765/symphony)
   PATH                 the pages under BASE (default: / /tasks /queue /reports /agents
-                       /docs/TASKS.md; a task's page is named, /task/SLUG)
+                       /docs/workflow/TASKS.md; a task's page is named, /task/SLUG)
 
 options:
   -h, --help           show this help message and exit
@@ -79,7 +79,7 @@ const PAGES: [&str; 6] = [
     "/queue",
     "/reports",
     "/agents",
-    "/docs/TASKS.md",
+    "/docs/workflow/TASKS.md",
 ];
 
 const FLAGS: [Flag; 5] = [
@@ -203,7 +203,7 @@ const PROBE: &str = r#"(() => {
     };
   }
   // The pages that follow no feed, by their regions' words.
-  const unfed = new Set(["reports", "runs", "run", "html", "folder"]);
+  const unfed = new Set(["reports", "runs", "run", "settings", "html", "folder"]);
   const look = () => {
     const ready = [...document.querySelectorAll("[data-ready]")].map((node) => node.getAttribute("data-ready"));
     const device = document.querySelector('[data-cache="device"]') !== null;

@@ -1,4 +1,4 @@
-//! Admission of one typed operation on a task an active custom workflow holds (docs/WORKFLOW.md,
+//! Admission of one typed operation on a task an active custom workflow holds (docs/workflow/WORKFLOW.md,
 //! "Admission"): what the store read decides whether the principal the host bound may take the
 //! edge from the pair the caller saw, and what the transition writes. Nothing here writes; the
 //! store fences the write on everything read here (`crate::store::workflow`), so a decision made
@@ -11,7 +11,7 @@
 //! ([`super::guard`]), and every check this release cannot make refuses: an adapter, an input
 //! revision that names no accepted output and that no guard binds, a dependency on a landing.
 //!
-//! An accepted output (docs/WORKFLOW.md, "Accepted outputs") is the id of the transition whose
+//! An accepted output (docs/workflow/WORKFLOW.md, "Accepted outputs") is the id of the transition whose
 //! edge moved a task to a position that satisfies its dependants from one that does not; it stands
 //! while the task stays at such positions ([`accepted_after`]), and an edge depending on
 //! `accepted_output` is taken only on the output standing for each task it depends on, which its
@@ -322,6 +322,38 @@ fn met(
         principal,
     };
     guard::check(context.definition, edge, &binding, guarding)
+}
+
+/// Why a guard of `request`'s edge refuses it for `principal` with `guarding`'s attestations, as a
+/// page shows it ([`guard::Explained`]): none where the edge is not one leaving the task's pair,
+/// its guards are met, or what refuses names no single guard. It decides nothing: admission's own
+/// refusal ([`admit`]) is the answer, and this says which guard it was.
+pub fn guard_refusal(
+    context: Context,
+    facts: &Facts,
+    principal: &Principal,
+    request: &OperationRequest,
+    guarding: &Guarding<'_>,
+) -> Option<symphony_api::workflow::GuardRefusal> {
+    let position = held(facts).ok()?;
+    let from = position.at();
+    let edge =
+        (context.definition.edges.iter()).find(|e| e.id == request.edge && e.from == from)?;
+    let binding = Binding {
+        project: guarding.project,
+        task: &facts.slug,
+        edge: &edge.id,
+        workflow: &context.revision.digest,
+        activation_generation: context.generation,
+        task_revision: position.revision,
+        at: &from,
+        input_revisions: &request.input_revisions,
+        principal,
+    };
+    guard::explained(context.definition, edge, &binding, guarding)
+        .err()?
+        .guard
+        .map(|guard| *guard)
 }
 
 /// The edges leaving the task's pair, each with what stops `principal` taking it now: a preview,

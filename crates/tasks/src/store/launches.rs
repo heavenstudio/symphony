@@ -61,6 +61,18 @@ impl NewLaunch {
     }
 }
 
+/// A launch record of a Codex thread as [`Store::codex_launches`] reads it: these fields alone.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CodexLaunch {
+    /// `codex:THREAD`, the thread known.
+    pub claude_session: String,
+    /// The hc terminal it ran in.
+    pub pane: String,
+    /// Its pane is not closed.
+    pub open: bool,
+}
+
 /// What a launch's own record line says about it, around the agent session it records (which the
 /// record's transaction settles: `SETTLED`): the words before it and after it.
 fn said(launch: &NewLaunch) -> (String, String) {
@@ -149,7 +161,10 @@ impl Store {
             "no_session": format!("{REFUSED}no session {}", repr(&launch.handle)),
         });
         let claude_session = self.retrying(|| {
-            self.transact::<String>(both(&body, pg::record_launch(launch.log)), vars.clone())
+            self.transact::<String>(
+                both(&body, pg::record_launch(launch.log)).posting_when(launch.log),
+                vars.clone(),
+            )
         })?;
         Ok(TaskSessionRow {
             claude_session,
@@ -160,7 +175,7 @@ impl Store {
     /// The sessions launched for `slug`, by when they started.
     pub fn task_sessions(&self, slug: &str) -> Result<Vec<TaskSessionRow>, Error> {
         self.retrying(|| {
-            self.transact(
+            self.read_together(
                 super::statement::both(
                     sql::sessions_of_task(),
                     super::postgres::launches::sessions_of_task(),
@@ -188,13 +203,22 @@ impl Store {
         self.task_sessions_where(&sql::open_sessions(), pg::open_sessions(), json!({}))
     }
 
-    fn task_sessions_where(
+    /// The launch records, open or closed, that name a Codex thread, each read only for its thread,
+    /// its terminal and whether it is open: what [`crate::launch::reap::presence`] judges. A record
+    /// naming none is not read, nor any other field, so one the board cannot read there (a
+    /// `started` not a number) stops nothing.
+    pub(crate) fn codex_launches(&self) -> Result<Vec<CodexLaunch>, Error> {
+        let vars = json!({"prefix": crate::launch::CODEX});
+        self.task_sessions_where(sql::CODEX_LAUNCHES, pg::codex_launches(), vars)
+    }
+
+    fn task_sessions_where<T: DeserializeOwned>(
         &self,
         read: &str,
         pg: Pg<'static>,
         vars: Value,
-    ) -> Result<Vec<TaskSessionRow>, Error> {
-        self.retrying(|| self.transact(both(read, pg.clone()), vars.clone()))
+    ) -> Result<Vec<T>, Error> {
+        self.retrying(|| self.read_together(both(read, pg.clone()), vars.clone()))
     }
 
     /// Its pane is closed. The record stays, with the line that brings it back. A Codex record whose
@@ -282,8 +306,12 @@ impl Store {
             ]);
         }
         held(&mut vars, &launch.handle, hold);
-        let kept: Option<String> =
-            self.retrying(|| self.transact(both(&body, pg::record_found_closed()), vars.clone()))?;
+        let kept: Option<String> = self.retrying(|| {
+            self.transact(
+                both(&body, pg::record_found_closed()).posting(),
+                vars.clone(),
+            )
+        })?;
         Ok(kept.map(|claude_session| TaskSessionRow {
             claude_session,
             ..row
@@ -389,7 +417,7 @@ impl Store {
         if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
             vars.extend(more);
         }
-        self.retrying(|| self.transact(both(body, pg.clone()), vars.clone()))
+        self.retrying(|| self.transact(both(body, pg.clone()).posting(), vars.clone()))
     }
 }
 

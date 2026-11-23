@@ -1,4 +1,4 @@
-//! The one admission of a workflow operation on the board (docs/WORKFLOW.md, "Admission"): the
+//! The one admission of a workflow operation on the board (docs/workflow/WORKFLOW.md, "Admission"): the
 //! active workflow read, a principal's next actions previewed, and an operation applied. Every
 //! surface that moves a task a custom workflow holds (the CLI, the api the app writes through, an
 //! agent) calls [`Store::apply_operation`], with the principal its host bound, never one a request
@@ -21,8 +21,7 @@
 
 use super::postgres as pg;
 use super::surreal::{self, cap as sql_cap, workflow as sql};
-use super::{Error, Failure, Opens, Store, Which, statement::both};
-use crate::Health;
+use super::{Error, Failure, Opens, Store, Which, executors_or, statement::both};
 use crate::workflow::admit::{self, Context, Facts, Prerequisite, Refusal};
 use crate::workflow::guard::{Accepted, Attester, Checked, Guarding};
 use crate::workflow::{Active, Host, Recorded, TaskPosition, Transition};
@@ -113,7 +112,7 @@ struct Found {
     accepted: Option<String>,
 }
 
-/// The accepted outputs of a task a custom workflow holds (docs/WORKFLOW.md, "Accepted outputs"):
+/// The accepted outputs of a task a custom workflow holds (docs/workflow/WORKFLOW.md, "Accepted outputs"):
 /// its own standing, and, where an edge leaving its pair depends on `accepted_output`, each task
 /// it depends on with the output standing for it, which a request taking that edge names.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -172,37 +171,20 @@ impl Store {
         })
     }
 
-    /// `slug`'s accepted outputs ([`Outputs`]), read as admission reads them; refused as
-    /// [`Store::workflow_actions`] is.
-    pub fn accepted_outputs(&self, slug: &str) -> Result<Outputs, Error> {
+    /// [`Store::workflow_actions`] and `slug`'s accepted outputs ([`Outputs`]), read as admission
+    /// reads them, from one read, so the outputs a page sends with an edge are those of the
+    /// snapshot it previews; refused as [`Store::workflow_actions`] is.
+    pub fn workflow_actions_with_outputs(
+        &self,
+        slug: &str,
+        principal: &Principal,
+        host: &Host,
+    ) -> Result<(NextActions, Outputs), Error> {
         self.retrying(|| {
-            let decided = self.decided(slug, &crate::workflow::board_service("reader"), None)?;
-            let context = context(&decided);
-            let at = decided.facts.position.as_ref().map(TaskPosition::at);
-            let own = Prerequisite {
-                slug: slug.to_string(),
-                found: Some((decided.task.status.clone(), decided.facts.position.clone())),
-                accepted: decided.facts.accepted.clone(),
-            };
-            let takes = (context.definition.edges.iter()).any(|e| {
-                Some(&e.from) == at.as_ref()
-                    && e.dependencies == symphony_api::workflow::Dependency::AcceptedOutput
-            });
-            let mut outputs = Outputs {
-                own: admit::standing(context, &own).map(str::to_string),
-                takes: Vec::new(),
-            };
-            if takes {
-                outputs.takes = (decided.facts.dependencies.iter())
-                    .map(|p| {
-                        (
-                            p.slug.clone(),
-                            admit::standing(context, p).map(str::to_string),
-                        )
-                    })
-                    .collect();
-            }
-            Ok(outputs)
+            let decided = self.decided(slug, principal, None)?;
+            let next = admit::next_actions(context(&decided), &decided.facts, principal, host)
+                .map_err(refusal)?;
+            Ok((next, outputs(&decided)))
         })
     }
 
@@ -236,6 +218,29 @@ impl Store {
         attestations: &[Signed],
     ) -> Result<OperationResult, Error> {
         self.apply(principal, host, request, attestations, None)
+    }
+
+    /// Which guard refuses `request` taken by `principal` with `attestations`, as the board reads
+    /// it now, for a page to show beside a refusal [`Store::apply_attested`] gave
+    /// ([`admit::guard_refusal`]): none where no single guard does. A read of its own, after the
+    /// refusal, which decides nothing and writes nothing.
+    pub fn guard_refusal(
+        &self,
+        principal: &Principal,
+        request: &OperationRequest,
+        attestations: &[Signed],
+    ) -> Result<Option<symphony_api::workflow::GuardRefusal>, Error> {
+        self.retrying(|| {
+            let decided = self.decided(&request.task, principal, None)?;
+            let guarding = guarding(&decided, attestations);
+            Ok(admit::guard_refusal(
+                context(&decided),
+                &decided.facts,
+                principal,
+                request,
+                &guarding,
+            ))
+        })
     }
 
     /// [`Store::apply_attested`], or, with what it `answered`, the automatic edge the board
@@ -335,7 +340,8 @@ impl Store {
             let body = both(
                 format!("{}{logged}{joins}{guard}", sql::APPLY),
                 pg::workflow::apply(&format!("{logged_pg}{joins_pg}"), guarded),
-            );
+            )
+            .posting();
             self.written(body, vars, slug)?;
             Ok(receipt)
         })?;
@@ -363,7 +369,7 @@ impl Store {
         if body.is_null() {
             return Ok(None);
         }
-        serde_json::from_value(body)
+        crate::objects::read(&body)
             .map(Some)
             .map_err(|e| Error::Db(format!("a workflow receipt not in the board's shape: {e}")))
     }
@@ -429,7 +435,8 @@ impl Store {
             "receipt": receipt.cloned().unwrap_or(json!(["receipt"])),
             "actor": agent(principal),
         });
-        let read: Read = self.transact(both(sql::ADMISSION, pg::workflow::admission()), vars)?;
+        let read: Read =
+            self.read_together(both(sql::ADMISSION, pg::workflow::admission()), vars)?;
         let active = read.active.ok_or_else(|| {
             refusal(Refusal::new(
                 RefusalCode::UnsupportedActivation,
@@ -439,6 +446,8 @@ impl Store {
         let task = read.task.ok_or_else(|| {
             refusal(Refusal::new(
                 RefusalCode::UnknownId,
+                // A workflow's refusal, by its code, of the slug as the request named it: not
+                // the board's own refusal of a slug no task has (`work::no_task`).
                 format!("no task {slug}"),
             ))
         })?;
@@ -520,10 +529,9 @@ impl Store {
                 continue;
             }
             let session = sessions.iter().find(|s| s.row.handle == pair.0);
-            let expired = role.expires.is_some_and(|expires| expires < now);
-            let gone = session.is_none_or(|s| matches!(s.health, Health::Lost | Health::Left));
-            if expired || gone {
-                if !expired && let Some(session) = session {
+            let (drop, fence) = super::lapsed(role.expires, session.map(|s| s.health), now);
+            if drop {
+                if fence && let Some(session) = session {
                     seen.push(json!({"handle": pair.0, "last_seen": session.row.last_seen}));
                 }
                 lapsed.push(pair);
@@ -567,16 +575,10 @@ impl Store {
         }
         let slug = &decided.task.slug;
         let view = self.view(&Which::Starting(slug))?;
-        let mut by: Vec<String> = (taking.add.iter())
+        let adds = (taking.add.iter())
             .filter(|(_, role)| role == "executor")
-            .map(|(handle, _)| handle.clone())
-            .chain(view.holders("executor").map(|r| r.handle.clone()))
-            .collect();
-        if by.is_empty()
-            && let Some(handle) = agent(principal)
-        {
-            by.push(handle.to_string());
-        }
+            .map(|(handle, _)| handle.clone());
+        let by = executors_or(adds.chain(view.executors()), agent(principal));
         let opens = Opens {
             status: Some(status.to_string()),
             by,
@@ -688,6 +690,34 @@ fn request_digest(request: &OperationRequest) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+/// The task's accepted outputs as `decided` reads them ([`Outputs`]): its own standing, and,
+/// where an edge leaving its pair depends on `accepted_output`, the one standing for each task it
+/// depends on.
+fn outputs(decided: &Decided) -> Outputs {
+    let context = context(decided);
+    let at = decided.facts.position.as_ref().map(TaskPosition::at);
+    let own = Prerequisite {
+        slug: decided.facts.slug.clone(),
+        found: Some((decided.task.status.clone(), decided.facts.position.clone())),
+        accepted: decided.facts.accepted.clone(),
+    };
+    let takes = (context.definition.edges.iter()).any(|e| {
+        Some(&e.from) == at.as_ref()
+            && e.dependencies == symphony_api::workflow::Dependency::AcceptedOutput
+    });
+    let standing = |p: &Prerequisite| admit::standing(context, p).map(str::to_string);
+    Outputs {
+        own: standing(&own),
+        takes: if takes {
+            (decided.facts.dependencies.iter())
+                .map(|p| (p.slug.clone(), standing(p)))
+                .collect()
+        } else {
+            Vec::new()
+        },
+    }
 }
 
 /// The handle of an agent principal, which the write checks is still on the board.

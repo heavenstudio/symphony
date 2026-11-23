@@ -1,4 +1,4 @@
-//! The owner's word that ends a task's block (docs/TASKS.md, "What a task waits on").
+//! The owner's word that ends a task's block (docs/workflow/TASKS.md, "What a task waits on").
 //!
 //! A block on `decision:NAME` ends once card NAME carries the owner's verdict that decides it
 //! (approved, rejected or dismissed) in an owner's line dated since the minute the block was
@@ -7,10 +7,11 @@
 //! newest verdict there is the card's: one that leaves it undecided (a question, the card set back
 //! to pending) ends nothing. An owner's line since the block that ends nothing (a message, a
 //! question) leaves the block and is told to the task's orchestrator once ([`told`]). A block on
-//! `check:owner`, the default landing's hold, ends once the owner's approve on the task's thread
-//! names the tip of its branch, read as the land's `owner` stamp reads it
-//! ([`symphony_board::stamps::read::owner`]). Either goes back to the status its block recorded,
-//! as a `task:` block's end does.
+//! `check:owner`, the default landing's hold, ends once the land's `owner` stamp stands on the tip
+//! of its branch, by its one reader ([`symphony_board::stamps::read::owner_at`]): the owner's
+//! approve on the task's thread naming the tip, or the owner's approve of every card the branch
+//! posted with only the owner's lines and merges of the default branch after it. Either goes back
+//! to the status its block recorded, as a `task:` block's end does.
 //!
 //! The shared server alone judges, on its board clock ([`Kept::look`]), from the cards its pages
 //! hold and the board it read that tick: a save needs no hook of its own, and a verdict written
@@ -142,6 +143,13 @@ pub fn approved_why(tip: &str) -> String {
     format!("the owner approved {}", short(tip))
 }
 
+/// Why a block on the owner's approve ended by the owner's approve of the cards `cards` the task's
+/// branch posted, `tip` that branch's: `the owner approved card NAME, at 1a2b3c4`.
+pub fn approved_cards_why(cards: &[String], tip: &str) -> String {
+    let named = symphony_board::stamps::read::on(cards);
+    format!("the owner approved {named}, at {}", short(tip))
+}
+
 /// A commit as a line says it: its first seven hex digits, as the land's hold names it.
 fn short(commit: &str) -> &str {
     commit.get(..7).unwrap_or(commit)
@@ -182,9 +190,16 @@ fn fnv(text: &str) -> u64 {
     })
 }
 
-/// Whether an approve of the owner's on `thread` names `tip`, as the land's `owner` stamp reads it.
-pub fn approves(thread: &[Message], tip: &str) -> bool {
-    symphony_board::stamps::read::owner(thread, tip).met
+/// Why the land's `owner` stamp stands on `tip`, read from the task's `thread` and the cards its
+/// branch posted in the main checkout `root` as the land reads it
+/// ([`symphony_board::stamps::read::owner_at`]): [`approved_why`] or [`approved_cards_why`]; none
+/// while it does not.
+pub fn approves(thread: &[Message], tip: &str, root: &Path) -> Option<String> {
+    let reading = symphony_board::stamps::read::owner_at(thread, tip, root);
+    reading.met.then(|| match reading.cards.as_slice() {
+        [] => approved_why(tip),
+        cards => approved_cards_why(cards, tip),
+    })
 }
 
 /// The tip of the branch of the task `slug` in the checkout at `root`, as the land reads it.
@@ -302,17 +317,18 @@ impl Kept {
     }
 }
 
-/// The task `slug`, held on the owner's approve as `block`, moved back once the owner's approve
-/// names the tip of its branch in the checkout at `root`.
+/// The task `slug`, held on the owner's approve as `block`, moved back once the land's `owner` stamp
+/// stands on the tip of its branch in the checkout at `root` ([`approves`]).
 fn approve(store: &Store, root: &Path, slug: &str, block: &Blocked, looked: &mut Looked) {
     let Some(tip) = tip(root, slug) else {
         return;
     };
-    match store.thread(slug) {
-        Ok(thread) if approves(&thread, &tip) => {
-            resume(store, slug, block, &approved_why(&tip), looked);
-        }
-        Ok(_) => {}
+    match store
+        .thread(slug)
+        .map(|thread| approves(&thread, &tip, root))
+    {
+        Ok(Some(why)) => resume(store, slug, block, &why, looked),
+        Ok(None) => {}
         Err(error) => looked
             .lines
             .push(format!("{slug}: its thread not read: {error}")),

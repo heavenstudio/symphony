@@ -5,8 +5,8 @@
 //! ([`crate::launch::Defaults::configured`]) and the Symphony's project load all take what
 //! [`beside`] read, so each takes the same override.
 //!
-//! It holds preferences alone: `[agents] launch` (`default`, `model`, `effort`),
-//! `[agents.models]` (a role's model) and `[limits]`. A setting that holds a command or a program
+//! It holds preferences alone: `[agents] launch` (`default`, `model`, `effort`, and the agents'
+//! switches, `[agents.launch.on]`), `[agents.models]` (a role's model) and `[limits]`. A setting that holds a command or a program
 //! the Symphony runs, or that decides what lands ([`PROTECTED`], [`PROTECTED_KEYS`]), is refused
 //! there by name and never read from it: a file no commit records must not change the landing gate
 //! or run a command, which would be a way around review that leaves no trace. Any other table or
@@ -17,8 +17,21 @@
 //! ([`left_out`]), so a broken local file stops neither the board nor a launch. No file is no
 //! override. A linked worktree has none of its own: every reader looks beside the main checkout's
 //! project file.
+//!
+//! The board's store of preferences ([`crate::settings`]) is judged here too ([`judge`], by its
+//! [`Place`]): one set of rules and one pair of lists says what either place may hold, so a setting
+//! refused in the file is refused in the store by the same line. The store holds one preference
+//! more, `[agents] panes` ([`PANES`]), which the local file has no place for.
+//!
+//! The launch default cannot be turned off ([`crate::launch::defaults`]): a local file that turns
+//! off the default it names itself is refused whole with the line that says to pick another
+//! default first ([`judge`]). One that turns off a default it does not name, the store's or the
+//! project file's, is the places disagreeing, which every reader settles alike: the default wins
+//! and the switch does not hold (`Defaults::overruled`).
 
-use crate::launch::defaults::{AGENTS, ROLES};
+use crate::launch::defaults::{
+    AGENT_KEY, AGENTS, ON, ON_TABLES, ROLES, agent, default_off, switch,
+};
 use crate::limits;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -33,8 +46,19 @@ pub const TABLES: [&str; 2] = ["agents", limits::TABLE];
 pub const LAUNCH: [&str; 3] = ["default", "model", "effort"];
 
 /// The tables that hold commands or programs the Symphony runs, or decide what lands: refused in a
-/// local file whole, each key by name.
-pub const PROTECTED: [&str; 5] = ["plugins", "verdicts", "land", "releases", "stamps"];
+/// local file whole, each key by name. The three workflow tables decide what lands (the stages, the
+/// edges and their guards, the authorities whose word meets them); the two lists of tables among
+/// them are refused in a local file as arrays all the same, which hold no table of settings.
+pub const PROTECTED: [&str; 8] = [
+    "plugins",
+    "verdicts",
+    "land",
+    "releases",
+    "stamps",
+    "workflow",
+    "workflow_mappings",
+    "workflow_authorities",
+];
 /// The keys of other tables that do: `[project]`'s and `[board]`'s.
 pub const PROTECTED_KEYS: [(&str, &[&str]); 2] = [
     ("project", &["cargo", "default_branch"]),
@@ -51,6 +75,57 @@ pub const PROTECTED_KEYS: [(&str, &[&str]); 2] = [
     ),
 ];
 
+/// What `[agents] panes` may be, as the Symphony's load of the project file reads it.
+pub const PANES: [&str; 2] = ["hc", "none"];
+
+/// The key of `[agents]` itself that the board's store keeps ([`Place::keeps`]): `panes`.
+const PANES_KEY: &str = "panes";
+
+/// Where preferences over the committed settings are kept, which [`judge`] words its refusals for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Place {
+    /// The local settings file ([`FILE`]).
+    File,
+    /// The board's store ([`crate::settings`]), which holds `[agents] panes` as well.
+    Store,
+}
+
+impl Place {
+    /// The place in a refusal: `a local file`, `the board's store`.
+    fn a(self) -> &'static str {
+        match self {
+            Place::File => "a local file",
+            Place::Store => "the board's store",
+        }
+    }
+
+    /// What it holds, as a refusal of anything else lists it.
+    fn holds(self) -> String {
+        match self {
+            Place::File => "[agents] launch, [agents.models] and [limits]".into(),
+            Place::Store => {
+                format!("[agents] launch, [agents.models], [agents] {PANES_KEY} and [limits]")
+            }
+        }
+    }
+
+    /// Whether it keeps `key` of the table `path` leads to: a key of `[agents] launch`
+    /// ([`LAUNCH`]), an agent's switch ([`AGENTS`]), a role's model ([`ROLES`]) or a key of
+    /// `[limits]` in either place, and `[agents] panes` in the board's store alone. The one list of
+    /// what each place keeps: [`judge`] takes a key of `[agents]` itself only where it says so, and
+    /// the Settings page reads it for where a setting may be written.
+    pub fn keeps(self, path: &[&str], key: &str) -> bool {
+        match path {
+            [limits::TABLE] => limits::KEYS.contains(&key),
+            ["agents", "launch"] => LAUNCH.contains(&key),
+            ["agents", "launch", ON] => AGENTS.contains(&key),
+            ["agents", "models"] => ROLES.contains(&key),
+            ["agents"] => self == Place::Store && key == PANES_KEY,
+            _ => false,
+        }
+    }
+}
+
 /// What a local file writes, each value as written, with the text its lines are found in.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Local {
@@ -62,6 +137,10 @@ pub struct Local {
     pub models: [Option<String>; 4],
     /// `[limits]`, by key ([`limits::KEYS`]).
     pub limits: BTreeMap<&'static str, usize>,
+    /// `[agents] panes`, which the board's store alone holds ([`Place::Store`]).
+    pub panes: Option<String>,
+    /// `[agents.launch.on]`: each agent's switch it writes, in [`AGENTS`]' order.
+    pub on: [Option<bool>; 2],
     text: String,
 }
 
@@ -77,6 +156,38 @@ impl Local {
         limits::Written {
             at: format!("{FILE} {at}"),
             line: self.line(path, key),
+        }
+    }
+
+    /// What `other` writes, put over what this one does: one entry of the board's store taken
+    /// into the rest ([`crate::settings::Stored::of`]).
+    pub(crate) fn over_local(&mut self, other: &Local) {
+        let Local {
+            launch,
+            models,
+            limits,
+            panes,
+            on,
+            ..
+        } = other;
+        for (into, written) in self.on.iter_mut().zip(on) {
+            if written.is_some() {
+                *into = *written;
+            }
+        }
+        for (into, written) in self.launch.iter_mut().zip(launch) {
+            if written.is_some() {
+                into.clone_from(written);
+            }
+        }
+        for (into, written) in self.models.iter_mut().zip(models) {
+            if written.is_some() {
+                into.clone_from(written);
+            }
+        }
+        self.limits.extend(limits.iter().map(|(key, n)| (*key, *n)));
+        if panes.is_some() {
+            self.panes.clone_from(panes);
         }
     }
 
@@ -109,7 +220,7 @@ pub fn path_beside(project_file: &Path) -> PathBuf {
 }
 
 /// The local file beside the project file at `project_file`, as [`parse`] reads it: none when
-/// there is no file.
+/// there is no file. Every reader takes it from here, so each reads the same file or none.
 ///
 /// # Errors
 ///
@@ -136,14 +247,32 @@ pub fn left_out(problem: &str) -> String {
 /// setting it may not hold ([`PROTECTED`], [`PROTECTED_KEYS`], or any outside [`TABLES`]), a key
 /// the Symphony does not know in a table it may hold, and a value of the wrong type or range.
 pub fn parse(path: &Path, text: &str) -> Result<Local, Vec<String>> {
-    let said = path.display();
+    let said = path.display().to_string();
     let file: toml::Table = toml::from_str(text)
         .map_err(|error| vec![format!("{said}: {}", error.to_string().trim_end())])?;
-    let mut local = Local {
-        path: path.to_path_buf(),
-        text: text.to_string(),
-        ..Local::default()
-    };
+    let mut local = judge(Place::File, &said, &file, &|tables, key| {
+        limits::line(text, tables, key)
+    })?;
+    local.path = path.to_path_buf();
+    local.text = text.to_string();
+    Ok(local)
+}
+
+/// `file`, the settings `place` was handed, named `said` in a problem: what it writes. `line`
+/// finds the line of a key in the tables that lead to it, where the place has lines.
+///
+/// # Errors
+///
+/// Every problem with it, each naming the place and the setting: a setting it may not hold
+/// ([`PROTECTED`], [`PROTECTED_KEYS`], or any outside what the place holds), a key the Symphony
+/// does not know in a table it may hold, and a value of the wrong type or range.
+pub fn judge(
+    place: Place,
+    said: &str,
+    file: &toml::Table,
+    line: &dyn Fn(&[&str], &str) -> Option<usize>,
+) -> Result<Local, Vec<String>> {
+    let mut local = Local::default();
     let mut problems = Vec::new();
     // `[table] key (line N)`, or `[table] (line N)` for the table itself.
     let named = |tables: &[&str], key: Option<&str>| {
@@ -152,24 +281,25 @@ pub fn parse(path: &Path, text: &str) -> Result<Local, Vec<String>> {
             None => format!("[{}]", tables.join(".")),
         };
         let line = match key {
-            Some(key) => limits::line(text, tables, key),
+            Some(key) => line(tables, key),
             None => tables
                 .split_last()
-                .and_then(|(table, above)| limits::line(text, above, table)),
+                .and_then(|(table, above)| line(above, table)),
         };
         limits::Written { at, line }.named()
     };
     let wrong = |name: String, value: &Value, why: &str| {
         format!("{said}: {name} is {}; {why}", limits::shown(value))
     };
-    for (table, value) in &file {
+    for (table, value) in file {
         let Value::Table(keys) = value else {
             let name = limits::Written {
                 at: table.clone(),
-                line: limits::line(text, &[], table),
+                line: line(&[], table),
             }
             .named();
-            problems.push(wrong(name, value, "a local file holds tables of settings"));
+            let why = format!("{} holds tables of settings", place.a());
+            problems.push(wrong(name, value, &why));
             continue;
         };
         let protected: Option<&[&str]> = if PROTECTED.contains(&table.as_str()) {
@@ -186,8 +316,29 @@ pub fn parse(path: &Path, text: &str) -> Result<Local, Vec<String>> {
                     let (known, into): (&[&str], &mut [Option<String>]) = match key.as_str() {
                         "launch" => (&LAUNCH, &mut local.launch),
                         "models" => (&ROLES, &mut local.models),
+                        // A key of `[agents]` itself is judged only where the one list says the
+                        // place keeps it ([`Place::keeps`]): none is taken that it does not name.
+                        own if !place.keeps(&["agents"], own) => {
+                            problems.push(not_local(place, said, &named(&["agents"], Some(own))));
+                            continue;
+                        }
+                        PANES_KEY => {
+                            let name = named(&["agents"], Some(key));
+                            match value {
+                                Value::String(text) if PANES.contains(&text.as_str()) => {
+                                    local.panes = Some(text.clone());
+                                }
+                                Value::String(text) => problems.push(format!(
+                                    "{said}: {name} {text:?} is not one of {}",
+                                    PANES.join(", ")
+                                )),
+                                other => problems.push(wrong(name, other, "not text")),
+                            }
+                            continue;
+                        }
+                        // One the list names and no arm here judges is refused all the same.
                         _ => {
-                            problems.push(not_local(&said, &named(&["agents"], Some(key))));
+                            problems.push(not_local(place, said, &named(&["agents"], Some(key))));
                             continue;
                         }
                     };
@@ -199,21 +350,31 @@ pub fn parse(path: &Path, text: &str) -> Result<Local, Vec<String>> {
                     };
                     for (key, value) in written {
                         let name = named(&tables, Some(key));
+                        if tables[1] == "launch" && key == ON {
+                            let Value::Table(switches) = value else {
+                                let why = "it is a table of each agent's switch";
+                                problems.push(wrong(name, value, why));
+                                continue;
+                            };
+                            for (agent, value) in switches {
+                                let name = named(&ON_TABLES, Some(agent));
+                                match switch(&name, agent, value) {
+                                    Ok((at, on)) => local.on[at] = Some(on),
+                                    Err(why) => problems.push(format!("{said}: {why}")),
+                                }
+                            }
+                            continue;
+                        }
                         let Some(at) = known.iter().position(|k| k == key) else {
-                            problems.push(unknown(&said, &name));
+                            problems.push(unknown(said, &name));
                             continue;
                         };
                         match value {
-                            Value::String(text)
-                                if tables[1] == "launch"
-                                    && at == 0
-                                    && !text.trim().is_empty()
-                                    && !AGENTS.contains(&text.as_str()) =>
-                            {
-                                problems.push(format!(
-                                    "{said}: {name} {text:?} is not one of {}",
-                                    AGENTS.join(", ")
-                                ));
+                            Value::String(text) if tables[1] == "launch" && at == 0 => {
+                                match agent(&name, Some(text)) {
+                                    Ok(_) => into[at] = Some(text.clone()),
+                                    Err(why) => problems.push(format!("{said}: {why}")),
+                                }
                             }
                             Value::String(text) => into[at] = Some(text.clone()),
                             other => problems.push(wrong(name, other, "not text")),
@@ -224,40 +385,51 @@ pub fn parse(path: &Path, text: &str) -> Result<Local, Vec<String>> {
             (limits::TABLE, _) => {
                 for (key, value) in keys {
                     let name = named(&[limits::TABLE], Some(key));
-                    let Some((known, least, below)) = limits::LEAST
+                    let Some((known, _, _)) = limits::LEAST
                         .iter()
                         .find(|(known, _, _)| known == key)
                         .copied()
                     else {
-                        problems.push(unknown(&said, &name));
+                        problems.push(unknown(said, &name));
                         continue;
                     };
-                    match limits::whole(value, least) {
+                    match limits::judged(known, value) {
                         Ok(n) => {
                             local.limits.insert(known, n);
                         }
-                        Err(why) => problems.push(wrong(name, value, why.unwrap_or(below))),
+                        Err(why) => problems.push(wrong(name, value, why)),
                     }
                 }
             }
             (_, Some(held)) => {
                 if keys.is_empty() {
                     problems.push(if held.is_empty() {
-                        refused(&said, &named(&[table], None))
+                        refused(place, said, &named(&[table], None))
                     } else {
-                        not_local(&said, &named(&[table], None))
+                        not_local(place, said, &named(&[table], None))
                     });
                 }
                 for key in keys.keys() {
                     let name = named(&[table], Some(key));
                     problems.push(if held.is_empty() || held.contains(&key.as_str()) {
-                        refused(&said, &name)
+                        refused(place, said, &name)
                     } else {
-                        not_local(&said, &name)
+                        not_local(place, said, &name)
                     });
                 }
             }
-            (_, None) => problems.push(not_local(&said, &named(&[table], None))),
+            (_, None) => problems.push(not_local(place, said, &named(&[table], None))),
+        }
+    }
+    // A file that turns off the default it names does not load; the store's entries are judged
+    // one by one, and its write against the default in force (`Store::store_setting`).
+    let own = agent(AGENT_KEY, local.launch[0].as_deref()).ok().flatten();
+    if let Some(own) = own.filter(|_| place == Place::File) {
+        let at = AGENTS.iter().position(|known| *known == own).unwrap_or(0);
+        if local.on[at] == Some(false) {
+            let chosen = named(&["agents", "launch"], Some("default"));
+            let name = named(&ON_TABLES, Some(own));
+            problems.push(format!("{said}: {}", default_off(&name, own, &chosen)));
         }
     }
     if problems.is_empty() {
@@ -268,26 +440,33 @@ pub fn parse(path: &Path, text: &str) -> Result<Local, Vec<String>> {
 }
 
 /// A setting that holds a command or decides what lands, refused by name.
-fn refused(path: &dyn std::fmt::Display, name: &str) -> String {
+fn refused(place: Place, said: &str, name: &str) -> String {
+    let (read, kept) = match place {
+        Place::File => ("read from a local file", "a file no commit records"),
+        Place::Store => ("kept in the board's store", "a place no commit records"),
+    };
     format!(
-        "{path}: {name} is not read from a local file: it holds a command or a program the \
-         Symphony runs, or decides what lands, and a file no commit records must not change \
-         that; it stays in {}",
+        "{said}: {name} is not {read}: it holds a command or a program the Symphony runs, or \
+         decides what lands, and {kept} must not change that; it stays in {}",
         crate::project::FILE
     )
 }
 
-/// A setting no local file overrides, or one misspelt: refused by name.
-fn not_local(path: &dyn std::fmt::Display, name: &str) -> String {
+/// A setting the place does not hold, or one misspelt: refused by name.
+fn not_local(place: Place, said: &str, name: &str) -> String {
+    let overrides = match place {
+        Place::File => "a local file overrides",
+        Place::Store => "the board's store keeps",
+    };
     format!(
-        "{path}: {name} is not a setting a local file overrides: it holds [agents] launch, \
-         [agents.models] and [limits] alone"
+        "{said}: {name} is not a setting {overrides}: it holds {} alone",
+        place.holds()
     )
 }
 
-/// A key the Symphony does not know in a table a local file may hold, in the project file's words.
-fn unknown(path: &dyn std::fmt::Display, name: &str) -> String {
-    format!("{path}: {name} is not a setting the Symphony knows")
+/// A key the Symphony does not know in a table the place may hold, in the project file's words.
+fn unknown(said: &str, name: &str) -> String {
+    format!("{said}: {name} is not a setting the Symphony knows")
 }
 
 #[cfg(test)]

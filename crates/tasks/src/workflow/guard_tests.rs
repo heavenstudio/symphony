@@ -3,6 +3,7 @@
 //! graphs leave a route around a guard.
 
 use super::*;
+use crate::store_fixture::pair;
 use crate::workflow::activate::tests::{TWO, custom};
 use crate::workflow::{Custom, agent_session, local_owner};
 use ed25519_dalek::{Signer, SigningKey};
@@ -129,13 +130,6 @@ pub(crate) fn sign_attestation(seed: u8, attestation: &Attestation) -> Signed {
 
 pub(crate) fn sign_observation(seed: u8, observation: &Observation) -> Signed {
     signed(seed, true, &serde_json::to_string(observation).unwrap())
-}
-
-fn pair(phase: &str, state: &str) -> Pair {
-    Pair {
-        phase: phase.into(),
-        state: state.into(),
-    }
 }
 
 /// The accepted state the fixtures attest at.
@@ -858,9 +852,17 @@ fn the_project_file_commits_authorities_only_for_a_workflow_and_a_project_id() {
             .unwrap_err()
             .contains("[project] id names none")
     );
+    // An id the project file's rule refuses names no project, as the board's lookup reads it.
+    for id in ["", " ", "Sim", "sim lab"] {
+        assert_eq!(
+            crate::workflow::attested_project(&format!("[project]\nid = {id:?}\n")),
+            None,
+            "{id:?}"
+        );
+    }
     assert_eq!(
-        crate::workflow::attested_project("[project]\nid = \" \"\n"),
-        None
+        crate::workflow::attested_project("[project]\nid = \"sim\"\n").as_deref(),
+        Some("sim")
     );
     let only = format!(
         "[[workflow_authorities]]\nadapter = \"approvals\"\nissuer = \"ledger\"\ncontract = 1\n\
@@ -1154,4 +1156,232 @@ fn a_resume_walked_back_to_anything_but_a_block_from_the_pair_finds_no_entry() {
         moved(9, Some(approved.clone()), landing, Vec::new()),
     ];
     assert_eq!(entry(&history, 9, &approved), None);
+}
+
+impl Case {
+    /// `given` checked for the acceptance, a refusal explained.
+    fn explained(&self, given: &[Signed]) -> Explained {
+        let definition = self.custom.definition.definition();
+        let edge = definition.edges.iter().find(|e| e.id == "accept").unwrap();
+        let binding = Binding {
+            project: &self.project,
+            task: "sim/a",
+            edge: &edge.id,
+            workflow: &self.custom.revision.digest,
+            activation_generation: 2,
+            task_revision: self.revision,
+            at: &self.at,
+            input_revisions: &self.inputs,
+            principal: &self.principal,
+        };
+        let guarding = Guarding {
+            project: &self.project,
+            attesters: &self.attesters,
+            accepted: &self.accepted,
+            given,
+            now: self.now,
+        };
+        let explained = explained(definition, edge, &binding, &guarding).expect_err("refused");
+        // The refusal is the one the check gives, whatever a page is told beside it.
+        assert_eq!(
+            check(definition, edge, &binding, &guarding),
+            Err(explained.refusal.clone())
+        );
+        explained
+    }
+
+    /// The word a page says the refusal of `attestation`, changed by `change`, with, and whether
+    /// what the attestation says is shown beside it.
+    fn word(&self, change: impl FnOnce(&mut Attestation)) -> (GuardWhy, bool) {
+        let mut attestation = passing(&self.custom);
+        change(&mut attestation);
+        let guard = (self.explained(&[sign_attestation(7, &attestation)]).guard)
+            .expect("one guard refused");
+        assert_eq!(
+            (guard.guard.as_str(), guard.adapter.as_str()),
+            ("approved", "approvals")
+        );
+        (guard.why, guard.record.is_some())
+    }
+}
+
+#[test]
+fn a_refusal_names_its_guard_and_a_word_for_why_and_shows_only_what_a_verified_attestation_says() {
+    let case = Case::new();
+    // What the authority said, shown with each refusal of an attestation that verified.
+    for (word, change) in [
+        (
+            GuardWhy::Stale,
+            (|a| a.task_revision = 3) as fn(&mut Attestation),
+        ),
+        (GuardWhy::Stale, |a| a.task = "sim/other".into()),
+        (GuardWhy::Stale, |a| {
+            a.input_revisions.insert("design".into(), "r1".into());
+        }),
+        (GuardWhy::NotYours, |a| {
+            a.principal.subject = "someone".into()
+        }),
+        (GuardWhy::Refused, |a| {
+            a.result = Attested::Refuse;
+            a.reasons = vec!["/task/sim/blocker is open".into()];
+        }),
+        (GuardWhy::Unknown, |a| a.result = Attested::Unknown),
+        (GuardWhy::Unfounded, |a| a.facts.clear()),
+        (GuardWhy::Expired, |a| a.expires_at = 150.0),
+        (GuardWhy::Expired, |a| a.expires_at = 100.0),
+        (GuardWhy::Early, |a| {
+            a.issued_at = 300.0;
+            a.expires_at = 500.0;
+        }),
+        (GuardWhy::Overlong, |a| {
+            a.expires_at = 100.0 + MAX_VALIDITY + 1.0
+        }),
+        (GuardWhy::DecidedAgain, |a| a.generation = 2),
+        (GuardWhy::DecidedAgain, |a| a.epoch = "e0".into()),
+        (GuardWhy::NotReported, |a| a.generation = 4),
+    ] {
+        assert_eq!(case.word(change), (word, true), "{word:?}");
+    }
+    let refused = case.explained(&[sign_attestation(7, &{
+        let mut refusing = passing(&case.custom);
+        refusing.result = Attested::Refuse;
+        refusing.reasons = vec!["/task/sim/blocker is open".into()];
+        refusing
+    })]);
+    let record = refused.guard.unwrap().record.unwrap();
+    assert_eq!(record.result, Attested::Refuse);
+    assert_eq!(
+        record.reasons,
+        vec!["/task/sim/blocker is open".to_string()]
+    );
+    assert_eq!((record.epoch.as_str(), record.generation), ("e1", 3));
+    assert_eq!((record.issued_at, record.expires_at), (100.0, 400.0));
+    assert_eq!(record.principal, attestee(&local_owner()));
+
+    // Nothing an attestation says is shown where none verified as this guard's authority's.
+    let unshown = |explained: Explained| {
+        let guard = explained.guard.expect("one guard refused");
+        assert_eq!(guard.record, None, "{:?}", guard.why);
+        guard.why
+    };
+    assert_eq!(unshown(case.explained(&[])), GuardWhy::Missing);
+    let forged = sign_attestation(8, &passing(&case.custom));
+    assert_eq!(unshown(case.explained(&[forged])), GuardWhy::Unverified);
+    let mut unreported = Case::new();
+    unreported.accepted.clear();
+    assert_eq!(unshown(unreported.explained(&[])), GuardWhy::Unreported);
+    let mut conflicted = Case::new();
+    conflicted.accepted[0].conflicted = true;
+    assert_eq!(unshown(conflicted.explained(&[])), GuardWhy::Conflict);
+    let mut uncommitted = Case::new();
+    uncommitted.attesters.clear();
+    assert_eq!(unshown(uncommitted.explained(&[])), GuardWhy::Uncommitted);
+}
+
+#[test]
+fn a_refusal_of_what_was_given_as_a_whole_names_no_guard() {
+    let case = Case::new();
+    let pass = sign_attestation(7, &passing(&case.custom));
+    let twice = case.explained(&[pass.clone(), pass]);
+    assert!(
+        twice.refusal.to_string().contains("two attestations"),
+        "{}",
+        twice.refusal
+    );
+    assert_eq!(twice.guard, None);
+    let mut elsewhere = passing(&case.custom);
+    elsewhere.guard = "signed_off".into();
+    let other = case.explained(&[sign_attestation(7, &elsewhere)]);
+    assert_eq!(other.refusal.code, RefusalCode::UnknownId);
+    assert_eq!(other.guard, None);
+}
+
+#[test]
+fn a_met_guard_stands_by_a_word_with_the_reason_a_dispatch_gives() {
+    let case = Case::new();
+    let met = case
+        .check(&[sign_attestation(7, &passing(&case.custom))])
+        .unwrap();
+    let (checked, attesters) = (&met[0], case.attesters.clone());
+    assert_eq!(
+        standing(checked, &attesters, &[accepted()]),
+        (GuardStanding::Met, None)
+    );
+    let later = Accepted {
+        generation: 4,
+        state: "s4".into(),
+        ..accepted()
+    };
+    let conflicted = Accepted {
+        conflicted: true,
+        ..accepted()
+    };
+    for (word, attesters, accepted) in [
+        (GuardStanding::DecidedAgain, attesters.clone(), vec![later]),
+        (GuardStanding::Conflict, attesters.clone(), vec![conflicted]),
+        (GuardStanding::Unreported, attesters.clone(), Vec::new()),
+        (GuardStanding::Uncommitted, Vec::new(), vec![accepted()]),
+        (
+            GuardStanding::Unverified,
+            vec![attester(8)],
+            vec![accepted()],
+        ),
+    ] {
+        let (stands, why) = standing(checked, &attesters, &accepted);
+        assert_eq!(stands, word);
+        // The words are the dispatch's own, said once.
+        assert_eq!(why, unstanding(&met, &attesters, &accepted), "{word:?}");
+        assert!(why.is_some(), "{word:?}");
+    }
+}
+
+#[test]
+fn an_authority_may_name_the_page_of_its_ledger_which_the_board_reads_for_a_link_and_never_keeps() {
+    let paged = |page: &str| {
+        guarded_text(7).replacen(
+            "issuer = \"ledger\"\n",
+            &format!("issuer = \"ledger\"\npage = \"{page}\"\n"),
+            1,
+        )
+    };
+    let read = |text: &str| {
+        let (definition, _) = crate::workflow::written(text).unwrap();
+        crate::workflow::authorities(text, definition.as_ref())
+    };
+    for page in [
+        "/docs/LEDGER.md#{task}",
+        "https://ledger.example/approvals?task={task}&guard={guard}",
+    ] {
+        let text = paged(page);
+        assert!(text.contains("page = "), "the fixture names a page: {text}");
+        // What the board records of the authority is what it records of one with no page.
+        assert_eq!(read(&text), Ok(vec![attester(7)]), "{page}");
+        let pages = crate::workflow::authority_pages(&text);
+        assert_eq!(pages.get("approvals").map(String::as_str), Some(page));
+    }
+    assert_eq!(
+        crate::workflow::page_for("/docs/LEDGER.md#{task}:{guard}", "sim/a", "approved"),
+        "/docs/LEDGER.md#sim/a:approved"
+    );
+    for page in [
+        "javascript:alert(1)",
+        "ledger/{task}",
+        "//evil.example/{task}",
+        "",
+    ] {
+        let text = paged(page);
+        assert_eq!(
+            read(&text),
+            Err(format!(
+                "workflow_authorities: approvals's page is neither a path of the app nor a web \
+                 address: {page}"
+            ))
+        );
+        assert!(crate::workflow::authority_pages(&text).is_empty(), "{page}");
+    }
+    // A file with no page, no authority, or that does not read names none.
+    assert!(crate::workflow::authority_pages(&guarded_text(7)).is_empty());
+    assert!(crate::workflow::authority_pages("").is_empty());
+    assert!(crate::workflow::authority_pages("workflow_authorities = 3\n").is_empty());
+    assert!(crate::workflow::authority_pages("not toml [").is_empty());
 }

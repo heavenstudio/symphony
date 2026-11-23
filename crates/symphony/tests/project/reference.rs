@@ -1,4 +1,4 @@
-//! docs/PROJECT_FILE.md, the reference of `symphony.toml`, names every key the Symphony reads and
+//! docs/operations/PROJECT_FILE.md, the reference of `symphony.toml`, names every key the Symphony reads and
 //! no other. The keys are the fields of the structs the file is read into, as their source writes
 //! them: `Project::parse` refuses any other key by name, and the strict tables' (an entrypoint's, a
 //! generator's, a machine's advice) refuse it where they are read, so those fields are the whole set.
@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use super::common::repo;
 
 /// The reference, from the workspace's root.
-const REFERENCE: &str = "docs/PROJECT_FILE.md";
+pub(super) const REFERENCE: &str = "docs/operations/PROJECT_FILE.md";
 
 /// The source of the struct the whole file is read into, whose fields are its tables, and of the
 /// project's own tables'.
@@ -24,7 +24,7 @@ const SOURCES: [&str; 3] = [
 /// The hosted board's settings, which the board reads and judges itself.
 const EXTERNAL: &str = "crates/tasks/src/pg/external.rs";
 
-const TABLES: [(&str, &str, &str); 23] = [
+const TABLES: [(&str, &str, &str); 24] = [
     (
         "crates/symphony-api/src/workflow.rs",
         "Definition",
@@ -36,8 +36,8 @@ const TABLES: [(&str, &str, &str); 23] = [
         "[[workflow_mappings]]",
     ),
     (
-        "crates/tasks/src/workflow/guard.rs",
-        "Attester",
+        "crates/tasks/src/workflow.rs",
+        "WrittenAuthority",
         "[[workflow_authorities]]",
     ),
     (FILE, "FileProject", "[project]"),
@@ -46,6 +46,7 @@ const TABLES: [(&str, &str, &str); 23] = [
     (SOURCES[2], "FileTheme", "[theme]"),
     (FILE, "FileAgents", "[agents]"),
     (FILE, "FileLaunch", "[agents.launch]"),
+    (FILE, "FileSwitches", "[agents.launch.on]"),
     (FILE, "FileModels", "[agents.models]"),
     (FILE, "FileVerdicts", "[verdicts]"),
     (FILE, "FileLand", "[land]"),
@@ -70,7 +71,7 @@ const TABLES: [(&str, &str, &str); 23] = [
     ("crates/tasks/src/stamps.rs", "Written", "[stamps.NAME]"),
 ];
 
-fn read(file: &str) -> String {
+pub(super) fn read(file: &str) -> String {
     std::fs::read_to_string(repo().join(file)).unwrap_or_else(|e| panic!("{file}: {e}"))
 }
 
@@ -123,7 +124,7 @@ fn code(line: &str) -> Option<&str> {
 /// The keys `text` lists, each with the table it is listed under: the first code span of a heading
 /// that is a table's name, then the first code span of each row of the tables below it. A fenced
 /// block is passed over.
-fn listed(text: &str) -> BTreeSet<(String, String)> {
+pub(super) fn listed(text: &str) -> BTreeSet<(String, String)> {
     let (mut table, mut fenced, mut keys) = (None, false, BTreeSet::new());
     for line in text.lines() {
         if line.starts_with("```") {

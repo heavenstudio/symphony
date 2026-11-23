@@ -3,9 +3,10 @@
 //!
 //! A move holds the board, stops its server, keeps a snapshot of its store, and reads it through
 //! a server of its own: the board's schema, which must be this build's (a move migrates
-//! nothing), the databases the store holds, which must be the board's alone (a store with
-//! another is refused, as the whole store is what changes places), the dump ([`Store::dump`]),
-//! the tables no copy holds ([`Store::carried`]) and the marker. It writes those as the export
+//! nothing), the dump ([`Store::dump`]), the tables no copy holds ([`Store::carried`]), the
+//! marker, and the databases the store holds beside the board's own (a scratch board's, `just
+//! tasks --database NAME`), which are not moved: they stay in the old store, kept whole with
+//! it, and the move names them. It writes the board as the export
 //! it keeps, makes a store of the other engine in a work folder of its own, copies and carries
 //! them there, moves that board's marker past the one it read, reads both back and compares
 //! them with what it read, row for row. Until then the home is untouched, and a failure removes
@@ -22,8 +23,8 @@
 //! committed or finishing what did, each step told by the journal and by what is on disk. A
 //! step that can be neither finished nor undone leaves the hold and the journal, and says so.
 //!
-//! Nothing is deleted but the work folder: the old store stays in `moved/`, with the export,
-//! and the snapshot stays with the snapshots.
+//! Nothing is deleted but the work folder: the old store stays in `moved/`, with the export
+//! and every database it held beside the board's, and the snapshot stays with the snapshots.
 //!
 //! The new board holds a recovery generation of its own, and the home is bound to none
 //! ([`crate::store::recovery`]): a token read before the move is refused, and `tasks recovery
@@ -128,6 +129,10 @@ pub struct Moved {
     pub to: Engine,
     /// The folder that keeps the store the move replaced, and its export.
     pub aside: PathBuf,
+    /// The databases the old store held beside the board's own, by name, which the move left
+    /// in it where it is kept (`aside`). None for a move an earlier call committed and this one
+    /// finished, which did not read them.
+    pub left: Vec<String>,
     /// The snapshot kept of the store before anything read it, where one was taken now.
     pub snapshot: Option<PathBuf>,
     /// The rows of the dump and of the carried tables, each compared on the new store. Zero for
@@ -168,8 +173,8 @@ fn read(path: &Path) -> Result<Option<Journal>, ServerError> {
         Err(why) if why.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(why) => return Err(io("could not read", path)(why)),
     };
-    match serde_json::from_str::<Journal>(&text) {
-        Ok(journal) if journal.format == 1 => Ok(Some(journal)),
+    match crate::objects::parse::<Journal>(&text) {
+        Some(journal) if journal.format == 1 => Ok(Some(journal)),
         _ => Err(ServerError::Io(format!(
             "{} does not read as a switch's journal: nothing was moved, and the board stays held",
             path.display()
@@ -494,6 +499,7 @@ impl Home {
                     from: journal.from,
                     to: journal.to,
                     aside: journal.aside,
+                    left: Vec::new(),
                     snapshot: None,
                     rows: 0,
                     finished: true,
@@ -540,7 +546,7 @@ impl Home {
             ))
         };
         let prepared = self.prepare((from, to), programs, &work, now);
-        let (aside, snapshot, rows) = match prepared {
+        let (aside, snapshot, rows, others) = match prepared {
             Ok(prepared) => prepared,
             Err(why) => {
                 // The work folder is the move's own; the home was never touched.
@@ -577,6 +583,7 @@ impl Home {
             from,
             to,
             aside,
+            left: others,
             snapshot,
             rows,
             finished: false,
@@ -586,15 +593,15 @@ impl Home {
 
     /// Everything of a move before its switch: the old store's server stopped and its snapshot
     /// kept, the board read from it and written as the export, the new store made in `work`,
-    /// filled and compared. The folder the old store will be kept in, the snapshot taken, and
-    /// the rows compared.
+    /// filled and compared. The folder the old store will be kept in, the snapshot taken, the
+    /// rows compared, and the databases the old store holds beside the board's, which it keeps.
     fn prepare(
         &self,
         (from, to): (Engine, Engine),
         programs: &Path,
         work: &Path,
         now: f64,
-    ) -> Result<(PathBuf, Option<PathBuf>, usize), ServerError> {
+    ) -> Result<(PathBuf, Option<PathBuf>, usize, Vec<String>), ServerError> {
         let halted = match from {
             Engine::SurrealDb => self.halt()?,
             Engine::PostgreSql => {
@@ -610,9 +617,9 @@ impl Home {
             Engine::PostgreSql => Some(self.postgresql(programs).snapshot_held(now)?),
         };
         let source = Side::start(self, from, programs, &halted)?;
-        let read = source.board(true);
+        let read = (source.board()).and_then(|board| Ok((board, source.others()?)));
         source.end()?;
-        let (board, carried, marker) = read?;
+        let ((board, carried, marker), others) = read?;
         // No lease stands across the hold, and none is its old holder's after it.
         let carried = crate::store::leases_ended(carried);
 
@@ -638,7 +645,7 @@ impl Home {
         let target = Side::start(&made, to, programs, &halted)?;
         let compared = target.fill(&board, &carried, marker);
         target.end()?;
-        Ok((aside, snapshot, compared?))
+        Ok((aside, snapshot, compared?, others))
     }
 }
 
@@ -703,7 +710,7 @@ impl<'a> Side<'a> {
         }
     }
 
-    /// The databases this store holds beside the board's own.
+    /// The databases this store holds beside the board's own, which a move leaves in it.
     fn others(&self) -> Result<Vec<String>, ServerError> {
         match self {
             Side::Surreal(_, running) => {
@@ -750,19 +757,11 @@ impl<'a> Side<'a> {
         )
     }
 
-    /// The board this store holds, the tables no copy holds, and its marker; `only` refuses a
-    /// store that holds another database, and one whose schema is not this build's.
-    fn board(&self, only: bool) -> Result<(Dump, Value, u64), ServerError> {
+    /// The board this store holds, the tables no copy holds, and its marker; a board whose
+    /// schema is not this build's is refused. The databases beside it are not read.
+    fn board(&self) -> Result<(Dump, Value, u64), ServerError> {
         if let Side::Surreal(home, running) = self {
             home.refuse_went_back(running)?;
-        }
-        let others = self.others()?;
-        if only && !others.is_empty() {
-            return Err(ServerError::Io(format!(
-                "the store holds {} beside the board's own database, and a move changes the \
-                 whole store for one that holds the board alone",
-                others.join(", ")
-            )));
         }
         let store = self.opened();
         let unread = |what: &str| {
@@ -803,7 +802,7 @@ impl<'a> Side<'a> {
         (store.copy(board)).map_err(unwritten("the board could not be copied"))?;
         (store.carry(carried)).map_err(unwritten("the carried tables could not be written"))?;
         (store.marker_past(marker)).map_err(unwritten("the marker could not be moved"))?;
-        let (there, kept, _) = self.board(false)?;
+        let (there, kept, _) = self.board()?;
         let rows = differing(&json!(board), &json!(there))? + differing(carried, &kept)?;
         Ok(rows)
     }

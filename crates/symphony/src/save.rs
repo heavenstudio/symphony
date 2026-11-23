@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::{Value, json};
 use symphony_board::NewAsk;
+use symphony_board::lock::Recovered as _;
 
 use crate::{Who, asks, branches, clock, commit, edit, register, taskview};
 
@@ -15,12 +16,15 @@ mod attest;
 mod failure;
 mod quick;
 mod quick_task;
-pub use failure::Failure;
+mod settings;
+pub use failure::{Failure, Refused};
 
 #[cfg(test)]
 mod close_tests;
+#[cfg(test)]
+mod lock_tests;
 
-pub const ROUTES: [&str; 14] = [
+pub const ROUTES: [&str; 15] = [
     "/api/postpone",
     "/api/decision",
     "/api/comment",
@@ -35,6 +39,7 @@ pub const ROUTES: [&str; 14] = [
     "/api/ask-reply",
     symphony_api::TASK_ACTION_ROUTE,
     WORKFLOW_APPLY,
+    symphony_api::SETTING_WRITE_PATH,
 ];
 
 /// The owner's operation on a task a custom workflow holds, through the board's one admission
@@ -90,7 +95,7 @@ impl Saves {
     pub fn close_saying(&self, stage: impl Fn(&str)) {
         stage("the save in flight");
         let committer = {
-            let _held = self.writes.lock().unwrap_or_else(|e| e.into_inner());
+            let _held = self.writes.lock().recover();
             self.closed.store(true, Ordering::Release);
             self.committer.get()
         };
@@ -260,6 +265,71 @@ impl Saves {
         ))
     }
 
+    /// The owner's workflow operation ([`WORKFLOW_APPLY`]), as [`Self::post`] takes it, a
+    /// refusal answered with the guard that refused where one did ([`Refused`]): what a page
+    /// shows beside the action, the refusal's words unchanged.
+    pub fn apply_workflow(&self, payload: &Value) -> Result<Value, Refused> {
+        if !payload.is_object() {
+            return Err(Failure::from("bad JSON: body must be a JSON object".to_string()).into());
+        }
+        if string(payload, "slug").trim().is_empty() {
+            return Err(Failure::from("slug is required".to_string()).into());
+        }
+        self.workflow_apply(payload)
+    }
+
+    fn workflow_apply(&self, payload: &Value) -> Result<Value, Refused> {
+        let request: symphony_api::workflow::OperationRequest =
+            serde_json::from_value(payload["request"].clone())
+                .map_err(|e| Failure::from(format!("request: not a workflow operation: {e}")))?;
+        if request.task != string(payload, "slug") {
+            return Err(Failure::from(format!(
+                "request: its task is {}, not the slug {}",
+                request.task,
+                string(payload, "slug")
+            ))
+            .into());
+        }
+        // A guarded edge's attestations, each the project authority's signed word: the payload's
+        // as given, or where it gives none, asked of the authorities the project's plugins answer
+        // for (attest.rs).
+        let given: Option<Vec<symphony_api::workflow::Signed>> =
+            match payload.get("attestations") {
+                None | Some(Value::Null) => None,
+                Some(given) => Some(serde_json::from_value(given.clone()).map_err(|e| {
+                    Failure::from(format!("attestations: not signed statements: {e}"))
+                })?),
+            };
+        let (store, owner) = (self.store()?, symphony_board::workflow::local_owner());
+        let attestations = match given {
+            Some(given) => given,
+            None => attest::fetched(
+                &store,
+                &crate::plugins::Plugins::of(&self.root),
+                &self.root,
+                &request,
+                &owner,
+            )?,
+        };
+        let host = symphony_board::workflow::Host::local();
+        match store.apply_attested(&owner, &host, &request, &attestations) {
+            Ok(result) => Ok(json!({"ok": true, "result": result})),
+            Err(refused) => {
+                // Which guard it was, read after the refusal: none where the board answers none,
+                // or cannot be read again. Judged on the board's error, never on the words a
+                // failure makes of it.
+                let guard = (attest::guards(&refused))
+                    .then(|| store.guard_refusal(&owner, &request, &attestations))
+                    .and_then(|read| read.ok().flatten())
+                    .map(Box::new);
+                Err(Refused {
+                    failure: Failure::from(refused),
+                    guard,
+                })
+            }
+        }
+    }
+
     pub fn post(&self, scope: &str, route: &str, payload: &Value) -> Result<Value, Failure> {
         self.post_inner(scope, route, payload, None)
     }
@@ -291,7 +361,7 @@ impl Saves {
             return Err("slug is required".to_string().into());
         }
         let request = json!([scope, route, payload]).to_string();
-        let mut unpublished = self.unpublished.lock().unwrap_or_else(|e| e.into_inner());
+        let mut unpublished = self.unpublished.lock().recover();
         if let Some((text, value, ask)) = unpublished.get(&request).cloned() {
             crate::callbacks::publish_asking(&self.root, &text, ask.as_ref())
                 .map_err(Failure::from)?;
@@ -310,66 +380,7 @@ impl Saves {
         // The ask this save opens or joins, if it waits on an agent's answer.
         let mut asking: Option<NewAsk> = None;
         let result = match route {
-            "/api/postpone" => {
-                let (root, rel) = self.scope(scope, string(payload, "path"))?;
-                Self::target(&root, &rel)?;
-                let action = string(payload, "action");
-                let path = self.page(&root, &rel, "")?;
-                let fallback;
-                let order = match order {
-                    Some(order) => Some(order),
-                    None if action == "later" => {
-                        fallback = crate::dashboard::snapshot(
-                            &self.root,
-                            &branches::branch_cards(&self.root),
-                            "",
-                        )
-                        .map_err(|e| Failure::from(e.to_string()))?;
-                        Some(fallback.order.as_ref())
-                    }
-                    None => None,
-                };
-                let path = order
-                    .and_then(|order| {
-                        order.path_for(path.trim_start_matches('/'), string(payload, "slug"))
-                    })
-                    .unwrap_or(path.trim_start_matches('/'));
-                let changed = if let Some(order) = order {
-                    order.act(
-                        &self.root,
-                        crate::postpone::OWNER,
-                        path.trim_start_matches('/'),
-                        string(payload, "slug"),
-                        action,
-                        crate::postpone::now(),
-                    )
-                } else {
-                    crate::postpone::act(
-                        &self.root,
-                        crate::postpone::OWNER,
-                        path.trim_start_matches('/'),
-                        string(payload, "slug"),
-                        action,
-                        crate::postpone::now(),
-                    )
-                }
-                .map_err(|e| Failure::from(e.to_string()))?;
-                let next = if action == "later" {
-                    order
-                        .expect("Later has a decision snapshot")
-                        .waiting(&self.root, crate::postpone::OWNER, crate::postpone::now())
-                        .map_err(|e| Failure::from(e.to_string()))?
-                        .iter()
-                        .find(|card| {
-                            card.doc != path.trim_start_matches('/')
-                                || card.slug != string(payload, "slug")
-                        })
-                        .map(|card| card.href())
-                } else {
-                    None
-                };
-                Ok(json!({"ok":true, "changed":changed, "next":next}))
-            }
+            "/api/postpone" => self.postpone(scope, payload, order),
             "/api/decision" | "/api/comment" | "/api/message" => {
                 self.document(scope, route, payload).map(|(value, ask)| {
                     asking = ask;
@@ -414,100 +425,10 @@ impl Saves {
                     .move_to(string(payload, "slug"), "cancelled", "owner")?;
                 Ok(json!({"ok":true}))
             }
-            WORKFLOW_APPLY => {
-                let request: symphony_api::workflow::OperationRequest =
-                    serde_json::from_value(payload["request"].clone())
-                        .map_err(|e| format!("request: not a workflow operation: {e}"))?;
-                if request.task != string(payload, "slug") {
-                    return Err(format!(
-                        "request: its task is {}, not the slug {}",
-                        request.task,
-                        string(payload, "slug")
-                    )
-                    .into());
-                }
-                // A guarded edge's attestations, each the project authority's signed word: the
-                // payload's as given, or where it gives none, asked of the authorities the
-                // project's plugins answer for (attest.rs).
-                let given: Option<Vec<symphony_api::workflow::Signed>> =
-                    match payload.get("attestations") {
-                        None | Some(Value::Null) => None,
-                        Some(given) => Some(
-                            serde_json::from_value(given.clone())
-                                .map_err(|e| format!("attestations: not signed statements: {e}"))?,
-                        ),
-                    };
-                let (store, owner) = (self.store()?, symphony_board::workflow::local_owner());
-                let attestations = match given {
-                    Some(given) => given,
-                    None => attest::fetched(
-                        &store,
-                        &crate::plugins::Plugins::of(&self.root),
-                        &self.root,
-                        &request,
-                        &owner,
-                    )?,
-                };
-                let result = store.apply_attested(
-                    &owner,
-                    &symphony_board::workflow::Host::local(),
-                    &request,
-                    &attestations,
-                )?;
-                Ok(json!({"ok": true, "result": result}))
-            }
-            symphony_api::TASK_ACTION_ROUTE => {
-                let slug = string(payload, "slug");
-                let store = self.store()?;
-                let task = store.get(slug)?;
-                let branch = crate::taskview::approval_branch(&store, &task)?;
-                let plugins = crate::plugins::Plugins::of(&self.root);
-                let actions = plugins.board_actions();
-                // The board action that made the offer, by the name the offer gave.
-                let named = string(payload, "action");
-                let done = match actions.iter().find(|action| action.name() == named) {
-                    Some(action) => action.submit(
-                        &self.root,
-                        &symphony_plugin::TaskRef {
-                            slug,
-                            status: &task.status,
-                            branch: &branch,
-                        },
-                        &symphony_plugin::Submission {
-                            payload: string(payload, "payload").into(),
-                            note: string(payload, "note").into(),
-                        },
-                    )?,
-                    // The Symphony's own, where no plugin's has its name: the owner's approve of
-                    // the tip its offer showed, the line the `owner` stamp reads.
-                    None if named == crate::gates::stamps::OWNER_APPROVE => {
-                        symphony_plugin::Submitted {
-                            said: crate::gates::stamps::approve_line(string(payload, "payload"))
-                                .map_err(|error| Failure { status: 400, error })?,
-                            released: Vec::new(),
-                        }
-                    }
-                    None => {
-                        return Err(Failure {
-                            status: 404,
-                            error: "no such board action".into(),
-                        });
-                    }
-                };
-                // With a note the owner's line waits on an agent: it opens the task's ask.
-                if string(payload, "note").trim().is_empty() {
-                    store.say(slug, "owner", &done.said, None)?;
-                } else {
-                    store.say_asking(slug, &done.said, None)?;
-                }
-                // The work it releases goes back to review. A move that fails here is made by the
-                // next landing or stamp edit, which re-reads them.
-                for held in &done.released {
-                    let _ = store.move_to(held, "review", "owner");
-                }
-                Ok(json!({"ok":true, "said": done.said}))
-            }
+            WORKFLOW_APPLY => (self.workflow_apply(payload)).map_err(|refused| refused.failure),
+            symphony_api::TASK_ACTION_ROUTE => self.task_action(payload),
             "/api/ask" | "/api/ask-reply" => self.ask(scope, route, payload),
+            symphony_api::SETTING_WRITE_PATH => self.setting(scope, payload),
             "/api/quick-chat" | "/api/quick-task" => self.quick(scope, route, payload),
             _ => Err(Failure {
                 status: 404,
@@ -552,6 +473,121 @@ impl Saves {
         result
     }
 
+    /// The owner's board action on a task ([`symphony_api::TASK_ACTION_ROUTE`]): `payload`'s
+    /// `action`, submitted to the project's board action of that name with its `payload` and
+    /// `note`, or where none has it, the Symphony's own owner approve. The line it says goes on the
+    /// task `slug`'s thread, and the work it releases back to review.
+    fn task_action(&self, payload: &Value) -> Result<Value, Failure> {
+        let slug = string(payload, "slug");
+        let store = self.store()?;
+        let task = store.get(slug)?;
+        let branch = crate::taskview::approval_branch(&store, &task)?;
+        let plugins = crate::plugins::Plugins::of(&self.root);
+        let actions = plugins.board_actions();
+        // The board action that made the offer, by the name the offer gave.
+        let named = string(payload, "action");
+        let done = match actions.iter().find(|action| action.name() == named) {
+            Some(action) => action.submit(
+                &self.root,
+                &symphony_plugin::TaskRef {
+                    slug,
+                    status: &task.status,
+                    branch: &branch,
+                },
+                &symphony_plugin::Submission {
+                    payload: string(payload, "payload").into(),
+                    note: string(payload, "note").into(),
+                },
+            )?,
+            // The Symphony's own, where no plugin's has its name: the owner's approve of
+            // the tip its offer showed, the line the `owner` stamp reads.
+            None if named == crate::gates::stamps::OWNER_APPROVE => symphony_plugin::Submitted {
+                said: crate::gates::stamps::approve_line(string(payload, "payload"))
+                    .map_err(|error| Failure { status: 400, error })?,
+                released: Vec::new(),
+            },
+            None => {
+                return Err(Failure {
+                    status: 404,
+                    error: "no such board action".into(),
+                });
+            }
+        };
+        // With a note the owner's line waits on an agent: it opens the task's ask.
+        if string(payload, "note").trim().is_empty() {
+            store.say(slug, "owner", &done.said, None)?;
+        } else {
+            store.say_asking(slug, &done.said, None)?;
+        }
+        // The work it releases goes back to review. A move that fails here is made by the
+        // next landing or stamp edit, which re-reads them.
+        for held in &done.released {
+            let _ = store.move_to(held, "review", "owner");
+        }
+        Ok(json!({"ok":true, "said": done.said}))
+    }
+
+    /// A card postponed, brought back or visited for the owner: `payload`'s `action` on the card
+    /// `slug` of its page, by the decisions its reader was shown (`order`). A Later is judged
+    /// against the waiting cards, read now where its reader was shown none, and answers where the
+    /// next waiting card is; an Undo or a visit reads no document.
+    fn postpone(
+        &self,
+        scope: &str,
+        payload: &Value,
+        order: Option<&crate::postpone::View>,
+    ) -> Result<Value, Failure> {
+        use crate::postpone::{OWNER, now};
+        let failed = |e: crate::ReviewError| Failure::from(e.to_string());
+        let (root, rel) = self.scope(scope, string(payload, "path"))?;
+        Self::target(&root, &rel)?;
+        let (action, slug) = (string(payload, "action"), string(payload, "slug"));
+        let page = self.page(&root, &rel, "")?;
+        let page = page.trim_start_matches('/');
+        if action != "later" {
+            let changed = match order {
+                Some(order) => {
+                    let path = order.path_for(page, slug).unwrap_or(page);
+                    order.act(
+                        &self.root,
+                        OWNER,
+                        path.trim_start_matches('/'),
+                        slug,
+                        action,
+                        now(),
+                    )
+                }
+                None => crate::postpone::act(&self.root, OWNER, page, slug, action, now()),
+            }
+            .map_err(failed)?;
+            return Ok(json!({"ok":true, "changed":changed, "next":null}));
+        }
+        let fallback;
+        let order = match order {
+            Some(order) => order,
+            None => {
+                fallback =
+                    crate::dashboard::snapshot(&self.root, &branches::branch_cards(&self.root), "")
+                        .map_err(|e| Failure::from(e.to_string()))?;
+                fallback.order.as_ref()
+            }
+        };
+        let path = order
+            .path_for(page, slug)
+            .unwrap_or(page)
+            .trim_start_matches('/');
+        let changed = order
+            .act(&self.root, OWNER, path, slug, action, now())
+            .map_err(failed)?;
+        let next = order
+            .waiting(&self.root, OWNER, now())
+            .map_err(failed)?
+            .iter()
+            .find(|card| card.doc != path || card.slug != slug)
+            .map(|card| card.href());
+        Ok(json!({"ok":true, "changed":changed, "next":next}))
+    }
+
     /// The save `request`'s chat `text` and ask put in the journal for the shared server to hand to
     /// the board, kept until then so an HTTP retry of the save journals the same.
     fn journal(
@@ -561,7 +597,7 @@ impl Saves {
         value: &Value,
         ask: Option<NewAsk>,
     ) -> Result<(), Failure> {
-        let mut unpublished = self.unpublished.lock().unwrap_or_else(|e| e.into_inner());
+        let mut unpublished = self.unpublished.lock().recover();
         unpublished.insert(
             request.to_string(),
             (text.clone(), value.clone(), ask.clone()),
@@ -642,15 +678,15 @@ impl Saves {
         } else {
             String::new()
         };
-        let _held = self.writes.lock().unwrap_or_else(|e| e.into_inner());
-        let _file = commit::write_lock(&root)?;
+        let _held = self.writes.lock().recover();
+        let _file = held_write_lock(&root)?;
         if self.closed.load(Ordering::Acquire) {
             return Err(Failure {
                 status: 503,
                 error: "document saves are closing".into(),
             });
         }
-        let mut taps = self.taps.lock().unwrap_or_else(|e| e.into_inner());
+        let mut taps = self.taps.lock().recover();
         if !tap.is_empty()
             && let Some((_, state, note)) = taps.iter().find(|(held, ..)| *held == tap)
         {
@@ -840,6 +876,13 @@ impl Saves {
             Ok(json!({"ok":true,"id":id}))
         }
     }
+}
+
+/// The write lock a save shares with the lander ([`commit::write_lock`]), unlocked as it drops,
+/// as every lock the committer takes is ([`commit::Held`]): closed alone, it would stay held by a
+/// copy of its descriptor a child another thread spawned keeps until its exec, past the save.
+fn held_write_lock(root: &Path) -> Result<Option<commit::Held>, String> {
+    Ok(commit::write_lock(root)?.map(commit::Held))
 }
 
 /// The verdicts that close a card: once one is given, nothing more is asked of the owner.

@@ -1,4 +1,4 @@
-//! Delivery-workflow definitions as the board runs them (docs/WORKFLOW.md): the strict reader of
+//! Delivery-workflow definitions as the board runs them (docs/workflow/WORKFLOW.md): the strict reader of
 //! a project file's `[workflow]`, `[[workflow_mappings]]` and `[[workflow_authorities]]`,
 //! normalization, revision identity,
 //! the host's prerequisites and capability grants, built-in definition v1, and the reader of the
@@ -28,7 +28,7 @@ pub use crate::store::workflow::{
     Active, Followed, Moved, Recorded, Recovered, TaskPosition, Transition, Trigger,
 };
 pub use activate::Host;
-pub use builtin::{builtin, legacy_pair};
+pub use builtin::{DEFAULT, builtin, legacy_pair};
 pub use guard::Attester;
 pub use operate::Operating;
 
@@ -134,7 +134,9 @@ pub fn candidate(text: &str) -> Result<Validated, String> {
 }
 
 /// The file's `[workflow]`, validated, or none when it has none; and its `[[workflow_mappings]]`,
-/// checked against that workflow. Mappings without a workflow are refused: they map onto nothing.
+/// checked against that workflow. Mappings without a workflow map onto built-in v1, the board's
+/// own writers: where each task goes when a board that activated a workflow returns to them
+/// ([`crate::Store::return_to_default`]).
 pub fn written(text: &str) -> Result<(Option<Validated>, Vec<Mapping>), String> {
     let mut file = table(text)?;
     written_from(file.remove("workflow"), file.remove("workflow_mappings"))
@@ -150,9 +152,9 @@ pub fn written_from(
     let mappings: Vec<Mapping> = taken(mappings, "workflow_mappings")?.unwrap_or_default();
     let Some(definition) = definition else {
         if !mappings.is_empty() {
-            return Err("workflow_mappings: no [workflow] to map onto".into());
+            Validated::new(builtin())?.check_mappings(&mappings)?;
         }
-        return Ok((None, Vec::new()));
+        return Ok((None, mappings));
     };
     let validated = Validated::new(definition)?;
     validated.check_mappings(&mappings)?;
@@ -189,7 +191,7 @@ fn taken<T: serde::de::DeserializeOwned>(
         }
     }
     value
-        .map(|value| serde_json::from_value(json(value)).map_err(|e| format!("{key}: {e}")))
+        .map(|value| crate::objects::read(&json(value)).map_err(|e| format!("{key}: {e}")))
         .transpose()
 }
 
@@ -207,14 +209,26 @@ pub fn authorities(text: &str, definition: Option<&Validated>) -> Result<Vec<Att
 }
 
 /// [`authorities`] of a file already read as TOML: the value of its `workflow_authorities` and its
-/// `[project] id`, none where it has none, so a reader of the whole file reads it once, as
-/// [`written_from`] does. A blank id is none.
+/// `[project] id`, none where it has none or one the project file's rule refuses
+/// ([`crate::project::id`]), so a reader of the whole file reads it once, as [`written_from`] does.
+/// A blank id given is none.
 pub fn authorities_from(
     value: Option<toml::Value>,
     project: Option<&str>,
     definition: Option<&Validated>,
 ) -> Result<Vec<Attester>, String> {
-    let mut attesters: Vec<Attester> = taken(value, "workflow_authorities")?.unwrap_or_default();
+    let written: Vec<WrittenAuthority> = taken(value, "workflow_authorities")?.unwrap_or_default();
+    for authority in &written {
+        authority.check_page()?;
+    }
+    let mut attesters: Vec<Attester> = (written.into_iter())
+        .map(|authority| Attester {
+            adapter: authority.adapter,
+            issuer: authority.issuer,
+            contract: authority.contract,
+            key: authority.key,
+        })
+        .collect();
     let Some(definition) = definition else {
         if !attesters.is_empty() {
             return Err("workflow_authorities: no [workflow] to guard".into());
@@ -224,7 +238,7 @@ pub fn authorities_from(
     if !attesters.is_empty() && project.is_none_or(|id| id.trim().is_empty()) {
         return Err(
             "workflow_authorities: an attestation names the project it is for, and [project] \
-             id names none"
+             id names none (it is unwritten, blank, or no slug)"
                 .into(),
         );
     }
@@ -234,6 +248,64 @@ pub fn authorities_from(
     Ok(attesters)
 }
 
+/// An authority as the file writes it: what the board records of it ([`Attester`]), and `page`,
+/// where its ledger shows a guard of a task, which a task's page links and the board never
+/// records or decides on.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WrittenAuthority {
+    adapter: String,
+    issuer: String,
+    contract: u32,
+    key: String,
+    #[serde(default)]
+    page: Option<String>,
+}
+
+/// What a `page` names the task by, and the guard: each filled in for the link a page draws.
+const PAGE_TASK: &str = "{task}";
+const PAGE_GUARD: &str = "{guard}";
+
+impl WrittenAuthority {
+    /// Refused unless `page`, filled in, is an address a page may link
+    /// ([`symphony_api::linkable`]): a path of the app or a web address.
+    fn check_page(&self) -> Result<(), String> {
+        let Some(page) = &self.page else {
+            return Ok(());
+        };
+        if symphony_api::linkable(&page_for(page, "area/task", "guard")) {
+            return Ok(());
+        }
+        Err(format!(
+            "workflow_authorities: {}'s page is neither a path of the app nor a web address: \
+             {page}",
+            self.adapter
+        ))
+    }
+}
+
+/// `page`, an authority's as the file writes it, for `guard` of `task`: each `{task}` and
+/// `{guard}` in it filled in.
+pub fn page_for(page: &str, task: &str, guard: &str) -> String {
+    page.replace(PAGE_TASK, task).replace(PAGE_GUARD, guard)
+}
+
+/// The page each authority of the project file `text` names, by its adapter: none for a file
+/// that does not read, or an authority that names none. It is read for a link alone, so what the
+/// file's own reading refuses ([`authorities_from`]) is no page here.
+pub fn authority_pages(text: &str) -> std::collections::BTreeMap<String, String> {
+    let written = table(text)
+        .ok()
+        .and_then(|mut file| file.remove("workflow_authorities"))
+        .and_then(|value| taken::<Vec<WrittenAuthority>>(Some(value), "workflow_authorities").ok())
+        .flatten()
+        .unwrap_or_default();
+    (written.into_iter())
+        .filter(|authority| authority.check_page().is_ok())
+        .filter_map(|authority| Some((authority.adapter, authority.page?)))
+        .collect()
+}
+
 /// The `[project] id` the file commits, which every attestation names as the project it is for:
 /// the committed id alone, never one a machine's registry or folder gives, so a project's
 /// attestation reads the same on every board of it and on no other project's.
@@ -241,18 +313,23 @@ pub fn attested_project(text: &str) -> Option<String> {
     project_id(&table(text).ok()?)
 }
 
-/// `file`'s `[project] id`, where it is text that is not blank.
+/// `file`'s `[project] id`, where it is text the project file's rule takes ([`crate::project::id`]):
+/// one it refuses (blank, or no slug) is none, as the board's lookup of the project reads it.
 fn project_id(file: &toml::Table) -> Option<String> {
     let id = file.get("project")?.get("id")?.as_str()?;
-    (!id.trim().is_empty()).then(|| id.to_string())
+    crate::project::id(id).ok().map(str::to_string)
 }
 
 /// The workflow a commit's project file sets: a custom definition with its revision, mappings
-/// and authorities, or none for a file with no `[workflow]` (the board's existing writers).
+/// and authorities, or none for a file with no `[workflow]` (the board's existing writers), and
+/// then the mappings onto built-in v1 the file keeps for a return to them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Committed {
     pub commit: String,
     pub custom: Option<Custom>,
+    /// The file's mappings where it has no `[workflow]`; empty beside a custom definition, whose
+    /// own they are.
+    pub returning: Vec<Mapping>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -299,6 +376,7 @@ fn committed_at(main: &Path, branch: &str, commit: String) -> Result<Committed, 
         return Ok(Committed {
             commit,
             custom: None,
+            returning: Vec::new(),
         });
     };
     if !matches!(mode.as_str(), "100644" | "100755") {
@@ -327,25 +405,30 @@ fn committed_at(main: &Path, branch: &str, commit: String) -> Result<Committed, 
     )
     .map_err(refuse)?;
     let project = project.filter(|_| !authorities.is_empty());
-    let custom = match definition {
-        None => None,
-        Some(definition) => {
-            let revision = definition
-                .revision(Source {
-                    commit: commit.clone(),
-                    project_blob: blob.to_string(),
-                })
-                .map_err(refuse)?;
-            Some(Custom {
-                definition,
-                revision,
-                mappings,
-                authorities,
-                project,
-            })
-        }
+    let Some(definition) = definition else {
+        return Ok(Committed {
+            commit,
+            custom: None,
+            returning: mappings,
+        });
     };
-    Ok(Committed { commit, custom })
+    let revision = definition
+        .revision(Source {
+            commit: commit.clone(),
+            project_blob: blob.to_string(),
+        })
+        .map_err(refuse)?;
+    Ok(Committed {
+        commit,
+        custom: Some(Custom {
+            definition,
+            revision,
+            mappings,
+            authorities,
+            project,
+        }),
+        returning: Vec::new(),
+    })
 }
 
 /// The workflow the project's default branch commits, followed on its board (automatic

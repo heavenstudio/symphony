@@ -81,9 +81,9 @@ fn original(task: &Task) -> &str {
         .unwrap_or("ready")
 }
 
-/// The column `task` goes in: a blocked task the board's own writers keep in the status it was
-/// blocked from, any other where every listing puts it ([`super::column`]), a task a custom
-/// workflow holds in its phase's, blocked or not.
+/// The column `task` goes in on this view: a blocked task the board's own writers keep in the
+/// status it was blocked from, any other where the waiting view puts it ([`super::column`]), a
+/// task a custom workflow holds in its phase's, blocked or not.
 fn stage(task: &Task, work: &MachineWork, activity: bool) -> String {
     if task.status == "blocked" && task.workflow.is_none() {
         original(task).to_string()
@@ -94,7 +94,7 @@ fn stage(task: &Task, work: &MachineWork, activity: bool) -> String {
 
 /// A wait facet that selects open held tasks by their coordination state, then the state's ID: the
 /// tasks it selects are listed across their phases, as a wait kind's are, under the kind's own
-/// `wait` (docs/WORKFLOW.md, "The app").
+/// `wait` (docs/workflow/WORKFLOW.md, "The app").
 const STATE: &str = "state:";
 
 /// The coordination state of a task a custom workflow holds; none for one the board's writers keep.

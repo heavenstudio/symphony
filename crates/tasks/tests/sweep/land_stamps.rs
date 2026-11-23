@@ -1,4 +1,4 @@
-//! The land by the stamps a task needs (docs/analysis/needed-stamps.md, "The land's check"), in
+//! The land by the stamps a task needs (docs/workflow/analysis/needed-stamps.md, "The land's check"), in
 //! scratch repositories on a board of their own: each row of the design's worked examples lands
 //! once what it needs stands at its tip; a waiver on another tip is refused, the defaults back; a
 //! missing stamp's refusal names it and who gives it; a stray red run is cleared by the same
@@ -25,6 +25,12 @@ pub(super) fn in_review(r: &Repo, slug: &str, files: &[(&str, &str)]) -> (Staff,
     }
     git(&wt, &["add", "-A"]);
     git(&wt, &["commit", "-qm", &format!("work on {slug}")]);
+    (staffed(r, slug), head(&wt, "HEAD"))
+}
+
+/// `slug` filed by the owner, orchestrated, claimed and moved to review by its executor: its
+/// people.
+fn staffed(r: &Repo, slug: &str) -> Staff {
     let store = &r.board.store;
     let staff = Staff {
         orch: r.board.session("orchestrator"),
@@ -35,7 +41,7 @@ pub(super) fn in_review(r: &Repo, slug: &str, files: &[(&str, &str)]) -> (Staff,
     store.take_role(slug, &staff.orch, "orchestrator").unwrap();
     store.claim(slug, &staff.exe).unwrap();
     store.move_to(slug, "review", &staff.exe).unwrap();
-    (staff, head(&wt, "HEAD"))
+    staff
 }
 
 /// The assessment `by` writes of `slug`: `stamps` at `tip`.
@@ -474,6 +480,104 @@ fn a_task_waiting_on_the_owner_alone_is_held_blocked_and_lands_from_there() {
         "{:?}",
         closed.fields
     );
+}
+
+/// A register of the project's documents holding `cards`.
+fn register(cards: &str) -> String {
+    format!(
+        "# Decisions\n\n<!-- register:start -->\n## Needs your decision\n\n### General\n\n{cards}\n\
+         <!-- register:end -->\n"
+    )
+}
+
+const LOOK: &str = "- [ ] **look** — Is the new page right?\n  \
+                    [2026-11-20 04:00] agent — Posted for the owner's look.\n";
+
+/// The card [`LOOK`] as the owner's approve on the branch's page saves it.
+fn look_approved() -> String {
+    LOOK.replace("[ ]", "[x]") + "  [2026-11-20 05:00] owner · approved — that is it\n"
+}
+
+/// The branch of `slug` posting the card [`LOOK`] beside a page, then the owner's approve of it
+/// committed alone: its worktree.
+fn card_approved(r: &Repo, slug: &str) -> PathBuf {
+    let wt = r.add(&slug.replace('/', "-"), Some(slug), "main");
+    write(&wt, "ui/page.gd", "extends Node\n");
+    write(&wt, "docs/DECISIONS.md", &register(LOOK));
+    git(&wt, &["add", "-A"]);
+    git(
+        &wt,
+        &[
+            "commit",
+            "-qm",
+            "the page, and its card for the owner's look",
+        ],
+    );
+    write(&wt, "docs/DECISIONS.md", &register(&look_approved()));
+    git(&wt, &["commit", "-qam", "the owner's approve of look"]);
+    wt
+}
+
+/// The owner's approve of the card a task's branch posted stands for its `owner` stamp: it lands
+/// with no approve of the tip, its line naming the card.
+#[test]
+fn a_task_lands_on_the_owners_approve_of_the_card_its_branch_posted() {
+    let r = Repo::new();
+    manifest(&r, "");
+    let slug = "ui/look";
+    let tip = head(&card_approved(&r, slug), "HEAD");
+    let staff = staffed(&r, slug);
+    assess(&r, slug, &staff.assessor, &["owner"], &tip);
+    let (said, result) = landed_by(&r, slug, &staff.orch);
+    let at = &tip[..7];
+    assert!(
+        said.contains(&format!(
+            "owner: Approved by the owner on card look, at {at}"
+        )),
+        "{said}"
+    );
+    assert_landed(&r, slug, &tip, result);
+}
+
+/// A commit after the owner's approve of the card that is more than the owner's line keeps the
+/// card's approve from standing, a fresh reviewer's approve of it notwithstanding: the land asks
+/// for the owner's approve of the tip, saying which commit came after the card's.
+#[test]
+fn a_commit_after_the_cards_approve_asks_the_owners_approve_of_the_tip_though_reviewed() {
+    let r = Repo::new();
+    manifest(&r, "");
+    let slug = "ui/look";
+    let wt = card_approved(&r, slug);
+    write(&wt, "ui/page.gd", "extends Node2D\n");
+    git(&wt, &["commit", "-qam", "more of the page"]);
+    let tip = head(&wt, "HEAD");
+    let staff = staffed(&r, slug);
+    assess(&r, slug, &staff.assessor, &["review", "owner"], &tip);
+    let store = &r.board.store;
+    let rev = r.board.session("reviewer");
+    store.take_role(slug, &rev, "reviewer").unwrap();
+    store
+        .verdict(slug, &rev, "approve", &format!("{tip}: read it"))
+        .unwrap();
+    let before = head(&r.root, "main");
+    let (_, result) = landed_by(&r, slug, &staff.orch);
+    let at = &tip[..7];
+    assert_eq!(
+        result,
+        Err(format!(
+            "{slug} lacks at its tip {at} what it needs: owner (Waits on the owner's approve of \
+             {at}; the owner's approve of card look came before {at}, which changes more than \
+             the owner's lines), which the owner gives on the task's page"
+        ))
+    );
+    assert_eq!(head(&r.root, "main"), before, "main stays where it was");
+    // The owner's approve of the tip lands it, as before.
+    store
+        .say(slug, "owner", &format!("approve {tip}"), None)
+        .unwrap();
+    let (said, result) = landed_by(&r, slug, &staff.orch);
+    assert!(said.contains("owner: Approved by the owner at "), "{said}");
+    assert_landed(&r, slug, &tip, result);
 }
 
 /// A waiver stands only on the tip its assessor read: a commit after it brings the catalogue's

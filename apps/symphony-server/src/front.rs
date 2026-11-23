@@ -12,11 +12,12 @@ use axum::response::{IntoResponse, Json, Response};
 use axum::routing::get;
 use futures_util::StreamExt;
 use std::future::Future;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
+use symphony_board::lock::Recovered as _;
 use symphony_board::{launch::reap::REAP_SECONDS, sys::Command};
 use tokio::sync::watch;
 use tower_http::compression::predicate::{DefaultPredicate, Predicate};
@@ -58,6 +59,8 @@ pub struct Shared {
     pub root: PathBuf,
     /// One release client for every worktree, installed beside the shared server or built locally.
     pub(crate) ui_dist: PathBuf,
+    /// Whether the client is the one installed beside the machine's one server: true for that
+    /// server alone ([`Shared::one_server`]).
     pub(crate) installed_ui: bool,
     pub(crate) embedded_ui: bool,
     /// Where the one server serves this project's pages, `/<id>`; empty for a server of its own,
@@ -97,7 +100,36 @@ pub struct Shared {
     maintenance: Mutex<Vec<std::thread::JoinHandle<()>>>,
 }
 
+/// What [`Shared::made`] makes a project's state with beside its process, port, root and base:
+/// the client it serves, the gate its peers pass and the gate its recorders keep.
+struct Serving {
+    ui_dist: PathBuf,
+    installed_ui: bool,
+    embedded_ui: bool,
+    gate: Gate,
+    recording: Arc<symphony_board::recording::Gate>,
+}
+
 impl Shared {
+    /// The project's hub, or the answer a request gets before the server has started one, boxed
+    /// as a response is large to carry in a `Result`.
+    pub(crate) fn hub(&self) -> Result<Arc<crate::live::Hub>, Box<Response>> {
+        self.api.get().cloned().ok_or_else(|| {
+            Box::new(crate::api::error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the Symphony server is starting",
+            ))
+        })
+    }
+
+    /// Whether this is the machine's one server, started with an install folder (`--home` or
+    /// `--install`): the server that alone does what its machine's projects share, as a private
+    /// one must not (the chat journal and the board's records, [`crate::live::Hub::start`]; a
+    /// cancel's cleanup).
+    pub(crate) fn one_server(&self) -> bool {
+        self.installed_ui
+    }
+
     /// A server's one project, at `/`. `install` is the one server's install folder, whose client
     /// it serves; none for a server of its own.
     pub fn new(
@@ -120,29 +152,37 @@ impl Shared {
         base: &str,
     ) -> Arc<Shared> {
         let (ui_dist, embedded_ui) = crate::client::selection(root, install);
-        let client = (ui_dist, install.is_some(), embedded_ui);
-        Shared::made(pid, port, root, (client, gate, Arc::default()), base)
+        let serving = Serving {
+            ui_dist,
+            installed_ui: install.is_some(),
+            embedded_ui,
+            gate,
+            recording: Arc::default(),
+        };
+        Shared::made(pid, port, root, serving, base)
     }
 
     /// The one server's state for another registered project at `root`, served at `base`: this
     /// server's process, port and client, that project's own hub, saves and gate.
     pub(crate) fn beside(&self, root: &Path, base: &str) -> Arc<Shared> {
-        let client = (self.ui_dist.clone(), self.installed_ui, self.embedded_ui);
-        let made = (client, Gate::tailscale(), self.recording.clone());
-        Shared::made(self.pid, self.port, root, made, base)
+        let serving = Serving {
+            ui_dist: self.ui_dist.clone(),
+            installed_ui: self.installed_ui,
+            embedded_ui: self.embedded_ui,
+            gate: Gate::tailscale(),
+            recording: self.recording.clone(),
+        };
+        Shared::made(self.pid, self.port, root, serving, base)
     }
 
-    fn made(
-        pid: i64,
-        port: u16,
-        root: &Path,
-        ((ui_dist, installed_ui, embedded_ui), gate, recording): (
-            (PathBuf, bool, bool),
-            Gate,
-            Arc<symphony_board::recording::Gate>,
-        ),
-        base: &str,
-    ) -> Arc<Shared> {
+    fn made(pid: i64, port: u16, root: &Path, serving: Serving, base: &str) -> Arc<Shared> {
+        let Serving {
+            ui_dist,
+            installed_ui,
+            embedded_ui,
+            gate,
+            recording,
+        } = serving;
         Arc::new(Shared {
             pid,
             port,
@@ -198,12 +238,9 @@ impl Shared {
     pub fn stop(&self) {
         self.stopped.send_replace(true);
         self.stop_wakers.wake();
-        self.stop_pipes
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
-        self.end_maintenance(&mut self.maintenance.lock().unwrap_or_else(|e| e.into_inner()));
-        let _held = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+        self.stop_pipes.lock().recover().clear();
+        self.end_maintenance(&mut self.maintenance.lock().recover());
+        let _held = self.lifecycle.lock().recover();
         if let Some(hub) = self.api.get() {
             hub.stop();
         }
@@ -213,7 +250,7 @@ impl Shared {
     /// joined: each sees the stop at its next look and ends the child it runs. Workers kept once it
     /// stopped are joined at once.
     pub(crate) fn maintained(&self, workers: Vec<std::thread::JoinHandle<()>>) {
-        let mut held = self.maintenance.lock().unwrap_or_else(|e| e.into_inner());
+        let mut held = self.maintenance.lock().recover();
         held.extend(workers);
         if self.stopping() {
             self.end_maintenance(&mut held);
@@ -224,10 +261,7 @@ impl Shared {
     /// with the list held.
     #[cfg(test)]
     pub(crate) fn maintaining(&self) -> usize {
-        self.maintenance
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .len()
+        self.maintenance.lock().recover().len()
     }
 
     /// Join every worker of `held`, the maintenance list, held so a second stop meanwhile waits
@@ -279,7 +313,7 @@ impl Shared {
     /// descriptor (a process's end, [`sys::until_ends`]) waits on this beside it.
     pub(crate) fn stop_pipe(&self) -> std::io::Result<std::io::PipeReader> {
         let (read, write) = symphony_board::sys::pipe()?;
-        let mut held = self.stop_pipes.lock().unwrap_or_else(|e| e.into_inner());
+        let mut held = self.stop_pipes.lock().recover();
         if !self.stopping() {
             held.push(write);
         }
@@ -317,11 +351,7 @@ impl Shared {
             root: self.root.display().to_string(),
             ready: self.api.get().is_some(),
             app: None,
-            tailnet: self
-                .tailnet
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone(),
+            tailnet: self.tailnet.lock().recover().clone(),
             orphans: 0,
         }
     }
@@ -430,19 +460,8 @@ async fn judge(
     // The peer as judged, for the routes that ask where a request came from: the extractor reads
     // a connection's address or a test's mock alike, a plain extension read only the first.
     request.extensions_mut().insert(ConnectInfo(peer));
-    let ip = peer.ip();
-    let allowed = crate::hosted::admission(&request).is_some() || ip.is_loopback() || {
-        let shared = shared.clone();
-        crate::spawn::blocking(move || shared.gate.allows(ip))
-            .await
-            .unwrap_or(false)
-    };
-    if !allowed {
-        return (
-            StatusCode::FORBIDDEN,
-            "Forbidden: the Symphony answers only this machine and its tailnet\n",
-        )
-            .into_response();
+    if crate::hosted::admission(&request).is_none() && !peer_allowed(&shared, peer.ip()).await {
+        return peer_refused();
     }
     let Some(path) = crate::api::decode_path(request.uri().path()) else {
         return missing(&shared, &request, StatusCode::BAD_REQUEST);
@@ -479,6 +498,27 @@ async fn judge(
     next.run(request).await
 }
 
+/// Whether a request from `ip` may be answered: this machine's, or a peer on its tailnet that
+/// `shared`'s gate confirms ([`Gate::allows`], asked on the blocking pool, as it may wait on
+/// `tailscale`). A gate that panics refuses.
+pub(crate) async fn peer_allowed(shared: &Arc<Shared>, ip: IpAddr) -> bool {
+    ip.is_loopback() || {
+        let shared = shared.clone();
+        crate::spawn::blocking(move || shared.gate.allows(ip))
+            .await
+            .unwrap_or(false)
+    }
+}
+
+/// What a peer [`peer_allowed`] refuses is answered.
+pub(crate) fn peer_refused() -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        "Forbidden: the Symphony answers only this machine and its tailnet\n",
+    )
+        .into_response()
+}
+
 /// What a miss at `request`'s path answers in this project ([`crate::pages::missing`]).
 fn missing(shared: &Shared, request: &Request, status: StatusCode) -> Response {
     crate::pages::missing(
@@ -494,19 +534,27 @@ fn missing(shared: &Shared, request: &Request, status: StatusCode) -> Response {
 /// loopback's name. A page another site rebinds to this machine names that site in its
 /// Host, and reads nothing (the app's routes are the app's to judge by Host, as it does).
 async fn front(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Response {
-    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
-    if !host.is_some_and(names_loopback) {
-        return (
-            StatusCode::FORBIDDEN,
-            "Forbidden: the Host header does not name this machine's loopback\n",
-        )
-            .into_response();
+    if let Some(refused) = loopback_refused(&headers) {
+        return refused;
     }
     Json(shared.status()).into_response()
 }
 
+/// `/api/front`'s refusal of a request whose Host does not name loopback ([`names_loopback`]),
+/// none given or one that is no text among them; none for a request whose Host does.
+pub(crate) fn loopback_refused(headers: &HeaderMap) -> Option<Response> {
+    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
+    (!host.is_some_and(names_loopback)).then(|| {
+        (
+            StatusCode::FORBIDDEN,
+            "Forbidden: the Host header does not name this machine's loopback\n",
+        )
+            .into_response()
+    })
+}
+
 /// Whether a Host header names loopback: 127.0.0.1, [::1] or localhost, with any port.
-pub(crate) fn names_loopback(host: &str) -> bool {
+fn names_loopback(host: &str) -> bool {
     let suffix = if let Some(suffix) = host.strip_prefix("[::1]") {
         suffix
     } else {
@@ -995,8 +1043,7 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     {
         let shared = shared.clone();
         background.workers.push(worker(TAILNET_WORKER, move || {
-            *shared.tailnet.lock().unwrap_or_else(|e| e.into_inner()) =
-                crate::gate::magicdns_name();
+            *shared.tailnet.lock().recover() = crate::gate::magicdns_name();
         }));
     }
     if serve.home.is_none() {
@@ -1098,9 +1145,13 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     // the projects' watch ([`crate::projects::Projects::watch`]), which then reads the registry
     // again on its own so a project registered or removed starts or stops its maintenance with
     // no request.
-    background
-        .workers
-        .extend(maintenance(&shared, serve.home.as_deref()));
+    let maintained = maintenance(&shared, serve.home.as_deref());
+    if serve.home.is_none()
+        && let Some(line) = own_sweep_line(&shared.root, !maintained.is_empty())
+    {
+        tell(format_args!("{line}"));
+    }
+    background.workers.extend(maintained);
     if let Some(projects) = &projects {
         background.workers.push(projects.watch());
     }
@@ -1216,7 +1267,8 @@ impl Started {
 
 /// What the machine's one server (`home`, its machine folder) runs for each project it serves, on
 /// the wall clock: the idle sweep ([`session_maintenance`]), a worker of its own, so one project's
-/// hung or failing round never holds up another's. A private preview (no `home`) runs none.
+/// hung or failing round never holds up another's. A server of its own (no `home`) runs none,
+/// unless its project asks it to ([`sweeps_of_its_own`]).
 pub(crate) fn maintenance(
     shared: &Arc<Shared>,
     home: Option<&Path>,
@@ -1244,21 +1296,83 @@ fn of_project(shared: &Shared) -> String {
 }
 
 /// A private preview may use a copied board, whose old pane identities must never be used to
-/// clean up real agent terminals. Only the machine's shared installation starts this worker,
-/// which reads the time from `clock` ([`MachineClock`] outside tests).
+/// clean up real agent terminals. Only the machine's shared installation starts this worker, and a
+/// server of its own whose project asks it to ([`sweeps_of_its_own`]); it reads the time from
+/// `clock` ([`MachineClock`] outside tests).
 fn session_maintenance(
     shared: &Arc<Shared>,
     home: Option<&Path>,
     clock: impl Clock,
 ) -> Option<std::thread::JoinHandle<()>> {
-    let home = home?;
+    session_maintenance_where(shared, home, clock, |name| std::env::var_os(name).is_some())
+}
+
+/// [`session_maintenance`] in an environment that names the variables `named` says.
+fn session_maintenance_where(
+    shared: &Arc<Shared>,
+    home: Option<&Path>,
+    clock: impl Clock,
+    named: impl Fn(&str) -> bool,
+) -> Option<std::thread::JoinHandle<()>> {
+    if home.is_none() && !sweeps_of_its_own(&shared.root, named) {
+        return None;
+    }
     Some(maintenance_worker(
         Arc::clone(shared),
         Duration::from_secs_f64(REAP_SECONDS),
         SWEEP_TIMEOUT,
         clock,
-        crate::held::Retrying::of_this_server(home),
+        home.and_then(crate::held::Retrying::of_this_server),
     ))
+}
+
+/// The variables by which a process names a board other than the one its folder finds: how a
+/// preview reaches a copy.
+const OTHER_BOARD: [&str; 2] = ["TASKS_SERVER", "TASKS_DATABASE"];
+
+/// Whether a server of its own serving `root` runs the idle-session sweep for it, as the one server
+/// would: its project file asks (`[board] own_sweep`, [`symphony_board::project::own_sweep`]), for
+/// a project no other server serves; `root` is its repository's main checkout, never a linked
+/// worktree, where a preview of branch code runs; and its environment names no other board
+/// (`named`, of [`OTHER_BOARD`]), so the board swept is the one whose terminals these are. The
+/// board's own lock still admits one sweeper at a time, whichever server it is.
+fn sweeps_of_its_own(root: &Path, named: impl Fn(&str) -> bool) -> bool {
+    symphony_board::project::own_sweep(root)
+        && main_checkout(root)
+        && !OTHER_BOARD.iter().any(|name| named(name))
+}
+
+/// Whether `root` is its repository's main checkout, or no checkout at all: never a linked
+/// worktree.
+fn main_checkout(root: &Path) -> bool {
+    let real = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    real(&symphony_board::builds::main_of(root)) == real(root)
+}
+
+/// What a server of its own says of the idle-session sweep as it starts serving `root`: that it
+/// runs it; that it runs none though its project file asks, and why; or, in a main checkout whose
+/// file does not ask, that it runs none, that the machine's one server sweeps the project if it
+/// serves it, and what else closes its idle agents' terminals. Nothing for a folder with no project
+/// file (a test's), nor for a linked worktree whose file does not ask (a preview's), where the key
+/// would change nothing.
+fn own_sweep_line(root: &Path, sweeps: bool) -> Option<&'static str> {
+    if sweeps {
+        return Some("· this server of its own runs the idle-session sweep ([board] own_sweep)");
+    }
+    if !root.join(symphony_board::project::FILE).is_file() {
+        return None;
+    }
+    if symphony_board::project::own_sweep(root) {
+        return Some(
+            "· this server of its own runs no idle-session sweep, though [board] own_sweep asks: \
+             it serves a linked worktree, or its environment names another board",
+        );
+    }
+    main_checkout(root).then_some(
+        "· a server of its own runs no idle-session sweep: the machine's one server sweeps the \
+         project if it serves it; if not, idle agents' terminals stay until `just tasks clean`, \
+         or set [board] own_sweep = true in symphony.toml",
+    )
 }
 
 /// A moment on both clocks. `Instant` stops while the machine sleeps, but the board's presence
@@ -1520,6 +1634,9 @@ mod broken_stderr_tests;
 
 #[cfg(test)]
 mod session_tests;
+
+#[cfg(test)]
+mod peers_tests;
 
 #[cfg(test)]
 pub(crate) mod test_clock;

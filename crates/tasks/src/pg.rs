@@ -6,10 +6,13 @@
 //! ([`Connection::exchange`]).
 //!
 //! A client makes its connection at its first request and keeps it for its life, so a command,
-//! one process, is one connection. Its startup names the user [`USER`], its database, UTF-8, and
-//! REPEATABLE READ for every transaction: a snapshot from a transaction's first statement, and
-//! a write that meets a row another committed since then fails at once, which is the board's rule
-//! of a write that met another (`lib.rs`), read and decided again.
+//! one process, is one connection. On macOS no child of the process copies its socket; elsewhere
+//! it is std's, close-on-exec, which a child spawned or forked beside it holds until its exec
+//! ([`unshared`]).
+//! Its startup names the user [`USER`], its database, UTF-8, and REPEATABLE READ for every
+//! transaction: a snapshot from a transaction's first statement, and a write that meets a row
+//! another committed since then fails at once, which is the board's rule of a write that met
+//! another (`lib.rs`), read and decided again.
 //!
 //! A request ([`Client::request`]) is its statements, each parsed, bound to its one parameter when
 //! it takes one (a `jsonb`, the statement's variables) and run, then one Sync: they run in one
@@ -22,15 +25,20 @@
 //! the words the statement raised; anything else is [`DbError::Failed`], in the server's words and
 //! with its code. A connection that fails mid-request is dropped and never used again; a request
 //! is never sent twice, a read no more than a write, so a client never repeats work the server may
-//! have done.
+//! have done. One the server took on a connection that worked and did not answer within the
+//! client's wait ([`Client::waiting`]), or a startup it did not answer in that time, says the
+//! server is slow in the words SurrealDB's client says it in ([`crate::rpc::slow`] knows both): a
+//! server that is there and late, never one that cannot be reached. The system says such a wait
+//! run out as its bare error, `EAGAIN`, "Resource temporarily unavailable", which names no wait.
 
-use crate::rpc::DbError;
+use crate::db::DbError;
+use crate::lock::Recovered as _;
 use std::io::{BufRead, BufReader, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub mod external;
@@ -123,7 +131,7 @@ impl Client {
     /// `database` is a name this code chooses (letters, digits, `_`), never a caller's text.
     pub fn new(socket: &Path, database: &str) -> Client {
         assert!(
-            crate::rpc::plain(database),
+            crate::db::plain(database),
             "{database:?} is not a plain name for a database"
         );
         Client {
@@ -229,7 +237,9 @@ impl Client {
         }
     }
 
-    /// Count each request once, including failures, without recording SQL or bound values.
+    /// Count each request once, including failures, without recording SQL or bound values: failed
+    /// only when it got no answer, never for an error the server answered (a raised exception, a
+    /// conflict, a refusal), so refused writes never read as a board too slow to answer.
     #[track_caller]
     fn measured(&self, out: &[u8], write: bool) -> Result<Vec<Answer>, DbError> {
         let began = Instant::now();
@@ -241,35 +251,49 @@ impl Client {
             write,
             failed: sent.is_err(),
         });
-        sent
+        sent.flatten()
     }
 
     /// `out` sent on this client's connection, made first when it has none, and every message the
     /// server answered with up to its next ReadyForQuery: what each statement gave, or the first
-    /// error. A connection that failed is dropped.
-    fn exchange(&self, out: &[u8]) -> Result<Vec<Answer>, DbError> {
+    /// error. The outer error is a request that got no answer, the inner the server's answer, a
+    /// refused startup included ([`Client::connect`]). A connection that failed is dropped.
+    fn exchange(&self, out: &[u8]) -> Result<Result<Vec<Answer>, DbError>, DbError> {
         self.requests.fetch_add(1, Ordering::SeqCst);
-        let mut held = self
-            .connection
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut held = self.connection.lock().recover();
         if held.is_none() {
-            *held = Some(self.connect()?);
+            match self.connect()? {
+                Ok(connection) => *held = Some(connection),
+                Err(refused) => return Ok(Err(refused)),
+            }
         }
         let connection = held.as_mut().expect("made above");
-        match connection.exchange(out) {
-            Ok(answered) => answered,
-            Err(broken) => {
-                *held = None;
-                Err(DbError::Failed(format!(
-                    "the board's PostgreSQL at {}: {broken}",
-                    self.socket.display()
-                )))
-            }
+        connection.exchange(out).map_err(|broken| {
+            *held = None;
+            DbError::Failed(self.broke(&broken))
+        })
+    }
+
+    /// What a request whose connection failed with `broken` says: that the server is slow, when it
+    /// is the client's wait run out on a write or a read of it ([`waited_out`]), and that the
+    /// request may have run, since it went out on a connection that worked; else the failure.
+    fn broke(&self, broken: &std::io::Error) -> String {
+        let at = format!("the board's PostgreSQL at {}", self.socket.display());
+        if waited_out(broken) {
+            format!(
+                "{at}{}{:?}: {broken}; the request may have run there, so it was not sent again",
+                crate::rpc::SLOW,
+                self.timeout
+            )
+        } else {
+            format!("{at}: {broken}")
         }
     }
 
-    fn connect(&self) -> Result<Connection, DbError> {
+    /// A connection, started: the outer error is a server that did not answer (no socket, a
+    /// connection that broke, a startup not answered within the client's wait), the inner one
+    /// that answered by refusing it (a database it does not hold, a password asked for).
+    fn connect(&self) -> Result<Result<Connection, DbError>, DbError> {
         let path = self.socket.join(crate::server::postgres::SOCKET_FILE);
         let unreachable = |why: std::io::Error| {
             DbError::Failed(format!(
@@ -277,14 +301,13 @@ impl Client {
                 path.display()
             ))
         };
-        let stream = UnixStream::connect(&path).map_err(unreachable)?;
+        let (stream, writer) = unshared(&path).map_err(unreachable)?;
         stream
             .set_read_timeout(Some(self.timeout))
             .map_err(unreachable)?;
         stream
             .set_write_timeout(Some(self.timeout))
             .map_err(unreachable)?;
-        let writer = stream.try_clone().map_err(unreachable)?;
         let mut connection = Connection {
             stream: BufReader::new(stream),
             writer,
@@ -296,23 +319,65 @@ impl Client {
             ("client_encoding", "UTF8"),
             ("default_transaction_isolation", "repeatable read"),
         ]);
-        connection
-            .started(&startup)
-            .map_err(|failed| match failed {
-                Started::Refused(error) => error,
-                Started::Broken(why) => unreachable(why),
-            })?;
-        Ok(connection)
+        match connection.started(&startup) {
+            Ok(()) => Ok(Ok(connection)),
+            Err(Started::Refused(error)) => Ok(Err(error)),
+            // The socket took the connection: the server is there, and late.
+            Err(Started::Broken(why)) if waited_out(&why) => Err(DbError::Failed(format!(
+                "the board's PostgreSQL at {}{}{:?} to the connection's startup on {}: {why}; \
+                 the request was not sent",
+                self.socket.display(),
+                crate::rpc::SLOW,
+                self.timeout,
+                path.display()
+            ))),
+            Err(Started::Broken(why)) => Err(unreachable(why)),
+        }
     }
+}
+
+/// A connection to the socket at `path`, as its reader and its writer: two descriptors of one
+/// socket, which no spawn or fork copies on macOS. std's socket is close-on-exec only, and every
+/// spawn or fork copies such a descriptor into its child until that child's exec. macOS marks a
+/// socket draining when a descriptor of it is closed while another process reads that descriptor
+/// (`lsof`), and a draining socket fails every later wait for data with EBADF: a child closing its
+/// copy did that to a board's connection, as `process_cwd::spawn::connect` says of its TCP twin.
+/// So the socket is connected under [`crate::sys::spawning`], which every helper spawn takes, and
+/// each of its two descriptors is a reopening of it close-on-exec and close-on-fork
+/// ([`unshared_copy`]); the first descriptor is closed before the lock goes.
+#[cfg(target_vendor = "apple")]
+fn unshared(path: &Path) -> std::io::Result<(UnixStream, UnixStream)> {
+    let _spawning = crate::sys::spawning();
+    let first = UnixStream::connect(path)?;
+    Ok((unshared_copy(&first)?, unshared_copy(&first)?))
+}
+
+/// A new descriptor of `socket`, close-on-exec and close-on-fork: macOS opens `/dev/fd/N` as a
+/// `dup` of N, sharing its open file, and only `open` sets close-on-fork
+/// ([`process_cwd::close_on_fork`]), which a `dup` would not carry.
+#[cfg(target_vendor = "apple")]
+fn unshared_copy(socket: &UnixStream) -> std::io::Result<UnixStream> {
+    use std::os::fd::AsRawFd as _;
+    let mut options = std::fs::File::options();
+    options.read(true).write(true);
+    let copy =
+        process_cwd::close_on_fork(&mut options).open(format!("/dev/fd/{}", socket.as_raw_fd()))?;
+    Ok(UnixStream::from(std::os::fd::OwnedFd::from(copy)))
+}
+
+/// A connection to the socket at `path`, as its reader and its writer: std's, whose descriptors
+/// are close-on-exec from the moment they exist, as nothing is close-on-fork here.
+#[cfg(not(target_vendor = "apple"))]
+fn unshared(path: &Path) -> std::io::Result<(UnixStream, UnixStream)> {
+    let stream = UnixStream::connect(path)?;
+    let writer = stream.try_clone()?;
+    Ok((stream, writer))
 }
 
 impl Drop for Client {
     /// A connection held is ended as the protocol ends one, so the server's backend goes at once.
     fn drop(&mut self) {
-        let held = self
-            .connection
-            .get_mut()
-            .unwrap_or_else(PoisonError::into_inner);
+        let held = self.connection.get_mut().recover();
         if let Some(connection) = held.as_mut() {
             let mut out = Vec::new();
             wire::terminate(&mut out);
@@ -493,6 +558,16 @@ fn given<T>(
         (Err((why, true)), _) | (_, Err((why, true))) => Err(why),
         (Err((why, false)), _) | (_, Err((why, false))) => Err(why),
     }
+}
+
+/// Whether `why`, a write's or a read's failure on a connection, is the client's wait run out
+/// ([`Client::waiting`]): a socket's timeout on a blocking write or read is `EAGAIN` (`EWOULDBLOCK`),
+/// on macOS as on Linux, and `ETIMEDOUT` where a system says that instead.
+fn waited_out(why: &std::io::Error) -> bool {
+    matches!(
+        why.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    )
 }
 
 /// A write's failure, said as the sending of a request.

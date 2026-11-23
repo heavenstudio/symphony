@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { WAITING } from "./media";
 import {
   keyed,
   nameOf,
@@ -14,6 +13,7 @@ import {
   Viewer,
   zoomable,
 } from "./media-layer";
+import { WAITING } from "./media-picture";
 
 // The tests run without a DOM: the page here is a tree of elements that knows the selectors the
 // layer asks for (a tag, `#id`, `.class`, `[name]`, `[name=value]`, `:not(…)`, the descendant and

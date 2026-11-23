@@ -1,4 +1,4 @@
-//! The orchestrator role the board gives, so every open task has an orchestrator (docs/TASKS.md,
+//! The orchestrator role the board gives, so every open task has an orchestrator (docs/workflow/TASKS.md,
 //! "Every open task has an orchestrator"): to a task filed with none ([`Store::give_filed`]), to
 //! the work a leave would leave with none (`Store::leave`), to a task moved out from under its
 //! orchestrator's task, to that one ([`Store::kept_at_move`]), or reopened with none
@@ -21,7 +21,9 @@
 //! for a red, which goes to one that stays whatever it holds; the orchestrator a filing's own story
 //! names is passed over at the limit, and the filer told why ([`Store::give_filed_saying`]). With
 //! none, that task is marked waiting ([`orchestration::WAITING`]), once, and the mark goes when it
-//! is given or somebody's again. The limit is fenced as the cap is: a pass holds each receiver's
+//! is given or somebody's again. A pass over every open task nobody orchestrates takes first the
+//! ones that wait on nothing ([`orchestration::first_free`]), so the places under the limit go to
+//! work that can start. The limit is fenced as the cap is: a pass holds each receiver's
 //! slot counter as it read it before the board, and a take or hand-over of the role that the limit
 //! holds reads the taker's open tasks and its counter together (`surreal::work::GAINING`, `Store::gaining`), so
 //! two writes that each saw a place cannot both fill it.
@@ -249,7 +251,7 @@ impl Store {
         }
         let session = by.filter(|by| *by != OWNER);
         let acts = session.is_some();
-        let body = both(sql::give_pass(acts), pg::give_pass(acts));
+        let body = both(sql::give_pass(acts), pg::give_pass(acts)).posting();
         let now = (self.clock)();
         let sender = by.unwrap_or(BOARD);
         let vars = match session {
@@ -370,7 +372,8 @@ impl Store {
     }
 
     /// Give every open task nobody orchestrates to an orchestrator that stays, the topmost of each
-    /// tree ([`orchestration::unowned_tops`]) by rule 4 ([`Pool`]), one line on each thread; with
+    /// tree ([`orchestration::unowned_tops`]), those that wait on nothing first
+    /// ([`orchestration::first_free`]), by rule 4 ([`Pool`]), one line on each thread; with
     /// none, mark each waiting, and lift the mark from those no longer waiting. `by`: the session
     /// whose write it is, or none for the board's own (the idle sweep, [`Store::give_if_due`]).
     /// What it gave, and what waits.
@@ -390,7 +393,8 @@ impl Store {
             let (board, versions) = self.board_versions()?;
             let mut pool = self.pool(&board, &[])?;
             let mut pass = Pass::default();
-            for top in orchestration::unowned_tops(&board.tasks) {
+            let tops = orchestration::unowned_tops(&board.tasks);
+            for top in orchestration::first_free(&board.tasks, tops) {
                 let why = if orchestration::waiting(&top.fields).is_some() {
                     "it waited for an orchestrator"
                 } else {

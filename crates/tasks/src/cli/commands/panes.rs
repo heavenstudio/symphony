@@ -19,7 +19,7 @@ pub(super) fn launch(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let actor = c.actor()?;
     let machine = Machine::of(c.env);
     let role = p.or("role", "executor");
-    let resolved = Defaults::configured(&machine.root)
+    let resolved = Defaults::configured_with(&machine.root, &store.stored())
         .map_err(Stop::Refused)?
         .resolve_as(Some(role), p.get("kind"), p.get("model"));
     let hc = Binary::of(c.env);
@@ -385,6 +385,24 @@ pub(super) fn finish(store: &Store, c: &mut Context) -> Result<(), Stop> {
 /// ([`launch::finish`]), each closed one a line; what went wrong is said, and nothing fails.
 pub(super) fn close_finished(store: &Store, c: &mut Context, slug: &str) {
     let lines = launch::finish(store, &Binary::of(c.env), &*procs::table(c.env), slug);
+    for line in lines {
+        c.say(&format!("→ {line}"));
+    }
+}
+
+/// [`close_finished`] once a land of `slug` ended: where a landing closed the task
+/// ([`launch::landed`]).
+pub(super) fn close_landed(store: &Store, c: &mut Context, slug: &str) {
+    let lines = launch::landed(store, &Binary::of(c.env), &*procs::table(c.env), slug);
+    for line in lines {
+        c.say(&format!("→ {line}"));
+    }
+}
+
+/// [`close_finished`] for `slug` approved and not landed: its executors' terminals stay, each a
+/// line ([`launch::approved`]).
+pub(super) fn close_approved(store: &Store, c: &mut Context, slug: &str) {
+    let lines = launch::approved(store, &Binary::of(c.env), &*procs::table(c.env), slug);
     for line in lines {
         c.say(&format!("→ {line}"));
     }

@@ -36,7 +36,11 @@ pub const ADVICE: &str = "add it to crates/symphony/shipped/symphony.just, name 
 
 /// The records under `docs/`, which say what was decided or found rather than how things are now:
 /// a file, or a folder ending in `/`.
-const RECORDS: [&str; 3] = ["docs/DECISIONS.md", "docs/analysis/", "docs/history/"];
+const RECORDS: [&str; 2] = ["docs/DECISIONS.md", "docs/history/"];
+
+/// The folder of an area's analyses, a record as well, at any depth under `docs/`
+/// (`docs/workflow/analysis/`).
+const ANALYSIS: &str = "analysis";
 
 /// What a guide is called: this repository's own guidance, at its root or in a package.
 const GUIDES: [&str; 3] = ["AGENTS.md", "README.md", "RULES.md"];
@@ -230,8 +234,8 @@ pub fn beside_documents(file: &str) -> bool {
 
 /// Whether the docs audit judges the names in `file`, a path from the root of the Symphony's own
 /// checkout, and keeps the lists' entries for it current: Markdown under `docs/` but the records
-/// (`RECORDS`), and what [`beside_documents`] names. The hooks test keeps the entries for every
-/// other file current.
+/// (`RECORDS`, `ANALYSIS`), and what [`beside_documents`] names. The hooks test keeps the entries
+/// for every other file current.
 pub fn audited(file: &str) -> bool {
     let record = |record: &&str| {
         if record.ends_with('/') {
@@ -240,7 +244,11 @@ pub fn audited(file: &str) -> bool {
             file == *record
         }
     };
-    let document =
-        file.starts_with("docs/") && file.ends_with(".md") && !RECORDS.iter().any(record);
+    let mut folders = file.split('/').skip(1).collect::<Vec<_>>();
+    folders.pop();
+    let document = file.starts_with("docs/")
+        && file.ends_with(".md")
+        && !RECORDS.iter().any(record)
+        && !folders.contains(&ANALYSIS);
     document || beside_documents(file)
 }

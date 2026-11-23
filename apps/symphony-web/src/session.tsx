@@ -1,4 +1,4 @@
-// An agent's Go to session control (docs/TASKS.md, "Going to a session"), which the agents page's
+// An agent's Go to session control (docs/workflow/TASKS.md, "Going to a session"), which the agents page's
 // rows and a task's role chips draw: an ordinary link to its session's web address; for a page on
 // the server's machine, a button that has the Herdr app show its pane; for a page anywhere else, a
 // button that shows the pane's screen, read only. A subagent's goes to its parent's session and says
@@ -6,16 +6,16 @@
 //
 // What crates/symphony-api's agents.rs decides for it (`SessionGo::control`, `via_parent`) is
 // carried here, held to the Rust by the cases it writes (wire.cases.json, session.test.tsx), as
-// project.ts carries the project's routes; the address it links is a `webAddress` (links.ts).
+// project.ts carries the project's routes; the address it links is a `webAddress` (links.ts). What a
+// press does, a focus or a screen read, is session-press.ts, a chunk imported as one is first pressed.
 
 import { useState } from "react";
 import { Button } from "./button";
 import { webAddress } from "./links";
 import { useMount } from "./mount";
-import { scoped } from "./project";
-import { getJson, post, said } from "./request";
-import { field } from "./shared";
-import { AGENT_FOCUS_PATH, AGENT_SCREEN_PATH, type AgentScreen, type SessionGo } from "./wire";
+import type { press } from "./session-press";
+import { snapshot } from "./shared";
+import type { AgentScreen, SessionGo } from "./wire";
 
 /** What a Go to session control does for the page that shows it. */
 export type SessionControl =
@@ -57,45 +57,6 @@ export function viaParent(go: SessionGo, handle: string): boolean {
   return go.handle !== handle;
 }
 
-/** A screen as the server answers one, or none for a value without what it needs. */
-export function readScreen(value: unknown): AgentScreen | null {
-  const handle = field(value, "handle");
-  const pane = field(value, "pane");
-  const text = field(value, "text");
-  const readAt = field(value, "read_at");
-  return typeof handle === "string" &&
-    typeof pane === "string" &&
-    typeof text === "string" &&
-    typeof readAt === "number"
-    ? { handle, pane, text, read_at: readAt }
-    : null;
-}
-
-/** Have the server's machine show `handle`'s session in the Herdr app: what it said it did. */
-export async function focus(handle: string, scope: string): Promise<string> {
-  try {
-    const answer = await post(scoped(scope, AGENT_FOCUS_PATH), { handle });
-    const told = field(answer, "said");
-    return typeof told === "string" ? told : "missing field `said`";
-  } catch (failure) {
-    return said(failure);
-  }
-}
-
-/** The screen of `handle`'s session's pane, read now, or what failed; given up once `signal` ends. */
-export async function screen(
-  handle: string,
-  scope: string,
-  signal: AbortSignal,
-): Promise<AgentScreen | string> {
-  try {
-    const path = `${AGENT_SCREEN_PATH}?handle=${encodeURIComponent(handle)}`;
-    return readScreen(await getJson(scoped(scope, path), signal)) ?? "The screen is not readable";
-  } catch (failure) {
-    return said(failure);
-  }
-}
-
 /** What a press of Go to session shows: whether it is on its way, what it said, and a screen read. */
 export interface Going {
   busy(busy: boolean): void;
@@ -103,34 +64,43 @@ export interface Going {
   screen(read: AgentScreen): void;
 }
 
+/** What a press does (session-press.ts), imported as a control is first pressed. */
+const pressing = () => import("./session-press");
+
 /**
- * A press of `control`'s button for `handle`'s session: nothing while one is on its way (`busy`) or
- * for a link, which the browser follows. Else a focus, saying what the server did or what failed;
- * or the screen read, shown, or what failed said beside the one shown before. Nothing more once
- * `mount` ended while the server answered.
+ * What a control says where what a press does did not come, once the shell said the page's build is
+ * there (where it is gone, the page loads again).
  */
-export async function press(
+export const UNPRESSED = "This page could not load the session's control. Try again.";
+
+/**
+ * A press of `control`'s button for `handle`'s session (session-press.ts `press`), once what a press
+ * does has come: nothing while one is on its way (`busy`) or for a link, which the browser follows;
+ * on its way while it comes. Where it did not come, UNPRESSED is said and the press may be made
+ * again; nothing more once `mount` ended meanwhile.
+ */
+export async function pressed(
   control: SessionControl,
   handle: string,
   scope: string,
   busy: boolean,
   mount: AbortSignal,
   going: Going,
+  load: () => Promise<{ press: typeof press }> = pressing,
 ): Promise<void> {
   if (busy || control.kind === "link") return;
   going.busy(true);
-  going.said("");
-  if (control.kind === "focus") {
-    const told = await focus(handle, scope);
-    if (mount.aborted) return;
-    going.said(told);
-  } else {
-    const read = await screen(handle, scope, mount);
-    if (mount.aborted) return;
-    if (typeof read === "string") going.said(read);
-    else going.screen(read);
+  let chunk: { press: typeof press };
+  try {
+    chunk = await load();
+  } catch {
+    const shell = snapshot("reviewShell") as { gone(): Promise<boolean> } | undefined;
+    if (mount.aborted || (await shell?.gone())) return;
+    going.busy(false);
+    going.said(UNPRESSED);
+    return;
   }
-  going.busy(false);
+  if (!mount.aborted) await chunk.press(control, handle, scope, false, mount, going);
 }
 
 export interface GoToSessionProps {
@@ -161,7 +131,7 @@ export function GoToSession({ handle, go, local, scope }: GoToSessionProps) {
       told={told}
       screen={shownScreen}
       onPress={() =>
-        void press(control, handle, scope, busy, mount, {
+        void pressed(control, handle, scope, busy, mount, {
           busy: setBusy,
           said: setTold,
           screen: setScreen,

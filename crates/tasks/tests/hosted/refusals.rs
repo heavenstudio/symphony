@@ -3,7 +3,7 @@
 //! a wrong password, and a login or database a board is not kept in. No refusal says a part of
 //! the secret, the login or the address.
 
-use crate::cluster::{self, Certificate, MAJORS, Project, environment, settings};
+use crate::cluster::{self, Certificate, Loopback, MAJORS, Project, environment, settings};
 use symphony_board::pg::Step;
 use symphony_board::pg::hosted::Client;
 
@@ -99,6 +99,35 @@ fn a_server_that_speaks_no_tls_is_refused_and_no_url_asks_for_less() {
                 "PostgreSQL {major}, {less}: {said}"
             );
         }
+    }
+}
+
+/// `localhost` names two addresses, in an order the machine chooses, and a server holds one: the
+/// server's refusal is what is said whether the address nothing holds is asked before it or
+/// after, never that the server cannot be reached.
+#[test]
+fn a_refusal_is_the_servers_own_whichever_of_the_names_addresses_it_holds() {
+    for loopback in [Loopback::V4, Loopback::V6] {
+        let project = cluster::cluster_on(18, Certificate::Good, loopback).project();
+        let wrong = project.url().replace(
+            &cluster::escaped(&project.password),
+            "not-the-password-41414141",
+        );
+        let said = refused_at(&project, wrong, &project.cluster.ca);
+        assert!(
+            said.contains("the server refused the login"),
+            "{loopback:?}: {said}"
+        );
+        let said = refused_at(&project, project.url(), &project.cluster.other_ca);
+        assert!(
+            said.contains("not one the deployment's authority signed"),
+            "{loopback:?}: {said}"
+        );
+        // And the login is let in at the address the server holds.
+        let client = Client::connect(&settings(""), project.environment("web")).unwrap();
+        client
+            .request(&[Step::bare("SELECT 1")])
+            .unwrap_or_else(|error| panic!("{loopback:?}: {error:?}"));
     }
 }
 

@@ -7,7 +7,6 @@ import {
   merge,
   readItemChange,
   readListing,
-  readSlugs,
   readTask,
   readTaskChange,
   slugOrder,
@@ -121,7 +120,6 @@ describe("a listing as the client reads it", () => {
     expect(readListing({ tasks: [aTask("w/a")] })).toEqual({
       tasks: [aTask("w/a")],
       statuses: [],
-      signoff: [],
       counts: [],
       lifecycle_counts: [],
       next: null,
@@ -137,12 +135,24 @@ describe("a listing as the client reads it", () => {
     expect(read?.unstarted).toBe(3);
   });
 
+  it("leaves the owner's sign-off, which no page draws, unread", () => {
+    expect(readListing({ tasks: [], signoff: "w/a" })).toEqual({
+      tasks: [],
+      statuses: [],
+      signoff: "w/a",
+      counts: [],
+      lifecycle_counts: [],
+      next: null,
+      orchestrators: [],
+      unstarted: 0,
+    });
+  });
+
   it.each([
     ["nothing", null],
     ["no tasks", { statuses: [] }],
     ["a task it cannot read", { tasks: [{ slug: "w/a" }] }],
     ["statuses that are no texts", { tasks: [], statuses: [1] }],
-    ["a sign-off that is no list", { tasks: [], signoff: "w/a" }],
     ["counts that are no pairs", { tasks: [], counts: [["ready"]] }],
     ["a count that is text", { tasks: [], lifecycle_counts: [["ready", "3"]] }],
     ["a cursor that is no text", { tasks: [], next: 3 }],
@@ -190,13 +200,6 @@ describe("a change the feed sends", () => {
     ["a task it cannot read", { key: "w/a", value: { slug: "w/a" } }],
   ])("of a task is none for %s", (_, value) => {
     expect(readItemChange(value)).toBeNull();
-  });
-
-  it("of the owner's sign-off is its slugs", () => {
-    expect(readSlugs(["w/a", "w/b"])).toEqual(["w/a", "w/b"]);
-    expect(readSlugs([])).toEqual([]);
-    expect(readSlugs([1])).toBeNull();
-    expect(readSlugs("w/a")).toBeNull();
   });
 });
 

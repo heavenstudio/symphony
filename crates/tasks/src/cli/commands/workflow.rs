@@ -1,6 +1,6 @@
 //! `workflow show`, `workflow actions SLUG` and `workflow apply SLUG EDGE --revision N`: the custom
 //! workflow a board activated, the edges a session could take from where a task stands, and one
-//! taken through the board's one admission ([`Store::apply_operation`], docs/WORKFLOW.md). The
+//! taken through the board's one admission ([`Store::apply_operation`], docs/workflow/WORKFLOW.md). The
 //! principal is the agent session `--as` names, as the local host binds it, never one the
 //! command's input names; the owner acts from the Symphony.
 //!
@@ -85,11 +85,12 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
     Ok(())
 }
 
-/// What the session could take from where `SLUG` stands, and what stops each edge now.
+/// What the session could take from where `SLUG` stands, and what stops each edge now, with the
+/// accepted outputs an edge sends from the same read as the revision it is taken at.
 fn actions(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let slug = required(c, "slug", "workflow actions SLUG")?;
     let principal = agent_session(&c.actor()?);
-    let next = store.workflow_actions(&slug, &principal, &Host::local())?;
+    let (next, outputs) = store.workflow_actions_with_outputs(&slug, &principal, &Host::local())?;
     if c.parsed.flag("json") {
         c.say(&pretty(&next));
         return Ok(());
@@ -97,7 +98,7 @@ fn actions(store: &Store, c: &mut Context) -> Result<(), Stop> {
     for line in action_lines(&slug, &next) {
         c.say(&line);
     }
-    for line in output_lines(&store.accepted_outputs(&slug)?) {
+    for line in output_lines(&outputs) {
         c.say(&line);
     }
     Ok(())

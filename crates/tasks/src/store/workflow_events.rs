@@ -1,5 +1,5 @@
 //! A task's recorded workflow transitions, oldest first: what its page's timeline draws the phases
-//! and states it went through from (docs/WORKFLOW.md, "The app"). A read alone, of the records
+//! and states it went through from (docs/workflow/WORKFLOW.md, "The app"). A read alone, of the records
 //! `workflow:['event', SLUG, REVISION]` that every move of a task's position writes
 //! ([`super::workflow::Transition`]), over the range of its slug's keys: no other task's are read.
 
@@ -21,7 +21,7 @@ impl Store {
                 json!({"slug": slug}),
             )
         })?;
-        serde_json::from_value(body).map_err(|e| {
+        crate::objects::read(&body).map_err(|e| {
             Error::Db(format!(
                 "a workflow transition not in the board's shape: {e}"
             ))

@@ -1,5 +1,5 @@
 //! A red run of the tests' lanes reruns each failure its log names alone, one at a time, in the same
-//! checkout and over the same build (docs/RELEASES.md, "The release run", step 5): one that passes
+//! checkout and over the same build (docs/workflow/RELEASES.md, "The release run", step 5): one that passes
 //! alone is no red, and the run files one p1 task for every such test of it; one that fails again
 //! is red as before, its task saying it failed twice; more than twelve failures are red with none
 //! rerun; and a candidate's rerun red only in tests that passed alone releases it.

@@ -166,6 +166,15 @@ fn restore_one(
             session.handle
         )));
     }
+    // An agent turned off, or whose program this machine lacks, is not started again: its record
+    // stays closed ([`super::off`]).
+    let agent = agent_of(&session.claude_session);
+    if let Some(why) = machine.refusing(store, agent)? {
+        return Err(Error::Refused(format!(
+            "no restore of {}: {why}",
+            session.handle
+        )));
+    }
     // Through a recipe an agent runs unasked, a record names a folder it makes again and starts an
     // agent in: only one in the project ([`super::Bounds`]), whenever the record was written, and
     // used as the check resolved it, not resolved again.
@@ -217,7 +226,8 @@ fn restore_one(
             )?;
         }
     }
-    let (agent, args) = if let Some(id) = session.claude_session.strip_prefix("codex:") {
+    let (agent, args) = if let Some(id) = session.claude_session.strip_prefix(crate::launch::CODEX)
+    {
         let mut args = codex_args(&session.model, None, &session.handle, machine);
         args.extend(["resume".into(), id.into()]);
         ("codex", args)
@@ -243,7 +253,7 @@ fn restore_one(
     let local = Local::new(store, hc, crate::workflow::board_service("restore"));
     let conversation = session
         .claude_session
-        .strip_prefix("codex:")
+        .strip_prefix(crate::launch::CODEX)
         .unwrap_or(&session.claude_session);
     let task = store.get(slug)?;
     let attempt = local
@@ -306,7 +316,7 @@ fn restore_one(
     if message == super::startup::Message::Working {
         let thread = session
             .claude_session
-            .strip_prefix("codex:")
+            .strip_prefix(crate::launch::CODEX)
             .expect("a resumed Codex turn");
         let delivery = match hc.queue_codex(thread, text) {
             Ok(()) => {

@@ -3,7 +3,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use super::{FILE, Project, SEEN, lock};
+use symphony_board::lock::Recovered as _;
+
+use super::{FILE, Project, SEEN};
 use crate::test_tree::Tree;
 
 /// A project whose plugin `slow` answers from the program `bin/slow`, an entrypoint over `models/`
@@ -15,7 +17,7 @@ const SLOW: &str = "[plugins]\ncrates = [\"slow\"]\n\n\
 
 /// What the project at `root` was last read from, as a read again started now is started for.
 fn started(root: &Path) -> Vec<(PathBuf, super::Stamp)> {
-    lock(&SEEN)[root].stamps.clone()
+    SEEN.lock().recover()[root].stamps.clone()
 }
 
 /// A read again that ends after a reader found the project's file changed, and read it afresh,

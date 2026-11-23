@@ -8,11 +8,15 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
+
+use symphony_board::lock::Recovered as _;
 
 /// How long the server waits on each board request: its board tick shares the data worker's thread
 /// with every document refresh, and a page gives up on an answer after 15 s (the client's
-/// `request.ts`). A read with no whole answer in that time goes once more
+/// `request.ts`). On PostgreSQL it bounds each write of a request and each read of its answer, and
+/// a request that met it is never sent again ([`symphony_board::pg::Client::waiting`]); on
+/// SurrealDB a read with no whole answer in that time goes once more
 /// ([`symphony_board::rpc::Kind`]), and so waits at most twice this.
 const BOARD_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
@@ -54,16 +58,13 @@ static SERVED: Mutex<BTreeMap<PathBuf, Served>> = Mutex::new(BTreeMap::new());
 pub fn serve(root: &Path) -> Option<PathBuf> {
     let repository = symphony_board::project::locate_quick(root).map(|place| place.common);
     let journal = crate::asks::found_path(root);
-    SERVED
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .insert(
-            root.to_path_buf(),
-            Served {
-                repository: repository.clone(),
-                journal,
-            },
-        );
+    SERVED.lock().recover().insert(
+        root.to_path_buf(),
+        Served {
+            repository: repository.clone(),
+            journal,
+        },
+    );
     repository
 }
 
@@ -72,7 +73,7 @@ pub fn serve(root: &Path) -> Option<PathBuf> {
 fn held(root: &Path) -> Option<PathBuf> {
     SERVED
         .lock()
-        .unwrap_or_else(PoisonError::into_inner)
+        .recover()
         .get(root)
         .and_then(|served| served.repository.clone())
 }
@@ -82,7 +83,7 @@ fn held(root: &Path) -> Option<PathBuf> {
 pub(crate) fn served_journal(root: &Path) -> Option<PathBuf> {
     SERVED
         .lock()
-        .unwrap_or_else(PoisonError::into_inner)
+        .recover()
         .get(root)
         .map(|served| served.journal.clone())
 }

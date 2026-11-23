@@ -1,6 +1,6 @@
 // The client cache: what a page drew, kept on this device so a return visit draws at once and then
-// asks the server only whether it changed (docs/analysis/client-cache.md). The store is the shell's
-// (shell/cache.js, `symphonyCache`), which every page kind shares; this names what
+// asks the server only whether it changed (docs/engineering/analysis/client-cache.md). The store is the shell's
+// (shell/cache.ts, `symphonyCache`), which every page kind shares; this names what
 // is kept, under the wire's CACHE_FORMAT, and reads it back. Without the store (a browser with no
 // IndexedDB) every read misses and nothing is kept.
 
@@ -8,7 +8,7 @@ import { project } from "./project";
 import { CACHE_FORMAT } from "./wire";
 
 /**
- * Which caps an item counts against (`CAPS` in cache.js); the board's reads and the reports
+ * Which caps an item counts against (`CAPS` in shell/cache.ts); the board's reads and the reports
  * (`reportsItem`, reports.tsx) are outside both, held by the origin's bytes and their age alone.
  */
 export type Kind = "board" | "task" | "document" | "reports";
@@ -59,11 +59,11 @@ export function keptView(query: string, days: number, activity: number): boolean
 
 /**
  * The columns a task board with these counts may have kept: each status its listing names (its
- * counts' when it names none), the machines' two stages and the owner's sign-off, once each.
+ * counts' when it names none) and the machines' two stages, once each.
  */
 export function columns(statuses: string[], counts: [string, number][]): string[] {
   const named = statuses.length === 0 ? counts.map(([status]) => status) : statuses;
-  return [...new Set([...named, "build", "test", "signoff"])];
+  return [...new Set([...named, "build", "test"])];
 }
 
 /** A kept read: its value, the tag the server answered it with, and when it was kept (ms). */

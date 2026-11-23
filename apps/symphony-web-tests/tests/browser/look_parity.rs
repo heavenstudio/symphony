@@ -1,6 +1,6 @@
 //! Computed styles and real input against the release client. API fixtures supply content only;
 //! hover, focus, layout and component markup are all the production client and stylesheets.
-use super::{SHOWN, assets::module, chrome, common, dist, site};
+use super::{READY, SHOWN, assets::module, at_page_width, chrome, common, dist, site};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -121,9 +121,9 @@ fn track_styles(browser: &mut super::chrome::Chrome) {
 }
 
 fn painted_layout(browser: &mut super::chrome::Chrome) {
-    // shell.js awaits the current module's links before mounting it; this reads that state
+    // shell.ts awaits the current module's links before mounting it; this reads that state
     // from the page, so a sheet that never loaded fails here rather than at a style read.
-    assert!(browser.wait_for("document.documentElement.dataset.navigation === 'ready' && document.readyState === 'complete' && document.querySelectorAll('link[rel=stylesheet]').length > 0 && [...document.querySelectorAll('link[rel=stylesheet]')].every(link=>link.sheet !== null)", SHOWN),"navigation and stylesheets must finish before measuring the page");
+    assert!(browser.wait_for(&format!("{READY} && document.readyState === 'complete' && document.querySelectorAll('link[rel=stylesheet]').length > 0 && [...document.querySelectorAll('link[rel=stylesheet]')].every(link=>link.sheet !== null)"), SHOWN),"navigation and stylesheets must finish before measuring the page");
     // The first frame resolves styles/layout; the next runs after that frame painted.
     browser.eval("document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>{document.documentElement.getBoundingClientRect();requestAnimationFrame(resolve)})))");
 }
@@ -153,10 +153,7 @@ fn the_docs_index_keeps_one_heading_and_the_original_intro_and_folder_spacing() 
     let site = ParitySite::with_data(folder_responses());
     let Some(mut browser) = chrome() else { return };
     track_styles(&mut browser);
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1280,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    browser.viewport(1280, 900, false);
     browser.open(&site.url("/docs/"));
     assert!(browser.wait_for("document.querySelector('.doc-body p')?.textContent === 'Design references for the Symphony.' && document.querySelector('.doc-body h2')?.textContent === 'Read the designs' && document.querySelectorAll('.folder-entry').length === 2", SHOWN));
     assert!(browser.wait_for("(() => {const slots=[...document.querySelectorAll('.doc-body > .doc-part, .folder-entries > .viewport-slot')];return slots.length === 6 && slots.every(e=>e.style.minHeight === '0px' && !e.querySelector('.viewport-placeholder,.section-loading'));})()", SHOWN),"folder prose and entries must release their lazy height reservations before measuring");
@@ -208,10 +205,7 @@ fn the_docs_index_keeps_one_heading_and_the_original_intro_and_folder_spacing() 
     );
     assert_eq!(browser.eval("const heading=document.querySelector('.doc-body h2'), paragraph=heading.closest('.doc-part').nextElementSibling.querySelector('p'); paragraph.getBoundingClientRect().top-heading.getBoundingClientRect().bottom"),json!(16),"separate lazy slots must retain the original collapsed 16px heading-to-prose gap");
     assert_eq!(browser.eval("const cards=[...document.querySelectorAll('.folder-entry')].map(e=>e.getBoundingClientRect()); cards.every(r=>r.height === cards[0].height)"),json!(true),"folder cards share the row height");
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true}),
-    );
+    browser.viewport(390, 844, true);
     assert!(browser.wait_for(
         "document.querySelector('.folder-entry').getBoundingClientRect().width < 400",
         SHOWN
@@ -245,13 +239,8 @@ fn the_docs_index_keeps_one_heading_and_the_original_intro_and_folder_spacing() 
         assert!(browser.wait_for("document.querySelectorAll('.doc-body li p').length === 4 && document.querySelector('.doc-body > .doc-part:last-child p')?.textContent.startsWith('A document link') && [...document.querySelectorAll('.doc-body > .doc-part')].every(e=>e.style.minHeight === '0px' && !e.querySelector('.viewport-placeholder,.section-loading'))", SHOWN));
         painted_layout(&mut browser);
         for phone in [false, true] {
-            browser.call(
-                "Emulation.setDeviceMetricsOverride",
-                json!({"width":if phone { 390 } else { 1280 },"height":900,"deviceScaleFactor":1,"mobile":phone}),
-            );
-            browser.eval(
-                "new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))",
-            );
+            browser.viewport(if phone { 390 } else { 1280 }, 900, phone);
+            browser.frames();
             assert_eq!(browser.eval("(() => {const headings=[...document.querySelectorAll('.doc-body h2')]; return headings.map(h=>{const list=h.closest('.doc-part').nextElementSibling.querySelector('ul,ol'), bottom=h.getBoundingClientRect().bottom; return {heading:h.textContent,tag:list.tagName,gap:list.getBoundingClientRect().top-bottom,itemGap:list.firstElementChild.getBoundingClientRect().top-bottom};});})()"),json!([{"heading":"Folders","tag":if ordered { "OL" } else { "UL" },"gap":16,"itemGap":16},{"heading":"Naming","tag":if ordered { "OL" } else { "UL" },"gap":16,"itemGap":16}]),"README heading-to-list spacing retains one collapsed margin (ordered={ordered}, phone={phone})");
             assert_eq!(browser.eval("(() => {const tail=document.querySelector('.doc-body > .doc-part:last-child p'), list=tail.closest('.doc-part').previousElementSibling.querySelector('ul,ol'); return tail.getBoundingClientRect().top-list.getBoundingClientRect().bottom;})()"),json!(16),"the list's following prose retains one collapsed margin (ordered={ordered}, phone={phone})");
         }
@@ -282,10 +271,7 @@ fn document_titles_share_the_contents_column_and_folding_returns_the_full_width(
     let site = ParitySite::start();
     let Some(mut browser) = chrome() else { return };
     track_styles(&mut browser);
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1280,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    browser.viewport(1280, 900, false);
     browser.open(&site.url(&format!("/{DOC}")));
     assert!(browser.wait_for(
         "document.querySelector('.doc-body table tbody td')?.textContent === 'Example'",
@@ -299,9 +285,10 @@ fn document_titles_share_the_contents_column_and_folding_returns_the_full_width(
     );
     browser.eval("document.querySelector('.doc-toc summary').click()");
     assert!(browser.wait_for("!document.querySelector('.doc-toc details').open", SHOWN));
-    // A vertical scrollbar consumes viewport width; folding must release the entire contents
-    // column within that viewport, keeping exactly the two 24 px page gutters.
-    assert_eq!(browser.eval("(() => { const head=document.querySelector('.doc-head').getBoundingClientRect(), body=document.querySelector('.doc-body').getBoundingClientRect(); return {head:head.x,body:body.x,gutters:document.documentElement.clientWidth-body.width}; })()"),json!({"head":24,"body":24,"gutters":48}));
+    // A vertical scrollbar consumes viewport width, scrolling or not; folding must release the
+    // entire contents column within the width it leaves the page (`PAGE_WIDTH`), keeping exactly
+    // the two 24 px page gutters.
+    assert_eq!(browser.eval(&at_page_width("width => { const head=document.querySelector('.doc-head').getBoundingClientRect(), body=document.querySelector('.doc-body').getBoundingClientRect(); return {head:head.x,body:body.x,gutters:width-body.width}; }")),json!({"head":24,"body":24,"gutters":48}));
     let mut plain = responses();
     plain.get_mut("/api/document").unwrap()["document"]["cards"] = json!([]);
     let paragraphs = json!([
@@ -325,9 +312,7 @@ fn document_titles_share_the_contents_column_and_folding_returns_the_full_width(
         painted_layout(&mut browser);
         assert_eq!(browser.eval("document.querySelector('.doc-toc') === null && document.querySelector('.doc-body').getBoundingClientRect().x === 24"),json!(true),"{count} headings must not reserve a contents column (original TOC_MIN=3)");
         assert!(browser.wait_for("[...document.querySelectorAll('.doc-body > .doc-part')].every(e=>e.style.minHeight === '0px' && !e.querySelector('.viewport-placeholder, .section-loading'))",SHOWN),"paragraphs must release their lazy height reservation before measuring their gap");
-        browser.eval(
-            "new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))",
-        );
+        browser.frames();
         assert_eq!(browser.eval("const p=[...document.querySelectorAll('.doc-body p')]; p[1].getBoundingClientRect().top-p[0].getBoundingClientRect().bottom"),json!(16),"adjacent lazy prose slots keep one paragraph margin");
     }
     report_styles(
@@ -346,10 +331,7 @@ fn the_comment_dropdown_keeps_the_approved_component_geometry_and_action_row() {
     let site = ParitySite::with_data(data);
     let Some(mut browser) = chrome() else { return };
     track_styles(&mut browser);
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1280,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    browser.viewport(1280, 900, false);
     browser.open(&site.url(&format!("/{DOC}")));
     // As a reader would, once the control shows: under the document's ghost (`Settle`) the editor
     // it opens takes no focus, and nothing focuses it again once the ghost lifts.
@@ -386,7 +368,7 @@ fn the_comment_dropdown_keeps_the_approved_component_geometry_and_action_row() {
         "document.querySelector('.callout')?.closest('.doc-part').style.minHeight === '0px'",
         SHOWN
     ));
-    browser.eval("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+    browser.frames();
     assert_eq!(browser.eval("document.querySelector('.callout').getBoundingClientRect().top-document.querySelector('form.comment:not([hidden])').getBoundingClientRect().bottom"),json!(12),"an open comment keeps its following block's margin");
     browser.eval("document.querySelector('form.comment .dx-select-trigger').click()");
     assert!(browser.wait_for(
@@ -405,10 +387,7 @@ fn approve_reject_and_question_are_equal_sized_in_the_approved_component_style()
     let site = ParitySite::start();
     let Some(mut browser) = chrome() else { return };
     track_styles(&mut browser);
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1280,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    browser.viewport(1280, 900, false);
     browser.open(&site.url(&format!("/{DOC}#palette")));
     assert!(browser.wait_for(
         "document.querySelector('.doc-card .doc-actions button') !== null",
@@ -429,10 +408,7 @@ fn approve_reject_and_question_are_equal_sized_in_the_approved_component_style()
     );
     for phone in [false, true] {
         if phone {
-            browser.call(
-                "Emulation.setDeviceMetricsOverride",
-                json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true}),
-            );
+            browser.viewport(390, 844, true);
             assert!(browser.wait_for(
                 "document.querySelector('form.verdict').getBoundingClientRect().width < 400",
                 SHOWN
@@ -705,10 +681,7 @@ fn a_wide_table_folds_the_contents_after_its_body_arrives() {
     let site = ParitySite::with_data(data);
     let Some(mut browser) = chrome() else { return };
     track_styles(&mut browser);
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1280,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    browser.viewport(1280, 900, false);
     browser.open(&site.url(&format!("/{DOC}")));
     assert!(browser.wait_for("document.querySelector('[data-ready=document]') !== null && document.querySelector('.doc-body pre') !== null",SHOWN));
     painted_layout(&mut browser);
@@ -735,11 +708,8 @@ fn a_wide_table_folds_the_contents_after_its_body_arrives() {
         browser.eval("document.querySelector('.doc-toc details').open"),
         json!(true)
     );
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1200,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
-    browser.eval("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+    browser.viewport(1200, 900, false);
+    browser.frames();
     assert_eq!(
         browser.eval("document.querySelector('.doc-toc details').open"),
         json!(true),
@@ -761,10 +731,7 @@ impl Drop for ParitySite {
 #[test]
 fn history_pictures_keep_their_original_caps_outside_the_inner_decision() {
     let Some(mut browser) = chrome() else { return };
-    browser.call(
-        "Emulation.setEmulatedMedia",
-        json!({"features":[{"name":"prefers-color-scheme","value":"light"}]}),
-    );
+    browser.scheme("light");
     for comparison in [false, true] {
         let mut data = responses();
         let image = json!({"type":"image","image":{"src":PICTURE,"alt":"History picture","presentation":{"attributes":{"width":"600","height":"900"}}}});
@@ -948,10 +915,7 @@ fn document_controls_reveal_on_hover_and_keyboard_focus_with_the_original_verdic
             "rgb(224, 184, 76)",
         ),
     ] {
-        browser.call(
-            "Emulation.setEmulatedMedia",
-            json!({"features":[{"name":"prefers-color-scheme","value":mode}]}),
-        );
+        browser.scheme(mode);
         // Read the completed button colour transition without changing the palette
         // assertion or the existing bounded browser wait.
         assert!(browser.wait_for(&format!("getComputedStyle(document.querySelector('.v-approved')).backgroundColor === {} && getComputedStyle(document.querySelector('.v-rejected')).color === {} && getComputedStyle(document.querySelector('.v-question')).color === {}", json!(approved), json!(rejected), json!(question)), SHOWN));
@@ -1004,15 +968,9 @@ fn document_controls_reveal_on_hover_and_keyboard_focus_with_the_original_verdic
 fn waiting_columns_keep_status_tones_priority_edges_and_a_single_phone_stage() {
     let site = ParitySite::start();
     let Some(mut browser) = chrome() else { return };
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
-    );
+    browser.viewport(1440, 900, false);
     track_styles(&mut browser);
-    browser.call(
-        "Emulation.setEmulatedMedia",
-        json!({"features":[{"name":"prefers-color-scheme","value":"light"}]}),
-    );
+    browser.scheme("light");
     browser.open(&site.url("/tasks"));
     // Lifecycle and machine columns keep their status colours before observations arrive.
     assert!(browser.wait_for("document.querySelectorAll('.waiting-columns .column').length === 8 && document.querySelector('.taskcard') !== null",SHOWN), "the board shows {}", browser.eval("JSON.stringify({columns: [...document.querySelectorAll('.column')].map(c => c.dataset.status), cards: [...document.querySelectorAll('.taskcard')].map(c => c.dataset.slug)})"));
@@ -1048,10 +1006,7 @@ fn waiting_columns_keep_status_tones_priority_edges_and_a_single_phone_stage() {
         browser.eval("getComputedStyle(document.querySelector('.taskcard.p1')).borderLeftWidth"),
         json!("3px")
     );
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true}),
-    );
+    browser.viewport(390, 844, true);
     assert!(browser.wait_for("document.querySelectorAll('.waiting-columns .column').length === 1 && document.querySelector('.column[data-status=review] .taskcard') !== null", SHOWN));
     assert_eq!(
         browser.eval("document.documentElement.scrollWidth <= innerWidth"),
@@ -1064,10 +1019,7 @@ fn waiting_columns_keep_status_tones_priority_edges_and_a_single_phone_stage() {
 fn task_priority_and_recipient_labels_stay_inline_with_their_controls() {
     let site = ParitySite::start();
     let Some(mut browser) = chrome() else { return };
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":1280,"height":800,"deviceScaleFactor":1,"mobile":false}),
-    );
+    browser.viewport(1280, 800, false);
     browser.open(&site.url("/task/visual/in-progress"));
     browser.reveal("[id=\"composer-visual/in-progress\"]");
     assert!(browser.wait_for(
@@ -1079,10 +1031,7 @@ fn task_priority_and_recipient_labels_stay_inline_with_their_controls() {
         SHOWN
     ));
     for (mode, background) in [("light", "rgb(251, 250, 247)"), ("dark", "rgb(22, 21, 19)")] {
-        browser.call(
-            "Emulation.setEmulatedMedia",
-            json!({"features":[{"name":"prefers-color-scheme","value":mode}]}),
-        );
+        browser.scheme(mode);
         painted_layout(&mut browser);
         assert_eq!(browser.eval("(() => {const dot=getComputedStyle(document.querySelector('#task-thread .entry.owner'),'::before');return {width:dot.width,height:dot.height,shadow:dot.boxShadow};})()"), json!({"width":"8px","height":"8px","shadow":format!("{background} 0px 0px 0px 3px")}), "{mode}: the timeline gap must use the page background, leaving only the 8px comment dot visible");
         for selector in [".task-controls > label", "#task-send .row > label"] {
@@ -1103,10 +1052,7 @@ fn queue_agent_task_and_chat_surfaces_keep_their_compact_review_treatment() {
     let site = ParitySite::start();
     let Some(mut browser) = chrome() else { return };
     track_styles(&mut browser);
-    browser.call(
-        "Emulation.setEmulatedMedia",
-        json!({"features":[{"name":"prefers-color-scheme","value":"light"}]}),
-    );
+    browser.scheme("light");
     browser.open(&site.url("/queue"));
     assert!(browser.wait_for("document.querySelector('.queue-rank') !== null", SHOWN));
     painted_layout(&mut browser);
@@ -1259,10 +1205,7 @@ fn queue_agent_task_and_chat_surfaces_keep_their_compact_review_treatment() {
         browser.eval("getComputedStyle(document.querySelector('.quick-thread')).overflowY"),
         json!("auto")
     );
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true}),
-    );
+    browser.viewport(390, 844, true);
     assert!(browser.wait_for(
         "document.getElementById('quick-sheet').getBoundingClientRect().width < 400",
         SHOWN

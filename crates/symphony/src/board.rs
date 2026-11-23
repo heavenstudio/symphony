@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
 use serde::Serialize;
+use symphony_board::lock::Recovered as _;
 
 use crate::callouts::{Comment, archive_callouts, ledger_entry, parse_comments};
 use crate::clock::now_stamp;
@@ -59,13 +60,27 @@ pub(crate) fn relative(path: &Path, root: &Path) -> String {
 /// Every document of the project at `root`, named by its route (`docs/…`) and sorted by it; a
 /// checkout that holds none of its entrypoints' folders is refused, naming the first.
 pub fn scan(root: &Path) -> Result<Vec<Doc>, ReviewError> {
-    if let Some(folder) = Project::of(root).missing_documents(root) {
-        return Err(ReviewError(format!(
+    has_documents(root)?;
+    documents(root)
+}
+
+/// [`scan`], each document a save still waits on read as its page shows it
+/// ([`documents_shown`]): what `symphony status` reads, so that in a project that delivers by
+/// pull request it says what the page says, an agent's kept reply among it.
+pub fn scan_shown(root: &Path) -> Result<Vec<Doc>, ReviewError> {
+    has_documents(root)?;
+    documents_shown(root)
+}
+
+/// The refusal of a checkout with no documents folder.
+fn has_documents(root: &Path) -> Result<(), ReviewError> {
+    match Project::of(root).missing_documents(root) {
+        Some(folder) => Err(ReviewError(format!(
             "no {folder}/ directory under {}",
             root.display()
-        )));
+        ))),
+        None => Ok(()),
     }
-    documents(root)
 }
 
 /// Every document of the project at `root`, as [`scan`] reads them, and none in a checkout that
@@ -87,7 +102,7 @@ pub fn documents(root: &Path) -> Result<Vec<Doc>, ReviewError> {
             .map_err(|e| ReviewError(os_error(&e, &path)))?;
         let stamp = FileStamp::read(&path).map_err(|e| ReviewError(os_error(&e, &path)))?;
         {
-            let parsed = PARSED.lock().unwrap_or_else(|e| e.into_inner());
+            let parsed = PARSED.lock().recover();
             if let Some((before, doc)) = parsed.get(&key)
                 && *before == stamp
             {
@@ -105,7 +120,7 @@ pub fn documents(root: &Path) -> Result<Vec<Doc>, ReviewError> {
             decisions: parse_decisions(&lines),
         };
         if FileStamp::read(&path).ok().as_ref() == Some(&stamp) {
-            let mut parsed = PARSED.lock().unwrap_or_else(|e| e.into_inner());
+            let mut parsed = PARSED.lock().recover();
             if parsed.len() >= 2048 && !parsed.contains_key(&key) {
                 parsed.clear();
             }
@@ -365,29 +380,245 @@ pub fn register_files(root: &Path) -> Vec<PathBuf> {
     found
 }
 
-/// `--tidy`: supersede, resolve and regroup every register, then move answered callouts to the
-/// ledger. Its exit code.
+/// `--tidy`: supersede and resolve the cards of every document, a register's and those inline
+/// alike, regroup every register, then move answered callouts to the ledger. Its exit code.
+///
+/// The whole tidy is worked out before a file is written, so a card it cannot tidy leaves every
+/// file as it was, and the ledger is written before the pages it takes comments from, so a ledger
+/// that cannot be written leaves them on their pages. In a checkout on the default branch of a
+/// project that delivers by pull request ([`crate::commit::delivers`]) it writes no file, as an
+/// owner's save writes none there: a tracked edit left in that checkout stops every delivered
+/// land. It reads each document there as the page shows it, the saves still waiting laid on it,
+/// and keeps each file it changes as a save of its own, all of them together
+/// ([`crate::commit::pending::keep_together`]), which the page shows at once and one pull request
+/// delivers, the ledger never without the pages or the pages without it. A ledger that branch does
+/// not hold yet could not be delivered, so there the answered comments stay on their pages, and
+/// the tidy says so.
 pub fn tidy(root: &Path, now: Option<&str>, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     tidy_with(root, now, crate::register::sort_register, out, err)
+}
+
+/// [`tidy`] by the session `by`, which the saves it keeps for delivery name (`agent` when blank).
+pub fn tidy_as(
+    root: &Path,
+    now: Option<&str>,
+    by: &str,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
+    tidied(root, now, crate::register::sort_register, by, out, err)
 }
 
 /// How a tidy regroups a register, its cards read by the project's card kinds.
 pub type Sort = fn(&str, &Plugins) -> Result<String, ReviewError>;
 
-/// One register tidied: its new text, the slugs resolved and those superseded.
+/// One register tidied from its text `original`: its new text, the slugs resolved and those
+/// superseded.
 fn tidy_text(
-    path: &Path,
+    original: &str,
     stamp: &str,
     sort: Sort,
     plugins: &Plugins,
 ) -> Result<(String, Vec<String>, Vec<String>), ReviewError> {
-    let original = read_text(path).map_err(|e| ReviewError(os_error(&e, path)))?;
-    let (text, superseded) = supersede(&original, stamp);
+    let (text, superseded) = supersede(original, stamp);
     let (text, changed) = resolve(&text, stamp, plugins);
     let text = sort(&text, plugins)?;
-    check_nothing_lost(&original, &text, "tidying")?;
-    check_nothing_repeated(&original, &text, "tidying")?;
+    check_nothing_lost(original, &text, "tidying")?;
+    check_nothing_repeated(original, &text, "tidying")?;
     Ok((text, changed, superseded))
+}
+
+/// What a tidy says of one file: the cards it resolved, and those it superseded when any.
+fn said(changed: &[String], superseded: &[String]) -> String {
+    let resolved = if changed.is_empty() {
+        "(none)".to_string()
+    } else {
+        changed.join(", ")
+    };
+    let superseded = if superseded.is_empty() {
+        String::new()
+    } else {
+        format!("superseded: {}\n", superseded.join(", "))
+    };
+    format!("resolved: {resolved}\n{superseded}")
+}
+
+/// Every document of the project at `root` that holds a card and no register region, `regions`
+/// being those that hold one ([`register_files`]): its cards sit inline, each at the place the
+/// document says what it decides.
+pub fn inline_files(root: &Path, regions: &[PathBuf]) -> Vec<PathBuf> {
+    let project = Project::of(root);
+    let mut found: Vec<PathBuf> = document_files(root, &project)
+        .into_iter()
+        .filter(|path| !regions.contains(path))
+        .filter(|path| {
+            read_text(path).is_ok_and(|text| !parse_decisions(&splitlines(&text)).is_empty())
+        })
+        .collect();
+    symphony_board::order::sort_by_key(&mut found, &|path| path.to_string_lossy().to_string());
+    found
+}
+
+/// One write of a tidy: the file, its new text, what the tidy says once it is written, and the
+/// words a failure to write it opens with.
+struct Step {
+    path: PathBuf,
+    text: String,
+    said: String,
+    failed: String,
+}
+
+impl Step {
+    /// The step's text written over its file whole, its folder made first.
+    fn write(&self) -> Result<(), String> {
+        if let Some(folder) = self.path.parent() {
+            std::fs::create_dir_all(folder).map_err(|e| os_error(&e, folder))?;
+        }
+        write_whole(&self.path, &self.text)
+            .map_err(|e| format!("{}{}", self.failed, os_error(&e, &self.path)))
+    }
+}
+
+/// A tidy of the checkout at `root` worked out, nothing written yet: its writes in the order it
+/// reaches them, a file's later write over its earlier one. `kept` when the tidy keeps its
+/// changes for delivery rather than writing them (a checkout on the default branch of a project
+/// that delivers by pull request): each file is then read as the page shows it, the saves still
+/// waiting laid on it ([`crate::commit::pending::shown`]).
+struct Plan {
+    root: PathBuf,
+    kept: bool,
+    steps: Vec<Step>,
+    /// Said once a kept tidy is done: what it left as it was, and why.
+    left: Vec<String>,
+}
+
+/// A file a tidy changes: its text before the tidy, none for a file not there yet, and after.
+struct Change {
+    path: PathBuf,
+    before: Option<String>,
+    after: String,
+}
+
+impl Plan {
+    fn new(root: &Path, kept: bool) -> Self {
+        Self {
+            root: root.to_path_buf(),
+            kept,
+            steps: Vec::new(),
+            left: Vec::new(),
+        }
+    }
+
+    /// The text of `path` before the tidy: the file's own, with the saves still waiting laid on
+    /// it where the tidy keeps its changes.
+    fn original(&self, path: &Path) -> std::io::Result<String> {
+        let text = read_text(path)?;
+        if !self.kept {
+            return Ok(text);
+        }
+        let file = relative(path, &self.root);
+        Ok(crate::commit::pending::shown(&self.root, &file, text))
+    }
+
+    /// The text of `path` as the tidy leaves it so far: its last write here, else its original.
+    fn read(&self, path: &Path) -> std::io::Result<String> {
+        match self.steps.iter().rev().find(|step| step.path == path) {
+            Some(step) => Ok(step.text.clone()),
+            None => self.original(path),
+        }
+    }
+
+    /// The files the tidy changes, each once in the order it reaches them: a file written with
+    /// the text it already holds is not changed.
+    fn changes(&self) -> Vec<Change> {
+        let mut reached: Vec<&Path> = Vec::new();
+        for step in &self.steps {
+            if !reached.contains(&step.path.as_path()) {
+                reached.push(&step.path);
+            }
+        }
+        reached
+            .into_iter()
+            .filter_map(|path| {
+                let before = self.original(path).ok();
+                let after = self.read(path).ok()?;
+                (before.as_ref() != Some(&after)).then(|| Change {
+                    path: path.to_path_buf(),
+                    before,
+                    after,
+                })
+            })
+            .collect()
+    }
+}
+
+/// The tidy of the project at `root`, worked out and nothing written; the first file it cannot
+/// tidy, as the line it is refused with.
+fn plan(
+    root: &Path,
+    project: &Project,
+    stamp: &str,
+    sort: Sort,
+    plugins: &Plugins,
+    kept: bool,
+) -> Result<Plan, String> {
+    let mut plan = Plan::new(root, kept);
+    let regions = register_files(root);
+    for path in &regions {
+        let rel = relative(path, root);
+        let failed = format!("{rel} not tidied: ");
+        let (text, changed, superseded) = plan
+            .read(path)
+            .map_err(|e| ReviewError(os_error(&e, path)))
+            .and_then(|original| tidy_text(&original, stamp, sort, plugins))
+            .map_err(|problem| format!("{failed}{problem}"))?;
+        let said = format!("{}regrouped {rel}\n", said(&changed, &superseded));
+        plan.steps.push(Step {
+            path: path.clone(),
+            text,
+            said,
+            failed,
+        });
+    }
+    // A document whose cards all sit inline has nothing to regroup: its cards are resolved and
+    // superseded where they are, and it is named only when one was.
+    for path in inline_files(root, &regions) {
+        let rel = relative(&path, root);
+        let failed = format!("{rel} not tidied: ");
+        let (text, changed, superseded) = plan
+            .read(&path)
+            .map_err(|e| ReviewError(os_error(&e, &path)))
+            .and_then(|original| tidy_text(&original, stamp, sort, plugins))
+            .map_err(|problem| format!("{failed}{problem}"))?;
+        if changed.is_empty() && superseded.is_empty() {
+            continue;
+        }
+        let said = format!("{}tidied {rel}\n", said(&changed, &superseded));
+        plan.steps.push(Step {
+            path,
+            text,
+            said,
+            failed,
+        });
+    }
+    archive(root, project, stamp, &mut plan)?;
+    Ok(plan)
+}
+
+/// What a tidy kept for delivery says once it is done, `kept` the files it kept, each with its
+/// save's number.
+fn kept_said(project: &Project, kept: &[(String, u64)]) -> String {
+    let each: Vec<String> = kept
+        .iter()
+        .map(|(file, number)| format!("{file} (save {number})"))
+        .collect();
+    format!(
+        "kept for delivery: {}. This project delivers by pull request ([land] delivery), so a \
+         tidy writes no file in a checkout on {}: the pages show it now, and a pull request \
+         delivers it.\n",
+        each.join(", "),
+        project.default_branch
+    )
 }
 
 /// [`tidy`] with the regroup given, so a test can hand it one that drops a line.
@@ -395,6 +626,17 @@ pub fn tidy_with(
     root: &Path,
     now: Option<&str>,
     sort: Sort,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
+    tidied(root, now, sort, "", out, err)
+}
+
+fn tidied(
+    root: &Path,
+    now: Option<&str>,
+    sort: Sort,
+    by: &str,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> i32 {
@@ -411,55 +653,117 @@ pub fn tidy_with(
     let stamp = now
         .filter(|now| !now.is_empty())
         .map_or_else(now_stamp, str::to_string);
-    for path in register_files(root) {
-        let rel = relative(&path, root);
-        let written = tidy_text(&path, &stamp, sort, &plugins).and_then(|tidied| {
-            write_whole(&path, &tidied.0)
-                .map(|()| tidied)
-                .map_err(|e| ReviewError(os_error(&e, &path)))
-        });
-        let (_, changed, superseded) = match written {
-            Ok(tidied) => tidied,
+    // Where the host alone writes the default branch, the checkout on it is written by nothing
+    // here, as an owner's save writes nothing there: each change is kept as a save
+    // (`commit::pending`), read and kept under the lock the server's saves take.
+    let kept = crate::commit::on_main(root) && crate::commit::delivers(root);
+    let _held = if kept {
+        match crate::commit::write_lock(root) {
+            Ok(held) => held.map(crate::commit::Held),
             Err(problem) => {
-                let _ = writeln!(err, "✖ {rel} not tidied: {problem}");
+                let _ = writeln!(err, "✖ not tidied: {problem}");
                 return 1;
             }
-        };
-        let _ = writeln!(
-            out,
-            "resolved: {}",
-            if changed.is_empty() {
-                "(none)".to_string()
-            } else {
-                changed.join(", ")
-            }
-        );
-        if !superseded.is_empty() {
-            let _ = writeln!(out, "superseded: {}", superseded.join(", "));
         }
-        let _ = writeln!(out, "regrouped {rel}");
-    }
-    match archive(root, &stamp, out) {
-        Ok(()) => 0,
+    } else {
+        None
+    };
+    let plan = match plan(root, &project, &stamp, sort, &plugins, kept) {
+        Ok(plan) => plan,
         Err(problem) => {
             let _ = writeln!(err, "✖ {problem}");
+            return 1;
+        }
+    };
+    if kept {
+        return keep_for_delivery(root, &project, &plan, by, out, err);
+    }
+    for step in &plan.steps {
+        if let Err(problem) = step.write() {
+            let _ = writeln!(err, "✖ {problem}");
+            return 1;
+        }
+        let _ = out.write_all(step.said.as_bytes());
+    }
+    0
+}
+
+/// The tidy `plan` of the checkout at `root` on the default branch of a project that delivers by
+/// pull request, kept and not written: each file it changes kept as a save of its own, in the
+/// order it reaches them (a ledger before its pages), all of them kept together
+/// ([`crate::commit::pending::keep_together`]), so no page reaches the default branch without the
+/// ledger that holds the comments it gave. `by` is the session tidying. Its exit code.
+fn keep_for_delivery(
+    root: &Path,
+    project: &Project,
+    plan: &Plan,
+    by: &str,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
+    for step in &plan.steps {
+        let _ = out.write_all(step.said.as_bytes());
+    }
+    for left in &plan.left {
+        let _ = writeln!(out, "{left}");
+    }
+    let (files, edits): (Vec<String>, Vec<crate::commit::Edit>) = (plan.changes().into_iter())
+        .map(|change| {
+            let file = relative(&change.path, root);
+            let edit = crate::commit::Edit {
+                rel: file.clone(),
+                base: change.before.unwrap_or_default(),
+                new: change.after,
+            };
+            (file, edit)
+        })
+        .unzip();
+    match crate::commit::pending::keep_together(root, edits, by) {
+        Ok(numbers) => {
+            if !numbers.is_empty() {
+                let kept: Vec<(String, u64)> = files.into_iter().zip(numbers).collect();
+                let _ = out.write_all(kept_said(project, &kept).as_bytes());
+            }
+            0
+        }
+        Err(unkept) => {
+            let file = &files[unkept.at];
+            let _ = writeln!(
+                err,
+                "✖ {file} not kept for delivery: {}\n  nothing of this tidy is kept: the pages and \
+                 {} stay as they were",
+                unkept.problem, project.default_branch
+            );
+            if unkept.left > 0 {
+                let _ = writeln!(
+                    err,
+                    "  ({} of its saves written before it stay in the journal ({}) until a person \
+                     removes them: each is listed as held on its page's note, and none is shown, \
+                     delivered or holds back another save)",
+                    unkept.left,
+                    crate::commit::pending::journal_below()
+                );
+            }
             1
         }
     }
 }
 
-/// Move every answered callout of the project's documents to the ledger in its first history
-/// folder, saying which files gave some. A project without a history folder keeps them on their
-/// pages.
-fn archive(root: &Path, stamp: &str, out: &mut dyn Write) -> Result<(), ReviewError> {
-    let project = Project::of(root);
+/// Move every answered callout of the project's documents, as the tidy leaves them so far, to
+/// the ledger in its first history folder: the writes that does, the ledger's first and then each
+/// document's, saying how many it gave, so a ledger that cannot be written leaves every comment
+/// on its page. A project without a history folder keeps them on their pages, and so does a tidy
+/// kept for delivery while the default branch holds no ledger yet: a save of a file that branch
+/// does not hold cannot be delivered ([`crate::commit::pending::holds_file`]).
+fn archive(root: &Path, project: &Project, stamp: &str, plan: &mut Plan) -> Result<(), String> {
     let Some(history) = project.history().into_iter().next() else {
         return Ok(());
     };
-    let fail = |e: std::io::Error, path: &Path| ReviewError(os_error(&e, path));
+    let fail = |e: std::io::Error, path: &Path| os_error(&e, path);
     let mut entries: Vec<String> = Vec::new();
-    for path in document_files(root, &project) {
-        let (text, taken) = archive_callouts(&read_text(&path).map_err(|e| fail(e, &path))?);
+    let mut pages: Vec<Step> = Vec::new();
+    for path in document_files(root, project) {
+        let (text, taken) = archive_callouts(&plan.read(&path).map_err(|e| fail(e, &path))?);
         if taken.is_empty() {
             continue;
         }
@@ -469,21 +773,39 @@ fn archive(root: &Path, stamp: &str, out: &mut dyn Write) -> Result<(), ReviewEr
                 .iter()
                 .map(|comment| ledger_entry(&rel, comment, stamp)),
         );
-        write_whole(&path, &text).map_err(|e| fail(e, &path))?;
-        let _ = writeln!(out, "archived: {rel} ({})", taken.len());
+        let said = format!("archived: {rel} ({})\n", taken.len());
+        pages.push(Step {
+            path,
+            text,
+            said,
+            failed: String::new(),
+        });
     }
     if entries.is_empty() {
         return Ok(());
     }
     let ledger = root.join(history).join(LEDGER);
-    if let Some(folder) = ledger.parent() {
-        std::fs::create_dir_all(folder).map_err(|e| fail(e, folder))?;
+    let named = relative(&ledger, root);
+    if plan.kept && !crate::commit::pending::holds_file(root, &named) {
+        plan.left.push(format!(
+            "archived: none of {} answered comments, as {} does not hold {named} yet: they stay \
+             on their pages until a tidy in a task's worktree moves them",
+            entries.len(),
+            project.default_branch
+        ));
+        return Ok(());
     }
     let old = if ledger.exists() {
-        read_text(&ledger).map_err(|e| fail(e, &ledger))?
+        plan.read(&ledger).map_err(|e| fail(e, &ledger))?
     } else {
         LEDGER_HEAD.to_string()
     };
-    let new = format!("{}\n\n{}", old.trim_end_matches('\n'), entries.join("\n"));
-    write_whole(&ledger, &new).map_err(|e| fail(e, &ledger))
+    plan.steps.push(Step {
+        text: format!("{}\n\n{}", old.trim_end_matches('\n'), entries.join("\n")),
+        path: ledger,
+        said: String::new(),
+        failed: String::new(),
+    });
+    plan.steps.extend(pages);
+    Ok(())
 }

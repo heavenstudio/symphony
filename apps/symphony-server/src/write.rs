@@ -1,5 +1,6 @@
 //! Native owner writes. Validate the browser's origin before reading or dispatching its body.
 
+use crate::api::error;
 use crate::front::Shared;
 use axum::body::Body;
 use axum::extract::Request;
@@ -10,15 +11,6 @@ use std::sync::Arc;
 
 /// JSON saves carry text and references; uploaded file bytes have their own route and cap.
 const JSON_BYTES: usize = 2 * 1024 * 1024;
-
-fn error(status: StatusCode, why: impl ToString) -> Response {
-    (
-        status,
-        [(header::CACHE_CONTROL, "no-store")],
-        Json(json!({"error":why.to_string()})),
-    )
-        .into_response()
-}
 
 // Why a write was refused, as its log line says.
 const HOST_REFUSED: &str = "its Host is not this machine's";
@@ -86,6 +78,9 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
         Ok(payload) => payload,
         Err((status, why)) => return error(status, why),
     };
+    if route == symphony_api::workflow::WORKFLOW_APPLY_ROUTE {
+        return workflow_apply(shared, payload).await;
+    }
     let shared = shared.clone();
     match crate::spawn::blocking(move || {
         let saves = shared
@@ -121,7 +116,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
         {
             eprintln!("· the pages were not read again after a pending save: {error}");
         }
-        if result.is_ok() && route == "/api/task-cancel" && shared.installed_ui {
+        if result.is_ok() && route == "/api/task-cancel" && shared.one_server() {
             let root = shared.root.clone();
             let slug = payload["slug"].as_str().unwrap_or("").to_string();
             let worker_root = root.clone();
@@ -142,7 +137,38 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
             StatusCode::from_u16(e.status).unwrap_or(StatusCode::BAD_REQUEST),
             e.error,
         ),
-        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e),
+        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+/// The owner's workflow operation (`symphony::save::WORKFLOW_APPLY`): its result, or its refusal
+/// as every save's is answered, with the guard that refused it beside the words as `guard` where
+/// one did ([`symphony_api::workflow::GuardRefusal`]), which a task's page draws by its word.
+async fn workflow_apply(shared: &Arc<Shared>, payload: serde_json::Value) -> Response {
+    let shared = shared.clone();
+    let applied = crate::spawn::blocking(move || {
+        let saves = shared
+            .saves
+            .get_or_init(|| symphony::save::Saves::start(&shared.root));
+        saves.apply_workflow(&payload)
+    })
+    .await;
+    match applied {
+        Ok(Ok(value)) => ([(header::CACHE_CONTROL, "no-store")], Json(value)).into_response(),
+        Ok(Err(refused)) => {
+            let status = StatusCode::from_u16(refused.failure.status);
+            let status = status.unwrap_or(StatusCode::BAD_REQUEST);
+            let Some(guard) = refused.guard else {
+                return error(status, refused.failure.error);
+            };
+            (
+                status,
+                [(header::CACHE_CONTROL, "no-store")],
+                Json(json!({"error": refused.failure.error, "guard": guard})),
+            )
+                .into_response()
+        }
+        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }
 
@@ -160,11 +186,9 @@ async fn attempt(shared: &Arc<Shared>, route: &str, request: Request) -> Respons
         Ok(payload) => payload,
         Err((status, why)) => return error(status, why),
     };
-    let Some(hub) = shared.api.get().cloned() else {
-        return error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "the Symphony server is starting",
-        );
+    let hub = match shared.hub() {
+        Ok(hub) => hub,
+        Err(starting) => return *starting,
     };
     let view = route == symphony_api::ATTEMPT_VIEW_ROUTE;
     let answered = crate::spawn::blocking(move || {
@@ -175,11 +199,7 @@ async fn attempt(shared: &Arc<Shared>, route: &str, request: Request) -> Respons
         }
     })
     .await;
-    match answered {
-        Ok(Ok(value)) => ([(header::CACHE_CONTROL, "no-store")], Json(value)).into_response(),
-        Ok(Err((status, why))) => error(status, why),
-        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e),
-    }
+    crate::api::answered(answered.map(|answer| answer.map(Json)), "")
 }
 
 /// Collect no more than the JSON cap, even for a chunked body with no length header. Once a
@@ -252,7 +272,7 @@ async fn upload(shared: &Arc<Shared>, request: Request) -> Response {
     let too_large = |bytes: usize| {
         error(
             StatusCode::PAYLOAD_TOO_LARGE,
-            symphony::uploads::Refusal::TooLarge { bytes },
+            symphony::uploads::Refusal::TooLarge { bytes }.to_string(),
         )
     };
     if let Some(length) = request
@@ -290,7 +310,7 @@ async fn upload(shared: &Arc<Shared>, request: Request) -> Response {
             StatusCode::from_u16(e.status).unwrap_or(StatusCode::BAD_REQUEST),
             e.error,
         ),
-        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e),
+        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }
 

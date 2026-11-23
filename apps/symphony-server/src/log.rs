@@ -13,6 +13,7 @@ use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use symphony_board::lock::Recovered as _;
 use symphony_board::sys::Stdio;
 
 pub struct Log {
@@ -38,7 +39,7 @@ enum Failure {
 impl Control {
     fn record(&self, out: &mut impl Write, report: &mut impl Write, bytes: &[u8]) {
         let error = line(out, bytes).err();
-        let mut failure = self.failure.lock().unwrap_or_else(|e| e.into_inner());
+        let mut failure = self.failure.lock().recover();
         if let Some(error) = error
             && matches!(*failure, Failure::Clean)
         {
@@ -61,7 +62,7 @@ static ORIGINAL_OUTPUT: Mutex<Option<[i32; 2]>> = Mutex::new(None);
 /// A replacement generation must inherit the real destinations, rather than pipes serviced by
 /// the generation that is about to exit. Take owned duplicates before spawning, not in pre_exec.
 pub(crate) fn output_for_reload() -> io::Result<Option<(Stdio, Stdio)>> {
-    let original = ORIGINAL_OUTPUT.lock().unwrap_or_else(|e| e.into_inner());
+    let original = ORIGINAL_OUTPUT.lock().recover();
     original
         .as_ref()
         .map(|fds| {
@@ -109,7 +110,7 @@ enum Next<R> {
 /// cannot be made, gives the stream its own destination back instead: undated lines, and no
 /// failing write.
 fn recapture(stream: i32, at_once: bool) -> Next<UnixStream> {
-    let original = ORIGINAL_OUTPUT.lock().unwrap_or_else(|e| e.into_inner());
+    let original = ORIGINAL_OUTPUT.lock().recover();
     let Some(saved) = original.as_ref() else {
         return Next::Over;
     };
@@ -143,7 +144,7 @@ impl Log {
     /// Called once before the runtime starts. Home has already connected both streams to its log;
     /// foreground callers retain their existing pipes. Preserve each stream's destination.
     pub fn start() -> io::Result<Self> {
-        let mut original = ORIGINAL_OUTPUT.lock().unwrap_or_else(|e| e.into_inner());
+        let mut original = ORIGINAL_OUTPUT.lock().recover();
         if original.is_some() {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
@@ -190,7 +191,7 @@ impl Log {
     pub fn finish(self) -> io::Result<()> {
         io::stdout().flush()?;
         io::stderr().flush()?;
-        let mut original = ORIGINAL_OUTPUT.lock().unwrap_or_else(|e| e.into_inner());
+        let mut original = ORIGINAL_OUTPUT.lock().recover();
         redirect(self.saved[0].as_raw_fd(), 1)?;
         redirect(self.saved[1].as_raw_fd(), 2)?;
         *original = None;
