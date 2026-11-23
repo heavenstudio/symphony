@@ -549,13 +549,6 @@ fn plugins(file: &FileRead, project: &Project) -> SettingsEntry {
                 SettingKind::Switch,
                 "off",
             ),
-            file.setting(
-                &["plugins"],
-                "loopback",
-                "Send each call through a JSON round trip",
-                SettingKind::Switch,
-                "off",
-            ),
         ],
         ..entry(
             "plugins",
