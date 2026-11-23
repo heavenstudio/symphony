@@ -278,6 +278,9 @@ fn landing_contract_classifies_changed_and_extra_paths_and_reports_owner_lines_a
         .open(value["write_lock"].as_str().unwrap())
         .unwrap();
     assert!(file.try_lock().is_err(), "must contend with document saves");
+    // Unlocked before its close, as the contract says: another test's git spawn may hold a copy
+    // of its descriptor, and a close alone releases the lock only with the last copy.
+    held.unlock().unwrap();
     drop(held);
     file.try_lock().unwrap();
 }

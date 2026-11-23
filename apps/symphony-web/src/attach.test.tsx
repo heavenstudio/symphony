@@ -5,17 +5,17 @@ import {
   AttachControls,
   type Attachments,
   compose,
-  isUpload,
   MAX_FILES,
   restored,
   routed,
   saved,
+  sendAfter,
+  shownOf,
   storageKey,
-  take,
-  tooLarge,
-  upload,
+  UNSENT,
 } from "./attach";
-import { reply, server, until } from "./testing";
+import { isUpload, take, tooLarge, upload } from "./attach-upload";
+import { reply, server, turn, until } from "./testing";
 import { UPLOAD_ACCEPT, UPLOAD_MAX_BYTES, type Upload } from "./wire";
 
 afterEach(() => {
@@ -147,7 +147,12 @@ describe("an upload", () => {
 });
 
 describe("a batch of files", () => {
-  const held = (files: Upload[] = []): Attachments => ({ files, pending: [], trouble: "earlier" });
+  const held = (files: Upload[] = []): Attachments => ({
+    files,
+    pending: [],
+    queued: [],
+    trouble: "earlier",
+  });
 
   it("is sent one at a time, each shown on its way and kept once stored", async () => {
     const attachments = held();
@@ -254,6 +259,208 @@ describe("a batch of files", () => {
     expect(changed).toHaveBeenCalledTimes(1);
     expect(attachments.files).toEqual([]);
     expect(attachments.pending).toEqual(["one.png"]);
+  });
+});
+
+describe("a composer's files before their sending has come", () => {
+  const held = (): Attachments => ({ files: [], pending: [], queued: [], trouble: null });
+
+  /** The sending, come as `come` says: a take it records, or none, which fails. */
+  function sending(come: boolean) {
+    const took = vi.fn(async () => {});
+    const load = vi.fn(async () => {
+      if (!come) throw new Error("no such chunk");
+      return { take: took };
+    });
+    return { took, load };
+  }
+
+  /** The page's shell, which says its build is `gone`. */
+  function aShell(gone: boolean) {
+    const asked = vi.fn(async () => gone);
+    vi.stubGlobal("window", { reviewShell: { gone: asked } });
+    return asked;
+  }
+
+  it("are taken once it has come, after the batches before them", async () => {
+    const { took, load } = sending(true);
+    const attachments = held();
+    const [changed, kept, alive] = [vi.fn(), vi.fn(), () => true];
+    let before: () => void = () => {};
+    const earlier = new Promise<void>((done) => {
+      before = done;
+    });
+    const files = [picked("one.png")];
+    const done = sendAfter(earlier, files, attachments, changed, kept, alive, load);
+    expect(attachments.queued).toEqual(["one.png"]);
+    expect(changed).toHaveBeenCalledOnce();
+    await Promise.resolve();
+    expect(load).not.toHaveBeenCalled();
+    let queuedAtTake: string[] = [];
+    took.mockImplementation(async () => {
+      queuedAtTake = [...attachments.queued];
+    });
+    before();
+    await done;
+    expect(took).toHaveBeenCalledExactlyOnceWith(files, attachments, changed, kept, alive);
+    expect(queuedAtTake).toEqual([]);
+  });
+
+  it("say they were not sent, once the shell says the build is there", async () => {
+    const gone = aShell(false);
+    const attachments = held();
+    const changed = vi.fn();
+    await sendAfter(
+      Promise.resolve(),
+      [picked("one.png")],
+      attachments,
+      changed,
+      () => {},
+      () => true,
+      sending(false).load,
+    );
+    expect(gone).toHaveBeenCalledOnce();
+    expect(attachments.trouble).toBe(UNSENT);
+    // Once as they were queued, once as they were said not sent.
+    expect(changed).toHaveBeenCalledTimes(2);
+    expect([attachments.files, attachments.pending, attachments.queued]).toEqual([[], [], []]);
+  });
+
+  it("say nothing where the build is gone, or the composer left", async () => {
+    for (const [gone, alive] of [
+      [true, true],
+      [false, false],
+    ] as const) {
+      const asked = aShell(gone);
+      const attachments = held();
+      const changed = vi.fn();
+      await sendAfter(
+        Promise.resolve(),
+        [picked("one.png")],
+        attachments,
+        changed,
+        () => {},
+        () => alive,
+        sending(false).load,
+      );
+      expect([gone, alive, attachments.trouble, attachments.queued]).toEqual([
+        gone,
+        alive,
+        null,
+        [],
+      ]);
+      // Only as they were queued.
+      expect(changed).toHaveBeenCalledOnce();
+      expect(asked).toHaveBeenCalledTimes(alive ? 1 : 0);
+    }
+  });
+
+  it("hold the composer busy, as uploading chips, while it comes, and leave as it fails", async () => {
+    aShell(false);
+    const attachments = held();
+    let fail: (why: Error) => void = () => {};
+    const load = () =>
+      new Promise<{ take: typeof take }>((_, failed) => {
+        fail = failed;
+      });
+    const done = sendAfter(
+      Promise.resolve(),
+      [picked("one.png"), picked("two.png")],
+      attachments,
+      () => {},
+      () => {},
+      () => true,
+      load,
+    );
+    await turn();
+    const waiting = shownOf(attachments);
+    expect(waiting).toMatchObject({ busy: true, pending: ["one.png", "two.png"], empty: true });
+    const chips = renderToStaticMarkup(<AttachControls attach={{ ...attachOf([]), ...waiting }} />);
+    expect(chips).toContain("Uploading one.png…");
+    expect(chips).toContain("Uploading two.png…");
+    fail(new Error("no such chunk"));
+    await done;
+    const said = shownOf(attachments);
+    expect(said).toMatchObject({ busy: false, pending: [], trouble: UNSENT });
+    const after = renderToStaticMarkup(<AttachControls attach={{ ...attachOf([]), ...said }} />);
+    expect(after).not.toContain("Uploading");
+    expect(after).toContain(UNSENT);
+  });
+
+  it("hold the composer busy with no gap as the sending takes over, a later batch queued behind", async () => {
+    const attachments = held();
+    let come: (chunk: { take: typeof take }) => void = () => {};
+    const load = vi.fn(
+      () =>
+        new Promise<{ take: typeof take }>((done) => {
+          come = done;
+        }),
+    );
+    // Each file is on its way for good: what the composer shows while it uploads.
+    const sent = (
+      batch: readonly File[],
+      into: Attachments,
+      ...rest: [() => void, () => void, () => boolean]
+    ) => take(batch, into, ...rest, () => new Promise<Upload>(() => {}));
+    const first = sendAfter(
+      Promise.resolve(),
+      [picked("one.png")],
+      attachments,
+      () => {},
+      () => {},
+      () => true,
+      load,
+    );
+    sendAfter(
+      first,
+      [picked("two.png")],
+      attachments,
+      () => {},
+      () => {},
+      () => true,
+      load,
+    );
+    expect(shownOf(attachments).pending).toEqual(["one.png", "two.png"]);
+    await turn();
+    come({ take: sent });
+    await turn();
+    expect(attachments).toMatchObject({ pending: ["one.png"], queued: ["two.png"] });
+    expect(shownOf(attachments)).toMatchObject({ busy: true, pending: ["one.png", "two.png"] });
+  });
+
+  it("are not counted against the most files a post carries until their turn", async () => {
+    const attachments = held();
+    attachments.files = Array.from({ length: MAX_FILES - 1 }, (_, at) => stored(`${at}.png`, true));
+    attachments.queued = ["later.png"];
+    await take(
+      [picked("now.png")],
+      attachments,
+      () => {},
+      () => {},
+      () => true,
+      async (file) => stored(file.name, true),
+    );
+    expect(attachments.files).toHaveLength(MAX_FILES);
+    expect(attachments.trouble).toBeNull();
+  });
+
+  it("are sent by the uploads' chunk itself by default", async () => {
+    vi.stubGlobal("document", { getElementById: () => null });
+    const asked = server();
+    const attachments = held();
+    const done = sendAfter(
+      Promise.resolve(),
+      [picked("one.png")],
+      attachments,
+      () => {},
+      () => {},
+      () => true,
+    );
+    await until(() => expect(asked).toHaveLength(1));
+    expect(asked[0]?.url).toBe("/api/upload?name=one.png");
+    asked[0]?.answer(reply(200, stored("one.png", true)));
+    await done;
+    expect(attachments.files).toEqual([stored("one.png", true)]);
   });
 });
 

@@ -234,11 +234,18 @@ describe("an entry", () => {
   });
 
   it("draws one that is a sentence alone with where it is said, and no setting", () => {
-    const html = draw(entryOf("workflow"));
-    expect(html).toContain('<span class="setting-state">Built in</span>');
-    expect(html).toContain('<p class="setting-from">default: no [workflow] written</p>');
+    const html = draw(entryOf("plugin-shop-catalogue"));
+    expect(html).toContain('<span class="setting-state">Read</span>');
+    expect(html).toContain('<p class="setting-from">catalogue.toml, line 1</p>');
     expect(html).not.toContain("<dl");
     expect(html).not.toContain("setting-tag");
+  });
+
+  it("draws the workflow as the reviewed sentence its default says", () => {
+    const html = draw(entryOf("workflow"));
+    expect(html).toContain('<p class="setting-sentence">The board&#x27;s own, built-in v1.</p>');
+    expect(html).toContain("[workflow] · default: no [workflow] written");
+    expect(html).not.toContain("setting-state");
   });
 
   it("draws one a server sent with nothing but its name", () => {
@@ -282,8 +289,9 @@ describe("the page", () => {
       "reviewed Shown here, changed by a reviewed task",
       "device This device",
     ]);
-    expect([...html.matchAll(/id="setting-([a-z]+)"/g)].map((found) => found[1])).toEqual([
+    expect([...html.matchAll(/id="setting-([a-z-]+)"/g)].map((found) => found[1])).toEqual([
       "herdr",
+      "plugin-shop-catalogue",
       "models",
       "landing",
       "workflow",

@@ -166,8 +166,21 @@ fn a_refusal_no_guard_gives_reads_no_guard() {
 #[test]
 fn a_guards_refusal_is_known_by_its_code_whatever_its_words_say() {
     use symphony_api::workflow::RefusalCode::{self, *};
-    // Every code, decided here: a code added to the board fails to compile until it is.
-    let a_guards = |code: RefusalCode| match code {
+    // Each code named once, and from those names both the match that decides it and the list
+    // the test walks: a code added to the board fails to compile until it is decided, and a code
+    // decided is a code tested.
+    macro_rules! decided {
+        ($($guard:ident)|+ => true, $($other:ident)|+ => false) => {
+            (
+                |code: RefusalCode| match code {
+                    $($guard)|+ => true,
+                    $($other)|+ => false,
+                },
+                [$($guard,)+ $($other,)+],
+            )
+        };
+    }
+    let (a_guards, every) = decided!(
         GuardUnavailable | StaleInput | Unauthorized => true,
         StaleTask
         | StaleWorkflow
@@ -180,25 +193,8 @@ fn a_guards_refusal_is_known_by_its_code_whatever_its_words_say() {
         | UnsupportedActivation
         | UnsupportedWriter
         | UnsupportedAdapter
-        | ExplicitActionRequired => false,
-    };
-    let every = [
-        StaleTask,
-        StaleWorkflow,
-        StaleActivation,
-        StaleInput,
-        UnknownId,
-        RemovedId,
-        Unauthorized,
-        Dependency,
-        Capacity,
-        HumanWait,
-        GuardUnavailable,
-        UnsupportedActivation,
-        UnsupportedWriter,
-        UnsupportedAdapter,
-        ExplicitActionRequired,
-    ];
+        | ExplicitActionRequired => false
+    );
     for code in every {
         for words in [
             "",

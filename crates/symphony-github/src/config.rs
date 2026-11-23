@@ -250,6 +250,12 @@ impl Config {
 pub struct Loaded {
     pub config: Config,
     pub revision: String,
+    /// The text they were read from: none for no file. What says where a key is written
+    /// ([`line`]).
+    pub text: Option<String>,
+    /// Where they were read, as a person names it: the file, and the branch where the source
+    /// knows it (`symphony-github.toml on main`).
+    pub place: String,
 }
 
 impl Loaded {
@@ -259,8 +265,34 @@ impl Loaded {
         Loaded {
             config: Config::default(),
             revision: "absent".into(),
+            text: None,
+            place: FILE.into(),
         }
     }
+
+    /// These settings, read at `place`.
+    #[must_use]
+    pub fn at(self, place: String) -> Loaded {
+        Loaded { place, ..self }
+    }
+}
+
+/// The line, counted from 1, that writes the top-level `key` in the settings' `text`: the first
+/// that starts with it and an `=` before any table opens. None where the text does not write it.
+#[must_use]
+pub fn line(text: &str, key: &str) -> Option<u32> {
+    for (at, written) in text.lines().enumerate() {
+        let written = written.trim_start();
+        if written.starts_with('[') {
+            return None;
+        }
+        let quoted = format!("\"{key}\"");
+        let rest = (written.strip_prefix(key)).or_else(|| written.strip_prefix(quoted.as_str()));
+        if rest.is_some_and(|rest| rest.trim_start().starts_with('=')) {
+            return u32::try_from(at + 1).ok();
+        }
+    }
+    None
 }
 
 fn label(text: &str) -> Result<(), String> {
@@ -459,6 +491,8 @@ pub fn load(text: &str) -> Result<Loaded, String> {
     Ok(Loaded {
         config: parse(text)?,
         revision: crate::digest(&[text]),
+        text: Some(text.into()),
+        place: FILE.into(),
     })
 }
 
@@ -592,15 +626,16 @@ impl Source for Committed {
         {
             return Err(format!("the repository has no branch {branch}"));
         }
+        let place = format!("{FILE} on {branch}");
         if !git(&["cat-file", "-e", &object])?.status.success() {
-            return Ok(Loaded::absent());
+            return Ok(Loaded::absent().at(place));
         }
         let shown = git(&["cat-file", "blob", &object])?;
         if !shown.status.success() {
             return Err(format!("git could not read {FILE} on {branch}"));
         }
         let text = String::from_utf8(shown.stdout).map_err(|error| format!("{FILE}: {error}"))?;
-        load(&text)
+        load(&text).map(|loaded| loaded.at(place))
     }
 }
 

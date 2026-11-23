@@ -7,10 +7,10 @@
 
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
+import { BoardPage } from "../board-page";
 import { Frame } from "../frame";
 import { HomePage } from "../home";
 import { heard, readBoard } from "../home-board";
-import { BoardPage } from "../live";
 import { MediaLayer } from "../media-layer";
 import { MountContext } from "../mount";
 import { useRoute } from "../route";

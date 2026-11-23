@@ -1,8 +1,7 @@
 //! A GitHub App's installation token made by the program where the settings name the App's
 //! installation and key (src/mint.rs). GitHub's side of the Apps is held here: it answers
 //! `POST /app/installations/ID/access_tokens` to a JWT whose signature it verifies by `openssl`
-//! with the public half of the App's key, as GitHub does with the one it keeps. Every test signs
-//! with `openssl`, so it holds [`crate::starting`].
+//! with the public half of the App's key, as GitHub does with the one it keeps.
 
 use crate::deliver::{APP, As, Connect, Delivery, HEAD, snapshot};
 use crate::github::{Fake, Fault};
@@ -304,8 +303,6 @@ fn delivery(name: &str, made: bool, more: &str) -> (Delivery, Arc<Apps>) {
     let mut d = Delivery::unverified(name, &format!("{maker}{more}"));
     let apps = Apps::new(d.rig.now.get());
     d.connect = apps.connect(&d.rig.github);
-    // The test holds `crate::starting`: its verification takes it not again.
-    d.starts = true;
     d.verify().ok();
     (d, apps)
 }
@@ -350,7 +347,6 @@ fn published(d: &Delivery, answer: &Value) {
 
 #[test]
 fn an_absent_token_is_made_once_and_the_delivery_goes_on() {
-    let _alone = crate::starting();
     let (d, apps) = delivery("mint-absent", true, "");
     let file = d.rig.token_file.clone();
     std::fs::remove_file(&file).unwrap();
@@ -396,7 +392,6 @@ fn an_absent_token_is_made_once_and_the_delivery_goes_on() {
 
 #[test]
 fn an_expired_a_nearly_expired_an_unknown_and_an_other_token_are_each_made_again_once() {
-    let _alone = crate::starting();
     let now = 2_000;
     for (case, kept) in [
         ("expired", made("ghs_old", now - 1)),
@@ -443,7 +438,6 @@ fn an_expired_a_nearly_expired_an_unknown_and_an_other_token_are_each_made_again
 
 #[test]
 fn a_current_token_makes_no_call() {
-    let _alone = crate::starting();
     let (d, apps) = delivery("mint-current", true, "");
     write(
         &d.rig.token_file,
@@ -486,7 +480,6 @@ fn refused(d: &Delivery, apps: &Apps, why: &[&str]) -> Value {
 
 #[test]
 fn a_loose_key_file_is_refused_before_anything_is_asked() {
-    let _alone = crate::starting();
     let loose =
         std::env::temp_dir().join(format!("symphony-github-loose-{}.pem", std::process::id()));
     std::fs::copy(key("42"), &loose).unwrap();
@@ -508,7 +501,6 @@ fn a_loose_key_file_is_refused_before_anything_is_asked() {
 
 #[test]
 fn a_key_of_another_app_is_refused_by_github_and_said_so() {
-    let _alone = crate::starting();
     let more = format!(
         "installation_id = {}\nkey_file = \"{}\"\n",
         installation(APP),
@@ -529,7 +521,6 @@ fn a_key_of_another_app_is_refused_by_github_and_said_so() {
 
 #[test]
 fn a_jwt_github_reads_as_of_another_time_says_its_words_and_the_clock() {
-    let _alone = crate::starting();
     let (d, apps) = delivery("mint-clock", true, "");
     apps.plant(Planted::Answer(
         401,
@@ -548,7 +539,6 @@ fn a_jwt_github_reads_as_of_another_time_says_its_words_and_the_clock() {
 
 #[test]
 fn a_release_run_asks_its_token_for_contents_write_and_publishes() {
-    let _alone = crate::starting();
     let rig = crate::Rig::off("mint-release");
     std::fs::remove_file(&rig.token_file).unwrap();
     rig.enable(&format!(
@@ -597,7 +587,6 @@ fn a_release_run_asks_its_token_for_contents_write_and_publishes() {
 
 #[test]
 fn a_file_that_is_no_key_is_refused_and_nothing_of_it_is_said() {
-    let _alone = crate::starting();
     let marker = "MARKERaaaaBEGINprivateKEYzzzz";
     let planted =
         std::env::temp_dir().join(format!("symphony-github-nokey-{}.pem", std::process::id()));
@@ -631,7 +620,6 @@ fn a_file_that_is_no_key_is_refused_and_nothing_of_it_is_said() {
 
 #[test]
 fn no_openssl_is_refused_naming_what_to_install() {
-    let _alone = crate::starting();
     let (mut d, apps) = delivery("mint-no-openssl", true, "");
     d.openssl = "/nowhere/openssl";
     refused(
@@ -647,7 +635,6 @@ fn no_openssl_is_refused_naming_what_to_install() {
 
 #[test]
 fn github_refusing_the_token_says_its_words_and_what_to_fix() {
-    let _alone = crate::starting();
     let (d, apps) = delivery("mint-422", true, "");
     apps.plant(Planted::Answer(
         422,
@@ -704,7 +691,6 @@ fn github_refusing_the_token_says_its_words_and_what_to_fix() {
 
 #[test]
 fn github_not_answering_is_unavailable_and_the_old_file_kept() {
-    let _alone = crate::starting();
     for planted in [
         Planted::Answer(502, json!({"message": "Bad Gateway"})),
         Planted::Answer(429, json!({"message": "slow down"})),
@@ -750,7 +736,6 @@ fn github_not_answering_is_unavailable_and_the_old_file_kept() {
 
 #[test]
 fn unset_a_token_file_is_read_as_it_is_and_an_expired_one_is_unavailable() {
-    let _alone = crate::starting();
     let (d, apps) = delivery("mint-unset", false, "");
     let before = std::fs::read(&d.rig.token_file).unwrap();
     // The token, expired: GitHub answers it 401, and nothing makes another.
@@ -783,7 +768,6 @@ fn unset_a_token_file_is_read_as_it_is_and_an_expired_one_is_unavailable() {
 
 #[test]
 fn two_runs_at_once_leave_one_valid_token_and_no_torn_file() {
-    let _alone = crate::starting();
     let (d, apps) = delivery("mint-together", true, "");
     let file = d.rig.token_file.clone();
     let text = crate::settings(&file, &format!("app_id = {APP}\n{}", maker()));
@@ -844,7 +828,6 @@ fn two_runs_at_once_leave_one_valid_token_and_no_torn_file() {
 
 #[test]
 fn the_exchange_asks_its_token_for_the_issues_permission_alone() {
-    let _alone = crate::starting();
     for (issues, close, permissions) in [
         ("import", false, json!({"issues": "read"})),
         ("export", false, json!({"issues": "write"})),
@@ -882,7 +865,6 @@ fn the_exchange_asks_its_token_for_the_issues_permission_alone() {
 
 #[test]
 fn tokens_says_whether_the_token_is_current_and_never_the_token() {
-    let _alone = crate::starting();
     let (d, apps) = delivery("mint-tokens", true, "");
     let now = 3_000;
     d.rig.now.set(now);

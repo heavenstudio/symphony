@@ -8,12 +8,13 @@ use std::time::Duration;
 
 use symphony_plugin::authority::{Operation, Signed};
 use symphony_plugin::vocabulary::{
-    Block, Gate, GatePast, GateState, LinkTarget, NavItem, Picture, Presentation, ProgressBar,
-    Region, Span, TaskOffer, View, Viewer,
+    Block, EntryNeed, EntryState, Gate, GatePast, GateState, LinkTarget, NavItem, Picture,
+    Presentation, ProgressBar, Region, Setting, SettingClass, SettingKind, SettingScope,
+    SettingSource, SettingsEntry, Span, TaskOffer, View, Viewer,
 };
 use symphony_plugin::{
-    Authority, BoardAction, BoardField, Card, CardKind, Command, Component, DocCheck, Docs,
-    Drawing, FieldKind, File, Gates, Generator, HomeRegion, Page, Plugin, Problem, ProseRule,
+    Authority, BoardAction, BoardField, Card, CardKind, Command, Component, Describer, DocCheck,
+    Docs, Drawing, FieldKind, File, Gates, Generator, HomeRegion, Page, Plugin, Problem, ProseRule,
     Renderer, Reply, Route, Submission, Submitted, TaskRef, Theme, Transport, Watch,
 };
 
@@ -70,6 +71,9 @@ impl Plugin for Every {
     fn authorities(&self) -> Vec<&dyn Authority> {
         vec![self]
     }
+    fn describers(&self) -> Vec<&dyn Describer> {
+        vec![self, &UNREAD]
+    }
     fn watches(&self) -> Vec<&dyn Watch> {
         vec![self]
     }
@@ -108,8 +112,9 @@ impl Plugin for Every {
 }
 
 /// [`EVERY`] as a plugin's process serves it: its name and each seam a process answers (its
-/// components, card kind, renderer, route, navigation, home region, board action, watch, doc check,
-/// command and theme), and a component that takes as long as it is told.
+/// components, card kind, renderer, route, navigation, home region, board action, Settings page
+/// describers, watch, doc check, command and theme), and a component that takes as long as it is
+/// told.
 pub(super) struct Piped;
 
 pub(super) static PIPED: Piped = Piped;
@@ -138,6 +143,9 @@ impl Plugin for Piped {
     }
     fn board_actions(&self) -> Vec<&dyn BoardAction> {
         EVERY.board_actions()
+    }
+    fn describers(&self) -> Vec<&dyn Describer> {
+        EVERY.describers()
     }
     fn watches(&self) -> Vec<&dyn Watch> {
         EVERY.watches()
@@ -495,6 +503,85 @@ impl Gates for Every {
     }
     fn kept_while(&self, root: &Path, task: &TaskRef<'_>) -> String {
         format!("{} {} in {}", task.status, task.branch, root.display())
+    }
+}
+
+/// The file in a project's root whose text is the shade [`EVERY`]'s entry says: what shows its
+/// describer reads the checkout it is asked of.
+pub const SHADE: &str = "every-shade";
+
+/// What [`EVERY`]'s describer answers for the project at `root`: an entry of every part, with a
+/// setting of its own, a preference of the machine's scope, and the land's delivery, a protected key,
+/// which it calls a preference too.
+pub fn described(root: &Path) -> SettingsEntry {
+    let shade = std::fs::read_to_string(root.join(SHADE)).unwrap_or_else(|_| "plain".into());
+    let source = |said: &str, file: &str, line: u32| SettingSource {
+        scope: Some(SettingScope::Project),
+        said: said.into(),
+        file: Some(file.into()),
+        line: Some(line),
+        over: None,
+    };
+    SettingsEntry {
+        id: "anything".into(),
+        name: "Every widget".into(),
+        about: "Draws every widget the project holds.".into(),
+        state: Some(EntryState {
+            word: "On".into(),
+            on: Some(true),
+            why: format!("Its shade is {}, read in {}.", shade.trim(), root.display()),
+        }),
+        needs: vec![EntryNeed {
+            what: "the widget folder".into(),
+            met: root.join("widgets").is_dir(),
+            said: "widgets/ in the checkout".into(),
+        }],
+        settings: vec![
+            Setting {
+                key: "[every] shade".into(),
+                name: "The widgets' shade".into(),
+                kind: SettingKind::Choice,
+                value: shade.trim().into(),
+                choices: vec!["plain".into(), "bright".into()],
+                source: source("every.toml [every] shade, line 1", "every.toml", 1),
+                scopes: vec![SettingScope::Project, SettingScope::Machine],
+                class: SettingClass::Preference,
+            },
+            Setting {
+                key: "[land] delivery".into(),
+                name: "How a land is delivered".into(),
+                kind: SettingKind::Text,
+                value: "pull_request".into(),
+                choices: Vec::new(),
+                source: source("symphony.toml [land] delivery, line 3", "symphony.toml", 3),
+                scopes: vec![SettingScope::Project, SettingScope::Machine],
+                class: SettingClass::Preference,
+            },
+        ],
+        source: None,
+    }
+}
+
+impl Describer for Every {
+    fn id(&self) -> &str {
+        "widgets"
+    }
+    fn describe(&self, root: &Path) -> Result<SettingsEntry, String> {
+        Ok(described(root))
+    }
+}
+
+/// A describer that cannot say.
+struct Unread;
+
+static UNREAD: Unread = Unread;
+
+impl Describer for Unread {
+    fn id(&self) -> &str {
+        "unread"
+    }
+    fn describe(&self, _: &Path) -> Result<SettingsEntry, String> {
+        Err("every.toml does not read".into())
     }
 }
 

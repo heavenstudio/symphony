@@ -95,11 +95,12 @@ fn namespace(before: &str) -> Option<&str> {
 }
 
 /// What a failure says of a server that took the request on a connection that worked and gave no
-/// whole answer within the wait.
-const SLOW: &str = " is slow: no answer within ";
+/// whole answer within the wait: SurrealDB's client's and PostgreSQL's ([`crate::pg`]) alike.
+pub(crate) const SLOW: &str = " is slow: no answer within ";
 
-/// Whether `error` is a request's failure ([`Client::query`]) on a server that was slow, not
-/// unreachable: the connection worked and the answer was late. Whatever wraps it keeps its words.
+/// Whether `error` is a request's failure ([`Client::query`], or [`crate::pg::Client`]'s on a
+/// request or a startup) on a server that was slow, not unreachable: the connection worked and the
+/// answer was late. Whatever wraps it keeps its words.
 pub fn slow(error: &str) -> bool {
     error.contains(SLOW)
 }

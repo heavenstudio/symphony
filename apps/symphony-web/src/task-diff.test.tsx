@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Parts, PartsContext } from "./parts";
-import { DiffFiles, diffPart, PatchText, readDiff, readPatch, TaskDiffPanel } from "./task-diff";
+import { DiffFiles, diffPart, loadFileList, readDiff, TaskDiffPanel } from "./task-diff";
+import { PatchText, readPatch } from "./task-diff-files";
 import type { TaskEvent } from "./task-live";
 import { reply, until } from "./testing";
 import type { TaskDiff } from "./wire";
@@ -19,6 +20,12 @@ const DIFF: TaskDiff = {
 };
 
 afterEach(() => vi.unstubAllGlobals());
+
+// The files' chunk, come as it comes once a page drew a comparison with files: the panel then draws
+// them at once (`a comparison's files before their chunk` draws them before).
+beforeAll(async () => {
+  await loadFileList();
+});
 
 it("draws the independent part's pending, answered, failed and missing states", async () => {
   expect(renderToStaticMarkup(<TaskDiffPanel scope="" slug="tools/x" />)).toContain(
@@ -189,6 +196,36 @@ describe("the task's changed files", () => {
         { region: "message", entry: { ...entry, message: { ...entry.message, kind: "msg" } } },
       ]),
     ).toBeNull();
+  });
+});
+
+describe("a comparison's files before their chunk", () => {
+  it("say they are read, a region the first screen waits for, then come as their chunk does", async () => {
+    vi.resetModules();
+    const fresh = await import("./task-diff");
+    const draw = () =>
+      renderToStaticMarkup(<fresh.DiffFiles diff={DIFF} scope="" slug="tools/x" />);
+    const before = draw();
+    expect(before).toContain("Branch from its merge base");
+    expect(before).toContain(
+      '<p role="status" aria-busy="true" data-pending="true">Reading changed files…</p>',
+    );
+    expect(before).not.toContain("one.ts");
+    await fresh.loadFileList();
+    expect(draw()).toContain("one.ts");
+    expect(draw()).not.toContain("Reading changed files");
+  });
+
+  it("are not asked for where the comparison has none to list", async () => {
+    vi.resetModules();
+    const fresh = await import("./task-diff");
+    for (const diff of [
+      { ...DIFF, files: [] },
+      { ...DIFF, source: "unavailable", base: null, head: null, files: [] },
+    ] as TaskDiff[]) {
+      const html = renderToStaticMarkup(<fresh.DiffFiles diff={diff} scope="" slug="tools/x" />);
+      expect(html).not.toContain("Reading changed files");
+    }
   });
 });
 

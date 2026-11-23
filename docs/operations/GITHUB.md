@@ -157,6 +157,12 @@ otherwise the `tasks` beside `symphony-github` or the one on `PATH`.
 
 - **`status`** says what the committed settings allow and what is kept. It reads no remote and
   writes nothing, not even its folder.
+- **`describe`** says the same as the exchange's entry on the Settings page
+  ([the settings page](PROJECT_FILE.md#the-settings-page)): one line of JSON with its state and
+  why, the token file as a need while it is enabled, and each setting with the line of
+  `symphony-github.toml` on the default branch that writes it, or its default, every one reviewed.
+  The server runs it to draw that entry, in the main checkout, and draws what it prints in place
+  of any reading of its own. It reads no remote, never says the token and writes nothing.
 - **`publish SLUG --title TITLE --body-file FILE`** opts a task in: TITLE and FILE's text are
   kept as its curated public text and shown as they will be published. Nothing is sent. A text
   an issue would not hold whole with its marker is refused, and so is a task imported from an

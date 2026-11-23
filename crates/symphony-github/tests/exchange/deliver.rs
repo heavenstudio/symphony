@@ -78,9 +78,6 @@ pub(crate) struct Delivery {
     /// What its requests are made through: as the App whose token each carries, unless a test
     /// puts GitHub's Apps in front ([`crate::minting`]).
     pub(crate) connect: Connect,
-    /// Whether the test holds [`crate::starting`], as one that makes a token signs it with
-    /// `openssl`: then no run takes [`crate::no_start`].
-    pub(crate) starts: bool,
     /// The program that signs a GitHub App's JWT.
     pub(crate) openssl: &'static str,
     /// Each rest its runs asked for between two reads, none of which waited.
@@ -148,7 +145,6 @@ impl Delivery {
             remote,
             said: RefCell::default(),
             connect,
-            starts: false,
             openssl: "openssl",
             rested: RefCell::default(),
         }
@@ -184,10 +180,8 @@ impl Delivery {
         gh
     }
 
-    /// `rulesets ARGS` run with [`Delivery::gh`], holding [`crate::starting`] while it starts gh
-    /// unless the test holds it.
+    /// `rulesets ARGS` run with [`Delivery::gh`].
     pub(crate) fn rulesets(&self, args: &[&str]) -> crate::Ran {
-        let _alone = (!self.starts).then(crate::starting);
         let gh = self.gh();
         let mut all = vec!["rulesets"];
         all.extend_from_slice(args);
@@ -209,7 +203,6 @@ impl Delivery {
 
     /// `symphony-github ARGS`, each request made as the App whose token it carries.
     pub(crate) fn run(&self, args: &[&str]) -> crate::Ran {
-        let _alone = (!self.starts).then(crate::no_start);
         crate::run(
             args,
             &self.rig.board,
@@ -235,7 +228,6 @@ impl Delivery {
             rest: &|wait| self.rested.borrow_mut().push(wait),
         };
         let mut out = Vec::new();
-        let _alone = (!self.starts).then(crate::no_start);
         let code = deliver::run(&ctx, &self.remote, verb, &file, &mut out).unwrap();
         assert_eq!(code, 0);
         let out = String::from_utf8(out).unwrap();
