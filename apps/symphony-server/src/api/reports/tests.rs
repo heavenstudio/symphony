@@ -1233,8 +1233,8 @@ fn a_landed_tab_with_no_landing_no_folder_or_a_file_that_does_not_read_says_so()
     assert_eq!((empty.without, empty.figures.tasks), (0, 0));
     assert_eq!((empty.figures.median, empty.kinds_from), (None, None));
     assert!(empty.kinds.is_empty() && empty.reviews.is_empty() && empty.unread.is_empty());
-    let none = landed_page(&Err("no common dir".into()), Grain::Week, 28, wednesday());
-    assert_eq!(none.unread, ["reports: no common dir"]);
+    let no_folder = landed_page(&Err("no common dir".into()), Grain::Week, 28, wednesday());
+    assert_eq!(no_folder.unread, ["reports: no common dir"]);
     let path = tree
         .path("reports")
         .join(report_file(&run_day(MONDAY + 2.0 * DAY)));
@@ -1247,7 +1247,7 @@ fn a_landed_tab_with_no_landing_no_folder_or_a_file_that_does_not_read_says_so()
         broken.unread
     );
     // Named as the periods' read names it, by the one reader of the two.
-    let periods = page(&folders(&tree), Grain::Day, 3, wednesday(), |_| Ok(Vec::new()));
+    let periods = page(&folders(&tree), Grain::Day, 3, wednesday(), none);
     assert_eq!(periods.unread, broken.unread);
     std::fs::remove_file(&path).unwrap();
     std::fs::create_dir(&path).unwrap();

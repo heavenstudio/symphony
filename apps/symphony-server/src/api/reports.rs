@@ -230,9 +230,9 @@ pub(crate) fn page(
     // Newest day first, so the bytes left go to the days nearest now.
     for day in days_read(from, to) {
         let [report, agents, health] = day_files(folders, &run_day(day));
-        if let Some(report) = report.and_then(|path| {
-            report_day(&path, (from, to), &mut budget, &mut unread, &mut landings)
-        }) {
+        if let Some(report) = report
+            .and_then(|path| report_day(&path, (from, to), &mut budget, &mut unread, &mut landings))
+        {
             for hour in &report.hours {
                 if let Some(at) = place(hour.start) {
                     sums[at].hour(hour);
