@@ -31,27 +31,36 @@ if [[ "$target" != /* ]]; then target="$root/$target"; fi
 binary="$target/debug/$name"
 if [ "$mode" = where ]; then printf '%s\n' "$binary"; exit 0; fi
 
-# The port `$1` names as the binary reads it (Rust's `u16`: an optional `+`, then digits, zeros
-# leading or not), without its leading zeros; failure for any other spelling.
-port_number() {
-    local digits="${1#+}"
-    case "$digits" in
-        '' | *[!0-9]*) return 1 ;;
-    esac
-    digits="${digits#"${digits%%[!0]*}"}"
-    digits="${digits:-0}"
-    [ "${#digits}" -le 5 ] && [ "$digits" -le 65535 ] || return 1
-    printf '%s\n' "$digits"
+# The folder the socket of the board's PostgreSQL on the data folder `$1` is in, as the board names
+# it (`server::postgres::socket_folder`): `/tmp/symphony-pg-` and the first 16 hex digits of the
+# SHA-256 of the data's path; failure where no SHA-256 program is found.
+socket_folder() {
+    local digest
+    if command -v shasum > /dev/null; then
+        digest="$(printf '%s' "$1" | shasum -a 256)" || return 1
+    elif command -v sha256sum > /dev/null; then
+        digest="$(printf '%s' "$1" | sha256sum)" || return 1
+    else
+        return 1
+    fi
+    printf '/tmp/symphony-pg-%s\n' "${digest:0:16}"
+}
+
+# The folder `$1` with its links followed, so `/tmp` and `/private/tmp` on macOS are one; `$1` as
+# it is where it cannot be entered.
+resolved() {
+    (cd "$1" 2> /dev/null && pwd -P) || printf '%s\n' "$1"
 }
 
 # Whether this run may reach this repository's live board: the `tasks` database (the last of the
 # leading `--database NAME` options, else TASKS_DATABASE) on the board's own server, which is the one
 # the working directory's repository reaches (TASKS_SERVER unset) when that repository is this one,
-# or a TASKS_SERVER on the port recorded in `$common/symphony/tasks/server.json`, compared as the number
-# the binary reads. A record naming no address, or a port spelled any other way, counts as that
-# port; with no record there is no live server to name.
+# or a TASKS_SERVER naming the socket folder of the PostgreSQL on that board's data
+# (`$common/symphony/tasks/postgresql`), compared with links followed, as the board compares it
+# (`live::names_address`). A TASKS_SERVER of any other form names no board a board binary opens, as
+# every one refuses it, and where the socket folder cannot be named it counts as the live one.
 live_board() {
-    local database="${TASKS_DATABASE:-tasks}" record="" file addr here named recorded
+    local database="${TASKS_DATABASE:-tasks}" here expected
     while [ "${1:-}" = --database ]; do
         database="${2:-}"
         [ $# -ge 2 ] || break
@@ -59,16 +68,13 @@ live_board() {
     done
     [ "$database" = tasks ] || return 1
     if [ -n "${TASKS_SERVER:-}" ]; then
-        file="$common/symphony/tasks/server.json"
-        [ -f "$file" ] || return 1
-        IFS= read -r record < "$file" || true
-        case "$record" in
-            *'"addr":"'*:*) addr="${record#*\"addr\":\"}"; addr="${addr%%\"*}" ;;
-            *) return 0 ;;
+        case "$TASKS_SERVER" in
+            postgresql:*) ;;
+            *) return 1 ;;
         esac
-        named="$(port_number "${TASKS_SERVER##*:}")" || return 0
-        recorded="$(port_number "${addr##*:}")" || return 0
-        [ "$named" = "$recorded" ]
+        # The board names its data by the common dir with its links followed (`git::read`).
+        expected="$(socket_folder "$(resolved "$common")/symphony/tasks/postgresql")" || return 0
+        [ "$(resolved "${TASKS_SERVER#postgresql:}")" = "$(resolved "$expected")" ]
         return
     fi
     here="$(pwd -P)"

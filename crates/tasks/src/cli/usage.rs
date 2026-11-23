@@ -321,8 +321,8 @@ pub fn top() -> String {
          first,\n                   before every other word, and sweeps no repository\n\
          \nenvironment:\n  TASKS_SESSION    the session handle --as defaults to\n  TASKS_DATABASE   \
          the board's database, as --database NAME names it\n  TASKS_SERVER     the board's \
-         server, HOST:PORT, in place of the one the\n                   repository's common dir \
-         records\n",
+         server, postgresql:SOCKET, in place of the\n                   one the repository's \
+         common dir records\n",
     );
     text
 }

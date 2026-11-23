@@ -22,7 +22,7 @@ pub fn main(args: &[String], env: &Env, out: &mut dyn Write, err: &mut dyn Write
             "--help" | "-h" if !literal => {
                 let _ = writeln!(
                     out,
-                    "{USAGE}\nSend through the recipient's registered Claude socket or Codex thread. Sender defaults to TASKS_SESSION. Pending delivery stays in its inbox; no channel is a refusal. Use -- before positional text beginning with a dash. The board is the working directory's project's, or the one TASKS_SERVER (HOST:PORT) and TASKS_DATABASE name; --database NAME is TASKS_DATABASE=NAME."
+                    "{USAGE}\nSend through the recipient's registered Claude socket or Codex thread. Sender defaults to TASKS_SESSION. Pending delivery stays in its inbox; no channel is a refusal. Use -- before positional text beginning with a dash. The board is the working directory's project's, or the one TASKS_SERVER (postgresql:SOCKET) and TASKS_DATABASE name; --database NAME is TASKS_DATABASE=NAME."
                 );
                 return 0;
             }
