@@ -213,6 +213,8 @@ fn a_save_another_took_or_already_committed_is_not_taken_again() {
 fn a_save_is_delivered_by_the_branch_it_went_on_else_by_its_own() {
     assert_eq!(Delivery::default().slug(7), format!("{BRANCHES}7"));
     assert_eq!(committed(3, "c3").slug(7), format!("{BRANCHES}3"));
+    // Kept by a tidy with others, by the first of them, which it goes with.
+    assert_eq!(together(5, 2).slug(6), format!("{BRANCHES}5"));
     // On its way unless closed, or stopped short of a branch.
     assert!(Delivery::default().on_its_way());
     assert!(committed(3, "c3").on_its_way());

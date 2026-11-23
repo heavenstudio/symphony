@@ -119,11 +119,13 @@ pub(super) struct Together {
 
 impl Delivery {
     /// The branch and task that deliver the save `sequence`: the one it was committed on, else
-    /// the one named after it, which it is committed on unless it goes with an earlier agent's
-    /// save ([`joining`]).
+    /// the one named after it, or after the first of the saves its tidy kept with it
+    /// ([`Together`]), which it is committed on unless it goes with an earlier agent's save
+    /// ([`joining`]).
     fn slug(&self, sequence: u64) -> String {
         if self.branch.is_empty() {
-            format!("{BRANCHES}{sequence}")
+            let first = self.together.map_or(sequence, |together| together.first);
+            format!("{BRANCHES}{first}")
         } else {
             self.branch.clone()
         }
