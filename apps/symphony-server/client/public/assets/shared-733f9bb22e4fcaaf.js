@@ -1,0 +1,1 @@
+import{I as e}from"./shared-1e8f4f0823052282.js";var t=[`feature`,`fix`,`red`,`tests`,`docs`];function n(e){return typeof e==`string`&&t.includes(e)}function r(t){let r=e(e(t,`_board`),`kind`);return n(r)?r:null}export{n,r,t};
