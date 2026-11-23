@@ -2495,6 +2495,14 @@ registered and stopped as it is removed, so one project's failing or hung sweep 
 other's; each writes its own `reap.json` and its own board's health, which `just tasks status`
 reads. A lock in `symphony/tasks/`, beside the board's server, keeps two sweeps (a second
 app's, or `just tasks reap` by hand) from running at once, and nothing goes into any monitor.
+A server of its own (`just symphony --port N`) runs no sweep, since a preview's board may be a
+copy that names another board's terminals, and says so as it starts (a preview in a linked
+worktree whose file does not ask says nothing): a project no other server serves, as one on a
+source build with no release on the machine, sets `[board] own_sweep = true` in its project
+file, and a server of its own in its main checkout then sweeps for it as the one server would,
+unless its environment names another board (`TASKS_SERVER`, `TASKS_DATABASE`;
+`sweeps_of_its_own` in `apps/symphony-server/src/front.rs`). Without either, idle terminals stay
+until `just tasks clean`.
 It closes (`hc kill`,
 then `hc rm`) one of this board's terminals (label `symphony.board`) whose named agent was
 idle (or stuck on the folder-trust prompt) at two sweeps at least five minutes apart,
@@ -2560,8 +2568,13 @@ hold or the main checkout has not followed. Such a worktree and branch are said 
 into main as COMMIT by pull request #N` where a merged one says `merged into main`, and every
 rule below holds for them as for any other. The sweep deletes no retained head, no receipt and
 no branch of the remote.
-Nothing did not land when it has no tracked edit, no untracked file and no ignored file but
-build output and caches, and holds no owner verdict no commit has (an owner's dated line under a
+Nothing did not land when it has no tracked edit, no untracked file but what a file manager
+writes into a folder a person opens (`.DS_Store`, `Thumbs.db`, `desktop.ini`, which go with the
+worktree whether or not its ignore file names them) and no ignored file but
+build output and caches (the board's own list, and the ignored paths the project names in
+`[board] sweep_disposable` of the main checkout's `symphony.toml`, where its stack keeps its
+dependencies and builds elsewhere, such as `node_modules/`), and holds no owner verdict no commit
+has (an owner's dated line under a
 card, in a document of the project's entrypoint folders, that its HEAD does not hold; a worktree
 whose documents git cannot read for one is kept, saying so). No live work holds it when no
 live or stale session is bound to it (a subagent's session is bound to its own `agent-ID`
