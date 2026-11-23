@@ -737,8 +737,9 @@ fn keep_for_delivery(
             if unkept.left > 0 {
                 let _ = writeln!(
                     err,
-                    "  ({} of its saves written before it stay in the journal ({}), never shown or \
-                     delivered, and hold back no other save)",
+                    "  ({} of its saves written before it stay in the journal ({}) until a person \
+                     removes them: each is listed as held on its page's note, and none is shown, \
+                     delivered or holds back another save)",
                     unkept.left,
                     crate::commit::pending::journal_below()
                 );

@@ -253,7 +253,9 @@ workers, so slow answers never hold the worker its other calls are answered on (
 render, an authority's attestation, what an answer is kept while); another answer waits in the host
 for one of the three to end, a minute at most, and then has its own minute. An answer with none in
 its minute is given up and sent a `cancel` like any call, and a process that has not answered it
-10 s later is ended.
+10 s later is ended. The SDK takes no `cancel` and runs the answer on, so the answer keeps its turn
+among the three until its late answer comes or its process ends: no fourth takes the last worker
+meanwhile.
 
 `gates.kept_while` is a call's round trip on every read, the sign-off lane's on the server's live
 loop among them, where a linked answerer's is cheap and never blocks: a process that stops
