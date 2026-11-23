@@ -301,14 +301,22 @@ fn a_fresh_project_runs_the_board_through_the_recipes_init_installed() {
          .target/bin/agent-send and .target/bin/symphony-server, or put them on PATH: the \
          heartbeat, the memory guard, `just symphony-cli`, `just tasks`, `just agent-send` and \
          `just symphony` run them and build nothing",
-        "\n- fetch SurrealDB ",
+        // Its board is not made yet, and is made on PostgreSQL, which this machine's search path
+        // for the fixture does not hold: the step says how to have it.
+        "\n- have PostgreSQL 18 or later for the board, which runs on the machine's own: ",
+        "install PostgreSQL 18 or later with the machine's package manager (`brew install \
+         postgresql@18` on a Mac); put its bin folder on PATH or set [board] postgresql in \
+         symphony.toml to that absolute folder\n",
+        "\n- make the board: the first board command makes it, on PostgreSQL (`just tasks list`)",
         "\n- register the project with the machine's Symphony: ",
         "\n\nClaude Code counts the allow rules only in a folder it trusts: ",
     ] {
         assert!(out.contains(said), "{said:?} in {out}");
     }
-    // `just` is on the search path, so nothing asks to install it.
+    // `just` is on the search path, so nothing asks to install it; a board not made yet needs
+    // no SurrealDB.
     assert!(!out.contains("install `just`"), "{out}");
+    assert!(!out.contains("SurrealDB"), "{out}");
     // The build running init is a checkout's: the step links it from there.
     let running = std::path::Path::new(BIN).canonicalize().unwrap();
     assert!(
@@ -366,8 +374,8 @@ fn a_fresh_project_runs_the_board_through_the_recipes_init_installed() {
     // Its board is not made yet: the step that makes it is left.
     assert!(
         out.contains(
-            "\n- make the board: the first board command makes it (`just tasks list`); the \
-             Symphony only reads a board and never makes one\n"
+            "\n- make the board: the first board command makes it, on PostgreSQL (`just tasks \
+             list`); the Symphony only reads a board and never makes one\n"
         ),
         "{out}"
     );

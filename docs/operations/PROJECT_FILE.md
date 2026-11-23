@@ -413,11 +413,13 @@ A generator, in `[land] generators` or `[verdicts] generators`, usually written 
 | `slot_locks` | none | the folder of the project's test-slot locks, which the agents view probes; under `.git/`, the git common dir |
 | `assessments` | none: an assessment is refused | the folder of the project's landing assessments; under `.git/`, the git common dir |
 
-A project's board needs no PostgreSQL: it runs on the SurrealDB `symphony init` fetches
-([getting started](GETTING_STARTED.md#2-set-the-project-up)). Only a board whose home names
-PostgreSQL uses what follows. Its setup requires version 18 or later, installed by the machine's
-package manager. Without an explicit `postgresql`, discovery takes the first executable `postgres` on `PATH`;
-`initdb`, `pg_ctl` and `psql` must be executable in the same folder. On a Mac with Homebrew:
+A project's board runs on the machine's PostgreSQL: a board not made yet is made on it by its
+first command ([getting started](GETTING_STARTED.md#2-set-the-project-up)), and only a board made
+on SurrealDB before that, which holds its store and names no other engine, still runs there
+until it is moved ([POSTGRESQL](POSTGRESQL.md)). Its setup requires version 18 or later,
+installed by the machine's package manager. Without an explicit `postgresql`, discovery takes the
+first executable `postgres` on `PATH`; `initdb`, `pg_ctl` and `psql` must be executable in the
+same folder. On a Mac with Homebrew:
 
 ```sh
 brew install postgresql@18
@@ -427,8 +429,9 @@ export PATH="$(brew --prefix postgresql@18)/bin:$PATH"
 For another installation, put its `bin` folder on `PATH` or set `[board] postgresql` to its
 absolute path. An explicit value always wins, including when it is invalid. A missing tool,
 failed version probe or server older than 18 fails with setup guidance; discovery never skips
-an incompatible installation to select another. It inspects programs only, starting no database:
-a board uses PostgreSQL once its home names it ([POSTGRESQL](POSTGRESQL.md)).
+an incompatible installation to select another. It inspects programs only, starting no database.
+A board not made yet on a machine without it is refused with that guidance, and nothing is made;
+`symphony init` asks for it until discovery finds it.
 
 ## `[board.external_postgresql]`
 
