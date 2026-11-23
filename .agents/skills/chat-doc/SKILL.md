@@ -2,7 +2,7 @@
 name: chat-doc
 description: Register as the Symphony chat recipient and answer each owner callback on its ask, card or callout. Trigger on "connect to the chat", "listen to the docs", "I'll chat with you in the app", "watch my review", or /chat-doc.
 ---
-<!-- symphony-stamp: 05811afc3155c028 files=SKILL.md -->
+<!-- symphony-stamp: 6c73e7d5801e5c53 files=SKILL.md -->
 
 # Chat with the owner through the Symphony
 
@@ -57,6 +57,14 @@ owner's ask on the card closes. Keep it short and plain: the app is a chat, not 
 may use markdown, links, `[[FILE#Heading]]` and pictures; a card's picture is a file committed
 beside its document under `docs/`, never a path into the ignored `artifacts/` folder or an
 owner's upload (`just symphony-cli docs-audit --check` refuses one git does not track).
+
+Where the project delivers by pull request (`[land] delivery`), the checkout on its default
+branch is the host's to write, and a file edited there stops every land. There
+`just symphony-reply` and `just symphony-status --tidy` write no file: each keeps what it changes
+as a save, the way the app keeps the owner's. The app shows it within seconds, and its own pull
+request delivers it after any earlier save of that document. Run them there as anywhere.
+Anything else a document needs (a rewrite, a new card, a picture) is made in a task's worktree,
+and that task's pull request delivers it.
 
 - **Chat message**: reply in conversation. If it asks for something (a picture, a rewrite, a new
   option), do it, then reply with the result. Do not change the card's verdict.

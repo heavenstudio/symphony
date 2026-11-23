@@ -764,3 +764,110 @@ pub(super) fn the_land_of_a_pending_saves_task_is_said_from_its_journal(f: &Fixt
     assert_eq!(state(&root), State::Conflicted);
     f.clean_workers();
 }
+
+/// `symphony reply PATH SLUG TEXT…` run in process from an agent's session, as the chat skill
+/// runs it in the main checkout: its exit code and what it printed.
+fn agent_reply(args: &[&str]) -> (i32, String) {
+    let mut argv = vec!["reply".to_string()];
+    argv.extend(args.iter().map(|arg| arg.to_string()));
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = symphony::cli::main(&argv, &mut "".as_bytes(), &mut out, &mut err);
+    let said = String::from_utf8(out).unwrap() + &String::from_utf8(err).unwrap();
+    (code, said)
+}
+
+pub(super) fn an_agents_reply_kept_from_main_is_delivered_behind_the_owners_save(f: &Fixture) {
+    let root = delivering(f);
+    let saves = ClosingSaves::start(&root);
+    let message = json!({"path":"docs/a.md","slug":"one","text":"what would two look like?"});
+    assert_eq!(
+        saves.post("", "/api/message", message),
+        json!({"ok":true,"delivery":"pending"})
+    );
+    drop(saves);
+    let owners = pending::saves(&root);
+    assert_eq!(owners.len(), 1, "{owners:?}");
+    let owner = owners[0].branch.clone();
+    assert_eq!(owners[0].state, State::Waiting);
+
+    // The agent answers from main's checkout: kept, nothing of the checkout written.
+    let page = root.join("docs/a.md");
+    let (code, said) = agent_reply(&[
+        page.to_str().unwrap(),
+        "one",
+        "Like the first, smaller.",
+        "--now",
+        "2026-11-22 21:10",
+        "--as",
+        "fox-1",
+    ]);
+    assert_eq!(code, 0, "{said}");
+    assert_eq!(git(&root, &["status", "--porcelain"]), "");
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), DOC);
+    // Shown after the owner's line it answers, and waiting for that save's delivery.
+    let shown = pending::shown(&root, "docs/a.md", DOC.into());
+    let asked = shown.find("what would two look like?").unwrap();
+    let answer = shown.find("agent — Like the first, smaller.").unwrap();
+    assert!(asked < answer, "{shown}");
+    let both = pending::saves(&root);
+    assert_eq!(both.len(), 2, "{both:?}");
+    let agent = both[1].branch.clone();
+    assert_eq!(
+        (both[1].state.clone(), both[1].by.as_str()),
+        (State::Queued, "fox-1")
+    );
+    let note = pending::note(&root, "docs/a.md").unwrap();
+    assert!(note.contains("This page shows 2 saves"), "{note}");
+    // A server's pass leaves it queued while the owner's save is on its way.
+    pass(&root);
+    assert_eq!(pending::saves(&root)[1].state, State::Queued);
+    assert_eq!(branches(&root), std::slice::from_ref(&owner));
+
+    // The owner's save lands and main here follows: the reply is committed on the main that
+    // holds it, a head of its own, and filed in words that say it is an agent's.
+    landed(&root, &owner, &owner);
+    git(&root, &["merge", "-q", "--ff-only", "origin/main"]);
+    pass(&root);
+    let pending = pending::saves(&root);
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    assert_eq!(
+        (pending[0].branch.as_str(), &pending[0].state),
+        (agent.as_str(), &State::Waiting)
+    );
+    assert_eq!(
+        git(&root, &["rev-parse", &format!("{agent}^")]),
+        git(&root, &["rev-parse", "main"])
+    );
+    let delivered = git(&root, &["diff", "main", &agent, "--", "docs/a.md"]);
+    assert!(
+        delivered.contains("+  [2026-11-22 21:10] agent — Like the first, smaller."),
+        "{delivered}"
+    );
+    assert_eq!(
+        delivered
+            .lines()
+            .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
+            .count(),
+        1,
+        "{delivered}"
+    );
+    let message = git(&root, &["log", "-1", "--format=%B", &agent]);
+    assert!(
+        message.starts_with("docs: an agent's save (fox-1)"),
+        "{message}"
+    );
+    let store = f.store();
+    let task = store.get(&agent).unwrap();
+    assert_eq!(task.status, "review");
+    assert_eq!(task.title, "Deliver an agent's save of docs/a.md");
+    let body = &task.body;
+    assert!(
+        body.starts_with(
+            "An agent (fox-1) saved a reply or a tidy of docs/a.md in the checkout on main"
+        ),
+        "{body}"
+    );
+    assert!(!body.contains("the owner's own"), "{body}");
+    assert_eq!(git(&root, &["status", "--porcelain"]), "");
+    f.clean_workers();
+}

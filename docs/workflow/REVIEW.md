@@ -328,12 +328,19 @@ pages keep only what is still open. Nothing is deleted: the cards stay where
 they are and the comments in the ledger.
 
 A tidy works out every file it changes before it writes one, so a card it cannot
-tidy leaves them all as they were. Where the project delivers by pull request
-(`[land] delivery`, [GITHUB_SETUP](../operations/GITHUB_SETUP.md#delivery-by-pull-request)),
-it writes nothing in a checkout on the default branch, as an owner's save writes
-nothing there: a tidy there with something to change is refused, naming the files.
-The same tidy run in a task's worktree writes them, and that task's pull request
-delivers them.
+tidy leaves them all as they were. It writes the ledger before the pages it takes
+comments from, so a ledger it cannot write leaves every comment on its page.
+
+Where the project delivers by pull request (`[land] delivery`,
+[GITHUB_SETUP](../operations/GITHUB_SETUP.md#delivery-by-pull-request)), a tidy and
+`just symphony-reply` write no file in a checkout on the default branch, just as an
+owner's save writes none there. Each reads the page as the saves still waiting
+leave it. Each file it changes is kept as an agent's save, which the page shows at
+once and its own pull request delivers
+([TASKS](TASKS.md#a-document-save-under-delivery)). A ledger that branch does not
+hold yet could not be delivered, so a tidy there leaves the answered comments on
+their pages and says so. In a task's worktree both write their files as anywhere,
+and that task's pull request delivers them.
 
 ### Slugs in prose
 

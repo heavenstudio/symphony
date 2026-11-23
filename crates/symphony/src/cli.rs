@@ -49,7 +49,9 @@ options:
 const REPLY_USAGE: &str =
     "usage: symphony reply [-h] [--question] [--now NOW] [--as HANDLE] path slug text";
 const REPLY_HELP: &str = "An agent's line under a card, appended the way the app appends the owner's, or the
-answer that resolves a comment.
+answer that resolves a comment. In a checkout on the default branch of a project that delivers
+by pull request it writes no file: it is kept as a save, shown on the page at once and delivered
+by a pull request of its own.
 
 positional arguments:
   path          the document, by its path from here
@@ -194,7 +196,8 @@ fn status_in(
     if parsed.flag("--lint") {
         return lint::main(&root, out, err);
     }
-    let docs = match scan(&root) {
+    // As the page shows it: a save still waiting for delivery by pull request is in it.
+    let docs = match crate::board::scan_shown(&root) {
         Ok(docs) => docs,
         Err(problem) => {
             let _ = writeln!(err, "✖ concept review board could not run: {problem}");
@@ -214,7 +217,10 @@ fn status_in(
 /// `symphony reply PATH SLUG TEXT [--question] [--now STAMP] [--as HANDLE]`: an agent's line under
 /// a card, or with the slug `L<line>` the answer that resolves the comment whose callout opens on
 /// that line; and, in a checkout, who wrote it, in the ask store ([`crate::asks::Reply`]), for the
-/// owner's ask it answers.
+/// owner's ask it answers. In a checkout on the default branch of a project that delivers by pull
+/// request it writes no file: the line is written on the page as the saves still waiting leave
+/// it, and kept as a save of its own ([`crate::commit::pending::keep`]), which the page shows at
+/// once and its own pull request delivers.
 pub fn reply_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     reply_in(args, &process_env(), out, err)
 }
@@ -278,7 +284,25 @@ fn reply_in(
         let _ = writeln!(err, "✖ {problem}");
         return 1;
     }
+    // In a checkout on the default branch of a project that delivers by pull request the reply
+    // writes no file: it is read as the page shows the saves still waiting, and kept as a save
+    // of its own (`commit::pending::keep`), under the lock the server's saves take.
+    let delivered = delivered_from(file);
+    let _held = match &delivered {
+        Some((top, _)) => match crate::commit::write_lock(top) {
+            Ok(held) => held.map(crate::commit::Held),
+            Err(problem) => {
+                let _ = writeln!(err, "✖ {problem}");
+                return 1;
+            }
+        },
+        None => None,
+    };
     let written = read_text(file)
+        .map(|old| match &delivered {
+            Some((top, rel)) => crate::commit::pending::shown(top, rel, old),
+            None => old,
+        })
         .map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => format!(
                 "no document {path}: reply names the document by its path from here, such as \
@@ -286,15 +310,18 @@ fn reply_in(
             ),
             _ => os_error(&e, file),
         })
-        .and_then(|old| match comment {
-            Some(line) => edit::resolve_comment(&old, line, text)
-                .map(|(new, title)| (new, "comment", title))
-                .map_err(|e| e.0),
-            None => edit::add_message(&old, slug, text, &now, Who::Agent, verdict)
-                .map(|new| (new, "card", slug.to_string()))
-                .map_err(|e| e.0),
+        .and_then(|old| {
+            match comment {
+                Some(line) => edit::resolve_comment(&old, line, text)
+                    .map(|(new, title)| (new, "comment", title))
+                    .map_err(|e| e.0),
+                None => edit::add_message(&old, slug, text, &now, Who::Agent, verdict)
+                    .map(|new| (new, "card", slug.to_string()))
+                    .map_err(|e| e.0),
+            }
+            .map(|made| (old, made))
         });
-    let (new, kind, target) = match written {
+    let (old, (new, kind, target)) = match written {
         Ok(written) => written,
         Err(problem) => {
             let _ = writeln!(err, "✖ {problem}");
@@ -308,7 +335,7 @@ fn reply_in(
         .map(str::to_string)
         .or_else(|| env.get("TASKS_SESSION").cloned())
         .filter(|by| !by.trim().is_empty());
-    if let Some(by) = by
+    if let Some(by) = &by
         && let Err(problem) = record_reply(file, kind, &target, by.trim(), env)
     {
         let _ = writeln!(
@@ -317,12 +344,51 @@ fn reply_in(
              credited to no one"
         );
     }
+    if let Some((top, rel)) = delivered {
+        let edit = crate::commit::Edit {
+            rel,
+            base: old,
+            new,
+        };
+        return match crate::commit::pending::keep(&top, edit, by.as_deref().unwrap_or_default()) {
+            Ok(branch) => {
+                let _ = writeln!(
+                    out,
+                    "replied on {slug} in {path}, kept as {branch}: this project delivers by \
+                     pull request, so the page shows it now and its own pull request delivers it"
+                );
+                0
+            }
+            Err(problem) => {
+                let _ = writeln!(err, "✖ the reply is not kept: {problem}");
+                1
+            }
+        };
+    }
     if let Err(e) = write_whole(file, &new) {
         let _ = writeln!(err, "✖ {}", os_error(&e, file));
         return 1;
     }
     let _ = writeln!(out, "replied on {slug} in {path}");
     0
+}
+
+/// The checkout that holds `file` and the file's path from it, when that checkout is on the
+/// default branch of a project that delivers by pull request (`[land] delivery`): there the host
+/// alone writes that branch, so a reply is kept for delivery ([`crate::commit::pending::keep`])
+/// and no file is written, as an owner's save writes none. None for a file in any other place.
+fn delivered_from(file: &Path) -> Option<(PathBuf, String)> {
+    let file = std::fs::canonicalize(file).ok()?;
+    let top = crate::branches::git(
+        file.parent()?,
+        &["rev-parse", "--path-format=absolute", "--show-toplevel"],
+    )?;
+    let top = std::fs::canonicalize(top.trim()).ok()?;
+    if !(crate::commit::on_main(&top) && crate::commit::delivers(&top)) {
+        return None;
+    }
+    let rel = crate::board::relative(&file, &top);
+    Some((top, rel))
 }
 
 /// Whether `path`, a place this process is told to write, may be written: anywhere for the binary

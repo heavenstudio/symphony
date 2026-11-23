@@ -1276,6 +1276,15 @@ A save kept by a build that did not know the key is delivered the same way. A pr
 `[verdicts]` generators are not run for a kept save, on its branch or after its delivery: what
 they generate stays as it is.
 
+An agent's reply (`just symphony-reply`) and a tidy (`just symphony-status --tidy`) run in the
+checkout on the default branch are kept the same way, one save for each file they change. Each
+is written against the page as the saves still waiting leave it, under the lock the app's saves
+take. So a reply follows the owner's line it answers on the page, and it is committed on its
+branch only once the owner's save before it is delivered. Its entry names the agent's session,
+and its task is filed as an agent's save of that page rather than the owner's. The server
+watches the journal's folder, so a save another process keeps there is shown and taken up at
+once, with no document changed.
+
 ### What the generators make, delivered by a pull request
 
 With `[land] delivery` set, [the regenerator](#the-regenerator) makes the outputs of the default

@@ -1,7 +1,9 @@
 //! [`super`] where no repository is needed: what a journal entry's name and a kept failure's
 //! words become, and what a folder that is no checkout answers.
 
-use super::{Delivery, QueuedPublication, flat, kept, note, saves, sequence_of, shown};
+use super::{
+    Delivery, QueuedPublication, Save, State, flat, kept, note, saves, sequence_of, shown, whose,
+};
 use crate::test_tree::Tree;
 use std::path::Path;
 
@@ -49,4 +51,35 @@ fn a_folder_that_is_no_checkout_keeps_and_shows_nothing() {
     assert!(saves(&root).is_empty());
     assert_eq!(note(&root, "docs/a.md"), None);
     assert_eq!(shown(&root, "docs/a.md", "text".into()), "text");
+}
+
+#[test]
+fn a_note_names_its_saves_by_whose_they_are() {
+    let save = |by: &str| Save {
+        sequence: 1,
+        file: "docs/a.md".into(),
+        branch: "docs/owner-save-1".into(),
+        shown: true,
+        state: State::Queued,
+        by: by.into(),
+    };
+    assert_eq!(whose(&[save("")]), "an owner's save");
+    assert_eq!(whose(&[save("fox-1")]), "an agent's save");
+    assert_eq!(whose(&[save(""), save("")]), "2 owner's saves");
+    assert_eq!(whose(&[save(""), save("fox-1")]), "2 saves");
+    assert_eq!(whose(&[save("fox-1"), save("agent"), save("")]), "3 saves");
+}
+
+#[test]
+fn an_owners_entry_names_no_one_and_an_agents_names_its_session() {
+    let owner = Delivery::default();
+    let written = serde_json::to_string(&owner).unwrap();
+    assert!(!written.contains("\"by\""), "{written}");
+    let agent = Delivery {
+        by: "fox-1".into(),
+        ..Delivery::default()
+    };
+    let written = serde_json::to_string(&agent).unwrap();
+    assert!(written.contains("\"by\":\"fox-1\""), "{written}");
+    assert_eq!(serde_json::from_str::<Delivery>(&written).unwrap(), agent);
 }

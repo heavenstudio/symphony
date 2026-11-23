@@ -1782,7 +1782,7 @@ impl Hub {
     }
 
     /// What the watcher follows: main's inputs, every tree's documents, models and concepts, and
-    /// the refs and worktree records in the common folder.
+    /// the refs, worktree records and the committer's journal in the common folder.
     fn watch_paths(&self) -> Vec<(PathBuf, RecursiveMode)> {
         let trees: Vec<_> = self.trees.read().recover().values().cloned().collect();
         self.inputs(&trees)
@@ -1845,6 +1845,13 @@ impl Hub {
                 ]
                 .map(|(below, mode)| (common.clone(), below.to_string(), mode)),
             );
+            // A save an agent's reply or tidy kept from main's checkout writes no document: its
+            // journal entry is what tells the pages, and what the committer then takes up.
+            paths.push((
+                common.clone(),
+                symphony::commit::pending::journal_below(),
+                RecursiveMode::NonRecursive,
+            ));
         }
         paths
     }
@@ -1968,6 +1975,12 @@ fn relevant(common: Option<&Path>, path: &Path) -> bool {
         Some("worktrees") => {
             let checkout = parts.len() == 3 && matches!(parts[2].to_str(), Some("HEAD" | "gitdir"));
             parts.len() <= 2 || checkout
+        }
+        // A journal entry renamed into place, or gone: a save kept for delivery, never the
+        // half-written file it is renamed from.
+        Some("symphony") => {
+            rel.parent() == Some(Path::new(&symphony::commit::pending::journal_below()))
+                && rel.extension().is_some_and(|extension| extension == "json")
         }
         _ => false,
     }
@@ -3588,7 +3601,7 @@ mod tests {
     }
 
     #[test]
-    fn idle_watch_ignores_scan_bookkeeping_but_follows_documents_and_refs() {
+    fn idle_watch_ignores_scan_bookkeeping_but_follows_documents_refs_and_kept_saves() {
         let common = Path::new("/repo/.git");
         for (path, expected) in [
             ("/repo/docs/game/SPEC.md", true),
@@ -3602,6 +3615,19 @@ mod tests {
             ("/repo/.git/worktrees/tree/index.lock", false),
             ("/repo/.git/worktrees/tree/logs/HEAD", false),
             ("/repo/.git/symphony/server/server.log", false),
+            (
+                "/repo/.git/symphony/server/verdict-publications/00000000000000000007.json",
+                true,
+            ),
+            (
+                "/repo/.git/symphony/server/verdict-publications/00000000000000000007.9-1.pending",
+                false,
+            ),
+            (
+                "/repo/.git/symphony/server/verdict-publications/00000000000000000007.failed",
+                false,
+            ),
+            ("/repo/.git/symphony/server/verdict-backlog/next", false),
             ("/repo/.git/index.lock", false),
         ] {
             assert_eq!(relevant(Some(common), Path::new(path)), expected, "{path}");
@@ -3730,5 +3756,53 @@ mod tests {
         );
         assert!(!hub.sweep(), "a change is reported once");
         assert!(hub.dirty.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_save_another_process_kept_is_a_change_of_mains_though_no_document_moved() {
+        let mut tree = Tree::new();
+        tree.root = tree.root.canonicalize().unwrap();
+        let root = repository(&tree);
+        let hub = Hub::new(&root, &root.join("build/client"));
+        *hub.swept.lock().unwrap() = Sweep::new(&hub.swept_paths());
+        hub.refresh_docs(None).unwrap();
+        assert!(!hub.sweep());
+        let common = hub.common.clone().expect("a checkout");
+        let journal = common.join(symphony::commit::pending::journal_below());
+        assert!(
+            hub.watch_paths().iter().any(
+                |(path, mode)| *path == journal && *mode == notify::RecursiveMode::NonRecursive
+            ),
+            "the journal is watched"
+        );
+        // As `symphony reply` keeps one from main's checkout: its folder new, its entry renamed
+        // into place, and nothing of the documents written.
+        let edit = symphony::commit::Edit {
+            rel: "docs/TOPIC.md".into(),
+            base: String::new(),
+            new: "# Topic\n".into(),
+        };
+        let branch = symphony::commit::pending::keep(&root, edit, "fox-1").unwrap();
+        let entry = journal.join(format!(
+            "{:020}.json",
+            branch
+                .strip_prefix(symphony::commit::pending::BRANCHES)
+                .unwrap()
+                .parse::<u64>()
+                .unwrap()
+        ));
+        assert!(entry.is_file());
+        assert!(hub.sweep(), "the kept save is missed");
+        let dirty = std::mem::take(&mut *hub.dirty.lock().unwrap());
+        assert_eq!(dirty, BTreeSet::from([entry]));
+        // A change of main's scope, so main's pages are read again and the committer woken.
+        let elsewhere = Path::new("/elsewhere");
+        assert!(scope_affected(
+            Some(&root),
+            &root,
+            Some(&dirty),
+            elsewhere,
+            elsewhere
+        ));
     }
 }

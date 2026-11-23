@@ -1,6 +1,8 @@
 //! An owner's save in a project that delivers by pull request (`[land] delivery`,
 //! [`super::delivers`]): kept, shown as pending, and delivered as a task's branch, never
-//! committed to the default branch here.
+//! committed to the default branch here. An agent's reply or tidy made in the checkout on that
+//! branch (`symphony reply`, `symphony status --tidy`) is kept the same way ([`keep`]), its task
+//! saying whose it is.
 //!
 //! Such a save writes nothing in the main checkout and moves no ref of the default branch: a
 //! tracked edit left there would stop every delivered land's reconciliation, the save's own
@@ -86,6 +88,10 @@ pub(super) struct Delivery {
     /// Why the last pass went no further, when it did not.
     #[serde(default)]
     problem: String,
+    /// Who saved it, when not the owner: the agent's handle, or `agent` for one that gave none
+    /// ([`keep`]). Empty, and left out of the entry, for an owner's save.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    by: String,
 }
 
 impl Delivery {
@@ -131,6 +137,8 @@ pub struct Save {
     /// default branch here.
     pub shown: bool,
     pub state: State,
+    /// Who saved it when not the owner, as its entry names them ([`keep`]); empty for the owner.
+    pub by: String,
 }
 
 /// The git common folder of the checkout at `root`, found once for each: every page read asks.
@@ -143,6 +151,13 @@ fn common(root: &Path) -> Option<PathBuf> {
     let common = common_dir(root).ok()?;
     found.insert(root.to_path_buf(), common.clone());
     Some(common)
+}
+
+/// The journal's folder below the git common folder of a checkout: what a server watches, so a
+/// save another process kept there ([`keep`]) is shown and taken up at once, though no document
+/// changed.
+pub fn journal_below() -> String {
+    format!("{}/{JOURNAL}", symphony_board::folders::SERVER)
 }
 
 /// The journal's folder for the checkout at `root`.
@@ -359,6 +374,7 @@ fn listed(root: &Path, only: Option<&str>) -> Vec<Save> {
                 branch: format!("{BRANCHES}{sequence}"),
                 shown,
                 state,
+                by: delivery.by,
             })
         })
         .collect()
@@ -369,6 +385,51 @@ fn listed(root: &Path, only: Option<&str>) -> Vec<Save> {
 /// ([`crate::save::Saves::settle`]).
 pub fn kept(root: &Path) -> bool {
     !entries(root).is_empty() && on_main(root)
+}
+
+/// Keep `edit`, an agent's, in the journal of the checkout at `root` as a save for delivery by
+/// pull request: the entry an owner's save makes ([`OutputJob::new`]), naming `by` as who saved
+/// it (an agent's handle; `agent` when blank). What `symphony reply` and `--tidy` do in a
+/// checkout on the default branch of a project that delivers by pull request, where they write
+/// no file: the pages show it at once ([`shown`]), and the next pass of a server's committer
+/// commits it on a branch of its own and files its task, behind any earlier save of the
+/// document, as for the owner's. Its branch, by which it is delivered.
+///
+/// `edit.base` is the document as [`shown`] leaves it, read under [`super::write_lock`], which
+/// the caller holds until this returns: a save of the server's is written against that text
+/// too, so neither is written against a page the other changed.
+///
+/// # Errors
+///
+/// The journal could not be written.
+pub fn keep(root: &Path, edit: Edit, by: &str) -> Result<String, String> {
+    let by = by.trim();
+    let by = if by.is_empty() { "agent" } else { by };
+    let backlog = super::Backlog::new(root)?;
+    let path = OutputJob::folder(root)?.join(format!("{:020}.json", backlog.sequence));
+    let saved = QueuedPublication {
+        edit,
+        publication: None,
+        dirty_retry: false,
+        dirty_reported: false,
+        delivery: Some(Delivery {
+            by: by.into(),
+            ..Delivery::saved(root)
+        }),
+    };
+    // Written whole and renamed into place, its lease let go at once: the server takes it up.
+    drop(OutputJob::write_journal(&path, &saved)?);
+    Ok(format!("{BRANCHES}{}", backlog.sequence))
+}
+
+/// Whether the default branch of the checkout at `root` holds the file `file`: a save of a file
+/// it does not hold cannot be committed there, nor delivered.
+pub fn holds_file(root: &Path, file: &str) -> bool {
+    git(
+        root,
+        &["cat-file", "-e", &format!("{}:{file}", main_ref(root))],
+    )
+    .is_ok()
 }
 
 /// The document `file` of the checkout at `root` as its pending saves leave it: `text`, the
@@ -439,13 +500,21 @@ pub fn note(root: &Path, file: &str) -> Option<String> {
         "> **Pending delivery.** This page {keeps} {} that `{default}` does not hold yet: this \
          project delivers by pull request, so each waits for the task that delivers it: {}. \
          Nothing is lost meanwhile, and nothing here is committed to `{default}`.",
-        if saves.len() == 1 {
-            "an owner's save".to_string()
-        } else {
-            format!("{} owner's saves", saves.len())
-        },
+        whose(&saves),
         each.join(", ")
     ))
+}
+
+/// The saves a page's note names, by whose they are: the owner's, an agent's ([`keep`]), or
+/// both.
+fn whose(saves: &[Save]) -> String {
+    let owners = saves.iter().filter(|save| save.by.is_empty()).count();
+    match (saves.len(), owners) {
+        (1, 1) => "an owner's save".into(),
+        (1, _) => "an agent's save".into(),
+        (n, owners) if owners == n => format!("{n} owner's saves"),
+        (n, _) => format!("{n} saves"),
+    }
 }
 
 /// The most characters of a failure's words the note carries: a board that does not answer
@@ -475,8 +544,14 @@ fn behind(root: &Path, sequence: u64, file: &str) -> bool {
 }
 
 /// The edit committed on its branch, on the default branch here: the branch and its commit. A
-/// branch a pass before made and never journaled is taken up, once it holds the edit.
-fn committed(root: &Path, sequence: u64, edit: &Edit) -> Result<(String, String), String> {
+/// branch a pass before made and never journaled is taken up, once it holds the edit. `by` is
+/// who saved it, empty for the owner ([`Delivery::by`]).
+fn committed(
+    root: &Path,
+    sequence: u64,
+    edit: &Edit,
+    by: &str,
+) -> Result<(String, String), String> {
     let branch = format!("{BRANCHES}{sequence}");
     let name = format!("refs/heads/{branch}");
     if let Ok(tip) = git(root, &["rev-parse", "--verify", "-q", &name]) {
@@ -498,7 +573,11 @@ fn committed(root: &Path, sequence: u64, edit: &Edit) -> Result<(String, String)
              delivered until the two agree"
         ));
     }
-    let message = format!("docs: owner verdicts\n\n{}", edit.rel);
+    let message = if by.is_empty() {
+        format!("docs: owner verdicts\n\n{}", edit.rel)
+    } else {
+        format!("docs: an agent's save ({by})\n\n{}", edit.rel)
+    };
     let commit = git(
         root,
         &["commit-tree", &made.tree, "-p", &parent, "-m", &message],
@@ -524,20 +603,39 @@ fn filed(root: &Path, delivery: &Delivery, edit: &Edit) -> Result<(), String> {
         let project = Project::of(root);
         let page = project.route(&edit.rel).unwrap_or_else(|| edit.rel.clone());
         let default = &project.default_branch;
+        // An agent's save, kept from the checkout on the default branch ([`keep`]), is filed
+        // the same way, in words that say whose it is.
+        let (title, saved, whose, own) = if delivery.by.is_empty() {
+            (
+                format!("Deliver the owner's save of {page}"),
+                format!("The owner saved an answer on {page} in the Symphony"),
+                "the owner's save".to_string(),
+                " and its text is the owner's own",
+            )
+        } else {
+            (
+                format!("Deliver an agent's save of {page}"),
+                format!(
+                    "An agent ({}) saved a reply or a tidy of {page} in the checkout on {default}",
+                    delivery.by
+                ),
+                "the agent's save".to_string(),
+                "",
+            )
+        };
         let new = NewTask {
             slug: slug.clone(),
-            title: format!("Deliver the owner's save of {page}"),
+            title,
             by: owner.into(),
             body: format!(
-                "The owner saved an answer on {page} in the Symphony, and this project delivers \
-                 by pull request, so the save is not on {default}: the branch {slug} holds it, \
-                 as the one commit {} of the owner's save of {}. Its work is done and its text is \
-                 the owner's own: nothing on the branch is edited but to settle a conflict with \
-                 {default}, by merging {default} into the branch and never by rebasing it: the \
-                 delivery is proved by a head that holds that commit. Assess that diff for what \
-                 it needs, then land it, which delivers it \
-                 by its pull request. The Symphony keeps the save and shows it as pending until \
-                 the delivery's receipt proves it on the remote {default}.",
+                "{saved}, and this project delivers by pull request, so the save is not on \
+                 {default}: the branch {slug} holds it, as the one commit {} of {whose} of {}. \
+                 Its work is done{own}: nothing on the branch is edited but to settle a conflict \
+                 with {default}, by merging {default} into the branch and never by rebasing it: \
+                 the delivery is proved by a head that holds that commit. Assess that diff for \
+                 what it needs, then land it, which delivers it by its pull request. The \
+                 Symphony keeps the save and shows it as pending until the delivery's receipt \
+                 proves it on the remote {default}.",
                 delivery.tip, edit.rel
             ),
             priority: 1,
@@ -670,7 +768,7 @@ impl OutputJob {
                 delivery.problem.clear();
                 return Ok(());
             }
-            match committed(root, sequence, edit) {
+            match committed(root, sequence, edit, &delivery.by) {
                 Ok((branch, tip)) => {
                     (delivery.branch, delivery.tip) = (branch, tip);
                     delivery.problem.clear();
