@@ -6,8 +6,8 @@
 import "../queue.css";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
+import { BoardPage } from "../board-page";
 import { Frame } from "../frame";
-import { BoardPage } from "../live";
 import { MountContext } from "../mount";
 import { changed, QueuePage } from "../queue";
 import { useRoute } from "../route";
