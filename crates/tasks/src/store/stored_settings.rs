@@ -6,15 +6,19 @@
 //! A write judges its value first ([`crate::settings::judged`]) and writes nothing it refuses.
 //! It reads the entry, decides in the process and writes the row whole, fenced on the revision it
 //! read ([`sql::WRITE`]): two writes of one setting meet on its row, and the one that lost reads
-//! and decides again, so no change is lost from the record.
+//! and decides again, so no change is lost from the record. A switch that would turn off the
+//! launch default the board has with it, the store's own over the project file's, is refused on
+//! what that read found ([`off_refused`]).
 
 use super::postgres::stored_settings as pg;
 use super::statement::both;
 use super::surreal::stored_settings as sql;
 use super::{Error, Failure, Store, refused};
+use crate::launch::defaults::{self, AGENT_KEY, AGENTS, ON_TABLES};
 use crate::schema;
-use crate::settings::{Entry, SAID, Stored, judged, kept, named};
+use crate::settings::{Entry, SAID, Stored, judged, kept, named, path};
 use serde_json::{Value, json};
+use std::path::Path;
 
 /// The table the entries are rows of.
 pub const TABLE: &str = "setting";
@@ -74,12 +78,13 @@ impl Store {
         &self,
         key: &str,
         by: &str,
-        change: impl Fn(Option<&Entry>) -> Result<Option<Value>, Error>,
+        change: impl Fn(Option<&Entry>, &[Entry]) -> Result<Option<Value>, Error>,
     ) -> Result<(Entry, bool), Error> {
         self.keeping_settings()?;
         for _ in 0..TRIES {
-            let found = (self.stored_entries()?.into_iter()).find(|entry| entry.key == key);
-            let after = change(found.as_ref())?;
+            let entries = self.stored_entries()?;
+            let found = entries.iter().find(|entry| entry.key == key).cloned();
+            let after = change(found.as_ref(), &entries)?;
             let before = found.unwrap_or_else(|| Entry {
                 key: key.to_string(),
                 ..Entry::default()
@@ -112,18 +117,25 @@ impl Store {
 
     /// Stores `value` for the setting `key` as `by`'s change, in force from the next read of the
     /// settings: the entry, and whether it changed (a value it held already writes nothing).
-    /// Refused, with nothing written: a value [`judged`] refuses, naming the key and why, and an
-    /// empty `by`.
+    /// Refused, with nothing written: a value [`judged`] refuses, naming the key and why; a switch
+    /// that turns off the launch default the board has with it, the store's own `default` over
+    /// the one `project_file` (the main checkout's) names ([`off_refused`]); and an empty `by`.
     pub fn store_setting(
         &self,
         key: &str,
         value: &toml::Value,
         by: &str,
+        project_file: &Path,
     ) -> Result<(Entry, bool), Error> {
         judged(key, value).map_err(|why| refused(format!("{why}: nothing was written")))?;
         let by = writer(by)?;
         let after = kept(value);
-        self.change_setting(key, by, |_| Ok(Some(after.clone())))
+        self.change_setting(key, by, |_, entries| {
+            if let Some(why) = off_refused(key, &after, entries, project_file) {
+                return Err(refused(format!("{why}: nothing was written")));
+            }
+            Ok(Some(after.clone()))
+        })
     }
 
     /// Removes the entry of the setting `key` as `by`'s change: its record is kept, it holds no
@@ -131,7 +143,7 @@ impl Store {
     /// would not take today too. Refused where no entry holds a value for it.
     pub fn remove_setting(&self, key: &str, by: &str) -> Result<Entry, Error> {
         let by = writer(by)?;
-        let removed = self.change_setting(key, by, |found| {
+        let removed = self.change_setting(key, by, |found, _| {
             if found.is_none_or(|entry| entry.value.is_none()) {
                 return Err(refused(format!(
                     "{SAID}: {} has no entry: nothing to remove, the files' value holds",
@@ -154,13 +166,50 @@ impl Store {
         by: &str,
     ) -> Result<bool, Error> {
         let by = writer(by)?;
-        let (_, removed) = self.change_setting(key, by, |found| {
+        let (_, removed) = self.change_setting(key, by, |found, _| {
             Ok(found
                 .and_then(|entry| entry.value.clone())
                 .filter(|held| held != value))
         })?;
         Ok(removed)
     }
+}
+
+/// Why `after`, written for `key`, is refused where it is a switch turning off the launch default
+/// the board has with `entries`, the store's: its `default` in force, else the one the project file
+/// at `project_file` names, else the board's own. None for any other write: a `default` naming an
+/// agent a switch turns off is taken, the default winning over the switch
+/// ([`defaults::Defaults::overruled`]).
+fn off_refused(key: &str, after: &Value, entries: &[Entry], project_file: &Path) -> Option<String> {
+    let (tables, agent) = path(key).ok()?;
+    if tables != ON_TABLES || after != &Value::Bool(false) {
+        return None;
+    }
+    let stored = Stored::of(entries);
+    let in_store = stored
+        .holds("agents.launch.default")
+        .then(|| defaults::agent(AGENT_KEY, stored.held.launch[0].as_deref()).ok())
+        .flatten()
+        .flatten();
+    let text = std::fs::read_to_string(project_file).unwrap_or_default();
+    let (own, chosen) = match (in_store, defaults::written_agent(&text)) {
+        (Some(own), _) => (own, format!("{SAID} {AGENT_KEY}")),
+        (None, Some(own)) => {
+            let line = crate::limits::line(&text, &["agents", "launch"], "default");
+            let at = crate::limits::Written {
+                at: format!("{} {AGENT_KEY}", crate::project::FILE),
+                line,
+            };
+            (own, at.said())
+        }
+        (None, None) => (AGENTS[0], "the board's own".to_string()),
+    };
+    (agent == own).then(|| {
+        format!(
+            "{SAID}: {}",
+            defaults::default_off(&named(key), own, &chosen)
+        )
+    })
 }
 
 /// `by`, who a change is recorded as made by: refused empty.

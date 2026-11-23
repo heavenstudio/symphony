@@ -208,6 +208,14 @@ fn one(fake: &Fake) -> Result<Vec<Answer>, DbError> {
     fake.client().request(&[Step::bare("SELECT 1")])
 }
 
+/// What the board's health `log` holds of the requests of the last hour: how many were sent, how
+/// many got no answer, and whether the slowest got none.
+fn recorded(log: &crate::board_health::QueryLog) -> (u64, u64, Option<bool>) {
+    let (queries, _) = log.report(crate::sweep::trigger::now());
+    let slowest = queries.slowest.map(|slowest| slowest.failed);
+    (queries.count, queries.failed, slowest)
+}
+
 #[test]
 fn a_fake_collects_the_clients_last_bytes_whichever_side_ends_first() {
     bounded("a fake and its client ending in either order", || {
@@ -472,6 +480,8 @@ fn a_connection_that_breaks_mid_answer_is_dropped_and_the_next_request_makes_ano
     let (_, first) = fake.sent();
     assert!(!first.is_empty());
     assert!(client.request(&[Step::bare("SELECT 1")]).is_ok());
+    let (count, failed, _) = recorded(&client.queries());
+    assert_eq!((count, failed), (2, 1), "the cut one alone went unanswered");
 }
 
 #[test]
@@ -563,7 +573,7 @@ fn a_server_that_takes_none_of_a_request_and_says_nothing_fails_it_at_the_client
 /// loaded machine, meets first.
 fn started_then_waiting(dir: &Dir, wait: Duration) -> Client {
     let mut client = Client::new(dir.path(), "board");
-    let connection = client.connect().unwrap();
+    let connection = client.connect().unwrap().unwrap();
     connection.writer.set_write_timeout(Some(wait)).unwrap();
     connection
         .stream
@@ -592,6 +602,7 @@ fn a_request_the_server_takes_and_never_answers_says_it_is_slow_at_the_clients_w
         drop(stream);
     });
     let client = started_then_waiting(&dir, Duration::from_millis(50));
+    let log = client.queries();
     let failed = bounded("a request the server never answers", move || {
         let failed = client.request(&[Step::bare("SELECT 1")]);
         (failed, client.connection.lock().unwrap().is_none())
@@ -613,6 +624,11 @@ fn a_request_the_server_takes_and_never_answers_says_it_is_slow_at_the_clients_w
         crate::rpc::slow(&format!("the board's database: {said}")),
         "{said}"
     );
+    assert_eq!(
+        recorded(&log),
+        (1, 1, Some(true)),
+        "a request with no answer"
+    );
 }
 
 #[test]
@@ -628,6 +644,7 @@ fn a_startup_the_server_never_answers_says_it_is_slow_and_that_no_request_was_se
         let _ = finished.recv();
     });
     let client = Client::new(dir.path(), "board").waiting(Duration::from_millis(50));
+    let log = client.queries();
     let failed = bounded("a startup the server never answers", move || {
         let failed = client.request(&[Step::bare("SELECT 1")]);
         (failed, client.connection.lock().unwrap().is_none())
@@ -649,6 +666,11 @@ fn a_startup_the_server_never_answers_says_it_is_slow_and_that_no_request_was_se
         )
     );
     assert!(crate::rpc::slow(&said), "{said}");
+    assert_eq!(
+        recorded(&log),
+        (1, 1, Some(true)),
+        "a request with no answer"
+    );
 }
 
 #[test]
@@ -657,9 +679,8 @@ fn a_socket_no_server_listens_on_refuses_the_connection_which_is_not_slow() {
     // The socket's file stays when its listener goes: a connection to it is refused, as one past a
     // full backlog is on macOS (Linux blocks that one instead, or says EAGAIN without blocking).
     drop(UnixListener::bind(dir.path().join(crate::server::postgres::SOCKET_FILE)).unwrap());
-    let Err(DbError::Failed(said)) =
-        Client::new(dir.path(), "board").request(&[Step::bare("SELECT 1")])
-    else {
+    let client = Client::new(dir.path(), "board");
+    let Err(DbError::Failed(said)) = client.request(&[Step::bare("SELECT 1")]) else {
         panic!("a refused connection is a failure");
     };
     assert_eq!(
@@ -673,6 +694,11 @@ fn a_socket_no_server_listens_on_refuses_the_connection_which_is_not_slow() {
         )
     );
     assert!(!crate::rpc::slow(&said), "{said}");
+    assert_eq!(
+        recorded(&client.queries()),
+        (1, 1, Some(true)),
+        "a request with no answer"
+    );
 }
 
 #[test]
@@ -925,7 +951,7 @@ fn a_bounded_client_waits_the_shorter_of_its_own_wait_and_the_bound_and_keeps_it
 }
 
 #[test]
-fn request_telemetry_counts_reads_writes_and_failures_once_and_is_shared_by_board() {
+fn request_telemetry_counts_reads_writes_and_unanswered_requests_once_and_is_shared_by_board() {
     let fake = Fake::new(vec![Script {
         started: STARTED,
         answers: vec![JSONB_AND_NULL, NOTICE, SYNTAX],
@@ -940,12 +966,123 @@ fn request_telemetry_counts_reads_writes_and_failures_once_and_is_shared_by_boar
             "DO $$ BEGIN UPDATE task SET title = 'new'; END $$",
         )])
         .unwrap();
+    // The server answered it: an error, and no request that went unanswered.
     assert!(client.simple("SELECT 'x' FROM").is_err());
     let (queries, writes) = log.report(crate::sweep::trigger::now());
-    assert_eq!((queries.count, queries.failed, writes.count), (3, 1, 1));
+    assert_eq!((queries.count, queries.failed, writes.count), (3, 0, 1));
     assert_eq!(client.requests(), 3);
     drop(client);
     fake.sent();
+}
+
+/// An error the server answered is an answer, which the board's health never counts as a request
+/// that went unanswered: a raised exception, a conflict, any other error, and a startup it
+/// refused, for a database it does not hold or with a password asked for.
+#[test]
+fn an_error_the_server_answered_is_no_unanswered_request() {
+    let thrown = |said: &Result<Vec<Answer>, DbError>| matches!(said, Err(DbError::Thrown(_)));
+    let conflict = |said: &Result<Vec<Answer>, DbError>| said == &Err(DbError::Conflict);
+    let failed = |said: &Result<Vec<Answer>, DbError>| matches!(said, Err(DbError::Failed(_)));
+    type Judged = fn(&Result<Vec<Answer>, DbError>) -> bool;
+    let cases: [(&str, &'static str, Vec<&'static str>, Judged); 5] = [
+        (
+            "a raised exception",
+            STARTED,
+            vec![RAISED_AFTER_ONE],
+            thrown,
+        ),
+        (
+            "a serialization failure",
+            STARTED,
+            vec![SERIALIZATION, ROLLED_BACK],
+            conflict,
+        ),
+        ("a syntax error", STARTED, vec![SYNTAX], failed),
+        ("a database not there", NO_SUCH_DATABASE, vec![], failed),
+        ("a password asked for", PASSWORD, vec![], failed),
+    ];
+    for (case, started, answers, judged) in cases {
+        let fake = Fake::new(vec![Script { started, answers }]);
+        let client = fake.client();
+        let said = client.request(&[Step::bare("SELECT 1")]);
+        assert!(judged(&said), "{case}: {said:?}");
+        assert_eq!(recorded(&client.queries()), (1, 0, Some(false)), "{case}");
+        drop(client);
+        fake.sent();
+    }
+}
+
+/// Whether a child std forks holds `fd` before its exec, as the child's own table says.
+#[cfg(target_vendor = "apple")]
+fn a_forked_child_holds(fd: std::os::fd::RawFd) -> bool {
+    use crate::children::Child as _;
+    use std::os::unix::process::CommandExt as _;
+    let mut command = std::process::Command::of("/usr/bin/true");
+    // SAFETY: fcntl is async-signal-safe and reads only the forked child's own table.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::fcntl(fd, libc::F_GETFD) == -1 {
+                Ok(())
+            } else {
+                Err(std::io::Error::from_raw_os_error(libc::EEXIST))
+            }
+        });
+    }
+    let _spawning = crate::sys::spawning();
+    match command.status() {
+        Ok(status) => {
+            assert!(status.success(), "{status}");
+            false
+        }
+        Err(e) if e.raw_os_error() == Some(libc::EEXIST) => true,
+        Err(e) => panic!("{e}"),
+    }
+}
+
+/// Neither of a connection's two descriptors reaches a child forked beside it, even before its
+/// exec, so no child can close a copy of its socket and drain it (macOS fails a draining socket's
+/// every wait with EBADF); std's socket, as a control, reaches one. Each is close-on-exec, and the
+/// connection serves the next request.
+#[cfg(target_vendor = "apple")]
+#[test]
+fn a_connections_socket_never_reaches_a_forked_child() {
+    use std::os::fd::AsRawFd as _;
+    let fake = Fake::new(vec![Script {
+        started: STARTED,
+        answers: vec![JSONB_AND_NULL, JSONB_AND_NULL],
+    }]);
+    let client = fake.client();
+    client.request(&[Step::bare("SELECT 1")]).unwrap();
+    {
+        let held = client.connection.lock().unwrap();
+        let connection = held.as_ref().expect("a connection kept");
+        let reader = connection.stream.get_ref().as_raw_fd();
+        let writer = connection.writer.as_raw_fd();
+        assert_ne!(reader, writer, "two descriptors");
+        for (side, fd) in [("reader", reader), ("writer", writer)] {
+            assert!(
+                !a_forked_child_holds(fd),
+                "the {side} reached a forked child"
+            );
+            // SAFETY: F_GETFD reads the flags of a descriptor the connection keeps open.
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+            assert_eq!(flags & libc::FD_CLOEXEC, libc::FD_CLOEXEC, "the {side}");
+        }
+    }
+    let (control, _peer) = UnixStream::pair().unwrap();
+    assert!(
+        a_forked_child_holds(control.as_raw_fd()),
+        "std's socket reaches a forked child"
+    );
+    let next = client.request(&[Step::bare("SELECT 1")]).unwrap();
+    assert_eq!(next[0].rows, [[Some("{\"a\": 1}".to_string()), None]]);
+    drop(client);
+    let (_, after) = fake.sent();
+    assert_eq!(
+        kinds(&after),
+        b"PBESPBESX",
+        "both requests on the one connection"
+    );
 }
 
 #[test]

@@ -1,7 +1,8 @@
 //! `settings list`, `settings set KEY VALUE` and `settings remove KEY`: the board's store of
 //! preferences ([`crate::settings`], [`crate::Store::store_setting`]) from the command line. A
 //! key is its setting's tables and key as the project file names them, joined by dots
-//! (`limits.low_volume`, `agents.launch.model`, `agents.models.reviewer`, `agents.panes`).
+//! (`limits.low_volume`, `agents.launch.model`, `agents.models.reviewer`, `agents.panes`,
+//! `agents.launch.on.codex`).
 
 use super::{Context, Stop};
 use crate::Store;
@@ -15,7 +16,10 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         ("list", None, None) => list(store, c),
         ("set", Some(key), Some(value)) => {
             let actor = c.actor()?;
-            let (entry, changed) = store.store_setting(key, &value_of(key, value), &actor)?;
+            // The project file whose launch default a switch is judged against, if any.
+            let file = crate::limits::file_of(c.env).unwrap_or_default();
+            let (entry, changed) =
+                store.store_setting(key, &value_of(key, value), &actor, &file)?;
             let held = entry.value.as_ref().map(shown).unwrap_or_default();
             c.say(&if changed {
                 format!(

@@ -3,12 +3,14 @@
 //! [`Defaults::model_of`]), or the local file beside it for one that file overrides
 //! ([`crate::local`]), or the board's store for one it holds ([`crate::settings`]), with the
 //! committed value that one stands over. What an agent reads before it starts a subagent, and what tells a
-//! project its edit was taken.
+//! project its edit was taken. Where any place writes an agent's switch (`[agents.launch.on]`), each
+//! agent is a row, on or off and where from, the launch default saying when a switch that would turn
+//! it off does not hold.
 
 use super::{Context, Stop};
 use crate::Store;
 use crate::alarm;
-use crate::launch::defaults::{Chosen, ROLES};
+use crate::launch::defaults::{AGENTS, Chosen, ROLES};
 use crate::launch::hc::Binary;
 use crate::launch::{Defaults, Machine, running};
 use crate::limits::{self, LOW, MACHINE_AGENTS, Read, SLOTS, TASKS};
@@ -212,6 +214,23 @@ pub fn lines(
             }
         }
         None => lines.push("MODELS: the project file cannot be read for them".into()),
+    }
+    if let Some(defaults) = models.filter(|defaults| defaults.on.iter().any(Option::is_some)) {
+        lines.push("AGENTS a launch may start, each by its switch ([agents.launch.on])".into());
+        let own = defaults.default_agent();
+        for (switch, agent) in defaults.on.iter().zip(AGENTS) {
+            let (value, from) = match (agent == own, switch) {
+                (true, _) => (
+                    "on",
+                    defaults
+                        .overruled()
+                        .unwrap_or_else(|| "the launch default".into()),
+                ),
+                (false, Some(switch)) => (if switch.on { "on" } else { "off" }, switch.at.said()),
+                (false, None) => ("on", "default".into()),
+            };
+            lines.push(row(agent, value.into(), from));
+        }
     }
     // The panes setting is the Symphony's to read, and a row here only when the store holds it.
     if let Some(panes) = &stored.held.panes {

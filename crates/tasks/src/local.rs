@@ -5,8 +5,8 @@
 //! ([`crate::launch::Defaults::configured`]) and the Symphony's project load all take what
 //! [`beside`] read, so each takes the same override.
 //!
-//! It holds preferences alone: `[agents] launch` (`default`, `model`, `effort`),
-//! `[agents.models]` (a role's model) and `[limits]`. A setting that holds a command or a program
+//! It holds preferences alone: `[agents] launch` (`default`, `model`, `effort`, and the agents'
+//! switches, `[agents.launch.on]`), `[agents.models]` (a role's model) and `[limits]`. A setting that holds a command or a program
 //! the Symphony runs, or that decides what lands ([`PROTECTED`], [`PROTECTED_KEYS`]), is refused
 //! there by name and never read from it: a file no commit records must not change the landing gate
 //! or run a command, which would be a way around review that leaves no trace. Any other table or
@@ -22,8 +22,16 @@
 //! [`Place`]): one set of rules and one pair of lists says what either place may hold, so a setting
 //! refused in the file is refused in the store by the same line. The store holds one preference
 //! more, `[agents] panes` ([`PANES`]), which the local file has no place for.
+//!
+//! The launch default cannot be turned off ([`crate::launch::defaults`]): a local file that turns
+//! off the default it names itself is refused whole with the line that says to pick another
+//! default first ([`judge`]). One that turns off a default it does not name, the store's or the
+//! project file's, is the places disagreeing, which every reader settles alike: the default wins
+//! and the switch does not hold (`Defaults::overruled`).
 
-use crate::launch::defaults::{ROLES, agent};
+use crate::launch::defaults::{
+    AGENT_KEY, AGENTS, ON, ON_TABLES, ROLES, agent, default_off, switch,
+};
 use crate::limits;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -97,13 +105,14 @@ impl Place {
     }
 
     /// Whether it keeps `key` of the table `path` leads to: a key of `[agents] launch`
-    /// ([`LAUNCH`]), a role's model ([`ROLES`]) or a key of `[limits]` in either place, and
-    /// `[agents] panes` in the board's store alone. The one list of what each place keeps, which
-    /// the Settings page reads for where a setting may be written.
+    /// ([`LAUNCH`]), an agent's switch ([`AGENTS`]), a role's model ([`ROLES`]) or a key of
+    /// `[limits]` in either place, and `[agents] panes` in the board's store alone. The one list of
+    /// what each place keeps, which the Settings page reads for where a setting may be written.
     pub fn keeps(self, path: &[&str], key: &str) -> bool {
         match path {
             [limits::TABLE] => limits::KEYS.contains(&key),
             ["agents", "launch"] => LAUNCH.contains(&key),
+            ["agents", "launch", ON] => AGENTS.contains(&key),
             ["agents", "models"] => ROLES.contains(&key),
             ["agents"] => self == Place::Store && key == "panes",
             _ => false,
@@ -124,6 +133,8 @@ pub struct Local {
     pub limits: BTreeMap<&'static str, usize>,
     /// `[agents] panes`, which the board's store alone holds ([`Place::Store`]).
     pub panes: Option<String>,
+    /// `[agents.launch.on]`: each agent's switch it writes, in [`AGENTS`]' order.
+    pub on: [Option<bool>; 2],
     text: String,
 }
 
@@ -150,8 +161,14 @@ impl Local {
             models,
             limits,
             panes,
+            on,
             ..
         } = other;
+        for (into, written) in self.on.iter_mut().zip(on) {
+            if written.is_some() {
+                *into = *written;
+            }
+        }
         for (into, written) in self.launch.iter_mut().zip(launch) {
             if written.is_some() {
                 into.clone_from(written);
@@ -197,7 +214,7 @@ pub fn path_beside(project_file: &Path) -> PathBuf {
 }
 
 /// The local file beside the project file at `project_file`, as [`parse`] reads it: none when
-/// there is no file.
+/// there is no file. Every reader takes it from here, so each reads the same file or none.
 ///
 /// # Errors
 ///
@@ -320,6 +337,21 @@ pub fn judge(
                     };
                     for (key, value) in written {
                         let name = named(&tables, Some(key));
+                        if tables[1] == "launch" && key == ON {
+                            let Value::Table(switches) = value else {
+                                let why = "it is a table of each agent's switch";
+                                problems.push(wrong(name, value, why));
+                                continue;
+                            };
+                            for (agent, value) in switches {
+                                let name = named(&ON_TABLES, Some(agent));
+                                match switch(&name, agent, value) {
+                                    Ok((at, on)) => local.on[at] = Some(on),
+                                    Err(why) => problems.push(format!("{said}: {why}")),
+                                }
+                            }
+                            continue;
+                        }
                         let Some(at) = known.iter().position(|k| k == key) else {
                             problems.push(unknown(said, &name));
                             continue;
@@ -374,6 +406,17 @@ pub fn judge(
                 }
             }
             (_, None) => problems.push(not_local(place, said, &named(&[table], None))),
+        }
+    }
+    // A file that turns off the default it names does not load; the store's entries are judged
+    // one by one, and its write against the default in force (`Store::store_setting`).
+    let own = agent(AGENT_KEY, local.launch[0].as_deref()).ok().flatten();
+    if let Some(own) = own.filter(|_| place == Place::File) {
+        let at = AGENTS.iter().position(|known| *known == own).unwrap_or(0);
+        if local.on[at] == Some(false) {
+            let chosen = named(&["agents", "launch"], Some("default"));
+            let name = named(&ON_TABLES, Some(own));
+            problems.push(format!("{said}: {}", default_off(&name, own, &chosen)));
         }
     }
     if problems.is_empty() {

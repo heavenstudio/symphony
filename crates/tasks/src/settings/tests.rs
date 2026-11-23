@@ -55,6 +55,32 @@ fn a_command_lines_text_is_a_whole_number_for_a_limit_and_text_for_any_other() {
 }
 
 #[test]
+fn a_command_lines_text_is_a_switch_for_an_agents_switch() {
+    for (text, on) in [
+        ("true", true),
+        (" on ", true),
+        ("false", false),
+        ("off", false),
+    ] {
+        assert_eq!(
+            value_of("agents.launch.on.codex", text),
+            Value::Boolean(on),
+            "{text}"
+        );
+    }
+    // Any other word stays text, which the switch's rule refuses; another key takes no switch.
+    assert_eq!(
+        value_of("agents.launch.on.codex", "no"),
+        Value::String("no".into())
+    );
+    assert_eq!(
+        value_of("agents.launch.model", "off"),
+        Value::String("off".into())
+    );
+    assert_eq!(named("agents.launch.on.codex"), "[agents.launch.on] codex");
+}
+
+#[test]
 fn a_value_is_kept_as_json_and_read_back_as_the_file_would_write_it() {
     for value in [
         Value::Integer(3),
