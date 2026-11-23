@@ -8,6 +8,7 @@ import "./styles/boardwait.css";
 import {
   type CSSProperties,
   memo,
+  type RefObject,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -521,14 +522,183 @@ export function windowChosen(filters: Filters, value: string, onFilter: Filter):
  * `days`. */
 export type Filter = (query: string, days: number, wait?: string) => void;
 
+/** The task the address links, as `useLinkedTask` finds it. */
+export interface LinkedTask {
+  /** The task, once the board holds it or the server named it; none before, or for no link. */
+  linked: Task | null;
+  /** Why it is not drawn, while the board does not hold it: its read failed, or found it gone. */
+  error: string;
+  /** Read it again. */
+  retry: () => void;
+}
+
+/**
+ * The task the address links (`slug`, none when empty): `known`, the board's own, when the board
+ * holds it, and otherwise read from the server under `scope` (`linkedTask`), which a search may
+ * have to page through. A task read is the link's while the address names it; a read the address
+ * left, or the board's own copy, came first, is given up. Its error is said until the board holds
+ * the task, and a retry clears it while it reads again.
+ */
+export function useLinkedTask(scope: string, slug: string, known: Task | undefined): LinkedTask {
+  const [resolved, setResolved] = useState<Task | null>(null);
+  const [error, setError] = useState("");
+  const [tries, setTries] = useState(0);
+  useEffect(() => {
+    void tries;
+    if (slug === "" || known !== undefined) return;
+    const controller = new AbortController();
+    setError("");
+    void linkedTask(scope, slug, controller.signal).then(
+      (task) => {
+        if (!controller.signal.aborted) {
+          setResolved(task);
+          if (task === null) setError("The linked task is no longer on this board.");
+        }
+      },
+      (error: unknown) => {
+        if (!controller.signal.aborted) setError(said(error));
+      },
+    );
+    return () => controller.abort();
+  }, [scope, slug, known, tries]);
+  return {
+    linked: known ?? (resolved?.slug === slug ? resolved : null),
+    error: slug !== "" && known === undefined ? error : "",
+    retry: () => setTries((count) => count + 1),
+  };
+}
+
+/** A custom workflow's flow, as `useFlow` reads it. */
+export interface FlowRead {
+  /** Its lanes, tabs and strip, once read; none while no workflow is active or it is not read. */
+  flow: Flow | null;
+  /** Its chunk did not come at this generation, and the page's build is not gone. */
+  failed: boolean;
+  /** Import the chunk again. */
+  retry: () => void;
+}
+
+/**
+ * A custom workflow's lanes, tabs and strip, from a chunk of its own (`flow.tsx`) read once the
+ * listing says one is active (its activation `generation`), and again when its generation moves;
+ * none, its names forgotten, while none is. A chunk that does not come is said with its retry, as
+ * a task's page says its own, once the shell has said the page's build is not gone (the page then
+ * loads again); the board draws its own lanes meanwhile. The failure is its generation's: a new
+ * one, a return to the board's own writers between included, imports the chunk again.
+ */
+export function useFlow(scope: string, generation: number | null | undefined): FlowRead {
+  const [flow, setFlow] = useState<Flow | null>(null);
+  const [failedAt, setFailedAt] = useState<number | null>(null);
+  const failed = !!generation && failedAt === generation;
+  useEffect(() => {
+    const reading = new AbortController();
+    if (!generation) {
+      setFlow(null);
+      NAMES.clear();
+    } else if (!failed)
+      import("./flow").then(
+        (chunk) =>
+          void chunk
+            .readFlow(scope, reading.signal, NAMES, [STAGES, PHONE_STAGES])
+            .then((read) => reading.signal.aborted || setFlow(read)),
+        async () => {
+          const shell = snapshot("reviewShell") as { gone(): Promise<boolean> } | undefined;
+          if (reading.signal.aborted || (await shell?.gone()) || reading.signal.aborted) return;
+          setFailedAt(generation);
+        },
+      );
+    return () => reading.abort();
+  }, [scope, generation, failed]);
+  return { flow, failed, retry: () => setFailedAt(null) };
+}
+
+/** Whether the window is a phone's (760 px wide or less), read again at each resize, and the time
+ * in seconds, moved at each minute, by which the cards say their ages. */
+export function usePhoneAndMinute(): [phone: boolean, now: number] {
+  const [phone, setPhone] = useState(() => windowWidth() <= 760);
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  useEffect(() => {
+    const resize = () => setPhone(windowWidth() <= 760);
+    window.addEventListener("resize", resize);
+    const controller = new AbortController();
+    void (async () => {
+      while (!controller.signal.aborted) {
+        await tick(controller.signal);
+        if (!controller.signal.aborted) setNow(Date.now() / 1000);
+      }
+    })();
+    return () => {
+      window.removeEventListener("resize", resize);
+      controller.abort();
+    };
+  }, []);
+  return [phone, now];
+}
+
+/** The lane scroller's sides and place, as `useLaneSides` keeps them. */
+export interface LaneSides {
+  /** Where the lane at `at`, in the lanes' order, stands in the scroller: whole when unmeasured. */
+  side: (at: number) => Side;
+  /** Keep where the scroller stands, while it shows the lanes, to come back to. */
+  remember: () => void;
+  /** The scroller scrolled: keep where it stands and read the lanes' sides again. */
+  scrolled: () => void;
+}
+
+/**
+ * Which lanes the scroller (`surface`) cuts, a side for each in their order, while it is
+ * `showingColumns`: read when it shows them, at each scroll and each change of its width. Where it
+ * stood among them, remembered before it shows something else, it stands again once it shows them
+ * again.
+ */
+export function useLaneSides(
+  surface: RefObject<HTMLElement | null>,
+  showingColumns: boolean,
+): LaneSides {
+  const left = useRef(0);
+  const wasShowing = useRef(showingColumns);
+  const [sides, setSides] = useState("");
+  const measure = useCallback(() => {
+    const box = surface.current;
+    if (box === null) return;
+    const frame = box.getBoundingClientRect();
+    setSides(
+      [...box.querySelectorAll(".column")]
+        .map((lane) => laneSide(frame, lane.getBoundingClientRect()))
+        .join(),
+    );
+  }, [surface]);
+  useLayoutEffect(() => {
+    if (showingColumns && !wasShowing.current && surface.current !== null) {
+      surface.current.scrollLeft = left.current;
+    }
+    wasShowing.current = showingColumns;
+    const box = surface.current;
+    if (!showingColumns || box === null) return;
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [surface, showingColumns, measure]);
+  const remember = useCallback(() => {
+    if (showingColumns && surface.current !== null) left.current = surface.current.scrollLeft;
+  }, [surface, showingColumns]);
+  return {
+    side: (at) => (sides.split(",")[at] || "shown") as Side,
+    remember,
+    scrolled: () => {
+      remember();
+      if (showingColumns) measure();
+    },
+  };
+}
+
 export interface TaskBoardProps {
   scope: string;
   tasks: Task[];
   work: MachineWork;
   connected: boolean;
-  signoff: string[];
   counts: [string, number][];
-  statuses: string[];
   refreshed: number;
   onFilter: Filter;
   onLoad: OnLoad;
@@ -554,67 +724,22 @@ export function TaskBoard({
   const [filters, setFilters] = useState<Filters>({ search: "", days: 1 });
   const { search, days } = filters;
   const [wait, setWait] = useState("");
-  // A custom workflow's lanes, tabs and strip, from a chunk of its own read once the listing says
-  // one is active, and again when its generation moves (`flow.tsx`). A chunk that does not come is
-  // said with its retry, as a task's page says its own, once the shell has said the page's build
-  // is not gone (the page then loads again); the board draws its own lanes meanwhile.
-  const [flow, setFlow] = useState<Flow | null>(null);
-  const [flowFailed, setFlowFailed] = useState(false);
   const generation = waiting?.workflow;
-  useEffect(() => {
-    const reading = new AbortController();
-    if (!generation) {
-      setFlow(null);
-      NAMES.clear();
-    } else if (!flowFailed)
-      import("./flow").then(
-        (chunk) =>
-          void chunk
-            .readFlow(scope, reading.signal, NAMES, [STAGES, PHONE_STAGES])
-            .then((read) => reading.signal.aborted || setFlow(read)),
-        async () => {
-          const shell = snapshot("reviewShell") as { gone(): Promise<boolean> } | undefined;
-          if (!reading.signal.aborted && !(await shell?.gone())) setFlowFailed(true);
-        },
-      );
-    return () => reading.abort();
-  }, [scope, generation, flowFailed]);
+  const { flow, failed: flowFailed, retry: retryFlow } = useFlow(scope, generation);
   const [stages, tabs] = flow?.lanes(waiting) ?? [STAGES, PHONE_STAGES];
   const name = (stage: string) => NAMES.get(stage) ?? statusLabel(stage);
   // The phone's stage this device chose, kept as chosen, and the one shown: the first of the
   // board's tabs when it names none of them.
   const [selected, setSelected] = useState(() => load(STAGE_KEY) ?? "");
   const tab = savedStage(selected, tabs);
-  const [phone, setPhone] = useState(() => windowWidth() <= 760);
+  const [phone, now] = usePhoneAndMinute();
   const [opened, setOpened] = useState("");
   const [filtering, setFiltering] = useState(false);
-  const [now, setNow] = useState(() => Date.now() / 1000);
   const address = useAnchor();
   const slug = linkedSlug(address);
-  const [resolved, setResolved] = useState<Task | null>(null);
-  const [linkError, setLinkError] = useState("");
-  const [retryLink, setRetryLink] = useState(0);
-  const [followed, setFollowed] = useState("");
   const known = tasks.find((task) => task.slug === slug);
-  const linked = known ?? (resolved?.slug === slug ? resolved : null);
-  useEffect(() => {
-    void retryLink;
-    if (slug === "" || known !== undefined) return;
-    const controller = new AbortController();
-    setLinkError("");
-    void linkedTask(scope, slug, controller.signal).then(
-      (task) => {
-        if (!controller.signal.aborted) {
-          setResolved(task);
-          if (task === null) setLinkError("The linked task is no longer on this board.");
-        }
-      },
-      (error: unknown) => {
-        if (!controller.signal.aborted) setLinkError(said(error));
-      },
-    );
-    return () => controller.abort();
-  }, [scope, slug, known, retryLink]);
+  const { linked, error: linkError, retry: retryLink } = useLinkedTask(scope, slug, known);
+  const [followed, setFollowed] = useState("");
   // Resolve the address before the selected column mounts, so its row can land directly under
   // the header. A saved phone tab never takes precedence over an explicit row address.
   const destination = linked === null ? "" : waitingStage(work, linked, connected);
@@ -656,36 +781,8 @@ export function TaskBoard({
   const surface = useRef<HTMLElement>(null);
   useKeptPlace(surface, true, true);
   const showingColumns = !phone && wait === "" && opened === "";
-  const columnLeft = useRef(0);
-  const wasShowingColumns = useRef(showingColumns);
-  const rememberColumns = () => {
-    if (showingColumns && surface.current !== null) columnLeft.current = surface.current.scrollLeft;
-  };
-  // Which lanes the scroller cuts, a side for each in their order, read again at each scroll and
-  // each change of its width.
-  const [sides, setSides] = useState("");
-  const measure = useCallback(() => {
-    const box = surface.current;
-    if (box === null) return;
-    const frame = box.getBoundingClientRect();
-    setSides(
-      [...box.querySelectorAll(".column")]
-        .map((lane) => laneSide(frame, lane.getBoundingClientRect()))
-        .join(),
-    );
-  }, []);
-  useLayoutEffect(() => {
-    if (showingColumns && !wasShowingColumns.current && surface.current !== null) {
-      surface.current.scrollLeft = columnLeft.current;
-    }
-    wasShowingColumns.current = showingColumns;
-    const box = surface.current;
-    if (!showingColumns || box === null) return;
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(box);
-    return () => observer.disconnect();
-  }, [showingColumns, measure]);
+  const lanes = useLaneSides(surface, showingColumns);
+  const { remember } = lanes;
   // Show a stage's lane whole (its heading's scroll margin reaches the lane's edges) and put the
   // focus on that heading, so the next Tab is in that lane.
   const jump = (stage: string) => {
@@ -727,21 +824,6 @@ export function TaskBoard({
     if (target !== null)
       document.querySelector<HTMLButtonElement>(target)?.focus({ preventScroll: true });
   }, [opened, phone]);
-  useEffect(() => {
-    const resize = () => setPhone(windowWidth() <= 760);
-    window.addEventListener("resize", resize);
-    const controller = new AbortController();
-    void (async () => {
-      while (!controller.signal.aborted) {
-        await tick(controller.signal);
-        if (!controller.signal.aborted) setNow(Date.now() / 1000);
-      }
-    })();
-    return () => {
-      window.removeEventListener("resize", resize);
-      controller.abort();
-    };
-  }, []);
   const kept = useRef(new Map<string, Task[]>());
   const columns = useMemo(
     () =>
@@ -764,9 +846,9 @@ export function TaskBoard({
   const count = (status: string) => counts.find(([one]) => one === status)?.[1] ?? 0;
   const meta = (status: string) => waiting?.columns.find((one) => one.status === status);
   const toggleCancelled = useCallback(() => {
-    if (showingColumns && surface.current !== null) columnLeft.current = surface.current.scrollLeft;
+    remember();
     setOpened((before) => (before === "cancelled" ? "" : "cancelled"));
-  }, [showingColumns]);
+  }, [remember]);
   const column = (status: string) => (
     <TaskColumn
       key={status}
@@ -793,7 +875,7 @@ export function TaskBoard({
   );
   const filter = (query: string, days: number) => onFilter(query, days, wait);
   const chooseWait = (kind: string) => {
-    rememberColumns();
+    remember();
     const next = wait === kind ? "" : kind;
     setWait(next);
     onFilter(search, days, next);
@@ -812,9 +894,9 @@ export function TaskBoard({
   const tabRow = useScrollRow(`${opened}:${tab}`);
   return (
     <div className="waiting-board">
-      {slug !== "" && known === undefined && linkError !== "" && (
+      {linkError !== "" && (
         <p role="status" className="trouble">
-          {linkError} <Button onClick={() => setRetryLink(retryLink + 1)}>Retry</Button>
+          {linkError} <Button onClick={retryLink}>Retry</Button>
         </p>
       )}
       <div className="board-toolbar">
@@ -833,7 +915,7 @@ export function TaskBoard({
             data-open-stage="backlog"
             aria-expanded={opened === "backlog"}
             onClick={() => {
-              rememberColumns();
+              remember();
               setOpened(opened === "backlog" ? "" : "backlog");
             }}
           >
@@ -924,10 +1006,10 @@ export function TaskBoard({
         </FirstSteps>
       )}
       {flow?.strip({ waiting, wait, choose: chooseWait, open: setOpened, opened, phone })}
-      {flowFailed && generation && (
+      {flowFailed && (
         <p className="flow-failed" role="alert">
           {"The workflow's phases could not be loaded. "}
-          <Button onClick={() => setFlowFailed(false)}>Retry</Button>
+          <Button onClick={retryFlow}>Retry</Button>
         </p>
       )}
       {wait === "" && (
@@ -968,7 +1050,7 @@ export function TaskBoard({
       {showingColumns && (
         <nav className="stage-jump" aria-label="Show a stage">
           {stages.map((stage, at) => {
-            const side = sides.split(",")[at] || "shown";
+            const side = lanes.side(at);
             return (
               <button key={stage} type="button" data-side={side} onClick={() => jump(stage)}>
                 {side === "before" && "‹ "}
@@ -983,10 +1065,7 @@ export function TaskBoard({
         ref={surface}
         aria-label="Task columns"
         tabIndex={phone ? undefined : 0}
-        onScroll={() => {
-          rememberColumns();
-          if (showingColumns) measure();
-        }}
+        onScroll={lanes.scrolled}
         className={`kanban waiting-columns${wait !== "" || (!phone && opened !== "") ? " wait-list" : ""}`}
       >
         {wait !== "" ? (

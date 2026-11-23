@@ -1130,8 +1130,6 @@ export function TasksView({ scope, board, stale, freshness, refreshed }: TasksVi
           counts={d.counts}
           work={d.work}
           connected={!stale}
-          statuses={d.statuses}
-          signoff={d.signoff}
           waiting={d.projection}
           orchestrators={d.orchestrators}
           unstarted={d.unstarted}

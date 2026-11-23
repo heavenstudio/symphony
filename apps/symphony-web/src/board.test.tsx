@@ -41,9 +41,7 @@ const board = (props: Partial<TaskBoardProps> = {}) =>
       tasks={[]}
       work={NO_WORK}
       connected
-      signoff={[]}
       counts={[]}
-      statuses={[]}
       refreshed={0}
       onFilter={() => {}}
       onLoad={() => {}}
@@ -84,7 +82,7 @@ describe("a board with no task", () => {
 
 describe("the approved B board", () => {
   it("shows lifecycle and machine columns, with Backlog in the toolbar and no Blocked or signoff column", () => {
-    const html = board({ signoff: ["a"], statuses: ["blocked", "ready"] });
+    const html = board();
     expect(columns(html)).toEqual([
       "concept",
       "design",
@@ -285,8 +283,10 @@ describe("the approved B board", () => {
     });
     expect(html).toContain("<b>4</b> in progress");
     expect(html).toContain("Working <b>7</b>");
-    // The strip's chip is the one thing the page reads as working.
-    expect(html.replace(/<[^>]*>/g, " ").match(/working/gi)).toEqual(["Working"]);
+    // The row of work under way reads none of them as working: the strip's chip alone does.
+    const underWay = html.match(/<nav class="under-way".*?<\/nav>/s)?.[0] ?? "";
+    expect(underWay).toContain("<b>4</b> in progress");
+    expect(underWay.replace(/<[^>]*>/g, " ").match(/working/gi)).toBeNull();
   });
   it("gives each count of the work under way its lane", () => {
     const shown: string[] = [];
