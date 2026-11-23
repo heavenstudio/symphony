@@ -602,3 +602,66 @@ fn a_claim_taking_accepted_outputs_is_met_and_named_by_the_outputs_standing() {
         assert_eq!(position(&f, "sim/down").at(), pair("build", "working"));
     }
 }
+
+/// A claim by its role reads its edge and the outputs that edge takes in one read of the board
+/// ([`Store::workflow_actions_with_outputs`]): the claim of a task whose edge takes the accepted
+/// output of what it depends on costs the round trips of the same claim by an edge that takes
+/// none, and names the output its read found standing.
+#[test]
+fn a_claim_taking_accepted_outputs_reads_the_board_no_more_than_one_taking_none() {
+    use crate::workflow::admit::tests::outputs;
+    use crate::workflow::local_owner;
+    let taking = outputs();
+    let claim = "operation = \"claim\", authority = [{ kind = \"task_role\", role = \"executor\" }], \
+                 inputs = [], dependencies = \"accepted_output\"";
+    assert!(taking.contains(claim));
+    let none = taking.replace(claim, &claim.replace("\"accepted_output\"", "\"none\""));
+    for backend in BACKENDS {
+        // sim/down's claim under `text` once sim/up is approved: what it took, the outputs it
+        // named and the requests it cost.
+        let claimed = |text: &str| {
+            let seed = Seed::default()
+                .session("amber")
+                .session("birch")
+                .task("sim/up", "ready")
+                .task("sim/down", "ready")
+                .link("sim/down", "dep", "sim/up");
+            let f = Fixture::on(backend, seed);
+            (f.store)
+                .activate_workflow(&custom(&format!("{text}{MAPPED}")), &Host::local())
+                .unwrap();
+            let (amber, birch, owner) = (
+                agent_session("amber"),
+                agent_session("birch"),
+                local_owner(),
+            );
+            for (principal, edge) in [(&amber, "claim"), (&amber, "submit"), (&owner, "approve")] {
+                take(&f.store, "sim/up", principal, edge).unwrap();
+            }
+            let before = f.store.database().requests();
+            let took = (f.store)
+                .claim_by_workflow("sim/down", &birch, &Host::local(), Role::Executor)
+                .unwrap();
+            let cost = f.store.database().requests() - before;
+            let receipt = (f.store.workflow_receipt(&birch, "sim/down@1:claim"))
+                .unwrap()
+                .unwrap();
+            (took.transition, receipt.sent.input_revisions, cost)
+        };
+        let (took, named, cost) = claimed(&taking);
+        assert_eq!(took, "sim/down@2", "{backend:?}");
+        let up = [("sim/up".to_string(), "sim/up@4".to_string())].into();
+        assert_eq!(named, up, "{backend:?}");
+        let (took, named, alone) = claimed(&none);
+        assert_eq!(took, "sim/down@2", "{backend:?}");
+        assert!(named.is_empty(), "{backend:?}: {named:?}");
+        assert!(
+            alone > 0,
+            "{backend:?}: the claim reads and writes the board"
+        );
+        assert_eq!(
+            cost, alone,
+            "{backend:?}: the outputs a claim names cost no read of their own"
+        );
+    }
+}
