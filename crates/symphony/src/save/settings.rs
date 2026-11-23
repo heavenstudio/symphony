@@ -83,9 +83,9 @@ fn takes(root: &std::path::Path, at: &[&str], value: &toml::Value) -> bool {
 /// commit did not merge into, is still its value, and the board's entry stays in force over it.
 fn untaken(said: &str, default: &str) -> Failure {
     conflict(format!(
-        "not removed: {FILE} on {default} writes {said} already, but this checkout's own {FILE} \
-         does not take it yet: the board's entry stays, in force over the checkout's own edit of \
-         the line, until the checkout takes the commit"
+        "not made the project's again: {FILE} on {default} writes {said} already, but this \
+         checkout's own {FILE} does not take it yet: the board's entry stays, in force over the \
+         checkout's own edit of the line, until the checkout takes the commit"
     ))
 }
 
