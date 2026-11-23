@@ -150,6 +150,7 @@ commit had, whatever the machine has installed; and a project can leave and beco
 
     None of them says what a setup shared between projects is.
   [2026-11-23 11:14] owner · rejected — This should work like the create-react-app used to work like. Which is to have it be and starter but that allows future changes to continue to propagate, as long as the project does not change settings that the blueprint puts in place. Once they do, then this now becomes a separate and its own version, which the user can still ask for upstream changes, but would require an agent task for updates given there's no guarantee of non breaking changes there. This sounds like C? But not exactly
+  [2026-11-23 11:30] agent — Recorded as the design: a blueprint is a starter the project keeps following. Its files are copied into the project and committed, with a record of what the blueprint put. While the project leaves those alone, each new version replaces them. A landing that changes one makes the project its own version; it can still ask for the blueprint's later changes, each as an agent's task under review. The section above this card now says so, and how it differs from C. The one thing your note leaves open, how a new version reaches a project that still follows, is the card **blueprint-following**.
 
 ### How a new version arrives
 
@@ -247,6 +248,7 @@ copies what is that project's alone together with what is shareable.
 
     **Earlier verdicts checked.** **release-delivery** decides how a release reaches a machine, and **consumer-contract-versioning** (B) what a project links of Symphony. Neither says where a shared setup is kept.
   [2026-11-23 11:15] owner · approved — B. Could use submodules to add it to a symphony project (inside the project repo?)
+  [2026-11-23 11:30] agent — Recorded: B. Each blueprint is a Git repository of its own, named in the project by its address and a tag, and Symphony's repository holds none. What follows is in the section above: a version is a tag recorded with its commit, a project trusts the address as a dependency, and a blueprint says the oldest Symphony release that reads it. On the submodule: it can hold the blueprint inside the project's repository, but the files still have to be copied to where each is read, and every clone and every task's worktree would have to fetch it. That is a choice of yours, so it is a card of its own: **blueprint-in-project**.
 
 ## Which one first
 
@@ -270,6 +272,7 @@ Rust web, then Godot, then the personal assistant.
     **Earlier verdicts checked.** No card names a first blueprint or an order of project kinds.
   [2026-11-23 11:18] owner · approved — A
   [2026-11-23 11:18] owner · approved — Agree with A -> B -> C rollout
+  [2026-11-23 11:30] agent — Recorded: A, and the order Rust web, then Godot, then the personal assistant. With **blueprint-home** answered B, the Rust web blueprint is taken from this repository's setup into a repository of its own, and this repository is the first project on it. Its build is filed once **blueprint-following** and **blueprint-in-project** are answered; making that new repository is yours to ask for then.
 
 ## The personal assistant
 
