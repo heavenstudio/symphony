@@ -927,6 +927,30 @@ fn only_a_duplicate_database_or_its_name_index_means_another_maker_won() {
 }
 
 #[test]
+fn making_a_database_copies_template0_from_the_maintenance_database_and_other_refusals_fail() {
+    // The recorded syntax error stands for any refusal but the database being there.
+    let fake = Fake::new(vec![Script {
+        started: STARTED,
+        answers: vec![SYNTAX],
+    }]);
+    assert_eq!(
+        fake.client().make_database(),
+        Err(DbError::Failed(
+            "syntax error at end of input (SQLSTATE 42601)".into()
+        ))
+    );
+    let (startup, after) = fake.sent();
+    let text = String::from_utf8(startup[4..].to_vec()).unwrap();
+    let named: Vec<_> = text.split('\0').collect();
+    assert_eq!(named[2..4], ["database", MAINTENANCE]);
+    let mut sent = after.as_slice();
+    let query = wire::read(&mut sent).unwrap();
+    assert_eq!(query.kind, b'Q', "one simple query");
+    assert_eq!(query.body, b"CREATE DATABASE board TEMPLATE template0\0");
+    assert_eq!(kinds(sent), b"X", "and the maker's connection ended");
+}
+
+#[test]
 fn a_client_says_where_it_reaches() {
     let client = Client::new(Path::new("/tmp/symphony-pg-1"), "board_1");
     assert_eq!(client.addr(), "postgresql:/tmp/symphony-pg-1");
