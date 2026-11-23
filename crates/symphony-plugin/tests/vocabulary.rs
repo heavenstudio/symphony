@@ -1,9 +1,10 @@
-//! The kit's lists that grow in a minor (`docs/engineering/PLUGIN_PROTOCOL.md`, *Versions*), from a crate that
-//! links the kit alone, as a plugin's does: a new kind of block, text span or media, a new word
-//! one carries, a new state of a gate, a new kind of board field or way of drawing a file, or a
-//! new word a Settings page's entry carries is a minor of the kit, never a new major. So each of those enums is `#[non_exhaustive]`: this crate
-//! builds because every match on one below ends with `_`, which is all a plugin that lists them
-//! needs to keep building on a later minor, and a plugin makes them as before.
+//! The kit's lists that grow in a minor (`docs/engineering/PLUGIN_PROTOCOL.md`, *Versions*), from
+//! a crate that links the kit alone, as a plugin's does: a new kind of block, text span or media,
+//! a new word one carries, a new state of a gate, a new kind of board field or way of drawing a
+//! file, or a new word a Settings page's entry carries is a minor of the kit, never a new major.
+//! So each of those enums is `#[non_exhaustive]`: this crate builds because every match on one
+//! below ends with `_`, which is all a plugin that lists them needs to keep building on a later
+//! minor, and a plugin makes them as before.
 
 use symphony_plugin::vocabulary::{
     Block, CalloutKind, CardGroup, CardState, ContainerKind, FieldValue, FigureSize, GateState,

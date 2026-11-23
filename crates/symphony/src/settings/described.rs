@@ -5,17 +5,19 @@
 //!
 //! A description declares and runs nothing, and its class is not its describer's to lower
 //! ([`judged`]): a setting the Symphony would run or that decides what lands (a key the local
-//! settings file refuses, by the lists [`super::class`] reads) is shown reviewed whatever its
+//! settings file refuses, the class [`super::class`] gives its key) is shown reviewed whatever its
 //! describer says, and so is every setting of a program whose settings decide what lands. A
-//! describer may mark a setting of its own reviewed. A program absent, or one that fails, and a
+//! describer may mark a setting of its own reviewed, and none is written in the board's store,
+//! which keeps the Symphony's own preferences alone. A program absent, or one that fails, and a
 //! describer that cannot say, are said in the entry's place, and the page is drawn all the same.
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::mpsc;
 use std::time::Duration;
 
 use symphony_api::{EntryNeed, EntryState, Setting, SettingClass, SettingScope, SettingsEntry};
-use symphony_board::{builds, local, sys};
+use symphony_board::{builds, sys};
 
 use super::{Machine, entry};
 use crate::plugins::Plugins;
@@ -141,14 +143,15 @@ fn run(command: &mut sys::Command, asked: &str, within: Duration) -> Result<Vec<
 
 /// The entries of every describer of `plugins`, in the project's order of its plugins and each
 /// plugin's of its describers, for the project at `root`, each judged ([`judged`]) and its id the
-/// plugin's name and the describer's (`plugin-NAME-ID`). One that cannot say is an entry of its
-/// id saying why.
+/// plugin's name and the describer's (`plugin-NAME-ID`), one an earlier entry took counted on
+/// ([`anchor`]). One that cannot say is an entry of its id saying why.
 pub fn plugins(plugins: &Plugins, root: &Path) -> Vec<SettingsEntry> {
+    let mut taken = HashSet::new();
     plugins
         .describers()
         .into_iter()
         .map(|(plugin, describer)| {
-            let id = format!("plugin-{plugin}-{}", describer.id());
+            let id = anchor(&mut taken, format!("plugin-{plugin}-{}", describer.id()));
             match describer.describe(root) {
                 Ok(described) => judged(described, id, false),
                 Err(why) => SettingsEntry {
@@ -166,9 +169,26 @@ pub fn plugins(plugins: &Plugins, root: &Path) -> Vec<SettingsEntry> {
         .collect()
 }
 
+/// `id`, the page's anchor of an entry, as none of `taken` is, which it then holds: where an entry
+/// before took it, `id` and the first count from 2 that none did (`plugin-x-y-z-2`). Two
+/// describers of one id give one anchor, and so do plugin `x`'s describer `y-z` and plugin `x-y`'s
+/// describer `z`.
+fn anchor(taken: &mut HashSet<String>, id: String) -> String {
+    let id = if taken.contains(&id) {
+        (2..)
+            .map(|count| format!("{id}-{count}"))
+            .find(|counted| !taken.contains(counted))
+            .expect("a count is free")
+    } else {
+        id
+    };
+    taken.insert(id.clone());
+    id
+}
+
 /// `described` as the page shows it: its id `id`, and each setting reviewed that its describer may
 /// not call a preference, every one where `all` says so, each then written in the project's scope
-/// alone ([`reviewed`]).
+/// alone ([`reviewed`]); and none written in the board's store ([`unstored`]).
 pub fn judged(described: SettingsEntry, id: String, all: bool) -> SettingsEntry {
     SettingsEntry {
         id,
@@ -179,12 +199,20 @@ pub fn judged(described: SettingsEntry, id: String, all: bool) -> SettingsEntry 
                 if all || protected(&setting.key) {
                     reviewed(setting)
                 } else {
-                    setting
+                    unstored(setting)
                 }
             })
             .collect(),
         ..described
     }
+}
+
+/// `setting` without the board's scope, whatever its describer says: the store keeps the
+/// Symphony's own preferences, each drawn in the Symphony's own entry, and no description's. So
+/// the page draws no control for a description's setting and names no store it is written in.
+fn unstored(mut setting: Setting) -> Setting {
+    setting.scopes.retain(|scope| *scope != SettingScope::Board);
+    setting
 }
 
 /// `setting`, reviewed: a reviewed task changes it in the committed file, so it is written in the
@@ -198,22 +226,18 @@ fn reviewed(setting: Setting) -> Setting {
 }
 
 /// Whether `key`, as the page spells a setting (`[land] delivery`, `[agents.launch] model`,
-/// `[land]` for a table said as a sentence, or the store's `land.delivery`), names one the local
-/// settings file refuses, by its lists ([`local::PROTECTED`], [`local::PROTECTED_KEYS`]): any key
-/// of a table it refuses whole, a key of a top-level table it refuses by name, and a table said
-/// whole that holds either.
+/// `[land]` for a table said as a sentence, or the store's `land.delivery`), is reviewed: the class
+/// [`super::class`] gives the key of its top-level table that holds it, its own key or, below a
+/// table of that table, the lower table's name, and the table said whole by its name alone.
 pub fn protected(key: &str) -> bool {
     let key = key.trim();
     let (tables, last) = match key.strip_prefix('[').and_then(|rest| rest.split_once(']')) {
         Some((tables, last)) => (tables, last.trim()),
         None => key.rsplit_once('.').unwrap_or(("", key)),
     };
-    let path: Vec<&str> = tables.split('.').map(str::trim).collect();
-    let top = path[0];
-    let refused_by_name =
-        |keys: &[&str]| last.is_empty() || (path.len() == 1 && keys.contains(&last));
-    local::PROTECTED.contains(&top)
-        || (local::PROTECTED_KEYS.iter()).any(|(of, keys)| *of == top && refused_by_name(keys))
+    let mut path = tables.split('.').map(str::trim);
+    let top = path.next().unwrap_or_default();
+    super::class(top, path.next().unwrap_or(last)) == SettingClass::Reviewed
 }
 
 /// A state neither on nor off, `why` said.
