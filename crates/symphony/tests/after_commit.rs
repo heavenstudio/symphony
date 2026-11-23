@@ -293,6 +293,14 @@ fn an_agents_saves_whose_turn_has_come_go_as_one_task() {
 }
 
 #[test]
+fn a_batch_made_and_never_journaled_is_taken_up_as_it_was() {
+    isolated(
+        "a_batch_made_and_never_journaled_is_taken_up_as_it_was",
+        delivery::a_batch_made_and_never_journaled_is_taken_up_as_it_was,
+    );
+}
+
+#[test]
 fn the_land_of_a_pending_saves_task_is_said_from_its_journal() {
     isolated(
         "the_land_of_a_pending_saves_task_is_said_from_its_journal",

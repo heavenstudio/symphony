@@ -994,3 +994,57 @@ pub(super) fn an_agents_saves_whose_turn_has_come_go_as_one_task(f: &Fixture) {
     assert_eq!(git(&root, &["status", "--porcelain"]), "");
     f.clean_workers();
 }
+
+/// The journal entry of `sequence` as a pass left it before any delivery: its edit, the base and
+/// who saved it, and nothing of a branch, a task or a batch.
+fn unjournaled(root: &Path, sequence: u64) {
+    let path = root
+        .join(".git/symphony/server/verdict-publications")
+        .join(format!("{sequence:020}.json"));
+    let mut entry: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let delivery = &entry["delivery"];
+    entry["delivery"] = json!({"base": delivery["base"], "by": delivery["by"]});
+    write(&path, &entry.to_string());
+}
+
+pub(super) fn a_batch_made_and_never_journaled_is_taken_up_as_it_was(f: &Fixture) {
+    let root = delivering(f);
+    replied(&root, "docs/b.md", "two", "Drafted.", 11);
+    replied(&root, "docs/b.md", "two", "Pictured too.", 12);
+    pass(&root);
+    let kept = pending::saves(&root);
+    let batch = kept[0].branch.clone();
+    assert_eq!(kept[1].branch, batch);
+    let tip = git(&root, &["rev-parse", &batch]);
+
+    // The pass cut short after the branch was made: no entry says so. A reply on another page
+    // kept since goes with none of it, though its turn has come.
+    unjournaled(&root, kept[0].sequence);
+    unjournaled(&root, kept[1].sequence);
+    replied(&root, "docs/a.md", "one", "Smaller.", 13);
+    pass(&root);
+    assert_eq!(git(&root, &["rev-parse", &batch]), tip);
+    let kept = pending::saves(&root);
+    assert_eq!(kept.len(), 3, "{kept:?}");
+    assert_eq!(
+        (kept[0].branch.as_str(), kept[1].branch.as_str()),
+        (batch.as_str(), batch.as_str()),
+        "{kept:?}"
+    );
+    let later = format!("docs/owner-save-{}", kept[2].sequence);
+    assert_eq!(kept[2].branch, later);
+    assert!(
+        kept.iter().all(|save| save.state == State::Waiting),
+        "{kept:?}"
+    );
+    let message = git(&root, &["log", "-1", "--format=%B", &later]);
+    assert_eq!(message, "docs: an agent's save (fox-1)\n\ndocs/a.md");
+    let store = f.store();
+    assert_eq!(store.get(&batch).unwrap().status, "review");
+    assert_eq!(store.get(&later).unwrap().status, "review");
+    let filed = (store.tasks(None).unwrap().into_iter())
+        .filter(|task| task.slug.starts_with("docs/owner-save-"))
+        .count();
+    assert_eq!(filed, 2);
+    f.clean_workers();
+}

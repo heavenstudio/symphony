@@ -653,24 +653,31 @@ fn committed(root: &Path, batch: &[Batched]) -> Result<(String, String, Vec<u64>
     let branch = format!("{BRANCHES}{}", first.sequence);
     let name = format!("refs/heads/{branch}");
     if let Ok(tip) = git(root, &["rev-parse", "--verify", "-q", &name]) {
-        if !holds(root, &name, first.edit) {
-            return Err(format!(
-                "the branch {branch} is there and does not hold this save"
-            ));
-        }
         if batch.len() == 1 {
+            if !holds(root, &name, first.edit) {
+                return Err(format!(
+                    "the branch {branch} is there and does not hold this save"
+                ));
+            }
             return Ok((branch, tip, Vec::new()));
         }
+        // The saves it was made of were those kept before it: of the ones that go with it now,
+        // the longest run from the first that makes its tree, those kept since left to wait.
+        // Its tree, never the first save's text alone, which a later one may have written
+        // beside.
         let parent = git(root, &["rev-parse", &format!("{name}^")])?;
-        let (edits, members) = applying(root, &parent, batch)?;
-        let (saved, _) = saved_uploads(root, &edits);
-        let made = made(root, &parent, &edits, &saved).map_err(String::from)?;
-        if made.tree != git(root, &["rev-parse", &format!("{name}^{{tree}}")])? {
-            return Err(format!(
-                "the branch {branch} is there and does not hold the saves that go with this one"
-            ));
+        let tree = git(root, &["rev-parse", &format!("{name}^{{tree}}")])?;
+        for end in (1..=batch.len()).rev() {
+            let (edits, members) = applying(root, &parent, &batch[..end])?;
+            let (saved, _) = saved_uploads(root, &edits);
+            let made = made(root, &parent, &edits, &saved).map_err(String::from)?;
+            if made.tree == tree {
+                return Ok((branch, tip, members));
+            }
         }
-        return Ok((branch, tip, members));
+        return Err(format!(
+            "the branch {branch} is there and does not hold this save and those that went with it"
+        ));
     }
     let default = &Project::of(root).default_branch;
     let parent = git(root, &["rev-parse", "--verify", "-q", &main_ref(root)])?;
