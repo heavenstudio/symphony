@@ -381,6 +381,70 @@ fn a_snapshot_is_put_back_over_its_board_and_the_cluster_it_replaced_is_kept() {
     assert_eq!(board(&b.store()).0.tasks.len(), 3);
 }
 
+/// A restore whose step fails is undone at once before its commit, whichever step it is: the
+/// cluster it had, no journal and its hold released. Past the commit a failure is said as a
+/// restore that committed, its hold and journal stand, and its holder's next restore finishes it.
+#[test]
+fn a_step_that_fails_is_undone_at_once_or_leaves_the_hold_and_is_finished_after_the_commit() {
+    let b = Board::new("restore-fails");
+    let home = b.home();
+    drop(b.seeded());
+    let pg = home.postgresql(&programs());
+    let before = board(&b.store());
+    pg.hold(HANDLE, "a snapshot").unwrap();
+    let snapshot = pg.snapshot(NOW).unwrap();
+    pg.release(HANDLE, None).unwrap();
+    let later = || {
+        b.store()
+            .create(&NewTask::new("sim/later", "Made after", "owner"))
+            .unwrap();
+    };
+    later();
+    let after = board(&b.store());
+    assert_ne!(after, before);
+
+    for step in ["journal", "aside", "placed", "identity"] {
+        let failing = home.clone().failing_after(step).postgresql(&programs());
+        let failed = refusal(failing.restore_over(&snapshot, HANDLE, NOW));
+        assert!(
+            failed.contains("the snapshot was not restored"),
+            "{step}: {failed}"
+        );
+        assert!(
+            failed.contains("on the cluster it had, and its hold is released"),
+            "{step}: {failed}"
+        );
+        assert_eq!(home.switching().unwrap(), None, "{step}");
+        assert_eq!(home.held(), None, "{step}");
+        assert!(!b.dir().join("postgresql.restoring").exists(), "{step}");
+        assert_eq!(board(&b.store()), after, "{step}: the cluster it had");
+    }
+
+    for step in ["committed", "revoked"] {
+        let failing = home.clone().failing_after(step).postgresql(&programs());
+        let pending = refusal(failing.restore_over(&snapshot, HANDLE, NOW));
+        assert!(
+            pending.contains("the restore committed: the board is on PostgreSQL"),
+            "{step}: {pending}"
+        );
+        assert!(
+            pending.contains("the board stays held and its journal stands")
+                && pending.contains("Run the command again to finish it"),
+            "{step}: {pending}"
+        );
+        stands(&b, &home);
+        let aside = pg.restore_over(&snapshot, HANDLE, NOW).unwrap();
+        assert!(
+            aside.join("postgresql").join("PG_VERSION").is_file(),
+            "{step}"
+        );
+        assert_eq!(home.switching().unwrap(), None, "{step}");
+        assert_eq!(home.held(), None, "{step}");
+        assert_eq!(board(&b.store()), before, "{step}: the snapshot's board");
+        later();
+    }
+}
+
 /// A snapshot put back brings no lease revision back with it: a holder that took its lease
 /// after the snapshot is past the snapshot's, and the restored lease is past the holder's.
 #[test]

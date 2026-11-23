@@ -1,9 +1,10 @@
 //! Search finds and ranks as it did when it was checked against SurrealDB's: the search tests'
 //! boards (`tests/cli/search.rs`), made through the store, answer each of their queries, and a few
 //! more, with the tasks, the order, each score to the bit and each one's excerpt pinned then
-//! (`search-answers.txt`), and the analyzer splits and folds the Latin blocks into the terms it did
-//! (`latin-terms.txt`). A score is SurrealDB's BM25, and a write's words are searched from that
-//! write on, a changed text's old ones no longer.
+//! (`search-answers.txt`, and `latin-answers.txt` for the uncommon Latin letters), and the
+//! analyzer splits and folds the Latin blocks into the terms it did (`latin-terms.txt`). A score is
+//! SurrealDB's BM25, and a write's words are searched from that write on, a changed text's old ones
+//! no longer.
 
 use crate::common::{Fixture, Seed};
 use serde_json::json;
@@ -250,46 +251,61 @@ fn a_writes_words_are_searched_from_that_write_on() {
     assert_eq!(found("tail"), Vec::<String>::new());
 }
 
-/// Uncommon Latin letters still match their ASCII spelling. Decomposition must not leave ø
+/// Uncommon Latin letters, each a task's title, and the ASCII spelling each still matches by.
+const LATIN: [(&str, &str); 13] = [
+    ("ƒoo", "foo"),
+    ("ƀar", "bar"),
+    ("ǿresund", "oresund"),
+    ("Crème", "creme"),
+    ("ǣther", "aether"),
+    ("ſalt", "salt"),
+    ("ꜳrdvark", "aardvark"),
+    ("ﬃeld", "ffield"),
+    ("ｆｕｌｌ", "full"),
+    ("ɖelta", "delta"),
+    ("ȣzel", "ouzel"),
+    ("Øresund", "oresund"),
+    ("ƑOO", "foo"),
+];
+
+/// What the board of [`LATIN`] answers each of its queries, one line a query: `[query, hits,
+/// excerpts]`, as [`answered`] reads them, pinned from the answers PostgreSQL gave when they were
+/// checked equal to SurrealDB's.
+const LATIN_ANSWERS: &str = include_str!("latin-answers.txt");
+
+/// Uncommon Latin letters still match their ASCII spelling, and find and rank as pinned: each
+/// query's hits, each score to the bit, and each one's excerpt. Decomposition must not leave ø
 /// behind in ǿ, or change the spelling of ŉ and the long s. Both query directions are checked.
 #[test]
 fn latin_letters_beyond_extended_a_find_their_ascii_spelling() {
     let f = Fixture::new(Seed::default());
-    let cases = [
-        ("ƒoo", "foo"),
-        ("ƀar", "bar"),
-        ("ǿresund", "oresund"),
-        ("Crème", "creme"),
-        ("ǣther", "aether"),
-        ("ſalt", "salt"),
-        ("ꜳrdvark", "aardvark"),
-        ("ﬃeld", "ffield"),
-        ("ｆｕｌｌ", "full"),
-        ("ɖelta", "delta"),
-        ("ȣzel", "ouzel"),
-        ("Øresund", "oresund"),
-        ("ƑOO", "foo"),
-    ];
-    for (n, (title, _)) in cases.iter().enumerate() {
-        let slug = format!("latin/{n}");
-        create(&f.store, &slug, title, "");
+    for (n, (title, _)) in LATIN.iter().enumerate() {
+        create(&f.store, &format!("latin/{n}"), title, "");
     }
     create(&f.store, "latin/apostrophe", "ŉame", "");
-    for (n, (title, ascii)) in cases.iter().enumerate() {
-        for query in [title, ascii] {
-            let found = answered(&f.store, query);
-            assert!(
-                found
-                    .0
-                    .iter()
-                    .any(|(slug, _)| *slug == format!("latin/{n}")),
-                "{query:?}"
-            );
-        }
-    }
     // ascii folding follows tokenization: ŉame becomes one term "'name", while the ASCII
     // query 'name is two terms. These do not match, as they did not on SurrealDB.
-    for query in ["ŉame", "'name", "name"] {
+    let apostrophe = ["ŉame", "'name", "name"];
+    let asked: Vec<&str> = (LATIN.iter())
+        .flat_map(|(title, ascii)| [*title, *ascii])
+        .chain(apostrophe)
+        .collect();
+    let pinned: Vec<(String, Answer)> = (LATIN_ANSWERS.lines())
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let queries: Vec<&str> = pinned.iter().map(|(query, _)| query.as_str()).collect();
+    assert_eq!(queries, asked);
+    for (query, answer) in &pinned {
+        assert_eq!(&answered(&f.store, query), answer, "{query:?}");
+    }
+    for (n, (title, ascii)) in LATIN.iter().enumerate() {
+        for query in [title, ascii] {
+            let found = answered(&f.store, query);
+            let slug = format!("latin/{n}");
+            assert!(found.0.iter().any(|(hit, _)| *hit == slug), "{query:?}");
+        }
+    }
+    for query in apostrophe {
         let found = answered(&f.store, query);
         assert_eq!(found.0.len(), usize::from(query == "ŉame"), "{query}");
     }

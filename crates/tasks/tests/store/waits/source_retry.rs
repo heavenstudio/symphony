@@ -73,6 +73,56 @@ fn a_real_retry_reobserves_source_without_refreshing_the_frozen_task_fence() {
     assert_eq!(f.said(SLUG), lines);
 }
 
+/// The fence a retry is held to is the expected state its caller gave, frozen, not the task as it
+/// is by then: another writer moves the task between the conflict and the retry, the source still
+/// current, and the retry is refused against the state it was given, writing nothing of its own.
+/// A retry that read the fence anew would pass, and publish.
+#[test]
+fn a_retry_is_held_to_the_expected_state_it_was_given_not_the_task_as_it_is_by_then() {
+    let f = Fixture::new(Seed::default().session(ACTOR));
+    f.task(SLUG);
+    let expected = f.store.assessment_state(SLUG).unwrap();
+    let lines = f.said(SLUG);
+    one_conflict(&f);
+    let competitor = f.other();
+    let mut tries = 0;
+    let result =
+        f.store
+            .record_waits_guarded(SLUG, RECORD, "original", ACTOR, &expected, &mut || {
+                tries += 1;
+                // Between the conflict and the retry, another writer moves the task on.
+                if tries == 2 {
+                    competitor
+                        .set_field(SLUG, "game", "effort", &json!(7), ACTOR)
+                        .unwrap();
+                }
+                Ok(true)
+            });
+    assert_eq!(tries, 2, "{result:?}");
+    let why = refused(result);
+    assert!(why.contains("changed since its assessment"), "{why}");
+    assert_eq!(
+        updates_tried(&f),
+        2,
+        "the first try's update, refused as a conflict, and the competitor's"
+    );
+    let task = f.store.get(SLUG).unwrap();
+    assert_eq!(task.fields["game"]["effort"], json!(7));
+    assert!(
+        !task.fields.contains_key("_board"),
+        "the retry wrote nothing"
+    );
+    assert_eq!(
+        f.said(SLUG).len(),
+        lines.len() + 1,
+        "only the competitor wrote"
+    );
+    assert_eq!(
+        f.store.assessment_state(SLUG).unwrap().version,
+        expected.version + 1
+    );
+}
+
 /// A known committed pair returns its original receipt, the source unreadable and its actor gone,
 /// and writes nothing.
 #[test]

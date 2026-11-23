@@ -434,3 +434,7 @@ mod tests {
 #[cfg(test)]
 #[path = "transaction_tests.rs"]
 mod guard_tests;
+
+#[cfg(test)]
+#[path = "sender_fence_tests.rs"]
+mod sender_fence_tests;

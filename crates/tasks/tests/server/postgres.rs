@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use symphony_board::server::postgres::{self, SOCKET_FILE, SOCKET_PATH_MAX, USER};
-use symphony_board::server::{Home, Postgres, Serving};
+use symphony_board::server::{Home, Postgres, ServerError, Serving};
 use symphony_board::sys::{self, command, pid_alive};
 
 /// How long a server's processes are given to be gone once it has stopped: they end at once, its
@@ -169,6 +169,65 @@ fn holds_snapshots_and_recovery_keep_the_stopped_cluster_and_the_holder_contract
             .trim(),
         serving.version.split('.').next().unwrap()
     );
+}
+
+/// A hold file that does not read still holds, by an unknown setter: no start and no other's hold
+/// goes past it, nothing is started, and any handle's release removes it, as it names no holder.
+#[test]
+fn a_hold_that_does_not_read_still_holds() {
+    let board = Board::new("hold-garbled");
+    let file = board.home().dir().join("hold");
+    std::fs::create_dir_all(board.home().dir()).unwrap();
+    std::fs::write(&file, "{not json").unwrap();
+    let hold = board.pg.held().unwrap();
+    assert_eq!(hold.by, "an unknown setter");
+    assert!(
+        hold.why.starts_with(&format!(
+            "{} is there and does not read as a hold (",
+            file.display()
+        )),
+        "{}",
+        hold.why
+    );
+    assert_eq!(board.pg.ensure(), Err(ServerError::Held(hold.clone())));
+    assert_eq!(
+        board.pg.hold("amber-heron", "a swap"),
+        Err(ServerError::Held(hold.clone()))
+    );
+    assert!(board.processes().is_empty(), "nothing was started");
+    assert_eq!(board.pg.release("vivid-swift", None).unwrap(), Some(hold));
+    assert!(!file.exists());
+    assert_eq!(board.pg.held(), None);
+}
+
+/// A board in a repository's common dir makes its folders there, `symphony/` and its own, and
+/// never the common dir or a folder above it: a project's folder removed under a start, a stop or
+/// a hold on its way is not made again, and each is refused as a project with no board.
+#[test]
+fn a_board_whose_common_dir_is_gone_makes_none_of_its_folders_again() {
+    let root = folder("common-gone");
+    let _ = std::fs::remove_dir_all(&root);
+    let project = root.join("project");
+    let common = project.join(".git");
+    std::fs::create_dir_all(&common).unwrap();
+    let home = Home::in_common(&common).telling(|_| {});
+    let pg = home.postgresql(&programs());
+    assert_eq!(pg.stop().unwrap(), None);
+    assert!(home.dir().is_dir(), "its folders made in the common dir");
+
+    std::fs::remove_dir_all(&project).unwrap();
+    for (what, refused) in [
+        ("a start", pg.ensure().err()),
+        ("a stop", pg.stop().err()),
+        ("a hold", pg.hold("x", "its project went").err()),
+    ] {
+        let why = refused
+            .unwrap_or_else(|| panic!("{what} went on"))
+            .to_string();
+        assert!(symphony_board::board_health::absent(&why), "{what}: {why}");
+        assert!(!project.exists(), "{what} made the project's folder again");
+    }
+    std::fs::remove_dir_all(&root).unwrap();
 }
 
 #[test]
