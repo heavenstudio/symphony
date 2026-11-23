@@ -224,3 +224,17 @@ fn a_change_records_what_it_held_before_and_after_and_who_made_it_when() {
     assert_eq!(row["changes"][0].get("before"), None);
     assert_eq!(serde_json::from_value::<Entry>(row).unwrap(), removed);
 }
+
+#[test]
+fn the_panes_in_force_are_the_stored_ones_over_the_committed_ones() {
+    let none = Stored::of(&[]);
+    assert_eq!(none.panes("hc"), "hc");
+    let stored = Stored::of(&[entry("agents.panes", Some(json!("none")))]);
+    assert_eq!(stored.panes("hc"), "none");
+    // A removed entry, and one the store does not read, leave the committed value in force.
+    let removed = Stored::of(&[entry("agents.panes", None)]);
+    assert_eq!(removed.panes("hc"), "hc");
+    let refused = Stored::of(&[entry("agents.panes", Some(json!("tmux")))]);
+    assert_eq!(refused.panes("none"), "none");
+    assert_eq!(refused.problems.len(), 1);
+}

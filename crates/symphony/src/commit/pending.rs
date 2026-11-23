@@ -118,6 +118,27 @@ pub enum State {
     Held(String),
 }
 
+impl State {
+    /// Where a save stands, in a sentence's words: `waiting for its pull request`. `default` is
+    /// the default branch.
+    pub fn said(&self, default: &str) -> String {
+        match self {
+            State::Queued => "kept, its branch not made yet".to_string(),
+            State::Waiting => "waiting for its pull request".to_string(),
+            State::Merging => "its land has asked for the merge of its pull request".into(),
+            State::Conflicted => format!(
+                "in conflict: its words no longer apply to `{default}` as it is here, so this \
+                 page cannot show them; its branch holds them, and needs the conflict settled \
+                 before its pull request delivers it"
+            ),
+            State::Following => {
+                format!("delivered on the remote; `{default}` here has not followed yet")
+            }
+            State::Held(why) => format!("kept, not delivered: {}", flat(why)),
+        }
+    }
+}
+
 /// A save kept for delivery by pull request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Save {
@@ -131,6 +152,9 @@ pub struct Save {
     /// default branch here.
     pub shown: bool,
     pub state: State,
+    /// For a settings edit of the project file ([`super::settings`]), the store keys it makes the
+    /// project's; none for a document's save.
+    pub keys: Vec<String>,
 }
 
 /// The git common folder of the checkout at `root`, found once for each: every page read asks.
@@ -353,12 +377,17 @@ fn listed(root: &Path, only: Option<&str>) -> Vec<Save> {
                     State::Conflicted
                 }),
             };
+            let keys = match super::settings::changes(&saved.edit) {
+                Some(Ok(changes)) => changes.into_iter().map(|change| change.key).collect(),
+                _ => Vec::new(),
+            };
             Some(Save {
                 sequence,
                 file: saved.edit.rel,
                 branch: format!("{BRANCHES}{sequence}"),
                 shown,
                 state,
+                keys,
             })
         })
         .collect()
@@ -403,20 +432,7 @@ pub fn note(root: &Path, file: &str) -> Option<String> {
         .iter()
         .map(|save| {
             let task = &save.branch;
-            let stands = match &save.state {
-                State::Queued => "kept, its branch not made yet".to_string(),
-                State::Waiting => "waiting for its pull request".to_string(),
-                State::Merging => "its land has asked for the merge of its pull request".into(),
-                State::Conflicted => format!(
-                    "in conflict: its words no longer apply to `{default}` as it is here, so \
-                     this page cannot show them; its branch holds them, and needs the conflict \
-                     settled before its pull request delivers it"
-                ),
-                State::Following => {
-                    format!("delivered on the remote; `{default}` here has not followed yet")
-                }
-                State::Held(why) => format!("kept, not delivered: {}", flat(why)),
-            };
+            let stands = save.state.said(&default);
             // Never left out of the page without a word: the owner's answer is kept, and why
             // it is not drawn is said beside it.
             let unshown = match (&save.shown, &save.state) {
@@ -498,7 +514,13 @@ fn committed(root: &Path, sequence: u64, edit: &Edit) -> Result<(String, String)
              delivered until the two agree"
         ));
     }
-    let message = format!("docs: owner verdicts\n\n{}", edit.rel);
+    let message = match super::settings::changes(edit) {
+        Some(changes) => format!(
+            "{}\n\nMade the project's on the Settings page.",
+            super::settings::message(&changes?)
+        ),
+        None => format!("docs: owner verdicts\n\n{}", edit.rel),
+    };
     let commit = git(
         root,
         &["commit-tree", &made.tree, "-p", &parent, "-m", &message],
@@ -524,12 +546,24 @@ fn filed(root: &Path, delivery: &Delivery, edit: &Edit) -> Result<(), String> {
         let project = Project::of(root);
         let page = project.route(&edit.rel).unwrap_or_else(|| edit.rel.clone());
         let default = &project.default_branch;
-        let new = NewTask {
-            slug: slug.clone(),
-            title: format!("Deliver the owner's save of {page}"),
-            by: owner.into(),
-            body: format!(
-                "The owner saved an answer on {page} in the Symphony, and this project delivers \
+        let new = match super::settings::changes(edit) {
+            Some(changes) => {
+                let (title, body) = super::settings::task(&changes?, slug, &delivery.tip, default);
+                NewTask {
+                    slug: slug.clone(),
+                    title,
+                    by: owner.into(),
+                    body,
+                    priority: 1,
+                    ..NewTask::default()
+                }
+            }
+            None => NewTask {
+                slug: slug.clone(),
+                title: format!("Deliver the owner's save of {page}"),
+                by: owner.into(),
+                body: format!(
+                    "The owner saved an answer on {page} in the Symphony, and this project delivers \
                  by pull request, so the save is not on {default}: the branch {slug} holds it, \
                  as the one commit {} of the owner's save of {}. Its work is done and its text is \
                  the owner's own: nothing on the branch is edited but to settle a conflict with \
@@ -538,11 +572,12 @@ fn filed(root: &Path, delivery: &Delivery, edit: &Edit) -> Result<(), String> {
                  it needs, then land it, which delivers it \
                  by its pull request. The Symphony keeps the save and shows it as pending until \
                  the delivery's receipt proves it on the remote {default}.",
-                delivery.tip, edit.rel
-            ),
-            priority: 1,
-            links: vec![page],
-            ..NewTask::default()
+                    delivery.tip, edit.rel
+                ),
+                priority: 1,
+                links: vec![page],
+                ..NewTask::default()
+            },
         };
         store
             .create_owner_task(&new, &receipt)
@@ -590,6 +625,28 @@ fn closed(root: &Path, delivery: &Delivery) -> Result<Option<String>, String> {
     })
 }
 
+/// Whether a delivered save's entry is still kept: for a settings edit ([`super::settings`]), until
+/// each store entry it made the project's is removed ([`super::settings::cleared`]), which a
+/// later pass tries again where the board did not answer, saying why meanwhile; none kept for a
+/// document's save.
+fn cleared(root: &Path, edit: &Edit, delivery: &mut Delivery) -> bool {
+    let Some(Ok(changes)) = super::settings::changes(edit) else {
+        return false;
+    };
+    let removed =
+        crate::taskview::connect(root).and_then(|store| super::settings::cleared(&store, &changes));
+    match removed {
+        Ok(()) => false,
+        Err(why) => {
+            delivery.problem = format!(
+                "delivered, and the board's store still holds its entry, which was not removed: \
+                 {why}"
+            );
+            true
+        }
+    }
+}
+
 /// Said once on the task of a save another task's delivery brought: nothing more is delivered
 /// by it, and closing it is its orchestrator's.
 fn covered(root: &Path, delivery: &Delivery, by: &Receipt) -> Result<(), String> {
@@ -634,7 +691,7 @@ impl OutputJob {
         let mut delivery = self.saved.delivery.clone().unwrap_or_default();
         let kept = match standing(root, sequence, &edit, &delivery) {
             Standing::Proved { here: false, .. } | Standing::Unproved => true,
-            Standing::Proved { covered: false, .. } => false,
+            Standing::Proved { covered: false, .. } => cleared(root, &edit, &mut delivery),
             Standing::Proved { receipt, .. } => {
                 // Its own task, if it has one, is told before the entry goes.
                 match delivery.filed.then(|| covered(root, &delivery, &receipt)) {
@@ -642,7 +699,7 @@ impl OutputJob {
                         delivery.problem = format!("its task was not told it is covered: {why}");
                         true
                     }
-                    _ => false,
+                    _ => cleared(root, &edit, &mut delivery),
                 }
             }
             Standing::Open => {

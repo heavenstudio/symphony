@@ -142,6 +142,25 @@ impl Store {
         })?;
         Ok(removed.0)
     }
+
+    /// Removes the entry of the setting `key` as `by`'s change, as [`Store::remove_setting`] does,
+    /// only while it holds `value`: what follows a commit that made that value the project's, so
+    /// a value stored again since stays. Whether it removed it; an entry holding another value, or
+    /// none, is left as it is and nothing written.
+    pub fn remove_setting_holding(
+        &self,
+        key: &str,
+        value: &Value,
+        by: &str,
+    ) -> Result<bool, Error> {
+        let by = writer(by)?;
+        let (_, removed) = self.change_setting(key, by, |found| {
+            Ok(found
+                .and_then(|entry| entry.value.clone())
+                .filter(|held| held != value))
+        })?;
+        Ok(removed)
+    }
 }
 
 /// `by`, who a change is recorded as made by: refused empty.

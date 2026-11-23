@@ -221,6 +221,13 @@ impl Stored {
         self.keys.iter().any(|held| held == key)
     }
 
+    /// `[agents] panes` in force over `committed`, what the project file gives it: the stored
+    /// value where the store holds one in force. The local file holds no panes setting, so this is
+    /// the value every reader of it takes.
+    pub fn panes<'a>(&'a self, committed: &'a str) -> &'a str {
+        self.held.panes.as_deref().unwrap_or(committed)
+    }
+
     /// Where the store writes `key`, as `tasks limits` says a stored setting:
     /// `the board's store [limits] low_volume`.
     pub fn written(key: &str) -> Written {

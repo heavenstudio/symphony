@@ -25,6 +25,9 @@ use serde::{Deserialize, Serialize};
 pub enum SettingScope {
     /// The committed project file: the same on every machine.
     Project,
+    /// The board's store of preferences, read after the project file and before the local file:
+    /// in force at once, and committed nowhere.
+    Board,
     /// The local settings file beside it, which git does not version: one machine's.
     Machine,
     /// The browser: one device's.
@@ -77,7 +80,10 @@ pub struct SettingSource {
     /// Its line there, when it can be found.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<u32>,
-    /// The committed value a local file's holds over, said as [`SettingSource::said`] says one.
+    /// What the value stands over: for a local file's, where the committed one is written, said as
+    /// [`SettingSource::said`] says one; for the board's store's, the committed value and where
+    /// (`4 (symphony.toml [limits] low_volume, line 5)`); for a local file's over the store's, the
+    /// stored value and the store.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub over: Option<String>,
 }

@@ -228,7 +228,7 @@ cannot keep installing after `--stop` returns.
 | `/api/task-thread?slug=…` | Alias for the typed paged task history |
 | `/api/agents` | The board's agents view, including probe availability |
 | `/api/reports?grain=…&days=…` | The Reports page's window (`ReportsPage`): its periods by the hour, day or week, each summed from the project's roll-up, agents and board-health day files, a period no file recorded none of; the commits in the window that changed the settings file, the rules or a skill, each with what it changed (`ReportMark`); what was not read. It reads files only, never the board, and at most 64 MiB of them (`src/api/reports.rs`). The answer is kept between reads with what it was read from (the hour, each day file by its stat, the default branch's tip), so a read that finds none of it moved opens no file and starts no git (`src/api/reports/kept.rs`). Its window ends at the moment `TASKS_NOW` holds the board's clock at, when the server's environment sets it, else at the server's clock (`Hub::recorded_now`), so a server over records written at a held moment reads them, as the product specs' pictures do |
-| `/api/settings` | The Settings page's one read (`SettingsPage`): the files read, what does not load, and every entry in one shape with each setting's value in force, source, scopes and class (`crates/symphony/src/settings.rs`). It reads the project's files, this machine's `PATH` and the committed `symphony-github.toml`, runs no program, and writes nothing; no route saves a setting. A hosted visitor is refused it, as it says what this machine has |
+| `/api/settings` | The Settings page's one read (`SettingsPage`): the files read, what does not load, and every entry in one shape with each setting's value in force, source, scopes and class (`crates/symphony/src/settings.rs`). It reads the project's files, the board's store of preferences, the project file's saves waiting for delivery, this machine's `PATH` and the committed `symphony-github.toml`, runs no program, and writes nothing; `/api/setting` is its write. A hosted visitor is refused it, as it says what this machine has |
 | `/api/run-log?run=…&tail=…` | Part of a run's log (`RunLog`): its last 64 KiB by default, its last `tail` bytes, or `from=…&to=…` a range, at most 1 MiB; only a regular file in a day folder of the project's `logs/`, never the board (`src/api/run_log.rs`, [RUNS](../../docs/workflow/RUNS.md#logs)) |
 | `/api/activity` | Latest forty document and owner-addressed task entries |
 | `/api/pending` | Pending cards in document navigation order, then branch cards |
@@ -455,7 +455,10 @@ snapshot; changed observations commit their sequence with their queued events.
 
 Owner POSTs to `/api/decision`, `/api/comment`, `/api/message`,
 `/api/task-message`, `/api/quick-chat`, `/api/quick-task`, `/api/ask`,
-`/api/ask-reply` and `/api/task-action` run natively through `symphony::save`. A task
+`/api/ask-reply`, `/api/task-action` and `/api/setting` run natively through `symphony::save`.
+`/api/setting` is the Settings page's write (`SettingWrite`): a preference kept in the board's
+store, its entry removed, or its stored value made the project's by a commit of the project file
+([PROJECT_FILE](../../docs/operations/PROJECT_FILE.md#the-settings-page)); a hosted visitor is refused it. A task
 action is a board action of the project's plugins, named by the offer it answers
 (`TaskOffer`: the action, its label, the branch and the payload it hands back);
 an action no plugin of the project offers is a 404, and one the action refuses
