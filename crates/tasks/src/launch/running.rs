@@ -1,6 +1,7 @@
 //! How many agents this machine runs, whoever started them: what `[limits] machine_agents`
 //! ([`crate::limits`]) holds `launch` and `next` to, and the staffing pass's session cap
-//! ([`super::staff`]).
+//! ([`super::staff`]); and how many of the board's sessions each agent runs ([`by_agent`]), which
+//! the Settings page says beside its switch.
 
 use super::hc::{self, Hc, Object, text_of};
 use crate::cli::agents::{self, Agent};
@@ -40,6 +41,27 @@ pub fn running(store: &Store, env: &Env, hc: &dyn Hc) -> Result<usize, Error> {
         ));
     }
     Ok(counted(&view.agents, &hc.live()?))
+}
+
+/// How many of the board's sessions each agent runs now, in [`super::defaults::AGENTS`]' order:
+/// each session that holds (live, stale or awaiting a sweep) and has an open launch record, counted
+/// once, as the agent its newest such record names. From the board alone: no terminal is asked.
+pub fn by_agent(store: &Store) -> Result<[usize; 2], Error> {
+    let holding: std::collections::HashSet<String> = (store.sessions()?.into_iter())
+        .filter(|s| s.health.holds())
+        .map(|s| s.row.handle)
+        .collect();
+    let mut agent = std::collections::BTreeMap::new();
+    for record in store.open_task_sessions()? {
+        if holding.contains(&record.handle) {
+            agent.insert(record.handle, super::agent_of(&record.claude_session));
+        }
+    }
+    let mut counts = [0; 2];
+    for (count, name) in counts.iter_mut().zip(super::defaults::AGENTS) {
+        *count = agent.values().filter(|of| **of == name).count();
+    }
+    Ok(counts)
 }
 
 /// Why a launch from `env` is refused now ([`over`]), if it is: only under `[limits]

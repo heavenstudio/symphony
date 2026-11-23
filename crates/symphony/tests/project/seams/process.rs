@@ -795,10 +795,13 @@ fn a_slow_gates_answer_of_a_plugins_process_is_kept_as_a_linked_ones_and_leaves_
         Ok(drawn),
         PIPED.components()[0].render(&page, "lantern", None)
     );
-    // The held answers outlast a call's wait, none given up, and the fourth still waits its turn.
-    until("the held answers outlast a call's wait", || {
-        held_since.elapsed() > wait * 4
-    });
+    // The held answers outlast a call's wait, none given up, and the fourth still waits its turn:
+    // each of the four reads above gave up only once its own wait had passed.
+    assert!(
+        held_since.elapsed() > wait * 4,
+        "{:?}",
+        held_since.elapsed()
+    );
     assert_eq!(marks(), 3);
     // Let go, a byte for each held: the three answer, then the fourth in its turn, at once with the
     // FIFO gone.

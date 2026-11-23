@@ -1,8 +1,8 @@
 //! The Settings page's read (`symphony::settings::page`): each value in force with where it was
 //! written, for a project with no file, with a project file, the board's store over it and a
-//! local file over both, and a project file or a store that does not load said as such; and the
+//! local file over both, and a project file or a store that does not load said as such; the
 //! class of every key of the reference, which the read takes from the local settings file's
-//! lists.
+//! lists; and every key of the reference on the page, and no other.
 
 use std::collections::BTreeSet;
 use std::os::unix::fs::PermissionsExt;
@@ -305,6 +305,7 @@ fn holding(entries: &[(&str, serde_json::Value)]) -> Board {
             })
             .collect()),
         waiting: Vec::new(),
+        running: None,
     }
 }
 
@@ -441,6 +442,7 @@ fn a_store_that_cannot_be_read_or_an_entry_it_refuses_is_said_and_the_files_hold
     let down = Board {
         entries: Err("connection refused".into()),
         waiting: Vec::new(),
+        running: None,
     };
     let page = page_with(&tree.root, &bare(), &down);
     assert_eq!(
@@ -669,7 +671,7 @@ fn an_agent_says_whether_this_machine_has_its_program() {
     assert!(!codex.needs[0].met);
     assert_eq!(
         codex.needs[0].said,
-        "Not found on this machine: a launch of it here would fail."
+        "Not found on this machine: a launch of it here is refused."
     );
     assert_eq!(codex.state.as_ref().unwrap().on, Some(true));
     assert!(
@@ -925,6 +927,28 @@ fn every_key_of_the_reference_has_the_class_the_local_file_s_lists_give_it() {
     }
 }
 
+/// The table a setting of the page is written in, as the path to it, and its key there, empty for
+/// a table said whole (`[stamps]`, `[[entrypoints]]`); none for the device's, the one setting no
+/// file writes. `[agents] launch model` is `[agents.launch]`'s `model`, as `just tasks limits`
+/// spells it.
+fn written_as(setting: &Setting) -> Option<(Vec<&str>, &str)> {
+    let Some((table, key)) = setting
+        .key
+        .strip_prefix('[')
+        .and_then(|k| k.trim_start_matches('[').split_once(']'))
+    else {
+        assert_eq!(setting.key, "appearance", "no key of the project file");
+        return None;
+    };
+    let mut path: Vec<&str> = table.split('.').collect();
+    let mut key = key.trim_start_matches(']').trim();
+    if let Some(of) = key.strip_prefix("launch ") {
+        path.push("launch");
+        key = of;
+    }
+    Some((path, key))
+}
+
 #[test]
 fn every_setting_the_page_shows_has_the_class_and_the_scopes_of_its_key() {
     let tree = Tree::new();
@@ -932,28 +956,17 @@ fn every_setting_the_page_shows_has_the_class_and_the_scopes_of_its_key() {
     let page = page(&tree.root, &bare());
     let mut shown = BTreeSet::new();
     for setting in settings(&page) {
-        let Some((table, key)) = setting
-            .key
-            .strip_prefix('[')
-            .and_then(|k| k.trim_start_matches('[').split_once(']'))
-        else {
-            // The device's is no key of the project file.
-            assert!(
-                ["appearance"].contains(&setting.key.as_str()),
-                "{}",
-                setting.key
-            );
+        let Some((path, key)) = written_as(setting) else {
             continue;
         };
-        let mut path: Vec<&str> = table.split('.').collect();
-        let mut key = key.trim_start_matches(']').trim();
-        // `[agents] launch model`, as `just tasks limits` spells it.
-        if let Some(of) = key.strip_prefix("launch ") {
-            path.push("launch");
-            key = of;
-        }
         assert_eq!(setting.class, class(path[0], key), "{}", setting.key);
-        assert_eq!(setting.scopes, scopes(&path, key), "{}", setting.key);
+        let mut expected = scopes(&path, key);
+        // The launch default's switch is not offered: the store refuses it turned off.
+        if path == ["agents", "launch", "on"] && setting.source.said.contains("the launch default")
+        {
+            expected.retain(|scope| *scope != SettingScope::Board);
+        }
+        assert_eq!(setting.scopes, expected, "{}", setting.key);
         shown.insert((path[0].to_string(), key.to_string()));
         if key.is_empty() {
             shown.insert((path[0].to_string(), "*".to_string()));
@@ -982,6 +995,42 @@ fn every_setting_the_page_shows_has_the_class_and_the_scopes_of_its_key() {
             .any(|(t, k)| *t == table && (*k == "*" || *k == key));
         assert!(whole || named || left, "{heading} {key} is not on the page");
     }
+}
+
+#[test]
+fn every_setting_the_page_shows_is_one_the_project_file_reads() {
+    // The reference lists every key the project file reads and no other (`reference.rs`), so a
+    // key it does not list, a removed one among them, is one the file refuses: a row of it would
+    // show a setting no file can write. The Symphony's own entries alone: a describer's are its
+    // program's to name.
+    let tree = Tree::new();
+    tree.write("symphony.toml", PROJECT);
+    let page = page(&tree.root, &bare());
+    let reference = listed(&read(REFERENCE));
+    let table = |heading: &str| heading.trim_matches(|c| c == '[' || c == ']').to_string();
+    let keys: BTreeSet<(String, &str)> = reference
+        .iter()
+        .map(|(heading, key)| (table(heading), key.as_str()))
+        .collect();
+    let mut seen = 0;
+    for setting in settings(&page) {
+        let Some((path, key)) = written_as(setting) else {
+            continue;
+        };
+        let path = path.join(".");
+        let known = if key.is_empty() {
+            keys.iter().any(|(listed, _)| *listed == path)
+        } else {
+            keys.contains(&(path, key))
+        };
+        assert!(
+            known,
+            "{} is no setting the project file reads",
+            setting.key
+        );
+        seen += 1;
+    }
+    assert!(seen > 50, "the page shows its settings: {seen}");
 }
 
 #[test]
@@ -1052,4 +1101,276 @@ generators = [
     let stamps = setting(&page, "stamps", "[stamps]");
     assert_eq!(stamps.value, "The project's: tests, review.");
     assert_eq!(stamps.class, SettingClass::Reviewed);
+}
+
+/// [`PROJECT`] with its launch writing `on`, its switches (`codex = false`), on line 6.
+fn project_turning(on: &str) -> String {
+    let launch = "launch = { default = \"claude\", model = \"opus\" }";
+    assert!(PROJECT.contains(launch));
+    PROJECT.replace(
+        launch,
+        &format!("launch = {{ default = \"claude\", model = \"opus\", on = {{ {on} }} }}"),
+    )
+}
+
+/// Each agent's switch, `[agents.launch.on] AGENT`, on `page`.
+fn switch<'a>(page: &'a SettingsPage, agent: &str) -> &'a Setting {
+    setting(page, agent, &format!("[agents.launch.on] {agent}"))
+}
+
+/// An agent's state on `page`: its word, on or off, and why.
+fn state_of(page: &SettingsPage, agent: &str) -> (String, Option<bool>, String) {
+    let state = entry(page, agent).state.clone().unwrap();
+    (state.word, state.on, state.why)
+}
+
+/// The keys of the board's store the page draws a control for.
+fn controlled(page: &SettingsPage) -> Vec<&str> {
+    page.stored
+        .iter()
+        .map(|stored| stored.key.as_str())
+        .collect()
+}
+
+#[test]
+fn with_no_switch_written_each_agent_is_on_and_only_the_other_than_the_default_has_a_control() {
+    let tree = Tree::new();
+    tree.write("symphony.toml", PROJECT);
+    let page = page_with(&tree.root, &bare(), &holding(&[]));
+    assert_eq!(page.problems, Vec::<String>::new());
+    let codex = switch(&page, "codex");
+    assert_eq!(
+        (codex.value.as_str(), codex.kind),
+        ("on", SettingKind::Switch)
+    );
+    assert_eq!(
+        from(codex),
+        ("on", None, "default: on, as no switch is written", None)
+    );
+    assert_eq!(
+        codex.scopes,
+        [
+            SettingScope::Project,
+            SettingScope::Board,
+            SettingScope::Machine
+        ]
+    );
+    assert_eq!(state_of(&page, "codex").0, "On");
+    // The launch default's is drawn with no control, saying to pick another default first.
+    let claude = switch(&page, "claude");
+    assert_eq!(
+        from(claude),
+        (
+            "on",
+            None,
+            "default: the launch default, which cannot be off",
+            None
+        )
+    );
+    assert_eq!(
+        claude.scopes,
+        [SettingScope::Project, SettingScope::Machine]
+    );
+    assert!(
+        state_of(&page, "claude")
+            .2
+            .contains("pick another default first to turn it off"),
+        "{:?}",
+        state_of(&page, "claude")
+    );
+    let keys = controlled(&page);
+    assert!(keys.contains(&"agents.launch.on.codex"), "{keys:?}");
+    assert!(!keys.contains(&"agents.launch.on.claude"), "{keys:?}");
+}
+
+#[test]
+fn an_agent_turned_off_says_off_and_where_from_each_place() {
+    let off = |page: &SettingsPage| {
+        let (word, on, why) = state_of(page, "codex");
+        assert_eq!((word.as_str(), on), ("Off", Some(false)), "{why}");
+        assert!(
+            why.contains("no launch, staffing pass or restore starts it"),
+            "{why}"
+        );
+        assert_eq!(switch(page, "codex").value, "off");
+        why
+    };
+    // Committed.
+    let tree = Tree::new();
+    tree.write("symphony.toml", &project_turning("codex = false"));
+    let page = page_with(&tree.root, &bare(), &holding(&[]));
+    assert_eq!(page.problems, Vec::<String>::new());
+    let why = off(&page);
+    assert!(
+        why.contains("(symphony.toml [agents.launch.on] codex, line 6)"),
+        "{why}"
+    );
+    let committed = switch(&page, "codex");
+    assert_eq!(
+        (committed.source.file.as_deref(), committed.source.line),
+        (Some("symphony.toml"), Some(6))
+    );
+    assert_eq!(committed.source.scope, Some(SettingScope::Project));
+    // Stored, over none written.
+    let tree = Tree::new();
+    tree.write("symphony.toml", PROJECT);
+    let board = holding(&[("agents.launch.on.codex", json!(false))]);
+    let page = page_with(&tree.root, &bare(), &board);
+    off(&page);
+    assert_eq!(
+        from(switch(&page, "codex")),
+        (
+            "off",
+            Some(SettingScope::Board),
+            "the board's store [agents.launch.on] codex",
+            Some("none written")
+        )
+    );
+    let stored = page
+        .stored
+        .iter()
+        .find(|s| s.key == "agents.launch.on.codex")
+        .unwrap();
+    assert_eq!((stored.value.as_deref(), stored.held), (Some("off"), true));
+    // The local file's, over a stored on.
+    tree.write("symphony.local.toml", "[agents.launch.on]\ncodex = false\n");
+    let board = holding(&[("agents.launch.on.codex", json!(true))]);
+    let page = page_with(&tree.root, &bare(), &board);
+    assert_eq!(page.problems, Vec::<String>::new());
+    off(&page);
+    assert_eq!(
+        from(switch(&page, "codex")),
+        (
+            "off",
+            Some(SettingScope::Machine),
+            "symphony.local.toml [agents.launch.on] codex, line 2",
+            Some("on (the board's store [agents.launch.on] codex)")
+        )
+    );
+    let stored = page
+        .stored
+        .iter()
+        .find(|s| s.key == "agents.launch.on.codex")
+        .unwrap();
+    assert!(!stored.held, "the local file writes over it");
+}
+
+#[test]
+fn a_switch_turning_off_the_default_from_another_place_is_said_not_to_hold() {
+    let tree = Tree::new();
+    // Claude is the committed default; the store's off was written while codex was.
+    tree.write("symphony.toml", PROJECT);
+    let board = holding(&[("agents.launch.on.claude", json!(false))]);
+    let page = page_with(&tree.root, &bare(), &board);
+    let (word, on, why) = state_of(&page, "claude");
+    assert_eq!((word.as_str(), on), ("On", Some(true)));
+    assert!(
+        why.contains(
+            "[agents.launch.on] claude turns off claude (the board's store [agents.launch.on] \
+             claude), which does not hold: claude is the launch default, which wins"
+        ),
+        "{why}"
+    );
+    assert_eq!(
+        from(switch(&page, "claude")),
+        (
+            "on",
+            None,
+            "default: the launch default, which cannot be off",
+            Some("off (the board's store [agents.launch.on] claude), which does not hold")
+        )
+    );
+}
+
+/// The page says it as it says a limit the board cannot read: the launch reads as the board's
+/// own; the settings check and a load refuse the file (`Project::checked`).
+#[test]
+fn a_project_file_turning_off_its_own_default_does_not_load_saying_to_pick_another() {
+    let tree = Tree::new();
+    tree.write("symphony.toml", &project_turning("claude = false"));
+    let page = page_with(&tree.root, &bare(), &holding(&[]));
+    assert!(
+        page.problems.iter().any(|problem| problem.contains(
+            "symphony.toml: [agents.launch.on] claude (line 6) turns off claude, the launch \
+             default ([agents] launch default, line 6), which cannot be off: pick another \
+             default first; the launch and the models read as the board's own"
+        )),
+        "{:?}",
+        page.problems
+    );
+    let text = std::fs::read_to_string(tree.path("symphony.toml")).unwrap();
+    let refused = symphony::project::Project::checked(&tree.root, &text).unwrap_err();
+    assert_eq!(
+        refused,
+        "symphony.toml: [agents.launch.on] claude (line 6) turns off claude, the launch default \
+         ([agents] launch default, line 6), which cannot be off: pick another default first"
+    );
+}
+
+#[test]
+fn each_agent_says_how_many_of_its_sessions_run_and_that_they_keep_running_when_off() {
+    let tree = Tree::new();
+    tree.write("symphony.toml", PROJECT);
+    let mut board = holding(&[("agents.launch.on.codex", json!(false))]);
+    board.running = Some(Ok([2, 0]));
+    let page = page_with(&tree.root, &bare(), &board);
+    assert!(
+        state_of(&page, "codex")
+            .2
+            .ends_with(" 2 of its sessions run now, and keep running.")
+    );
+    assert!(
+        state_of(&page, "claude")
+            .2
+            .ends_with(" None of its sessions runs now.")
+    );
+    board.running = Some(Ok([1, 1]));
+    let page = page_with(&tree.root, &bare(), &board);
+    assert!(
+        state_of(&page, "codex")
+            .2
+            .ends_with(" One of its sessions runs now, and keeps running.")
+    );
+    assert!(
+        state_of(&page, "claude")
+            .2
+            .ends_with(" One of its sessions runs now.")
+    );
+    board.running = Some(Ok([0, 3]));
+    let page = page_with(&tree.root, &bare(), &board);
+    assert!(
+        state_of(&page, "claude")
+            .2
+            .ends_with(" 3 of its sessions run now.")
+    );
+    board.running = Some(Err("connection refused".into()));
+    let page = page_with(&tree.root, &bare(), &board);
+    assert!(
+        state_of(&page, "codex")
+            .2
+            .ends_with(" How many of its sessions run cannot be read: connection refused.")
+    );
+}
+
+#[test]
+fn a_switch_of_no_agent_or_that_is_no_switch_is_refused_by_the_load_with_its_line() {
+    let tree = Tree::new();
+    let refused = |text: &str| symphony::project::Project::checked(&tree.root, text).unwrap_err();
+    // An agent the table does not know, by name and line, as any key the Symphony does not know.
+    assert_eq!(
+        refused("[agents.launch.on]\ngemini = false\n"),
+        "symphony.toml: [agents.launch.on] gemini (line 2) is not a setting the Symphony knows"
+    );
+    // A value that is no switch, as the board says it.
+    assert_eq!(
+        refused("[agents.launch]\ndefault = \"claude\"\n\n[agents.launch.on]\ncodex = \"maybe\"\n"),
+        "symphony.toml: [agents.launch.on] codex (line 5) is \"maybe\"; a switch is true (on) or \
+         false (off)"
+    );
+    // Both switches written, the default's on: the file loads.
+    symphony::project::Project::checked(
+        &tree.root,
+        "[agents.launch]\ndefault = \"claude\"\n\n[agents.launch.on]\ncodex = false\nclaude = true\n",
+    )
+    .unwrap();
 }

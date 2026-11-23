@@ -19,20 +19,26 @@ use symphony_board::settings::{Change, Entry, Stored, named};
 use crate::commit::pending;
 use crate::project::FILE;
 
-/// What the board holds for the page: the store's entries, or why it could not be read, and the
-/// saves of the project file waiting for delivery by pull request.
+/// What the board holds for the page: the store's entries, or why it could not be read, the saves
+/// of the project file waiting for delivery by pull request, and how many of its sessions each
+/// agent runs.
 #[derive(Clone, Debug)]
 pub struct Board {
     pub entries: Result<Vec<Entry>, String>,
     pub waiting: Vec<pending::Save>,
+    /// The sessions each agent runs, in `symphony_board::launch::defaults::AGENTS`' order
+    /// (`symphony_board::launch::running::by_agent`), or why they cannot be counted; none where the
+    /// board was not asked.
+    pub running: Option<Result<[usize; 2], String>>,
 }
 
 impl Default for Board {
-    /// A board never told anything: no entry, nothing waiting.
+    /// A board never told anything: no entry, nothing waiting, no count asked.
     fn default() -> Board {
         Board {
             entries: Ok(Vec::new()),
             waiting: Vec::new(),
+            running: None,
         }
     }
 }
@@ -40,14 +46,19 @@ impl Default for Board {
 impl Board {
     /// The board of the project at `root`, as the server reads it for the page.
     pub fn of(root: &Path) -> Board {
-        let entries = crate::taskview::connect(root)
+        let store = crate::taskview::connect(root);
+        let entries = (store.as_ref().map_err(Clone::clone))
             .and_then(|store| store.stored_entries().map_err(|e| e.to_string()));
+        let running = (store.as_ref().map_err(Clone::clone)).and_then(|store| {
+            symphony_board::launch::running::by_agent(store).map_err(|e| e.to_string())
+        });
         Board {
             entries,
             waiting: pending::saves(root)
                 .into_iter()
                 .filter(|save| save.file == FILE)
                 .collect(),
+            running: Some(running),
         }
     }
 
@@ -92,6 +103,9 @@ pub fn local_writes(local: &Local, key: &str) -> bool {
             .position(|known| known == leaf)
             .is_some_and(|at| wrote(local.launch[at].as_deref())),
         ["agents", "models", role] => wrote(local.model_of(role)),
+        ["agents", "launch", "on", agent] => (symphony_board::launch::defaults::AGENTS.iter())
+            .position(|known| known == agent)
+            .is_some_and(|at| local.on[at].is_some()),
         ["limits", leaf] => local.limits.keys().any(|held| held == leaf),
         _ => false,
     }

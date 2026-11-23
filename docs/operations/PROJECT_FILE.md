@@ -87,7 +87,12 @@ seconds, is said in its place as unknown, with the page drawn all the same. Each
 project selects adds the entries of its describers after the Symphony's own
 ([PLUGIN_PROTOCOL](../engineering/PLUGIN_PROTOCOL.md#settings-describers)), drawn alike; a
 description declares and runs nothing, and a key the local file refuses is shown reviewed whatever
-its describer calls it. A project file that does not load is said at the top of the page with what
+its describer calls it. Each launch agent's entry says whether it is on or off and where that
+comes from, whether its program is on this machine, and how many of the board's sessions it runs
+now (a session that holds, counted once by its newest open launch record); its switch
+(`[agents.launch.on]`) is a preference with the store's control, and the launch default's is drawn
+with no control, saying to pick another default first, and says when a switch written off in
+another place does not hold. A project file that does not load is said at the top of the page with what
 holds in its place, as is a local file that is refused, a store that cannot be read and an
 entry of it that is not.
 
@@ -110,7 +115,10 @@ store's record of its changes and two controls:
   checkout holds, whose message names the key, the value before and the value after (`settings:
   [limits] low_volume from 4 to 3`); each main checkout takes it with its own edits of the file
   merged on, or keeps its file as it is where they meet and says so. Once it stands the entry is
-  removed, while it still holds the value committed, and the file's value is in force. Where the
+  removed, while it still holds the value committed, and the file's value is in force; but where
+  a main checkout kept its file, the entry stays in force over that checkout's own edit until it
+  takes the commit, and making the value the project's again then removes it (before then, it is
+  refused and the entry stays). Where the
   project delivers by pull request (`[land] delivery`), the edit is kept and delivered as a
   document save is ([a land dispatched at
   review](../workflow/TASKS.md#a-land-dispatched-at-review)): made against the project file as
@@ -168,7 +176,8 @@ machine_agents = 4
 
 It holds preferences alone, in the same tables, keys and types as the project file:
 
-- `[agents.launch]`: the agent a launch starts, its model and its effort;
+- `[agents.launch]`: the agent a launch starts, its model and its effort, and each agent's
+  switch (`[agents.launch.on]`);
 - `[agents.models]`: the model each role runs on;
 - `[limits]`: every key of it.
 
@@ -185,7 +194,8 @@ overrides.
 
 Whatever is wrong with it is said with the file and the line: a refused setting, a key of one of
 its three tables the Symphony does not know, a value of the wrong type or outside its range, an
-agent a launch does not start, or text that is no TOML. None of the file is then read and the committed
+agent a launch does not start, a switch turning off the launch default the file itself names, or
+text that is no TOML. None of the file is then read and the committed
 settings hold, so a broken local file stops neither the board nor a launch: every board command
 says it on stderr, as it says a limit it cannot read, and the settings check exits 1 on it.
 
@@ -215,14 +225,16 @@ stands over a later commit of the same key, as it is read after the file, until 
 removed. The local file stays the last word on its machine.
 
 An entry is keyed by its setting, the tables and the key the project file names it by, joined by
-dots: `limits.low_volume`, `agents.launch.model`, `agents.models.reviewer`, `agents.panes`. It
+dots: `limits.low_volume`, `agents.launch.model`, `agents.models.reviewer`, `agents.panes`,
+`agents.launch.on.codex`. It
 keeps every change made to it, not only the last: the value before, the value after, when, and the
 session or page that wrote it. A removed entry holds no value and keeps its record, and the
 files' value is in force again.
 
 It holds preferences alone:
 
-- `[agents.launch]`: the agent a launch starts, its model and its effort;
+- `[agents.launch]`: the agent a launch starts, its model and its effort, and each agent's
+  switch (`[agents.launch.on]`);
 - `[agents.models]`: the model each role runs on;
 - `[agents]`'s `panes`;
 - `[limits]`: every key of it.
@@ -232,12 +244,15 @@ What the local file is refused, the store is refused, by the same rules and the 
 or a program the Symphony runs, or that decides what lands, is never kept there, as a place no
 commit records must not change the landing gate or run a command. A value is judged when it is
 written, since no landing passes over it: its type, a limit's range, an agent a launch starts,
-one of `panes`' two values. A refusal names the key and why, and nothing is written. Each entry
+one of `panes`' two values, a switch that would turn off the launch default in force (the store's,
+else the main checkout's project file's, else the board's own). A refusal names the key and why,
+and nothing is written. Each entry
 is judged again when it is read, alone: one the store may not hold, however its row came to be
 in the table, is said on stderr and never read, and the others hold.
 
 ```sh
 just tasks settings set limits.machine_agents 4 --as HANDLE
+just tasks settings set agents.launch.on.codex off --as HANDLE
 just tasks settings remove limits.machine_agents --as HANDLE
 just tasks settings list
 ```
@@ -350,8 +365,42 @@ limits` prints what holds and where it came from.
 | Key | Default | What it sets |
 | --- | --- | --- |
 | `default` | `"codex"` | the agent a launch starts: `"codex"` or `"claude"`, a blank one the default, any other refused |
+| `on` | below | the table `[agents.launch.on]` |
 | `model` | the board's own for that agent | its model |
 | `effort` | the board's own for that agent | its effort |
+
+## `[agents.launch.on]`
+
+Each agent's switch: `false` turns it off, and an agent left out is on.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `codex` | `true` | whether a launch, the staffing pass and a restore may start Codex: `true` or `false`, any other refused |
+| `claude` | `true` | whether they may start Claude Code: `true` or `false`, any other refused |
+
+An agent turned off starts nowhere: `just tasks launch` naming it, the staffing pass and a restore
+of a closed pane of it (a reviewer's resume among them) are each refused, naming the agent and
+where it was turned off, the file and line or the board's store, and the staffing pass gives an
+idle one no new work. An agent already running is not stopped, its files stay installed, and
+turning it on again is the switch alone. A launch of an agent whose program this machine lacks on
+its search path is refused with that reason, whatever its switch says.
+
+The launch default cannot be off. A project file that turns off the default it names, or, naming
+none, the board's own, does not load, saying to pick another default first, and so does a local
+file that turns off the default it names itself; the board's store refuses the same write, judged
+against the default in force (the store's, else the main checkout's project file's, else the
+board's own). Where the places disagree (a default committed after an older stored switch turned
+that agent off, or a local file turning off a default it does not name) the default wins: the
+switch does not hold, and both `just tasks limits` and the Settings page say so. A switch that
+names no agent a launch starts, or is no `true` or `false`, is refused with its line.
+
+```toml
+[agents.launch]
+default = "claude"
+
+[agents.launch.on]
+codex = false
+```
 
 ## `[agents.models]`
 
