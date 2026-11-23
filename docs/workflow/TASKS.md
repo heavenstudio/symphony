@@ -1944,7 +1944,7 @@ assessor = "haiku"
   not hold. A launch of
   an agent whose program this machine lacks on its search path is refused with that reason,
   whatever its switch says
-  ([PROJECT_FILE](../operations/PROJECT_FILE.md#agentslaunch), `crates/tasks/src/launch/off.rs`).
+  ([PROJECT_FILE](../operations/PROJECT_FILE.md#agentslaunchon), `crates/tasks/src/launch/off.rs`).
 - **`just tasks limits`** prints each limit, the pipeline alarm's thresholds
   ([The pipeline alarm](#the-pipeline-alarm)) and each role's model, each with where it came
   from (`[limits] low_volume, line 8`, `[agents] launch model, line 12`, `the board's store

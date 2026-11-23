@@ -24,7 +24,7 @@ const SOURCES: [&str; 3] = [
 /// The hosted board's settings, which the board reads and judges itself.
 const EXTERNAL: &str = "crates/tasks/src/pg/external.rs";
 
-const TABLES: [(&str, &str, &str); 23] = [
+const TABLES: [(&str, &str, &str); 24] = [
     (
         "crates/symphony-api/src/workflow.rs",
         "Definition",
@@ -46,6 +46,7 @@ const TABLES: [(&str, &str, &str); 23] = [
     (SOURCES[2], "FileTheme", "[theme]"),
     (FILE, "FileAgents", "[agents]"),
     (FILE, "FileLaunch", "[agents.launch]"),
+    (FILE, "FileSwitches", "[agents.launch.on]"),
     (FILE, "FileModels", "[agents.models]"),
     (FILE, "FileVerdicts", "[verdicts]"),
     (FILE, "FileLand", "[land]"),

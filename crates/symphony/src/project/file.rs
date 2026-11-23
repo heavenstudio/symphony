@@ -73,7 +73,7 @@ impl File {
                 _ => named(&[], key, key.clone()),
             })
             .collect();
-        let tables: [(&str, &[&str], &Unknown); 12] = [
+        let tables: [(&str, &[&str], &Unknown); 13] = [
             ("[project]", &["project"], &self.project.unknown),
             ("[plugins]", &["plugins"], &self.plugins.unknown),
             ("[theme]", &["theme"], &self.theme.unknown),
@@ -82,6 +82,11 @@ impl File {
                 "[agents.launch]",
                 &["agents", "launch"],
                 &self.agents.launch.unknown,
+            ),
+            (
+                "[agents.launch.on]",
+                &["agents", "launch", "on"],
+                &self.agents.launch.on.unknown,
             ),
             (
                 "[agents.models]",
@@ -232,15 +237,28 @@ pub(super) struct FileStamps {
     pub(super) unknown: Unknown,
 }
 
-/// The `[agents.launch]` table. Its `on`, each agent's switch, the board reads itself
-/// (`symphony_board::launch::Defaults`), and [`super::Project::parse`] refuses what it refuses.
+/// The `[agents.launch]` table, its agents' switches the table [`FileSwitches`].
 #[derive(Default, Deserialize)]
 #[serde(default)]
 pub(super) struct FileLaunch {
     pub(super) default: Option<String>,
     pub(super) model: Option<String>,
     pub(super) effort: Option<String>,
-    pub(super) on: Option<toml::Value>,
+    pub(super) on: FileSwitches,
+    #[serde(flatten)]
+    pub(super) unknown: Unknown,
+}
+
+/// The `[agents.launch.on]` table: each agent's switch, which the board reads itself
+/// (`symphony_board::launch::Defaults`), each known here by the agent's name so another is refused
+/// by name and line. Their values are any the file writes, as the limits' are: one that is no
+/// switch, or one turning off the launch default, [`super::Project::parse`] refuses as the board
+/// says it.
+#[derive(Default, Deserialize)]
+#[serde(default)]
+pub(super) struct FileSwitches {
+    pub(super) codex: Option<toml::Value>,
+    pub(super) claude: Option<toml::Value>,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }

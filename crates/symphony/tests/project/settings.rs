@@ -1351,3 +1351,26 @@ fn each_agent_says_how_many_of_its_sessions_run_and_that_they_keep_running_when_
             .ends_with(" How many of its sessions run cannot be read: connection refused.")
     );
 }
+
+#[test]
+fn a_switch_of_no_agent_or_that_is_no_switch_is_refused_by_the_load_with_its_line() {
+    let tree = Tree::new();
+    let refused = |text: &str| symphony::project::Project::checked(&tree.root, text).unwrap_err();
+    // An agent the table does not know, by name and line, as any key the Symphony does not know.
+    assert_eq!(
+        refused("[agents.launch.on]\ngemini = false\n"),
+        "symphony.toml: [agents.launch.on] gemini (line 2) is not a setting the Symphony knows"
+    );
+    // A value that is no switch, as the board says it.
+    assert_eq!(
+        refused("[agents.launch]\ndefault = \"claude\"\n\n[agents.launch.on]\ncodex = \"maybe\"\n"),
+        "symphony.toml: [agents.launch.on] codex (line 5) is \"maybe\"; a switch is true (on) or \
+         false (off)"
+    );
+    // Both switches written, the default's on: the file loads.
+    symphony::project::Project::checked(
+        &tree.root,
+        "[agents.launch]\ndefault = \"claude\"\n\n[agents.launch.on]\ncodex = false\nclaude = true\n",
+    )
+    .unwrap();
+}

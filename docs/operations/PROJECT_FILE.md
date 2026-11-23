@@ -362,9 +362,18 @@ limits` prints what holds and where it came from.
 | Key | Default | What it sets |
 | --- | --- | --- |
 | `default` | `"codex"` | the agent a launch starts: `"codex"` or `"claude"`, a blank one the default, any other refused |
-| `on` | every agent on | `[agents.launch.on]`: each agent's switch, `codex = false` turning Codex off; an agent left out is on |
+| `on` | below | the table `[agents.launch.on]` |
 | `model` | the board's own for that agent | its model |
 | `effort` | the board's own for that agent | its effort |
+
+## `[agents.launch.on]`
+
+Each agent's switch: `false` turns it off, and an agent left out is on.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `codex` | `true` | whether a launch, the staffing pass and a restore may start Codex: `true` or `false`, any other refused |
+| `claude` | `true` | whether they may start Claude Code: `true` or `false`, any other refused |
 
 An agent turned off starts nowhere: `just tasks launch` naming it, the staffing pass and a restore
 of a closed pane of it (a reviewer's resume among them) are each refused, naming the agent and
