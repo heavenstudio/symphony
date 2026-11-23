@@ -389,12 +389,24 @@ pub fn register_files(root: &Path) -> Vec<PathBuf> {
 /// project that delivers by pull request ([`crate::commit::delivers`]) it writes no file, as an
 /// owner's save writes none there: a tracked edit left in that checkout stops every delivered
 /// land. It reads each document there as the page shows it, the saves still waiting laid on it,
-/// and keeps each file it changes as a save of its own ([`crate::commit::pending::keep`]), which
-/// the page shows at once and a pull request delivers. A ledger that branch does not
-/// hold yet could not be delivered, so there the answered comments stay on their pages, and the
-/// tidy says so.
+/// and keeps each file it changes as a save of its own, all of them together
+/// ([`crate::commit::pending::keep_together`]), which the page shows at once and one pull request
+/// delivers, the ledger never without the pages or the pages without it. A ledger that branch does
+/// not hold yet could not be delivered, so there the answered comments stay on their pages, and
+/// the tidy says so.
 pub fn tidy(root: &Path, now: Option<&str>, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     tidy_with(root, now, crate::register::sort_register, out, err)
+}
+
+/// [`tidy`] by the session `by`, which the saves it keeps for delivery name (`agent` when blank).
+pub fn tidy_as(
+    root: &Path,
+    now: Option<&str>,
+    by: &str,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
+    tidied(root, now, crate::register::sort_register, by, out, err)
 }
 
 /// How a tidy regroups a register, its cards read by the project's card kinds.
@@ -617,6 +629,17 @@ pub fn tidy_with(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> i32 {
+    tidied(root, now, sort, "", out, err)
+}
+
+fn tidied(
+    root: &Path,
+    now: Option<&str>,
+    sort: Sort,
+    by: &str,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
     let project = Project::of(root);
     if let Some(folder) = project.missing_documents(root) {
         let _ = writeln!(
@@ -653,7 +676,7 @@ pub fn tidy_with(
         }
     };
     if kept {
-        return keep_for_delivery(root, &project, &plan, out, err);
+        return keep_for_delivery(root, &project, &plan, by, out, err);
     }
     for step in &plan.steps {
         if let Err(problem) = step.write() {
@@ -667,11 +690,14 @@ pub fn tidy_with(
 
 /// The tidy `plan` of the checkout at `root` on the default branch of a project that delivers by
 /// pull request, kept and not written: each file it changes kept as a save of its own, in the
-/// order it reaches them (a ledger before its pages). Its exit code.
+/// order it reaches them (a ledger before its pages), all of them kept together
+/// ([`crate::commit::pending::keep_together`]), so no page reaches the default branch without the
+/// ledger that holds the comments it gave. `by` is the session tidying. Its exit code.
 fn keep_for_delivery(
     root: &Path,
     project: &Project,
     plan: &Plan,
+    by: &str,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> i32 {
@@ -681,29 +707,42 @@ fn keep_for_delivery(
     for left in &plan.left {
         let _ = writeln!(out, "{left}");
     }
-    let mut kept = Vec::new();
-    for change in plan.changes() {
-        let file = relative(&change.path, root);
-        let edit = crate::commit::Edit {
-            rel: file.clone(),
-            base: change.before.unwrap_or_default(),
-            new: change.after,
-        };
-        match crate::commit::pending::keep(root, edit, "") {
-            Ok(number) => kept.push((file, number)),
-            Err(problem) => {
-                if !kept.is_empty() {
-                    let _ = out.write_all(kept_said(project, &kept).as_bytes());
-                }
-                let _ = writeln!(err, "✖ {file} not kept for delivery: {problem}");
-                return 1;
+    let (files, edits): (Vec<String>, Vec<crate::commit::Edit>) = (plan.changes().into_iter())
+        .map(|change| {
+            let file = relative(&change.path, root);
+            let edit = crate::commit::Edit {
+                rel: file.clone(),
+                base: change.before.unwrap_or_default(),
+                new: change.after,
+            };
+            (file, edit)
+        })
+        .unzip();
+    match crate::commit::pending::keep_together(root, edits, by) {
+        Ok(numbers) => {
+            if !numbers.is_empty() {
+                let kept: Vec<(String, u64)> = files.into_iter().zip(numbers).collect();
+                let _ = out.write_all(kept_said(project, &kept).as_bytes());
             }
+            0
+        }
+        Err((numbers, problem)) => {
+            let file = &files[numbers.len()];
+            let _ = writeln!(err, "✖ {file} not kept for delivery: {problem}");
+            if !numbers.is_empty() {
+                let kept: Vec<String> = files[..numbers.len()].to_vec();
+                let _ = writeln!(
+                    err,
+                    "  kept before it: {}. They wait for it, so none of them is delivered, and \
+                     each later save of their files waits behind them until a person removes \
+                     their entries from the journal ({}).",
+                    kept.join(", "),
+                    crate::commit::pending::journal_below()
+                );
+            }
+            1
         }
     }
-    if !kept.is_empty() {
-        let _ = out.write_all(kept_said(project, &kept).as_bytes());
-    }
-    0
 }
 
 /// Move every answered callout of the project's documents, as the tidy leaves them so far, to

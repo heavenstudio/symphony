@@ -82,6 +82,18 @@ fn dirt(root: &Path) -> String {
     git(root, &["status", "--porcelain", "--untracked-files=all"])
 }
 
+/// `symphony status --tidy` of the checkout at `root` at `now`, run by the session `session`
+/// (none when empty): its exit code, what it printed and what it said on stderr.
+fn tidy(root: &Path, now: &str, session: &str) -> (i32, String, String) {
+    let mut env: BTreeMap<String, String> = unmarked();
+    env.remove("TASKS_SESSION");
+    if !session.is_empty() {
+        env.insert("TASKS_SESSION".into(), session.into());
+    }
+    let root = root.display().to_string();
+    cli_in(&["status", "--root", &root, "--tidy", "--now", now], &env)
+}
+
 /// The saves the journal of the checkout at `root` keeps, in the order kept: each entry whole.
 fn journal(root: &Path) -> Vec<Value> {
     let folder = root.join(".git/symphony/server/verdict-publications");
@@ -119,7 +131,7 @@ fn ledgered() -> Tree {
 fn a_tidy_on_the_default_branch_of_a_project_that_delivers_keeps_each_change_and_writes_no_file() {
     let tree = ledgered();
     let register = inode(&tree.path("docs/DECISIONS.md"));
-    let (code, out, err) = status(&tree.root, &["--tidy", "--now", "2026-11-22 21:00"]);
+    let (code, out, err) = tidy(&tree.root, "2026-11-22 21:00", "");
     assert_eq!((code, err.as_str()), (0, ""), "{out}");
     assert_eq!(
         out,
@@ -160,6 +172,12 @@ fn a_tidy_on_the_default_branch_of_a_project_that_delivers_keeps_each_change_and
             .contains("Fixed.")
     );
     assert_eq!(entries[2]["edit"]["new"], "# N\n\nrest\n");
+    // Kept together: delivered in one commit or not at all, the ledger never without its pages.
+    let first = entries[0]["delivery"]["together"]["first"].clone();
+    for entry in &entries {
+        assert_eq!(entry["delivery"]["together"]["count"], 3, "{entry}");
+        assert_eq!(entry["delivery"]["together"]["first"], first, "{entry}");
+    }
     // The page shows it at once, and so does the board the CLI reads.
     let shown = pending::shown(&tree.root, "docs/DECISIONS.md", REGISTER.into());
     assert_eq!(shown, resolved);
@@ -171,7 +189,7 @@ fn a_tidy_on_the_default_branch_of_a_project_that_delivers_keeps_each_change_and
         "the answered comment is still on its page: {json}"
     );
     // A tidy again reads the pages as those saves leave them: nothing more to keep.
-    let (code, out, err) = status(&tree.root, &["--tidy", "--now", "2026-11-22 22:00"]);
+    let (code, out, err) = tidy(&tree.root, "2026-11-22 22:00", "");
     assert_eq!((code, err.as_str()), (0, ""));
     assert_eq!(out, "resolved: (none)\nregrouped docs/DECISIONS.md\n");
     assert_eq!(journal(&tree.root).len(), 3);
@@ -181,7 +199,7 @@ fn a_tidy_on_the_default_branch_of_a_project_that_delivers_keeps_each_change_and
 fn a_kept_tidy_leaves_the_answered_comments_on_their_pages_while_main_holds_no_ledger() {
     // A save of a file the default branch does not hold could never be delivered.
     let tree = checkout(DELIVERS);
-    let (code, out, err) = status(&tree.root, &["--tidy", "--now", "2026-11-22 21:00"]);
+    let (code, out, err) = tidy(&tree.root, "2026-11-22 21:00", "");
     assert_eq!((code, err.as_str()), (0, ""), "{out}");
     assert!(
         out.starts_with(
@@ -208,7 +226,7 @@ fn a_ledger_that_cannot_be_written_leaves_every_comment_on_its_page() {
     let history = tree.path("docs/history");
     std::fs::create_dir_all(&history).unwrap();
     std::fs::set_permissions(&history, std::fs::Permissions::from_mode(0o555)).unwrap();
-    let (code, out, err) = status(&tree.root, &["--tidy", "--now", "2026-11-22 21:00"]);
+    let (code, out, err) = tidy(&tree.root, "2026-11-22 21:00", "");
     std::fs::set_permissions(&history, std::fs::Permissions::from_mode(0o755)).unwrap();
     assert_eq!(code, 1, "{out}");
     assert!(err.contains("review-ledger.md"), "{err}");
@@ -220,12 +238,12 @@ fn a_ledger_that_cannot_be_written_leaves_every_comment_on_its_page() {
 fn a_tidy_there_with_nothing_to_change_says_what_it_always_says_and_replaces_no_file() {
     // The checkout as a tidy delivered leaves it: tidied, committed, and then delivering.
     let tree = checkout("");
-    let (code, _, err) = status(&tree.root, &["--tidy", "--now", "2026-11-22 21:00"]);
+    let (code, _, err) = tidy(&tree.root, "2026-11-22 21:00", "");
     assert_eq!((code, err.as_str()), (0, ""));
     tree.write("symphony.toml", DELIVERS);
     commit(&tree.root, "tidied, and delivering");
     let register = inode(&tree.path("docs/DECISIONS.md"));
-    let (code, out, err) = status(&tree.root, &["--tidy", "--now", "2026-11-22 22:00"]);
+    let (code, out, err) = tidy(&tree.root, "2026-11-22 22:00", "");
     assert_eq!((code, err.as_str()), (0, ""));
     assert_eq!(out, "resolved: (none)\nregrouped docs/DECISIONS.md\n");
     let after = inode(&tree.path("docs/DECISIONS.md"));
@@ -253,7 +271,7 @@ fn the_tidy_in_a_tasks_worktree_writes_it_and_leaves_the_checkout_on_main_as_it_
         ],
     );
     let _gone = Removed(&worktree);
-    let (code, out, err) = status(&worktree, &["--tidy", "--now", "2026-11-22 21:00"]);
+    let (code, out, err) = tidy(&worktree, "2026-11-22 21:00", "");
     assert_eq!((code, err.as_str()), (0, ""), "{out}");
     let register = std::fs::read_to_string(worktree.join("docs/DECISIONS.md")).unwrap();
     assert!(
@@ -281,7 +299,7 @@ impl Drop for Removed<'_> {
 #[test]
 fn a_tidy_of_a_project_that_does_not_deliver_writes_its_checkout_on_main_as_before() {
     let tree = checkout("[land]\ncheck = false\n");
-    let (code, out, err) = status(&tree.root, &["--tidy", "--now", "2026-11-22 21:00"]);
+    let (code, out, err) = tidy(&tree.root, "2026-11-22 21:00", "");
     assert_eq!((code, err.as_str()), (0, ""));
     assert_eq!(
         out,
@@ -304,7 +322,7 @@ fn a_delivery_the_default_branch_does_not_commit_holds_nothing_back() {
     // written in the checkout is not the project's yet.
     let tree = checkout("");
     tree.write("symphony.toml", DELIVERS);
-    let (code, _, err) = status(&tree.root, &["--tidy", "--now", "2026-11-22 21:00"]);
+    let (code, _, err) = tidy(&tree.root, "2026-11-22 21:00", "");
     assert_eq!((code, err.as_str()), (0, ""));
     assert!(tree.read("docs/DECISIONS.md").contains("- [r] **done**"));
 }
@@ -522,9 +540,8 @@ fn a_reply_that_cannot_be_kept_says_so_and_writes_no_file_either() {
 #[test]
 fn a_tidy_that_cannot_keep_a_change_says_which_and_writes_no_file_either() {
     let tree = ledgered();
-    let (code, out, err) = unwritable_journal(&tree.root, || {
-        status(&tree.root, &["--tidy", "--now", "2026-11-22 21:00"])
-    });
+    let (code, out, err) =
+        unwritable_journal(&tree.root, || tidy(&tree.root, "2026-11-22 21:00", ""));
     assert_eq!(code, 1, "{out}");
     assert!(
         err.starts_with("✖ docs/DECISIONS.md not kept for delivery: "),
@@ -534,4 +551,28 @@ fn a_tidy_that_cannot_keep_a_change_says_which_and_writes_no_file_either() {
     assert_eq!(tree.read("docs/DECISIONS.md"), REGISTER);
     assert_eq!(tree.read("docs/NOTES.md"), NOTES);
     assert_eq!(dirt(&tree.root), "");
+}
+
+#[test]
+fn a_tidy_keeps_its_saves_in_the_name_of_the_session_tidying() {
+    let tree = ledgered();
+    let (code, out, err) = tidy(&tree.root, "2026-11-22 21:00", "fox-1");
+    assert_eq!((code, err.as_str()), (0, ""), "{out}");
+    let by: Vec<String> = kept(&tree.root).into_iter().map(|(_, by)| by).collect();
+    assert_eq!(by, ["fox-1", "fox-1", "fox-1"]);
+}
+
+#[test]
+fn a_tidy_of_one_file_keeps_it_alone() {
+    // The register alone changes: nothing goes with it.
+    let tree = checkout(DELIVERS);
+    let (code, out, err) = tidy(&tree.root, "2026-11-22 21:00", "");
+    assert_eq!((code, err.as_str()), (0, ""), "{out}");
+    let entries = journal(&tree.root);
+    assert_eq!(entries.len(), 1);
+    assert!(
+        entries[0]["delivery"].get("together").is_none(),
+        "{}",
+        entries[0]
+    );
 }

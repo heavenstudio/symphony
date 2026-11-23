@@ -303,6 +303,14 @@ fn a_batch_made_and_never_journaled_is_taken_up_as_it_was() {
 }
 
 #[test]
+fn a_tidys_saves_reach_main_in_one_commit_or_not_at_all() {
+    isolated(
+        "a_tidys_saves_reach_main_in_one_commit_or_not_at_all",
+        delivery::a_tidys_saves_reach_main_in_one_commit_or_not_at_all,
+    );
+}
+
+#[test]
 fn the_land_of_a_pending_saves_task_is_said_from_its_journal() {
     isolated(
         "the_land_of_a_pending_saves_task_is_said_from_its_journal",

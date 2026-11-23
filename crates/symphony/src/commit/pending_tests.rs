@@ -2,8 +2,8 @@
 //! words become, and what a folder that is no checkout answers.
 
 use super::{
-    BRANCHES, Batched, Delivery, QueuedPublication, Save, State, applying, flat, joining, kept,
-    led, note, saves, sequence_of, shown, whose,
+    BRANCHES, Batched, Delivery, QueuedPublication, Save, State, Together, applying, behind, flat,
+    joining, kept, led, note, saves, sequence_of, shown, whose,
 };
 use crate::test_tree::Tree;
 use std::path::Path;
@@ -288,6 +288,7 @@ fn a_save_that_no_longer_applies_after_those_before_it_is_left_out_with_the_rest
             sequence,
             edit,
             by: "fox-1",
+            together: None,
         });
     let (edits, members) = applying(&tree.root, &parent, &batch).unwrap();
     assert_eq!(members, [4]);
@@ -298,6 +299,147 @@ fn a_save_that_no_longer_applies_after_those_before_it_is_left_out_with_the_rest
         sequence: 2,
         edit: &stale,
         by: "fox-1",
+        together: None,
     }];
     assert!(applying(&tree.root, &parent, &batch).is_err());
+}
+
+/// Kept by one tidy with others: the first of them, and how many.
+fn together(first: u64, count: u64) -> Delivery {
+    Delivery {
+        together: Some(Together { first, count }),
+        ..Delivery::default()
+    }
+}
+
+/// The journal entry of `sequence`, gone: its save delivered and dropped.
+fn dropped(tree: &Tree, sequence: u64) {
+    let folder = tree
+        .root
+        .join(".git")
+        .join(symphony_board::folders::SERVER)
+        .join(super::JOURNAL);
+    std::fs::remove_file(folder.join(format!("{sequence:020}.json"))).unwrap();
+}
+
+const LEDGER: &str = "docs/history/review-ledger.md";
+
+#[test]
+fn a_tidys_page_saves_wait_with_its_ledger_save_behind_an_earlier_one() {
+    let tree = repository();
+    // Tidy 1's ledger and page, committed as one; a reply on page Q; tidy 2's ledger and Q.
+    let first = Some(Together { first: 1, count: 2 });
+    let ledger = Delivery {
+        members: vec![2],
+        together: first,
+        ..committed(1, "c1")
+    };
+    entry(&tree, 1, LEDGER, "fox-1", ledger);
+    let page = Delivery {
+        together: first,
+        ..committed(1, "c1")
+    };
+    entry(&tree, 2, "docs/p.md", "fox-1", page);
+    entry(&tree, 3, "docs/q.md", "fox-1", Delivery::default());
+    entry(&tree, 4, LEDGER, "fox-1", together(4, 2));
+    entry(&tree, 5, "docs/q.md", "fox-1", together(4, 2));
+    let tidy = Some(Together { first: 4, count: 2 });
+    // The reply leads, and tidy 2 goes with none of it: its ledger waits behind tidy 1's, and its
+    // page with it, so no branch holds Q's archived comment without the ledger that holds it.
+    assert!(!behind(&tree.root, 3, "docs/q.md", None));
+    assert_eq!(numbers(joining(&tree.root, 3)), Vec::<u64>::new());
+    assert!(behind(&tree.root, 4, LEDGER, tidy));
+    assert!(behind(&tree.root, 5, "docs/q.md", tidy));
+    // Tidy 1 delivered, the reply committed: Q waits for the reply, so the ledger does too.
+    dropped(&tree, 1);
+    dropped(&tree, 2);
+    entry(&tree, 3, "docs/q.md", "fox-1", committed(3, "c3"));
+    assert!(behind(&tree.root, 4, LEDGER, tidy));
+    // The reply delivered: tidy 2 goes, led by its ledger, its page with it.
+    dropped(&tree, 3);
+    assert!(!behind(&tree.root, 4, LEDGER, tidy));
+    assert!(
+        behind(&tree.root, 5, "docs/q.md", tidy),
+        "led by its first alone"
+    );
+    assert_eq!(numbers(joining(&tree.root, 4)), [5]);
+}
+
+#[test]
+fn saves_kept_together_go_only_once_each_of_them_is_kept() {
+    let tree = repository();
+    // The second of the two not kept yet, or never.
+    entry(&tree, 1, LEDGER, "fox-1", together(1, 2));
+    let tidy = Some(Together { first: 1, count: 2 });
+    assert!(behind(&tree.root, 1, LEDGER, tidy));
+    entry(&tree, 2, "docs/r.md", "fox-1", Delivery::default());
+    entry(&tree, 3, "docs/s.md", "fox-1", together(3, 2));
+    assert!(numbers(joining(&tree.root, 2)).is_empty());
+    entry(&tree, 4, "docs/t.md", "fox-1", together(3, 2));
+    assert_eq!(numbers(joining(&tree.root, 2)), [3, 4]);
+}
+
+#[test]
+fn another_tidys_saves_go_with_a_batch_all_of_them_or_none() {
+    let tree = repository();
+    entry(&tree, 1, "docs/r.md", "fox-1", Delivery::default());
+    entry(&tree, 2, LEDGER, "fox-1", together(2, 2));
+    entry(&tree, 3, "docs/p.md", "fox-1", together(2, 2));
+    assert_eq!(numbers(joining(&tree.root, 1)), [2, 3]);
+    // One of them held back holds back both, and every later save of either file.
+    entry(&tree, 1, "docs/p.md", "", committed(1, "c1"));
+    entry(&tree, 4, "docs/r.md", "fox-1", Delivery::default());
+    entry(&tree, 5, LEDGER, "fox-1", Delivery::default());
+    assert_eq!(numbers(joining(&tree.root, 4)), Vec::<u64>::new());
+}
+
+#[test]
+fn a_tidys_saves_are_left_out_together_when_one_no_longer_applies() {
+    let tree = repository();
+    tree.write("docs/a.md", "one\n");
+    tree.write("docs/b.md", "x\n");
+    tree.write("docs/c.md", "c\n");
+    git(&tree, &["add", "docs"]);
+    git(&tree, &["commit", "-qm", "docs"]);
+    let parent = git(&tree, &["rev-parse", "HEAD"]);
+    let first = edit("docs/b.md", "x\n", "x\ny\n");
+    let ledger = edit("docs/c.md", "c\n", "c\nentry\n");
+    let stale = edit("docs/a.md", "old\n", "new\n");
+    let after = edit("docs/c.md", "c\nentry\n", "c\nentry\nmore\n");
+    let tidy = Some(Together { first: 2, count: 2 });
+    let batch = [
+        (1, &first, None),
+        (2, &ledger, tidy),
+        (3, &stale, tidy),
+        (4, &after, None),
+    ]
+    .map(|(sequence, edit, together)| Batched {
+        sequence,
+        edit,
+        by: "fox-1",
+        together,
+    });
+    // Its ledger applies, and goes nowhere without the page that no longer does; the save
+    // written after that ledger waits with it.
+    let (edits, members) = applying(&tree.root, &parent, &batch).unwrap();
+    assert!(members.is_empty(), "{members:?}");
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0].rel, "docs/b.md");
+    // Led by such a tidy, the batch fails whole.
+    assert!(applying(&tree.root, &parent, &batch[1..]).is_err());
+}
+
+#[test]
+fn an_entry_names_the_saves_kept_with_it_and_nothing_alone() {
+    let lone = serde_json::to_string(&Delivery::default()).unwrap();
+    assert!(!lone.contains("together"), "{lone}");
+    let written = serde_json::to_string(&together(4, 3)).unwrap();
+    assert!(
+        written.contains(r#""together":{"first":4,"count":3}"#),
+        "{written}"
+    );
+    assert_eq!(
+        serde_json::from_str::<Delivery>(&written).unwrap(),
+        together(4, 3)
+    );
 }

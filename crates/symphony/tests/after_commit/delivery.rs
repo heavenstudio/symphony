@@ -1048,3 +1048,111 @@ pub(super) fn a_batch_made_and_never_journaled_is_taken_up_as_it_was(f: &Fixture
     assert_eq!(filed, 2);
     f.clean_workers();
 }
+
+/// The page `file` as the saves still waiting leave it on `main` here.
+fn as_shown(root: &Path, file: &str) -> String {
+    let text = git(root, &["show", &format!("main:{file}")]) + "\n";
+    pending::shown(root, file, text)
+}
+
+/// The edit of `file` from the page as shown to `new`, made of it by `change`.
+fn shown_edit(root: &Path, file: &str, change: impl Fn(&str) -> String) -> symphony::commit::Edit {
+    let base = as_shown(root, file);
+    symphony::commit::Edit {
+        rel: file.into(),
+        new: change(&base),
+        base,
+    }
+}
+
+pub(super) fn a_tidys_saves_reach_main_in_one_commit_or_not_at_all(f: &Fixture) {
+    let root = delivering(f);
+    write(
+        &root.join("docs/c.md"),
+        "# C\n\nan answered comment\n\nrest\n",
+    );
+    git(&root, &["add", "docs/c.md"]);
+    git(&root, &["commit", "-qm", "page c"]);
+    git(&root, &["push", "-q", "origin", "main"]);
+    git(&root, &["fetch", "-q", "origin"]);
+    // docs/a.md stands for the ledger, the others for the pages a tidy takes comments from.
+    let tidy = |page: &str, entry: &str, from: &str| {
+        let ledger = shown_edit(&root, "docs/a.md", |text| format!("{text}{entry}\n"));
+        let page = shown_edit(&root, page, |text| text.replace(from, "tidied"));
+        pending::keep_together(&root, vec![ledger, page], "fox-1").unwrap()
+    };
+    let first = tidy("docs/b.md", "entry one", "second proposal");
+    pass(&root);
+    let one = format!("docs/owner-save-{}", first[0]);
+    let kept = pending::saves(&root);
+    assert_eq!(
+        kept.iter()
+            .map(|save| save.branch.as_str())
+            .collect::<Vec<_>>(),
+        [one.as_str(), one.as_str()]
+    );
+    let files = git(&root, &["diff", "--name-only", "main", &one]);
+    assert_eq!(files, "docs/a.md\ndocs/b.md");
+
+    // A reply on page C, then a second tidy whose ledger entry is C's comment.
+    let reply = shown_edit(&root, "docs/c.md", |text| format!("{text}a reply\n"));
+    let replied = pending::keep(&root, reply, "fox-1").unwrap();
+    let second = tidy("docs/c.md", "entry two", "an answered comment");
+    pass(&root);
+    // The reply goes alone: C's tidied page waits with its ledger entry, behind the first tidy.
+    let alone = format!("docs/owner-save-{replied}");
+    let mut made = vec![one.clone(), alone.clone()];
+    made.sort();
+    assert_eq!(branches(&root), made);
+    assert_eq!(
+        git(&root, &["diff", "--name-only", "main", &alone]),
+        "docs/c.md"
+    );
+    let waiting = |root: &Path| -> Vec<State> {
+        (pending::saves(root).into_iter())
+            .filter(|save| second.contains(&save.sequence))
+            .map(|save| save.state)
+            .collect()
+    };
+    assert_eq!(waiting(&root), [State::Queued, State::Queued]);
+
+    // The first tidy delivered: the ledger's turn has come, and C's page waits for the reply,
+    // so the ledger waits with it.
+    landed(&root, &one, &one);
+    git(&root, &["merge", "-q", "--ff-only", "origin/main"]);
+    pass(&root);
+    assert_eq!(branches(&root), made);
+    assert_eq!(waiting(&root), [State::Queued, State::Queued]);
+
+    // The reply delivered: the second tidy goes, its ledger and its page in one commit.
+    landed(&root, &alone, &alone);
+    git(&root, &["merge", "-q", "--ff-only", "origin/main"]);
+    pass(&root);
+    let two = format!("docs/owner-save-{}", second[0]);
+    let kept = pending::saves(&root);
+    assert_eq!(
+        kept.iter()
+            .map(|save| save.branch.as_str())
+            .collect::<Vec<_>>(),
+        [two.as_str(), two.as_str()]
+    );
+    assert_eq!(waiting(&root), [State::Waiting, State::Waiting]);
+    assert_eq!(
+        git(&root, &["diff", "--name-only", "main", &two]),
+        "docs/a.md\ndocs/c.md"
+    );
+    let ledger = git(&root, &["show", &format!("{two}:docs/a.md")]);
+    assert!(ledger.contains("entry one\nentry two"), "{ledger}");
+    let page = git(&root, &["show", &format!("{two}:docs/c.md")]);
+    assert!(
+        page.contains("tidied") && page.contains("a reply"),
+        "{page}"
+    );
+    let store = f.store();
+    assert_eq!(
+        store.get(&two).unwrap().title,
+        "Deliver an agent's saves of docs/a.md and 1 more"
+    );
+    assert_eq!(git(&root, &["status", "--porcelain"]), "");
+    f.clean_workers();
+}

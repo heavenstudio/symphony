@@ -337,7 +337,9 @@ Where the project delivers by pull request (`[land] delivery`,
 owner's save writes none there. Each reads the page as the saves still waiting
 leave it. Each file it changes is kept as an agent's save, which the page shows at
 once and a pull request delivers, with the agent's other saves whose turn has come
-([TASKS](TASKS.md#a-document-save-under-delivery)). A ledger that branch does not
+([TASKS](TASKS.md#a-document-save-under-delivery)). A tidy's saves reach that branch
+in one commit or not at all, so its pages never go without the ledger that holds
+their comments. A ledger that branch does not
 hold yet could not be delivered, so a tidy there leaves the answered comments on
 their pages and says so. In a task's worktree both write their files as anywhere,
 and that task's pull request delivers them.

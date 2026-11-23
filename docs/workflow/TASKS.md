@@ -1285,8 +1285,9 @@ An agent's reply (`just symphony-reply`) and a tidy (`just symphony-status --tid
 checkout on the default branch are kept the same way, one save for each file they change. Each
 is written against the page as the saves still waiting leave it, under the lock the app's saves
 take. So a reply follows the owner's line it answers on the page, and it is committed only
-once the owner's save before it is delivered. Its entry names the agent's session, and its task
-is filed as an agent's save rather than the owner's. The server watches the journal's folder, so
+once the owner's save before it is delivered. Its entry names the agent's session
+(`TASKS_SESSION`, or the reply's `--as`; `agent` with none), and its task is filed as an agent's
+save rather than the owner's. The server watches the journal's folder, so
 a save another process keeps there is shown and taken up at once, with no document changed.
 
 One pass delivers an agent's saves as one task. The first agent's save whose turn has come
@@ -1299,6 +1300,14 @@ a pass splits only where one document's saves meet an owner's save still on its 
 already on its way: the later saves of that document wait for it, and go with the next pass's
 batch. A save that no longer applies after those before it is left out, with every later save of
 its document, and waits as well.
+
+The saves one tidy keeps go to the default branch in one commit or not at all: its ledger never
+reaches it without the pages whose comments it holds, nor a page without the ledger
+(`together` in each entry: the first's number and how many). They are led by the first of them,
+which waits while any of them would: a page's save waits behind its ledger's, and the ledger's
+behind a save of that page still on its way. A batch takes them all or none, and leaves them all
+out where one no longer applies. A tidy that could keep only some of them says so: those it kept
+are never delivered, and wait until a person removes their entries from the journal.
 
 ### What the generators make, delivered by a pull request
 

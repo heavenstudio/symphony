@@ -21,7 +21,8 @@
 //!   each head is assessed as its own. It is shown meanwhile, as every kept save is. An agent's
 //!   save takes with it the later agent's saves whose turn has come in the same pass
 //!   ([`joining`]), one commit on its branch, so a sitting of replies and tidies is one task; an
-//!   owner's save is always one of its own.
+//!   owner's save is always one of its own. The saves one tidy keeps go in one commit or not at
+//!   all ([`keep_together`]), so no page goes without the ledger that holds its comments.
 //! - **A task delivers it.** The branch is filed on the board as the owner's task of that slug,
 //!   under a receipt of the branch and its commit, so a pass run again files nothing twice, and
 //!   moved to review. What it needs is its assessor's to say from its diff, as for any task; the
@@ -100,6 +101,19 @@ pub(super) struct Delivery {
     /// none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     members: Vec<u64>,
+    /// The saves one tidy kept with this one ([`keep_together`]), which go to the default
+    /// branch in one commit or not at all. None for a save kept alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    together: Option<Together>,
+}
+
+/// The saves of one keep: the first's entry number, and how many it kept. A ledger and the pages
+/// a tidy took its comments from are one, so no page reaches the default branch without the
+/// ledger that holds what it gave.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub(super) struct Together {
+    first: u64,
+    count: u64,
 }
 
 impl Delivery {
@@ -460,9 +474,22 @@ pub fn kept(root: &Path) -> bool {
 ///
 /// The journal could not be written.
 pub fn keep(root: &Path, edit: Edit, by: &str) -> Result<u64, String> {
+    kept_as(root, edit, by, None)
+}
+
+/// [`keep`], with the saves it goes with: `together`'s `first` zero for the first of them, which
+/// is then its own number.
+fn kept_as(root: &Path, edit: Edit, by: &str, together: Option<Together>) -> Result<u64, String> {
     let by = by.trim();
     let by = if by.is_empty() { "agent" } else { by };
     let backlog = super::Backlog::new(root)?;
+    let together = together.map(|together| Together {
+        first: match together.first {
+            0 => backlog.sequence,
+            first => first,
+        },
+        ..together
+    });
     let path = OutputJob::folder(root)?.join(format!("{:020}.json", backlog.sequence));
     let saved = QueuedPublication {
         edit,
@@ -471,12 +498,49 @@ pub fn keep(root: &Path, edit: Edit, by: &str) -> Result<u64, String> {
         dirty_reported: false,
         delivery: Some(Delivery {
             by: by.into(),
+            together,
             ..Delivery::saved(root)
         }),
     };
     // Written whole and renamed into place, its lease let go at once: the server takes it up.
     drop(OutputJob::write_journal(&path, &saved)?);
     Ok(backlog.sequence)
+}
+
+/// The edits of one tidy kept as saves of `by` that go together ([`Together`]): delivered in one
+/// commit, led by the first, or none of them. Kept one after another, as [`keep`] keeps each:
+/// a pass that finds only some of them, the rest not kept yet or never, delivers none. One edit
+/// is kept alone. Their entries' numbers.
+///
+/// # Errors
+///
+/// An entry could not be written: those kept before it, and why. They wait for the rest, which
+/// will never come, so none of them is delivered.
+pub fn keep_together(
+    root: &Path,
+    edits: Vec<Edit>,
+    by: &str,
+) -> Result<Vec<u64>, (Vec<u64>, String)> {
+    if edits.len() < 2 {
+        let mut kept = Vec::new();
+        for edit in edits {
+            kept.push(keep(root, edit, by).map_err(|problem| (Vec::new(), problem))?);
+        }
+        return Ok(kept);
+    }
+    let count = edits.len() as u64;
+    let mut kept: Vec<u64> = Vec::new();
+    for edit in edits {
+        let together = Together {
+            first: kept.first().copied().unwrap_or(0),
+            count,
+        };
+        match kept_as(root, edit, by, Some(together)) {
+            Ok(number) => kept.push(number),
+            Err(problem) => return Err((kept, problem)),
+        }
+    }
+    Ok(kept)
 }
 
 /// Whether the default branch of the checkout at `root` holds the file `file`: a save of a file
@@ -576,45 +640,105 @@ fn flat(text: &str) -> String {
 /// of that document waits for it, as it was written against it. One whose task closed with no
 /// delivery (cancelled, or closed unproved), or that could not be committed (it conflicts with
 /// the default branch), is on no way, and is waited for no longer: the later save carries its
-/// own change alone.
-fn behind(root: &Path, sequence: u64, file: &str) -> bool {
-    entries(root).into_iter().any(|(earlier, saved)| {
-        earlier < sequence
+/// own change alone. A save one tidy kept with others (`together`) waits while any of them
+/// would: it goes only with the first of them, and only once each is kept.
+fn behind(root: &Path, sequence: u64, file: &str, together: Option<Together>) -> bool {
+    let entries = entries(root);
+    let Some(together) = together else {
+        return before(&entries, sequence, file, &[]);
+    };
+    // A save kept with others goes only with the first of them, once each of them may go.
+    if together.first != sequence {
+        return true;
+    }
+    let mates = group(&entries, together);
+    if mates.len() as u64 != together.count {
+        return true;
+    }
+    let own: Vec<u64> = mates.iter().map(|(number, _)| *number).collect();
+    (mates.iter()).any(|(number, saved)| before(&entries, *number, &saved.edit.rel, &own))
+}
+
+/// Whether a save of `file` kept before the save `sequence`, and none of `except`, is still on
+/// its way to the default branch.
+fn before(entries: &[(u64, QueuedPublication)], sequence: u64, file: &str, except: &[u64]) -> bool {
+    entries.iter().any(|(earlier, saved)| {
+        *earlier < sequence
+            && !except.contains(earlier)
             && saved.edit.rel == file
-            && saved.delivery.is_some_and(|delivery| delivery.on_its_way())
+            && saved.delivery.as_ref().is_some_and(Delivery::on_its_way)
     })
+}
+
+/// The saves of `entries` kept together as `together` ([`keep_together`]), in the order kept.
+fn group(
+    entries: &[(u64, QueuedPublication)],
+    together: Together,
+) -> Vec<&(u64, QueuedPublication)> {
+    (entries.iter())
+        .filter(|(_, saved)| {
+            (saved.delivery.as_ref()).is_some_and(|delivery| delivery.together == Some(together))
+        })
+        .collect()
 }
 
 /// The agent's saves kept after the agent's save `leader` that go on its branch with it, in the
 /// order kept: each not yet committed, stopped or taken by another, whose every earlier save of
 /// its document is delivered, on no way to the default branch, or going with it. An owner's save
 /// never goes with one, so it holds back every later save of its document, as any save still on
-/// its way does: a reply waits behind the owner's save it answers.
+/// its way does: a reply waits behind the owner's save it answers. The saves one tidy kept
+/// together ([`Together`]) go all of them or none: the leader's own always, as it leads only
+/// once each of them may go ([`behind`]), and another's once each of them is kept and free.
 fn joining(root: &Path, leader: u64) -> Vec<(u64, QueuedPublication)> {
     let entries = entries(root);
     let taken: std::collections::BTreeSet<u64> = (entries.iter())
         .filter_map(|(_, saved)| saved.delivery.as_ref())
         .flat_map(|delivery| delivery.members.iter().copied())
         .collect();
-    let mut held_back = std::collections::BTreeSet::new();
-    let mut joining = Vec::new();
-    for (sequence, saved) in entries {
-        let Some(delivery) = &saved.delivery else {
-            continue;
-        };
-        let free = sequence > leader
+    let free = |sequence: u64, delivery: &Delivery| {
+        sequence > leader
             && !delivery.by.is_empty()
             && delivery.tip.is_empty()
             && delivery.problem.is_empty()
             && !delivery.closed
-            && !taken.contains(&sequence);
-        if free && !held_back.contains(&saved.edit.rel) {
-            joining.push((sequence, saved));
-        } else if sequence != leader && delivery.on_its_way() {
+            && !taken.contains(&sequence)
+    };
+    let own = (entries.iter())
+        .find(|(sequence, _)| *sequence == leader)
+        .and_then(|(_, saved)| saved.delivery.as_ref()?.together);
+    let mut held_back = std::collections::BTreeSet::new();
+    let mut going = std::collections::BTreeMap::new();
+    let mut joining = std::collections::BTreeSet::new();
+    for (sequence, saved) in &entries {
+        let Some(delivery) = &saved.delivery else {
+            continue;
+        };
+        if *sequence == leader {
+            continue;
+        }
+        let goes = match delivery.together {
+            Some(together) if Some(together) == own => *sequence > leader,
+            // Decided once for all of them, where the first stands: they are kept one after
+            // another, under the lock every save takes.
+            Some(together) => *going.entry(together.first).or_insert_with(|| {
+                let mates = group(&entries, together);
+                mates.len() as u64 == together.count
+                    && (mates.iter()).all(|(number, saved)| {
+                        (saved.delivery.as_ref()).is_some_and(|mate| free(*number, mate))
+                            && !held_back.contains(&saved.edit.rel)
+                    })
+            }),
+            None => free(*sequence, delivery) && !held_back.contains(&saved.edit.rel),
+        };
+        if goes {
+            joining.insert(*sequence);
+        } else if delivery.on_its_way() {
             held_back.insert(saved.edit.rel.clone());
         }
     }
-    joining
+    (entries.into_iter())
+        .filter(|(sequence, _)| joining.contains(sequence))
+        .collect()
 }
 
 /// The branch an earlier agent's save took the save `sequence` onto ([`joining`]), with its
@@ -633,27 +757,52 @@ struct Batched<'a> {
     sequence: u64,
     edit: &'a Edit,
     by: &'a str,
+    together: Option<Together>,
+}
+
+/// `batch` cut into what goes or stays as one: the saves one tidy kept together, else each save
+/// alone. Those kept together stand one after another, as [`joining`] gives them.
+fn units<'b, 'a>(batch: &'b [Batched<'a>]) -> Vec<&'b [Batched<'a>]> {
+    let mut units = Vec::new();
+    let mut start = 0;
+    for end in 1..=batch.len() {
+        let together = batch[end - 1].together;
+        if end == batch.len() || together.is_none() || batch[end].together != together {
+            units.push(&batch[start..end]);
+            start = end;
+        }
+    }
+    units
 }
 
 /// Of `batch`, the leader's save first, the saves that apply on the default branch's commit
-/// `parent` each after those before it, in the order kept: the leader's alone fails, and a later
-/// one that no longer applies is left out with every later save of its document, which was
-/// written against it. Their edits, and the numbers of those after the leader.
+/// `parent` each after those before it, in the order kept: the leader's alone fails, with those
+/// it was kept together with, and a later one that no longer applies is left out with every
+/// later save of its document, which was written against it. The saves one tidy kept together
+/// apply all of them or are all left out ([`units`]). Their edits, and the numbers of those after
+/// the leader.
 fn applying(root: &Path, parent: &str, batch: &[Batched]) -> Result<(Vec<Edit>, Vec<u64>), String> {
-    let mut edits = vec![batch[0].edit.clone()];
+    let units = units(batch);
+    let mut edits: Vec<Edit> = units[0].iter().map(|save| save.edit.clone()).collect();
     apply(root, parent, &edits).map_err(String::from)?;
-    let mut members = Vec::new();
+    let mut members: Vec<u64> = units[0][1..].iter().map(|save| save.sequence).collect();
     let mut left: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-    for save in &batch[1..] {
-        if left.contains(save.edit.rel.as_str()) {
+    for unit in &units[1..] {
+        let files = unit.iter().map(|save| save.edit.rel.as_str());
+        if unit
+            .iter()
+            .any(|save| left.contains(save.edit.rel.as_str()))
+        {
+            left.extend(files);
             continue;
         }
-        edits.push(save.edit.clone());
+        let before = edits.len();
+        edits.extend(unit.iter().map(|save| save.edit.clone()));
         if apply(root, parent, &edits).is_ok() {
-            members.push(save.sequence);
+            members.extend(unit.iter().map(|save| save.sequence));
         } else {
-            edits.pop();
-            left.insert(&save.edit.rel);
+            edits.truncate(before);
+            left.extend(files);
         }
     }
     Ok((edits, members))
@@ -683,7 +832,9 @@ fn committed(root: &Path, batch: &[Batched]) -> Result<(String, String, Vec<u64>
         // beside.
         let parent = git(root, &["rev-parse", &format!("{name}^")])?;
         let tree = git(root, &["rev-parse", &format!("{name}^{{tree}}")])?;
-        for end in (1..=batch.len()).rev() {
+        let units = units(batch);
+        for count in (1..=units.len()).rev() {
+            let end: usize = units[..count].iter().map(|unit| unit.len()).sum();
             let (edits, members) = applying(root, &parent, &batch[..end])?;
             let (saved, _) = saved_uploads(root, &edits);
             let made = made(root, &parent, &edits, &saved).map_err(String::from)?;
@@ -937,8 +1088,13 @@ fn covered(
     let (text, key) = if alone {
         (
             format!(
-                "The owner's save this task delivers is on the remote default branch already: \
+                "The {} save this task delivers is on the remote default branch already: \
                  {brought}. Nothing more is delivered by {}: close it as covered by that landing.",
+                if delivery.by.is_empty() {
+                    "owner's"
+                } else {
+                    "agent's"
+                },
                 delivery.branch
             ),
             format!("document-save-covered:{}", by.squash),
@@ -1028,7 +1184,7 @@ impl OutputJob {
                 self.saved.delivery = Some(delivery.clone());
                 self.save()?;
             } else {
-                if behind(root, sequence, &edit.rel) {
+                if behind(root, sequence, &edit.rel, delivery.together) {
                     delivery.problem.clear();
                     return Ok(());
                 }
@@ -1043,12 +1199,15 @@ impl OutputJob {
                     sequence,
                     edit,
                     by: &by,
+                    together: delivery.together,
                 }];
                 batch.extend(joining.iter().filter_map(|(number, saved)| {
+                    let delivery = saved.delivery.as_ref()?;
                     Some(Batched {
                         sequence: *number,
                         edit: &saved.edit,
-                        by: &saved.delivery.as_ref()?.by,
+                        by: &delivery.by,
+                        together: delivery.together,
                     })
                 }));
                 match committed(root, &batch) {

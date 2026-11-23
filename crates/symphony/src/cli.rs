@@ -24,7 +24,7 @@ use serde_json::{Value, json};
 use symphony_board::lock::Recovered as _;
 
 use crate::asks::{self, AskError, AskStore};
-use crate::board::{Doc, render, scan, tidy, to_json};
+use crate::board::{Doc, render, scan, tidy_as, to_json};
 use crate::callouts::{Comment, parse_comments};
 use crate::clock::now_stamp;
 use crate::edit::{self, EditError};
@@ -191,7 +191,9 @@ fn status_in(
             let _ = writeln!(err, "✖ {problem}");
             return 1;
         }
-        return tidy(&root, parsed.value("--now"), out, err);
+        // The saves it keeps for delivery name the session tidying, as a reply's do.
+        let by = env.get("TASKS_SESSION").map_or("", String::as_str);
+        return tidy_as(&root, parsed.value("--now"), by, out, err);
     }
     if parsed.flag("--lint") {
         return lint::main(&root, out, err);
