@@ -1,9 +1,11 @@
 import { renderToStaticMarkup as render } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  BoardLanes,
   BoardRow,
   boardShape,
   byColumn,
+  columnLabel,
   firstPageHeight,
   GhostBoard,
   GhostCard,
@@ -15,18 +17,24 @@ import {
   ROW,
   recallGhost,
   recallShape,
+  type Side,
+  StageJump,
+  StageTabs,
   sameRow,
   searched,
+  shownTasks,
   TaskBoard,
   type TaskBoardProps,
   TaskColumn,
   UnderWay,
   UnreadBoard,
+  WaitStrip,
   windowChosen,
   windowOf,
 } from "./board";
-import { STAGE_KEY, STAGES } from "./boardwait";
-import { aMachine, anOperation, aTask, aWork, memoryStorage } from "./testing";
+import { NAMES, STAGE_KEY, STAGES } from "./boardwait";
+import { aMachine, anOperation, aTask, aWork, fire, memoryStorage } from "./testing";
+import type { WaitingBoard } from "./wire";
 import { NO_WORK } from "./work";
 
 beforeEach(() => {
@@ -41,9 +49,7 @@ const board = (props: Partial<TaskBoardProps> = {}) =>
       tasks={[]}
       work={NO_WORK}
       connected
-      signoff={[]}
       counts={[]}
-      statuses={[]}
       refreshed={0}
       onFilter={() => {}}
       onLoad={() => {}}
@@ -84,7 +90,7 @@ describe("a board with no task", () => {
 
 describe("the approved B board", () => {
   it("shows lifecycle and machine columns, with Backlog in the toolbar and no Blocked or signoff column", () => {
-    const html = board({ signoff: ["a"], statuses: ["blocked", "ready"] });
+    const html = board();
     expect(columns(html)).toEqual([
       "concept",
       "design",
@@ -285,8 +291,10 @@ describe("the approved B board", () => {
     });
     expect(html).toContain("<b>4</b> in progress");
     expect(html).toContain("Working <b>7</b>");
-    // The strip's chip is the one thing the page reads as working.
-    expect(html.replace(/<[^>]*>/g, " ").match(/working/gi)).toEqual(["Working"]);
+    // The row of work under way reads none of them as working: the strip's chip alone does.
+    const underWay = html.match(/<nav class="under-way".*?<\/nav>/s)?.[0] ?? "";
+    expect(underWay).toContain("<b>4</b> in progress");
+    expect(underWay.replace(/<[^>]*>/g, " ").match(/working/gi)).toBeNull();
   });
   it("gives each count of the work under way its lane", () => {
     const shown: string[] = [];
@@ -533,4 +541,200 @@ it("opens a hidden rail stage for a task holding the focus on a wide board", () 
   expect(columns(html)).toEqual(["backlog"]);
   expect(html).toContain("Back to stages");
   expect(html).toContain('class="kanban waiting-columns wait-list"');
+});
+
+describe("the board's parts", () => {
+  const counts: [string, number][] = [
+    ["ready", 3],
+    ["review", 2],
+    ["done", 4],
+    ["cancelled", 1],
+    ["build", 1],
+    ["test", 0],
+  ];
+  const waiting = {
+    kinds: [
+      ["decision", 2],
+      ["working", 3],
+    ],
+    columns: [{ status: "ready", ordinary: 2, blocked: 1 }],
+  } as unknown as WaitingBoard;
+  const row = () => undefined;
+  afterEach(() => NAMES.clear());
+
+  it("shows the board's deliverable tasks, its slices too under a search", () => {
+    const tasks = [aTask("w/a"), aTask("w/b", { parent: "w/a" })];
+    expect(shownTasks(tasks, "", "").map((task) => task.slug)).toEqual(["w/a"]);
+    expect(shownTasks(tasks, "lamp", "").map((task) => task.slug)).toEqual(["w/a", "w/b"]);
+  });
+
+  it("shows under a wait filter the open tasks that wait so, or stand in its workflow state", () => {
+    const on = (kind: string) => ({ kind, who: "", why: "", since: 0 });
+    const tasks = [
+      aTask("w/a", { waits_on: on("check") }),
+      aTask("w/b", { waits_on: on("check"), status: "done" }),
+      aTask("w/c", { waits_on: on("check"), status: "cancelled" }),
+      aTask("w/d", { waits_on: on("decision") }),
+      aTask("w/e", { workflow: { phase: "p", state: "s1", revision: 1 } }),
+      aTask("w/f", { workflow: { phase: "p", state: "s1", revision: 1 }, status: "done" }),
+    ];
+    expect(shownTasks(tasks, "", "check").map((task) => task.slug)).toEqual(["w/a"]);
+    expect(shownTasks(tasks, "", "state:s1").map((task) => task.slug)).toEqual(["w/e"]);
+  });
+
+  it("heads a wait filter's column by its wait, a state by its name, and a phase by its own", () => {
+    NAMES.set("state:s1", "Drafting");
+    NAMES.set("phase:p", "Planning");
+    expect(columnLabel("waiting", "check")).toBe("On checks");
+    expect(columnLabel("waiting", "state:s1")).toBe("Drafting");
+    expect(columnLabel("waiting", "state:s2")).toBeUndefined();
+    expect(columnLabel("phase:p", "")).toBe("Planning");
+    expect(columnLabel("ready", "")).toBeUndefined();
+  });
+
+  it("counts every open task in the strip, from the projection, else the stages but the finished", () => {
+    const strip = (given: WaitingBoard | null) =>
+      render(<WaitStrip row={row} waiting={given} counts={counts} wait="" choose={() => {}} />);
+    expect(strip(waiting)).toContain('aria-pressed="true">5 open</button>');
+    expect(strip(waiting)).toContain("Your decisions <b>2</b>");
+    expect(strip(waiting)).toContain("On checks <b>0</b>");
+    expect(strip(null)).toContain('aria-pressed="true">6 open</button>');
+  });
+
+  it("presses the wait the board is filtered by, and chooses the one pressed", () => {
+    const chosen: string[] = [];
+    const given = {
+      row,
+      waiting,
+      counts,
+      wait: "working",
+      choose: (kind: string) => chosen.push(kind),
+    };
+    expect(render(<WaitStrip {...given} />)).toContain(
+      '<button type="button" class="wait-chip k-working" aria-pressed="true">',
+    );
+    const strip = WaitStrip(given);
+    fire(strip, (one) => one.props.className === "open-count", "onClick");
+    fire(strip, (one) => one.props.className === "wait-chip k-check", "onClick");
+    expect(chosen).toEqual(["", "check"]);
+  });
+
+  it("gives each stage tab its count and blocked tasks, and Build and Test while a machine reports", () => {
+    const tabs = (machine: boolean, opened = "") =>
+      render(
+        <StageTabs
+          row={row}
+          tabs={["ready", "review", "done"]}
+          tab="review"
+          opened={opened}
+          machine={machine}
+          counts={counts}
+          waiting={waiting}
+          show={() => {}}
+        />,
+      );
+    expect(tabs(false)).toBe(
+      '<nav class="stage-tabs scroll-row" aria-label="Task stages">' +
+        '<button type="button">Ready <i>2</i><b>+1</b></button>' +
+        '<button type="button" aria-current="page">Review <i>2</i></button>' +
+        '<button type="button">Done <i>4</i></button></nav>',
+    );
+    expect(tabs(true)).toContain(
+      '<button type="button">Build 1</button><button type="button">Test 0</button></nav>',
+    );
+    // Done is current while its cancelled tasks are opened, and a machine's stage when it is.
+    expect(tabs(true, "cancelled")).toContain('<button type="button" aria-current="page">Done');
+    expect(tabs(true, "build")).toContain('<button type="button" aria-current="page">Build 1');
+    expect(tabs(true, "build")).not.toContain('aria-current="page">Review');
+  });
+
+  it("shows the stage a tab names", () => {
+    const shown: string[] = [];
+    const tabs = StageTabs({
+      row,
+      tabs: ["ready"],
+      tab: "ready",
+      opened: "",
+      machine: true,
+      counts,
+      waiting: null,
+      show: (stage) => shown.push(stage),
+    });
+    fire(tabs, (one) => one.key === "ready", "onClick");
+    fire(tabs, (one) => one.key === "test", "onClick");
+    expect(shown).toEqual(["ready", "test"]);
+  });
+
+  it("marks each stage to show by the side its lane is cut at, and shows that lane whole", () => {
+    const sides: Side[] = ["before", "shown", "after"];
+    const asked: string[] = [];
+    const head = {
+      scrollIntoView: vi.fn(),
+      focus: vi.fn(),
+    };
+    const surface = {
+      current: {
+        querySelector: (selector: string) => {
+          asked.push(selector);
+          return selector.includes("review") ? head : null;
+        },
+      } as unknown as HTMLElement,
+    };
+    const given = {
+      stages: ["ready", "review", "done"],
+      side: (at: number) => sides[at] ?? "shown",
+      surface,
+    };
+    expect(render(<StageJump {...given} />)).toBe(
+      '<nav class="stage-jump" aria-label="Show a stage">' +
+        '<button type="button" data-side="before">‹ Ready</button>' +
+        '<button type="button" data-side="shown">Review</button>' +
+        '<button type="button" data-side="after">Done ›</button></nav>',
+    );
+    const jump = StageJump(given);
+    fire(jump, (one) => one.key === "review", "onClick");
+    expect(head.scrollIntoView).toHaveBeenCalledWith({ block: "nearest", inline: "nearest" });
+    expect(head.focus).toHaveBeenCalledWith({ preventScroll: true });
+    // A lane not drawn, or no scroller, shows nothing.
+    fire(jump, (one) => one.key === "done", "onClick");
+    expect(asked).toEqual(['[data-status="review"] > h2', '[data-status="done"] > h2']);
+    fire(
+      StageJump({ ...given, surface: { current: null } }),
+      (one) => one.key === "ready",
+      "onClick",
+    );
+    expect(head.focus).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds a wait filter's column, the phone's tab or the stage opened, else every lane", () => {
+    const lanes = (fields: { phone?: boolean; wait?: string; opened?: string }) =>
+      render(
+        <BoardLanes
+          surface={{ current: null }}
+          phone={false}
+          wait=""
+          opened=""
+          tab="review"
+          stages={["ready", "review"]}
+          onScroll={() => {}}
+          column={(status) => <i key={status}>{status}</i>}
+          {...fields}
+        />,
+      );
+    const open = (classes: string, tabIndex = ' tabindex="0"') =>
+      `<section aria-label="Task columns"${tabIndex} class="kanban waiting-columns${classes}">`;
+    expect(lanes({})).toBe(
+      `${open("")}<div class="waiting-pipeline"><div class="stage-slot"><i>ready</i></div>` +
+        '<div class="stage-slot"><i>review</i></div></div></section>',
+    );
+    expect(lanes({ opened: "backlog" })).toBe(`${open(" wait-list")}<i>backlog</i></section>`);
+    expect(lanes({ wait: "check", opened: "backlog" })).toBe(
+      `${open(" wait-list")}<i>waiting</i></section>`,
+    );
+    expect(lanes({ phone: true })).toBe(`${open("", "")}<i>review</i></section>`);
+    expect(lanes({ phone: true, opened: "build" })).toBe(`${open("", "")}<i>build</i></section>`);
+    expect(lanes({ phone: true, wait: "check" })).toBe(
+      `${open(" wait-list", "")}<i>waiting</i></section>`,
+    );
+  });
 });
