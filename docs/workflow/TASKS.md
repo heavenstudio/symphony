@@ -1281,6 +1281,45 @@ A save kept by a build that did not know the key is delivered the same way. A pr
 `[verdicts]` generators are not run for a kept save, on its branch or after its delivery: what
 they generate stays as it is.
 
+An agent's reply (`just symphony-reply`) and a tidy (`just symphony-status --tidy`) run in the
+checkout on the default branch are kept the same way, one save for each file they change. Each
+is written against the page as the saves still waiting leave it, under the lock the app's saves
+take. So a reply follows the owner's line it answers on the page, and it is committed only
+once the owner's save before it is delivered. Its entry names the agent's session
+(`TASKS_SESSION`, or the reply's `--as`; `agent` with none), and its task is filed as an agent's
+save rather than the owner's. The server watches the journal's folder, so
+a save another process keeps there is shown and taken up at once, with no document changed.
+
+One pass delivers an agent's saves as one task. The first agent's save whose turn has come
+takes with it every later agent's save whose turn has come too, of any document: one whose
+every earlier save of its document is delivered, on no way to the default branch, or going with
+it. They are committed in the order kept, as one commit on the first's branch, and filed as one
+task; each entry names that branch and its commit (`members` in the first's), so each is proved,
+held and closed by that branch's receipt, land and task. An owner's save never goes with one, so
+a pass splits only where one document's saves meet an owner's save still on its way, or a batch
+already on its way: the later saves of that document wait for it, and go with the next pass's
+batch. A save left out of a batch, because it no longer applies after those before it, waits for
+the next pass with every later save of its document. The next pass tries it alone: one that
+cannot be committed then is on no way to the default branch, says why on its page, and holds
+back no later save.
+
+The saves one tidy keeps go to the default branch in one commit or not at all: its ledger never
+reaches it without the pages whose comments it holds, nor a page without the ledger
+(`together` in each entry: the first's number and how many). They are led by the first of them,
+which waits while any of them would: a page's save waits behind its ledger's, and the ledger's
+behind a save of that page still on its way. A batch takes them all or none, and leaves them all
+out where one no longer applies.
+
+A tidy whose saves cannot go is on no way as a whole, as a save alone that cannot be committed
+is. That is the case when its first is held (one of them conflicts with the default branch, and
+so its commit fails), when its task closed with no delivery, or when it is no longer whole once
+kept, one of them dropped as another delivery brought it. Each of its saves then says why on its
+page, and none holds back a later save of its files: an owner's save of one of its pages goes,
+and so does a later tidy's ledger. The tidy writes its first entry last, so a tidy that could
+not keep all of its saves has no first in the journal. Those it did keep are never shown or
+delivered and hold back nothing, and the tidy says on its error output that nothing of it was
+kept.
+
 ### What the generators make, delivered by a pull request
 
 With `[land] delivery` set, [the regenerator](#the-regenerator) makes the outputs of the default

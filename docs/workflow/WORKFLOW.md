@@ -676,7 +676,7 @@ falls back to the first tab; the ghost drawn before the board's first read draws
 the count the phase last had. The state facet chosen is the page's own and is not kept. A
 definition the board cannot draw leaves it as its own writers draw it.
 
-- [x] **workflow-board-labels** — On a board a custom workflow holds, the project's own words can match the board's: a phase named Build beside the machine's Build column, a state chip Working beside the Working wait chip. As built, the machine's columns read Machine build and Machine test, and the workflow's chips follow a small Workflow label. A board with no workflow is unchanged.
+- [r] **workflow-board-labels** — On a board a custom workflow holds, the project's own words can match the board's: a phase named Build beside the machine's Build column, a state chip Working beside the Working wait chip. As built, the machine's columns read Machine build and Machine test, and the workflow's chips follow a small Workflow label. A board with no workflow is unchanged.
   [2026-11-20 00:04] agent — Posted for the board task `app/workflow-pages-follow-ups`, at its tip 57ac59eb3; the change is its commit f80b7c2bc. Both pictures are the browser test's board, drawn from main's build at e00700b13 and from that tip.
 
     **Before**, wide and on a phone: ![The board before, wide](../design/analysis/workflow-board-labels/before-wide.png) ![The board before, on a phone](../design/analysis/workflow-board-labels/before-phone.png)
@@ -695,6 +695,7 @@ definition the board cannot draw leaves it as its own writers draw it.
 
     Approve to keep it, reject to drop it, or comment with other words.
   [2026-11-20 04:14] owner · approved
+  [2026-11-22 21:51] agent · resolved
 
 **The task page.** A task with a place loads the next-actions chunk
 (`apps/symphony-web/src/nextactions.tsx`). It says the place, the pair a blocked task resumes to

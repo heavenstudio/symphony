@@ -90,7 +90,8 @@ fn main() -> std::process::ExitCode {
 ```
 
 What answers from a process here is a plugin's components, card kinds, renderers, routes, home
-regions, board actions, watches and doc checks, each call a request on the pipe; its commands, each
+regions, board actions, gates ([below](#gates)), watches and doc checks, each call a request on the
+pipe; its commands, each
 run as its program ([below](#its-commands)); and its navigation and theme, which its declaration
 holds and which cost no call. A project that loads starts its plugins' processes for their
 declarations, as its navigation is among the routes an entrypoint's files must not meet. An
@@ -107,7 +108,7 @@ first read of the project, and the first after its file changes, are no retry: w
 waits for the declaration, ten seconds at most, the server's live loop as much as a request. Once
 the process declares, the project is served as its file says, with no change to the file. A command
 of such a project says why it is not known ([below](#its-commands)). Its other seams (board fields,
-gates, prose rules, generators and transports) are not asked of a process: a plugin that declares
+prose rules, generators and transports) are not asked of a process: a plugin that declares
 any of them is refused under `[plugins.process]`, naming them, rather than losing them without a
 word, and stays a linked plugin's to answer. The refusal is what holds: the protocol has their
 calls and the SDK's `serve` answers them, but no host asks one of a process. So is a plugin
@@ -145,11 +146,12 @@ for its life. The plugin's stdin ends when the host does: a plugin ends then, an
 exits at most 1 s after (`symphony_plugin::ENDING`), with code 1 if a call still runs, whatever that
 call is doing. A plugin written without the SDK must end when its stdin does, or it outlives its host.
 
-The first request is the declaration (below). A call then waits 10 s for its answer, the writing of
-its request included: the host's lines go to a writer thread through a queue of 256, so a plugin that
-stops reading holds no call past its wait. A call whose answer does not come in the wait is given
-up, sent a `cancel`, and shown as failed; a call whose request the plugin did not even read in the
-wait ends the process. The host ends a process (closes its stdin and kills it) when:
+The first request is the declaration (below). A call then waits 10 s for its answer (a gates answer
+a minute, [below](#gates)), the writing of its request included: the host's lines go to a writer
+thread through a queue of 256, so a plugin that stops reading holds no call past its wait. A call
+whose answer does not come in the wait is given up, sent a `cancel`, and shown as failed; a call
+whose request the plugin did not even read in the wait ends the process. The host ends a process
+(closes its stdin and kills it) when:
 
 - it is refused at its declaration (another major, another name, a seam a process does not answer);
 - its declaration has no answer in 10 s;
@@ -170,7 +172,8 @@ that does not read) is shown where its answer would go: a component's in its pla
 renderer's drawing the same way in the file's place, and a card kind's as the kind's default, as if
 the plugin said nothing of the card. A route answers not found and a home region shows nothing, why
 in the plugin's log. A board action's offer or submission is its error, naming why, as a linked
-action's error is shown, and a submission refused moves nothing. A watch that did not warm says so
+action's error is shown, and a submission refused moves nothing. A gates answerer's gates read
+unknown, why as their detail ([below](#gates)), never met. A watch that did not warm says so
 in the server's log, and one told to forget says nothing: a process that ends keeps nothing. A
 describer's entry on the Settings page says why in its place, as unknown. A doc
 check that did not run is a problem of the project file naming the plugin and the check, so
@@ -230,6 +233,39 @@ What it saves, counted: card by card, a read asks each of the eight calls of eac
 trip of its own; in one request, a register of 500 cards is one request of 1,000 entries (each card
 with its document and with none), 206 KB asked and 410 KB answered, well within a line. What the
 three reads cost in time is the second test of [Measured](#measured), taken as that section says.
+
+## Gates
+
+A plugin's gates answerers (`Gates`, declared in `gates` by their names) answer from its process as
+linked ones do: the same reads ask them, each answer kept by the task's status, its branch's tip
+and what the answerer says it reads besides, so the plugin is asked once a tip
+(`crates/symphony/src/gates.rs`). A read asks `gates.kept_while` with the project's checkout and the
+task (its slug, status and branch), and, when nothing kept holds, `gates.answer` with those and the
+branch's tip, none when the repository holds no such branch. A branch's checkout is answered by its
+main checkout's process, each call naming the branch's checkout. The plugin's own error is kept as
+it said it, and asked again after a while, as a linked answerer's is.
+
+An answer may start a landing binary, so it is waited for as long as a linked one may run: a minute,
+the gates' ceiling (`gates::CEILING`), not a call's 10 s. A read waits 10 s for it, as for a linked
+answer, and shows its gates unknown meanwhile; the answer comes on and is kept for the next read.
+The host asks a process three answers at once (`GATES_AT_ONCE`), one fewer than the SDK's four
+workers, so slow answers never hold the worker its other calls are answered on (a component's
+render, an authority's attestation, what an answer is kept while); another answer waits in the host
+for one of the three to end, a minute at most, and then has its own minute. An answer with none in
+its minute is given up and sent a `cancel` like any call, and a process that has not answered it
+10 s later is ended.
+
+`gates.kept_while` is a call's round trip on every read, the sign-off lane's on the server's live
+loop among them, where a linked answerer's is cheap and never blocks: a process that stops
+answering holds such a read for a call's wait, and the reads after it until the host ends it 10 s
+after the cancel, about twenty seconds once.
+
+A call that had no answer (the process down, or ended while it answered; a refusal, a panic in the
+plugin among them; no answer in its wait) is the answerer's error, `plugin NAME: WHY`. In
+`gates.answer` it is the answer, kept as an error is. `gates.kept_while` has no error to return, so
+its failure is the read's answer at once, and nothing kept is used past it. Either way each gate the
+answerer answered before reads unknown, why as its detail, in place of the Symphony's of its name,
+and never as met. Both calls are 0.1's, so a plugin of any minor is asked them.
 
 ## Approval authorities
 
