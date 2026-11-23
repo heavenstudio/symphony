@@ -164,11 +164,14 @@ impl Home {
         if seen::read_at(&record).is_none() {
             return Ok(());
         }
-        let found = crate::Store::unchecked(
-            rpc::Client::new(&running.addr, crate::NAMESPACE, crate::DATABASE),
+        let client = rpc::Client::new(&running.addr, crate::NAMESPACE, crate::DATABASE);
+        let database = crate::Database::named(&client).map_err(ServerError::Reclaim)?;
+        let found = crate::Store::unchecked_on(
+            database,
             Box::new(crate::store::now),
             Box::new(|_| true),
             "",
+            &crate::Opening::write(),
         )
         .board_version()
         .map_err(|e| {
@@ -405,21 +408,6 @@ pub fn bytes(path: &Path) -> u64 {
             .map(|entry| bytes(&entry.path()))
             .sum::<u64>()
     })
-}
-
-/// What the database `ns`/`db` at `running` defines, SurrealDB's own account of it: its tables,
-/// functions, users and the rest, each by name.
-pub(super) fn defined(running: &Running, ns: &str, db: &str) -> Result<Value, ServerError> {
-    let sql = "INFO FOR DB;";
-    rpc::Client::new(&running.addr, ns, db)
-        .query(sql, json!({}))
-        .map(|mut answers| answers.pop().unwrap_or(Value::Null))
-        .map_err(|problem| {
-            ServerError::Io(format!(
-                "could not read {sql:?} of {ns}/{db} at {}: {problem}",
-                running.addr
-            ))
-        })
 }
 
 /// The databases the server `running` holds, sorted, with the users and accesses of its root (the

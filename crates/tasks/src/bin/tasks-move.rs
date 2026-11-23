@@ -1,12 +1,11 @@
-//! The board's store moved to the other engine, or a PostgreSQL snapshot put back over its
-//! board:
+//! A PostgreSQL snapshot put back over the board, or a move an earlier release left standing
+//! settled:
 //!
-//!     tasks-move postgresql --as HANDLE
-//!     tasks-move surrealdb --as HANDLE
 //!     tasks-move --restore SNAPSHOT --as HANDLE
+//!     tasks-move postgresql --as HANDLE
 //!
 //! The board in the git common dir of the working directory, held meanwhile
-//! (`symphony_board::server::Home::move_to`, `Postgres::restore_over`): the owner's to run. It
+//! (`symphony_board::server::Postgres::restore_over`, `Home::move_to`): the owner's to run. It
 //! says what it did, or why not (exit 2); `--help` alone says how it is run, and `--version` its
 //! version.
 

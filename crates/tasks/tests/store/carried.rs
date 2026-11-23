@@ -2,7 +2,7 @@
 //! `Store::carry`): the rows the board's commands keep for sessions and programs and no copy
 //! derives, read on one engine and written on the other under the same keys, row for row.
 
-use crate::common::{Backend, Fixture, Seed};
+use crate::common::{Fixture, Seed};
 use serde_json::{Value, json};
 use symphony_board::{CARRIED, Error, NewSession, leases_ended};
 
@@ -74,7 +74,7 @@ fn rows(carried: &Value, table: &str) -> usize {
 }
 
 fn carried_across(from: Backend, to: Backend) {
-    let source = Fixture::on(from, Seed::default());
+    let source = Fixture::new(from, Seed::default());
     seeded(&source);
     let carried = source.store.carried().unwrap();
     for table in CARRIED {
@@ -89,7 +89,7 @@ fn carried_across(from: Backend, to: Backend) {
     assert_eq!(carried["counter"][0]["id"], json!(["hold", "tools/one"]));
     assert_eq!(carried["callback_state"][0]["id"], json!("amber-heron"));
 
-    let target = Fixture::on(to, Seed::default());
+    let target = Fixture::new(to, Seed::default());
     // What the target held is replaced, the copy's counters and its marker left alone.
     let raw = target.store.raw();
     raw.row("callback_state", "stale-one")
@@ -152,26 +152,28 @@ fn postgresqls_rows_are_surrealdbs_row_for_row() {
     carried_across(Backend::PostgreSql, Backend::SurrealDb);
 }
 
-on_both! {
-    fn an_empty_board_carries_no_row_and_a_table_no_move_carries_is_refused(backend: Backend) {
-        let f = Fixture::on(backend, Seed::default());
-        let none = f.store.carried().unwrap();
-        for table in CARRIED {
-            // An opening writes its own line among the writers.
-            assert!(table == "writer" || rows(&none, table) == 0, "{table}: {none}");
-        }
-        let refused = f.store.carry(&json!({"task": []})).unwrap_err();
+#[test]
+fn an_empty_board_carries_no_row_and_a_table_no_move_carries_is_refused() {
+    let f = Fixture::new(Seed::default());
+    let none = f.store.carried().unwrap();
+    for table in CARRIED {
+        // An opening writes its own line among the writers.
         assert!(
-            matches!(&refused, Error::Refused(why) if why.contains("task is no table a move carries")),
-            "{refused:?}"
+            table == "writer" || rows(&none, table) == 0,
+            "{table}: {none}"
         );
     }
+    let refused = f.store.carry(&json!({"task": []})).unwrap_err();
+    assert!(
+        matches!(&refused, Error::Refused(why) if why.contains("task is no table a move carries")),
+        "{refused:?}"
+    );
 }
 
 /// `from`'s board moved to `to` as a move does it: the dump copied, the carried tables written
 /// with their leases ended, and read back as they were written.
 fn moved(from: &Fixture, to: Backend) -> Fixture {
-    let target = Fixture::on(
+    let target = Fixture::new(
         to,
         Seed {
             dump: from.store.dump().unwrap(),
@@ -199,7 +201,7 @@ fn waiting(f: &Fixture, handle: &str) -> Vec<String> {
 }
 
 fn a_send_and_a_lease_meet_the_board_as_it_was(from: Backend, to: Backend) {
-    let source = Fixture::on(from, Seed::default());
+    let source = Fixture::new(from, Seed::default());
     let register = || {
         (source.store.register(&NewSession::new("worker")).unwrap())
             .row

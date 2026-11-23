@@ -2,7 +2,6 @@
 //! dispatcher a host at a time (`Store::dispatching_by`, `Store::dispatch_detached`): the write
 //! answers without delivering, and every recipient still hears each message once. What a
 //! dispatcher that finds another running does is `dispatch_holder`'s.
-use crate::common::Backend;
 
 use super::callbacks::Listener;
 use super::common::{Fixture, HOST};
@@ -106,9 +105,9 @@ fn queued(f: &Fixture, handle: &str, message: i64) -> Option<bool> {
     }
 }
 
-on_both! {
-fn a_write_that_hands_its_delivery_over_queues_it_and_answers_before_any_delivery(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_write_that_hands_its_delivery_over_queues_it_and_answers_before_any_delivery() {
+    let f = Fixture::new(crate::common::Seed::default());
     let to = recipient(&f, 0);
     let writer = f.session("worker");
     let before = to.listener.drain(&f, &writer, &to.handle);
@@ -142,11 +141,10 @@ fn a_write_that_hands_its_delivery_over_queues_it_and_answers_before_any_deliver
         "a read or a heartbeat hands nothing over"
     );
 }
-}
 
-on_both! {
-fn a_pass_delivers_from_its_one_read_of_the_messages_what_the_inbox_lists(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_pass_delivers_from_its_one_read_of_the_messages_what_the_inbox_lists() {
+    let f = Fixture::new(crate::common::Seed::default());
     let to = recipient(&f, 0);
     let other = recipient(&f, 1);
     let (writer, reviewer) = (f.session("worker"), f.session("reviewer"));
@@ -194,11 +192,10 @@ fn a_pass_delivers_from_its_one_read_of_the_messages_what_the_inbox_lists(backen
         listed.keys().map(|id| (*id, 1)).collect::<BTreeMap<_, _>>()
     );
 }
-}
 
-on_both! {
-fn a_hand_off_that_cannot_start_dispatches_in_the_write(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_hand_off_that_cannot_start_dispatches_in_the_write() {
+    let f = Fixture::new(crate::common::Seed::default());
     let to = recipient(&f, 0);
     let writer = f.session("worker");
     let before = to.listener.drain(&f, &writer, &to.handle);
@@ -218,11 +215,10 @@ fn a_hand_off_that_cannot_start_dispatches_in_the_write(backend: Backend) {
         BTreeMap::from([(id, 1)])
     );
 }
-}
 
-on_both! {
-fn a_dispatcher_on_another_host_delivers_there_while_this_hosts_is_busy(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_dispatcher_on_another_host_delivers_there_while_this_hosts_is_busy() {
+    let f = Fixture::new(crate::common::Seed::default());
     let remote = f.elsewhere();
     let there = remote
         .register(&symphony_board::NewSession::new("worker"))
@@ -266,5 +262,4 @@ fn a_dispatcher_on_another_host_delivers_there_while_this_hosts_is_busy(backend:
         json!(0),
         "nothing asked this host's dispatcher for another host's work"
     );
-}
 }

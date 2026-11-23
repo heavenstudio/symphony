@@ -5,7 +5,7 @@
 //! well state any orchestrator under the limit takes with `role`; a red is held to none of it. One
 //! already past the limit keeps every task and lets unstarted ones go with `release`.
 
-use super::common::{Backend, Fixture, Seed, refused};
+use super::common::{Fixture, Seed, refused};
 use super::orchestrators::go_quiet_but;
 use symphony_board::health::LIVE_SECONDS;
 use symphony_board::limits::{Limits, ORCHESTRATOR_TASKS};
@@ -64,108 +64,109 @@ fn red(f: &Fixture, slug: &str) {
     });
 }
 
-on_both! {
-    fn the_default_limit_refuses_the_seventeenth_take_naming_the_setting(backend: Backend) {
-        let f = Fixture::on(backend, Seed::default());
-        let amber = f.session("orchestrator");
-        assert_eq!(f.store.limits().orchestrator_tasks, ORCHESTRATOR_TASKS);
-        orchestrating(&f, &f.store, &amber, "tools/t", ORCHESTRATOR_TASKS);
-        f.task("tools/more");
-        assert_eq!(
-            refused(f.store.take_role("tools/more", &amber, "orchestrator")),
-            format!(
-                "{amber} cannot take orchestrator on tools/more: {}",
-                at_limit(&amber, 16, 16)
-            )
-        );
-        assert!(orchestrators_of(&f, "tools/more").is_empty());
-        // Taking again one it holds gains nothing, and is never refused.
-        f.store
-            .take_role("tools/t/0", &amber, "orchestrator")
-            .unwrap();
-        // One done frees a place.
-        let worker = f.session("worker");
-        f.store.claim("tools/t/0", &worker).unwrap();
-        f.store.move_to("tools/t/0", "cancelled", &amber).unwrap();
-        f.store
-            .take_role("tools/more", &amber, "orchestrator")
-            .unwrap();
-    }
-
-    fn every_open_task_held_counts_review_and_blocked_too_but_not_the_tree_below_nor_a_red(backend: Backend) {
-        let f = Fixture::on(backend, Seed::default());
-        let store = limited(&f, 3);
-        let (amber, worker) = (f.session("orchestrator"), f.session("worker"));
-        orchestrating(&f, &store, &amber, "tools/t", 2);
-        store.claim("tools/t/0", &worker).unwrap();
-        store.move_to("tools/t/0", "review", &worker).unwrap();
-        store.move_to("tools/t/1", "blocked", &amber).unwrap();
-        // Work under its tasks is its own by the tree: no place taken, and the third goes.
-        for part in ["tools/t/0/part", "tools/t/1/part"] {
-            let parent = part.rsplit_once('/').unwrap().0;
-            f.task_with(NewTask {
-                parent: Some(parent.into()),
-                ..NewTask::new(part, "Part", "owner")
-            });
-        }
-        // A red it orchestrates takes none, and is taken at any count.
-        red(&f, "tests/main-red-a");
-        store
-            .take_role("tests/main-red-a", &amber, "orchestrator")
-            .unwrap();
-        f.task("tools/third");
-        store
-            .take_role("tools/third", &amber, "orchestrator")
-            .unwrap();
-        f.task("tools/fourth");
-        assert_eq!(
-            refused(store.take_role("tools/fourth", &amber, "orchestrator")),
-            format!(
-                "{amber} cannot take orchestrator on tools/fourth: {}",
-                at_limit(&amber, 3, 3)
-            )
-        );
-        red(&f, "tests/main-red-b");
-        store
-            .take_role("tests/main-red-b", &amber, "orchestrator")
-            .unwrap();
-    }
-
-    fn a_hand_over_to_one_at_the_limit_is_refused_but_the_owners_and_a_reds(backend: Backend) {
-        // The owner's session, which holds the role on a task as the board's seed wrote it.
-        let seed = (Seed::default().session("owner"))
-            .task("tools/owned", "ready")
-            .role("tools/owned", "owner", "orchestrator");
-        let f = Fixture::on(backend, seed);
-        let store = limited(&f, 1);
-        let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
-        orchestrating(&f, &store, &cobalt, "tools/c", 1);
-        orchestrating(&f, &limited(&f, 2), &amber, "tools/a", 2);
-        assert_eq!(
-            refused(store.hand_over("tools/a/1", &amber, &cobalt)),
-            format!(
-                "{amber} cannot hand tools/a/1 to {cobalt}: {}",
-                at_limit(&cobalt, 1, 1)
-            )
-        );
-        assert_eq!(orchestrators_of(&f, "tools/a/1"), [amber.as_str()]);
-        // The owner's is not held to it, as its moves are not held to the cap.
-        store.hand_over("tools/owned", "owner", &cobalt).unwrap();
-        assert_eq!(orchestrators_of(&f, "tools/owned"), [cobalt.as_str()]);
-        red(&f, "tests/main-red-c");
-        store
-            .take_role("tests/main-red-c", &amber, "orchestrator")
-            .unwrap();
-        store
-            .hand_over("tests/main-red-c", &amber, &cobalt)
-            .unwrap();
-        assert_eq!(orchestrators_of(&f, "tests/main-red-c"), [cobalt.as_str()]);
-    }
+#[test]
+fn the_default_limit_refuses_the_seventeenth_take_naming_the_setting() {
+    let f = Fixture::new(Seed::default());
+    let amber = f.session("orchestrator");
+    assert_eq!(f.store.limits().orchestrator_tasks, ORCHESTRATOR_TASKS);
+    orchestrating(&f, &f.store, &amber, "tools/t", ORCHESTRATOR_TASKS);
+    f.task("tools/more");
+    assert_eq!(
+        refused(f.store.take_role("tools/more", &amber, "orchestrator")),
+        format!(
+            "{amber} cannot take orchestrator on tools/more: {}",
+            at_limit(&amber, 16, 16)
+        )
+    );
+    assert!(orchestrators_of(&f, "tools/more").is_empty());
+    // Taking again one it holds gains nothing, and is never refused.
+    f.store
+        .take_role("tools/t/0", &amber, "orchestrator")
+        .unwrap();
+    // One done frees a place.
+    let worker = f.session("worker");
+    f.store.claim("tools/t/0", &worker).unwrap();
+    f.store.move_to("tools/t/0", "cancelled", &amber).unwrap();
+    f.store
+        .take_role("tools/more", &amber, "orchestrator")
+        .unwrap();
 }
 
-on_both! {
-fn an_orchestrator_filing_at_the_limit_is_passed_over_for_one_under_it_or_the_task_waits(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn every_open_task_held_counts_review_and_blocked_too_but_not_the_tree_below_nor_a_red() {
+    let f = Fixture::new(Seed::default());
+    let store = limited(&f, 3);
+    let (amber, worker) = (f.session("orchestrator"), f.session("worker"));
+    orchestrating(&f, &store, &amber, "tools/t", 2);
+    store.claim("tools/t/0", &worker).unwrap();
+    store.move_to("tools/t/0", "review", &worker).unwrap();
+    store.move_to("tools/t/1", "blocked", &amber).unwrap();
+    // Work under its tasks is its own by the tree: no place taken, and the third goes.
+    for part in ["tools/t/0/part", "tools/t/1/part"] {
+        let parent = part.rsplit_once('/').unwrap().0;
+        f.task_with(NewTask {
+            parent: Some(parent.into()),
+            ..NewTask::new(part, "Part", "owner")
+        });
+    }
+    // A red it orchestrates takes none, and is taken at any count.
+    red(&f, "tests/main-red-a");
+    store
+        .take_role("tests/main-red-a", &amber, "orchestrator")
+        .unwrap();
+    f.task("tools/third");
+    store
+        .take_role("tools/third", &amber, "orchestrator")
+        .unwrap();
+    f.task("tools/fourth");
+    assert_eq!(
+        refused(store.take_role("tools/fourth", &amber, "orchestrator")),
+        format!(
+            "{amber} cannot take orchestrator on tools/fourth: {}",
+            at_limit(&amber, 3, 3)
+        )
+    );
+    red(&f, "tests/main-red-b");
+    store
+        .take_role("tests/main-red-b", &amber, "orchestrator")
+        .unwrap();
+}
+
+#[test]
+fn a_hand_over_to_one_at_the_limit_is_refused_but_the_owners_and_a_reds() {
+    // The owner's session, which holds the role on a task as the board's seed wrote it.
+    let seed = (Seed::default().session("owner"))
+        .task("tools/owned", "ready")
+        .role("tools/owned", "owner", "orchestrator");
+    let f = Fixture::new(seed);
+    let store = limited(&f, 1);
+    let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
+    orchestrating(&f, &store, &cobalt, "tools/c", 1);
+    orchestrating(&f, &limited(&f, 2), &amber, "tools/a", 2);
+    assert_eq!(
+        refused(store.hand_over("tools/a/1", &amber, &cobalt)),
+        format!(
+            "{amber} cannot hand tools/a/1 to {cobalt}: {}",
+            at_limit(&cobalt, 1, 1)
+        )
+    );
+    assert_eq!(orchestrators_of(&f, "tools/a/1"), [amber.as_str()]);
+    // The owner's is not held to it, as its moves are not held to the cap.
+    store.hand_over("tools/owned", "owner", &cobalt).unwrap();
+    assert_eq!(orchestrators_of(&f, "tools/owned"), [cobalt.as_str()]);
+    red(&f, "tests/main-red-c");
+    store
+        .take_role("tests/main-red-c", &amber, "orchestrator")
+        .unwrap();
+    store
+        .hand_over("tests/main-red-c", &amber, &cobalt)
+        .unwrap();
+    assert_eq!(orchestrators_of(&f, "tests/main-red-c"), [cobalt.as_str()]);
+}
+
+#[test]
+fn an_orchestrator_filing_at_the_limit_is_passed_over_for_one_under_it_or_the_task_waits() {
+    let f = Fixture::new(Seed::default());
     let store = limited(&f, 2);
     let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
     orchestrating(&f, &store, &amber, "tools/a", 2);
@@ -212,11 +213,10 @@ fn an_orchestrator_filing_at_the_limit_is_passed_over_for_one_under_it_or_the_ta
         (Some(teal.as_str()), None)
     );
 }
-}
 
-on_both! {
-fn one_filed_for_at_the_limit_is_named_as_passed_over_though_the_filer_is_given_the_task(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn one_filed_for_at_the_limit_is_named_as_passed_over_though_the_filer_is_given_the_task() {
+    let f = Fixture::new(crate::common::Seed::default());
     let store = limited(&f, 2);
     let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
     orchestrating(&f, &store, &amber, "tools/a", 1);
@@ -234,11 +234,10 @@ fn one_filed_for_at_the_limit_is_named_as_passed_over_though_the_filer_is_given_
     );
     assert_eq!(orchestrators_of(&f, "tools/for"), [amber.as_str()]);
 }
-}
 
-on_both! {
-fn the_boards_give_fills_none_past_the_limit_and_a_waiting_task_is_any_takers(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn the_boards_give_fills_none_past_the_limit_and_a_waiting_task_is_any_takers() {
+    let f = Fixture::new(Seed::default());
     let store = limited(&f, 2);
     let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
     orchestrating(&f, &store, &amber, "tools/a", 1);
@@ -264,11 +263,10 @@ fn the_boards_give_fills_none_past_the_limit_and_a_waiting_task_is_any_takers(ba
     assert!(store.give_if_due(&store.board().unwrap()));
     assert_eq!(orchestrators_of(&f, "tools/free/2"), [amber.as_str()]);
 }
-}
 
-on_both! {
-fn a_red_with_none_under_the_limit_goes_to_one_that_stays_whatever_it_holds(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn a_red_with_none_under_the_limit_goes_to_one_that_stays_whatever_it_holds() {
+    let f = Fixture::new(Seed::default());
     let store = limited(&f, 1);
     let amber = f.session("orchestrator");
     orchestrating(&f, &store, &amber, "tools/a", 1);
@@ -282,11 +280,10 @@ fn a_red_with_none_under_the_limit_goes_to_one_that_stays_whatever_it_holds(back
     );
     assert_eq!(given.waiting, ["tools/ordinary"]);
 }
-}
 
-on_both! {
-fn a_leavers_work_goes_only_as_far_as_the_others_limits_and_the_rest_waits(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn a_leavers_work_goes_only_as_far_as_the_others_limits_and_the_rest_waits() {
+    let f = Fixture::new(Seed::default());
     let store = limited(&f, 2);
     let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
     orchestrating(&f, &store, &cobalt, "tools/c", 1);
@@ -298,11 +295,10 @@ fn a_leavers_work_goes_only_as_far_as_the_others_limits_and_the_rest_waits(backe
     let task = f.store.get("tools/a/1").unwrap();
     assert!(symphony_board::orchestration::waiting(&task.fields).is_some());
 }
-}
 
-on_both! {
-fn a_reopened_task_is_given_only_to_one_under_the_limit(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn a_reopened_task_is_given_only_to_one_under_the_limit() {
+    let f = Fixture::new(Seed::default());
     let store = limited(&f, 1);
     let (amber, exe, rev) = (
         f.session("orchestrator"),
@@ -323,11 +319,10 @@ fn a_reopened_task_is_given_only_to_one_under_the_limit(backend: Backend) {
     assert!(task.holders("orchestrator").is_empty(), "{task:?}");
     assert!(symphony_board::orchestration::waiting(&task.fields).is_some());
 }
-}
 
-on_both! {
-fn one_past_the_limit_keeps_every_task_and_lets_the_unstarted_ones_go(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn one_past_the_limit_keeps_every_task_and_lets_the_unstarted_ones_go() {
+    let f = Fixture::new(Seed::default());
     let (amber, worker) = (f.session("orchestrator"), f.session("worker"));
     // Taken under a limit of 4, then held to 2: amber is 2 past it, and nothing is taken from it.
     orchestrating(&f, &limited(&f, 4), &amber, "tools/a", 4);
@@ -364,11 +359,10 @@ fn one_past_the_limit_keeps_every_task_and_lets_the_unstarted_ones_go(backend: B
     assert!(given.gave.is_empty(), "{given:?}");
     assert_eq!(given.waiting, ["tools/a/1", "tools/a/2"]);
 }
-}
 
-on_both! {
-fn a_take_written_between_a_gives_read_and_its_write_has_it_decide_again(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn a_take_written_between_a_gives_read_and_its_write_has_it_decide_again() {
+    let f = Fixture::new(Seed::default());
     let store = limited(&f, 2);
     let amber = f.session("orchestrator");
     orchestrating(&f, &store, &amber, "tools/a", 1);
@@ -393,11 +387,10 @@ fn a_take_written_between_a_gives_read_and_its_write_has_it_decide_again(backend
     assert_eq!(orchestrators_of(&f, "tools/raced"), [amber.as_str()]);
     assert!(orchestrators_of(&f, "tools/free").is_empty());
 }
-}
 
-on_both! {
-fn a_quiet_orchestrators_work_waits_while_the_one_that_stays_is_full(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn a_quiet_orchestrators_work_waits_while_the_one_that_stays_is_full() {
+    let f = Fixture::new(Seed::default());
     let store = limited(&f, 1);
     let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
     orchestrating(&f, &store, &cobalt, "tools/c", 1);
@@ -408,5 +401,4 @@ fn a_quiet_orchestrators_work_waits_while_the_one_that_stays_is_full(backend: Ba
     assert_eq!(given.waiting, ["tools/a/0"]);
     // A give of its own is not due again while nothing changes.
     assert!(!store.give_if_due(&store.board().unwrap()));
-}
 }

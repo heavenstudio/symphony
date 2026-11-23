@@ -17,7 +17,7 @@ fn replacement(f: &Fixture, pending: &Pending) -> String {
 fn a_same_task_active_successor_blocks_restore_without_answering_or_reserving_the_post() {
     for backend in [Backend::SurrealDb, Backend::PostgreSql] {
         for state in ["live", "stale", "native", "unknown", "busy"] {
-            let (f, pending) = setup(backend);
+            let (f, pending) = setup();
             let next = replacement(&f, &pending);
             match state {
                 "stale" => f.advance(crate::health::LIVE_SECONDS + 1.0),
@@ -76,7 +76,7 @@ fn unrelated_roles_and_gone_successors_do_not_block_and_own_running_work_does() 
             "own-busy",
             "other-busy",
         ] {
-            let (f, pending) = setup(backend);
+            let (f, pending) = setup();
             f.advance(31.0 * 60.0);
             let next = f.session("worker");
             match state {
@@ -132,7 +132,7 @@ fn reservation_rechecks_replacement_answer_session_and_native_changes_without_co
             "release",
             "unrelated",
         ] {
-            let (f, pending) = setup(backend);
+            let (f, pending) = setup();
             let next = replacement(&f, &pending);
             f.advance(31.0 * 60.0);
             let rows = answers::rows(&f.store, &pending.handle, pending.post.id).unwrap();
@@ -181,7 +181,7 @@ fn reservation_rechecks_replacement_answer_session_and_native_changes_without_co
 #[test]
 fn a_replacement_arriving_during_the_last_probe_is_revalidated_by_the_reservation() {
     for backend in [Backend::SurrealDb, Backend::PostgreSql] {
-        let (f, pending) = setup(backend);
+        let (f, pending) = setup();
         f.advance(31.0 * 60.0);
         let next = f.session("worker");
         let probed = Cell::new(false);
@@ -223,7 +223,7 @@ fn native_registration_from_an_absent_row_and_confirmation_of_an_existing_row_re
  {
     for backend in [Backend::SurrealDb, Backend::PostgreSql] {
         for existing in [false, true] {
-            let (f, pending) = setup(backend);
+            let (f, pending) = setup();
             let next = replacement(&f, &pending);
             let elsewhere = f.elsewhere();
             let address = format!("codex:{THREAD}");
@@ -276,7 +276,7 @@ fn native_registration_from_an_absent_row_and_confirmation_of_an_existing_row_re
 #[test]
 fn recovery_fences_touch_only_the_observed_task_sessions_and_existing_native_row() {
     for backend in [Backend::SurrealDb, Backend::PostgreSql] {
-        let (f, pending) = setup(backend);
+        let (f, pending) = setup();
         let next = replacement(&f, &pending);
         let address = format!("codex:{THREAD}");
         f.elsewhere()
@@ -347,7 +347,7 @@ fn recovery_fences_touch_only_the_observed_task_sessions_and_existing_native_row
 #[test]
 fn a_released_live_successors_projection_agrees_with_reservation_eligibility() {
     for backend in [Backend::SurrealDb, Backend::PostgreSql] {
-        let (f, pending) = setup(backend);
+        let (f, pending) = setup();
         let next = replacement(&f, &pending);
         f.store.move_to(&pending.slug, "blocked", &next).unwrap();
         let busy = BTreeSet::from([next.clone()]);

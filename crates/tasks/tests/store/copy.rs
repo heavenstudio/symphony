@@ -3,7 +3,7 @@
 //! the same shape, each table in the order of its key.
 
 use crate::children::Child as _;
-use crate::common::{Backend, Fixture, NOW, Seed, client, server_addr, session, task};
+use crate::common::{Fixture, NOW, Seed, client, database, server_addr, session, task};
 use serde_json::json;
 use symphony_board::rows::{
     AskRow, BarredKeyRow, DeliveryKeyRow, DeliveryRow, Dump, HeldRow, LinkRow, MessageRow, RoleRow,
@@ -284,73 +284,77 @@ fn place(db: &Database) -> String {
     }
 }
 
-on_both! {
-    fn a_copy_reads_back_as_it_was_written(backend: Backend) {
-        let f = Fixture::on(backend, Seed { dump: everything() });
-        assert_eq!(f.store.dump().unwrap(), everything());
-    }
+#[test]
+fn a_copy_reads_back_as_it_was_written() {
+    let f = Fixture::new(Seed { dump: everything() });
+    assert_eq!(f.store.dump().unwrap(), everything());
+}
 
-    fn copying_again_replaces_the_board(backend: Backend) {
-        let f = Fixture::on(backend, Seed { dump: everything() });
-        let smaller = Seed::default()
-            .session("coral-hare")
-            .task("docs/x", "backlog")
-            .dump;
-        f.store.copy(&smaller).unwrap();
-        assert_eq!(f.store.dump().unwrap(), smaller);
-        f.store.copy(&Dump::default()).unwrap();
-        assert_eq!(f.store.dump().unwrap(), Dump::default());
-    }
+#[test]
+fn copying_again_replaces_the_board() {
+    let f = Fixture::new(Seed { dump: everything() });
+    let smaller = Seed::default()
+        .session("coral-hare")
+        .task("docs/x", "backlog")
+        .dump;
+    f.store.copy(&smaller).unwrap();
+    assert_eq!(f.store.dump().unwrap(), smaller);
+    f.store.copy(&Dump::default()).unwrap();
+    assert_eq!(f.store.dump().unwrap(), Dump::default());
+}
 
-    fn a_dump_the_board_would_refuse_leaves_the_board_as_it_was(backend: Backend) {
-        let f = Fixture::on(backend, Seed { dump: everything() });
-        let mut bad = Seed::default()
-            .session("coral-hare")
-            .task("docs/x", "backlog")
-            .dump;
-        bad.messages.push(MessageRow {
-            id: 1,
-            slug: "docs/x".into(),
-            sender: "coral-hare".into(),
-            kind: "shout".into(),
-            text: "!".into(),
-            ts: NOW,
-            ..Default::default()
-        });
-        match f.store.copy(&bad) {
-            Err(Error::Db(why)) => assert!(why.contains("shout"), "{why}"),
-            other => panic!("expected the server to refuse the copy, got {other:?}"),
-        }
-        assert_eq!(f.store.dump().unwrap(), everything());
+#[test]
+fn a_dump_the_board_would_refuse_leaves_the_board_as_it_was() {
+    let f = Fixture::new(Seed { dump: everything() });
+    let mut bad = Seed::default()
+        .session("coral-hare")
+        .task("docs/x", "backlog")
+        .dump;
+    bad.messages.push(MessageRow {
+        id: 1,
+        slug: "docs/x".into(),
+        sender: "coral-hare".into(),
+        kind: "shout".into(),
+        text: "!".into(),
+        ts: NOW,
+        ..Default::default()
+    });
+    match f.store.copy(&bad) {
+        Err(Error::Db(why)) => assert!(why.contains("shout"), "{why}"),
+        other => panic!("expected the server to refuse the copy, got {other:?}"),
     }
+    assert_eq!(f.store.dump().unwrap(), everything());
+}
 
-    fn a_board_opened_again_is_kept(backend: Backend) {
-        let f = Fixture::on(backend, Seed { dump: everything() });
-        assert_eq!(f.other().dump().unwrap(), everything());
-    }
+#[test]
+fn a_board_opened_again_is_kept() {
+    let f = Fixture::new(Seed { dump: everything() });
+    assert_eq!(f.other().dump().unwrap(), everything());
+}
 
-    fn a_null_inside_a_tasks_fields_is_copied_and_read_back(backend: Backend) {
-        let mut dump = everything();
-        dump.tasks[0].fields = [(
-            "fixture".into(),
-            [(
-                "settings".into(),
-                serde_json::json!({"empty": null, "items": [null, {"value": null}]}),
-            )]
-            .into_iter()
-            .collect(),
+#[test]
+fn a_null_inside_a_tasks_fields_is_copied_and_read_back() {
+    let mut dump = everything();
+    dump.tasks[0].fields = [(
+        "fixture".into(),
+        [(
+            "settings".into(),
+            serde_json::json!({"empty": null, "items": [null, {"value": null}]}),
         )]
         .into_iter()
-        .collect();
-        let f = Fixture::on(backend, Seed { dump: dump.clone() });
-        assert_eq!(f.store.dump().unwrap(), dump);
-    }
+        .collect(),
+    )]
+    .into_iter()
+    .collect();
+    let f = Fixture::new(Seed { dump: dump.clone() });
+    assert_eq!(f.store.dump().unwrap(), dump);
+}
 
-    fn a_board_with_nothing_staged_removes_no_staging(backend: Backend) {
-        let f = Fixture::on(backend, Seed { dump: everything() });
-        f.store.remove_staging().unwrap();
-        assert_eq!(f.store.dump().unwrap(), everything());
-    }
+#[test]
+fn a_board_with_nothing_staged_removes_no_staging() {
+    let f = Fixture::new(Seed { dump: everything() });
+    f.store.remove_staging().unwrap();
+    assert_eq!(f.store.dump().unwrap(), everything());
 }
 
 #[test]
@@ -504,42 +508,41 @@ fn the_copy_binary_is_the_command() {
     assert_eq!(refused.status.code(), Some(2));
 }
 
-on_both! {
-    fn text_that_reads_as_another_type_stays_text(backend: Backend) {
-        let mut seed = Seed::default().session("amber-heron");
-        let lookalikes = [
-            "approve: looks right",
-            "a:b",
-            "2024-01-01T00:00:00Z",
-            "00000000-0000-0000-0000-000000000000",
-            "1s",
-            "NONE",
-            "null",
-            "<string> 1",
-            "'); DROP TABLE task; --",
-            "{\"a\": 1}",
-        ];
-        for (i, text) in lookalikes.iter().enumerate() {
-            let id = i as i64 + 1;
-            seed = seed.task_row(TaskRow {
-                id,
-                title: text.to_string(),
-                body: text.to_string(),
-                ..task(&format!("t/{id}"), "ready")
-            });
-            seed.dump.messages.push(MessageRow {
-                id,
-                slug: format!("t/{id}"),
-                sender: "owner".into(),
-                kind: "msg".into(),
-                text: text.to_string(),
-                ts: NOW,
-                ..Default::default()
-            });
-        }
-        let f = Fixture::on(backend, seed.clone());
-        assert_eq!(f.store.dump().unwrap(), seed.dump);
+#[test]
+fn text_that_reads_as_another_type_stays_text() {
+    let mut seed = Seed::default().session("amber-heron");
+    let lookalikes = [
+        "approve: looks right",
+        "a:b",
+        "2024-01-01T00:00:00Z",
+        "00000000-0000-0000-0000-000000000000",
+        "1s",
+        "NONE",
+        "null",
+        "<string> 1",
+        "'); DROP TABLE task; --",
+        "{\"a\": 1}",
+    ];
+    for (i, text) in lookalikes.iter().enumerate() {
+        let id = i as i64 + 1;
+        seed = seed.task_row(TaskRow {
+            id,
+            title: text.to_string(),
+            body: text.to_string(),
+            ..task(&format!("t/{id}"), "ready")
+        });
+        seed.dump.messages.push(MessageRow {
+            id,
+            slug: format!("t/{id}"),
+            sender: "owner".into(),
+            kind: "msg".into(),
+            text: text.to_string(),
+            ts: NOW,
+            ..Default::default()
+        });
     }
+    let f = Fixture::new(seed.clone());
+    assert_eq!(f.store.dump().unwrap(), seed.dump);
 }
 
 /// A board whose senders each said several things: posts in turn on two threads, one number on
@@ -595,39 +598,48 @@ fn said(f: &Fixture, senders: &[&str]) -> Vec<serde_json::Value> {
         .collect()
 }
 
-on_both! {
-    fn a_copy_leaves_each_senders_last_word_as_its_messages_one_by_one_would(backend: Backend) {
-        let f = Fixture::on(backend, Seed { dump: many_words() });
-        let word = |sid: i64, slug: &str| serde_json::json!({"sid": sid, "slug": slug});
-        assert_eq!(
-            said(&f, &["amber-heron", "brisk-finch"]),
-            [word(50, "sim/b"), word(52, "sim/a")],
-            "the greatest number, then the greater slug, of its posts and verdicts alone"
-        );
-        let last = f.store.last_messages().unwrap();
-        assert_eq!(last["amber-heron"].text, "msg 50 on sim/b");
-        assert_eq!(last["brisk-finch"].text, "verdict 52 on sim/a");
-        // The words are kept from then on as every post keeps them.
-        f.store.say("sim/a", "amber-heron", "after the copy", None).unwrap();
-        assert_eq!(said(&f, &["amber-heron", "brisk-finch"])[0], word(55, "sim/a"));
-        // A copy refused at its last message leaves every word where it was, and they are kept
-        // after it as before.
-        let mut bad = many_words();
-        bad.messages.last_mut().unwrap().kind = "shout".into();
-        bad.messages.retain(|m| m.sender != "brisk-finch");
-        assert!(matches!(f.store.copy(&bad), Err(Error::Db(_))));
-        assert_eq!(
-            said(&f, &["amber-heron", "brisk-finch"]),
-            [word(55, "sim/a"), word(52, "sim/a")]
-        );
-        f.store.say("sim/b", "brisk-finch", "after the refusal", None).unwrap();
-        assert_eq!(said(&f, &["amber-heron", "brisk-finch"])[1], word(56, "sim/b"));
-        // A board copied with fewer senders holds no word of the ones it lost.
-        let mut fewer = many_words();
-        fewer.messages.retain(|m| m.sender != "brisk-finch");
-        f.store.copy(&fewer).unwrap();
-        assert_eq!(said(&f, &["amber-heron"]), [word(50, "sim/b")]);
-    }
+#[test]
+fn a_copy_leaves_each_senders_last_word_as_its_messages_one_by_one_would() {
+    let f = Fixture::new(Seed { dump: many_words() });
+    let word = |sid: i64, slug: &str| serde_json::json!({"sid": sid, "slug": slug});
+    assert_eq!(
+        said(&f, &["amber-heron", "brisk-finch"]),
+        [word(50, "sim/b"), word(52, "sim/a")],
+        "the greatest number, then the greater slug, of its posts and verdicts alone"
+    );
+    let last = f.store.last_messages().unwrap();
+    assert_eq!(last["amber-heron"].text, "msg 50 on sim/b");
+    assert_eq!(last["brisk-finch"].text, "verdict 52 on sim/a");
+    // The words are kept from then on as every post keeps them.
+    f.store
+        .say("sim/a", "amber-heron", "after the copy", None)
+        .unwrap();
+    assert_eq!(
+        said(&f, &["amber-heron", "brisk-finch"])[0],
+        word(55, "sim/a")
+    );
+    // A copy refused at its last message leaves every word where it was, and they are kept
+    // after it as before.
+    let mut bad = many_words();
+    bad.messages.last_mut().unwrap().kind = "shout".into();
+    bad.messages.retain(|m| m.sender != "brisk-finch");
+    assert!(matches!(f.store.copy(&bad), Err(Error::Db(_))));
+    assert_eq!(
+        said(&f, &["amber-heron", "brisk-finch"]),
+        [word(55, "sim/a"), word(52, "sim/a")]
+    );
+    f.store
+        .say("sim/b", "brisk-finch", "after the refusal", None)
+        .unwrap();
+    assert_eq!(
+        said(&f, &["amber-heron", "brisk-finch"])[1],
+        word(56, "sim/b")
+    );
+    // A board copied with fewer senders holds no word of the ones it lost.
+    let mut fewer = many_words();
+    fewer.messages.retain(|m| m.sender != "brisk-finch");
+    f.store.copy(&fewer).unwrap();
+    assert_eq!(said(&f, &["amber-heron"]), [word(50, "sim/b")]);
 }
 
 /// The PostgreSQL client of `f`'s board, for a statement of the test's own.
@@ -643,7 +655,7 @@ fn postgresql_of(f: &Fixture) -> symphony_board::pg::Client {
 /// far it was: at its first table, in the middle, and past its last.
 #[test]
 fn a_postgresql_copy_the_server_ends_says_the_rows_it_reached_and_leaves_the_board() {
-    let f = Fixture::on(Backend::PostgreSql, Seed { dump: many_words() });
+    let f = Fixture::new(Backend::PostgreSql, Seed { dump: many_words() });
     let client = postgresql_of(&f);
     client
         .simple(
@@ -821,7 +833,7 @@ fn a_board_bigger_than_one_request_is_copied_whole() {
 /// at its last row leaves the board as it was.
 #[test]
 fn on_postgresql_a_big_board_is_copied_in_one_request_and_refused_whole() {
-    let f = Fixture::on(Backend::PostgreSql, Seed { dump: everything() });
+    let f = Fixture::new(Backend::PostgreSql, Seed { dump: everything() });
     let before = f.store.database().requests();
     f.store.copy(&a_big_board()).unwrap();
     assert_eq!(f.store.database().requests() - before, 1);
@@ -871,43 +883,44 @@ fn a_big_dump_refused_late_leaves_the_board_and_nothing_else() {
     assert_eq!(tables(&f), BOARD_TABLES);
 }
 
-on_both! {
-    fn board_copies_into_the_board_the_environment_reaches(backend: Backend) {
-        let db = backend.database();
-        let dump = serde_json::to_vec(&everything()).unwrap();
-        let (code, said, err) = copied(&["--board"], &board_env(&db), &dump);
-        assert_eq!((code, err.as_str()), (0, ""));
-        assert!(
-            said.starts_with("tasks-copy: 2 tasks, ")
-                && said.ends_with(&format!(" into {}\n", place(&db))),
-            "{said}"
-        );
-        assert_eq!(held(&db), everything());
-    }
+#[test]
+fn board_copies_into_the_board_the_environment_reaches() {
+    let db = database();
+    let dump = serde_json::to_vec(&everything()).unwrap();
+    let (code, said, err) = copied(&["--board"], &board_env(&db), &dump);
+    assert_eq!((code, err.as_str()), (0, ""));
+    assert!(
+        said.starts_with("tasks-copy: 2 tasks, ")
+            && said.ends_with(&format!(" into {}\n", place(&db))),
+        "{said}"
+    );
+    assert_eq!(held(&db), everything());
+}
 
-    fn board_out_writes_the_boards_dump_as_the_copy_reads_it_on_one_line(backend: Backend) {
-        let f = Fixture::on(backend, Seed { dump: everything() });
-        let env = board_env(&f.other_database());
-        let (code, text, err) = copied(&["--board", "--out"], &env, b"");
-        assert_eq!((code, err.as_str()), (0, ""));
-        assert_eq!(text.lines().count(), 1);
-        assert_eq!(Dump::from_json(&text).unwrap(), everything());
-        assert_eq!(
-            f.store.dump().unwrap(),
-            everything(),
-            "reading it writes nothing"
-        );
-    }
+#[test]
+fn board_out_writes_the_boards_dump_as_the_copy_reads_it_on_one_line() {
+    let f = Fixture::new(Seed { dump: everything() });
+    let env = board_env(&f.other_database());
+    let (code, text, err) = copied(&["--board", "--out"], &env, b"");
+    assert_eq!((code, err.as_str()), (0, ""));
+    assert_eq!(text.lines().count(), 1);
+    assert_eq!(Dump::from_json(&text).unwrap(), everything());
+    assert_eq!(
+        f.store.dump().unwrap(),
+        everything(),
+        "reading it writes nothing"
+    );
+}
 
-    /// The address form takes either server: SurrealDB's `HOST:PORT`, PostgreSQL's socket.
-    fn the_copy_command_copies_into_the_database_at_an_address(backend: Backend) {
-        let db = backend.database();
-        let dump = serde_json::to_vec(&everything()).unwrap();
-        let (code, said, err) = copied(&[&db.addr(), db.database()], &no_env(), &dump);
-        assert_eq!((code, err.as_str()), (0, ""));
-        assert!(said.ends_with(&format!(" into {}\n", place(&db))), "{said}");
-        assert_eq!(held(&db), everything());
-    }
+/// The address form takes either server: SurrealDB's `HOST:PORT`, PostgreSQL's socket.
+#[test]
+fn the_copy_command_copies_into_the_database_at_an_address() {
+    let db = database();
+    let dump = serde_json::to_vec(&everything()).unwrap();
+    let (code, said, err) = copied(&[&db.addr(), db.database()], &no_env(), &dump);
+    assert_eq!((code, err.as_str()), (0, ""));
+    assert!(said.ends_with(&format!(" into {}\n", place(&db))), "{said}");
+    assert_eq!(held(&db), everything());
 }
 
 /// One board read out of each database is one document, byte for byte: what was copied into
@@ -915,7 +928,7 @@ on_both! {
 #[test]
 fn board_out_is_the_same_document_from_either_database() {
     for board in [everything(), many_words(), a_big_board()] {
-        let surreal = Fixture::on(Backend::SurrealDb, Seed { dump: board });
+        let surreal = Fixture::new(Backend::SurrealDb, Seed { dump: board });
         let env = board_env(&surreal.other_database());
         let (code, from_surreal, err) = copied(&["--board", "--out"], &env, b"");
         assert_eq!((code, err.as_str()), (0, ""));

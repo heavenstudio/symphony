@@ -104,9 +104,6 @@ pub(super) enum Before {
     /// `tasks-reclaim`, which removes the old store once the new one is in its place
     /// ([`Home::reclaim`]).
     Reclaim,
-    /// A move of the board to another engine, whose own server on the store closes it again
-    /// before it is moved aside ([`Home::move_to`]).
-    Move,
 }
 
 impl Before {
@@ -115,7 +112,6 @@ impl Before {
         match self {
             Before::Replay => "this start",
             Before::Reclaim => "this reclaim",
-            Before::Move => "this move",
         }
     }
 
@@ -124,7 +120,6 @@ impl Before {
         match self {
             Before::Replay => "the replay of its log",
             Before::Reclaim => "its reclaim",
-            Before::Move => "its move to another engine",
         }
     }
 
@@ -133,7 +128,6 @@ impl Before {
         match self {
             Before::Replay => "it was not replayed and no server was started on it",
             Before::Reclaim => "it was not reclaimed, and nothing was exported or removed",
-            Before::Move => "it was not moved, and no server was started on it",
         }
     }
 
@@ -142,7 +136,6 @@ impl Before {
         match self {
             Before::Replay => "the board's command",
             Before::Reclaim => "`tasks-reclaim`",
-            Before::Move => "`tasks-move`",
         }
     }
 }
@@ -368,7 +361,7 @@ impl Home {
                 before.untouched()
             );
             match before {
-                Before::Replay | Before::Move => ServerError::Io(message),
+                Before::Replay => ServerError::Io(message),
                 Before::Reclaim => ServerError::Reclaim(message),
             }
         };

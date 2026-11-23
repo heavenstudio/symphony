@@ -163,6 +163,13 @@ const UNPACK: &str = ".unpack";
 /// The board's folder in the git common dir.
 pub const FOLDER: &str = crate::folders::TASKS;
 
+/// How a board still on SurrealDB is moved, which a build without SurrealDB says wherever it
+/// meets one: by an earlier release, the last that serves SurrealDB, never by this one.
+pub const GONE: &str = "a board still on SurrealDB moves to PostgreSQL with an earlier release's \
+                        `tasks-move postgresql --as HANDLE` (release-2026-11-22.3 has it), run \
+                        from its project's main checkout, then `tasks recovery rebind`, before \
+                        it takes this release";
+
 /// In the board's folder: where the server answers, the lock its starters take, its log, its data.
 pub(crate) const ADDRESS: &str = "server.json";
 const LOCK: &str = "lock";

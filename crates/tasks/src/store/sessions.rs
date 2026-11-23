@@ -2,8 +2,7 @@
 //! and coming back.
 
 use super::postgres::sessions as pg;
-use super::statement::both;
-use super::surreal::sessions as sql;
+use super::statement::Statement;
 use super::work::Pass;
 use super::{Beside, Error, Failure, Found, REFUSED, Session, Store, refused, repr};
 use crate::health::{self, EXECUTING};
@@ -172,7 +171,7 @@ impl Store {
             .as_ref()
             .map(|parent| format!("{REFUSED}no parent session {}", repr(parent)));
         let (handle, found) = self.retrying(|| {
-            let handles = both(sql::HANDLES, pg::HANDLES);
+            let handles = Statement::from(pg::HANDLES);
             let taken: Vec<String> = self.read_together(handles, json!({}))?;
             let handle = self
                 .new_handle(&taken.into_iter().collect())
@@ -194,7 +193,7 @@ impl Store {
             };
             let vars = json!({"handle": handle, "row": row, "parent": new.parent, "orphan": orphan,
                               "executing": EXECUTING});
-            let found: Found = self.transact(both(sql::register(), pg::register()), vars)?;
+            let found: Found = self.transact(Statement::from(pg::register()), vars)?;
             Ok((handle, found))
         })?;
         self.found(&handle, found)
@@ -220,10 +219,9 @@ impl Store {
 
     /// The session is seen (the monitor's beat).
     pub fn touch(&self, handle: &str) -> Result<(), Error> {
-        let body = sql::touch();
         let pg = pg::touch();
         let vars = self.acting(handle, (self.clock)(), json!({}));
-        self.retrying(|| self.transact::<Value>(both(&body, pg.clone()), vars.clone()))
+        self.retrying(|| self.transact::<Value>(Statement::from(pg.clone()), vars.clone()))
             .map(|_| ())
     }
 
@@ -232,7 +230,7 @@ impl Store {
     /// moving under it is not waited for: the recorder says it again at its next time.
     pub(crate) fn seen_once(&self, handle: &str) -> Result<(), Error> {
         let vars = self.acting(handle, (self.clock)(), json!({}));
-        match self.transact::<Value>(both(sql::touch(), pg::touch()), vars) {
+        match self.transact::<Value>(Statement::from(pg::touch()), vars) {
             Ok(_) => Ok(()),
             Err(Failure::Again) => Err(Error::Db("the board moved under it".into())),
             Err(Failure::Stop(error)) => Err(error),
@@ -262,7 +260,7 @@ impl Store {
         }
         self.retrying(|| {
             let found: Found = self.read_together(
-                both(sql::BINDING, pg::binding()),
+                Statement::from(pg::binding()),
                 json!({"agent": agent, "handle": handle}),
             )?;
             let Some(row) = found.row else {
@@ -280,7 +278,7 @@ impl Store {
                     return Ok(true);
                 }
                 self.transact::<Value>(
-                    both(sql::rebind(), pg::rebind()),
+                    Statement::from(pg::rebind()),
                     json!({"agent":agent, "handle":handle, "full":session,
                            "pid":row.pid, "host":row.host}),
                 )?;
@@ -301,9 +299,8 @@ impl Store {
                 "agent": agent, "handle": handle, "full": session, "now": (self.clock)(),
                 "pid": row.pid, "host": row.host,
             });
-            let write = if bound { sql::bind() } else { sql::bar() };
             let pg = if bound { pg::bind() } else { pg::bar() };
-            self.transact::<Value>(both(&write, pg), vars)?;
+            self.transact::<Value>(Statement::from(pg), vars)?;
             Ok(bound)
         })
     }
@@ -364,9 +361,8 @@ impl Store {
         if spends {
             super::spending::vars(&mut vars, spent);
         }
-        let body = sql::beat(spends);
         let pg = pg::beat(spends);
-        self.retrying(|| self.transact(both(&body, pg.clone()), vars.clone()))
+        self.retrying(|| self.transact(Statement::from(pg.clone()), vars.clone()))
     }
 
     /// Take an existing handle back (a re-armed monitor), keeping every role it holds.
@@ -376,10 +372,9 @@ impl Store {
         } else {
             ""
         };
-        let body = sql::reattach();
         let pg = pg::reattach();
         let vars = self.acting(handle, (self.clock)(), json!({"pid": pid, "host": host}));
-        self.retrying(|| self.transact::<Value>(both(&body, pg.clone()), vars.clone()))?;
+        self.retrying(|| self.transact::<Value>(Statement::from(pg.clone()), vars.clone()))?;
         self.session(handle)
     }
 
@@ -390,7 +385,7 @@ impl Store {
             "handle": handle, "now": (self.clock)(),
             "unknown": format!("{REFUSED}no session {}", repr(handle)),
         });
-        self.retrying(|| self.transact::<Value>(both(sql::REVIVE, pg::revive()), vars.clone()))
+        self.retrying(|| self.transact::<Value>(Statement::from(pg::revive()), vars.clone()))
             .map(|_| ())
     }
 
@@ -406,13 +401,11 @@ impl Store {
         // What it staffs on a task a custom workflow holds goes first, by each position's
         // lost-holder recovery (docs/workflow/WORKFLOW.md, "Recovery").
         self.recover_leaving(handle)?;
-        let body = sql::leave();
         let pg = pg::leave();
         let why = format!("{handle}, who orchestrated it, left");
         self.retrying(|| {
-            let read = sql::held_orchestrating();
             let held: Vec<String> = self.read(
-                both(&read, pg::held_orchestrating()),
+                Statement::from(pg::held_orchestrating()),
                 json!({"actor": handle}),
             )?;
             let mut pass = Pass::default();
@@ -427,7 +420,10 @@ impl Store {
                 pass.guard(&counted);
             }
             let vars = self.acting(handle, (self.clock)(), json!({"held": held}));
-            self.transact::<Value>(both(&body, pg.clone()).posting(), pass.vars(handle, vars))
+            self.transact::<Value>(
+                Statement::from(pg.clone()).posting(),
+                pass.vars(handle, vars),
+            )
         })
         .map(|_| ())
     }
@@ -439,9 +435,11 @@ impl Store {
             sessions: Vec<SessionRow>,
             held: Vec<String>,
         }
-        let read = sql::sessions();
         let found: Found = self.retrying(|| {
-            self.read_together(both(&read, pg::sessions()), json!({"executing": EXECUTING}))
+            self.read_together(
+                Statement::from(pg::sessions()),
+                json!({"executing": EXECUTING}),
+            )
         })?;
         let now = (self.clock)();
         let held: HashSet<&str> = found.held.iter().map(String::as_str).collect();
@@ -465,7 +463,7 @@ impl Store {
     pub fn handle_for_agent(&self, agent: &str) -> Result<Option<String>, Error> {
         self.retrying(|| {
             self.read_together(
-                both(sql::HANDLE_FOR_AGENT, pg::handle_for_agent()),
+                Statement::from(pg::handle_for_agent()),
                 json!({"agent": agent}),
             )
         })
@@ -479,9 +477,8 @@ impl Store {
             handle: String,
             agent: String,
         }
-        let bound: Vec<Bound> = self.retrying(|| {
-            self.read_together(both(sql::BOUND_AGENTS, pg::bound_agents()), json!({}))
-        })?;
+        let bound: Vec<Bound> =
+            self.retrying(|| self.read_together(Statement::from(pg::bound_agents()), json!({})))?;
         Ok(bound.into_iter().map(|b| (b.handle, b.agent)).collect_map())
     }
 
@@ -489,9 +486,8 @@ impl Store {
     /// in-process agent's, and where and since when that agent's calls run), for sessions that have
     /// not left: what [`Store::bound_agents`] reads, in the same one request.
     pub fn agent_bindings(&self) -> Result<BTreeMap<String, Binding>, Error> {
-        let bound: Vec<BoundAgent> = self.retrying(|| {
-            self.read_together(both(sql::AGENT_BINDINGS, pg::agent_bindings()), json!({}))
-        })?;
+        let bound: Vec<BoundAgent> =
+            self.retrying(|| self.read_together(Statement::from(pg::agent_bindings()), json!({})))?;
         Ok(bound
             .into_iter()
             .map(|b| (b.handle, b.binding))

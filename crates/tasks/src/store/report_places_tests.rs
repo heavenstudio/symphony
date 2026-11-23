@@ -13,12 +13,12 @@ use symphony_plugin::execution::{Principal, PrincipalKind};
 
 const BACKENDS: [Backend; 2] = [Backend::SurrealDb, Backend::PostgreSql];
 
-fn board(backend: Backend) -> Fixture {
+fn board() -> Fixture {
     let seed = Seed::default()
         .task("sim/ready", "ready")
         .task("sim/review", "review")
         .task("sim/done", "done");
-    Fixture::on(backend, seed)
+    Fixture::new(seed)
 }
 
 /// Each place of `slug` in `read` as `(phase, phase label, state, state label, status)`.
@@ -46,7 +46,7 @@ fn places<'a>(
 #[test]
 fn a_board_that_runs_no_workflow_is_asked_nothing_more() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let log = f.store.database().queries();
         let (first, _) = log.report(now());
         let read = f.store.report_records(0.0).unwrap();
@@ -71,7 +71,7 @@ fn a_board_that_runs_no_workflow_is_asked_nothing_more() {
 #[test]
 fn each_task_s_places_are_its_own_transitions_named_by_the_definition_each_was_made_under() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let two = custom(&format!("{TWO}{MAPPED}"));
         let committed = Committed {
             commit: "3".repeat(40),

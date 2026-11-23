@@ -20,7 +20,7 @@ fn a_postgresql_copy_held_past_its_limit_is_ended_by_the_server_and_leaves_the_b
         .session("amber-heron")
         .task("sim/jump", "ready")
         .task("sim/land", "review");
-    let f = Fixture::on(Backend::PostgreSql, seed.clone());
+    let f = Fixture::new(Backend::PostgreSql, seed.clone());
     let Database::PostgreSql(holder) = f.other_database() else {
         panic!("this board is on PostgreSQL");
     };

@@ -57,7 +57,7 @@ fn held(f: &Fixture, slug: &str, count: u64) -> Vec<Transition> {
 #[test]
 fn a_task_no_workflow_held_and_a_task_not_there_have_none() {
     for backend in BACKENDS {
-        let f = Fixture::on(backend, Seed::default());
+        let f = Fixture::new(Seed::default());
         f.task("sim/jump");
         assert_eq!(f.store.workflow_transitions("sim/jump").unwrap(), vec![]);
         assert_eq!(f.store.workflow_transitions("sim/none").unwrap(), vec![]);
@@ -67,7 +67,7 @@ fn a_task_no_workflow_held_and_a_task_not_there_have_none() {
 #[test]
 fn a_tasks_transitions_are_its_own_by_revision_never_a_neighbours() {
     for backend in BACKENDS {
-        let f = Fixture::on(backend, Seed::default());
+        let f = Fixture::new(Seed::default());
         // Revision 10 after 9, never after 1 as text would order it.
         let jump = held(&f, "sim/jump", 11);
         // Slugs either side of it, and one it is the start of.

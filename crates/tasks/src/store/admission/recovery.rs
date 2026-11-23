@@ -1,6 +1,6 @@
 //! Recovery of a holder's exit on a task a custom workflow holds (docs/workflow/WORKFLOW.md, "Recovery"),
 //! decided by [`crate::workflow::recover`] on admission's one read and written as an admitted
-//! operation is (`sql::APPLY`): fenced on the active workflow, the task's version, each role it
+//! operation is (`pg::workflow::apply`): fenced on the active workflow, the task's version, each role it
 //! relies on or drops and, for a lost holder, the holder's session as it was read, so a holder that
 //! comes back, or moves the task first, wins and the recovery decides again. Its principal is the
 //! board's recovery service, which the host must grant `recovery`; the session that asked is the
@@ -13,9 +13,9 @@
 
 use super::{
     Decided, Error, Failure, Host, Refusal, RefusalCode, Store, Taking, Transition, Value, context,
-    pg, refusal, sql, sql_cap, surreal,
+    pg, refusal,
 };
-use crate::store::statement::both;
+use crate::store::statement::Statement;
 use crate::workflow::recover::{self as plan, Recovery};
 use crate::workflow::{Recovered, Trigger, board_service};
 use serde_json::json;
@@ -110,7 +110,7 @@ impl Store {
         }
         let slugs: Vec<String> = self.retrying(|| {
             self.read(
-                both(sql::LEAVING, pg::workflow::leaving()),
+                Statement::from(pg::workflow::leaving()),
                 json!({"actor": handle}),
             )
         })?;
@@ -220,24 +220,19 @@ impl Store {
     }
 }
 
-/// The write of a recovery (`sql::APPLY`), its line on the thread by the system, and the slot
-/// counters it holds guarded after it when `guarded`.
-pub(super) fn applied(guarded: bool) -> crate::store::statement::Statement<'static> {
-    let logged = surreal::logged("$slug", "$sender", "'system'", "$said", "NONE");
-    let guard = if guarded { sql_cap::GUARD } else { "" };
-    both(
-        format!("{}{logged}{guard}", sql::APPLY),
-        pg::workflow::apply(
-            &pg::logged(
-                "v ->> 'slug'",
-                "v ->> 'sender'",
-                "'system'",
-                "v ->> 'said'",
-                "NULL",
-            ),
-            guarded,
+/// The write of a recovery (`pg::workflow::apply`), its line on the thread by the system, and the
+/// slot counters it holds guarded after it when `guarded`.
+pub(super) fn applied(guarded: bool) -> Statement<'static> {
+    Statement::from(pg::workflow::apply(
+        &pg::logged(
+            "v ->> 'slug'",
+            "v ->> 'sender'",
+            "'system'",
+            "v ->> 'said'",
+            "NULL",
         ),
-    )
+        guarded,
+    ))
     .posting()
 }
 

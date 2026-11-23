@@ -15,7 +15,7 @@ pub(crate) fn reviewed() -> Custom {
 
 /// Sessions amber, birch, cedar and orch; sim/a ready, sim/c ready on sim/gone (cancelled),
 /// sim/d in progress on sim/gone, each orchestrated by orch; [`REVIEWED`] activated.
-pub(crate) fn board(backend: Backend) -> Fixture {
+pub(crate) fn board() -> Fixture {
     let seed = Seed::default()
         .session("amber")
         .session("birch")
@@ -30,7 +30,7 @@ pub(crate) fn board(backend: Backend) -> Fixture {
         .role("sim/d", "orch", "orchestrator")
         .link("sim/c", "dep", "sim/gone")
         .link("sim/d", "dep", "sim/gone");
-    let f = Fixture::on(backend, seed);
+    let f = Fixture::new(seed);
     f.store
         .activate_workflow(&reviewed(), &Host::local())
         .unwrap();
@@ -59,8 +59,7 @@ fn settle(f: &Fixture) -> Vec<String> {
 #[test]
 fn a_board_with_no_workflow_settles_nothing_and_reads_no_workflow() {
     for backend in BACKENDS {
-        let f = Fixture::on(
-            backend,
+        let f = Fixture::new(
             Seed::default()
                 .session("amber")
                 .task("sim/a", "in_progress")
@@ -79,7 +78,7 @@ fn a_board_with_no_workflow_settles_nothing_and_reads_no_workflow() {
 #[test]
 fn a_lost_executor_is_recovered_by_the_board_once() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         take(&f.store, "sim/a", &agent_session("amber"), "claim").unwrap();
         assert!(
             settle(&f).iter().all(|l| !l.contains("sim/a")),
@@ -106,7 +105,7 @@ fn a_lost_executor_is_recovered_by_the_board_once() {
 #[test]
 fn a_manual_stay_is_recorded_once_and_the_holder_keeps_its_role() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let amber = agent_session("amber");
         take(&f.store, "sim/a", &amber, "claim").unwrap();
         take(&f.store, "sim/a", &amber, "block").unwrap();
@@ -134,7 +133,7 @@ fn a_manual_stay_is_recorded_once_and_the_holder_keeps_its_role() {
 #[test]
 fn a_dependant_whose_policy_is_cancel_is_cancelled_and_block_moves_nothing() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let d = position(&f, "sim/d");
         let lines = settle(&f);
         assert!(
@@ -165,8 +164,7 @@ fn a_cancel_policy_with_no_edge_the_board_may_take_moves_nothing() {
              \"system_capability\", capability = \"recovery\" }]",
             "authority = [{ kind = \"project_capability\", capability = \"owner\" }]",
         );
-        let f = Fixture::on(
-            backend,
+        let f = Fixture::new(
             Seed::default()
                 .session("orch")
                 .task("sim/c", "ready")
@@ -184,7 +182,7 @@ fn a_cancel_policy_with_no_edge_the_board_may_take_moves_nothing() {
 #[test]
 fn a_claim_by_its_role_takes_the_one_edge_that_gives_it() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let (amber, birch) = (agent_session("amber"), agent_session("birch"));
         let host = Host::local();
         let claimed = (f.store)
@@ -221,7 +219,7 @@ fn a_claim_by_its_role_takes_the_one_edge_that_gives_it() {
 #[test]
 fn a_claim_by_its_role_says_what_stops_its_one_edge() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let (amber, birch) = (agent_session("amber"), agent_session("birch"));
         let host = Host::local();
         (f.store)
@@ -236,10 +234,7 @@ fn a_claim_by_its_role_says_what_stops_its_one_edge() {
             .unwrap();
         assert_eq!(again.transition, "sim/a@6");
         // No workflow active refuses as such, and the owner holds no task role.
-        let plain = Fixture::on(
-            backend,
-            Seed::default().session("amber").task("sim/x", "ready"),
-        );
+        let plain = Fixture::new(Seed::default().session("amber").task("sim/x", "ready"));
         assert!(
             refused(
                 plain
@@ -262,7 +257,7 @@ fn a_claim_by_its_role_says_what_stops_its_one_edge() {
 
 /// Sessions amber, birch, cedar and orch; sim/a and sim/b ready, each orchestrated by orch;
 /// [`REVIEWED`] activated.
-fn two_ready(backend: Backend) -> Fixture {
+fn two_ready() -> Fixture {
     let seed = Seed::default()
         .session("amber")
         .session("birch")
@@ -272,7 +267,7 @@ fn two_ready(backend: Backend) -> Fixture {
         .task("sim/b", "ready")
         .role("sim/a", "orch", "orchestrator")
         .role("sim/b", "orch", "orchestrator");
-    let f = Fixture::on(backend, seed);
+    let f = Fixture::new(seed);
     f.store
         .activate_workflow(&reviewed(), &Host::local())
         .unwrap();
@@ -288,7 +283,7 @@ fn holdings(store: &Store) -> Vec<String> {
 #[test]
 fn a_held_task_holds_its_slot_by_its_positions_policy_from_its_executor_to_its_reviewer() {
     for backend in BACKENDS {
-        let f = two_ready(backend);
+        let f = two_ready();
         let capped = f.other().capping(Some(1));
         let [amber, birch, cedar] = ["amber", "birch", "cedar"].map(agent_session);
         let held = || holdings(&f.store);
@@ -333,7 +328,7 @@ fn a_held_task_holds_its_slot_by_its_positions_policy_from_its_executor_to_its_r
 #[test]
 fn the_transitions_of_held_tasks_are_read_by_their_ids_in_the_order_asked_each_oldest_first() {
     for backend in BACKENDS {
-        let f = two_ready(backend);
+        let f = two_ready();
         let amber = agent_session("amber");
         take(&f.store, "sim/a", &amber, "claim").unwrap();
         take(&f.store, "sim/a", &amber, "submit").unwrap();
@@ -375,10 +370,7 @@ fn a_claim_by_its_role_takes_the_one_open_edge_of_several_and_refuses_a_choice_b
         let host = Host::local();
         let amber = agent_session("amber");
         let on = |definition: &Custom| {
-            let f = Fixture::on(
-                backend,
-                Seed::default().session("amber").task("sim/a", "ready"),
-            );
+            let f = Fixture::new(Seed::default().session("amber").task("sim/a", "ready"));
             f.store.activate_workflow(definition, &host).unwrap();
             f
         };
@@ -424,8 +416,7 @@ fn reworked() -> Custom {
 fn next_offers_a_held_tasks_claim_whatever_status_its_position_projects_to_and_no_task_done_by_the_board()
  {
     for backend in BACKENDS {
-        let f = Fixture::on(
-            backend,
+        let f = Fixture::new(
             Seed::default()
                 .session("amber")
                 .session("birch")
@@ -459,8 +450,7 @@ fn next_offers_a_held_tasks_claim_whatever_status_its_position_projects_to_and_n
 #[test]
 fn a_settle_the_board_is_refused_is_said_and_counts_as_no_write() {
     for backend in BACKENDS {
-        let f = Fixture::on(
-            backend,
+        let f = Fixture::new(
             Seed::default()
                 .session("orch")
                 .task("sim/c", "ready")
@@ -514,7 +504,7 @@ fn a_claim_taking_accepted_outputs_is_met_and_named_by_the_outputs_standing() {
             .task("sim/up", "ready")
             .task("sim/down", "ready")
             .link("sim/down", "dep", "sim/up");
-        let f = Fixture::on(backend, seed);
+        let f = Fixture::new(seed);
         let workflow = custom(&format!("{}{MAPPED}", outputs()));
         f.store
             .activate_workflow(&workflow, &Host::local())

@@ -1,55 +1,38 @@
-//! A board's store moved from one engine to the other ([`Home::move_to`]), and the switch of a
-//! home's data that it and a restore over the board ([`super::Postgres::restore_over`]) share.
+//! The switch of a home's data under a journal, which a restore over the board
+//! ([`super::Postgres::restore_over`]) takes, and which a move between the engines took in the
+//! releases that had one ([`Home::move_to`] settles a journal one of them left).
 //!
-//! A move holds the board, stops its server, keeps a snapshot of its store, and reads it through
-//! a server of its own: the board's schema, which must be this build's (a move migrates
-//! nothing), the dump ([`Store::dump`]), the tables no copy holds ([`Store::carried`]), the
-//! marker, and the databases the store holds beside the board's own (a scratch board's, `just
-//! tasks --database NAME`), which are not moved: they stay in the old store, kept whole with
-//! it, and the move names them. It writes the board as the export
-//! it keeps, makes a store of the other engine in a work folder of its own, copies and carries
-//! them there, moves that board's marker past the one it read, reads both back and compares
-//! them with what it read, row for row. Until then the home is untouched, and a failure removes
-//! the work folder and nothing else.
+//! The switch, each step durable before the next, under a journal (`move.json`) written first:
+//! the old data moved aside into `moved/STAMP-ENGINE/`, the new data moved in, the identity
+//! written, the journal marked committed, the home's recovery bindings revoked, the journal
+//! removed. Marking the journal is the commit point. Before it, a failure is undone at once and
+//! the board is on its old data as it was, its bindings untouched; after it, the board is on its
+//! new data and what is left is finished. While the journal stands nothing reads the home as
+//! either engine ([`Home::backend`] refuses), no start runs and the hold is not released; only
+//! the holder's next `tasks-move` settles it, undoing what never committed or finishing what
+//! did, each step told by the journal and by what is on disk. A step that can be neither
+//! finished nor undone leaves the hold and the journal, and says so.
 //!
-//! Then the switch, each step durable before the next, under a journal (`move.json`) written
-//! first: the old store moved aside into `moved/STAMP-ENGINE/`, the new one moved in, the
-//! identity written, the journal marked committed, the home's recovery bindings revoked, the
-//! journal removed. Marking the journal is the commit point. Before it, a failure is undone at
-//! once and the board is on its old engine as it was, its bindings untouched; after it, the
-//! board is on its new engine and what is left is finished. While the journal stands nothing
-//! reads the home as either engine ([`Home::backend`] refuses), no start runs and the hold is
-//! not released; only the holder's next move or restore settles it, undoing what never
-//! committed or finishing what did, each step told by the journal and by what is on disk. A
-//! step that can be neither finished nor undone leaves the hold and the journal, and says so.
-//!
-//! Nothing is deleted but the work folder: the old store stays in `moved/`, with the export
-//! and every database it held beside the board's, and the snapshot stays with the snapshots.
+//! Nothing is deleted but the switch's work folder: the old data stays in `moved/`, and the
+//! snapshot stays with the snapshots.
 //!
 //! The new board holds a recovery generation of its own, and the home is bound to none
-//! ([`crate::store::recovery`]): a token read before the move is refused, and `tasks recovery
+//! ([`crate::store::recovery`]): a token read before the switch is refused, and `tasks recovery
 //! rebind` binds the board again.
 
 use super::backend::Engine;
-use super::postgres::Postgres;
-use super::snapshot::{Before, Kept, stamp};
+use super::snapshot::stamp;
 use super::starters::Doing;
-use super::storage::store;
-use super::{Home, Running, ServerError, io};
-use crate::rows::Dump;
-use crate::store::{Database, Opening, Store};
+use super::{Home, ServerError, io};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 /// The journal of a switch under way, in the board's home.
 pub(in crate::server) const JOURNAL: &str = "move.json";
-/// The work folder of a move, the move's own: all that one removes.
-const WORK: &str = "moving";
 /// Where the stores a switch replaced are kept, each in a folder of its own.
 const ASIDE: &str = "moved";
-/// The export a move keeps beside the store it replaced.
+/// The export a move of an earlier release kept beside the store it replaced.
 pub const EXPORT: &str = "export.json";
 
 /// The steps of a switch, in order, each durable before the next: what a test stops one after
@@ -122,24 +105,13 @@ pub(in crate::server) enum Settled {
     Undone(Journal),
 }
 
-/// What [`Home::move_to`] did.
+/// The move [`Home::move_to`] finished: one an earlier release's `tasks-move` committed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Moved {
     pub from: Engine,
     pub to: Engine,
     /// The folder that keeps the store the move replaced, and its export.
     pub aside: PathBuf,
-    /// The databases the old store held beside the board's own, by name, which the move left
-    /// in it where it is kept (`aside`). None for a move an earlier call committed and this one
-    /// finished, which did not read them.
-    pub left: Vec<String>,
-    /// The snapshot kept of the store before anything read it, where one was taken now.
-    pub snapshot: Option<PathBuf>,
-    /// The rows of the dump and of the carried tables, each compared on the new store. Zero for
-    /// a move that an earlier call compared and this one finished.
-    pub rows: usize,
-    /// Whether this call finished a move an earlier one had committed.
-    pub finished: bool,
     /// The hold that stands after it: the caller's own, set before the move.
     pub held: bool,
 }
@@ -161,8 +133,7 @@ pub(super) fn unsettled(journal: &Path) -> String {
     };
     format!(
         "{what} ({}): the board is held and nothing reads or starts its store until its holder \
-         settles it with `tasks-move`, a move or a restore, which finishes what \
-         committed and undoes what did not",
+         settles it with `tasks-move`, which finishes what committed and undoes what did not",
         journal.display()
     )
 }
@@ -474,23 +445,17 @@ impl Home {
         })
     }
 
-    /// The board's store moved to `to`, as `by`, at `now` (the module's doc says how).
-    /// `programs` is the folder of the PostgreSQL programs that serve the side that is
-    /// PostgreSQL. The hold is the caller's where it set one before, and is then left standing;
-    /// otherwise the move sets it and releases it once the board is whole on one engine. A
-    /// journal an earlier call left is settled instead: a committed move finished, which is
-    /// what this then answers, or one that never committed undone, which is refused, saying so.
+    /// A journal an earlier call left settled, as `by`, before anything else: a committed move
+    /// finished, which is what this answers, or a switch that never committed undone, which is
+    /// refused, saying so. Then the board stays where it is: this build moves no board between
+    /// the engines, so a board on `to` already or not made yet has nothing to move, and one on
+    /// the other engine is refused, naming the way it moves ([`super::GONE`]). The hold a
+    /// settle takes is released after it where the switch had set it.
     ///
     /// # Errors
     ///
     /// Each refusal and failure, naming the engine the board is on and whether it is held.
-    pub fn move_to(
-        &self,
-        to: Engine,
-        programs: &Path,
-        by: &str,
-        now: f64,
-    ) -> Result<Moved, ServerError> {
+    pub fn move_to(&self, to: Engine, by: &str) -> Result<Moved, ServerError> {
         let _locked = self.lock(Doing::Moving)?;
         match self.settle(by)? {
             Settled::Nothing => {}
@@ -499,17 +464,13 @@ impl Home {
                     from: journal.from,
                     to: journal.to,
                     aside: journal.aside,
-                    left: Vec::new(),
-                    snapshot: None,
-                    rows: 0,
-                    finished: true,
                     held: !journal.took,
                 });
             }
             Settled::Undone(journal) => {
                 return Err(ServerError::Io(format!(
                     "a {} to {} had stopped before it committed, and is now undone: the board \
-                     is on {} as it was, {}. Nothing was moved by this command; run it again",
+                     is on {} as it was, {}. Nothing was moved by this command",
                     journal.word(),
                     journal.to,
                     journal.from,
@@ -521,131 +482,21 @@ impl Home {
                 )));
             }
         }
+        if self.unmade()? {
+            return Err(ServerError::Io(
+                "the board is not made yet: it has nothing to move".into(),
+            ));
+        }
         let from = self.backend()?;
         if from == to {
             return Err(ServerError::Io(format!(
                 "the board is on {to} already: nothing was moved"
             )));
         }
-        if !present(&self.dir.join(from.data()))? {
-            return Err(ServerError::Io(format!(
-                "the board has no {from} store at {} to move: nothing was moved",
-                self.dir.join(from.data()).display()
-            )));
-        }
-        let took = self.held_for(by, &format!("moving the board to {to}"))?;
-        let work = self.dir.join(WORK);
-        let left = |why: ServerError, released: bool| {
-            ServerError::Io(format!(
-                "the board was not moved: {why}. It is on {from} as it was, {}",
-                if released {
-                    "and its hold is released"
-                } else {
-                    "and still held"
-                }
-            ))
-        };
-        let prepared = self.prepare((from, to), programs, &work, now);
-        let (aside, snapshot, rows, others) = match prepared {
-            Ok(prepared) => prepared,
-            Err(why) => {
-                // The work folder is the move's own; the home was never touched.
-                let _ = fs::remove_dir_all(&work);
-                if took {
-                    self.release_as(by, None)?;
-                }
-                return Err(left(why, took));
-            }
-        };
-        let journal = Journal::new(
-            Kind::Move,
-            (from, to),
-            &aside,
-            &work.join(to.data()),
-            &work,
-            (by, took),
-        );
-        match self.switch(journal) {
-            Ok(()) => {}
-            Err(Left::Unchanged(why)) => {
-                let _ = fs::remove_dir_all(&work);
-                if took {
-                    self.release_as(by, None)?;
-                }
-                return Err(left(why, took));
-            }
-            Err(Left::Standing(why)) => return Err(why),
-        }
-        if took {
-            self.release_as(by, None)?;
-        }
-        Ok(Moved {
-            from,
-            to,
-            aside,
-            left: others,
-            snapshot,
-            rows,
-            finished: false,
-            held: !took,
-        })
-    }
-
-    /// Everything of a move before its switch: the old store's server stopped and its snapshot
-    /// kept, the board read from it and written as the export, the new store made in `work`,
-    /// filled and compared. The folder the old store will be kept in, the snapshot taken, the
-    /// rows compared, and the databases the old store holds beside the board's, which it keeps.
-    fn prepare(
-        &self,
-        (from, to): (Engine, Engine),
-        programs: &Path,
-        work: &Path,
-        now: f64,
-    ) -> Result<(PathBuf, Option<PathBuf>, usize, Vec<String>), ServerError> {
-        let halted = match from {
-            Engine::SurrealDb => self.halt()?,
-            Engine::PostgreSql => {
-                self.postgresql(programs).stop_held()?;
-                Vec::new()
-            }
-        };
-        let snapshot = match from {
-            Engine::SurrealDb => match self.keep(now, Before::Move)? {
-                Kept::Cloned(path) | Kept::Copied(path) => Some(path),
-                Kept::Already(_) => None,
-            },
-            Engine::PostgreSql => Some(self.postgresql(programs).snapshot_held(now)?),
-        };
-        let source = Side::start(self, from, programs, &halted)?;
-        let read = (source.board()).and_then(|board| Ok((board, source.others()?)));
-        source.end()?;
-        let ((board, carried, marker), others) = read?;
-        // No lease stands across the hold, and none is its old holder's after it.
-        let carried = crate::store::leases_ended(carried);
-
-        let aside = self.aside(now, from);
-        fs::create_dir_all(&aside).map_err(io("could not make", &aside))?;
-        let export = aside.join(EXPORT);
-        let text = serde_json::to_vec(&json!({"board": board, "carried": carried}))
-            .expect("an export serializes");
-        fs::write(&export, text).map_err(io("could not write", &export))?;
-
-        if present(work)? {
-            fs::remove_dir_all(work).map_err(io("could not remove", work))?;
-        }
-        self.make(work)?;
-        let made = Home {
-            dir: work.into(),
-            cut: None,
-            ..self.clone()
-        }
-        .supervised(true)
-        .snapshotting(false);
-        made.identify(to)?;
-        let target = Side::start(&made, to, programs, &halted)?;
-        let compared = target.fill(&board, &carried, marker);
-        target.end()?;
-        Ok((aside, snapshot, compared?, others))
+        Err(ServerError::Io(format!(
+            "the board is on {from}, and this build moves no board to {to}: {}. Nothing was moved",
+            super::GONE
+        )))
     }
 }
 
@@ -659,291 +510,9 @@ fn stopped(done: usize) -> ServerError {
     ServerError::Io(format!("a test ended the switch after {:?}", STEPS[done]))
 }
 
-/// One store of a move, served by the move's own server, which no record names.
-enum Side<'a> {
-    Surreal(&'a Home, Running),
-    Postgres(Postgres),
-}
-
-impl<'a> Side<'a> {
-    fn start(
-        home: &'a Home,
-        engine: Engine,
-        programs: &Path,
-        halted: &[u16],
-    ) -> Result<Side<'a>, ServerError> {
-        match engine {
-            Engine::SurrealDb => {
-                let running = home.spawn_held(
-                    &store(&home.dir.join(engine.data())),
-                    halted,
-                    home.storage,
-                    home.patience,
-                    "the move's server",
-                    &|_| Ok(()),
-                )?;
-                Ok(Side::Surreal(home, running))
-            }
-            Engine::PostgreSql => {
-                let postgres = home.postgresql(programs);
-                postgres.serve()?;
-                Ok(Side::Postgres(postgres))
-            }
-        }
-    }
-
-    fn end(&self) -> Result<(), ServerError> {
-        match self {
-            Side::Surreal(home, running) => home.end(running.pid),
-            Side::Postgres(postgres) => postgres.stop_held().map(|_| ()),
-        }
-    }
-
-    fn database(&self) -> Database {
-        match self {
-            Side::Surreal(_, running) => {
-                crate::rpc::Client::new(&running.addr, crate::NAMESPACE, crate::DATABASE).into()
-            }
-            Side::Postgres(postgres) => {
-                crate::pg::Client::new(&postgres.socket(), crate::DATABASE).into()
-            }
-        }
-    }
-
-    /// The databases this store holds beside the board's own, which a move leaves in it.
-    fn others(&self) -> Result<Vec<String>, ServerError> {
-        match self {
-            Side::Surreal(_, running) => {
-                let mut others = Vec::new();
-                for (ns, db) in super::reclaim::layout(running)?.databases {
-                    if (ns.as_str(), db.as_str()) == (crate::NAMESPACE, crate::DATABASE) {
-                        continue;
-                    }
-                    // SurrealDB makes a database of its own in every store, which defines
-                    // nothing: only one that holds something is another's.
-                    let info = super::reclaim::defined(running, &ns, &db)?;
-                    if !defines_nothing(&info) {
-                        others.push(format!("{ns}/{db}"));
-                    }
-                }
-                Ok(others)
-            }
-            Side::Postgres(postgres) => {
-                let answers = crate::pg::Client::new(&postgres.socket(), "postgres")
-                    .simple(
-                        "SELECT datname FROM pg_database WHERE NOT datistemplate \
-                         AND datname <> 'postgres' ORDER BY 1",
-                    )
-                    .map_err(|why| {
-                        ServerError::Io(format!(
-                            "the databases of the board's PostgreSQL could not be read: {why:?}"
-                        ))
-                    })?;
-                Ok((answers.iter().flat_map(|answer| &answer.rows))
-                    .filter_map(|row| row.first().cloned().flatten())
-                    .filter(|name| name != crate::DATABASE)
-                    .collect())
-            }
-        }
-    }
-
-    fn opened(&self) -> Store {
-        Store::unchecked_on(
-            self.database(),
-            Box::new(crate::store::now),
-            Box::new(crate::sys::pid_alive),
-            &crate::sys::hostname(),
-            &Opening::write(),
-        )
-    }
-
-    /// The board this store holds, the tables no copy holds, and its marker; a board whose
-    /// schema is not this build's is refused. The databases beside it are not read.
-    fn board(&self) -> Result<(Dump, Value, u64), ServerError> {
-        if let Side::Surreal(home, running) = self {
-            home.refuse_went_back(running)?;
-        }
-        let store = self.opened();
-        let unread = |what: &str| {
-            let what = what.to_string();
-            move |why: crate::Error| ServerError::Io(format!("{what} could not be read: {why}"))
-        };
-        let schema = (store.board_version()).map_err(unread("the board's schema"))?;
-        if schema != Some(crate::SCHEMA) {
-            return Err(ServerError::Io(format!(
-                "the board is at schema {}, and this build moves a board at its own, {}: a move \
-                 migrates nothing",
-                schema.map_or("none".into(), |schema| schema.to_string()),
-                crate::SCHEMA
-            )));
-        }
-        Ok((
-            store.dump().map_err(unread("the board"))?,
-            (store.carried()).map_err(unread("the tables a move carries"))?,
-            store.marker().map_err(unread("the board's marker"))?,
-        ))
-    }
-
-    /// `board` and `carried` written on this new store, its marker moved past `marker`, and
-    /// both read back as they were written: how many rows.
-    fn fill(&self, board: &Dump, carried: &Value, marker: u64) -> Result<usize, ServerError> {
-        let unwritten = |what: &str| {
-            let what = what.to_string();
-            move |why: crate::Error| ServerError::Io(format!("{what}: {why}"))
-        };
-        let store = Store::opening_on(
-            self.database(),
-            Box::new(crate::store::now),
-            Box::new(crate::sys::pid_alive),
-            &crate::sys::hostname(),
-            &Opening::write(),
-        )
-        .map_err(unwritten("the new store's board could not be made"))?;
-        (store.copy(board)).map_err(unwritten("the board could not be copied"))?;
-        (store.carry(carried)).map_err(unwritten("the carried tables could not be written"))?;
-        (store.marker_past(marker)).map_err(unwritten("the marker could not be moved"))?;
-        let (there, kept, _) = self.board()?;
-        let rows = differing(&json!(board), &json!(there))? + differing(carried, &kept)?;
-        Ok(rows)
-    }
-}
-
-/// Whether `a` and `b` are one value: alike in every part, a number by what it counts, as one
-/// engine writes a whole number of seconds `3.0` where the other writes `3`.
-fn same(a: &Value, b: &Value) -> bool {
-    match (a, b) {
-        (Value::Number(a), Value::Number(b)) => match (a.as_i64(), b.as_i64()) {
-            (Some(a), Some(b)) => a == b,
-            _ => a == b || a.as_f64() == b.as_f64(),
-        },
-        (Value::Array(a), Value::Array(b)) => {
-            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same(a, b))
-        }
-        (Value::Object(a), Value::Object(b)) => {
-            a.len() == b.len() && (a.iter()).all(|(key, a)| b.get(key).is_some_and(|b| same(a, b)))
-        }
-        _ => a == b,
-    }
-}
-
-/// Whether `info`, SurrealDB's `INFO FOR DB`, names nothing defined: an object, every part of
-/// it empty. An answer of another shape is taken to hold something.
-fn defines_nothing(info: &Value) -> bool {
-    info.as_object().is_some_and(|parts| {
-        parts.values().all(|part| match part {
-            Value::Object(named) => named.is_empty(),
-            Value::Array(listed) => listed.is_empty(),
-            Value::Null => true,
-            _ => false,
-        })
-    })
-}
-
-/// The rows of `read`, tables of rows by name, when `written` holds the same, row for row; the
-/// first that differs is refused, named by its table and place.
-fn differing(written: &Value, read: &Value) -> Result<usize, ServerError> {
-    let none = Vec::new();
-    let empty = serde_json::Map::new();
-    let (a, b) = (
-        written.as_object().unwrap_or(&empty),
-        read.as_object().unwrap_or(&empty),
-    );
-    let mut rows = 0;
-    for table in a
-        .keys()
-        .chain(b.keys().filter(|table| !a.contains_key(*table)))
-    {
-        let was = a.get(table).and_then(Value::as_array).unwrap_or(&none);
-        let is = b.get(table).and_then(Value::as_array).unwrap_or(&none);
-        let differs = (0..was.len().max(is.len())).find(|&row| match (was.get(row), is.get(row)) {
-            (Some(was), Some(is)) => !same(was, is),
-            _ => true,
-        });
-        if let Some(row) = differs {
-            return Err(ServerError::Io(format!(
-                "the new store does not hold the board as it was read: {table} has {} rows \
-                 against {}, and row {row} is {} against {}",
-                is.len(),
-                was.len(),
-                is.get(row).unwrap_or(&Value::Null),
-                was.get(row).unwrap_or(&Value::Null)
-            )));
-        }
-        rows += was.len();
-    }
-    Ok(rows)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn tables_are_the_same_only_row_for_row_and_the_first_difference_is_named() {
-        let board = json!({"tasks": [{"id": 1}, {"id": 2}], "asks": []});
-        assert_eq!(differing(&board, &board).unwrap(), 2);
-        for (other, said) in [
-            (
-                json!({"tasks": [{"id": 1}], "asks": []}),
-                "tasks has 1 rows against 2, and row 1",
-            ),
-            (
-                json!({"tasks": [{"id": 1}, {"id": 3}], "asks": []}),
-                "row 1 is {\"id\":3}",
-            ),
-            (
-                json!({"tasks": [{"id": 1}, {"id": 2}], "asks": [], "more": [1]}),
-                "more has 1 rows against 0",
-            ),
-            (json!({"asks": []}), "tasks has 0 rows against 2, and row 0"),
-        ] {
-            let refused = differing(&board, &other).unwrap_err().to_string();
-            assert!(refused.contains(said), "{refused}");
-        }
-    }
-
-    #[test]
-    fn a_number_is_the_same_by_what_it_counts_and_nothing_else_is_the_same_loosely() {
-        let whole = json!({"ts": 1_800_000_000.0, "n": [1, {"k": 2.5}], "t": "3"});
-        assert!(same(
-            &whole,
-            &json!({"n": [1.0, {"k": 2.5}], "t": "3", "ts": 1_800_000_000})
-        ));
-        for other in [
-            json!({"ts": 1_800_000_001, "n": [1, {"k": 2.5}], "t": "3"}),
-            json!({"ts": 1_800_000_000, "n": [1, {"k": 2.5}], "t": 3}),
-            json!({"ts": 1_800_000_000, "n": [1, {"k": 2.5}]}),
-            json!({"ts": 1_800_000_000, "n": [1, {"k": 2.5}, 0], "t": "3"}),
-            json!({"ts": 1_800_000_000, "n": [1, {"j": 2.5}], "t": "3"}),
-            json!({"ts": null, "n": [1, {"k": 2.5}], "t": "3"}),
-        ] {
-            assert!(!same(&whole, &other), "{other}");
-        }
-        let (large, next) = (
-            json!(9_007_199_254_740_993_i64),
-            json!(9_007_199_254_740_992_i64),
-        );
-        assert!(
-            !same(&large, &next),
-            "whole numbers are never compared as fractions"
-        );
-    }
-
-    #[test]
-    fn a_database_defines_nothing_only_when_every_part_of_its_info_is_empty() {
-        assert!(defines_nothing(
-            &json!({"tables": {}, "users": {}, "configs": []})
-        ));
-        assert!(defines_nothing(&json!({})));
-        for holds in [
-            json!({"tables": {"row": "DEFINE TABLE row"}, "users": {}}),
-            json!({"tables": {}, "strict": true}),
-            json!(null),
-            json!("an error"),
-        ] {
-            assert!(!defines_nothing(&holds), "{holds}");
-        }
-    }
 
     #[test]
     fn a_journal_reads_whole_or_not_at_all() {

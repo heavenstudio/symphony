@@ -152,12 +152,3 @@ fn a_program_is_named_by_its_file_name_and_this_process_by_its_executable() {
     );
     assert_eq!(Program::this(), this, "the same each time");
 }
-
-/// The opening's read sends as a read, and the line's write as a write, which is never sent again.
-#[test]
-fn the_opening_read_is_a_read_and_the_lines_write_a_write() {
-    use crate::rpc::Kind;
-    assert_eq!(Kind::of(sql::OPENING), Kind::Read);
-    assert_eq!(Kind::of(sql::LINES), Kind::Read);
-    assert_eq!(Kind::of(sql::WRITE_LINE), Kind::Write);
-}

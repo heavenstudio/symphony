@@ -180,7 +180,7 @@ fn managed(f: &Fixture, slug: &str) -> Transition {
 #[test]
 fn a_board_without_a_workflow_holds_none_of_its_records() {
     for backend in BACKENDS {
-        let f = Fixture::on(backend, Seed::default());
+        let f = Fixture::new(Seed::default());
         f.task("sim/jump");
         assert_eq!(f.store.workflow_active().unwrap(), None);
         assert_eq!(f.store.workflow_definition("d1").unwrap(), None);
@@ -197,7 +197,7 @@ fn a_board_without_a_workflow_holds_none_of_its_records() {
 #[test]
 fn a_transition_is_recorded_beside_its_position_once() {
     for backend in BACKENDS {
-        let f = Fixture::on(backend, Seed::default());
+        let f = Fixture::new(Seed::default());
         let first = managed(&f, "sim/jump");
         assert_eq!(
             f.store.workflow_position("sim/jump").unwrap(),
@@ -243,7 +243,7 @@ fn a_transition_is_recorded_beside_its_position_once() {
 #[test]
 fn no_writer_moves_a_managed_task_past_its_record() {
     for backend in BACKENDS {
-        let f = Fixture::on(backend, Seed::default());
+        let f = Fixture::new(Seed::default());
         let first = managed(&f, "sim/jump");
         let task = || f.store.raw().row("task", "sim/jump");
         let follows = refused(task().set(json!({"status": "ready"})));
@@ -319,7 +319,7 @@ fn no_writer_moves_a_managed_task_past_its_record() {
 #[test]
 fn nothing_writes_a_workflow_record_past_its_rules() {
     for backend in BACKENDS {
-        let f = Fixture::on(backend, Seed::default());
+        let f = Fixture::new(Seed::default());
         managed(&f, "sim/jump");
         let raw = f.store.raw();
         let event = || raw.row("workflow", json!(["event", "sim/jump", 1]));
@@ -343,14 +343,14 @@ fn nothing_writes_a_workflow_record_past_its_rules() {
 fn by_hand(f: &Fixture, surreal: &'static str, postgres: &'static str) -> Result<Value, Error> {
     f.store.retrying(|| {
         f.store
-            .transact(both(surreal, Pg::script(postgres)), json!({}))
+            .transact(Statement::from(Pg::script(postgres)), json!({}))
     })
 }
 
 #[test]
 fn the_database_never_changes_a_recorded_transition_or_moves_the_active_generation_back() {
     for backend in BACKENDS {
-        let f = Fixture::on(backend, Seed::default());
+        let f = Fixture::new(Seed::default());
         managed(&f, "sim/jump");
         let changed = refused(by_hand(
             &f,
@@ -415,7 +415,7 @@ fn the_database_never_changes_a_recorded_transition_or_moves_the_active_generati
 #[test]
 fn the_database_retires_a_position_only_beside_a_returns_transition() {
     for backend in BACKENDS {
-        let f = Fixture::on(backend, Seed::default());
+        let f = Fixture::new(Seed::default());
         managed(&f, "sim/jump");
         managed(&f, "sim/two");
         // The next transition of each, as an activation's: 7 an ordinary one, 8 a return.
@@ -477,7 +477,7 @@ fn the_database_retires_a_position_only_beside_a_returns_transition() {
 #[test]
 fn the_database_never_changes_an_admission_or_lowers_an_authority_within_its_epoch() {
     for backend in BACKENDS {
-        let f = Fixture::on(backend, Seed::default());
+        let f = Fixture::new(Seed::default());
         by_hand(
             &f,
             "CREATE workflow:['admission', 'sim/a', 4] CONTENT { kind: 'admission', body: { edge: 'accept' }, at: 1.0 } RETURN NONE;
@@ -535,7 +535,7 @@ fn the_database_never_changes_an_admission_or_lowers_an_authority_within_its_epo
 #[test]
 fn a_copy_carries_the_workflow_and_refuses_positions_without_their_records() {
     for backend in BACKENDS {
-        let f = Fixture::on(backend, Seed::default());
+        let f = Fixture::new(Seed::default());
         let first = managed(&f, "sim/jump");
         f.task("sim/free");
         let dump = f.store.dump().unwrap();
@@ -550,7 +550,7 @@ fn a_copy_carries_the_workflow_and_refuses_positions_without_their_records() {
             serde_json::to_value(first.position()).unwrap()
         );
         for other in BACKENDS {
-            let copied = Fixture::on(other, Seed { dump: dump.clone() });
+            let copied = Fixture::new(other, Seed { dump: dump.clone() });
             assert_eq!(
                 copied.store.dump().unwrap(),
                 dump,
@@ -568,7 +568,7 @@ fn a_copy_carries_the_workflow_and_refuses_positions_without_their_records() {
             workflow: vec![],
             ..dump.clone()
         };
-        let target = Fixture::on(backend, Seed::default());
+        let target = Fixture::new(Seed::default());
         target.task("sim/kept");
         let refusal = refused(target.store.copy(&lost));
         assert!(
@@ -644,7 +644,7 @@ fn a_schema_step_keeps_every_row_fences_the_writer_before_it_and_its_readers_rea
     use crate::store_fixture::{HOST, NOW};
     use crate::{NewTask, Opening, Schema};
     for backend in BACKENDS {
-        let database = backend.database();
+        let database = database();
         let open = |how| {
             Store::opening_on(
                 database.another(),
@@ -729,13 +729,8 @@ fn a_board_made_at_an_older_schema_migrates_to_this_one_with_its_rows_and_then_o
     let defines = |store: &Store, table: &str| -> bool {
         let surreal = format!("RETURN (INFO FOR DB).tables.{table} != NONE;");
         let postgres = format!("to_jsonb(to_regclass('{table}') IS NOT NULL)");
-        (store.retrying(|| {
-            store.read(
-                both(surreal.as_str(), Pg::read(postgres.as_str())),
-                json!({}),
-            )
-        }))
-        .unwrap()
+        (store.retrying(|| store.read(Statement::from(Pg::read(postgres.as_str())), json!({}))))
+            .unwrap()
     };
     for backend in BACKENDS {
         for (older, lacks) in [
@@ -746,7 +741,7 @@ fn a_board_made_at_an_older_schema_migrates_to_this_one_with_its_rows_and_then_o
             (25, &[][..]),
             (26, &[][..]),
         ] {
-            let database = backend.database();
+            let database = database();
             let open = |how| {
                 Store::opening_on(
                     database.another(),
@@ -767,7 +762,7 @@ fn a_board_made_at_an_older_schema_migrates_to_this_one_with_its_rows_and_then_o
             let task = old.get("sim/jump").unwrap();
             for (surreal, postgres) in lacks {
                 old.retrying(|| {
-                    old.transact::<Value>(both(*surreal, Pg::script(*postgres)), json!({}))
+                    old.transact::<Value>(Statement::from(Pg::script(*postgres)), json!({}))
                 })
                 .unwrap();
             }

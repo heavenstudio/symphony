@@ -198,7 +198,7 @@ fn the_same_work_is_answered_alike_on_hosted_16_hosted_18_and_the_local_board() 
             .session("amber-heron")
             .session("brisk-finch")
     };
-    let local = worked(&Fixture::on(Backend::PostgreSql, seed()).store);
+    let local = worked(&Fixture::new(Backend::PostgreSql, seed()).store);
     assert!(local.contains("ecole: [\"sim/jump@"), "{local}");
     assert!(
         local.contains("(\"sim/jump\", \"in_progress\")") && local.contains("\"amber-heron\""),

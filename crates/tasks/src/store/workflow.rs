@@ -15,8 +15,7 @@
 //! fences as it always ran.
 
 use super::postgres::workflow as pg;
-use super::statement::both;
-use super::surreal::workflow as sql;
+use super::statement::Statement;
 use super::{Error, Store};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -270,7 +269,7 @@ pub enum Followed {
 /// How many times an activation is planned again after the board changed under it.
 const PLANS: usize = 5;
 
-/// What an activation reads ([`sql::STANDINGS`]).
+/// What an activation reads ([`pg::standings`]).
 #[derive(Deserialize)]
 struct Standings {
     active: Option<Active>,
@@ -437,10 +436,7 @@ impl Store {
                 "at": at,
             });
             match self.retrying(|| {
-                self.transact::<Value>(
-                    both(sql::RETURN_DEFAULT, pg::return_default()),
-                    vars.clone(),
-                )
+                self.transact::<Value>(Statement::from(pg::return_default()), vars.clone())
             }) {
                 Ok(_) => return Ok(Followed::Returned { generation }),
                 Err(Error::Refused(why))
@@ -466,7 +462,7 @@ impl Store {
         // The versions first, the holders after: a claim between the two is seen by the
         // second, or fences the write by the version it moved.
         let mut read: Standings =
-            self.retrying(|| self.read_together(both(sql::STANDINGS, pg::standings()), json!({})))?;
+            self.retrying(|| self.read_together(Statement::from(pg::standings()), json!({})))?;
         let board = self.board()?;
         let read_slug = |slug: &str| read.tasks.iter().any(|t| t.slug == slug);
         let seen: Vec<Value> = (board.tasks.iter())
@@ -518,7 +514,7 @@ impl Store {
     /// was.
     fn moved_since(&self, tasks: &[crate::workflow::activate::Standing]) -> Result<bool, Error> {
         let now: Standings =
-            self.retrying(|| self.read_together(both(sql::STANDINGS, pg::standings()), json!({})))?;
+            self.retrying(|| self.read_together(Statement::from(pg::standings()), json!({})))?;
         Ok(now.tasks.len() != tasks.len()
             || (now.tasks.iter().zip(tasks))
                 .any(|(now, then)| now.slug != then.slug || now.version != then.version))
@@ -591,7 +587,7 @@ impl Store {
         // stays active as it was: only a commit that changes the workflow activates.
         // The active generation and the revision its definition was recorded with.
         let mut body: Value =
-            self.retrying(|| self.read(both(sql::ACTIVE_SOURCE, pg::active_source()), json!({})))?;
+            self.retrying(|| self.read(Statement::from(pg::active_source()), json!({})))?;
         if let Some(active) = decoded::<Active>(body["active"].take(), "active workflow")?
             && self.activated_as(&active, &body["revision"], custom)?
         {
@@ -659,9 +655,9 @@ impl Store {
                 "seen": seen,
                 "at": at,
             });
-            match self.retrying(|| {
-                self.transact::<Value>(both(sql::ACTIVATE, pg::activate()), vars.clone())
-            }) {
+            match self
+                .retrying(|| self.transact::<Value>(Statement::from(pg::activate()), vars.clone()))
+            {
                 Ok(_) => {
                     return Ok(Followed::Activated(Active {
                         generation,
@@ -687,8 +683,7 @@ impl Store {
     /// The active custom workflow, or none on a board that never activated one or returned to its
     /// own writers.
     pub fn workflow_active(&self) -> Result<Option<Active>, Error> {
-        let body: Value =
-            self.retrying(|| self.read(both(sql::ACTIVE, pg::active()), json!({})))?;
+        let body: Value = self.retrying(|| self.read(Statement::from(pg::active()), json!({})))?;
         decoded(body, "active workflow")
     }
 
@@ -745,7 +740,7 @@ impl Store {
         }
         let body: Value = self.retrying(|| {
             self.read(
-                both(sql::AUTHORITIES, pg::authorities()),
+                Statement::from(pg::authorities()),
                 json!({"generation": generation}),
             )
         })?;
@@ -760,7 +755,7 @@ impl Store {
     ) -> Result<Option<Vec<crate::workflow::Mapping>>, Error> {
         let body: Value = self.retrying(|| {
             self.read(
-                both(sql::MAPPINGS, pg::mappings()),
+                Statement::from(pg::mappings()),
                 json!({"generation": generation}),
             )
         })?;
@@ -795,12 +790,8 @@ impl Store {
 
     /// The definition recorded under `digest`, or none.
     pub fn workflow_definition(&self, digest: &str) -> Result<Option<Recorded>, Error> {
-        let body: Value = self.retrying(|| {
-            self.read(
-                both(sql::DEFINITION, pg::definition()),
-                json!({"digest": digest}),
-            )
-        })?;
+        let body: Value = self
+            .retrying(|| self.read(Statement::from(pg::definition()), json!({"digest": digest})))?;
         decoded(body, "workflow definition")
     }
 
@@ -862,14 +853,14 @@ impl Store {
                 .into_iter()
                 .collect(),
         );
-        self.retrying(|| self.read(both(sql::TRANSITIONS, pg::transitions()), vars.clone()))
+        self.retrying(|| self.read(Statement::from(pg::transitions()), vars.clone()))
     }
 
     /// `slug`'s workflow position, or none for a task the board's own writers keep; refused for
     /// a task that is not there.
     pub fn workflow_position(&self, slug: &str) -> Result<Option<TaskPosition>, Error> {
         let body: Value = self.retrying(|| {
-            self.read_together(both(sql::POSITION, pg::position()), json!({"slug": slug}))
+            self.read_together(Statement::from(pg::position()), json!({"slug": slug}))
         })?;
         decoded(body, "workflow position")
     }
@@ -891,7 +882,7 @@ impl Store {
             "transition": transition,
             "position": transition.position(),
         });
-        self.retrying(|| self.transact::<Value>(both(sql::RECORD, pg::record()), vars.clone()))
+        self.retrying(|| self.transact::<Value>(Statement::from(pg::record()), vars.clone()))
             .map(drop)
     }
 }

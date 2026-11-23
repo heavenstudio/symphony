@@ -5,8 +5,9 @@
 //! the mark goes on a task of a red series alone ([`crate::red::SERIES`]), so no work marks itself
 //! red to take no slot, nor any feature, whoever registers as a filer.
 
-use super::{Error, REFUSED, Store, Task, both, no_task, pg, refused, repr, sql};
+use super::{Error, REFUSED, Store, Task, no_task, pg, refused, repr};
 use crate::red::{FILER, SERIES, filed};
+use crate::store::statement::Statement;
 use serde_json::{Value, json};
 
 /// [`sql::FILED`]'s variables for `actor`.
@@ -45,7 +46,7 @@ impl Store {
     /// it is, its thread unchanged.
     pub fn mark_red(&self, slug: &str, what: &str, by: &str) -> Result<Task, Error> {
         let what = named(slug, what)?;
-        let body = || both(sql::mark_red(), pg::mark_red()).posting();
+        let body = || Statement::from(pg::mark_red()).posting();
         self.retrying(|| {
             let mut vars = self.acting(
                 by,
@@ -84,11 +85,7 @@ impl Store {
                 vars.extend(filer);
             }
             let (fenced, guarded) = (held.fenced(), held.guarded());
-            let body = both(
-                sql::unmark_red(fenced, guarded),
-                pg::unmark_red(fenced, guarded),
-            )
-            .posting();
+            let body = Statement::from(pg::unmark_red(fenced, guarded)).posting();
             self.written(body, vars, slug)
         })
     }

@@ -94,7 +94,7 @@ fn take_with_head(f: &Fixture, principal: &Principal, edge: &str) -> OperationRe
 /// A board on `adapter`'s landing workflow, sim/a built by amber and approved by birch at HEAD:
 /// at deliver/approved, workflow revision 4.
 fn approved(backend: crate::store_fixture::Backend, adapter: &str) -> Fixture {
-    let f = board(backend, &landing(adapter));
+    let f = board(&landing(adapter));
     let amber = agent_session("amber");
     take(&f.store, SLUG, &amber, "claim").unwrap();
     take(&f.store, SLUG, &amber, "submit").unwrap();
@@ -142,7 +142,7 @@ fn finalize(f: &Fixture, fake: &Fake) -> Result<Finalized, Error> {
 #[test]
 fn an_effect_is_prepared_with_its_intent_dispatched_and_finalized_on_what_was_read_back() {
     for backend in BACKENDS {
-        let f = approved(backend, DEFAULT_LAND);
+        let f = approved(DEFAULT_LAND);
         let bound = bindings(&f, HEAD);
         let fake = Fake::new(DEFAULT_LAND, &bound);
         assert_eq!(f.store.effect_intent(SLUG, 5).unwrap(), None);
@@ -213,7 +213,7 @@ fn an_effect_is_prepared_with_its_intent_dispatched_and_finalized_on_what_was_re
 #[test]
 fn a_callers_word_never_prepares_or_finalizes() {
     for backend in BACKENDS {
-        let f = approved(backend, DEFAULT_LAND);
+        let f = approved(DEFAULT_LAND);
         // The list of its actions says so before anyone asks: the edge is its adapter's.
         let listed = |edge: &str| {
             let next = (f.store)
@@ -258,7 +258,7 @@ fn a_callers_word_never_prepares_or_finalizes() {
 #[test]
 fn a_prepare_is_refused_for_an_adapter_or_bindings_that_are_not_the_edges() {
     for backend in BACKENDS {
-        let f = approved(backend, DEFAULT_LAND);
+        let f = approved(DEFAULT_LAND);
         let bound = bindings(&f, HEAD);
         let prepare = |fake: &Fake, bound: &Bindings| {
             refused((f.store).prepare_effect(
@@ -308,7 +308,7 @@ fn a_prepare_is_refused_for_an_adapter_or_bindings_that_are_not_the_edges() {
 #[test]
 fn a_prepare_repeated_under_its_key_answers_its_intent_and_refuses_other_bindings() {
     for backend in BACKENDS {
-        let f = approved(backend, DEFAULT_LAND);
+        let f = approved(DEFAULT_LAND);
         let bound = bindings(&f, HEAD);
         let fake = Fake::new(DEFAULT_LAND, &bound);
         let request = preparing(&f, "land:1");
@@ -332,7 +332,7 @@ fn a_prepare_repeated_under_its_key_answers_its_intent_and_refuses_other_binding
 #[test]
 fn a_reservation_whose_binding_moved_is_withdrawn_before_dispatch_and_nothing_is_sent() {
     for backend in BACKENDS {
-        let f = approved(backend, DEFAULT_LAND);
+        let f = approved(DEFAULT_LAND);
         let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
         prepared(&f, &fake);
         fake.now.borrow_mut().head = "2222222222222222222222222222222222222222".into();
@@ -367,7 +367,7 @@ fn a_reservation_whose_binding_moved_is_withdrawn_before_dispatch_and_nothing_is
 #[test]
 fn a_reservation_cancelled_by_an_edge_out_is_withdrawn_before_dispatch() {
     for backend in BACKENDS {
-        let f = approved(backend, DEFAULT_LAND);
+        let f = approved(DEFAULT_LAND);
         let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
         prepared(&f, &fake);
         take(&f.store, SLUG, &orch(), "send_back").unwrap();
@@ -383,7 +383,7 @@ fn a_reservation_cancelled_by_an_edge_out_is_withdrawn_before_dispatch() {
 #[test]
 fn a_dispatch_is_refused_while_the_adapter_cannot_read_and_the_intent_stays() {
     for backend in BACKENDS {
-        let f = approved(backend, DEFAULT_LAND);
+        let f = approved(DEFAULT_LAND);
         let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
         prepared(&f, &fake);
         fake.unreadable.replace(true);
@@ -413,7 +413,7 @@ fn a_dispatch_is_refused_while_the_adapter_cannot_read_and_the_intent_stays() {
 #[test]
 fn nothing_is_finalized_without_a_result_the_adapter_read_back() {
     for backend in BACKENDS {
-        let f = approved(backend, DEFAULT_LAND);
+        let f = approved(DEFAULT_LAND);
         let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
         prepared(&f, &fake);
         // Never dispatched: nothing was sent, whatever anyone says happened.
@@ -448,7 +448,7 @@ fn nothing_is_finalized_without_a_result_the_adapter_read_back() {
 #[test]
 fn a_crash_between_the_effect_and_its_finalize_is_finished_by_the_same_intent_once() {
     for backend in BACKENDS {
-        let f = approved(backend, DEFAULT_LAND);
+        let f = approved(DEFAULT_LAND);
         let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
         prepared(&f, &fake);
         f.store.dispatch_effect(&fake, SLUG, 5).unwrap();
@@ -478,7 +478,7 @@ fn a_crash_between_the_effect_and_its_finalize_is_finished_by_the_same_intent_on
 #[test]
 fn a_policy_or_evidence_changed_in_the_gap_records_the_outcome_and_the_recovery_owed() {
     for backend in BACKENDS {
-        let f = approved(backend, DEFAULT_LAND);
+        let f = approved(DEFAULT_LAND);
         let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
         prepared(&f, &fake);
         f.store.dispatch_effect(&fake, SLUG, 5).unwrap();
@@ -513,7 +513,7 @@ fn a_policy_or_evidence_changed_in_the_gap_records_the_outcome_and_the_recovery_
 #[test]
 fn an_effect_that_happened_after_its_task_moved_is_recorded_and_takes_no_edge() {
     for backend in BACKENDS {
-        let f = approved(backend, DEFAULT_LAND);
+        let f = approved(DEFAULT_LAND);
         let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
         prepared(&f, &fake);
         f.store.dispatch_effect(&fake, SLUG, 5).unwrap();
@@ -547,7 +547,7 @@ fn an_effect_that_happened_after_its_task_moved_is_recorded_and_takes_no_edge() 
 #[test]
 fn an_effect_that_happened_under_another_generation_is_recorded_and_takes_no_edge() {
     for backend in BACKENDS {
-        let f = approved(backend, DEFAULT_LAND);
+        let f = approved(DEFAULT_LAND);
         let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
         prepared(&f, &fake);
         f.store.dispatch_effect(&fake, SLUG, 5).unwrap();
@@ -574,7 +574,7 @@ fn an_effect_that_happened_under_another_generation_is_recorded_and_takes_no_edg
 #[test]
 fn a_finalize_edge_refused_records_the_outcome_and_is_taken_by_who_may() {
     for backend in BACKENDS {
-        let f = approved(backend, DEFAULT_LAND);
+        let f = approved(DEFAULT_LAND);
         let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
         prepared(&f, &fake);
         f.store.dispatch_effect(&fake, SLUG, 5).unwrap();
@@ -613,7 +613,7 @@ fn a_finalize_edge_refused_records_the_outcome_and_is_taken_by_who_may() {
 #[test]
 fn the_review_standing_is_read_from_the_approves_transition_and_its_receipt() {
     for backend in BACKENDS {
-        let f = board(backend, &landing(DEFAULT_LAND));
+        let f = board(&landing(DEFAULT_LAND));
         assert_eq!(f.store.reviewed(SLUG).unwrap(), None);
         // A task no workflow holds has none.
         assert_eq!(f.store.reviewed("sim/dep").unwrap(), None);
@@ -661,7 +661,7 @@ impl Adapter for Raced<'_> {
 #[test]
 fn a_finalize_that_meets_an_intent_withdrawn_since_it_read_it_answers_withdrawn_at_once() {
     for backend in BACKENDS {
-        let f = approved(backend, DEFAULT_LAND);
+        let f = approved(DEFAULT_LAND);
         let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
         prepared(&f, &fake);
         f.store.dispatch_effect(&fake, SLUG, 5).unwrap();
@@ -697,7 +697,7 @@ fn a_finalize_that_meets_an_intent_withdrawn_since_it_read_it_answers_withdrawn_
 #[test]
 fn a_projects_own_landing_takes_the_same_boundary_with_its_pull_request_bound() {
     for backend in BACKENDS {
-        let f = approved(backend, PROJECT_LAND);
+        let f = approved(PROJECT_LAND);
         let mut bound = bindings(&f, HEAD);
         bound.pull = Some("github.com/acme/widgets#42".into());
         let fake = Fake::new(PROJECT_LAND, &bound);
@@ -732,7 +732,7 @@ fn a_host_that_registers_no_adapter_neither_activates_nor_admits_its_edges() {
     let why = crate::workflow::activate::supported(&custom.definition, &bare).unwrap_err();
     assert_eq!(why, "unsupported adapter: default_land");
     for backend in BACKENDS {
-        let f = approved(backend, DEFAULT_LAND);
+        let f = approved(DEFAULT_LAND);
         let actions = f.store.workflow_actions(SLUG, &orch(), &bare).unwrap();
         let prepare = (actions.actions.iter())
             .find(|a| a.edge == "prepare_land")
@@ -791,7 +791,7 @@ fn guarded_landing_with_stays() -> crate::workflow::Custom {
 /// generation 3 of e1, and recorded as an admission.
 fn approved_under_guard(backend: crate::store_fixture::Backend) -> Fixture {
     use crate::workflow::effect::tests::guarded_landing;
-    approved_under_guard_on(backend, &guarded_landing(DEFAULT_LAND, 7))
+    approved_under_guard_on(&guarded_landing(DEFAULT_LAND, 7))
 }
 
 /// [`approved_under_guard`] on `custom`.
@@ -801,7 +801,7 @@ fn approved_under_guard_on(
 ) -> Fixture {
     use crate::workflow::guard::tests::{passing, sign_attestation};
     use crate::workflow::guard::{MAX_VALIDITY, attestee};
-    let f = board(backend, custom);
+    let f = board(custom);
     let amber = agent_session("amber");
     take(&f.store, SLUG, &amber, "claim").unwrap();
     take(&f.store, SLUG, &amber, "submit").unwrap();
@@ -842,7 +842,7 @@ fn approved_under_guard_on(
 fn a_decision_revoked_between_the_guarded_approve_and_the_land_withdraws_its_dispatch() {
     for backend in BACKENDS {
         // The approve's decision standing, the land dispatches.
-        let f = approved_under_guard(backend);
+        let f = approved_under_guard();
         let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
         prepared(&f, &fake);
         let dispatched = f.store.dispatch_effect(&fake, SLUG, 5).unwrap();
@@ -850,7 +850,7 @@ fn a_decision_revoked_between_the_guarded_approve_and_the_land_withdraws_its_dis
         // Revoked before the land's prepare, or after it and before its dispatch: either way the
         // intent is withdrawn and nothing is sent, the prepare edge itself guarded by nothing.
         for revoked_first in [true, false] {
-            let f = approved_under_guard(backend);
+            let f = approved_under_guard();
             let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
             if revoked_first {
                 reported(&f, 4, Some(3));
@@ -894,7 +894,7 @@ fn a_dispatch_rechecks_the_approve_past_a_block_or_a_release_that_stayed_in_its_
     for backend in BACKENDS {
         for (what, stay, moves) in stays {
             for revoked in [false, true] {
-                let f = approved_under_guard_on(backend, &custom);
+                let f = approved_under_guard_on(&custom);
                 stay(&f);
                 assert_eq!(
                     position(&f),
@@ -957,7 +957,7 @@ fn a_task_brought_to_the_blocked_pair_by_another_edge_is_never_resumed_past_the_
     let owner = crate::workflow::local_owner();
     for backend in BACKENDS {
         // Approved under the guard at 4, prepared at 5, sent back at 6, parked at 7.
-        let f = approved_under_guard_on(backend, &custom);
+        let f = approved_under_guard_on(&custom);
         let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
         let intent = prepared(&f, &fake);
         take(&f.store, SLUG, &orch(), "send_back").unwrap();

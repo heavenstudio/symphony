@@ -4,7 +4,7 @@
 //! text for each one's excerpt. A score is SurrealDB's BM25, and a write's words are searched
 //! from that write on, a changed text's old ones no longer.
 
-use crate::common::{Backend, Fixture, Seed};
+use crate::common::{Fixture, Seed};
 use serde_json::json;
 use symphony_board::{NewTask, SearchHit, Store};
 
@@ -126,7 +126,7 @@ pub fn answered(store: &Store, query: &str) -> Answer {
 fn each_search_tests_query_finds_and_ranks_alike_on_both_databases() {
     let (surreal, postgres) = (
         Fixture::empty(),
-        Fixture::on(Backend::PostgreSql, Seed::default()),
+        Fixture::new(Backend::PostgreSql, Seed::default()),
     );
     board(&surreal.store);
     board(&postgres.store);
@@ -155,59 +155,94 @@ fn each_search_tests_query_finds_and_ranks_alike_on_both_databases() {
     assert!(slugs("absentword").is_empty() && slugs("...").is_empty() && slugs("→").is_empty());
 }
 
-on_both! {
-    /// Six briefs scored as SurrealDB 3.3 scores them, by hand: `needle` is in two of six briefs
-    /// (an empty one among the six), eighteen terms in all.
-    fn a_score_is_surrealdbs_bm25_to_the_bit(backend: Backend) {
-        let f = Fixture::on(backend, Seed::default());
-        let briefs = ["needle in the hay needle", "the hay", "", "a needle", "...", "hay hay hay stack"];
-        for (n, brief) in briefs.iter().enumerate() {
-            create(&f.store, &format!("b/{n}"), "T", brief);
+/// Six briefs scored as SurrealDB 3.3 scores them, by hand: `needle` is in two of six briefs
+/// (an empty one among the six), eighteen terms in all.
+#[test]
+fn a_score_is_surrealdbs_bm25_to_the_bit() {
+    let f = Fixture::new(Seed::default());
+    let briefs = [
+        "needle in the hay needle",
+        "the hay",
+        "",
+        "a needle",
+        "...",
+        "hay hay hay stack",
+    ];
+    for (n, brief) in briefs.iter().enumerate() {
+        create(&f.store, &format!("b/{n}"), "T", brief);
+    }
+    let scored = |query: &str| {
+        let hits = f.store.search(query).unwrap();
+        hits.into_iter()
+            .map(|hit| (hit.slug, hit.score))
+            .collect::<Vec<_>>()
+    };
+    let needle = [
+        ("b/3".to_string(), 0.654_749_691_486_358_6),
+        ("b/0".into(), 0.594_857_513_904_571_5),
+    ];
+    let before = f.store.database().requests();
+    assert_eq!(scored("needle"), needle);
+    assert_eq!(
+        f.store.database().requests() - before,
+        1,
+        "a search is one request"
+    );
+    let before = f.store.database().requests();
+    let sources = f.store.search_sources("needle", &["b/0", "b/3"]).unwrap();
+    assert_eq!(
+        f.store.database().requests() - before,
+        1,
+        "and its excerpts one more"
+    );
+    assert_eq!(sources["b/0"].text, "needle in the hay needle");
+    // A term the query holds twice counts once; one in half the briefs or more scores nothing.
+    assert_eq!(scored("needle needle hay"), [needle[1].clone()]);
+    assert_eq!(
+        scored("hay").iter().map(|hit| hit.1).collect::<Vec<_>>(),
+        [0.0; 3]
+    );
+    // A title's score is three times its own, a slug's four, an exact slug a million.
+    let title = f.store.search("t").unwrap();
+    assert_eq!(title.len(), 6);
+    assert!(title.iter().all(|hit| hit.score == title[0].score));
+    assert_eq!(
+        f.store.search("b/3").unwrap()[0],
+        SearchHit {
+            slug: "b/3".into(),
+            score: 1e6
         }
-        let scored = |query: &str| {
-            let hits = f.store.search(query).unwrap();
-            hits.into_iter().map(|hit| (hit.slug, hit.score)).collect::<Vec<_>>()
-        };
-        let needle = [("b/3".to_string(), 0.654_749_691_486_358_6), ("b/0".into(), 0.594_857_513_904_571_5)];
-        let before = f.store.database().requests();
-        assert_eq!(scored("needle"), needle);
-        assert_eq!(f.store.database().requests() - before, 1, "a search is one request");
-        let before = f.store.database().requests();
-        let sources = f.store.search_sources("needle", &["b/0", "b/3"]).unwrap();
-        assert_eq!(f.store.database().requests() - before, 1, "and its excerpts one more");
-        assert_eq!(sources["b/0"].text, "needle in the hay needle");
-        // A term the query holds twice counts once; one in half the briefs or more scores nothing.
-        assert_eq!(scored("needle needle hay"), [needle[1].clone()]);
-        assert_eq!(scored("hay").iter().map(|hit| hit.1).collect::<Vec<_>>(), [0.0; 3]);
-        // A title's score is three times its own, a slug's four, an exact slug a million.
-        let title = f.store.search("t").unwrap();
-        assert_eq!(title.len(), 6);
-        assert!(title.iter().all(|hit| hit.score == title[0].score));
-        assert_eq!(f.store.search("b/3").unwrap()[0], SearchHit { slug: "b/3".into(), score: 1e6 });
-    }
+    );
+}
 
-    /// A text changed is searched by its new words, a task gone by none, a thread line by its own.
-    fn a_writes_words_are_searched_from_that_write_on(backend: Backend) {
-        let f = Fixture::on(backend, Seed::default());
-        create(&f.store, "a/one", "Comet tail", "");
-        create(&f.store, "a/two", "Other", "");
-        let found = |query: &str| -> Vec<String> {
-            let hits = f.store.search(query).unwrap();
-            hits.into_iter().map(|hit| hit.slug).collect()
-        };
-        assert_eq!(found("comet"), ["a/one"]);
-        let raw = f.store.raw();
-        raw.row("task", "a/one").set(json!({"title": "Nebula tail"})).unwrap();
-        assert!(found("comet").is_empty());
-        assert_eq!(found("nebula tail"), ["a/one"]);
-        raw.row("task", "a/one").set(json!({"status": "ready", "priority": 1})).unwrap();
-        assert_eq!(found("nebula"), ["a/one"]);
-        f.store.say("a/two", "owner", "a comet again", None).unwrap();
-        assert_eq!(found("comet"), ["a/two"]);
-        raw.row("task", "a/one").delete().unwrap();
-        assert!(found("nebula").is_empty());
-        assert_eq!(found("tail"), Vec::<String>::new());
-    }
+/// A text changed is searched by its new words, a task gone by none, a thread line by its own.
+#[test]
+fn a_writes_words_are_searched_from_that_write_on() {
+    let f = Fixture::new(Seed::default());
+    create(&f.store, "a/one", "Comet tail", "");
+    create(&f.store, "a/two", "Other", "");
+    let found = |query: &str| -> Vec<String> {
+        let hits = f.store.search(query).unwrap();
+        hits.into_iter().map(|hit| hit.slug).collect()
+    };
+    assert_eq!(found("comet"), ["a/one"]);
+    let raw = f.store.raw();
+    raw.row("task", "a/one")
+        .set(json!({"title": "Nebula tail"}))
+        .unwrap();
+    assert!(found("comet").is_empty());
+    assert_eq!(found("nebula tail"), ["a/one"]);
+    raw.row("task", "a/one")
+        .set(json!({"status": "ready", "priority": 1}))
+        .unwrap();
+    assert_eq!(found("nebula"), ["a/one"]);
+    f.store
+        .say("a/two", "owner", "a comet again", None)
+        .unwrap();
+    assert_eq!(found("comet"), ["a/two"]);
+    raw.row("task", "a/one").delete().unwrap();
+    assert!(found("nebula").is_empty());
+    assert_eq!(found("tail"), Vec::<String>::new());
 }
 
 /// Uncommon Latin letters still match their ASCII spelling. Decomposition must not leave ø
@@ -216,7 +251,7 @@ on_both! {
 fn latin_letters_beyond_extended_a_find_and_rank_alike() {
     let (surreal, postgres) = (
         Fixture::empty(),
-        Fixture::on(Backend::PostgreSql, Seed::default()),
+        Fixture::new(Backend::PostgreSql, Seed::default()),
     );
     let cases = [
         ("ƒoo", "foo"),
@@ -270,7 +305,7 @@ fn the_analyzer_agrees_over_latin_blocks() {
     use symphony_board::{Database, pg::Step};
     let (surreal, postgres) = (
         Fixture::empty(),
-        Fixture::on(Backend::PostgreSql, Seed::default()),
+        Fixture::new(Backend::PostgreSql, Seed::default()),
     );
     let Database::PostgreSql(pg) = postgres.other_database() else {
         unreachable!()

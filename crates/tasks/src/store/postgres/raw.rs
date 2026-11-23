@@ -1,14 +1,21 @@
 //! The statements of `store/raw.rs` on PostgreSQL: a board's rows read and set as they are, by
 //! table, id and equal fields, each text made of the names it is handed and nothing a caller wrote.
 //!
-//! A field is named as on SurrealDB, a path of plain names (`fields._board.red`): on a table of
+//! A field is named by a path of plain names (`fields._board.red`): on a table of
 //! typed columns its first name is the column and the rest a path in that column's `jsonb`; on a
 //! SCHEMALESS table, or one the board's schema does not name, the whole path is in `doc`.
 
 use super::Pg;
 use super::schema::{Kind, Table, table};
-use crate::store::surreal::raw::Rows;
 use serde_json::{Map, Value};
+
+/// The rows a statement is about: one by its id (`v -> 'id'`), or a table's, every one or those
+/// whose fields equal the given values (`v -> 'w0'`, `v -> 'w1'`, in the fields' order; a null is
+/// a field that is not there).
+pub(in crate::store) enum Rows<'a> {
+    One(&'a str),
+    Where(&'a str, &'a Map<String, Value>),
+}
 
 /// The table's columns, or none where it holds its fields in `doc`.
 fn columns(name: &str) -> Option<&'static Table> {

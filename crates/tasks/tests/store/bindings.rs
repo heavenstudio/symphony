@@ -1,7 +1,7 @@
 //! The checkout an in-process key's binding keeps: where a subagent's own tool calls run, and since
 //! when, by the board's clock and the clock since boot, beside the session its orchestrator
 //! registered elsewhere.
-use crate::common::{Backend, Seed};
+use crate::common::Seed;
 
 use crate::common::{Fixture, NOW};
 use std::collections::BTreeMap;
@@ -70,9 +70,9 @@ impl<'a> Subagent<'a> {
     }
 }
 
-on_both! {
-fn a_subagents_binding_keeps_the_checkout_its_tool_calls_run_in_as_it_moves(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn a_subagents_binding_keeps_the_checkout_its_tool_calls_run_in_as_it_moves() {
+    let f = Fixture::new(Seed::default());
     let s = Subagent::bound(&f);
     let h = s.handle.clone();
     assert_eq!(binding_of(&f, &h), kept("", "", 0.0, 0.0), "none seen yet");
@@ -100,13 +100,12 @@ fn a_subagents_binding_keeps_the_checkout_its_tool_calls_run_in_as_it_moves(back
     // Its session keeps where it registered, for readers that know no binding.
     assert_eq!(f.store.session(&h).unwrap().row.worktree, "/main");
 }
-}
 
-on_both! {
 /// The adversarial review's clock probe at the store: a call there that reads a time before any
 /// other did lowers where its stay may date from, never when it came; a move starts both again.
-fn a_clock_that_went_back_while_it_was_there_widens_its_stay_and_never_moves_when_it_came(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn a_clock_that_went_back_while_it_was_there_widens_its_stay_and_never_moves_when_it_came() {
+    let f = Fixture::new(Seed::default());
     let s = Subagent::bound(&f);
     let h = s.handle.clone();
     s.call(0.0, Some(("/wt/a", "tools/a")));
@@ -125,13 +124,12 @@ fn a_clock_that_went_back_while_it_was_there_widens_its_stay_and_never_moves_whe
     let b = NOW + 12.0;
     assert_eq!(binding_of(&f, &h), kept("/wt/b", "tools/b", b, b));
 }
-}
 
-on_both! {
 /// What a call read of the clock since boot (on which Linux dates a process's start): the reading
 /// of the call that came to a checkout, and its latest call's, whatever the board's clock reads.
-fn a_subagents_binding_keeps_the_clock_since_boot_its_calls_read_when_it_came_and_last(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn a_subagents_binding_keeps_the_clock_since_boot_its_calls_read_when_it_came_and_last() {
+    let f = Fixture::new(Seed::default());
     let s = Subagent::bound(&f);
     let h = s.handle.clone();
     let a = Some(("/wt/a", "tools/a"));
@@ -172,17 +170,16 @@ fn a_subagents_binding_keeps_the_clock_since_boot_its_calls_read_when_it_came_an
         kept("/wt/a", "tools/a", NOW - 5.0, NOW - 5.0)
     );
 }
-}
 
-on_both! {
 /// Missing samples must not erase the ordering guard, even across repeated failures or reboots.
 /// Arrival order alone cannot retire the uncertainty; a new checkout stay can.
-fn unreadable_boot_samples_keep_the_watermark_and_uncertainty_until_a_new_stay(backend: Backend) {
+#[test]
+fn unreadable_boot_samples_keep_the_watermark_and_uncertainty_until_a_new_stay() {
     struct Sample {
         reading: Option<Boottime>,
         kept: Option<Boottime>,
     }
-    let f = Fixture::on(backend, Seed::default());
+    let f = Fixture::new(Seed::default());
     let s = Subagent::bound(&f);
     let place = Some(("/wt/a", "tools/a"));
     s.reading(0.0, place, read("boot-1", 100.0));
@@ -269,7 +266,6 @@ fn unreadable_boot_samples_keep_the_watermark_and_uncertainty_until_a_new_stay(b
     };
     assert_eq!(binding_of(&f, &s.handle), expected);
 }
-}
 
 /// Unknown and duplicate samples leave the metadata untouched once their evidence is kept.
 // SurrealDB alone: installs a SurrealDB event to count writes to binding metadata.
@@ -303,9 +299,9 @@ fn repeated_unknown_or_older_samples_do_not_rewrite_binding_metadata() {
     assert_eq!(writes(), json!(2), "a duplicate reading is already kept");
 }
 
-on_both! {
-fn a_beat_from_a_checkout_is_one_request_as_a_beat_without_one(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn a_beat_from_a_checkout_is_one_request_as_a_beat_without_one() {
+    let f = Fixture::new(Seed::default());
     let h = f.session("worker");
     assert!(f.store.bind_agent("agent-1", &h, false).unwrap());
     let boot = |at: f64| Boottime {
@@ -326,11 +322,10 @@ fn a_beat_from_a_checkout_is_one_request_as_a_beat_without_one(backend: Backend)
     assert_eq!(requests(Some(("/wt/b", "b")), Some(&boot(3.0))), plain);
     assert_eq!(requests(None, Some(&boot(2.0))), plain);
 }
-}
 
-on_both! {
-fn a_key_bound_to_no_session_keeps_no_checkout(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn a_key_bound_to_no_session_keeps_no_checkout() {
+    let f = Fixture::new(Seed::default());
     let h = f.session("worker");
     f.store.leave(&h).unwrap();
     assert!(!f.store.bind_agent("agent-1", &h, false).unwrap());
@@ -349,11 +344,10 @@ fn a_key_bound_to_no_session_keeps_no_checkout(backend: Backend) {
     assert!(f.store.bind_agent("agent-1", &other, false).unwrap());
     assert_eq!(binding_of(&f, &other), kept("", "", 0.0, 0.0));
 }
-}
 
-on_both! {
-fn a_full_sessions_binding_keeps_no_checkout_and_reads_as_no_subagents(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn a_full_sessions_binding_keeps_no_checkout_and_reads_as_no_subagents() {
+    let f = Fixture::new(Seed::default());
     let h = f.session("worker");
     assert!(f.store.bind_agent("session-1", &h, true).unwrap());
     let boot = Boottime {
@@ -377,5 +371,4 @@ fn a_full_sessions_binding_keeps_no_checkout_and_reads_as_no_subagents(backend: 
         f.store.bound_agents().unwrap(),
         BTreeMap::from([(h, "session-1".to_string())])
     );
-}
 }

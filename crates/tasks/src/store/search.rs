@@ -9,8 +9,7 @@
 //! their definitions in the schema, as removing one is a schema move, and a board that holds their
 //! rows keeps them: nothing here reads or writes them.
 use super::postgres::{self, Pg};
-use super::statement::both;
-use super::surreal::search as sql;
+use super::statement::Statement;
 use super::*;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -78,7 +77,7 @@ impl Store {
         if !validate_query(query)? {
             return Ok(Vec::new());
         }
-        let search = || both(sql::SEARCH, Pg::read(postgres::search::SEARCH.as_str()));
+        let search = || Statement::from(Pg::read(postgres::search::SEARCH.as_str()));
         let vars = json!({"query": query.trim().to_lowercase()});
         self.retrying(|| self.read_together(search(), vars.clone()))
     }
@@ -93,7 +92,7 @@ impl Store {
         if slugs.is_empty() {
             return Ok(Default::default());
         }
-        let sources = || both(sql::SOURCES, Pg::read(postgres::search::SOURCES.as_str()));
+        let sources = || Statement::from(Pg::read(postgres::search::SOURCES.as_str()));
         let vars = json!({"query": query.trim().to_lowercase(), "slugs": slugs});
         let groups: BTreeMap<String, Vec<ScoredSource>> =
             self.retrying(|| self.read_together(sources(), vars.clone()))?;

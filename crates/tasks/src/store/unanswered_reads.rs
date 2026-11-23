@@ -40,8 +40,8 @@ fn operations(steps: &[Value]) -> Vec<&str> {
 
 /// A board of `work` in progress under `worker`, its subtask `work-child`, an unrelated task and a
 /// post to the worker on `work`; and that post.
-fn board(backend: Backend) -> (Fixture, String, Message) {
-    let f = Fixture::on(backend, Seed::default());
+fn board() -> (Fixture, String, Message) {
+    let f = Fixture::new(Seed::default());
     f.task("work");
     f.task("unrelated");
     f.task_with(NewTask {
@@ -103,7 +103,7 @@ fn every_read_of_the_lookup_is_a_range_or_an_index_inside_its_closures() {
 #[test]
 fn the_reads_answer_only_the_asked_threads_handles_and_answers() {
     for backend in [Backend::SurrealDb, Backend::PostgreSql] {
-        let (f, worker, post) = board(backend);
+        let (f, worker, post) = board();
         let other = f.session("worker");
         f.store
             .say("unrelated", &worker, "a word elsewhere", None)
@@ -119,7 +119,7 @@ fn the_reads_answer_only_the_asked_threads_handles_and_answers() {
         let named: Vec<Vec<String>> = f
             .store
             .bounded_read(
-                both(sql::naming(""), pg::naming()),
+                Statement::from(pg::naming()),
                 json!({"handles": [&worker, "absent"]}),
             )
             .map_err(recovery_error)
@@ -129,7 +129,7 @@ fn the_reads_answer_only_the_asked_threads_handles_and_answers() {
         let read: Threads = f
             .store
             .bounded_read(
-                both(sql::threads(""), pg::threads()),
+                Statement::from(pg::threads()),
                 json!({"slugs": ["work", "absent"], "launched": ["work", "work-child"]}),
             )
             .map_err(recovery_error)
@@ -146,7 +146,7 @@ fn the_reads_answer_only_the_asked_threads_handles_and_answers() {
         let found: Vec<Vec<i64>> = f
             .store
             .bounded_read(
-                both(sql::below(""), pg::below()),
+                Statement::from(pg::below()),
                 json!({"asks": [
                     {"handle": &worker, "after": post.id, "below": ["work-child"]},
                     {"handle": &worker, "after": answer.id, "below": ["work-child"]},
@@ -180,7 +180,7 @@ fn launch(f: &Fixture, slug: &str, handle: &str, role: &str) {
 #[test]
 fn launches_on_the_task_and_its_instructions_are_read_by_range() {
     for backend in [Backend::SurrealDb, Backend::PostgreSql] {
-        let (f, worker, _) = board(backend);
+        let (f, worker, _) = board();
         f.task_with(NewTask {
             parent: Some("work".into()),
             instruction: true,
@@ -193,7 +193,7 @@ fn launches_on_the_task_and_its_instructions_are_read_by_range() {
         let read: Threads = f
             .store
             .bounded_read(
-                both(sql::threads(""), pg::threads()),
+                Statement::from(pg::threads()),
                 json!({"slugs": ["work"], "launched": ["work", "work-review"]}),
             )
             .map_err(recovery_error)
@@ -230,7 +230,7 @@ fn owing(f: &Fixture, handles: &[&str]) -> Vec<(String, String, i64)> {
 #[test]
 fn a_handle_owes_the_posts_of_the_threads_that_name_it_and_of_no_other_handle() {
     for backend in [Backend::SurrealDb, Backend::PostgreSql] {
-        let (f, worker, post) = board(backend);
+        let (f, worker, post) = board();
         let other = f.session("worker");
         // A finished task keeps its direct post; a role post goes to its holder by its claim.
         f.task("finished");
@@ -284,7 +284,7 @@ fn a_handle_owes_the_posts_of_the_threads_that_name_it_and_of_no_other_handle() 
 #[test]
 fn a_released_holder_still_owes_the_role_posts_its_history_addresses() {
     for backend in [Backend::SurrealDb, Backend::PostgreSql] {
-        let (f, worker, post) = board(backend);
+        let (f, worker, post) = board();
         f.store.say("work", &worker, "on it", None).unwrap();
         f.store
             .raw()
@@ -307,7 +307,7 @@ fn a_released_holder_still_owes_the_role_posts_its_history_addresses() {
 #[test]
 fn a_reviewer_with_no_launch_on_its_task_takes_its_latest_reviewer_launch() {
     for backend in [Backend::SurrealDb, Backend::PostgreSql] {
-        let (f, worker, _) = board(backend);
+        let (f, worker, _) = board();
         f.store.move_to("work", "review", &worker).unwrap();
         let reviewer = f.session("reviewer");
         f.store.take_role("work", &reviewer, "reviewer").unwrap();
@@ -336,7 +336,7 @@ fn a_reviewer_with_no_launch_on_its_task_takes_its_latest_reviewer_launch() {
 #[test]
 fn overdue_asks_only_open_tasks_and_posts_half_an_hour_old_of_a_gone_agent() {
     for backend in [Backend::SurrealDb, Backend::PostgreSql] {
-        let (f, worker, post) = board(backend);
+        let (f, worker, post) = board();
         let board = f.store.board().unwrap();
         let now = f.now();
         let overdue = |board: &Board, now: f64| {

@@ -5,7 +5,7 @@
 //! names.
 //!
 //! An operation is decided on one read ([`crate::workflow::admit`]) and written in one transaction
-//! that checks again everything the decision used (`sql::APPLY`): the active generation, the
+//! that checks again everything the decision used (`postgres::workflow::apply`): the active generation, the
 //! task's version, each dependency's, each role relied on or taken, its key, its agent, and the
 //! slot counters it takes under the cap. Anything moved is `stale`, and the board reads and
 //! decides again: a caller's expected snapshot is compared afresh each time, so a request the
@@ -20,8 +20,7 @@
 //! the write makes the admission decide again, on the authority's new generation.
 
 use super::postgres as pg;
-use super::surreal::{self, cap as sql_cap, workflow as sql};
-use super::{Error, Failure, Opens, Store, Which, executors_or, statement::both};
+use super::{Error, Failure, Opens, Store, Which, executors_or, statement::Statement};
 use crate::workflow::admit::{self, Context, Facts, Prerequisite, Refusal};
 use crate::workflow::guard::{Accepted, Attester, Checked, Guarding};
 use crate::workflow::{Active, Host, Recorded, TaskPosition, Transition};
@@ -344,8 +343,7 @@ impl Store {
                 applied(self, &decided, &admitted, principal, request, &digest, at)?;
             vars["said"] = json!(said(&admitted.transition));
             let guarded = !vars["slots"].as_array().is_none_or(Vec::is_empty);
-            let (joins, joins_pg) = joins_said(&vars);
-            let logged = surreal::logged("$slug", "$sender", "'system'", "$said", "NONE");
+            let joins_pg = joins_said(&vars);
             let logged_pg = pg::logged(
                 "v ->> 'slug'",
                 "v ->> 'sender'",
@@ -353,11 +351,10 @@ impl Store {
                 "v ->> 'said'",
                 "NULL",
             );
-            let guard = if guarded { sql_cap::GUARD } else { "" };
-            let body = both(
-                format!("{}{logged}{joins}{guard}", sql::APPLY),
-                pg::workflow::apply(&format!("{logged_pg}{joins_pg}"), guarded),
-            )
+            let body = Statement::from(pg::workflow::apply(
+                &format!("{logged_pg}{joins_pg}"),
+                guarded,
+            ))
             .posting();
             self.written(body, vars, slug)?;
             Ok(receipt)
@@ -379,7 +376,7 @@ impl Store {
     ) -> Result<Option<Receipt>, Error> {
         let body: Value = self.retrying(|| {
             self.read(
-                both(sql::RECEIPT, pg::workflow::receipt()),
+                Statement::from(pg::workflow::receipt()),
                 json!({"receipt": receipt_id(principal, key)}),
             )
         })?;
@@ -392,7 +389,7 @@ impl Store {
     }
 
     /// The first transition of `new`, filed while a custom workflow is active: it starts at the
-    /// workflow's initial pair, which its filing records (`sql::PLACED`). None on a board that
+    /// workflow's initial pair, which its filing records (`pg::workflow::PLACED`). None on a board that
     /// never activated one, which files as it always did. Refused when the filing asks for a
     /// status other than the initial pair's: a task starts there, and moves on by an edge.
     pub(super) fn placing(&self, new: &crate::NewTask) -> Result<Option<Transition>, Error> {
@@ -452,8 +449,7 @@ impl Store {
             "receipt": receipt.cloned().unwrap_or(json!(["receipt"])),
             "actor": agent(principal),
         });
-        let read: Read =
-            self.read_together(both(sql::ADMISSION, pg::workflow::admission()), vars)?;
+        let read: Read = self.read_together(Statement::from(pg::workflow::admission()), vars)?;
         let active = read.active.ok_or_else(|| {
             refusal(Refusal::new(
                 RefusalCode::UnsupportedActivation,
@@ -743,7 +739,7 @@ fn said(transition: &Transition) -> String {
     line
 }
 
-/// The variables of `sql::APPLY` for `admitted`, and its receipt: one builder for every write
+/// The variables of `pg::workflow::apply` for `admitted`, and its receipt: one builder for every write
 /// that takes an edge ([`Store::apply_operation`], and an external effect's prepare and finalize):
 /// the receipt under the request's key, the roles relied on, added and dropped (with the
 /// reservations that lapsed, which the decision no longer counts), the dependencies and the slot
@@ -853,18 +849,11 @@ fn guarding<'a>(decided: &'a Decided, given: &'a [Signed]) -> Guarding<'a> {
     }
 }
 
-/// The statements, on each store, that say each role `vars` gives as joined (its `joined`), after
-/// the write's own line.
-fn joins_said(vars: &Value) -> (String, String) {
-    let (mut surreal_lines, mut pg_lines) = (String::new(), String::new());
+/// The statements that say each role `vars` gives as joined (its `joined`), after the write's own
+/// line.
+fn joins_said(vars: &Value) -> String {
+    let mut pg_lines = String::new();
     for i in 0..vars["joined"].as_array().map_or(0, Vec::len) {
-        surreal_lines.push_str(&surreal::logged(
-            "$slug",
-            "$sender",
-            "'system'",
-            &format!("$joined[{i}]"),
-            "NONE",
-        ));
         pg_lines.push('\n');
         pg_lines.push_str(&pg::logged(
             "v ->> 'slug'",
@@ -874,7 +863,7 @@ fn joins_said(vars: &Value) -> (String, String) {
             "NULL",
         ));
     }
-    (surreal_lines, pg_lines)
+    pg_lines
 }
 
 fn refusal(refusal: Refusal) -> Failure {

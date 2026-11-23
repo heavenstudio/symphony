@@ -18,8 +18,8 @@ fn owed_by(f: &Fixture, handle: &str) -> Vec<Pending> {
         .unwrap()
 }
 
-fn setup(backend: Backend) -> (Fixture, Pending) {
-    let f = Fixture::on(backend, Seed::default());
+fn setup() -> (Fixture, Pending) {
+    let f = Fixture::new(Seed::default());
     f.task("work");
     let worker = f.session("worker");
     f.store.claim("work", &worker).unwrap();
@@ -49,7 +49,7 @@ fn reserved(f: &Fixture, pending: &Pending) -> bool {
 fn final_reservation_rechecks_late_descendant_answers_and_preserves_one_attempt() {
     for backend in [Backend::SurrealDb, Backend::PostgreSql] {
         for reply_task in ["work", "different-name"] {
-            let (f, pending) = setup(backend);
+            let (f, pending) = setup();
             let rows = answers::rows(&f.store, &pending.handle, pending.post.id).unwrap();
             let parents = answers::parents(&f.store, &rows).unwrap();
             assert!(rows.is_empty());
@@ -87,7 +87,7 @@ fn final_reservation_rechecks_late_descendant_answers_and_preserves_one_attempt(
 fn final_reservation_rechecks_ancestry_and_heartbeat_without_consuming_an_attempt() {
     for backend in [Backend::SurrealDb, Backend::PostgreSql] {
         for change in ["parent", "heartbeat", "status"] {
-            let (f, pending) = setup(backend);
+            let (f, pending) = setup();
             f.task("unrelated");
             f.store
                 .set_parent("different-name", Some("unrelated"), "owner")
@@ -162,7 +162,6 @@ fn recipient_suffix_uses_sender_kind_and_sequence_index_bounds() {
     );
     for kind in ["msg", "verdict", "system"] {
         let vars = json!({"handle":pending.handle, "kind":kind, "post":cursor.id});
-        let query = sql::answers_select();
         let plan = f
             .store
             .client()
@@ -185,7 +184,7 @@ fn recipient_suffix_uses_sender_kind_and_sequence_index_bounds() {
 #[test]
 fn concurrent_reservations_allow_one_attempt_and_keep_it_after_reopening() {
     for backend in [Backend::SurrealDb, Backend::PostgreSql] {
-        let (f, pending) = setup(backend);
+        let (f, pending) = setup();
         let stores = [f.other(), f.other()];
         let barrier = std::sync::Barrier::new(2);
         let answers = std::thread::scope(|scope| {
@@ -245,7 +244,7 @@ fn concurrent_reservations_allow_one_attempt_and_keep_it_after_reopening() {
 #[test]
 fn descendant_latest_maps_keep_two_parent_alignment_full_posts_and_equal_clock_cutoffs() {
     for backend in [Backend::SurrealDb, Backend::PostgreSql] {
-        let (f, first) = setup(backend);
+        let (f, first) = setup();
         let handle = first.handle.clone();
         f.task("work-two");
         f.store.claim("work-two", &handle).unwrap();

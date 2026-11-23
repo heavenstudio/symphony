@@ -136,8 +136,6 @@ pub(in crate::store) fn rule(parts: RuleParts) -> Pg<'static> {
 /// A statement on PostgreSQL.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::store) enum Pg<'a> {
-    /// Nothing to send: what SurrealDB needs that PostgreSQL does not (an analyzer).
-    Nothing,
     /// An expression over `v` whose value is the answer.
     Read(Cow<'a, str>),
     /// A read of long lists, each list a statement of its own that answers an item a row, all in
@@ -201,14 +199,13 @@ pub(in crate::store) enum Gives {
     },
 }
 
-/// The statements `statement` sends, behind the schema's guard when `guarded`; none for
-/// [`Pg::Nothing`].
+/// The statements `statement` sends, behind the schema's guard when `guarded`.
 ///
 /// A request carries its variables once, in its first statement, and only its last answers
 /// anything at length, or each statement of its lists: a read of one statement binds them, and
 /// any other request sets them first ([`VARS`], which answers nothing), where every statement
 /// after it reads them.
-pub(in crate::store) fn request(statement: &Pg, guarded: bool) -> Option<Request> {
+pub(in crate::store) fn request(statement: &Pg, guarded: bool) -> Request {
     let mut steps = Vec::new();
     let several = matches!(statement, Pg::Listed(listed) if listed.statements() > 1);
     let set = guarded || several || matches!(statement, Pg::Script(..) | Pg::Within(..));
@@ -220,8 +217,7 @@ pub(in crate::store) fn request(statement: &Pg, guarded: bool) -> Option<Request
     }
     let from = if set { SET } else { BOUND };
     match statement {
-        Pg::Nothing => return None,
-        Pg::Simple(sql) => return Some(Request::Simple(sql.to_string())),
+        Pg::Simple(sql) => return Request::Simple(sql.to_string()),
         Pg::Read(expression) => steps.push((answered(expression, from), !set)),
         Pg::Listed(listed) => {
             let mut lists = Vec::new();
@@ -234,7 +230,7 @@ pub(in crate::store) fn request(statement: &Pg, guarded: bool) -> Option<Request
                 steps.len() - 1
             });
             let answer = Gives::Lists { lists, rest };
-            return Some(Request::Steps { steps, answer });
+            return Request::Steps { steps, answer };
         }
         Pg::Within(millis, block) => {
             steps.push((within(*millis), false));
@@ -250,7 +246,7 @@ pub(in crate::store) fn request(statement: &Pg, guarded: bool) -> Option<Request
         }
     }
     let answer = Gives::Value(steps.len() - 1);
-    Some(Request::Steps { steps, answer })
+    Request::Steps { steps, answer }
 }
 
 /// The variables, set for the transaction, where every later statement reads them ([`SET`]): a
@@ -555,16 +551,16 @@ mod tests {
     fn a_read_is_one_statement_and_a_write_sets_its_variables_runs_its_block_and_answers() {
         assert_eq!(
             request(&Pg::read("v -> 'a'"), false),
-            Some(Request::Steps {
+            Request::Steps {
                 steps: vec![(
                     "SELECT to_jsonb((v -> 'a'))::text FROM (SELECT $1::jsonb AS v) AS board_vars"
                         .into(),
                     true
                 )],
                 answer: Gives::Value(0)
-            })
+            }
         );
-        let Some(Request::Steps { steps, answer }) = request(&Pg::script("NULL;"), true) else {
+        let Request::Steps { steps, answer } = request(&Pg::script("NULL;"), true) else {
             panic!("a script is steps");
         };
         let kinds: Vec<(&str, bool)> = steps
@@ -585,7 +581,7 @@ mod tests {
         assert!(steps[2].0.contains("\nNULL;\n"), "{}", steps[2].0);
         assert_eq!(steps[3].0, ANSWER);
         assert_eq!(answer, Gives::Value(3));
-        let Some(Request::Steps { steps, answer }) = request(&Pg::script_then("NULL;", "v"), false)
+        let Request::Steps { steps, answer } = request(&Pg::script_then("NULL;", "v"), false)
         else {
             panic!("a script is steps");
         };
@@ -598,14 +594,13 @@ mod tests {
             "the read after the block takes the variables its first statement set"
         );
         assert_eq!(answer, Gives::Value(2));
-        let Some(Request::Steps { steps, .. }) = request(&Pg::read("v"), true) else {
+        let Request::Steps { steps, .. } = request(&Pg::read("v"), true) else {
             panic!("a read is steps");
         };
         assert_eq!(steps.len(), 3);
         assert_eq!(binding(&steps), [0], "a guarded read binds them once too");
         assert!(steps[2].0.contains(SET), "{}", steps[2].0);
-        let Some(Request::Steps { steps, answer }) =
-            request(&Pg::Within(270_000, "NULL;".into()), true)
+        let Request::Steps { steps, answer } = request(&Pg::Within(270_000, "NULL;".into()), true)
         else {
             panic!("a bounded block is steps");
         };
@@ -617,10 +612,9 @@ mod tests {
         );
         assert!(steps[3].0.contains("\nNULL;\n"), "{}", steps[3].0);
         assert_eq!((steps[4].0.as_str(), answer), (ANSWER, Gives::Value(4)));
-        assert_eq!(request(&Pg::Nothing, true), None);
         assert_eq!(
             request(&Pg::Simple("CREATE TABLE t ();".into()), false),
-            Some(Request::Simple("CREATE TABLE t ();".into()))
+            Request::Simple("CREATE TABLE t ();".into())
         );
     }
 
@@ -649,7 +643,7 @@ mod tests {
         assert_eq!(read.lists[0].item, row("t"));
         assert_eq!(
             request(&Pg::Listed(listing(&[""], None)), false),
-            Some(Request::Steps {
+            Request::Steps {
                 steps: vec![(
                     "SELECT n.item FROM (SELECT $1::jsonb AS v) AS board_vars, \
                      LATERAL (SELECT (to_jsonb(t))::text AS item, t.at AS place0, t.id AS place1 \
@@ -662,7 +656,7 @@ mod tests {
                     lists: vec![("", 0)],
                     rest: None
                 }
-            })
+            }
         );
     }
 
@@ -689,8 +683,7 @@ mod tests {
         let mut read = listing(&["tasks", "roles"], Some("'latest', 7"));
         read.with = "picked AS (SELECT 1)".into();
         for guarded in [false, true] {
-            let Some(Request::Steps { steps, answer }) =
-                request(&Pg::Listed(read.clone()), guarded)
+            let Request::Steps { steps, answer } = request(&Pg::Listed(read.clone()), guarded)
             else {
                 panic!("a read of lists is steps");
             };

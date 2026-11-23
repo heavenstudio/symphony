@@ -1,9 +1,8 @@
 //! The tokens sessions spent ([`crate::usage`]): added by a beat in its own transaction
-//! ([`sql::SPEND`]), read back by task and by session.
+//! ([`pg::SPEND`]), read back by task and by session.
 
 use super::postgres::spending as pg;
-use super::statement::both;
-use super::surreal::spending as sql;
+use super::statement::Statement;
 use super::{Error, Store};
 use crate::health::FINISHED;
 use crate::rows::UsageRow;
@@ -12,7 +11,7 @@ use crate::usage::{Prices, Spend, Spent};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-/// [`sql::SPEND`]'s variables, beside the beat's own.
+/// [`pg::SPEND`]'s variables, beside the beat's own.
 pub(super) fn vars(vars: &mut Value, spent: &[Spent]) {
     vars["spent"] = json!(spent);
     vars["finished"] = json!(FINISHED);
@@ -26,7 +25,7 @@ impl Store {
         if slugs.is_empty() {
             return Ok(Vec::new());
         }
-        self.retrying(|| self.read(both(sql::SPENT_ON, pg::spent_on()), json!({"slugs": slugs})))
+        self.retrying(|| self.read(Statement::from(pg::spent_on()), json!({"slugs": slugs})))
     }
 
     /// What each of `slugs` took, its subtasks' with it as its page counts them, and what that
@@ -38,10 +37,7 @@ impl Store {
             return Ok(BTreeMap::new());
         }
         let answer: Value = self.retrying(|| {
-            self.read_together(
-                both(sql::SPENT_UNDER, pg::spent_under()),
-                json!({"slugs": slugs}),
-            )
+            self.read_together(Statement::from(pg::spent_under()), json!({"slugs": slugs}))
         })?;
         let unread = || Error::Db("the tokens' read is not in the board's shape".into());
         let rows: Vec<UsageRow> =
@@ -78,12 +74,8 @@ impl Store {
         if handles.is_empty() {
             return Ok(BTreeMap::new());
         }
-        let rows: Vec<UsageRow> = self.retrying(|| {
-            self.read(
-                both(sql::SPENT_BY, pg::spent_by()),
-                json!({"handles": handles}),
-            )
-        })?;
+        let rows: Vec<UsageRow> = self
+            .retrying(|| self.read(Statement::from(pg::spent_by()), json!({"handles": handles})))?;
         let prices = Prices::embedded();
         let mut by = BTreeMap::new();
         for row in &rows {

@@ -31,7 +31,7 @@ fn two(depends: bool) -> Custom {
 /// A board with sessions amber and birch, sim/a and sim/b ready and sim/busy in progress, the
 /// three orchestrated by orch, sim/a depending on sim/dep (done) and sim/b on sim/busy, sim/gone
 /// cancelled, and `custom` activated.
-pub(super) fn board(backend: Backend, custom: &Custom) -> Fixture {
+pub(super) fn board(custom: &Custom) -> Fixture {
     let seed = Seed::default()
         .session("amber")
         .session("birch")
@@ -46,7 +46,7 @@ pub(super) fn board(backend: Backend, custom: &Custom) -> Fixture {
         .role("sim/busy", "orch", "orchestrator")
         .link("sim/a", "dep", "sim/dep")
         .link("sim/b", "dep", "sim/busy");
-    let f = Fixture::on(backend, seed);
+    let f = Fixture::new(seed);
     f.store.activate_workflow(custom, &Host::local()).unwrap();
     f
 }
@@ -115,7 +115,7 @@ use crate::workflow::Transition;
 #[test]
 fn an_agent_claims_and_submits_and_the_owner_accepts_each_move_on_the_record() {
     for backend in BACKENDS {
-        let f = board(backend, &two(false));
+        let f = board(&two(false));
         let amber = agent_session("amber");
         let claimed = take(&f.store, "sim/a", &amber, "claim").unwrap();
         assert_eq!(claimed.transition, "sim/a@2");
@@ -172,7 +172,7 @@ fn an_agent_claims_and_submits_and_the_owner_accepts_each_move_on_the_record() {
 #[test]
 fn the_workflow_read_names_the_active_definition_and_none_before_one_is_active() {
     for backend in BACKENDS {
-        let f = Fixture::on(backend, Seed::default().task("sim/a", "ready"));
+        let f = Fixture::new(Seed::default().task("sim/a", "ready"));
         assert_eq!(f.store.workflow_read().unwrap(), None);
         assert_eq!(
             refused(
@@ -201,7 +201,7 @@ fn the_workflow_read_names_the_active_definition_and_none_before_one_is_active()
 #[test]
 fn a_repeated_key_answers_its_first_result_and_another_request_under_it_is_refused() {
     for backend in BACKENDS {
-        let f = board(backend, &two(false));
+        let f = board(&two(false));
         let amber = agent_session("amber");
         let claim = request(&f.store, "sim/a", &amber, "claim", "k");
         assert_eq!(f.store.workflow_receipt(&amber, "k").unwrap(), None);
@@ -234,7 +234,7 @@ fn a_repeated_key_answers_its_first_result_and_another_request_under_it_is_refus
 #[test]
 fn a_request_from_a_revision_another_moved_past_is_stale_and_two_from_one_make_one_transition() {
     for backend in BACKENDS {
-        let f = board(backend, &two(false));
+        let f = board(&two(false));
         let (amber, birch) = (agent_session("amber"), agent_session("birch"));
         let late = request(&f.store, "sim/a", &birch, "claim", "b");
         take(&f.store, "sim/a", &amber, "claim").unwrap();
@@ -273,7 +273,7 @@ fn a_request_from_a_revision_another_moved_past_is_stale_and_two_from_one_make_o
 #[test]
 fn a_principal_without_the_role_or_the_capability_or_on_another_board_moves_nothing() {
     for backend in BACKENDS {
-        let f = board(backend, &two(false));
+        let f = board(&two(false));
         let amber = agent_session("amber");
         let before = f.store.dump().unwrap();
         let mut elsewhere = request(&f.store, "sim/a", &amber, "claim", "k");
@@ -306,7 +306,7 @@ fn a_principal_without_the_role_or_the_capability_or_on_another_board_moves_noth
 #[test]
 fn a_dependency_is_checked_in_the_write_and_one_that_moved_after_the_read_is_decided_again() {
     for backend in BACKENDS {
-        let f = board(backend, &two(true));
+        let f = board(&two(true));
         let amber = agent_session("amber");
         let request = request(&f.store, "sim/a", &amber, "claim", "k");
         let store = f.other();
@@ -328,7 +328,7 @@ fn a_dependency_is_checked_in_the_write_and_one_that_moved_after_the_read_is_dec
 #[test]
 fn a_claim_past_the_cap_is_refused_as_capacity_in_the_write_and_moves_nothing() {
     for backend in BACKENDS {
-        let f = board(backend, &two(false));
+        let f = board(&two(false));
         let amber = agent_session("amber");
         let capped = f.other().capping(Some(1));
         let refusal = refused(take(&capped, "sim/a", &amber, "claim"));
@@ -347,7 +347,7 @@ fn a_claim_past_the_cap_is_refused_as_capacity_in_the_write_and_moves_nothing() 
 #[test]
 fn the_board_writers_neither_move_nor_staff_a_task_the_workflow_holds() {
     for backend in BACKENDS {
-        let f = board(backend, &two(false));
+        let f = board(&two(false));
         let explicit = |result: Result<crate::Task, Error>| {
             let why = refused(result);
             assert!(
@@ -395,7 +395,7 @@ fn the_board_writers_neither_move_nor_staff_a_task_the_workflow_holds() {
 #[test]
 fn a_task_filed_under_the_workflow_starts_at_its_initial_pair_on_the_record() {
     for backend in BACKENDS {
-        let f = board(backend, &two(false));
+        let f = board(&two(false));
         let filed = f.task("sim/new");
         assert_eq!(filed.status, "ready");
         let position = f.store.workflow_position("sim/new").unwrap().unwrap();
@@ -440,7 +440,7 @@ fn a_task_closed_before_the_activation_is_placed_by_the_move_that_reopens_it() {
             .role("sim/late", "birch", "reviewer")
             .role("sim/late", "orch", "orchestrator")
             .task("sim/gone", "cancelled");
-        let f = Fixture::on(backend, seed);
+        let f = Fixture::new(seed);
         (f.store)
             .verdict("sim/late", "birch", "approve", "good")
             .unwrap();

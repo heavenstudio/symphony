@@ -7,8 +7,7 @@
 //! ([`Store::report_places`]); a board that runs none is asked nothing more.
 
 use super::postgres::report_lines as pg;
-use super::statement::both;
-use super::surreal::report_lines as sql;
+use super::statement::Statement;
 use super::workflow::Transition;
 use super::{Error, Store};
 use crate::stages::Line;
@@ -80,7 +79,7 @@ impl Store {
     /// after `since`, each with its thread: one round trip, writing nothing.
     pub fn report_records(&self, since: f64) -> Result<ReportRead, Error> {
         let answer: Value = self.retrying(|| {
-            self.read_together(both(sql::READ, pg::read()), json!({"since": since}))
+            self.read_together(Statement::from(pg::read()), json!({"since": since}))
         })?;
         taken_apart(&answer)
             .ok_or_else(|| Error::Db("the reports' read is not in the board's shape".into()))

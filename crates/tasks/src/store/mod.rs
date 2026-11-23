@@ -1,11 +1,11 @@
-//! The board over SurrealDB: the reads, the rules and the copy (`tools/tasks_store.py` `Store`).
+//! The board over PostgreSQL: the reads, the rules and the copy (`tools/tasks_store.py` `Store`).
 //!
 //! Every read is one request whose statements run in one transaction, so it sees the board as of one
 //! commit (the Python store's `_snapshot`). A rule reads the task it acts on, decides here, and writes
 //! in a transaction that throws `stale` if what it decided on has moved since: the task's `version`,
 //! the actor's session, and the `last_seen` of every session it took to be gone (each write that
-//! could make a session healthier moves its `last_seen`). A write that meets another's (SurrealDB's
-//! optimistic conflict) or finds itself stale reads and decides again.
+//! could make a session healthier moves its `last_seen`). A write that meets another's (a
+//! serialization conflict) or finds itself stale reads and decides again.
 
 use crate::db::DbError;
 use crate::health::{self, EXECUTING, Health};
@@ -62,7 +62,6 @@ mod stage_lines;
 mod stamp;
 mod statement;
 pub(crate) mod stored_settings;
-mod surreal;
 mod thread_window;
 mod transaction;
 pub(crate) mod unanswered;
@@ -74,16 +73,13 @@ mod writers;
 
 use beside::Beside;
 use postgres::{self as pg, Pg};
-use statement::{Statement, both};
-use surreal::reading::reading;
-use surreal::session_read;
+use statement::Statement;
 
 pub(crate) use crate::stages::BLOCK_LINE;
 pub use asks::{ASK_KINDS, Ask, LATE_SECONDS, NewAsk};
 pub use callbacks::{Callback, ChatSeat, Presence};
 /// Every statement the cap on an orchestrator's open tasks sends: the plan test's to plan.
-pub use cap::STATEMENTS as SLOT_READS;
-pub use copy::{CARRIED, leases_ended, leases_past};
+pub use copy::{CARRIED, leases_past};
 pub use database::Database;
 pub use launches::NewLaunch;
 pub use messages::reviewer_verdict;
@@ -320,15 +316,12 @@ impl Store {
         )
     }
 
-    /// The SurrealDB client of a board on SurrealDB. A board on PostgreSQL has none: its client is
-    /// [`Store::database`]'s.
+    /// A SurrealDB client of the board, which no board has: every board is on PostgreSQL, whose
+    /// client is [`Store::database`]'s. Kept by its name for the consumers that call it
+    /// (`tests/consumer_api.rs`) until their code no longer does, as it has panicked on a
+    /// PostgreSQL board since the first one.
     pub fn client(&self) -> &Client {
-        match self.db.reach() {
-            database::Reach::SurrealDb(client) => client,
-            database::Reach::PostgreSql(_) => {
-                panic!("this board is on PostgreSQL, which no SurrealDB client reaches")
-            }
-        }
+        panic!("this board is on PostgreSQL, which no SurrealDB client reaches")
     }
 
     /// The database the board is in.
@@ -379,7 +372,7 @@ impl Store {
     /// Eligibility without transferring briefs, roles or session health for the entire board.
     pub(crate) fn task_slugs(&self, status: Option<&str>) -> Result<Vec<String>, Error> {
         let by_status = status.is_some();
-        let read = || both(surreal::task_slugs(by_status), pg::task_slugs(by_status));
+        let read = || Statement::from(pg::task_slugs(by_status));
         self.retrying(|| self.read_together(read(), json!({"status":status})))
     }
 
@@ -399,7 +392,7 @@ impl Store {
     pub fn session(&self, handle: &str) -> Result<Session, Error> {
         let found: Found = self.retrying(|| {
             self.read_together(
-                both(session_read(), Pg::read(pg::sessions::session_read())),
+                Statement::from(Pg::read(pg::sessions::session_read())),
                 json!({"handle": handle, "executing": EXECUTING}),
             )
         })?;
@@ -424,7 +417,7 @@ impl Store {
 
     /// The tasks another session could take over if `handle` were gone.
     pub fn claimable(&self, handle: &str) -> Result<Vec<String>, Error> {
-        let read = || both(surreal::claimable(), pg::claimable());
+        let read = || Statement::from(pg::claimable());
         let mut slugs: Vec<String> = self.retrying(|| {
             self.read_together(read(), json!({"handle": handle, "executing": EXECUTING}))
         })?;
@@ -441,7 +434,7 @@ impl Store {
         }
         let thread: Thread = self.retrying(|| {
             self.read_together(
-                both(surreal::THREAD, pg::messages::thread()),
+                Statement::from(pg::messages::thread()),
                 json!({"slug": slug}),
             )
         })?;
@@ -459,7 +452,7 @@ impl Store {
             unknown: Vec<String>,
             threads: Vec<Vec<MessageRow>>,
         }
-        let read = || both(surreal::THREADS, pg::messages::threads());
+        let read = || Statement::from(pg::messages::threads());
         let read: Threads =
             self.retrying(|| self.read_together(read(), json!({"slugs": slugs})))?;
         if let Some(slug) = read.unknown.first() {
@@ -779,7 +772,7 @@ impl Store {
             };
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
             let parts = change.parts(&ruled.slots, placing.as_ref());
-            let body = both(surreal::rule(parts), pg::rule(parts)).posting();
+            let body = Statement::from(pg::rule(parts)).posting();
             let mut vars = change.vars(slug, actor, version, view.now);
             vars["slots"] = Value::Array(ruled.slots);
             if let Some(placing) = placing {
@@ -874,20 +867,17 @@ impl Store {
         deliver: bool,
     ) -> Result<Task, Failure> {
         let which = Which::Slug(slug);
-        let (read, more) = (reading(&which, Sessions::Shown), reading::vars(&which));
-        if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
+        if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), reading::vars(&which)) {
             vars.extend(more);
         }
-        // On PostgreSQL the write's block, then the read, its answer.
-        let postgres = match body.postgres {
-            Some(Pg::Script(block, None)) => {
-                Some(Pg::script_then(block, pg::reading::written(&which)))
-            }
-            _ => None,
+        // The write's block, then the read, its answer.
+        let Pg::Script(block, None) = body.postgres else {
+            return Err(Failure::Stop(Error::Db(
+                "a task's write is a block with no answer of its own: nothing was sent".into(),
+            )));
         };
         let written = Statement {
-            surreal: (body.surreal.as_deref()).map(|body| surreal::written(body, &read).into()),
-            postgres,
+            postgres: Pg::script_then(block, pg::reading::written(&which)),
             posts: body.posts,
             names: body.names,
         };
@@ -1287,7 +1277,7 @@ struct Change {
     unlanded: Option<Value>,
 }
 
-/// What a rule's write adds to the write every rule makes ([`surreal::rule`], [`pg::rule`]),
+/// What a rule's write adds to the write every rule makes ([`pg::rule`]),
 /// each part by its name ([`Change::parts`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct RuleParts {
@@ -1485,11 +1475,12 @@ fn message(row: MessageRow) -> Message {
     }
 }
 
-/// The read of `which` with the sessions `sessions` asks for, in each database's language, and
-/// its variables.
+/// The read of `which` with the sessions `sessions` asks for, and its variables.
 fn read_of(which: &Which, sessions: Sessions) -> (Statement<'static>, Value) {
-    let (read, vars) = (reading(which, sessions), reading::vars(which));
-    (both(read, pg::reading::reading(which, sessions)), vars)
+    (
+        Statement::from(pg::reading::reading(which, sessions)),
+        reading::vars(which),
+    )
 }
 
 /// Whether a reservation that `expires` at a time (none: never) is past it at `now`.

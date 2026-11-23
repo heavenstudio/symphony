@@ -5,9 +5,10 @@
 //! `recovery_revision` (absent means zero; older readers ignore and writers preserve it), whereas
 //! PostgreSQL locks that row. No session field or schema change is needed.
 
-use super::{Error, Health, Pending, Store, both, pg, recovery_error, sql};
+use super::{Error, Health, Pending, Store, pg, recovery_error};
 use crate::health;
 use crate::rows::SessionRow;
+use crate::store::statement::Statement;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -66,7 +67,7 @@ pub(super) fn read(store: &Store, pending: &Pending) -> Result<Option<Observatio
     }
     let value: Value = store
         .bounded_read(
-            both(sql::successors(), pg::successors()),
+            Statement::from(pg::successors()),
             json!({"slug":pending.slug}),
         )
         .map_err(recovery_error)?;

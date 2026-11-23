@@ -1,35 +1,8 @@
-//! The store over a real SurrealDB server, one test binary so they share one server.
+//! The store over a real PostgreSQL server, one test binary so they share one server.
 
 // How a test starts its own children ([`children::Child`]).
 #[path = "../support/children.rs"]
 mod children;
-
-/// Tests written once and run on each database the board can be in: each `fn NAME(backend:
-/// Backend)` becomes the module `NAME` of two tests, `NAME::surrealdb` and `NAME::postgresql`,
-/// each handing its body the database it names ([`common::Backend`]). The parent module's items
-/// are in scope in the body.
-macro_rules! on_both {
-    ($($(#[$meta:meta])* fn $name:ident($backend:ident: Backend) $body:block)+) => {$(
-        mod $name {
-            #[allow(unused_imports, reason = "the body names what it uses of its module")]
-            use super::*;
-
-            fn run($backend: Backend) $body
-
-            #[test]
-            $(#[$meta])*
-            fn surrealdb() {
-                run(crate::common::Backend::SurrealDb);
-            }
-
-            #[test]
-            $(#[$meta])*
-            fn postgresql() {
-                run(crate::common::Backend::PostgreSql);
-            }
-        }
-    )+};
-}
 
 mod amend;
 mod artifacts;

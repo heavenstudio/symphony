@@ -366,7 +366,7 @@ pub fn connect(env: &Env) -> Result<Store, String> {
 /// The next write a `tasks` command makes follows what the branch commits.
 pub(super) fn connect_unfollowing(env: &Env) -> Result<Store, String> {
     let reached = reach(env, &env.cwd, true)?;
-    let database = reached.database();
+    let database = reached.database()?;
     let (store, _) = opened(reached, database, &Clock::of(env)?, crate::Opening::write())?;
     Ok(capped(looking_up(store, env), env))
 }
@@ -519,17 +519,10 @@ pub struct Reached {
 }
 
 impl Reached {
-    /// A client of this board's selected engine. The existing `client` remains available for
-    /// consumers that name SurrealDB alone; new readers use this database-neutral entry.
-    pub fn database(&self) -> crate::Database {
-        named_database(
-            Client::new(
-                self.client.addr(),
-                self.client.namespace(),
-                self.client.database(),
-            )
-            .waiting(self.client.wait_limit()),
-        )
+    /// A client of this board, a client of its own: refused where `client` names a SurrealDB
+    /// server ([`crate::Database::named`]). `client` stays as consumers' code reads it.
+    pub fn database(&self) -> Result<crate::Database, String> {
+        crate::Database::named(&self.client)
     }
 
     /// `how`, naming this board's project and opening it as the live board it is, if it is one: a
@@ -720,23 +713,12 @@ fn socket_named(addr: &str, what: &str) -> Result<(), String> {
     }
 }
 
-/// The database `db` on the server at `addr`, SurrealDB's `HOST:PORT` or PostgreSQL's
-/// `postgresql:/SOCKET`, which `what` names in a refusal: what a program handed a server's
-/// address opens its store on.
+/// The database `db` on the PostgreSQL at `addr`, `postgresql:/SOCKET`, which `what` names in a
+/// refusal: what a program handed a server's address opens its store on. A SurrealDB server's
+/// `HOST:PORT` is refused ([`crate::Database::named`]).
 pub(crate) fn database_at(addr: &str, db: &str, what: &str) -> Result<crate::Database, String> {
     socket_named(addr, &format!("{what} "))?;
-    Ok(named_database(Client::new(addr, NAMESPACE, db)))
-}
-
-/// A named scratch server can be a PostgreSQL socket folder. Repository discovery still
-/// reaches the existing server; no configured or live board is switched by this adapter.
-fn named_database(client: Client) -> crate::Database {
-    match client.addr().strip_prefix("postgresql:") {
-        Some(socket) => crate::pg::Client::new(Path::new(socket), client.database())
-            .waiting(client.wait_limit())
-            .into(),
-        None => client.into(),
-    }
+    crate::Database::named(&Client::new(addr, NAMESPACE, db))
 }
 
 /// The board `reached`, to read and write by this build's schema, read by `clock`: a newer board
@@ -749,7 +731,7 @@ fn open(reached: Reached, clock: &Clock) -> Result<Store, String> {
 /// As [`open`], by `how` (`tasks migrate`'s, which may move a live board). Its refusals name a
 /// scratch board as `tasks` and `agent-send` take it, `--database NAME`.
 fn open_as(reached: Reached, clock: &Clock, how: crate::Opening) -> Result<Store, String> {
-    let database = reached.database();
+    let database = reached.database()?;
     open_as_database(reached, database, clock, how)
 }
 
@@ -806,7 +788,7 @@ fn following(store: &Store, how: &crate::Opening) {
 /// once when there is a record ([`crate::live::seen::checked`]).
 fn open_unchecked(reached: Reached, clock: &Clock) -> Result<Store, String> {
     let live = reached.live.clone();
-    let store = unchecked(reached, clock);
+    let store = unchecked(reached, clock)?;
     if let Some(live) = live
         && let Some(back) = crate::live::seen::checked(&live, || {
             store.board_version().map_err(|why| why.to_string())
@@ -833,7 +815,7 @@ fn not_gone_back(reached: &Reached) -> Result<(), String> {
 /// refuses the beat's write to a board that went back.
 fn open_beating(reached: Reached, clock: &Clock) -> Result<Store, String> {
     let live = reached.live.clone();
-    let store = unchecked(reached, clock);
+    let store = unchecked(reached, clock)?;
     if let Some(live) = &live
         && let Some(back) =
             crate::live::seen::past_guard(live, crate::Schema::this_build().version(), || {
@@ -845,17 +827,19 @@ fn open_beating(reached: Reached, clock: &Clock) -> Result<Store, String> {
     Ok(store)
 }
 
-/// The board `reached`, its tables taken as they are, by no check of its own.
-fn unchecked(reached: Reached, clock: &Clock) -> Store {
+/// The board `reached`, its tables taken as they are, by no check of its own: refused where its
+/// address names a SurrealDB server ([`crate::Database::named`]).
+fn unchecked(reached: Reached, clock: &Clock) -> Result<Store, String> {
     let (clock, probe, host) = parts(clock);
     let how = crate::Opening::write()
         .of(reached.project.as_deref())
         .live(reached.live);
     let named = reached.project.is_none();
-    naming(
-        Store::unchecked_on(named_database(reached.client), clock, probe, &host, &how),
+    let database = crate::Database::named(&reached.client)?;
+    Ok(naming(
+        Store::unchecked_on(database, clock, probe, &host, &how),
         named,
-    )
+    ))
 }
 
 /// `store`, saying its server in the commands it tells when `TASKS_SERVER` `named` it (a board
@@ -898,7 +882,7 @@ mod tests {
             project: "demo".into(),
             common: repo.0.join(".git"),
         };
-        let f = Fixture::on(
+        let f = Fixture::new(
             Backend::SurrealDb,
             Seed::default().task("sim/ready", "ready"),
         );
@@ -918,7 +902,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_scratch_servers_keep_their_backend_and_database() {
+    fn an_explicit_scratch_server_keeps_its_database_and_a_surrealdb_one_is_refused() {
         for (address, postgres) in [
             ("127.0.0.1:9", false),
             ("postgresql:/tmp/board socket", true),
@@ -934,8 +918,12 @@ mod tests {
             let reached = reach_board(&env, &env.cwd, Reaching::Peek, None).unwrap();
             assert!(reached.project.is_none());
             assert!(reached.live.is_none());
-            let database = named_database(reached.client);
-            assert_eq!(database.is_postgresql(), postgres);
+            if !postgres {
+                let refused = reached.database().unwrap_err();
+                assert!(refused.contains(crate::server::GONE), "{refused}");
+                continue;
+            }
+            let database = reached.database().unwrap();
             assert_eq!(database.addr(), address);
             assert_eq!(database.database(), "scratch_route");
             assert_eq!(

@@ -23,7 +23,7 @@
 //! (`TASKS_CATALOGUE=write just test-rs -p symphony-board --test store catalogue`), once its schema
 //! changes; the files of the versions and steps before stay as they were committed.
 
-use crate::common::{Backend, HOST, NOW};
+use crate::common::{HOST, NOW, database};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -49,7 +49,7 @@ fn writer(db: &Database, schema: Schema) -> Store {
 }
 
 /// The engine's name in a catalogue file's.
-fn engine(backend: Backend) -> &'static str {
+fn engine() -> &'static str {
     match backend {
         Backend::SurrealDb => "surrealdb",
         Backend::PostgreSql => "postgresql",
@@ -57,10 +57,10 @@ fn engine(backend: Backend) -> &'static str {
 }
 
 /// The committed catalogue of `version` with `steps` additive steps on it on `backend`.
-fn file(backend: Backend, version: i64, steps: i64) -> PathBuf {
+fn file(version: i64, steps: i64) -> PathBuf {
     let name = match steps {
-        0 => format!("{}-{version}.txt", engine(backend)),
-        steps => format!("{}-{version}.{steps}.txt", engine(backend)),
+        0 => format!("{}-{version}.txt", engine()),
+        steps => format!("{}-{version}.{steps}.txt", engine()),
     };
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/store/catalogue")
@@ -68,12 +68,12 @@ fn file(backend: Backend, version: i64, steps: i64) -> PathBuf {
 }
 
 /// The committed catalogue of `version` with every additive step it had, the last of its files.
-fn last_file(backend: Backend, version: i64) -> PathBuf {
+fn last_file(version: i64) -> PathBuf {
     let mut steps = 0;
-    while file(backend, version, steps + 1).exists() {
+    while file(version, steps + 1).exists() {
         steps += 1;
     }
-    file(backend, version, steps)
+    file(version, steps)
 }
 
 /// The text of a committed catalogue, which is there.
@@ -342,13 +342,8 @@ fn rows(db: &Database, catalogue: &str) -> BTreeMap<String, Vec<String>> {
 /// step on: refused unless its catalogue is the one before with an additive step ([`additive`]),
 /// the step defines just the tables it declares, `declared`, and every row of each table there
 /// before is as it was.
-fn step_checked(
-    backend: Backend,
-    before: Schema,
-    after: Schema,
-    declared: &[&str],
-) -> Result<(), String> {
-    let db = backend.database();
+fn step_checked(before: Schema, after: Schema, declared: &[&str]) -> Result<(), String> {
+    let db = database();
     populated(&db, before);
     let was = catalogue(&db);
     let rows_were = rows(&db, &was);
@@ -560,8 +555,8 @@ const NOT_ADDITIVE: [(Twin, &[&str], &str); 12] = [
 
 /// A board on `backend` made at this build's schema and moved on by `steps`, one migration of them
 /// all, and the catalogue of each: before and after.
-fn moved_by(backend: Backend, steps: &[&Twin]) -> (String, String) {
-    let db = backend.database();
+fn moved_by(steps: &[&Twin]) -> (String, String) {
+    let db = database();
     moved(&db, Schema::this_build());
     let before = catalogue(&db);
     let mut schema = Schema::this_build();
@@ -572,119 +567,135 @@ fn moved_by(backend: Backend, steps: &[&Twin]) -> (String, String) {
     (before, catalogue(&db))
 }
 
-on_both! {
-    fn this_builds_catalogue_is_its_file_and_each_of_its_additive_steps_is_one(
-        backend: Backend
-    ) {
-        let db = backend.database();
-        moved(&db, Schema::this_build());
-        let made = catalogue(&db);
-        let (version, steps) = (VERSION, ADDITIONS);
-        assert_eq!(
-            (Schema::this_build().version(), Schema::this_build().additions()),
-            (version, steps)
-        );
-        let path = file(backend, version, steps);
-        if std::env::var("TASKS_CATALOGUE").as_deref() == Ok("write") {
-            std::fs::write(&path, &made).unwrap();
-        }
-        let committed_now = committed(&path);
-        // Each way, as a check of one way takes the tables and the database's lines it adds.
-        if let Err(changed) = kept(&committed_now, &made).and_then(|()| kept(&made, &committed_now)) {
-            panic!(
-                "{} is not the board this build makes ({changed}); write it again with \
+#[test]
+fn this_builds_catalogue_is_its_file_and_each_of_its_additive_steps_is_one() {
+    let db = database();
+    moved(&db, Schema::this_build());
+    let made = catalogue(&db);
+    let (version, steps) = (VERSION, ADDITIONS);
+    assert_eq!(
+        (
+            Schema::this_build().version(),
+            Schema::this_build().additions()
+        ),
+        (version, steps)
+    );
+    let path = file(version, steps);
+    if std::env::var("TASKS_CATALOGUE").as_deref() == Ok("write") {
+        std::fs::write(&path, &made).unwrap();
+    }
+    let committed_now = committed(&path);
+    // Each way, as a check of one way takes the tables and the database's lines it adds.
+    if let Err(changed) = kept(&committed_now, &made).and_then(|()| kept(&made, &committed_now)) {
+        panic!(
+            "{} is not the board this build makes ({changed}); write it again with \
                  TASKS_CATALOGUE=write just test-rs -p symphony-board --test store catalogue",
-                path.display()
+            path.display()
+        );
+    }
+    // A declared version keeps every table of the one before as that version's last file has
+    // it: its contract before any additive step on it.
+    if keeps_writes(version) {
+        let before = committed(&last_file(version - 1));
+        if let Err(changed) = kept(&before, &committed(&file(version, 0))) {
+            panic!("schema {version} is declared in COMPATIBLE but changes: {changed}");
+        }
+    }
+    for (listed, _) in COMPATIBLE {
+        assert!(*listed <= version);
+    }
+    // Each additive step on the contract is one: a board one step before, moved by it, and
+    // its file, the one before with it.
+    for step in 1..=steps {
+        let addition = &ADDED[usize::try_from(step - 1).unwrap()];
+        let (before, after) = (
+            Schema::of_this_contract(step - 1),
+            Schema::of_this_contract(step),
+        );
+        if let Err(why) = step_checked(before, after, addition.tables) {
+            panic!(
+                "schema {version}'s additive step {step} ({}) is not one: {why}",
+                addition.why
             );
         }
-        // A declared version keeps every table of the one before as that version's last file has
-        // it: its contract before any additive step on it.
-        if keeps_writes(version) {
-            let before = committed(&last_file(backend, version - 1));
-            if let Err(changed) = kept(&before, &committed(&file(backend, version, 0))) {
-                panic!("schema {version} is declared in COMPATIBLE but changes: {changed}");
-            }
+        let (was, now) = (file(version, step - 1), file(version, step));
+        if let Err(why) = additive(&committed(&was), &committed(&now)) {
+            panic!(
+                "{} is not {} with an additive step: {why}",
+                now.display(),
+                was.display()
+            );
         }
-        for (listed, _) in COMPATIBLE {
-            assert!(*listed <= version);
+    }
+    assert!(
+        !file(version, steps + 1).exists(),
+        "a file of a step this build does not have"
+    );
+}
+
+#[test]
+fn the_check_takes_a_step_of_new_tables_and_refuses_every_change_to_one_there_before() {
+    // Each step that keeps the tables there before, alone and two at once.
+    for steps in [
+        vec![&KEEPING[0]],
+        vec![&KEEPING[1]],
+        vec![&KEEPING[0], &KEEPING[1]],
+    ] {
+        let (before, after) = moved_by(&steps);
+        assert_ne!(before, after, "the step defined something");
+        kept(&before, &after).unwrap();
+    }
+    // Each that changes one, alone and after a step that keeps them, in one move.
+    for (step, named) in &CHANGING {
+        for steps in [vec![step], vec![&KEEPING[0], step]] {
+            let (before, after) = moved_by(&steps);
+            let changed = kept(&before, &after).unwrap_err();
+            assert!(changed.starts_with(named), "{}: {changed}", step.surreal);
+            assert_eq!(changed.lines().count(), 1, "{changed}");
         }
-        // Each additive step on the contract is one: a board one step before, moved by it, and
-        // its file, the one before with it.
-        for step in 1..=steps {
-            let addition = &ADDED[usize::try_from(step - 1).unwrap()];
-            let (before, after) = (Schema::of_this_contract(step - 1), Schema::of_this_contract(step));
-            if let Err(why) = step_checked(backend, before, after, addition.tables) {
-                panic!("schema {version}'s additive step {step} ({}) is not one: {why}", addition.why);
-            }
-            let (was, now) = (file(backend, version, step - 1), file(backend, version, step));
-            if let Err(why) = additive(&committed(&was), &committed(&now)) {
-                panic!("{} is not {} with an additive step: {why}", now.display(), was.display());
-            }
-        }
-        assert!(
-            !file(backend, version, steps + 1).exists(),
-            "a file of a step this build does not have"
+    }
+    // A table there before and gone is a change too; one that was not there is new.
+    let (before, _) = moved_by(&[&KEEPING[0]]);
+    let without: String = (before.lines())
+        .filter(|line| !line.starts_with("ask\t"))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    assert!(kept(&before, &without).unwrap_err().starts_with("ask: "));
+    kept(&without, &before).unwrap();
+}
+
+#[test]
+fn an_additive_step_adds_tables_and_optional_fields_on_open_tables_and_writes_no_row() {
+    let this = Schema::this_build;
+    let step = |schema: Schema, twin: &Twin, tables: &[&str]| {
+        schema.then_additive(twin.surreal, twin.postgres, tables)
+    };
+    for (twin, tables) in &ADDITIVE {
+        let after = step(this(), twin, tables);
+        assert_eq!(
+            (after.version(), after.additions()),
+            (VERSION, ADDITIONS + 1)
         );
+        step_checked(this(), after, tables).unwrap_or_else(|why| panic!("{}: {why}", twin.surreal));
     }
-
-    fn the_check_takes_a_step_of_new_tables_and_refuses_every_change_to_one_there_before(
-        backend: Backend
-    ) {
-        // Each step that keeps the tables there before, alone and two at once.
-        for steps in [vec![&KEEPING[0]], vec![&KEEPING[1]], vec![&KEEPING[0], &KEEPING[1]]] {
-            let (before, after) = moved_by(backend, &steps);
-            assert_ne!(before, after, "the step defined something");
-            kept(&before, &after).unwrap();
-        }
-        // Each that changes one, alone and after a step that keeps them, in one move.
-        for (step, named) in &CHANGING {
-            for steps in [vec![step], vec![&KEEPING[0], step]] {
-                let (before, after) = moved_by(backend, &steps);
-                let changed = kept(&before, &after).unwrap_err();
-                assert!(changed.starts_with(named), "{}: {changed}", step.surreal);
-                assert_eq!(changed.lines().count(), 1, "{changed}");
-            }
-        }
-        // A table there before and gone is a change too; one that was not there is new.
-        let (before, _) = moved_by(backend, &[&KEEPING[0]]);
-        let without: String = (before.lines())
-            .filter(|line| !line.starts_with("ask\t"))
-            .map(|line| format!("{line}\n"))
-            .collect();
-        assert!(kept(&before, &without).unwrap_err().starts_with("ask: "));
-        kept(&without, &before).unwrap();
+    // Two at once, by a build two steps on.
+    let (first, second) = (&ADDITIVE[0], &ADDITIVE[2]);
+    let after = step(step(this(), &first.0, first.1), &second.0, second.1);
+    step_checked(this(), after, &["fixture_own"]).unwrap();
+    // And none of the rest, each refused naming what it changed.
+    for (twin, tables, named) in &NOT_ADDITIVE {
+        let why = step_checked(this(), step(this(), twin, tables), tables).expect_err(twin.surreal);
+        assert!(why.starts_with(named), "{}: {why}", twin.surreal);
     }
-
-    fn an_additive_step_adds_tables_and_optional_fields_on_open_tables_and_writes_no_row(
-        backend: Backend
-    ) {
-        let this = Schema::this_build;
-        let step = |schema: Schema, twin: &Twin, tables: &[&str]| {
-            schema.then_additive(twin.surreal, twin.postgres, tables)
-        };
-        for (twin, tables) in &ADDITIVE {
-            let after = step(this(), twin, tables);
-            assert_eq!((after.version(), after.additions()), (VERSION, ADDITIONS + 1));
-            step_checked(backend, this(), after, tables)
-                .unwrap_or_else(|why| panic!("{}: {why}", twin.surreal));
-        }
-        // Two at once, by a build two steps on.
-        let (first, second) = (&ADDITIVE[0], &ADDITIVE[2]);
-        let after = step(step(this(), &first.0, first.1), &second.0, second.1);
-        step_checked(backend, this(), after, &["fixture_own"]).unwrap();
-        // And none of the rest, each refused naming what it changed.
-        for (twin, tables, named) in &NOT_ADDITIVE {
-            let why = step_checked(backend, this(), step(this(), twin, tables), tables)
-                .expect_err(twin.surreal);
-            assert!(why.starts_with(named), "{}: {why}", twin.surreal);
-        }
-        let (row_writer, _, _) = &NOT_ADDITIVE[10];
-        let why = step_checked(backend, this(), step(this(), row_writer, &[]), &[]).unwrap_err();
-        assert!(why.contains("\"task\""), "{why}");
-        let (field, _) = &ADDITIVE[2];
-        let why = step_checked(backend, this(), step(this(), field, &["task"]), &["task"]).unwrap_err();
-        assert_eq!(why, "the step declares the tables {\"task\"} and defines {}");
-    }
+    let (row_writer, _, _) = &NOT_ADDITIVE[10];
+    let why = step_checked(this(), step(this(), row_writer, &[]), &[]).unwrap_err();
+    assert!(why.contains("\"task\""), "{why}");
+    let (field, _) = &ADDITIVE[2];
+    let why = step_checked(this(), step(this(), field, &["task"]), &["task"]).unwrap_err();
+    assert_eq!(
+        why,
+        "the step declares the tables {\"task\"} and defines {}"
+    );
 }
 
 #[test]

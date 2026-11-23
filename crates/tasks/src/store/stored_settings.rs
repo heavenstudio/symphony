@@ -5,12 +5,11 @@
 //!
 //! A write judges its value first ([`crate::settings::judged`]) and writes nothing it refuses.
 //! It reads the entry, decides in the process and writes the row whole, fenced on the revision it
-//! read ([`sql::WRITE`]): two writes of one setting meet on its row, and the one that lost reads
+//! read ([`pg::write`]): two writes of one setting meet on its row, and the one that lost reads
 //! and decides again, so no change is lost from the record.
 
 use super::postgres::stored_settings as pg;
-use super::statement::both;
-use super::surreal::stored_settings as sql;
+use super::statement::Statement;
 use super::{Error, Failure, Store, refused};
 use crate::schema;
 use crate::settings::{Entry, SAID, Stored, judged, kept, named};
@@ -36,7 +35,7 @@ impl Store {
     /// board without the step.
     pub fn stored_entries(&self) -> Result<Vec<Entry>, Error> {
         self.retrying(|| {
-            let read = both(sql::ENTRIES, pg::ENTRIES);
+            let read = Statement::from(pg::ENTRIES);
             let read = self.request(read, json!({})).map(Some);
             let Some(found) = self.absent_board(read, None)? else {
                 return Ok(Vec::new());
@@ -95,7 +94,7 @@ impl Store {
             });
             let wrote: bool = self.retrying(|| {
                 self.transact_dispatch(
-                    both(sql::WRITE, pg::write()).naming(&[TABLE]),
+                    Statement::from(pg::write()).naming(&[TABLE]),
                     vars.clone(),
                     false,
                 )

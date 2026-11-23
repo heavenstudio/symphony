@@ -1,7 +1,7 @@
 //! A plugin's board fields, on the real store and a scratch database for each case: what a write
 //! keeps, what it refuses, and boards of the schema before the field (9) meeting this one's.
 
-use super::common::{Backend, Fixture, RawWrite, Seed, refused};
+use super::common::{Fixture, RawWrite, Seed, refused};
 use serde_json::{Value, json};
 use symphony_board::Raw;
 
@@ -28,72 +28,76 @@ fn schema_version(f: &Fixture) -> Value {
     version.unwrap()
 }
 
-on_both! {
-    fn a_field_is_kept_under_its_plugin_beside_the_others_and_said_on_the_thread(backend: Backend) {
-        let f = Fixture::on(backend, Seed::default().session("brisk-finch"));
-        f.task("sim/jump");
-        let other = f.task("sim/dock");
-        let version = record(&f, "sim/jump")["version"].as_i64().unwrap();
-        f.advance(1.0);
-        let set = f
-            .store
-            .set_field("sim/jump", "game", "effort", &json!(3), "brisk-finch")
-            .unwrap();
-        assert_eq!(
-            set.fields,
-            [("game".into(), [("effort".into(), json!(3))].into())].into()
-        );
-        assert_eq!(record(&f, "sim/jump")["version"], json!(version + 1));
-        f.store
-            .set_field("sim/jump", "game", "risk", &json!("high"), "brisk-finch")
-            .unwrap();
-        f.store
-            .set_field("sim/jump", "other-plugin", "owner_x", &json!(1.5), "owner")
-            .unwrap();
-        let last = f
-            .store
-            .set_field("sim/jump", "game", "effort", &json!(5), "brisk-finch")
-            .unwrap();
-        assert_eq!(
-            serde_json::to_value(&last.fields).unwrap(),
-            json!({"game": {"effort": 5, "risk": "high"}, "other-plugin": {"owner_x": 1.5}})
-        );
-        assert_eq!(last, f.store.get("sim/jump").unwrap());
-        assert_eq!(
-            record(&f, "sim/jump")["fields"],
-            json!({"game": {"effort": 5, "risk": "high"}, "other-plugin": {"owner_x": 1.5}})
-        );
-        let said = f.said("sim/jump");
-        assert_eq!(
-            said[said.len() - 4..],
-            [
-                "brisk-finch set game.effort to 3",
-                "brisk-finch set game.risk to high",
-                "owner set other-plugin.owner_x to 1.5",
-                "brisk-finch set game.effort to 5",
-            ]
-        );
-        assert_eq!(f.store.get("sim/dock").unwrap(), other);
-    }
-
-    fn a_task_never_given_a_field_carries_none_for_a_reader_from_before_it(backend: Backend) {
-        let f = Fixture::on(backend, Seed::default().session("brisk-finch"));
-        let made = f.task("sim/jump");
-        assert!(made.fields.is_empty());
-        let raw = record(&f, "sim/jump");
-        assert!(raw.get("fields").is_none(), "{raw}");
-        f.store.set_priority("sim/jump", 0, "brisk-finch").unwrap();
-        assert!(record(&f, "sim/jump").get("fields").is_none());
-        let dumped = serde_json::to_value(f.rows()).unwrap();
-        let task = dumped["task"].as_array().unwrap().iter()
-            .find(|row| row["slug"] == "sim/jump").expect("the task is present");
-        assert!(task.get("fields").is_none(), "{task}");
-    }
+#[test]
+fn a_field_is_kept_under_its_plugin_beside_the_others_and_said_on_the_thread() {
+    let f = Fixture::new(Seed::default().session("brisk-finch"));
+    f.task("sim/jump");
+    let other = f.task("sim/dock");
+    let version = record(&f, "sim/jump")["version"].as_i64().unwrap();
+    f.advance(1.0);
+    let set = f
+        .store
+        .set_field("sim/jump", "game", "effort", &json!(3), "brisk-finch")
+        .unwrap();
+    assert_eq!(
+        set.fields,
+        [("game".into(), [("effort".into(), json!(3))].into())].into()
+    );
+    assert_eq!(record(&f, "sim/jump")["version"], json!(version + 1));
+    f.store
+        .set_field("sim/jump", "game", "risk", &json!("high"), "brisk-finch")
+        .unwrap();
+    f.store
+        .set_field("sim/jump", "other-plugin", "owner_x", &json!(1.5), "owner")
+        .unwrap();
+    let last = f
+        .store
+        .set_field("sim/jump", "game", "effort", &json!(5), "brisk-finch")
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&last.fields).unwrap(),
+        json!({"game": {"effort": 5, "risk": "high"}, "other-plugin": {"owner_x": 1.5}})
+    );
+    assert_eq!(last, f.store.get("sim/jump").unwrap());
+    assert_eq!(
+        record(&f, "sim/jump")["fields"],
+        json!({"game": {"effort": 5, "risk": "high"}, "other-plugin": {"owner_x": 1.5}})
+    );
+    let said = f.said("sim/jump");
+    assert_eq!(
+        said[said.len() - 4..],
+        [
+            "brisk-finch set game.effort to 3",
+            "brisk-finch set game.risk to high",
+            "owner set other-plugin.owner_x to 1.5",
+            "brisk-finch set game.effort to 5",
+        ]
+    );
+    assert_eq!(f.store.get("sim/dock").unwrap(), other);
 }
 
-on_both! {
-fn bad_names_values_tasks_and_actors_leave_the_board_unchanged(backend: Backend) {
-    let f = Fixture::on(backend,
+#[test]
+fn a_task_never_given_a_field_carries_none_for_a_reader_from_before_it() {
+    let f = Fixture::new(Seed::default().session("brisk-finch"));
+    let made = f.task("sim/jump");
+    assert!(made.fields.is_empty());
+    let raw = record(&f, "sim/jump");
+    assert!(raw.get("fields").is_none(), "{raw}");
+    f.store.set_priority("sim/jump", 0, "brisk-finch").unwrap();
+    assert!(record(&f, "sim/jump").get("fields").is_none());
+    let dumped = serde_json::to_value(f.rows()).unwrap();
+    let task = dumped["task"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["slug"] == "sim/jump")
+        .expect("the task is present");
+    assert!(task.get("fields").is_none(), "{task}");
+}
+
+#[test]
+fn bad_names_values_tasks_and_actors_leave_the_board_unchanged() {
+    let f = Fixture::new(
         Seed::default()
             .session("brisk-finch")
             .session("amber-heron"),
@@ -157,7 +161,6 @@ fn bad_names_values_tasks_and_actors_leave_the_board_unchanged(backend: Backend)
         );
     }
     assert_eq!(f.rows(), before);
-}
 }
 
 // SurrealDB alone: reconstructs its historical schema-9 field definitions.

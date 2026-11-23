@@ -8,7 +8,7 @@
 
 use super::*;
 use crate::live::Live;
-use crate::store::statement::both;
+use crate::store::statement::Statement;
 use crate::store_fixture::{Backend, HOST, NOW};
 use crate::{NewTask, Opening, Schema};
 use serde_json::json;
@@ -31,15 +31,9 @@ fn ahead() -> Schema {
 /// A write that moves `sim/jump`'s priority to 4, then does `surreal` or `postgres`, in one
 /// transaction.
 fn then(surreal: &str, postgres: &str) -> Statement<'static> {
-    both(
-        format!(
-            "UPDATE type::record('task', 'sim/jump') SET priority = 4 RETURN NONE;\n{surreal}\n\
-             RETURN NONE;"
-        ),
-        Pg::script(format!(
-            "UPDATE task SET priority = 4 WHERE slug = 'sim/jump';\n{postgres}"
-        )),
-    )
+    Statement::from(Pg::script(format!(
+        "UPDATE task SET priority = 4 WHERE slug = 'sim/jump';\n{postgres}"
+    )))
 }
 
 /// Whether `table` is there, by a read of it, which a board without it refuses.
@@ -50,7 +44,7 @@ fn there(store: &Store, table: &str) -> bool {
 #[test]
 fn a_write_needing_a_step_the_board_lacks_is_refused_whole_until_the_board_takes_it() {
     for backend in BACKENDS {
-        let db = backend.database();
+        let db = database();
         let open = |how: &Opening| {
             Store::opening_on(
                 db.another(),

@@ -6,7 +6,7 @@
 //! above the deepest open one, never one for each task.
 
 use super::{EIGHT, K, O, capped, sessions, with};
-use crate::common::{Backend, Fixture, session, task};
+use crate::common::{Fixture, session, task};
 use serde_json::json;
 use symphony_board::SLOT_READS;
 use symphony_board::rows::TaskRow;
@@ -18,7 +18,7 @@ const DEEPEST: usize = 3;
 
 /// The board: [`DONE`] finished tasks under twenty orchestrators and forty workers, six of O's
 /// open, one more open three levels below a task of O's, and two ready to claim.
-fn big(backend: Backend) -> Fixture {
+fn big() -> Fixture {
     let mut seed = sessions();
     for n in 0..20 {
         seed = seed.session(&format!("orch-{n}"));
@@ -52,7 +52,7 @@ fn big(backend: Backend) -> Fixture {
     );
     seed = with(seed, "work/next", "ready", None, Some(O));
     seed = with(seed, "plain/next", "ready", None, Some(O));
-    Fixture::on(backend, seed.session_row(session("unused")))
+    Fixture::new(seed.session_row(session("unused")))
 }
 
 /// Whether a plan's line holds a subquery in a predicate, which EXPLAIN shows as `(Operator)`.

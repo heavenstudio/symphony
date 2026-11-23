@@ -14,7 +14,7 @@ const BACKENDS: [Backend; 2] = [Backend::SurrealDb, Backend::PostgreSql];
 
 /// A board of one task in each open status, a blocked one that came from in_progress, and a done
 /// and a cancelled one the activation leaves to the board's writers.
-fn board(backend: Backend) -> Fixture {
+fn board() -> Fixture {
     let mut blocked = task("sim/blocked", "blocked");
     blocked.id = 9;
     blocked.fields = BTreeMap::from([(
@@ -39,7 +39,7 @@ fn board(backend: Backend) -> Fixture {
         seed.task(&format!("sim/{status}"), status)
     })
     .task_row(blocked);
-    Fixture::on(backend, seed)
+    Fixture::new(seed)
 }
 
 fn mapped() -> Custom {
@@ -71,7 +71,7 @@ fn status(f: &Fixture, slug: &str) -> String {
 #[test]
 fn a_project_that_commits_no_workflow_writes_nothing() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let before = f.store.dump().unwrap();
         assert_eq!(
             f.store.follow_committed(&committed(None), &Host::local()),
@@ -84,7 +84,7 @@ fn a_project_that_commits_no_workflow_writes_nothing() {
 #[test]
 fn a_first_activation_places_every_open_task_and_records_why() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let two = mapped();
         let followed = f
             .store
@@ -186,7 +186,7 @@ to = { phase = "verify", state = "awaiting" }
 #[test]
 fn only_a_commit_that_changes_the_workflow_activates_it() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let first = at_commit(&mapped(), 'a');
         f.store.activate_workflow(&first, &Host::local()).unwrap();
         let active = Active {
@@ -265,7 +265,7 @@ fn only_a_commit_that_changes_the_workflow_activates_it() {
 #[test]
 fn a_reactivation_maps_a_removed_pair_and_its_resume_pairs() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let first = mapped();
         f.store.activate_workflow(&first, &Host::local()).unwrap();
         // The next commit folds build/blocked's resume target, build/working, into a new state.
@@ -306,7 +306,7 @@ fn a_reactivation_maps_a_removed_pair_and_its_resume_pairs() {
 #[test]
 fn an_activation_moves_the_boards_marker_and_a_board_read_carries_its_generation() {
     for backend in BACKENDS {
-        let f = Fixture::on(backend, Seed::default());
+        let f = Fixture::new(Seed::default());
         assert_eq!(f.store.board().unwrap().workflow_generation, None);
         assert_eq!(f.store.clock_board().unwrap().workflow_generation, None);
         let marker = f.store.marker().unwrap();
@@ -329,7 +329,7 @@ fn an_activation_moves_the_boards_marker_and_a_board_read_carries_its_generation
 #[test]
 fn a_return_moves_the_boards_marker_and_a_board_read_carries_no_generation() {
     for backend in BACKENDS {
-        let f = Fixture::on(backend, Seed::default());
+        let f = Fixture::new(Seed::default());
         f.store
             .activate_workflow(&mapped(), &Host::local())
             .unwrap();
@@ -358,7 +358,7 @@ fn a_return_moves_the_boards_marker_and_a_board_read_carries_no_generation() {
 #[test]
 fn an_activation_refused_leaves_the_board_and_the_previous_workflow_as_they_were() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let before = f.store.dump().unwrap();
         let unmapped = custom(TWO);
         let why = refused(
@@ -397,7 +397,7 @@ fn events(f: &Fixture) -> u64 {
 #[test]
 fn a_board_returns_to_its_own_writers_and_back_with_its_history_kept() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let two = mapped();
         f.store.activate_workflow(&two, &Host::local()).unwrap();
         assert_eq!(events(&f), 7);
@@ -502,7 +502,7 @@ fn a_board_returns_to_its_own_writers_and_back_with_its_history_kept() {
         assert_eq!(f.store.dump().unwrap(), returned, "{backend:?}");
         // A copy of the returned board is the board, on either database.
         for other in BACKENDS {
-            let copied = Fixture::on(
+            let copied = Fixture::new(
                 other,
                 Seed {
                     dump: returned.clone(),
@@ -567,7 +567,7 @@ fn a_board_returns_to_its_own_writers_and_back_with_its_history_kept() {
 #[test]
 fn a_task_closed_after_a_return_is_reopened_under_the_next_workflow_past_its_retired_revision() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let held = custom(&format!("{TWO}{MAPPED}{HELD}"));
         f.store.activate_workflow(&held, &Host::local()).unwrap();
         f.store
@@ -630,7 +630,7 @@ fn owner_takes(f: &Fixture, slug: &str, edge: &str) {
 #[test]
 fn a_task_blocked_under_the_workflow_returns_parked_naming_where_it_came_from() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         f.store
             .activate_workflow(&mapped(), &Host::local())
             .unwrap();
@@ -661,7 +661,7 @@ fn a_task_blocked_under_the_workflow_returns_parked_naming_where_it_came_from() 
 #[test]
 fn a_block_record_a_task_left_under_the_workflow_does_not_come_back_on_the_return() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         // Blocked from ready on sim/review by the board's writers before the workflow.
         (f.store.raw().row("task", "sim/ready"))
             .set(json!({
@@ -717,7 +717,7 @@ fn a_block_record_a_task_left_under_the_workflow_does_not_come_back_on_the_retur
 #[test]
 fn a_return_refused_leaves_the_custom_generation_active_and_the_board_as_it_was() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         f.store
             .activate_workflow(&mapped(), &Host::local())
             .unwrap();
@@ -772,7 +772,7 @@ fn a_return_refused_leaves_the_custom_generation_active_and_the_board_as_it_was(
 #[test]
 fn a_live_holder_returns_with_its_work_or_refuses_the_return() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let worker = f.session("worker");
         f.store.claim("sim/in_progress", &worker).unwrap();
         f.store
@@ -840,7 +840,7 @@ fn a_live_holder_returns_with_its_work_or_refuses_the_return() {
 #[test]
 fn a_plan_refused_on_a_read_the_board_moved_on_from_is_planned_again() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         f.store
             .activate_workflow(&mapped(), &Host::local())
             .unwrap();
@@ -861,7 +861,7 @@ fn a_plan_refused_on_a_read_the_board_moved_on_from_is_planned_again() {
 #[test]
 fn of_an_admission_and_a_return_at_once_one_wins_and_the_board_is_whole() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         f.store
             .activate_workflow(&mapped(), &Host::local())
             .unwrap();
@@ -949,7 +949,7 @@ fn of_an_admission_and_a_return_at_once_one_wins_and_the_board_is_whole() {
 #[test]
 fn a_live_holder_refuses_the_activation_until_its_work_drains() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let worker = f.session("worker");
         f.store.claim("sim/ready", &worker).unwrap();
         let before = f.store.dump().unwrap();
@@ -972,12 +972,12 @@ fn a_live_holder_refuses_the_activation_until_its_work_drains() {
 #[test]
 fn the_activation_write_is_refused_as_stale_after_another_write_and_planned_again() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let two = mapped();
         let write = |vars: Value| {
             f.store.retrying(|| {
                 f.store
-                    .transact::<Value>(both(sql::ACTIVATE, pg::activate()), vars.clone())
+                    .transact::<Value>(Statement::from(pg::activate()), vars.clone())
             })
         };
         let empty = json!({
@@ -1084,7 +1084,7 @@ fn the_activation_write_is_refused_as_stale_after_another_write_and_planned_agai
 #[test]
 fn a_lost_holder_seen_between_the_plan_and_its_write_refuses_the_activation() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let worker = f.session("worker");
         f.store.claim("sim/ready", &worker).unwrap();
         f.advance(LIVE_SECONDS + STALE_SECONDS + 1.0);
@@ -1115,7 +1115,7 @@ fn a_lost_holder_seen_between_the_plan_and_its_write_refuses_the_activation() {
 #[test]
 fn a_task_filed_between_the_plan_and_its_write_is_placed_by_the_next_plan() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let filer = f.other();
         let late = f.late(move || {
             filer
@@ -1150,7 +1150,7 @@ fn a_task_placed_between_a_later_plan_and_its_write_is_moved_by_the_next_plan() 
             .task("sim/late", "review")
             .role("sim/late", "birch", "reviewer")
             .role("sim/late", "orch", "orchestrator");
-        let f = Fixture::on(backend, seed);
+        let f = Fixture::new(seed);
         (f.store.verdict("sim/late", "birch", "approve", "good")).unwrap();
         let first = custom(&format!("{TWO}{MAPPED}{HELD}"));
         f.store.activate_workflow(&first, &Host::local()).unwrap();
@@ -1217,7 +1217,7 @@ fn a_task_placed_between_a_later_plan_and_its_write_is_moved_by_the_next_plan() 
 #[test]
 fn a_commit_of_the_active_ones_file_is_unchanged_by_its_blob_alone() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let first = mapped();
         f.store.activate_workflow(&first, &Host::local()).unwrap();
         let active = f.store.workflow_active().unwrap().unwrap();
@@ -1260,17 +1260,14 @@ fn a_commit_of_the_active_ones_file_is_unchanged_by_its_blob_alone() {
 #[test]
 fn the_return_write_is_refused_as_stale_after_another_write() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         f.store
             .activate_workflow(&mapped(), &Host::local())
             .unwrap();
         let before = f.store.dump().unwrap();
         let back = |vars: Value| {
             f.store.retrying(|| {
-                (f.store).transact::<Value>(
-                    both(sql::RETURN_DEFAULT, pg::return_default()),
-                    vars.clone(),
-                )
+                (f.store).transact::<Value>(Statement::from(pg::return_default()), vars.clone())
             })
         };
         let empty = json!({
@@ -1373,7 +1370,7 @@ fn the_return_write_is_refused_as_stale_after_another_write() {
             "activation": {}, "moved": [], "kept": [], "seen": [], "at": 1.0,
         });
         let activate = f.store.retrying(|| {
-            (f.store).transact::<Value>(both(sql::ACTIVATE, pg::activate()), taken.clone())
+            (f.store).transact::<Value>(Statement::from(pg::activate()), taken.clone())
         });
         assert_eq!(
             refused(activate),
@@ -1386,13 +1383,13 @@ fn the_return_write_is_refused_as_stale_after_another_write() {
 #[test]
 fn a_copy_of_an_activated_board_keeps_its_workflow() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         f.store
             .activate_workflow(&mapped(), &Host::local())
             .unwrap();
         let dump = f.store.dump().unwrap();
         assert!(dump.workflow.len() >= 10, "{}", dump.workflow.len());
-        let copied = Fixture::on(backend, Seed { dump: dump.clone() });
+        let copied = Fixture::new(Seed { dump: dump.clone() });
         assert_eq!(copied.store.dump().unwrap(), dump);
         assert_eq!(
             copied.store.workflow_active().unwrap(),
@@ -1404,7 +1401,7 @@ fn a_copy_of_an_activated_board_keeps_its_workflow() {
 #[test]
 fn the_board_follows_the_workflow_its_default_branch_commits_and_nothing_else() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let repo = Scratch::new("follow");
         // A repository with no commit yet commits no workflow, and says nothing.
         assert_eq!(follow(&f.store, &repo.0), Ok(Followed::Legacy));

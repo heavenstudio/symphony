@@ -1,5 +1,4 @@
 //! Heartbeats invalidate cached health without writing the structural change counter.
-use crate::common::Backend;
 
 use super::common::{Fixture, GONE, Seed, refused};
 use super::gate::Gate;
@@ -18,9 +17,9 @@ fn markers(f: &Fixture) -> (u64, u64) {
     (structure, f.store.marker().unwrap())
 }
 
-on_both! {
-fn beats_refresh_cached_health_without_the_shared_counter_board_write(backend: Backend) {
-    let f = Fixture::on(backend,
+#[test]
+fn beats_refresh_cached_health_without_the_shared_counter_board_write() {
+    let f = Fixture::new(
         Seed::default()
             .session("worker")
             .task("tools/held", "in_progress")
@@ -52,7 +51,10 @@ fn beats_refresh_cached_health_without_the_shared_counter_board_write(backend: B
         (f.store.raw().row("counter", "board"))
             .field("last")
             .unwrap(),
-        match backend { Backend::SurrealDb => json!(i64::MIN), Backend::PostgreSql => serde_json::Value::Null },
+        match backend {
+            Backend::SurrealDb => json!(i64::MIN),
+            Backend::PostgreSql => serde_json::Value::Null,
+        },
         "a beat neither rewrites SurrealDB's retired scalar nor creates one on PostgreSQL"
     );
     let board = reader.clock_board().unwrap();
@@ -87,12 +89,11 @@ fn beats_refresh_cached_health_without_the_shared_counter_board_write(backend: B
     );
     assert_eq!(reader.clock_board().unwrap(), board);
 }
-}
 
-on_both! {
-fn deleting_and_recreating_sessions_never_reuses_a_cached_marker(backend: Backend) {
+#[test]
+fn deleting_and_recreating_sessions_never_reuses_a_cached_marker() {
     let seed = crate::common::session("worker");
-    let f = Fixture::on(backend, crate::common::Seed::default());
+    let f = Fixture::new(crate::common::Seed::default());
     let reader = f.other();
     assert_eq!(markers(&f), (0, 0));
     let empty = reader.clock_board().unwrap();
@@ -101,7 +102,11 @@ fn deleting_and_recreating_sessions_never_reuses_a_cached_marker(backend: Backen
         "sessions on an empty board: {:?}",
         empty.sessions
     );
-    f.store.raw().row("session", "worker").put(json!(seed)).unwrap();
+    f.store
+        .raw()
+        .row("session", "worker")
+        .put(json!(seed))
+        .unwrap();
     let initial = reader.clock_board().unwrap();
     let before = markers(&f);
     f.store.raw().row("session", "worker").delete().unwrap();
@@ -113,7 +118,11 @@ fn deleting_and_recreating_sessions_never_reuses_a_cached_marker(backend: Backen
         "sessions after deletion: {:?}",
         after_delete.sessions
     );
-    f.store.raw().row("session", "worker").put(json!(seed)).unwrap();
+    f.store
+        .raw()
+        .row("session", "worker")
+        .put(json!(seed))
+        .unwrap();
     let recreated = markers(&f);
     assert_eq!(recreated, (deleted.0, deleted.1 + 1));
     assert_eq!(reader.clock_board().unwrap(), initial);
@@ -122,7 +131,6 @@ fn deleting_and_recreating_sessions_never_reuses_a_cached_marker(backend: Backen
         reader.clock_board().unwrap().sessions[0].health,
         Health::Left
     );
-}
 }
 
 // SurrealDB alone: reconstructs the pre-shard schema-14 session marker.

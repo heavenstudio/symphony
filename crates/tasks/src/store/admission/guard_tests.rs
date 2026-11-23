@@ -22,8 +22,8 @@ fn guarded_two(seed: u8) -> Custom {
 
 /// The guarded board with sim/a claimed and submitted by amber: at verify/awaiting, its workflow
 /// revision 3, waiting on the owner's guarded acceptance.
-fn awaiting(backend: Backend) -> Fixture {
-    let f = board(backend, &guarded_two(7));
+fn awaiting() -> Fixture {
+    let f = board(&guarded_two(7));
     let amber = agent_session("amber");
     take(&f.store, "sim/a", &amber, "claim").unwrap();
     take(&f.store, "sim/a", &amber, "submit").unwrap();
@@ -102,7 +102,7 @@ fn accepted_state(f: &Fixture) -> crate::workflow::guard::Accepted {
 #[test]
 fn a_guarded_acceptance_is_admitted_only_with_a_current_attestation_and_recorded() {
     for backend in BACKENDS {
-        let f = awaiting(backend);
+        let f = awaiting();
         let request = accept(&f, "accept");
         let unobserved = refused(applied(&f.store, &request, &[]));
         assert!(
@@ -173,7 +173,7 @@ fn a_guarded_acceptance_is_admitted_only_with_a_current_attestation_and_recorded
 #[test]
 fn an_unguarded_transition_dispatches_on_its_position_alone() {
     for backend in BACKENDS {
-        let f = awaiting(backend);
+        let f = awaiting();
         assert_eq!(f.store.revalidate_dispatch("sim/a", 3, &[]), Ok(Vec::new()));
         assert!(refused(f.store.revalidate_dispatch("sim/a", 2, &[])).starts_with("stale_task:"));
     }
@@ -182,7 +182,7 @@ fn an_unguarded_transition_dispatches_on_its_position_alone() {
 #[test]
 fn a_decision_revoked_since_the_attestation_refuses_it_and_stops_its_dispatch() {
     for backend in BACKENDS {
-        let f = awaiting(backend);
+        let f = awaiting();
         observe(&f.store, 3, None).unwrap();
         let before = attested(&f, "sim/a", 3);
         // The ledger revokes: its authority reports the next generation.
@@ -269,7 +269,7 @@ fn a_decision_revoked_since_the_attestation_refuses_it_and_stops_its_dispatch() 
 #[test]
 fn a_revocation_between_the_read_and_the_write_makes_the_admission_decide_again() {
     for backend in BACKENDS {
-        let f = awaiting(backend);
+        let f = awaiting();
         observe(&f.store, 3, None).unwrap();
         let signed = attested(&f, "sim/a", 3);
         let request = accept(&f, "accept");
@@ -304,7 +304,7 @@ fn a_revocation_between_the_read_and_the_write_makes_the_admission_decide_again(
 #[test]
 fn an_admission_between_an_observations_read_and_write_makes_it_decide_again() {
     for backend in BACKENDS {
-        let f = awaiting(backend);
+        let f = awaiting();
         observe(&f.store, 3, None).unwrap();
         let signed = attested(&f, "sim/a", 3);
         let request = accept(&f, "accept");
@@ -342,7 +342,7 @@ fn an_admission_between_an_observations_read_and_write_makes_it_decide_again() {
 #[test]
 fn a_revocation_racing_an_admission_never_lets_it_land_on_the_revoked_generation() {
     for backend in BACKENDS {
-        let f = awaiting(backend);
+        let f = awaiting();
         observe(&f.store, 3, None).unwrap();
         let signed = attested(&f, "sim/a", 3);
         let request = accept(&f, "accept");
@@ -393,7 +393,7 @@ fn a_revocation_racing_an_admission_never_lets_it_land_on_the_revoked_generation
 fn two_first_observations_racing_never_let_one_overwrite_the_other() {
     for backend in BACKENDS {
         for round in 0..6 {
-            let f = board(backend, &guarded_two(7));
+            let f = board(&guarded_two(7));
             let gate = Arc::new(Barrier::new(2));
             let observers: Vec<_> = ["s3", "x3"]
                 .into_iter()
@@ -473,7 +473,7 @@ fn a_first_observation_meeting_another_before_its_write_decides_again() {
 #[test]
 fn an_observation_moves_the_authority_only_forward_and_only_by_its_committed_key() {
     for backend in BACKENDS {
-        let f = board(backend, &guarded_two(7));
+        let f = board(&guarded_two(7));
         let first = observation("e1", 3, None);
         let foreign = refused(f.store.observe_authority(&sign_observation(8, &first)));
         assert!(foreign.contains("committed key"), "{backend:?}: {foreign}");
@@ -511,7 +511,7 @@ fn an_observation_moves_the_authority_only_forward_and_only_by_its_committed_key
         };
         assert_eq!((next.epoch.as_str(), next.generation), ("e2", 1));
 
-        let none = Fixture::on(backend, Seed::default());
+        let none = Fixture::new(Seed::default());
         assert!(refused(observe(&none.store, 3, None)).contains("no workflow is active"));
     }
 }
@@ -519,7 +519,7 @@ fn an_observation_moves_the_authority_only_forward_and_only_by_its_committed_key
 #[test]
 fn two_decisions_at_one_generation_hold_every_admission_until_a_later_state() {
     for backend in BACKENDS {
-        let f = awaiting(backend);
+        let f = awaiting();
         observe(&f.store, 3, None).unwrap();
         let mut other = observation("e1", 3, Some(("e1", 2)));
         other.state = "forked".into();
@@ -547,7 +547,7 @@ fn two_decisions_at_one_generation_hold_every_admission_until_a_later_state() {
 #[test]
 fn another_projects_attestation_never_passes_on_this_board() {
     for backend in BACKENDS {
-        let f = awaiting(backend);
+        let f = awaiting();
         observe(&f.store, 3, None).unwrap();
         // The same authority's word for another project, sent to this board as its own.
         let mut theirs = attestation(&f, "sim/a", 3);
@@ -594,7 +594,7 @@ fn from_another_commit(mut custom: Custom) -> Custom {
 #[test]
 fn a_changed_key_is_a_new_activation_and_the_old_keys_word_stops() {
     for backend in BACKENDS {
-        let f = awaiting(backend);
+        let f = awaiting();
         observe(&f.store, 3, None).unwrap();
         let old = attested(&f, "sim/a", 3);
         // The same words from another commit are the workflow active already.
@@ -633,7 +633,7 @@ fn a_changed_key_is_a_new_activation_and_the_old_keys_word_stops() {
 
 #[test]
 fn a_workflow_committing_an_authority_and_naming_no_project_never_activates() {
-    let f = Fixture::on(Backend::SurrealDb, Seed::default());
+    let f = Fixture::new(Backend::SurrealDb, Seed::default());
     let unbound = Custom {
         project: None,
         ..guarded_two(7)
@@ -646,10 +646,7 @@ fn a_workflow_committing_an_authority_and_naming_no_project_never_activates() {
 #[test]
 fn an_edge_two_authorities_guard_is_met_by_each_ones_own_word_and_fenced_on_both() {
     for backend in BACKENDS {
-        let f = board(
-            backend,
-            &custom(&format!("{}{MAPPED}", two_authorities_text())),
-        );
+        let f = board(&custom(&format!("{}{MAPPED}", two_authorities_text())));
         let amber = agent_session("amber");
         take(&f.store, "sim/a", &amber, "claim").unwrap();
         take(&f.store, "sim/a", &amber, "submit").unwrap();
@@ -716,7 +713,7 @@ fn an_edge_two_authorities_guard_is_met_by_each_ones_own_word_and_fenced_on_both
 #[test]
 fn a_transition_admitted_under_an_older_activation_is_not_dispatched_under_a_newer_one() {
     for backend in BACKENDS {
-        let f = awaiting(backend);
+        let f = awaiting();
         observe(&f.store, 3, None).unwrap();
         let request = accept(&f, "accept");
         applied(&f.store, &request, &[attested(&f, "sim/a", 3)]).unwrap();
@@ -741,12 +738,12 @@ fn a_transition_admitted_under_an_older_activation_is_not_dispatched_under_a_new
 #[test]
 fn a_copy_carries_admissions_and_leaves_the_authorities_state_behind() {
     for backend in BACKENDS {
-        let f = awaiting(backend);
+        let f = awaiting();
         observe(&f.store, 3, None).unwrap();
         applied(&f.store, &accept(&f, "accept"), &[attested(&f, "sim/a", 3)]).unwrap();
         let dump = f.store.dump().unwrap();
         assert!(dump.workflow.iter().any(|row| row.kind == "authority"));
-        let copy = Fixture::on(backend, Seed::default());
+        let copy = Fixture::new(Seed::default());
         copy.store.copy(&dump).unwrap();
         assert!(copy.store.workflow_admission("sim/a", 4).unwrap().is_some());
         let authorities = copy.store.workflow_authorities().unwrap();

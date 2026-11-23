@@ -4,8 +4,7 @@
 //! only once it moved.
 
 use super::postgres::stamp as pg;
-use super::statement::both;
-use super::surreal::stamp as sql;
+use super::statement::Statement;
 use super::{Error, Store};
 use serde_json::{Value, json};
 
@@ -25,7 +24,7 @@ impl Store {
     /// whose reservation lapsed from the one before.
     pub fn task_stamp(&self, slug: &str) -> Result<Option<TaskStamp>, Error> {
         let read: Value =
-            self.retrying(|| self.read(both(sql::READ, pg::read()), json!({"slug": slug})))?;
+            self.retrying(|| self.read(Statement::from(pg::read()), json!({"slug": slug})))?;
         let known = read.get("task").is_some_and(|task| !task.is_null());
         Ok(known.then_some(TaskStamp(read)))
     }

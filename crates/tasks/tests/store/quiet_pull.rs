@@ -1,15 +1,14 @@
 //! Durable PULL delivery and unanswered-post identity across fresh dispatchers.
-use crate::common::Backend;
 
 use super::*;
 
 #[path = "pull_recovery.rs"]
 mod recovery;
 
-on_both! {
-fn the_first_pull_is_delivered_once_even_when_its_lists_are_empty(backend: Backend) {
+#[test]
+fn the_first_pull_is_delivered_once_even_when_its_lists_are_empty() {
     for existing_gap in [false, true] {
-        let f = Fixture::on(backend, crate::common::Seed::default());
+        let f = Fixture::new(crate::common::Seed::default());
         let orch = f.session("orchestrator");
         let sender = f.session("worker");
         if existing_gap {
@@ -51,11 +50,10 @@ fn the_first_pull_is_delivered_once_even_when_its_lists_are_empty(backend: Backe
         assert!(o.drain(&f, &sender, &orch).is_empty());
     }
 }
-}
 
-on_both! {
-fn native_unanswered_lines_survive_fresh_dispatchers_without_repeating_a_post(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn native_unanswered_lines_survive_fresh_dispatchers_without_repeating_a_post() {
+    let f = Fixture::new(crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let worker = f.session("worker");
     let barrier = f.session("worker");
@@ -118,7 +116,6 @@ fn native_unanswered_lines_survive_fresh_dispatchers_without_repeating_a_post(ba
         .collect();
     assert_eq!(pending.len(), 1, "{received:?}");
     assert!(pending[0].contains(&format!("post #{} —", next.id)));
-}
 }
 
 /// A launch record no reader decodes, on the task the scan asks about, which fails the scan's read

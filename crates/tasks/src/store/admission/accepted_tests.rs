@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 /// A board with sessions amber, birch and orch, sim/up, sim/down (depending on sim/up) and
 /// sim/late (depending on sim/old, closed before the activation), and the workflow whose claim
 /// takes the accepted outputs of what a task depends on activated.
-fn board(backend: Backend) -> Fixture {
+fn board() -> Fixture {
     let seed = Seed::default()
         .session("amber")
         .session("birch")
@@ -27,7 +27,7 @@ fn board(backend: Backend) -> Fixture {
         .role("sim/late", "orch", "orchestrator")
         .link("sim/down", "dep", "sim/up")
         .link("sim/late", "dep", "sim/old");
-    let f = Fixture::on(backend, seed);
+    let f = Fixture::new(seed);
     let workflow = custom(&format!("{}{MAPPED}", outputs()));
     f.store
         .activate_workflow(&workflow, &Host::local())
@@ -103,7 +103,7 @@ fn takes(output: Option<&str>) -> Outputs {
 #[test]
 fn a_dependant_takes_the_output_standing_and_none_superseded_until_another_is_accepted() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let (birch, owner) = (agent_session("birch"), local_owner());
         let claim =
             |named: &[(&str, &str)]| refused(taking(&f.store, "sim/down", &birch, "claim", named));
@@ -201,7 +201,7 @@ fn a_dependant_takes_the_output_standing_and_none_superseded_until_another_is_ac
 #[test]
 fn a_supersession_between_an_admissions_read_and_its_write_wins_and_one_after_it_loses() {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let birch = agent_session("birch");
         let output = accepted(&f.store, "sim/up");
         let named = sent(
@@ -248,7 +248,7 @@ fn a_supersession_between_an_admissions_read_and_its_write_wins_and_one_after_it
 fn an_activation_keeps_an_output_where_it_stands_and_supersedes_it_where_dependants_go_on_no_more()
 {
     for backend in BACKENDS {
-        let f = board(backend);
+        let f = board();
         let output = accepted(&f.store, "sim/up");
         let activated = |text: String| {
             let workflow = custom(&format!("{text}{MAPPED}"));

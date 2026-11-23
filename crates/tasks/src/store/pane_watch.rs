@@ -10,8 +10,7 @@ use crate::cli::attach::{self, PaneWatch};
 use crate::lock::Recovered as _;
 use crate::rows::TaskSessionRow;
 use crate::store::postgres::pane_watch as pg;
-use crate::store::statement::both;
-use crate::store::surreal::pane_watch as sql;
+use crate::store::statement::Statement;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::cell::OnceCell;
@@ -127,7 +126,7 @@ impl Store {
         // Both looks judge the one sample at the moment of the first.
         let now = self.now();
         let queued: Vec<Queued> =
-            self.retrying(|| self.read(both(sql::QUEUED, pg::queued()), json!({"handle":handle})))?;
+            self.retrying(|| self.read(Statement::from(pg::queued()), json!({"handle":handle})))?;
         let plan = look(
             board,
             handle,
@@ -142,7 +141,7 @@ impl Store {
         }
         self.with_callback_lease(handle, collect, |revision| {
             let saved: Saved = self.retrying(|| self.read(
-                both(sql::SAVED, pg::saved()),
+                Statement::from(pg::saved()),
                 json!({"handle":handle}),
             ))?;
             // A role or launch can move while the first look waits for its lease.
@@ -155,7 +154,7 @@ impl Store {
                 Event::line(key, handle, text.clone(), session_task(&board, handle), None)
             }).collect();
             self.retrying(|| self.transact::<Value>(
-                both(sql::RECORD, pg::record()),
+                Statement::from(pg::record()),
                 json!({"handle":handle, "events":events, "after":plan.after, "retired":plan.retired}),
             ))?;
             self.deliver_pending(handle, callback, revision, send)

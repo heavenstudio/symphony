@@ -8,7 +8,7 @@
 //! A line's time is the machine's, never the store's pinned clock, so these tests age a line by
 //! moving its `seen` back by hand.
 
-use crate::common::{Backend, HOST, NOW, client, refused};
+use crate::common::{HOST, NOW, client, database, refused};
 use serde_json::json;
 use symphony_board::Database;
 use symphony_board::sweep::trigger::now;
@@ -80,9 +80,9 @@ fn newer() -> Schema {
     Schema::this_build().then("DEFINE TABLE IF NOT EXISTS fixture_next SCHEMALESS;")
 }
 
-on_both! {
-fn a_writer_is_recorded_as_it_opens_and_its_last_seen_moves_once_an_hour_has_gone(backend: Backend) {
-    let client = backend.database();
+#[test]
+fn a_writer_is_recorded_as_it_opens_and_its_last_seen_moves_once_an_hour_has_gone() {
+    let client = database();
     let start = now();
     opened(&client, &Opening::write().by(gate()), HOST).unwrap();
     let first = line(&client, "gate-review", HOST);
@@ -132,7 +132,6 @@ fn a_writer_is_recorded_as_it_opens_and_its_last_seen_moves_once_an_hour_has_gon
     opened(&client, &Opening::read().by(reader), HOST).unwrap();
     assert_eq!(lines(&client), [studio, moved]);
 }
-}
 
 /// A build from before the record, which arrived with schema 18 (`store/writers.rs`'s `SINCE`):
 /// this build's tables, the writers' among them, at the version below it.
@@ -144,9 +143,9 @@ fn before_the_record() -> Schema {
     older
 }
 
-on_both! {
-fn a_build_from_before_the_record_writes_no_line_and_the_build_that_moves_its_board_does(backend: Backend) {
-    let client = backend.database();
+#[test]
+fn a_build_from_before_the_record_writes_no_line_and_the_build_that_moves_its_board_does() {
+    let client = database();
     let older = Program::named("tasks", "/opt/old/tasks");
     opened(
         &client,
@@ -164,7 +163,6 @@ fn a_build_from_before_the_record_writes_no_line_and_the_build_that_moves_its_bo
         .map(|w| (w.program, w.schema))
         .collect();
     assert_eq!(recorded, [("gate-review".to_string(), this())]);
-}
 }
 
 /// A board at this build, its gate's line last seen `ago` before now, and the line of the test's own

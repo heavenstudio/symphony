@@ -3,10 +3,9 @@
 use super::red::{filing, named};
 use super::{
     BEFORE_WORK, Error, NewTask, OWNER, REFUSED, Store, Task, no_task, plain_slug, refused, repr,
-    sql,
 };
 use crate::store::postgres::{Pg, work as pg};
-use crate::store::statement::both;
+use crate::store::statement::Statement;
 use serde_json::{Value, json};
 use std::fmt::Write as _;
 
@@ -27,7 +26,7 @@ impl Store {
     /// at most: none when the save never reached the board, one when it did, and two when the
     /// receipt does not say which task it made.
     pub fn owner_saved(&self, receipt: &str) -> Result<Vec<String>, Error> {
-        let read = || both(sql::OWNER_SAVED, pg::OWNER_SAVED);
+        let read = || Statement::from(pg::OWNER_SAVED);
         self.retrying(|| self.read(read(), json!({"receipt": receipt})))
     }
 
@@ -120,14 +119,14 @@ impl Store {
             let _ = write!(said, " for {assignee}");
         }
         let file_as = |placing: Option<crate::workflow::Transition>| {
-            let creating = sql::Creating {
+            let creating = pg::Creating {
                 acts: new.by != OWNER,
                 receipt: receipt.is_some(),
                 red: red.is_some(),
                 arm: arm.is_some(),
                 placed: placing.is_some(),
             };
-            let body = || both(sql::create(&creating), Pg::script(pg::create(&creating))).posting();
+            let body = || Statement::from(Pg::script(pg::create(&creating))).posting();
             let mut vars = self.acting(
                 &new.by,
                 (self.clock)(),
@@ -161,5 +160,5 @@ impl Store {
 }
 
 /// The refusal of a filing written as the board's own while a custom workflow is active, which
-/// files it again at the workflow's initial pair (`sql::UNPLACED`).
+/// files it again at the workflow's initial pair (`postgres::work::create`).
 const UNPLACED: &str = "a custom workflow is active, which starts the task at its initial pair";
