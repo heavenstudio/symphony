@@ -59,6 +59,7 @@ pub mod gates;
 pub mod git;
 pub mod health;
 mod json_object;
+pub mod kind;
 pub mod land;
 pub mod launch;
 pub mod limits;

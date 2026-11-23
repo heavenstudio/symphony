@@ -28,6 +28,8 @@ mod given;
 pub(super) use given::Pass;
 pub use given::{Filed, Given};
 
+mod kind;
+
 mod moves;
 use moves::Moving;
 
@@ -110,6 +112,9 @@ pub struct NewTask {
     /// What is red, for a task filed to fix a red that stops every landing ([`crate::red`]): it
     /// and the work under it take no orchestrator slot.
     pub red: Option<String>,
+    /// What its work is, one of [`crate::kind::KINDS`]; none leaves it without one, or `red` for a
+    /// task filed with a red mark ([`crate::kind`]).
+    pub kind: Option<String>,
 }
 
 impl Default for NewTask {
@@ -127,6 +132,7 @@ impl Default for NewTask {
             assignee: None,
             instruction: false,
             red: None,
+            kind: None,
         }
     }
 }

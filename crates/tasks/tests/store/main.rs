@@ -75,6 +75,7 @@ mod health;
 mod held_settle;
 mod held_stream;
 mod keyed;
+mod kind;
 mod launches;
 mod lost_observers;
 mod low_volume;

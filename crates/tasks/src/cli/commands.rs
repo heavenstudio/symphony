@@ -229,6 +229,14 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 })?;
             c.say(&format!("{} is p{}", t.slug, t.priority));
         }
+        "kind" => {
+            let t = store.set_kind(&c.arg("slug"), &c.arg("kind"), &c.actor()?)?;
+            c.say(&format!(
+                "{} is {}",
+                t.slug,
+                t.kind().unwrap_or("of no kind")
+            ));
+        }
         "parent" => {
             if p.flag("none") == p.get("parent").is_some() {
                 return Err(Stop::Refused("name the parent, or pass --none".into()));
@@ -763,6 +771,7 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
         instruction: p.flag("instruction"),
         // Reds are marked by what files them (`tasks api` `create`); work under one is red work.
         red: None,
+        kind: p.get("kind").map(str::to_string),
         // No task is filed as a fast fix any more: what it needs to land is its assessor's.
     };
     let t = match p.get("arm") {
@@ -989,6 +998,9 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
     }
     if let Some(arm) = task.arm() {
         c.say(&format!("  arm: {arm}"));
+    }
+    if let Some(kind) = task.kind() {
+        c.say(&format!("  kind: {kind}"));
     }
     c.say(&format!("  {}", stages::summary_line(&stages)));
     for line in tally.lines() {
