@@ -2,8 +2,8 @@
 //! words become, and what a folder that is no checkout answers.
 
 use super::{
-    BRANCHES, Delivery, QueuedPublication, Save, State, flat, joining, kept, led, note, saves,
-    sequence_of, shown, whose,
+    BRANCHES, Batched, Delivery, QueuedPublication, Save, State, applying, flat, joining, kept,
+    led, note, saves, sequence_of, shown, whose,
 };
 use crate::test_tree::Tree;
 use std::path::Path;
@@ -243,4 +243,60 @@ fn an_entry_names_the_saves_that_went_with_it_and_nothing_with_none() {
     let written = serde_json::to_string(&leading).unwrap();
     assert!(written.contains(r#""members":[4,9]"#), "{written}");
     assert_eq!(serde_json::from_str::<Delivery>(&written).unwrap(), leading);
+}
+
+/// `args` run by git in `tree`, its output.
+fn git(tree: &Tree, args: &[&str]) -> String {
+    let done = symphony_board::sys::output(
+        symphony_board::sys::Command::new("git")
+            .args(args)
+            .current_dir(&tree.root)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example.com")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example.com"),
+    )
+    .unwrap();
+    assert!(done.status.success(), "{done:?}");
+    String::from_utf8(done.stdout).unwrap().trim().to_string()
+}
+
+fn edit(rel: &str, base: &str, new: &str) -> crate::commit::Edit {
+    crate::commit::Edit {
+        rel: rel.into(),
+        base: base.into(),
+        new: new.into(),
+    }
+}
+
+#[test]
+fn a_save_that_no_longer_applies_after_those_before_it_is_left_out_with_the_rest_of_its_page() {
+    let tree = repository();
+    tree.write("docs/a.md", "one\n");
+    tree.write("docs/b.md", "x\n");
+    git(&tree, &["add", "docs"]);
+    git(&tree, &["commit", "-qm", "docs"]);
+    let parent = git(&tree, &["rev-parse", "HEAD"]);
+    let first = edit("docs/b.md", "x\n", "x\ny\n");
+    // Written against a line main no longer has, and the one written after it.
+    let stale = edit("docs/a.md", "old\n", "new\n");
+    let after = edit("docs/a.md", "new\n", "new\nmore\n");
+    let next = edit("docs/b.md", "x\ny\n", "x\ny\nz\n");
+    let batch =
+        [(1, &first), (2, &stale), (3, &after), (4, &next)].map(|(sequence, edit)| Batched {
+            sequence,
+            edit,
+            by: "fox-1",
+        });
+    let (edits, members) = applying(&tree.root, &parent, &batch).unwrap();
+    assert_eq!(members, [4]);
+    let files: Vec<&str> = edits.iter().map(|edit| edit.new.as_str()).collect();
+    assert_eq!(files, ["x\ny\n", "x\ny\nz\n"]);
+    // The first save's own failure is the batch's.
+    let batch = [Batched {
+        sequence: 2,
+        edit: &stale,
+        by: "fox-1",
+    }];
+    assert!(applying(&tree.root, &parent, &batch).is_err());
 }
