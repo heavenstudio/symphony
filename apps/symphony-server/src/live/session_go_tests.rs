@@ -668,8 +668,9 @@ fn the_settings_read_holds_the_stores_values_read_on_the_board_the_hub_holds() {
 }
 
 /// A store the board failed the settings read on is forgotten, as every reader of the store the
-/// page reads share forgets it ([`Hub::reader_failed`]): that read says the store unread and holds
-/// the project file's values, and the next opens the board anew, where its server is now.
+/// page reads share forgets it ([`Hub::reader_failed`]): that read, whose reads of the board are
+/// all made on the one store, says the store unread and holds the project file's values, and the
+/// next opens the board anew, where its server is now.
 #[test]
 fn a_store_the_board_failed_the_settings_read_on_is_dropped_and_the_next_read_opens_the_board_anew()
 {
@@ -694,6 +695,11 @@ fn a_store_the_board_failed_the_settings_read_on_is_dropped_and_the_next_read_op
                 && problem.ends_with("); none of it is read, the files' settings hold")
         }),
         "{unread:?}"
+    );
+    assert_eq!(
+        s.opened.load(Ordering::SeqCst),
+        1,
+        "the failed read opened no store but the one it failed on"
     );
     for _ in 0..2 {
         let (status, page) = s.ask(HERE, "GET", symphony_api::SETTINGS_PATH, None);

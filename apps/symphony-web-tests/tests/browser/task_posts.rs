@@ -9,6 +9,14 @@ use serde_json::{Value, json};
 
 const PAGE: &str = "/task/visual/in-progress";
 
+/// The agents' entries of the thread, as a list.
+const ENTRIES: &str = "[...document.querySelectorAll('#task-thread .entry.agent .entry-text')]";
+
+/// Whether the browser renders the entry `text`, which has no `innerText` until it does: what a
+/// failure prints for each entry, with the thread's `textContent`, as `task_attempts.rs`'s `SAID`.
+const RENDERED: &str =
+    "text.checkVisibility({visibilityProperty: true, contentVisibilityAuto: true})";
+
 /// glacial-sparrow-263's post at 2026-11-20 00:54 on app/workflow-pages-follow-ups, as stored.
 const POST: &str = "From app/token-cost-on-pages (glacial-sparrow-263), the hunks I hold in the task page and board files, so whoever lands second merges them. apps/symphony-web/src/task-page.tsx: useContext added to the react import; tokensPart added to the ./task-live import; a TokensPanel type and two components, TokensPart and TokensBody, just before WorkflowPart; one <TokensPart key=tokens-SLUG> line after the Changes section's NearViewport. apps/symphony-web/src/task-live.ts: TASK_TOKENS_PATH in the ./wire import, tokensPart() after timelinePart(). apps/symphony-web/src/task-diff.css: two .task-tokens rules at the end. Board: apps/symphony-web/src/boardwait.tsx (one import, one useCardCost line at WaitCard's top, a .card-cost span between the slug's code and .prio); apps/symphony-web/src/styles/boardwait.css (one .waiting-slug .card-cost rule before .waiting-slug .prio); apps/symphony-web/src/kinds/board.tsx (one import; TasksPage wrapped in <CardCostsOf key=scope scope>, the key moved onto it). board.tsx and boardlive.tsx: nothing. New: card-costs.ts. Say if any of it crosses what you hold.";
 
@@ -60,12 +68,14 @@ fn a_post_naming_components_draws_its_words_once_and_an_unknown_element_its_cont
     // is the next one, so a reader never sees the region empty, but a read before it would.
     assert!(
         page.wait_for(
-            "(texts => texts.length === 2 && texts.every(text => text.checkVisibility({visibilityProperty: true, contentVisibilityAuto: true})))\
-                ([...document.querySelectorAll('#task-thread .entry.agent .entry-text')])",
+            &format!("(texts => texts.length === 2 && texts.every(text => {RENDERED}))({ENTRIES})"),
             SHOWN
         ),
         "the entries were never rendered: {}",
-        page.eval("document.querySelector('#task-thread')?.innerText")
+        page.eval(&format!(
+            "({{text: document.querySelector('#task-thread')?.textContent, \
+                rendered: {ENTRIES}.map(text => {RENDERED})}})"
+        ))
     );
     let drawn = page.eval(
         "[...document.querySelectorAll('#task-thread .entry.agent .entry-text')].map(text => ({\

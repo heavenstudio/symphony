@@ -458,17 +458,21 @@ async fn off_board(
         // The settings are the project's files, its board's store of preferences, this machine's
         // programs, what the GitHub exchange's program says of itself and the project's plugins'
         // descriptions: a read, which writes nothing (`symphony::settings`). The board is read on
-        // the store the page reads share ([`Hub::on_reader`]), never one opened anew; one that does
-        // not answer is said on the page, and the files' settings hold.
+        // the store the page reads share ([`Hub::on_reader`]), never one opened anew, its entries
+        // and its running sessions on that one store; one that does not answer is said on the page
+        // for both, and the files' settings hold.
         symphony_api::SETTINGS_PATH => {
             let hub = shared.hub()?;
             let read = crate::spawn::blocking(move || {
                 let machine = symphony::settings::Machine::of_process();
-                let board = symphony::settings::stored::Board::with(
-                    &hub.root,
-                    hub.on_reader(symphony_board::Store::stored_entries),
-                    hub.on_reader(symphony_board::launch::running::by_agent),
-                );
+                let (entries, running) = match hub.on_reader(|store| {
+                    let entries = store.stored_entries()?;
+                    Ok((entries, symphony_board::launch::running::by_agent(store)?))
+                }) {
+                    Ok((entries, running)) => (Ok(entries), Ok(running)),
+                    Err(why) => (Err(why.clone()), Err(why)),
+                };
+                let board = symphony::settings::stored::Board::with(&hub.root, entries, running);
                 Ok(Json(symphony::settings::page_with(
                     &hub.root, &machine, &board,
                 )))

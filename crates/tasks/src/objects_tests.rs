@@ -721,3 +721,23 @@ fn a_struct_read_by_field_refuses_the_first_wrong_field_it_asks_for() {
         "invalid type: string \"soon\", expected f64"
     );
 }
+
+#[test]
+fn a_field_read_as_an_option_is_refused_where_it_is_missing_and_optional_reads_none() {
+    let row = json!({"state": null, "checked": 1});
+    let row = fields(&row, "struct Recipient").unwrap();
+    let missing = row.field::<Option<String>>("handle").unwrap_err();
+    assert_eq!(missing.to_string(), "missing field `handle`");
+    assert_eq!(row.optional::<String>("handle").unwrap(), None);
+    // Present, both read it alike: null as none, a value as itself.
+    assert_eq!(row.field::<Option<Binding>>("state").unwrap(), None);
+    assert_eq!(row.optional::<Binding>("state").unwrap(), None);
+    assert_eq!(row.field::<Option<f64>>("checked").unwrap(), Some(1.0));
+    assert_eq!(row.optional::<f64>("checked").unwrap(), Some(1.0));
+    // Where a derived reader of the same field reads none.
+    #[derive(Derived, Debug)]
+    struct Handle {
+        handle: Option<String>,
+    }
+    assert!(read::<Handle>(&json!({})).unwrap().handle.is_none());
+}
