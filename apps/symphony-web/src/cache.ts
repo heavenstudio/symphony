@@ -59,11 +59,11 @@ export function keptView(query: string, days: number, activity: number): boolean
 
 /**
  * The columns a task board with these counts may have kept: each status its listing names (its
- * counts' when it names none), the machines' two stages and the owner's sign-off, once each.
+ * counts' when it names none) and the machines' two stages, once each.
  */
 export function columns(statuses: string[], counts: [string, number][]): string[] {
   const named = statuses.length === 0 ? counts.map(([status]) => status) : statuses;
-  return [...new Set([...named, "build", "test", "signoff"])];
+  return [...new Set([...named, "build", "test"])];
 }
 
 /** A kept read: its value, the tag the server answered it with, and when it was kept (ms). */

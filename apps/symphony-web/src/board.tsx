@@ -595,6 +595,7 @@ export function useFlow(scope: string, generation: number | null | undefined): F
     const reading = new AbortController();
     if (!generation) {
       setFlow(null);
+      setFailedAt(null);
       NAMES.clear();
     } else if (!failed)
       import("./flow").then(
@@ -1158,8 +1159,10 @@ export function TaskBoard({
       );
     }
   }
-  const view = { address, destination, held: known !== undefined, phone, opened, tab, wait };
-  useLinkedPage({ ...view, search, days }, { tasks, counts, work, connected, onLoad });
+  useLinkedPage(
+    { address, destination, held: known !== undefined, phone, opened, tab, wait, search, days },
+    { tasks, counts, work, connected, onLoad },
+  );
   const surface = useRef<HTMLElement>(null);
   useKeptPlace(surface, true, true);
   const showingColumns = !phone && wait === "" && opened === "";
