@@ -21,6 +21,12 @@
 //! ([`SettingsPage::stored`](symphony_api::SettingsPage)), the settings the store keeps, each with
 //! the store's entry and record.
 //!
+//! Each agent's entry carries its switch (`[agents.launch.on]`), read as the board reads it: on or
+//! off with where that comes from, the store's control beside it, whether its program is on this
+//! machine and how many of its sessions run. The launch default's switch is drawn with no control
+//! and says to pick another default first, and a switch that would turn it off from another place
+//! is said not to hold ([`agent`]).
+//!
 //! A setting's class comes from the lists the local settings file's reader holds
 //! (`symphony_board::local::PROTECTED`, `PROTECTED_KEYS`) and from no other list ([`class`]): what
 //! that file refuses as holding a command or deciding what lands is reviewed, and every other
@@ -38,7 +44,7 @@ use symphony_api::{
     SettingsEntry, SettingsFile, SettingsPage, SettingsSection,
 };
 use symphony_board::launch::Defaults;
-use symphony_board::launch::defaults::{AGENTS, Chosen, ROLES};
+use symphony_board::launch::defaults::{AGENTS, Chosen, ON_TABLES, ROLES, Switch, switch_named};
 use symphony_board::limits::{self, Written};
 use symphony_board::local::{self, Local};
 use symphony_board::settings::Stored;
@@ -111,21 +117,14 @@ pub fn class(table: &str, key: &str) -> SettingClass {
 
 /// The scopes `key` of the table `path` leads to may be written in: the project's; the board's
 /// where its store keeps it, which is where the page writes it; and the machine's too where the
-/// local settings file may hold it. The store keeps what the local file may hold, and `[agents]
-/// panes` besides (`symphony_board::local::Place::Store`).
+/// local settings file may hold it, as the board's judge of both places says
+/// ([`local::Place::keeps`]).
 pub fn scopes(path: &[&str], key: &str) -> Vec<SettingScope> {
-    let machine = match path {
-        [table] => *table == limits::TABLE && limits::KEYS.contains(&key),
-        ["agents", "launch"] => local::LAUNCH.contains(&key),
-        ["agents", "models"] => ROLES.contains(&key),
-        _ => false,
-    };
-    let board = machine || (path == ["agents"] && key == "panes");
     let mut scopes = vec![SettingScope::Project];
-    if board {
+    if local::Place::Store.keeps(path, key) {
         scopes.push(SettingScope::Board);
     }
-    if machine {
+    if local::Place::File.keeps(path, key) {
         scopes.push(SettingScope::Machine);
     }
     scopes
@@ -368,8 +367,15 @@ pub fn page_with(root: &Path, machine: &Machine, board_held: &Board) -> Settings
             about: "Each one says whether it is on and whether this machine has what it needs."
                 .into(),
             entries: vec![
-                agent(machine, &defaults, "claude", "Claude Code"),
-                agent(machine, &defaults, "codex", "Codex"),
+                agent(
+                    machine,
+                    &defaults,
+                    &board,
+                    board_held,
+                    "claude",
+                    "Claude Code",
+                ),
+                agent(machine, &defaults, &board, board_held, "codex", "Codex"),
                 herdr(machine, &file, &project, &stored),
                 described::program(machine, &main, &described::GITHUB),
                 plugins(&file, &project),
@@ -437,27 +443,127 @@ pub fn page_with(root: &Path, machine: &Machine, board_held: &Board) -> Settings
     }
 }
 
-/// One of the two agents a launch starts: on, as nothing turns one off, and whether its program
-/// is here.
-fn agent(machine: &Machine, defaults: &Defaults, agent: &str, name: &str) -> SettingsEntry {
-    let default = defaults.agent.unwrap_or(AGENTS[0]) == agent;
+/// One of the two agents a launch starts: its switch (`[agents.launch.on]`) as the board reads it
+/// with `defaults`, on or off and where from, whether its program is here and how many of the
+/// board's sessions it runs (`board_held`). The launch default is on whatever a switch says: its
+/// switch is drawn with no control, saying to pick another default first, and one written off in
+/// another place is said not to hold.
+fn agent(
+    machine: &Machine,
+    defaults: &Defaults,
+    board: &FileRead,
+    board_held: &Board,
+    agent: &str,
+    name: &str,
+) -> SettingsEntry {
+    let own = defaults.default_agent() == agent;
+    let off = defaults.off(agent);
+    let at = AGENTS.iter().position(|known| *known == agent).unwrap_or(0);
+    let mut switch = Setting {
+        key: switch_named(agent),
+        name: "The board starts it".into(),
+        kind: SettingKind::Switch,
+        value: if off.is_some() { "off" } else { "on" }.into(),
+        choices: Vec::new(),
+        source: switch_source(board, &board_held.stored(), defaults.on[at].as_ref(), agent),
+        scopes: scopes(&ON_TABLES, agent),
+        class: class("agents", "launch"),
+    };
+    let mut why = if own {
+        "The launch default: a launch starts it unless its caller names the other. Its switch is \
+         not offered: pick another default first to turn it off."
+            .to_string()
+    } else if let Some(off) = off {
+        format!(
+            "Turned off ({}): no launch, staffing pass or restore starts it, and no page offers it \
+             but this one. Its files stay installed, so on again is the switch alone.",
+            off.said()
+        )
+    } else {
+        "A launch starts it when its caller names it.".to_string()
+    };
+    if own {
+        // No control: the store refuses its switch turned off, and the files may write it on.
+        switch.scopes.retain(|scope| *scope != SettingScope::Board);
+        switch.source = SettingSource {
+            over: defaults.overruled().map(|_| match &defaults.on[at] {
+                Some(written) => format!("off ({}), which does not hold", written.said()),
+                None => "none written".into(),
+            }),
+            ..default("the launch default, which cannot be off")
+        };
+        if let Some(overruled) = defaults.overruled() {
+            why.push_str(&format!(" {overruled}."));
+        }
+    }
+    let running =
+        (board_held.running.as_ref()).map(|counts| counts.as_ref().map(|counts| counts[at]));
+    match running {
+        Some(Ok(running)) => why.push_str(&match (running, off.is_some()) {
+            (0, _) => " None of its sessions runs now.".to_string(),
+            (1, false) => " One of its sessions runs now.".to_string(),
+            (1, true) => " One of its sessions runs now, and keeps running.".to_string(),
+            (n, false) => format!(" {n} of its sessions run now."),
+            (n, true) => format!(" {n} of its sessions run now, and keep running."),
+        }),
+        Some(Err(problem)) => {
+            why.push_str(&format!(
+                " How many of its sessions run cannot be read: {problem}."
+            ));
+        }
+        None => {}
+    }
     SettingsEntry {
         state: state(
-            "On",
-            Some(true),
-            if default {
-                "The launch default: a launch starts it unless its caller names the other."
-            } else {
-                "A launch starts it when its caller names it."
-            },
+            if off.is_some() { "Off" } else { "On" },
+            Some(off.is_none()),
+            why,
         ),
-        needs: vec![program(machine, agent, "a launch of it here would fail")],
+        needs: vec![program(machine, agent, "a launch of it here is refused")],
+        settings: vec![switch],
         ..entry(
             agent,
             name,
             &format!("Agents the board launches as {name}."),
         )
     }
+}
+
+/// Where the switch `written` (none: none written) of `agent` in force comes from, as the page
+/// says a source: the local file's over the store's (`stored`), the store's over the committed
+/// one, each with what it stands over; or the default, on.
+fn switch_source(
+    board: &FileRead,
+    stored: &Stored,
+    written: Option<&Switch>,
+    agent: &str,
+) -> SettingSource {
+    let Some(written) = written else {
+        return default("on, as no switch is written");
+    };
+    let mut from = source(&written.at);
+    let shown = |on: bool| if on { "on" } else { "off" };
+    let committed = || match board.get(&ON_TABLES, agent) {
+        Some(Value::Boolean(on)) => {
+            let at = board
+                .written(&switch_named(agent), &ON_TABLES, agent)
+                .map(|written| source(&written).said)
+                .unwrap_or_default();
+            format!("{} ({at})", shown(*on))
+        }
+        _ => "none written".into(),
+    };
+    let key = symphony_board::launch::defaults::switch_key(agent);
+    let at = AGENTS.iter().position(|known| *known == agent).unwrap_or(0);
+    let in_store = stored.held.on[at].filter(|_| stored.holds(&key));
+    from.over = match (from.scope, in_store) {
+        (Some(SettingScope::Machine), Some(on)) => {
+            Some(format!("{} ({})", shown(on), Stored::written(&key).said()))
+        }
+        (Some(SettingScope::Board | SettingScope::Machine), _) => Some(committed()),
+        _ => None,
+    };
+    from
 }
 
 /// Herdr's panes: `[agents] panes`, the board's store's over the project file's.

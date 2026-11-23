@@ -32,6 +32,7 @@ fn the_settings_wait_for_a_hub_then_answer_the_project_s_with_each_source() {
                 "limits.low_volume",
                 &symphony_board::settings::written(&serde_json::json!(3)).unwrap(),
                 "owner",
+                std::path::Path::new(""),
             )
             .unwrap();
         crate::testing::child_on(&board, CHILD, TEST);
