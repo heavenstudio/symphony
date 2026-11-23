@@ -147,7 +147,7 @@ fn a_board_not_made_or_whose_folder_is_gone_is_absent_and_any_other_failure_is_n
         assert!(absent(&wrapped), "its wrapper keeps its words: {wrapped}");
     }
     // A board still on SurrealDB is there, and unwell until it is moved.
-    let on_surrealdb = Home::new(&PathBuf::from("/repo/.git").join(crate::folders::TASKS))
+    let on_surrealdb = Home::at(&PathBuf::from("/repo/.git").join(crate::folders::TASKS))
         .on_surrealdb("Nothing was started")
         .to_string();
     for error in [

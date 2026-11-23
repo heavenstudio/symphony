@@ -1382,7 +1382,8 @@ Once a release's tag is pushed, the run does this, in order:
   own pin, and a board moved past it would leave that server only reading it.
 - **The boards.** A release that keeps the board schema of the release `current` names, or is
   behind it, moves no board back and judges only a board read behind its schema, one an earlier
-  refresh left behind, saying nothing of the rest (`RELEASE serves board schema N, as the release
+  refresh left behind, and a board still on SurrealDB, red (below), saying nothing of the rest
+  (`RELEASE serves board schema N, as the release
   current names serves N: only a board left behind it moves`; `RELEASE serves board schema N,
   behind the release current names, which serves M: none moves back, and only a board left behind
   N moves`). One that raises it, or the first, with no `current`, judges the live board of each

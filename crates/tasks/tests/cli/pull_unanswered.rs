@@ -338,7 +338,7 @@ const READABLE_LAUNCHES: &str = "DELETE FROM task_session WHERE id = '[\"sim/a\"
 
 /// `sql` sent as it is on `f`'s board.
 fn write(f: &crate::common::Fixture, sql: &str) {
-    let symphony_board::Database::PostgreSql(client) = f.other_database();
+    let client = f.other_database().into_postgresql();
     client.simple(sql).unwrap();
 }
 

@@ -50,7 +50,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use symphony_api::Front;
-use symphony_board::server::{Home, ServerError};
+use symphony_board::server::{Engine, Home, ServerError};
 
 use super::board;
 use super::checks::{Ran, Step};
@@ -277,7 +277,8 @@ pub(crate) struct Ended {
 /// Each registered project's board brought to the release's schema `target` over `kept`, the
 /// schema of the release `current` names (none: none named), its lines said in `refresh` and to
 /// `out` and its steps put in `steps`: how each board ended. A release at `kept` or behind it moves
-/// only a board left behind it, and says nothing of the rest. Each board is judged and moved alone
+/// only a board left behind it, judges one still on SurrealDB (red, as this build refuses it), and
+/// says nothing of the rest. Each board is judged and moved alone
 /// (docs/workflow/RELEASES.md, "The boards"): snapshotted just before its own move, and one that lags, red or
 /// its project's to finish, holds neither another board nor `current`.
 fn boards(
@@ -298,8 +299,9 @@ fn boards(
         match project(entry, against) {
             Err(Some(line)) if !reconciling => say(refresh, out, line),
             Err(_) => {}
-            // A release current serves already judges only a board read behind it.
-            Ok(common) if reconciling && !behind(&common, target) => {}
+            // A release current serves already judges only a board read behind it, or still on
+            // SurrealDB.
+            Ok(common) if reconciling && !judged_again(&common, target) => {}
             Ok(common) => judged.push(judge(entry, &common, target, against)),
         }
     }
@@ -344,14 +346,18 @@ fn boards(
     ends
 }
 
-/// Whether the board in the git common dir `common` reads behind `target`: a board left behind a
-/// release current already serves. One not read (no board, its database not running) is not.
-fn behind(common: &Path, target: i64) -> bool {
+/// Whether a release current already serves, at board schema `target`, judges the board in the
+/// git common dir `common`: one read behind `target`, left behind that release, or one still on
+/// SurrealDB, which this build refuses and every release before it served, so that it is said red,
+/// naming how it moves, on the first refresh to a build that refuses it. One not read (no board,
+/// its database not running) is not.
+fn judged_again(common: &Path, target: i64) -> bool {
     if !common.join(symphony_board::server::FOLDER).is_dir() {
         return false;
     }
     let home = Home::in_common(common);
-    matches!(home.schema(symphony_board::DATABASE), Ok(Some(live)) if live < target)
+    matches!(home.backend(), Ok(Engine::SurrealDb))
+        || matches!(home.schema(symphony_board::DATABASE), Ok(Some(live)) if live < target)
 }
 
 /// Why the release `tag`, serving board schema `target`, moves no board where the release

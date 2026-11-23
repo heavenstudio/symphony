@@ -84,7 +84,7 @@ impl Drop for Board {
         if let Some(hold) = home.held() {
             let _ = home.release(&hold.by, None);
         }
-        let pg = Home::new(self.dir()).postgresql(&programs());
+        let pg = Home::at(self.dir()).postgresql(&programs());
         if pg.data().exists() {
             let _ = pg.stop();
         }

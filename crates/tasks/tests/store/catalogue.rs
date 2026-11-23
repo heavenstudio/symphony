@@ -86,7 +86,7 @@ fn line(table: &str, kind: &str, name: &str, definition: &str) -> String {
 /// The definitions `db`'s board holds, as a catalogue.
 fn catalogue(db: &Database) -> String {
     let mut lines = BTreeSet::new();
-    let Database::PostgreSql(client) = db;
+    let client = db.postgresql();
     let rows = |sql: &str| -> Vec<Vec<String>> {
         let answer = client
             .request(&[Step::bare(&format!(

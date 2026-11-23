@@ -370,7 +370,7 @@ mod tests {
             let dir = std::env::temp_dir().join(format!("backend-{}-{name}", std::process::id()));
             fs::create_dir_all(&dir).unwrap();
             Self {
-                home: Home::new(&dir),
+                home: Home::at(&dir),
             }
         }
     }
@@ -484,7 +484,7 @@ mod tests {
     #[test]
     fn a_board_not_made_yet_is_postgresqls_anywhere_and_its_start_names_it_so() {
         // Outside a scratch place too: a new live board is made on PostgreSQL.
-        let live = Home::new(Path::new("/not-a-scratch-board"));
+        let live = Home::at(Path::new("/not-a-scratch-board"));
         assert!(!scratch(live.dir()));
         assert_eq!(live.backend().unwrap(), Engine::PostgreSql);
         live.allow_postgresql().unwrap();
@@ -653,7 +653,7 @@ mod tests {
         let board = Board::new("metadata-error");
         let file = board.home.dir.join("not-a-folder");
         fs::write(&file, "kept").unwrap();
-        let home = Home::new(&file);
+        let home = Home::at(&file);
         for engine in [Engine::SurrealDb, Engine::PostgreSql] {
             assert!(home.data_matches(engine).is_err());
         }
@@ -692,7 +692,7 @@ mod tests {
 
     #[test]
     fn no_live_identity_is_initialized_even_by_a_supervised_home() {
-        let home = Home::new(Path::new("/not-a-scratch-board")).supervised(true);
+        let home = Home::at(Path::new("/not-a-scratch-board")).supervised(true);
         assert!(
             home.initialize_backend(Engine::PostgreSql)
                 .unwrap_err()

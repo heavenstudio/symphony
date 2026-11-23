@@ -120,7 +120,7 @@ fn refused_at(store: &Store, found: i64) -> String {
 /// `db`'s record of the oldest schema whose Symphony may write it replaced by `from`, a value no
 /// build writes: the column retyped to hold it.
 fn malformed(db: &Database, from: &Value) {
-    let Database::PostgreSql(client) = db;
+    let client = db.postgresql();
     client
         .simple(&format!(
             "ALTER TABLE meta ALTER COLUMN writable_from TYPE jsonb \
@@ -306,9 +306,7 @@ fn a_reader_is_refused_an_undeclared_step_and_a_record_missing_or_of_another_sha
         } else {
             malformed(&db, &from);
         }
-        if from.is_null() || matches!(db, Database::PostgreSql(_)) {
-            assert_eq!(record(&db).1, from);
-        }
+        assert_eq!(record(&db).1, from);
         assert!(!reading.board_standing().unwrap().writes, "{from}");
         refused_at(&reading, v + 1);
         assert_eq!(thread(&db).len(), 2, "{from}");
@@ -407,7 +405,7 @@ fn a_bound_write_is_fenced_on_the_generation_one_ahead_and_a_rebind_is_refused_t
 fn a_readers_write_with_a_snapshot_before_a_migration_meets_the_record_it_wrote() {
     for (schema, writes) in [(unlisted(), false), (listed(), true)] {
         let db = board();
-        let Database::PostgreSql(client) = db.another();
+        let client = db.another().into_postgresql();
         client
             .simple("BEGIN ISOLATION LEVEL REPEATABLE READ; SELECT version FROM meta;")
             .unwrap();

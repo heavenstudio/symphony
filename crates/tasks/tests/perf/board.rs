@@ -195,7 +195,7 @@ fn remove_ended_runs(temp: &Path) {
         });
         for entry in ended {
             let run = entry.path();
-            let socket = Home::new(&run).postgresql(Path::new("")).socket();
+            let socket = Home::at(&run).postgresql(Path::new("")).socket();
             let _ = std::fs::remove_dir_all(socket);
             let _ = std::fs::remove_dir_all(run);
         }
@@ -239,7 +239,7 @@ impl Board {
         std::fs::write(dir.join("ps"), "").unwrap();
         let programs = discover_programs(&store::project_root())
             .unwrap_or_else(|why| panic!("the suite's PostgreSQL: {why}"));
-        let server = Home::new(&dir).telling(|_| {}).postgresql(&programs);
+        let server = Home::at(&dir).telling(|_| {}).postgresql(&programs);
         let serving = (server.ensure())
             .unwrap_or_else(|why| panic!("the suite's PostgreSQL did not come up: {why}"));
         let root = u32::try_from(serving.pid).expect("a postmaster's process id");

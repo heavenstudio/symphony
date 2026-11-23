@@ -761,7 +761,7 @@ fn cached_board_inputs_age_without_a_board_read_and_refresh_after_mutation() {
         "Changed by another writer"
     );
     let marker = f.store.marker().unwrap();
-    let symphony_board::Database::PostgreSql(client) = f.store.database();
+    let client = f.store.database().postgresql();
     assert!(client.simple("BEGIN; UPDATE task SET title = 'Uncommitted'; DO $test$ BEGIN RAISE EXCEPTION 'rollback'; END $test$; COMMIT;").is_err());
     client.simple("ROLLBACK").unwrap();
     assert_eq!(

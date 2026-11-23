@@ -62,7 +62,7 @@ impl Board {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let programs = symphony_board::server::postgres::discover_programs(&workspace)
             .unwrap_or_else(|why| panic!("no PostgreSQL for the board: {why}"));
-        let postgres = Home::new(&folder).supervised(true).postgresql(&programs);
+        let postgres = Home::at(&folder).supervised(true).postgresql(&programs);
         let serving = postgres
             .ensure()
             .unwrap_or_else(|why| panic!("the board's server did not start: {why}"));

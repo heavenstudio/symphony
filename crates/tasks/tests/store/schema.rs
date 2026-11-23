@@ -30,7 +30,7 @@ fn again(db: &Database) -> Database {
 #[test]
 fn a_write_with_a_snapshot_before_a_migration_cannot_commit_after_it() {
     let db = board();
-    let Database::PostgreSql(writer) = again(&db);
+    let writer = again(&db).into_postgresql();
     writer
         .simple("BEGIN ISOLATION LEVEL REPEATABLE READ; SELECT version FROM meta;")
         .unwrap();
@@ -55,7 +55,7 @@ fn version(db: &Database) -> Option<i64> {
 
 /// The tables the database holds.
 fn tables(db: &Database) -> Vec<String> {
-    let Database::PostgreSql(client) = db;
+    let client = db.postgresql();
     let listed = client
         .request(&[Step::bare(
             "SELECT coalesce(jsonb_agg(table_name::text ORDER BY table_name), '[]')::text \
@@ -110,7 +110,7 @@ fn a_database_not_made_yet_is_defined_and_brought_to_the_version_once() {
 
 /// Why a request in `db`'s database fails, which the test expects it to.
 fn fails(db: &Database) -> String {
-    let Database::PostgreSql(client) = db;
+    let client = db.postgresql();
     let failed = client.request(&[Step::bare("SELECT 1")]).err();
     failed
         .map(|why| format!("{why:?}"))
@@ -119,7 +119,7 @@ fn fails(db: &Database) -> String {
 
 /// `db`'s database made on its server, and nothing in it.
 fn made_empty(db: &Database) {
-    let Database::PostgreSql(client) = db;
+    let client = db.postgresql();
     client.make_database().unwrap()
 }
 
@@ -437,7 +437,7 @@ fn schema_19_gains_reservation_storage_and_keeps_existing_reservations() {
                 .unwrap();
         } else {
             // The predecessor's catalogue, not a row mutation.
-            let Database::PostgreSql(client) = &db;
+            let client = db.postgresql();
             client.simple("DROP TABLE unanswered_restore").unwrap();
         }
         raw.row("meta", "schema")
@@ -478,7 +478,7 @@ fn schema_19_gains_reservation_storage_and_keeps_existing_reservations() {
 fn schema_26_gains_the_guards_kinds_and_alters_the_check_once() {
     let db = board();
     let six = "'active', 'definition', 'activation', 'event', 'receipt', 'intent'";
-    let Database::PostgreSql(client) = &db;
+    let client = db.postgresql();
     let authority = || -> Result<(), symphony_board::db::DbError> {
         client
             .simple(

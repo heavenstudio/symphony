@@ -1528,6 +1528,65 @@ fn a_board_still_on_surrealdb_is_red_naming_how_it_moves_and_nothing_of_it_is_to
     assert_eq!(fixture.reds().keys().collect::<Vec<_>>(), [slug], "{out}");
 }
 
+/// A release that keeps the board schema the release `current` names serves still judges a board
+/// still on SurrealDB, which every release before this build served: the first refresh to a build
+/// that refuses it says it red and files its update, though no board moves, and touches nothing of
+/// it.
+#[test]
+fn a_board_still_on_surrealdb_is_red_too_on_a_release_that_keeps_the_schema_current_serves() {
+    let (fixture, _) = refreshing();
+    registered(&fixture, &[]);
+    let builder = builder(&fixture, 19);
+    let extra = [(BUILDER, builder.as_str())];
+    let (code, out, err) = fixture.release_with(NOW, &["--check", CHECK], &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(current(&fixture).as_deref(), Some(RELEASE), "{out}");
+
+    // A project registered since, its home holding a SurrealDB store and naming no engine, as a
+    // board an earlier release kept does.
+    let alpha = a_project(&fixture, "alpha", &[]);
+    registered(&fixture, &[("alpha", &alpha, &[])]);
+    let folder = alpha.join(".git").join(FOLDER);
+    fs::create_dir_all(folder.join("data")).unwrap();
+    fs::write(folder.join("data/CURRENT"), "MANIFEST-000001\n").unwrap();
+    let before = Fixture::files(&folder);
+    fixture.land("crates/core/notes.txt", Some("b\n"), "a landing after it");
+
+    let (code, out, err) = fixture.release_with(NOW + DAY, &["--check", CHECK], &extra);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains(&format!(
+            "release: refresh: {NEXT} serves board schema 19, as the release current names serves \
+             19: only a board left behind it moves\n"
+        )),
+        "{out}"
+    );
+    let said: Vec<&str> = (out.lines())
+        .filter(|line| line.starts_with("release: refresh: alpha: "))
+        .collect();
+    assert!(
+        said.len() == 1
+            && said[0].starts_with("release: refresh: alpha: red: ")
+            && said[0].contains(GONE),
+        "{out}"
+    );
+    assert!(out.contains("release: refresh-alpha red ("), "{out}");
+    assert_eq!(Fixture::files(&folder), before, "{out}");
+    assert!(migrated(&fixture).is_empty(), "no migrate ran");
+    assert_eq!(
+        current(&fixture).as_deref(),
+        Some(NEXT),
+        "a board's red holds no current"
+    );
+    let slug = "tests/release-red-update-alpha-19";
+    assert!(
+        out.contains("release: refresh: updates: alpha@19 failed: ")
+            && out.contains(&format!("; filed {slug} on this repository's board\n")),
+        "{out}"
+    );
+    assert_eq!(fixture.reds().keys().collect::<Vec<_>>(), [slug], "{out}");
+}
+
 /// The scratch database `filed` on the board's server `running`, where the stand-in's own board
 /// binary files what a refresh files on that project's board.
 fn filed(running: &Running) -> symphony_board::Store {

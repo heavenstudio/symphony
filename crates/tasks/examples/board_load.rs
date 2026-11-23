@@ -818,7 +818,7 @@ fn main() -> Result<(), Failed> {
 /// it. Stopped once it is measured.
 fn postgresql_run(options: &Options, programs: &Path) -> Result<(), Failed> {
     let dir = options.home.join("board");
-    let pg = Home::new(&dir).postgresql(programs);
+    let pg = Home::at(&dir).postgresql(programs);
     pg.ensure().map_err(|why| why.to_string())?;
     pg.stop().map_err(|why| why.to_string())?;
     let serving = pg.ensure().map_err(|why| why.to_string())?;
@@ -867,7 +867,7 @@ fn postgresql_run(options: &Options, programs: &Path) -> Result<(), Failed> {
 
 /// The board work over PostgreSQL, the `tasks` binary at `tasks` running each command.
 fn postgresql_board_run(options: &Options, programs: &Path, tasks: &Path) -> Result<(), Failed> {
-    let pg = Home::new(&options.home.join("board")).postgresql(programs);
+    let pg = Home::at(&options.home.join("board")).postgresql(programs);
     let open = || -> Result<Store, Failed> {
         Ok(Store::opening_on(
             symphony_board::pg::Client::new(&pg.socket(), &options.database).into(),

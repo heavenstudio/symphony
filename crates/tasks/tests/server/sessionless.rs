@@ -43,7 +43,7 @@ fn helper_children_of_a_session() {
         .map(|(name, _)| std::env::var(name).unwrap_or_else(|_| "unset".into()))
         .collect();
     std::fs::write(dir.join("helper-saw"), format!("{}\n", held.join("|"))).unwrap();
-    let ended = Home::new(&dir.join("board"))
+    let ended = Home::at(&dir.join("board"))
         .telling(|_| {})
         .patience(Duration::from_secs(30))
         .postgresql(&dir.join("bin"))

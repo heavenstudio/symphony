@@ -78,6 +78,16 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(Client) -> Result<Store> = Store::open;
     let _ = |client: Client| Store::with(client, Box::new(|| 0.0), Box::new(|_| false), "host");
     let _: fn(&Store) -> &Client = Store::client;
+    // A consumer's fixture reads the store's PostgreSQL client by a refutable pattern, which its
+    // lint (`-D warnings`) refuses once the pattern is irrefutable. `Database` is
+    // `#[non_exhaustive]`, so the pattern stays refutable; it is matched here as that consumer
+    // matches it, not by every variant (the header), as a variant added breaks no consumer.
+    let _ = |store: &Store| {
+        let symphony_board::Database::PostgreSql(client) = store.database() else {
+            panic!("the board is on PostgreSQL");
+        };
+        client.database().len()
+    };
     let _: fn(&Store, &str) -> Result<Task> = Store::get;
     let _: fn(&Store, Option<&str>) -> Result<Vec<Task>> = Store::tasks;
     let _: fn(&Store, &str) -> Result<Vec<Message>> = Store::thread;
@@ -350,6 +360,10 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(&str, &str) -> bool = red::filed_in;
     let _: fn(&str) -> bool = red::open;
     let _: &str = server::FOLDER;
+    // A board's home in a consumer's fixtures: by its folder and the SurrealDB binary an earlier
+    // release served it by, which nothing reads now, and by its folder alone, which replaces it.
+    let _: fn(&Path, &Path) -> server::Home = server::Home::new;
+    let _: fn(&Path) -> server::Home = server::Home::at;
     let _: Option<&server::Running> = None;
     let _: fn(Option<&str>, bool) -> bool = on_review::delivery_task;
     let _ = |branch: &str, found: &[(String, Option<String>, Option<String>)]| {

@@ -140,8 +140,17 @@ pub struct Home {
 }
 
 impl Home {
+    /// The board in `dir`, as [`Home::at`] gives it. The second argument, the `surreal` binary an
+    /// earlier release served the board by, is read by nothing: a board's server is its
+    /// PostgreSQL ([`Home::postgresql`]). It keeps its signature by the two-release rule (RULES.md
+    /// `code/consumer-api-two-releases`), as a consumer's code calls it, until a release after the
+    /// consumer moves to [`Home::at`] removes it.
+    pub fn new(dir: &Path, _surreal: &Path) -> Home {
+        Home::at(dir)
+    }
+
     /// The board in `dir`.
-    pub fn new(dir: &Path) -> Home {
+    pub fn at(dir: &Path) -> Home {
         Home {
             dir: dir.into(),
             within: dir.parent().unwrap_or(dir).into(),
@@ -177,7 +186,7 @@ impl Home {
     pub fn in_common(common: &Path) -> Home {
         Home {
             within: common.into(),
-            ..Home::new(&common.join(FOLDER))
+            ..Home::at(&common.join(FOLDER))
         }
     }
 

@@ -402,7 +402,7 @@ mod tests {
     #[test]
     fn only_complete_named_snapshots_are_listed_in_numeric_order_within_a_second() {
         let dir = std::env::temp_dir().join(format!("pg-snapshot-list-{}", std::process::id()));
-        let home = crate::server::Home::new(&dir);
+        let home = crate::server::Home::at(&dir);
         let pg = home.postgresql(Path::new("/no/postgres"));
         let folder = dir.join(SNAPSHOTS);
         let base = "1970-01-01T00-00-01Z";

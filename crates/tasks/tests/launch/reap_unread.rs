@@ -41,7 +41,7 @@ fn readable(slug: &str) -> String {
 }
 
 fn write(w: &World, sql: &str) {
-    let symphony_board::Database::PostgreSql(client) = w.f.other_database();
+    let client = w.f.other_database().into_postgresql();
     client.simple(sql).unwrap();
 }
 

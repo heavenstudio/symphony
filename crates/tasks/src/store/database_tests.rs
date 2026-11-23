@@ -54,3 +54,20 @@ fn a_boards_address_names_its_postgresql_and_a_surrealdb_servers_is_refused() {
     );
     assert!(refused.contains(crate::server::GONE), "{refused}");
 }
+
+#[test]
+fn its_postgresql_client_is_the_one_it_was_made_of_borrowed_or_taken() {
+    let patient = Duration::from_secs(1_800);
+    let db = Database::from(pg::Client::new(Path::new("/tmp/symphony-pg-2"), "b").waiting(patient));
+    assert_eq!(
+        (db.postgresql().addr(), db.postgresql().database()),
+        (db.addr(), "b")
+    );
+    assert_eq!(db.postgresql().wait(), patient);
+    let addr = db.addr();
+    let client = db.into_postgresql();
+    assert_eq!(
+        (client.addr(), client.database(), client.wait()),
+        (addr, "b", patient)
+    );
+}

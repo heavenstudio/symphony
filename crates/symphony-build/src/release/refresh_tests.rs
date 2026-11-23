@@ -293,3 +293,17 @@ fn a_board_folder_with_no_board_made_in_it_is_nothing_to_move_and_not_down() {
     assert!(judged.home.unmade().unwrap(), "nothing was made");
     assert_eq!(tree.names("alpha/.git/symphony/tasks"), ["keys"]);
 }
+
+/// A release that keeps the schema current serves judges a board still on SurrealDB, as it does
+/// one left behind, so that the first refresh to a build that refuses it says it red; a board not
+/// made yet, and a project with no board folder, it passes over.
+#[test]
+fn a_release_at_currents_schema_judges_a_board_still_on_surrealdb_and_passes_over_none_made() {
+    let (_surreal, common, ..) = alpha_holding("data");
+    assert!(judged_again(&common, symphony_board::SCHEMA));
+    let (_unmade, common, ..) = alpha_holding("keys");
+    assert!(!judged_again(&common, symphony_board::SCHEMA));
+    let (_none, common, folder, ..) = alpha_holding("keys");
+    fs::remove_dir_all(&folder).unwrap();
+    assert!(!judged_again(&common, symphony_board::SCHEMA));
+}

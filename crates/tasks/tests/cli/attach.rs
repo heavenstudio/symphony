@@ -114,7 +114,7 @@ fn watched(f: &Fixture, me: &str, polls: i64, mut meanwhile: impl FnMut(usize)) 
 fn a_look_that_fails_is_said_and_the_watch_goes_on() {
     let f = Fixture::empty();
     let me = f.session("worker");
-    let symphony_board::Database::PostgreSql(board) = f.other_database();
+    let board = f.other_database().into_postgresql();
     let lines = watched(&f, &me, 2, |n| {
         if n == 0 {
             // From the server's maintenance database, ending the connections the board has.

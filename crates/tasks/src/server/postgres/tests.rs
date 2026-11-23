@@ -239,7 +239,7 @@ fn a_server_is_outgoing_when_its_record_names_it_and_its_starter_has_ended() {
 /// met is left, the refusal saying pg_ctl's words, that the wait stalled and the load.
 #[test]
 fn a_stop_whose_server_took_its_record_with_it_is_stopped_once_its_process_has_ended() {
-    let pg = Home::new(Path::new("/nowhere/board"))
+    let pg = Home::at(Path::new("/nowhere/board"))
         .patience(std::time::Duration::ZERO)
         .postgresql(Path::new("/nowhere/bin"));
     let record = |pid| PidFile {
@@ -280,7 +280,7 @@ fn a_stop_whose_server_took_its_record_with_it_is_stopped_once_its_process_has_e
 /// be run to tell of is refused at once, never waited for as one that took its record with it.
 #[test]
 fn a_failed_stop_takes_only_its_own_pid_for_running_and_a_ps_that_cannot_run_for_neither() {
-    let pg = Home::new(Path::new("/nowhere/board"))
+    let pg = Home::at(Path::new("/nowhere/board"))
         .patience(std::time::Duration::from_secs(5))
         .postgresql(Path::new("/nowhere/bin"));
     let record = |pid| PidFile {
@@ -357,7 +357,7 @@ fn a_failed_stop_takes_only_its_own_pid_for_running_and_a_ps_that_cannot_run_for
 #[test]
 fn a_server_is_its_programs_postgres_on_its_data_and_a_ps_that_cannot_run_or_fails_is_unknown() {
     use std::os::unix::process::ExitStatusExt as _;
-    let pg = Home::new(Path::new("/nowhere/board")).postgresql(Path::new("/nowhere/bin"));
+    let pg = Home::at(Path::new("/nowhere/board")).postgresql(Path::new("/nowhere/bin"));
     let said = |code: i32, line: &str, error: &str| {
         Ok(std::process::Output {
             status: std::process::ExitStatus::from_raw(code << 8),
@@ -450,7 +450,7 @@ fn a_record_counts_only_for_a_live_server_of_the_data() {
 
 #[test]
 fn programs_that_are_not_there_are_refused_naming_the_setting_and_the_install() {
-    let refused = Home::new(Path::new("/tmp/board"))
+    let refused = Home::at(Path::new("/tmp/board"))
         .postgresql(Path::new("/nowhere/pg/bin"))
         .version()
         .unwrap_err()
@@ -506,7 +506,7 @@ impl StandIn {
             fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
         }
-        let pg = Home::new(&dir.join("board"))
+        let pg = Home::at(&dir.join("board"))
             .telling(|_| {})
             .postgresql(&bin);
         StandIn { dir, pg }

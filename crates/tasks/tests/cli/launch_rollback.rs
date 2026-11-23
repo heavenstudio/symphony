@@ -1,7 +1,7 @@
 //! A failed launch must release its partial setup so the orchestrator can retry it.
 
 use super::launch::Terminals;
-use symphony_board::{Database, Health, NewTask, Store};
+use symphony_board::{Health, NewTask, Store};
 
 /// A trigger named `name` on `table` that fails each row an `event` (`INSERT`, `UPDATE`) writes
 /// where `when` holds, raising `why`: a database error the board's own writes then meet.
@@ -19,7 +19,7 @@ fn refusing(board: &Store, name: &str, event: &str, table: &str, when: &str, why
 
 /// `sql` sent to the board's database as it is.
 fn send(board: &Store, sql: &str) {
-    let Database::PostgreSql(client) = board.database();
+    let client = board.database().postgresql();
     client.simple(sql).unwrap();
 }
 

@@ -53,7 +53,7 @@ impl Board {
             std::fs::remove_dir_all(dir).unwrap();
         }
         std::fs::create_dir_all(dir).unwrap();
-        let pg = Home::new(&dir.join("board"))
+        let pg = Home::at(&dir.join("board"))
             .telling(|_| {})
             .postgresql(&programs(dir));
         Board {
@@ -64,7 +64,7 @@ impl Board {
 
     /// The board's home, as its PostgreSQL was made on it.
     fn home(&self) -> Home {
-        Home::new(&self.dir.join("board"))
+        Home::at(&self.dir.join("board"))
     }
 
     /// What `sql` answers over the server's socket, through one connection of `psql`'s.
@@ -565,7 +565,7 @@ fn helper_starts_and_ends() {
 /// The server of the board [`HELPER_BOARD`] names, started by this process on its lifeline.
 fn helper_started() -> Serving {
     let dir = PathBuf::from(std::env::var(HELPER_BOARD).expect("the board to start"));
-    Home::new(&dir).postgresql(&programs()).ensure().unwrap()
+    Home::at(&dir).postgresql(&programs()).ensure().unwrap()
 }
 
 /// `signal` (`STOP`, `CONT`) sent to process `pid` by `kill`.

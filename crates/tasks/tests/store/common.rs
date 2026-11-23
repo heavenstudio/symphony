@@ -121,7 +121,7 @@ fn start_postgresql() -> PgServer {
     }
     std::fs::create_dir_all(&dir).unwrap();
     let programs = symphony_board::server::postgres::discover_programs(&project_root()).unwrap();
-    let pg = Home::new(&dir.join("board"))
+    let pg = Home::at(&dir.join("board"))
         .telling(|_| {})
         .postgresql(&programs);
     let serving = pg
@@ -368,8 +368,7 @@ impl Fixture {
         reason = "each test binary including this file runs on the databases its tests name"
     )]
     pub fn postgresql(&self) -> pg::Client {
-        let Database::PostgreSql(client) = self.db.another();
-        client
+        self.db.another().into_postgresql()
     }
 
     /// Counts each row of `table` written from now on (made, changed or removed) by a trigger of

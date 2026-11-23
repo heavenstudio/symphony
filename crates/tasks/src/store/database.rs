@@ -8,7 +8,14 @@ use crate::rpc;
 use std::time::Duration;
 
 /// Where a board is.
+///
+/// Non-exhaustive: an earlier release had a SurrealDB variant too, and a consumer's code reads the
+/// client by a refutable pattern (`let Database::PostgreSql(client) = store.database() else …`),
+/// which a single exhaustive variant would make irrefutable, refused by its lint
+/// (`irrefutable_let_patterns` under `-D warnings`). Outside this crate the client is
+/// [`Database::postgresql`]'s or [`Database::into_postgresql`]'s.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Database {
     PostgreSql(pg::Client),
 }
@@ -85,6 +92,20 @@ impl Database {
     /// Whether this is a PostgreSQL board: every board is.
     pub fn is_postgresql(&self) -> bool {
         matches!(self, Database::PostgreSql(_))
+    }
+
+    /// Its PostgreSQL client: every board this build reaches is on PostgreSQL.
+    pub fn postgresql(&self) -> &pg::Client {
+        match self {
+            Database::PostgreSql(client) => client,
+        }
+    }
+
+    /// Its PostgreSQL client, taken whole ([`Database::postgresql`]).
+    pub fn into_postgresql(self) -> pg::Client {
+        match self {
+            Database::PostgreSql(client) => client,
+        }
     }
 
     /// The same board, each answer waited for at most `most` (PostgreSQL's client sends nothing

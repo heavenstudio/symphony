@@ -133,7 +133,7 @@ fn open(
     // A read-only web request is never a board session or a launcher.
     env.vars.remove("TASKS_SESSION");
     let reached = reach(&env, held(root).as_deref())?;
-    let symphony_board::Database::PostgreSql(client) = reached.database()?;
+    let client = reached.database()?.into_postgresql();
     let client = client.waiting(BOARD_WAIT).into();
     let how = symphony_board::Opening::read()
         .of(reached.project.as_deref())

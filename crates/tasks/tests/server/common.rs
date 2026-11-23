@@ -58,7 +58,7 @@ impl Scratch {
     }
 
     pub fn home(&self) -> Home {
-        Home::new(&self.dir)
+        Home::at(&self.dir)
     }
 }
 

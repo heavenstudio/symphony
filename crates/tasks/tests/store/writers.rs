@@ -83,7 +83,7 @@ fn newer() -> Schema {
 
 /// The tables the board's database holds.
 fn tables(client: &Database) -> Vec<String> {
-    let Database::PostgreSql(raw) = client;
+    let raw = client.postgresql();
     let listed = raw
         .request(&[symphony_board::pg::Step::bare(
             "SELECT coalesce(jsonb_agg(table_name::text ORDER BY table_name), '[]')::text \
@@ -308,7 +308,7 @@ fn a_migrate_counts_no_writer_unseen_for_a_week_at_its_schema_already_or_itself(
 fn an_opening_whose_line_is_refused_still_opens_its_board() {
     let client = board_with_gate(HOUR);
     // A hand at the server makes the table refuse every line from now on.
-    let Database::PostgreSql(raw) = &client;
+    let raw = client.postgresql();
     raw.simple("ALTER TABLE writer ADD CONSTRAINT never CHECK (false) NOT VALID")
         .unwrap();
     let store = opened(&client, &Opening::write().by(gate()), HOST).unwrap();

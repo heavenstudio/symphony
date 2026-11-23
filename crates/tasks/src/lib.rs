@@ -356,7 +356,7 @@ fn reclaim_home(args: &[String], env: &cli::Env) -> Result<server::Home, String>
     };
     let common = git::common_dir(&env.cwd).map_err(|e| e.to_string())?;
     Ok(match folder {
-        Some(folder) => server::Home::new(&folder),
+        Some(folder) => server::Home::at(&folder),
         None => server::Home::in_common(&common),
     })
 }
