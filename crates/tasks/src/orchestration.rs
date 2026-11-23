@@ -471,6 +471,17 @@ pub fn unowned_tops(tasks: &[Task]) -> Vec<&Task> {
     tops(tasks, &unowned)
 }
 
+/// `tops` with the tasks that wait on nothing first, each group in the order it came: a task whose
+/// every dependency on `tasks` is done ([`crate::waits_on::Look::free`], as the digest's
+/// `ready_unstaffed` reads it) can be worked on now, so where the limit on the open tasks an
+/// orchestrator holds leaves places for only some, they go to those before a task that still waits
+/// on another, which nobody can start whoever orchestrates it.
+pub fn first_free<'t>(tasks: &[Task], mut tops: Vec<&'t Task>) -> Vec<&'t Task> {
+    let look = crate::waits_on::Look::new(tasks, &[]);
+    tops.sort_by_key(|top| !look.free(top));
+    tops
+}
+
 /// What a read of the whole board says of the board's give, before anything else is read: none to
 /// make (`None`: every open task has an orchestrator, and no waiting mark is left to lift), or the
 /// work there is, which `pool` then decides ([`give_due`]).
@@ -1063,6 +1074,43 @@ mod tests {
             .map(|t| t.slug.clone())
             .collect();
         assert_eq!(found, ["finished/open"], "a finished task is given nothing");
+    }
+
+    #[test]
+    fn the_give_takes_first_the_tops_that_wait_on_nothing_each_group_in_its_order() {
+        let on = |slug: &str, depends: &[&str]| Task {
+            depends: depends.iter().map(|d| d.to_string()).collect(),
+            ..task(slug, None, Vec::new())
+        };
+        let tasks = vec![
+            at(task("landed", None, Vec::new()), "done"),
+            at(task("dropped", None, Vec::new()), "cancelled"),
+            task("open", None, Vec::new()),
+            on("on-open", &["open"]),
+            on("on-landed", &["landed"]),
+            on("on-dropped", &["dropped"]),
+            on("on-elsewhere", &["not-on-the-board"]),
+            on("on-landed-and-open", &["landed", "open"]),
+            task("on-none", None, Vec::new()),
+        ];
+        let slugs =
+            |found: Vec<&Task>| -> Vec<String> { found.iter().map(|t| t.slug.clone()).collect() };
+        let tops: Vec<&Task> = tasks.iter().skip(2).collect();
+        // A cancelled dependency is never met, as no open one is; one the board does not hold
+        // holds nothing up.
+        assert_eq!(
+            slugs(first_free(&tasks, tops)),
+            [
+                "open",
+                "on-landed",
+                "on-elsewhere",
+                "on-none",
+                "on-open",
+                "on-dropped",
+                "on-landed-and-open",
+            ]
+        );
+        assert!(first_free(&tasks, Vec::new()).is_empty());
     }
 
     #[test]
