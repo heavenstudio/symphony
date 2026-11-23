@@ -30,8 +30,8 @@ pub const SUPPORTED: [u32; 2] = [16, 18];
 const ENDING: Duration = Duration::from_secs(2);
 
 /// What is said of a connection nothing answered: no server there, or none in time.
-const UNREACHED: &str = "the server cannot be reached";
-const UNANSWERED: &str = "the server did not answer in time";
+pub(super) const UNREACHED: &str = "the server cannot be reached";
+pub(super) const UNANSWERED: &str = "the server did not answer in time";
 
 pub(super) struct Session {
     client: tokio_postgres::Client,
@@ -219,11 +219,17 @@ async fn reached(
     Err(telling(refusals).unwrap_or(unreached))
 }
 
+/// Whether a connection's refusal says only that nothing answered there: no server, or none in
+/// time. Any other the server answered: by refusing it, or with what this side refuses (a
+/// certificate, a weaker login than SCRAM bound to the channel, a server or login a board is not
+/// kept in).
+pub(super) fn silent(refusal: &Refusal) -> bool {
+    matches!(refusal, Refusal::Unavailable(why) if [UNREACHED, UNANSWERED].contains(why))
+}
+
 /// Of the refusals a host's addresses gave, in turn, the first that says more than that nothing
-/// answered there (the server's own refusal, or a connection this side refused); the last when
-/// none does, as the driver says it; none of none.
+/// answered there ([`silent`]); the last when none does, as the driver says it; none of none.
 fn telling(refusals: Vec<Refusal>) -> Option<Refusal> {
-    let silent = |refusal: &Refusal| matches!(refusal, Refusal::Unavailable(why) if [UNREACHED, UNANSWERED].contains(why));
     let said = refusals.iter().position(|refusal| !silent(refusal));
     let at = said.or(refusals.len().checked_sub(1))?;
     refusals.into_iter().nth(at)

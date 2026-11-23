@@ -1012,33 +1012,6 @@ fn an_error_the_server_answered_is_no_unanswered_request() {
     }
 }
 
-/// Whether a child std forks holds `fd` before its exec, as the child's own table says.
-#[cfg(target_vendor = "apple")]
-fn a_forked_child_holds(fd: std::os::fd::RawFd) -> bool {
-    use crate::children::Child as _;
-    use std::os::unix::process::CommandExt as _;
-    let mut command = std::process::Command::of("/usr/bin/true");
-    // SAFETY: fcntl is async-signal-safe and reads only the forked child's own table.
-    unsafe {
-        command.pre_exec(move || {
-            if libc::fcntl(fd, libc::F_GETFD) == -1 {
-                Ok(())
-            } else {
-                Err(std::io::Error::from_raw_os_error(libc::EEXIST))
-            }
-        });
-    }
-    let _spawning = crate::sys::spawning();
-    match command.status() {
-        Ok(status) => {
-            assert!(status.success(), "{status}");
-            false
-        }
-        Err(e) if e.raw_os_error() == Some(libc::EEXIST) => true,
-        Err(e) => panic!("{e}"),
-    }
-}
-
 /// Neither of a connection's two descriptors reaches a child forked beside it, even before its
 /// exec, so no child can close a copy of its socket and drain it (macOS fails a draining socket's
 /// every wait with EBADF); std's socket, as a control, reaches one. Each is close-on-exec, and the
@@ -1061,7 +1034,7 @@ fn a_connections_socket_never_reaches_a_forked_child() {
         assert_ne!(reader, writer, "two descriptors");
         for (side, fd) in [("reader", reader), ("writer", writer)] {
             assert!(
-                !a_forked_child_holds(fd),
+                !crate::sys::a_forked_child_holds(fd),
                 "the {side} reached a forked child"
             );
             // SAFETY: F_GETFD reads the flags of a descriptor the connection keeps open.
@@ -1071,7 +1044,7 @@ fn a_connections_socket_never_reaches_a_forked_child() {
     }
     let (control, _peer) = UnixStream::pair().unwrap();
     assert!(
-        a_forked_child_holds(control.as_raw_fd()),
+        crate::sys::a_forked_child_holds(control.as_raw_fd()),
         "std's socket reaches a forked child"
     );
     let next = client.request(&[Step::bare("SELECT 1")]).unwrap();
