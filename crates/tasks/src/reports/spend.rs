@@ -62,12 +62,54 @@ pub fn by_role<'a>(
     roles
 }
 
+/// A landed task priced: what it and its subtasks took up to its first review and after it, how
+/// many reviews it took, its kind and the lines its landing changed.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LandedTask {
+    pub slug: String,
+    /// When it landed.
+    pub at: f64,
+    /// The kind it was given ([`crate::kind`]); none for one given none.
+    pub kind: Option<String>,
+    /// What it took up to its first review: its round 1, with any sum told in no round.
+    pub first: Spend,
+    /// What it took in every round after it: each review, and the fixes it asked for.
+    pub later: Spend,
+    /// How many reviews it took: the last round it took tokens in, less the first; none for a task
+    /// whose tokens are all its first round's.
+    pub reviews: u32,
+    /// The lines its landing changed, added and removed together; none where the roll-up read
+    /// none ([`Landed::lines`]).
+    pub lines: Option<u64>,
+}
+
+impl LandedTask {
+    /// What it took, all told.
+    pub fn spend(&self) -> Spend {
+        let mut all = self.first.clone();
+        all.add(&self.later);
+        all
+    }
+
+    /// What its priced tokens cost, in picodollars.
+    pub fn total(&self) -> u128 {
+        self.first.cost.total() + self.later.cost.total()
+    }
+
+    /// Its estimated cost in picodollars; none where none of its tokens had a price, which gives
+    /// it no figure to rank. A cost with a part unpriced is its priced part.
+    pub fn priced(&self) -> Option<u128> {
+        let unpriced = !self.first.cost.unpriced.is_empty() || !self.later.cost.unpriced.is_empty();
+        let total = self.total();
+        (total > 0 || !unpriced).then_some(total)
+    }
+}
+
 /// What the tasks landed in a window took, at the prices they were read at.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LandedCosts {
-    /// Each landed task the board recorded tokens for, the dearest first, then by slug: its slug,
-    /// when it landed and what it and its subtasks took.
-    pub tasks: Vec<(String, f64, Spend)>,
+    /// Each landed task the board recorded tokens for, the dearest first, then by slug.
+    pub tasks: Vec<LandedTask>,
     /// The landed tasks it recorded none for: in no figure.
     pub without: usize,
     /// The median estimated cost of those of `tasks` with a priced token, in picodollars: of an
@@ -77,8 +119,12 @@ pub struct LandedCosts {
     pub first: Spend,
     /// What they took in every round after it: each review, and the fixes it asked for.
     pub later: Spend,
-    /// How many of `tasks` took anything after their first round.
+    /// How many of `tasks` took anything after their first round: every task reviewed, as its
+    /// first review's tokens are its second round's. Kept for `stats --json`'s readers.
     pub again: usize,
+    /// How many of `tasks` were back after review: reviewed twice or more, a round past the second,
+    /// so their first review sent them back.
+    pub back: usize,
 }
 
 /// What `landed` took at `prices`: each task once, the first of a slug met standing for it (a
@@ -94,45 +140,203 @@ pub fn landed_costs<'a>(
             continue;
         }
         seen.push(&task.slug);
-        let mut all = Spend::default();
-        let mut after = false;
+        let mut priced = LandedTask {
+            slug: task.slug.clone(),
+            at: task.at,
+            kind: task.kind.clone(),
+            lines: task.lines.map(|lines| lines.changed()),
+            ..LandedTask::default()
+        };
+        let mut last = 1;
         for sum in &task.spent {
             let spent = spend(sum, prices);
             if spent.tokens == Tokens::default() {
                 continue;
             }
-            all.add(&spent);
+            last = last.max(sum.round);
             if sum.round > 1 {
-                costs.later.add(&spent);
-                after = true;
+                priced.later.add(&spent);
             } else {
-                costs.first.add(&spent);
+                priced.first.add(&spent);
             }
         }
-        if all.tokens == Tokens::default() {
+        if priced.spend().tokens == Tokens::default() {
             costs.without += 1;
             continue;
         }
-        costs.again += usize::from(after);
-        // Put in its place, the dearest first, then by slug, which links no sort.
-        let place = (Reverse(all.cost.total()), task.slug.as_str());
-        let at = (costs.tasks.iter())
-            .position(|(slug, _, kept)| (Reverse(kept.cost.total()), slug.as_str()) > place)
-            .unwrap_or(costs.tasks.len());
-        costs.tasks.insert(at, (task.slug.clone(), task.at, all));
+        priced.reviews = last - 1;
+        costs.first.add(&priced.first);
+        costs.later.add(&priced.later);
+        costs.again += usize::from(last > 1);
+        costs.back += usize::from(last > 2);
+        costs.tasks.push(priced);
     }
-    // A task none of whose tokens had a price has no figure to rank.
-    let priced: Vec<u128> = (costs.tasks.iter())
-        .map(|(_, _, spend)| &spend.cost)
-        .filter(|cost| cost.total() > 0 || cost.unpriced.is_empty())
-        .map(crate::usage::Cost::total)
-        .collect();
+    // The dearest first, then by slug, through the crate's one sort.
+    crate::order::sort_by(&mut costs.tasks, &|a: &LandedTask, b: &LandedTask| {
+        (Reverse(a.total()), &a.slug).cmp(&(Reverse(b.total()), &b.slug))
+    });
+    let priced: Vec<u128> = costs.tasks.iter().filter_map(LandedTask::priced).collect();
     costs.median = match priced.len() {
         0 => None,
         n if n % 2 == 1 => Some(priced[n / 2]),
         n => Some(u128::midpoint(priced[n / 2 - 1], priced[n / 2])),
     };
     costs
+}
+
+/// `pico` picodollars in dollars, as a figure on the wire says them.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "a dollar figure: an f64 keeps fifteen significant digits of it"
+)]
+pub fn in_dollars(pico: u128) -> f64 {
+    pico as f64 / 1e12
+}
+
+/// What a set of landed tasks cost, as a figure says it: every amount in dollars, of the tasks
+/// with a priced cost ([`LandedTask::priced`]).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Summary {
+    /// The tasks with a priced cost.
+    pub tasks: usize,
+    pub median: Option<f64>,
+    pub mean: Option<f64>,
+    pub p90: Option<f64>,
+    /// What they cost, all told.
+    pub cost: f64,
+    /// What their rounds after the first cost: the review rounds.
+    pub later: f64,
+    /// Of them, those whose landing changed a counted line, what those cost and the lines.
+    pub lined: usize,
+    pub lined_cost: f64,
+    pub lines: u64,
+    /// Of them, those whose landing changed no counted line (the regenerator's, a landing that
+    /// changed nothing): in no figure per line.
+    pub unlined: usize,
+    /// Of them, those whose landing's lines were not read (one landed before they were kept): in
+    /// no figure per line.
+    pub unread: usize,
+}
+
+impl Summary {
+    /// What 100 of the lines cost, in dollars; none with no line.
+    pub fn per_100_lines(&self) -> Option<f64> {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a count of lines, far under 2^52"
+        )]
+        (self.lines > 0).then(|| self.lined_cost / self.lines as f64 * 100.0)
+    }
+}
+
+/// The [`Summary`] of `tasks`.
+pub fn summary<'a>(tasks: impl IntoIterator<Item = &'a LandedTask>) -> Summary {
+    let mut summary = Summary::default();
+    let mut costs = Vec::new();
+    for task in tasks {
+        let Some(pico) = task.priced() else {
+            continue;
+        };
+        let cost = in_dollars(pico);
+        costs.push(cost);
+        summary.cost += cost;
+        summary.later += in_dollars(task.later.cost.total());
+        match task.lines {
+            Some(0) => summary.unlined += 1,
+            Some(lines) => {
+                summary.lined += 1;
+                summary.lined_cost += cost;
+                summary.lines += lines;
+            }
+            None => summary.unread += 1,
+        }
+    }
+    summary.tasks = costs.len();
+    #[expect(clippy::cast_precision_loss, reason = "a count of tasks")]
+    let mean = (!costs.is_empty()).then(|| summary.cost / costs.len() as f64);
+    summary.mean = mean;
+    if let Some(spread) = crate::stages::stats::spread(costs) {
+        summary.median = Some(spread.median);
+        summary.p90 = Some(spread.p90);
+    }
+    summary
+}
+
+/// The landed tasks of one kind, or of none.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct KindGroup {
+    /// The kind; none for the tasks given none.
+    pub kind: Option<String>,
+    pub summary: Summary,
+}
+
+/// `tasks` by their kind, those that cost the most in all first, then by kind, and the tasks of no
+/// kind last; a kind no task is of is left out, as is a task with no priced cost.
+pub fn by_kind(tasks: &[LandedTask]) -> Vec<KindGroup> {
+    let mut groups: Vec<KindGroup> = Vec::new();
+    let kinds = tasks
+        .iter()
+        .filter(|task| task.priced().is_some())
+        .map(|task| &task.kind);
+    for kind in kinds {
+        if !groups.iter().any(|group| group.kind == *kind) {
+            groups.push(KindGroup {
+                kind: kind.clone(),
+                summary: summary(tasks.iter().filter(|task| task.kind == *kind)),
+            });
+        }
+    }
+    crate::order::sort_by(&mut groups, &|a: &KindGroup, b: &KindGroup| {
+        let last = |group: &KindGroup| group.kind.is_none();
+        (last(a).cmp(&last(b)))
+            .then(b.summary.cost.total_cmp(&a.summary.cost))
+            .then(a.kind.cmp(&b.kind))
+    });
+    groups
+}
+
+/// How many reviews the last group of [`by_reviews`] holds, with every task of more.
+pub const REVIEWS_GROUPED: u32 = 4;
+
+/// The landed tasks that took one number of reviews ([`LandedTask::reviews`]), or
+/// [`REVIEWS_GROUPED`] or more.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ReviewGroup {
+    /// The reviews: [`REVIEWS_GROUPED`] for that many or more.
+    pub reviews: u32,
+    /// The tasks with a priced cost.
+    pub tasks: usize,
+    /// The mean cost of one's first round and of its review rounds, in dollars.
+    pub first: f64,
+    pub later: f64,
+    /// The median cost of one, in dollars.
+    pub median: Option<f64>,
+}
+
+/// `tasks` by how many reviews each took, the fewest first; a number no task took is left out, as
+/// is a task with no priced cost.
+pub fn by_reviews(tasks: &[LandedTask]) -> Vec<ReviewGroup> {
+    let grouped = |task: &LandedTask| task.reviews.min(REVIEWS_GROUPED);
+    (0..=REVIEWS_GROUPED)
+        .filter_map(|reviews| {
+            let of: Vec<&LandedTask> = (tasks.iter())
+                .filter(|task| grouped(task) == reviews && task.priced().is_some())
+                .collect();
+            let all = summary(of.iter().copied());
+            #[expect(clippy::cast_precision_loss, reason = "a count of tasks")]
+            let mean = |pick: fn(&LandedTask) -> u128| {
+                let sum: u128 = of.iter().map(|task| pick(task)).sum();
+                in_dollars(sum) / of.len() as f64
+            };
+            (!of.is_empty()).then(|| ReviewGroup {
+                reviews,
+                tasks: of.len(),
+                first: mean(|task| task.first.cost.total()),
+                later: mean(|task| task.later.cost.total()),
+                median: all.median,
+            })
+        })
+        .collect()
 }
 
 /// The counts of a sum, in the order the file writes them.
@@ -319,7 +523,15 @@ mod tests {
                     ..sum(role, model, *n)
                 })
                 .collect(),
+            ..Landed::default()
         }
+    }
+
+    /// `landed` given `kind` and `lines` changed, added alone.
+    fn of(mut landed: Landed, kind: Option<&str>, lines: Option<u64>) -> Landed {
+        landed.kind = kind.map(str::to_string);
+        landed.lines = lines.map(|added| symphony_api::reports::Lines { added, removed: 0 });
+        landed
     }
 
     #[test]
@@ -390,7 +602,7 @@ mod tests {
         ];
         let costs = landed_costs(&files, &prices());
         let ranked: Vec<(&str, f64, String)> = (costs.tasks.iter())
-            .map(|(slug, at, spend)| (slug.as_str(), *at, spend.cost.said()))
+            .map(|task| (task.slug.as_str(), task.at, task.spend().cost.said()))
             .collect();
         assert_eq!(
             ranked,
@@ -407,6 +619,25 @@ mod tests {
         assert_eq!(costs.first.cost.said(), "$9.00 + unpriced");
         assert_eq!(costs.later.cost.said(), "$5.00");
         assert_eq!(costs.again, 2);
+        // Only a/mid took a round past the second: its first review sent it back.
+        assert_eq!(costs.back, 1);
+        let reviews: Vec<(&str, u32)> = (costs.tasks.iter())
+            .map(|task| (task.slug.as_str(), task.reviews))
+            .collect();
+        assert_eq!(
+            reviews,
+            [
+                ("a/dear", 1),
+                ("a/mid", 2),
+                ("a/cheap", 0),
+                ("a/unpriced", 0)
+            ]
+        );
+        let dear = &costs.tasks[0];
+        assert_eq!(
+            (dear.first.cost.said(), dear.later.cost.said()),
+            ("$6.00".to_string(), "$4.00".to_string())
+        );
         // Of two: the mean of $10 and $1.
         let even = landed_costs(&files[..3], &prices());
         assert_eq!(even.median, Some(5_500_000_000_000));
@@ -420,9 +651,199 @@ mod tests {
             landed("t/d", 4.0, &[("executor", 1, "m", 2)]),
         ];
         let order: Vec<String> = (landed_costs(&tied, &prices()).tasks.into_iter())
-            .map(|(slug, _, _)| slug)
+            .map(|task| task.slug)
             .collect();
         assert_eq!(order, ["t/c", "t/a", "t/b", "t/d"]);
+    }
+
+    #[test]
+    fn a_landed_task_carries_its_kind_and_lines_and_a_round_told_in_none_is_its_first() {
+        let files = [
+            of(
+                landed(
+                    "a/kinded",
+                    1.0,
+                    &[("executor", 0, "m", 2), ("reviewer", 2, "m", 1)],
+                ),
+                Some("fix"),
+                Some(40),
+            ),
+            of(
+                landed("a/plain", 2.0, &[("executor", 1, "m", 1)]),
+                None,
+                None,
+            ),
+        ];
+        let costs = landed_costs(&files, &prices());
+        let kinded = &costs.tasks[0];
+        assert_eq!(
+            (kinded.slug.as_str(), kinded.kind.as_deref(), kinded.lines),
+            ("a/kinded", Some("fix"), Some(40))
+        );
+        assert_eq!(
+            kinded.first.cost.said(),
+            "$2.00",
+            "a sum of round 0 is the first round's"
+        );
+        assert_eq!(
+            (kinded.reviews, kinded.priced()),
+            (1, Some(3_000_000_000_000))
+        );
+        let plain = &costs.tasks[1];
+        assert_eq!(
+            (plain.kind.as_ref(), plain.lines, plain.reviews),
+            (None, None, 0)
+        );
+    }
+
+    #[test]
+    fn a_summary_spreads_the_priced_tasks_and_counts_lines_only_where_some_were_changed() {
+        let files = [
+            of(
+                landed("s/a", 1.0, &[("executor", 1, "m", 1)]),
+                None,
+                Some(100),
+            ),
+            of(
+                landed(
+                    "s/b",
+                    2.0,
+                    &[("executor", 1, "m", 2), ("reviewer", 2, "m", 2)],
+                ),
+                None,
+                Some(300),
+            ),
+            of(
+                landed("s/c", 3.0, &[("executor", 1, "m", 3)]),
+                None,
+                Some(0),
+            ),
+            of(landed("s/d", 4.0, &[("executor", 1, "m", 10)]), None, None),
+            // No price: in no figure.
+            of(
+                landed("s/e", 5.0, &[("executor", 1, "other", 9)]),
+                None,
+                Some(50),
+            ),
+        ];
+        let costs = landed_costs(&files, &prices());
+        let all = summary(&costs.tasks);
+        assert_eq!(all.tasks, 4);
+        assert_eq!((all.cost, all.later), (18.0, 2.0));
+        assert_eq!(all.mean, Some(4.5));
+        // $1, $3, $4, $10: interpolated as the lead times are.
+        assert_eq!(all.median, Some(3.5));
+        // 0.9 of the way along the four: 0.7 of the way from $4 to $10.
+        assert_eq!(all.p90, Some(4.0 + (10.0 - 4.0) * (0.9 * 3.0 - 2.0)));
+        assert_eq!((all.lined, all.lined_cost, all.lines), (2, 5.0, 400));
+        assert_eq!((all.unlined, all.unread), (1, 1));
+        assert_eq!(all.per_100_lines(), Some(1.25));
+        let none = summary(&[]);
+        assert_eq!(
+            (
+                none.tasks,
+                none.median,
+                none.mean,
+                none.p90,
+                none.per_100_lines()
+            ),
+            (0, None, None, None, None)
+        );
+    }
+
+    #[test]
+    fn kinds_go_dearest_in_all_first_and_the_tasks_of_none_last() {
+        let files = [
+            of(
+                landed("k/a", 1.0, &[("executor", 1, "m", 1)]),
+                Some("docs"),
+                Some(10),
+            ),
+            of(
+                landed("k/b", 2.0, &[("executor", 1, "m", 50)]),
+                None,
+                Some(10),
+            ),
+            of(
+                landed("k/c", 3.0, &[("executor", 1, "m", 4)]),
+                Some("tests"),
+                Some(10),
+            ),
+            of(
+                landed("k/d", 4.0, &[("executor", 1, "m", 3)]),
+                Some("docs"),
+                None,
+            ),
+            of(
+                landed("k/e", 5.0, &[("executor", 1, "m", 4)]),
+                Some("fix"),
+                Some(0),
+            ),
+            of(
+                landed("k/f", 6.0, &[("executor", 1, "other", 9)]),
+                Some("red"),
+                Some(5),
+            ),
+        ];
+        let costs = landed_costs(&files, &prices());
+        let kinds = by_kind(&costs.tasks);
+        let groups: Vec<(Option<&str>, usize, f64, Option<f64>)> = (kinds.iter())
+            .map(|g| {
+                (
+                    g.kind.as_deref(),
+                    g.summary.tasks,
+                    g.summary.cost,
+                    g.summary.median,
+                )
+            })
+            .collect();
+        assert_eq!(
+            groups,
+            [
+                // docs and tests tie at $4 and fix too: by kind's name.
+                (Some("docs"), 2, 4.0, Some(2.0)),
+                (Some("fix"), 1, 4.0, Some(4.0)),
+                (Some("tests"), 1, 4.0, Some(4.0)),
+                (None, 1, 50.0, Some(50.0)),
+            ],
+            "the red task has no priced cost, so red has no group"
+        );
+        assert!(by_kind(&[]).is_empty());
+    }
+
+    #[test]
+    fn reviews_group_by_their_number_and_four_or_more_together() {
+        let rounds = |slug: &str, last: u32| {
+            let mut spent = vec![("executor", 1, "m", 2)];
+            spent.extend((2..=last).map(|round| ("reviewer", round, "m", 1)));
+            landed(slug, 1.0, &spent)
+        };
+        let files = [
+            rounds("r/none", 1),
+            rounds("r/once", 2),
+            rounds("r/once-too", 2),
+            rounds("r/thrice", 4),
+            rounds("r/five", 6),
+            rounds("r/six", 7),
+        ];
+        let costs = landed_costs(&files, &prices());
+        let reviewed = by_reviews(&costs.tasks);
+        let groups: Vec<(u32, usize, f64, f64, Option<f64>)> = (reviewed.iter())
+            .map(|g| (g.reviews, g.tasks, g.first, g.later, g.median))
+            .collect();
+        assert_eq!(
+            groups,
+            [
+                (0, 1, 2.0, 0.0, Some(2.0)),
+                (1, 2, 2.0, 1.0, Some(3.0)),
+                (3, 1, 2.0, 3.0, Some(5.0)),
+                // Five and six reviews: $7 and $8.
+                (REVIEWS_GROUPED, 2, 2.0, 5.5, Some(7.5)),
+            ],
+            "no task took two reviews, so two has no group"
+        );
+        assert_eq!(costs.back, 3);
+        assert!(by_reviews(&[]).is_empty());
     }
 
     #[test]

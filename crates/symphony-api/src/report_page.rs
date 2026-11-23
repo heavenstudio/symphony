@@ -116,10 +116,6 @@ pub struct ReportsPage {
     /// missing from the periods.
     #[serde(default)]
     pub unread: Vec<String>,
-    /// What the top-level tasks landed in the window took, by the roll-up's day files; none when
-    /// none of them names a landed task.
-    #[serde(default)]
-    pub landed: Option<LandedSpend>,
     /// The day the price table's prices were read (`YYYY-MM-DD`), which every estimate of the
     /// answer is at; empty from a server that prices none.
     #[serde(default)]
@@ -147,42 +143,152 @@ pub struct RoleSpend {
     pub cost: crate::AgentCost,
 }
 
-/// What the tasks landed in a window took, each with its subtasks, as the board recorded it up to
-/// the roll-up that read its landing.
+/// The Landed tasks tab's read: `GET` [`REPORTS_LANDED_PATH`]`?grain=hour|day|week&days=N`
+/// answers a [`LandedPage`], the top-level tasks landed in the same window as [`REPORTS_PATH`]'s,
+/// each once at its last landing in it, priced with its subtasks at the table the server embeds,
+/// out of the roll-up's day files alone: by task, not by period. Its own read, as a window of
+/// weeks lands a few thousand tasks, each a row.
+pub const REPORTS_LANDED_PATH: &str = "/api/reports/landed";
+
+/// The top-level tasks landed in a window and what they took.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
-pub struct LandedSpend {
-    /// The landed tasks the board recorded tokens for.
-    pub tasks: u32,
-    /// The landed tasks it recorded none for: in no figure here.
+pub struct LandedPage {
+    pub grain: Grain,
+    /// The days the window reaches back, as [`Grain::days`] took the ask.
+    pub days: u32,
+    /// The first second of its first period and where it ends, as [`ReportsPage`]'s.
+    pub from: f64,
+    pub to: f64,
+    /// Each one the board recorded tokens for, the dearest first, then by slug: the first ten are
+    /// the dearest, and all of them the dots and the table.
+    #[serde(default)]
+    pub tasks: Vec<LandedRow>,
+    /// Those it recorded none for: in no figure.
     #[serde(default)]
     pub without: u32,
-    /// The median estimated cost of those with a priced token, in US dollars; none with none.
+    /// The window's figures, of the tasks with a priced cost.
     #[serde(default)]
-    pub median: Option<f64>,
-    /// The dearest of them, at most ten, the dearest first.
+    pub figures: LandedFigures,
+    /// By the kind each was given, those that cost the most in all first, the tasks given none
+    /// last.
     #[serde(default)]
-    pub dearest: Vec<LandedTask>,
-    /// What they took up to their first review, all told.
+    pub kinds: Vec<KindRow>,
+    /// By how many reviews each took, the fewest first, the last one of four or more.
     #[serde(default)]
-    pub first_round: Spend,
-    /// What they took in every round after it: each review, and the fixes it asked for.
+    pub reviews: Vec<ReviewRow>,
+    /// When the first landing of the window that names a kind landed; none when none does, as in
+    /// a window from before kinds were kept.
     #[serde(default)]
-    pub later_rounds: Spend,
-    /// How many of them took anything after their first round.
+    pub kinds_from: Option<f64>,
+    /// The day the price table's prices were read (`YYYY-MM-DD`).
     #[serde(default)]
-    pub again: u32,
+    pub prices: String,
+    /// What was not read, each in a sentence naming its file and why: a task it held is missing.
+    #[serde(default)]
+    pub unread: Vec<String>,
 }
 
-/// A landed task and what it took: a [`Spend`]'s two fields beside it, as [`RoleSpend`]'s are.
+/// A landed task: what it and its subtasks took, in US dollars estimated at list prices.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
-pub struct LandedTask {
+pub struct LandedRow {
     pub slug: String,
     /// When it landed.
     pub at: f64,
-    pub tokens: crate::AgentTokens,
-    pub cost: crate::AgentCost,
+    /// Its kind; none for one given none.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// What its work up to its first review cost, and every round after it.
+    pub first: f64,
+    pub later: f64,
+    /// Its tokens, all told.
+    pub tokens: u64,
+    /// Whether some of its tokens had no price, and are in no dollar here; one none of whose had
+    /// one has no cost to rank, and is in no figure.
+    #[serde(default)]
+    pub unpriced: bool,
+    /// How many reviews it took: the last round it took tokens in, less the first.
+    #[serde(default)]
+    pub reviews: u32,
+    /// The lines its landing changed, added and removed; none where they were not read.
+    #[serde(default)]
+    pub lines: Option<u64>,
+}
+
+/// The figures of a set of landed tasks with a priced cost, in US dollars.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct LandedFigures {
+    /// The tasks with a priced cost.
+    pub tasks: u32,
+    #[serde(default)]
+    pub median: Option<f64>,
+    #[serde(default)]
+    pub mean: Option<f64>,
+    #[serde(default)]
+    pub p90: Option<f64>,
+    /// What they cost, all told, and what their review rounds cost of it.
+    pub cost: f64,
+    pub later: f64,
+    /// Those back after review: reviewed twice or more, a round past the second.
+    pub back: u32,
+    /// Those whose landing changed a counted line, what those cost and their lines.
+    pub lined: u32,
+    pub lined_cost: f64,
+    pub lines: u64,
+    /// Those whose landing changed no counted line, and those whose lines were not read.
+    pub unlined: u32,
+    pub unread: u32,
+}
+
+/// The landed tasks of one kind, or of none.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct KindRow {
+    /// The kind; none for the tasks given none.
+    #[serde(default)]
+    pub kind: Option<String>,
+    pub tasks: u32,
+    #[serde(default)]
+    pub median: Option<f64>,
+    /// What they cost, all told.
+    pub cost: f64,
+    /// Of them, what those whose landing changed a counted line cost, and those lines.
+    pub lined_cost: f64,
+    pub lines: u64,
+}
+
+/// The landed tasks that took one number of reviews.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct ReviewRow {
+    /// The reviews; the last row's is four, for four or more.
+    pub reviews: u32,
+    pub tasks: u32,
+    /// The mean cost of one's first round and of its review rounds.
+    pub first: f64,
+    pub later: f64,
+    #[serde(default)]
+    pub median: Option<f64>,
+}
+
+/// The top-level tasks landed in one period, each once at its last landing in the window.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct BucketLanded {
+    /// The tasks landed in it, with tokens recorded or not: what **All in** divides the period's
+    /// whole cost by.
+    pub tasks: u32,
+    /// Of them, those with a priced cost, the median and the p90 of what one cost, in dollars.
+    pub priced: u32,
+    #[serde(default)]
+    pub median: Option<f64>,
+    #[serde(default)]
+    pub p90: Option<f64>,
+    /// Of those, the ones whose landing changed a counted line, what they cost and their lines.
+    pub lined: u32,
+    pub lined_cost: f64,
+    pub lines: u64,
 }
 
 /// One period of a window.
@@ -235,6 +341,10 @@ pub struct ReportBucket {
     /// none does, as on a board that runs no workflow of its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow: Option<PlacedHours>,
+    /// The top-level tasks landed in it and what they cost, by the roll-up's day files; none when
+    /// none landed, which has no point.
+    #[serde(default)]
+    pub landed: Option<BucketLanded>,
 }
 
 /// How the top-level tasks moved in a period.

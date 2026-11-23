@@ -990,6 +990,8 @@ fn show_the_task_route_and_stats_say_the_same_tokens_and_cost() {
         (&round(1)["tokens"], &round(1)["cost"])
     );
     assert_eq!(landed["again"], 1);
+    // Reviewed once: back after none.
+    assert_eq!(landed["back_after_review"], 0);
     // The text says each figure is an estimate, with the day of the prices, and what had none.
     let text = with_files.ok("", &["stats", "--days", "1"]);
     let prices = tokens["cost"]["prices"].as_str().unwrap();
@@ -1000,7 +1002,7 @@ fn show_the_task_route_and_stats_say_the_same_tokens_and_cost() {
             .to_string(),
         "no price for gpt-x 2k tokens, in no figure".to_string(),
         "Cost per landed task: 1 landed with tokens recorded, median".to_string(),
-        "1 of 1 went past their first round".to_string(),
+        "back after review: 0 of 1 were reviewed twice or more".to_string(),
     ] {
         assert!(text.contains(&said), "{said:?} not in {text}");
     }

@@ -32,6 +32,8 @@ pub struct ReportTask {
     /// The commits a red's body names it came between ([`crate::red::between`]); none for a task
     /// not marked red, whose body is not read.
     pub between: Option<String>,
+    /// The kind it was given ([`crate::kind`]); none for one given none, or a word of no kind.
+    pub kind: Option<String>,
     /// Every line of its thread, once each and in the order written (by its key): a `system` line
     /// whole, a `verdict` cut to the words that name it, and a post (`msg`) with no text, its sender
     /// and time alone.
@@ -219,6 +221,9 @@ fn taken_apart(answer: &Value) -> Option<ReportRead> {
             instruction: task.get("instruction").and_then(Value::as_bool) == Some(true),
             marked_red,
             between: body.and_then(crate::red::between).map(str::to_owned),
+            kind: (task.get("kind").and_then(Value::as_str))
+                .and_then(|kind| crate::kind::named(kind).ok())
+                .map(str::to_owned),
             lines,
         });
     }
@@ -387,6 +392,7 @@ mod tests {
                 instruction: false,
                 marked_red: false,
                 between: None,
+                kind: None,
                 lines: vec![Line {
                     id: 3,
                     kind: "system".into(),
@@ -398,9 +404,17 @@ mod tests {
             "a line's text and sender and a task's parent, instruction and red may be missing"
         );
         let marked = json!({"slug": "a", "status": "ready", "created": 1.0, "updated": 2.0,
-            "parent": null, "instruction": true, "red": {"series": "main"}});
+            "parent": null, "instruction": true, "red": {"series": "main"}, "kind": "red"});
         let read = taken_apart(&json!({"tasks": [marked], "lines": [[]]})).unwrap();
         assert!(read.tasks[0].instruction && read.tasks[0].marked_red);
+        assert_eq!(read.tasks[0].kind.as_deref(), Some("red"));
+        // A word of no kind, or a value that is no word, is none.
+        for kind in [json!("chore"), json!(3), json!(null)] {
+            let odd = json!({"slug": "a", "status": "ready", "created": 1.0, "updated": 2.0,
+                "kind": kind});
+            let read = taken_apart(&json!({"tasks": [odd], "lines": [[]]})).unwrap();
+            assert_eq!(read.tasks[0].kind, None, "{kind}");
+        }
         assert!(!read.workflow, "a read that names no workflow runs none");
         for (workflow, runs) in [
             (json!(null), false),

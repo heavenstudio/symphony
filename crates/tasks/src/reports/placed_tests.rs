@@ -37,6 +37,7 @@ fn task(slug: &str, parent: Option<&str>, created: f64) -> ReportTask {
         instruction: false,
         marked_red: false,
         between: None,
+        kind: None,
         lines: Vec::new(),
     }
 }

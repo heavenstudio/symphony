@@ -221,9 +221,12 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         // Reports'.
         declared::<api::Grain>(cfg),
         declared::<api::report_page::ReportMark>(cfg),
-        declared::<api::report_page::LandedSpend>(cfg),
-        declared::<api::report_page::LandedTask>(cfg),
         declared::<api::report_page::Spend>(cfg),
+        declared::<api::report_page::LandedPage>(cfg),
+        declared::<api::report_page::LandedRow>(cfg),
+        declared::<api::report_page::LandedFigures>(cfg),
+        declared::<api::report_page::KindRow>(cfg),
+        declared::<api::report_page::ReviewRow>(cfg),
         // The Settings page's.
         declared::<api::SettingsPage>(cfg),
         declared::<api::SettingsFile>(cfg),
@@ -1408,6 +1411,11 @@ fn samples() -> Value {
     samples.extend(agents_samples());
     samples.insert("reports".into(), json!(reports()));
     samples.insert("emptyReports".into(), json!(api::ReportsPage::default()));
+    samples.insert("landed".into(), json!(landed_page()));
+    samples.insert(
+        "emptyLanded".into(),
+        json!(api::report_page::LandedPage::default()),
+    );
     samples.insert("settings".into(), json!(settings()));
     samples.insert("emptySettings".into(), json!(api::SettingsPage::default()));
     samples.extend(tokens_samples());
@@ -2651,23 +2659,6 @@ fn reports() -> api::ReportsPage {
             changed: vec!["settings".into()],
         }],
         unread: vec!["/repo/.git/symphony/reports/2026-11-08.json: not read".into()],
-        landed: Some(api::report_page::LandedSpend {
-            tasks: 2,
-            without: 1,
-            median: Some(1.5),
-            dearest: vec![{
-                let api::report_page::Spend { tokens, cost } = spend(2.0, false);
-                api::report_page::LandedTask {
-                    slug: "sim/jump".into(),
-                    at: MONDAY + 7_200.0,
-                    tokens,
-                    cost,
-                }
-            }],
-            first_round: spend(2.0, false),
-            later_rounds: spend(1.0, true),
-            again: 1,
-        }),
         prices: "2026-11-16".into(),
     }
 }
@@ -2868,6 +2859,109 @@ fn report_bucket(start: f64) -> api::ReportBucket {
                 spent("awaiting", "Awaiting", 6.0),
             ],
         }),
+        landed: Some(api::report_page::BucketLanded {
+            tasks: 3,
+            priced: 2,
+            median: Some(1.5),
+            p90: Some(2.8),
+            lined: 1,
+            lined_cost: 2.0,
+            lines: 400,
+        }),
+    }
+}
+
+/// The landed tasks of [`reports`]' window, every member the tab reads written: one of each kind
+/// and of none, a task priced in part, one with no lines read and one of no counted line.
+fn landed_page() -> api::report_page::LandedPage {
+    use api::report_page::{KindRow, LandedFigures, LandedPage, LandedRow, ReviewRow};
+    const MONDAY: f64 = 1_794_182_400.0;
+    let row =
+        |slug: &str, kind: Option<&str>, first: f64, later: f64, lines: Option<u64>| LandedRow {
+            slug: slug.into(),
+            at: MONDAY + 7_200.0,
+            kind: kind.map(str::to_string),
+            first,
+            later,
+            tokens: 120_000,
+            unpriced: false,
+            reviews: u32::from(later > 0.0),
+            lines,
+        };
+    LandedPage {
+        grain: api::Grain::Day,
+        days: 1,
+        from: MONDAY,
+        to: MONDAY + 86_400.0,
+        tasks: vec![
+            LandedRow {
+                unpriced: true,
+                reviews: 2,
+                ..row("app/charts", Some("feature"), 2.0, 1.5, Some(400))
+            },
+            row("docs/guide", Some("docs"), 1.0, 0.0, None),
+            row("generated/outputs", None, 0.5, 0.0, Some(0)),
+        ],
+        without: 1,
+        figures: LandedFigures {
+            tasks: 3,
+            median: Some(1.0),
+            mean: Some(5.0 / 3.0),
+            p90: Some(3.0),
+            cost: 5.0,
+            later: 1.5,
+            back: 1,
+            lined: 1,
+            lined_cost: 3.5,
+            lines: 400,
+            unlined: 1,
+            unread: 1,
+        },
+        kinds: vec![
+            KindRow {
+                kind: Some("feature".into()),
+                tasks: 1,
+                median: Some(3.5),
+                cost: 3.5,
+                lined_cost: 3.5,
+                lines: 400,
+            },
+            KindRow {
+                kind: Some("docs".into()),
+                tasks: 1,
+                median: Some(1.0),
+                cost: 1.0,
+                lined_cost: 0.0,
+                lines: 0,
+            },
+            KindRow {
+                kind: None,
+                tasks: 1,
+                median: Some(0.5),
+                cost: 0.5,
+                lined_cost: 0.0,
+                lines: 0,
+            },
+        ],
+        reviews: vec![
+            ReviewRow {
+                reviews: 0,
+                tasks: 2,
+                first: 0.75,
+                later: 0.0,
+                median: Some(0.75),
+            },
+            ReviewRow {
+                reviews: 2,
+                tasks: 1,
+                first: 2.0,
+                later: 1.5,
+                median: Some(3.5),
+            },
+        ],
+        kinds_from: Some(MONDAY + 3_600.0),
+        prices: "2026-11-16".into(),
+        unread: vec!["/repo/.git/symphony/reports/2026-11-08.json: not read".into()],
     }
 }
 

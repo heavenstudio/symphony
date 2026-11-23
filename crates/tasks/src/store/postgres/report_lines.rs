@@ -5,7 +5,7 @@ use super::Pg;
 pub(in crate::store) fn read() -> Pg<'static> {
     Pg::read(
         "(WITH picked AS (SELECT sid, slug, status, created, updated, parent, instruction, \
-        fields #> '{_board,red}' AS red, CASE WHEN (fields #> '{_board,red}') NOT IN ('null', 'false', '0', '\"\"', '[]', '{}') THEN body END AS body \
+        fields #> '{_board,red}' AS red, fields #> '{_board,kind}' AS kind, CASE WHEN (fields #> '{_board,red}') NOT IN ('null', 'false', '0', '\"\"', '[]', '{}') THEN body END AS body \
         FROM task WHERE status NOT IN ('done', 'cancelled') OR updated >= (v ->> 'since')::double precision \
             OR slug IN (SELECT slug FROM message WHERE ts >= (v ->> 'since')::double precision)) \
         , landed AS (SELECT slug FROM picked WHERE status = 'done' AND parent IS NULL) \
