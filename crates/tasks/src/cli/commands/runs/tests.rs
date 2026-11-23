@@ -310,28 +310,79 @@ fn a_command_its_runner_refused_is_named_apart_with_its_line() {
     );
 }
 
+/// A run of `label` for the task at `commit` that kept its log at `log` in `/board/runs`, a run of a
+/// pipeline as the recorder keeps one, refused by its runner with `refused` when that names a line.
+fn kept(mut run: Record, log: &str, refused: Option<&str>) -> Record {
+    let kept = serde_json::json!({
+        "pipeline": "test", "trigger": "owner", "runs": "/board/runs", "log": log,
+        "refused": refused,
+    });
+    run.run = Some(serde_json::from_value(kept).unwrap());
+    run
+}
+
 #[test]
-fn a_red_run_that_kept_a_log_is_followed_by_the_logs_path_and_no_other_run_is() {
-    let kept = |log: &str| -> recorded::Run {
-        serde_json::from_value(serde_json::json!({
-            "pipeline": "verify", "trigger": "owner", "runs": "/board/runs", "log": log,
-        }))
-        .unwrap()
+fn each_red_run_at_the_tip_that_kept_a_log_is_followed_by_the_logs_path_and_no_other_run_is() {
+    let board = "just test-rs -p board";
+    let runs = [
+        // A red at another commit is none of the tip's.
+        kept(red(1, board, EARLIER, 101), "logs/2026-01-01/e.log", None),
+        // Red once, then green at the same tip: the red is still named, as which test failed then
+        // is what tells a flake from a race.
+        kept(red(3, board, TIP, 101), "logs/2026-01-01/a.log", None),
+        kept(green(4, "just check", TIP), "logs/2026-01-01/b.log", None),
+        // A red recorded with no pipeline kept no log: nothing to name.
+        red(5, "just test-client", TIP, 1),
+        kept(green(6, board, TIP), "logs/2026-01-01/c.log", None),
+        // Two reds of one command, each named, the older first; the run still going is no red.
+        kept(
+            red(7, "just lint-rs", TIP, 1),
+            "logs/2026-01-01/d.log",
+            None,
+        ),
+        kept(
+            red(8, "just lint-rs", TIP, 2),
+            "logs/2026-01-01/f.log",
+            None,
+        ),
+        kept(
+            run(9, SLUG, "just lint-rs", TIP, Step::Running, 0),
+            "logs/2026-01-01/g.log",
+            None,
+        ),
+        // A command its runner refused ran nothing, so its log holds no failed test.
+        kept(
+            red(10, "just test-rs -p nothing", TIP, 2),
+            "logs/2026-01-01/h.log",
+            Some("error: no such package"),
+        ),
+    ];
+    let lines = printed(&runs, Ok(""));
+    let first = lines.iter().position(|line| line.contains("LOG")).unwrap();
+    let logs: Vec<&str> = (lines[first..].iter())
+        .map(String::as_str)
+        .take_while(|line| line.contains("LOG"))
+        .collect();
+    let log = |label: &str, seconds: f64, file: &str| {
+        format!(
+            "  LOG of the red `{label}` at {}, what failed is at its end: /board/runs/logs/2026-01-01/{file}",
+            at(seconds)
+        )
     };
-    let mut failed = red(3, "just test-rs -p board", TIP, 101);
-    failed.run = Some(kept("logs/2026-01-01/a.log"));
-    let mut passed = green(4, "just check", TIP);
-    passed.run = Some(kept("logs/2026-01-01/b.log"));
-    // A red recorded with no pipeline kept no log: nothing to name.
-    let bare = red(5, "just test-client", TIP, 1);
-    let lines = printed(&[failed, passed, bare], Ok(""));
-    let logs: Vec<&String> = lines.iter().filter(|line| line.contains("LOG")).collect();
     assert_eq!(
         logs,
         [
-            "  LOG of the red `just test-rs -p board`, what failed is at its end: \
-          /board/runs/logs/2026-01-01/a.log"
+            log(board, 3060.0, "a.log"),
+            log("just lint-rs", 7060.0, "d.log"),
+            log("just lint-rs", 8060.0, "f.log"),
         ],
         "{lines:#?}"
     );
+    // They follow the rows of the tip's runs, before the refused and the stamp.
+    assert!(lines[first - 1].starts_with("  "), "{lines:#?}");
+    assert!(
+        lines[first + logs.len()].starts_with("REFUSED"),
+        "{lines:#?}"
+    );
+    assert_eq!(lines.iter().filter(|line| line.contains("LOG")).count(), 3);
 }
