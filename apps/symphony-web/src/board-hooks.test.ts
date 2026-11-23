@@ -1,22 +1,30 @@
-// The task board's hooks (board.tsx), each called as React calls it while it draws, with no DOM:
-// its states, refs and memos kept from one draw to the next by the order it asks for them, and
-// after each draw every effect whose dependencies moved run, its last cleanup first, the layout
-// effects before the others (`runtime`). A state set to a new value draws the hook again, as React
-// would, until none is; a test draws it again itself once a promise it waits on has answered.
+// The task board's hooks (board.tsx), and its toolbar, which keeps a state of its own, each called
+// as React calls it while it draws, with no DOM: its states, refs and memos kept from one draw to
+// the next by the order it asks for them, and after each draw every effect whose dependencies
+// moved run, its last cleanup first, the layout effects before the others (`runtime`). A state set
+// to a new value draws it again, as React would, until none is; a test draws it again itself once
+// a promise it waits on has answered.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  BoardFilters,
+  type BoardFiltersProps,
   type FlowRead,
+  type LinkedView,
   type Side,
+  useColumns,
   useFlow,
   useLaneSides,
+  useLinkedPage,
   useLinkedTask,
+  useOpenedFocus,
   usePhoneAndMinute,
 } from "./board";
 import { NAMES, PHONE_STAGES, STAGES } from "./boardwait";
 import type { Flow } from "./flow";
-import { aTask, turn, until } from "./testing";
+import { aTask, elementOf, type Found, fire, turn, until } from "./testing";
 import type { Task } from "./wire";
+import { NO_WORK } from "./work";
 
 const runtime = vi.hoisted(() => {
   type Cleanup = (() => void) | undefined;
@@ -567,5 +575,210 @@ describe("the lanes' sides and place", () => {
     const { remember } = lanes.current;
     expect(lanes.draw(surface, true).remember).toBe(remember);
     expect(lanes.draw(surface, false).remember).not.toBe(remember);
+  });
+});
+
+describe("the board's columns", () => {
+  const ready = aTask("w/a");
+  const review = aTask("w/b", { status: "review" });
+  const slice = aTask("w/c", { parent: "w/a" });
+  const slugs = (columns: Map<string, Task[]>) =>
+    Object.fromEntries([...columns].map(([status, tasks]) => [status, tasks.map((t) => t.slug)]));
+
+  it("puts each task shown in the stage it waits in, or all in one under a wait filter", () => {
+    const columns = mount(useColumns, [review, ready, slice], "", "", NO_WORK, true);
+    expect(slugs(columns.current)).toEqual({ review: ["w/b"], ready: ["w/a"] });
+    const on = aTask("w/d", { waits_on: { kind: "check", who: "", why: "", since: 0 } });
+    expect(slugs(columns.draw([review, on], "", "check", NO_WORK, true))).toEqual({
+      waiting: ["w/d"],
+    });
+  });
+
+  it("keeps a column's list while its tasks are the same, and the columns while nothing moved", () => {
+    const given = [ready, review];
+    const columns = mount(useColumns, given, "", "", NO_WORK, true);
+    const before = columns.current;
+    expect(columns.draw(given, "", "", NO_WORK, true)).toBe(before);
+    const moved = columns.draw(
+      [ready, aTask("w/b", { status: "review", title: "Moved" })],
+      "",
+      "",
+      NO_WORK,
+      true,
+    );
+    expect(moved).not.toBe(before);
+    expect(moved.get("ready")).toBe(before.get("ready"));
+    expect(moved.get("review")).not.toBe(before.get("review"));
+  });
+});
+
+describe("the page of a linked task's stage", () => {
+  /** The board's view: a desk's lanes, the address linking `w/z`, which stands in Ready. */
+  const view = (fields: Partial<LinkedView> = {}): LinkedView => ({
+    address: "row-w/z",
+    destination: "ready",
+    held: false,
+    phone: false,
+    opened: "",
+    tab: "review",
+    wait: "",
+    search: "",
+    days: 1,
+    ...fields,
+  });
+  /** The board, `rows` tasks in Ready of the `total` it counts. */
+  const board = (rows: number, total = 3, onLoad = vi.fn()) => ({
+    tasks: Array.from({ length: rows }, (_, at) => aTask(`w/${at}`)),
+    counts: [["ready", total]] as [string, number][],
+    work: NO_WORK,
+    connected: true,
+    onLoad,
+  });
+
+  it("reads the stage's next page while the board does not hold the task, once for its rows", () => {
+    const onLoad = vi.fn();
+    const page = mount(useLinkedPage, view({ days: 7 }), board(1, 3, onLoad));
+    expect(onLoad.mock.calls).toEqual([["ready", true, "", 7]]);
+    page.draw(view({ days: 7 }), board(1, 3, onLoad));
+    expect(onLoad).toHaveBeenCalledTimes(1);
+    page.draw(view({ days: 7 }), board(2, 3, onLoad));
+    expect(onLoad).toHaveBeenCalledTimes(2);
+    // Another address asks again for the same rows.
+    page.draw(view({ days: 7, address: "row-w/y" }), board(2, 3, onLoad));
+    expect(onLoad).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    ["the board holds the task", view({ held: true }), 1, 3],
+    ["the task is not found yet", view({ destination: "" }), 1, 3],
+    ["a wait filter's column is shown", view({ wait: "check" }), 1, 3],
+    ["a search's column is shown", view({ search: "lamp" }), 1, 3],
+    ["the stage has no row yet", view(), 0, 3],
+    ["the stage has every row", view(), 3, 3],
+    ["a desk shows another stage", view({ opened: "backlog" }), 1, 3],
+    ["a phone shows another tab", view({ phone: true }), 1, 3],
+    ["a phone opened another stage", view({ phone: true, tab: "ready", opened: "build" }), 1, 3],
+  ] as [string, LinkedView, number, number][])("reads nothing when %s", (_, given, rows, total) => {
+    const onLoad = vi.fn();
+    mount(useLinkedPage, given, board(rows, total, onLoad));
+    expect(onLoad).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a desk opened it", view({ opened: "ready" })],
+    ["a phone's tab is it", view({ phone: true, tab: "ready" })],
+    ["a phone opened it", view({ phone: true, opened: "ready" })],
+  ] as [string, LinkedView][])("reads it when %s", (_, given) => {
+    const onLoad = vi.fn();
+    mount(useLinkedPage, given, board(1, 3, onLoad));
+    expect(onLoad).toHaveBeenCalledWith("ready", true, "", 1);
+  });
+});
+
+describe("the focus once the stage shown changed", () => {
+  /** The page: what holds the focus, and the control each selector finds, which says it took it. */
+  function aPage(focusHeld = false) {
+    const body = {};
+    const focused: string[] = [];
+    vi.stubGlobal("document", {
+      body,
+      activeElement: focusHeld ? {} : body,
+      querySelector: (selector: string) =>
+        selector === "none" ? null : { focus: () => focused.push(selector) },
+    });
+    return focused;
+  }
+
+  it("goes on a desk to Back to stages, and back to the control that opened the stage", () => {
+    const focused = aPage();
+    const focus = mount(useOpenedFocus, "", false);
+    expect(focused).toEqual([]);
+    focus.draw("backlog", false);
+    focus.draw("cancelled", false);
+    focus.draw("", false);
+    expect(focused).toEqual([
+      ".back-to-stages",
+      ".back-to-stages",
+      '[data-open-stage="cancelled"]',
+    ]);
+  });
+
+  it("goes on a phone to the current tab", () => {
+    const focused = aPage();
+    const focus = mount(useOpenedFocus, "", true);
+    focus.draw("build", true);
+    focus.draw("", true);
+    expect(focused).toEqual([
+      '.stage-tabs button[aria-current="page"]',
+      '.stage-tabs button[aria-current="page"]',
+    ]);
+  });
+
+  it("moves nothing while the focus is held, or while the stage shown stays", () => {
+    const held = aPage(true);
+    mount(useOpenedFocus, "", false).draw("backlog", false);
+    expect(held).toEqual([]);
+    const focused = aPage();
+    const focus = mount(useOpenedFocus, "backlog", false);
+    focus.draw("backlog", true);
+    expect(focused).toEqual([]);
+  });
+});
+
+describe("the board's toolbar and filters", () => {
+  const props = (fields: Partial<BoardFiltersProps> = {}): BoardFiltersProps => ({
+    filters: { search: "", days: 1 },
+    onFilters: vi.fn(),
+    filter: vi.fn(),
+    backlog: 4,
+    backlogOpen: false,
+    onBacklog: vi.fn(),
+    ...fields,
+  });
+  const byClass = (name: string) => (element: Found) => element.props.className === name;
+  const prop = (drawn: unknown, name: string, key: string) =>
+    elementOf(drawn as Found, byClass(name))?.props[key];
+
+  it("opens and closes its filters", () => {
+    const filters = mount(BoardFilters, props());
+    expect(prop(filters.current, "board-filters-toggle", "aria-expanded")).toBe(false);
+    expect(prop(filters.current, "row filters", "data-open")).toBe(false);
+    fire(filters.current, byClass("board-filters-toggle"), "onClick");
+    expect(prop(filters.draw(), "row filters", "data-open")).toBe(true);
+    expect(prop(filters.current, "board-filters-toggle", "aria-expanded")).toBe(true);
+    fire(filters.current, byClass("board-filters-toggle"), "onClick");
+    expect(prop(filters.draw(), "row filters", "data-open")).toBe(false);
+  });
+
+  it("reads the board under each key typed, in the window chosen", () => {
+    const given = props({ filters: { search: "", days: 7 } });
+    fire(mount(BoardFilters, given).current, byClass("dx-input"), "onInput", {
+      currentTarget: { value: "lamp" },
+    });
+    expect(given.filter).toHaveBeenCalledWith("lamp", 7);
+    expect(given.onFilters).toHaveBeenCalledWith({ search: "lamp", days: 7 });
+  });
+
+  it("reads the board in the window chosen, under the search typed", () => {
+    const given = props({ filters: { search: "lamp", days: 1 } });
+    const filters = mount(BoardFilters, given).current;
+    expect(
+      elementOf(filters, (element) => element.props.label === "Finished tasks")?.props.value,
+    ).toBe("1");
+    fire(filters, (element) => element.props.label === "Finished tasks", "onChange", "7");
+    expect(given.filter).toHaveBeenCalledWith("lamp", 7);
+    expect(given.onFilters).toHaveBeenCalledWith({ search: "lamp", days: 7 });
+  });
+
+  it("has the desk's Backlog with its count, opened or not, and none where it is none", () => {
+    const given = props({ backlogOpen: true });
+    const filters = mount(BoardFilters, given).current;
+    expect(prop(filters, "board-backlog", "children")).toEqual(["Backlog ", 4]);
+    expect(prop(filters, "board-backlog", "aria-expanded")).toBe(true);
+    fire(filters, byClass("board-backlog"), "onClick");
+    expect(given.onBacklog).toHaveBeenCalledTimes(1);
+    expect(
+      prop(mount(BoardFilters, props({ backlog: null })).current, "board-backlog", "children"),
+    ).toBeUndefined();
   });
 });
