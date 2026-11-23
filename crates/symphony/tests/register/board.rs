@@ -270,6 +270,8 @@ fn a_tidy_that_cannot_write_a_file_names_it_and_says_nothing_of_it() {
     assert_eq!(code, 1, "{out}");
     assert_eq!(out, "");
     assert!(err.starts_with(&format!("✖ {rel} not tidied: ")), "{err}");
+    // The planning step says the same prefix: the OS's own error is the write's.
+    assert!(err.contains("] File name too long: "), "{err}");
     assert_eq!(tree.read(&rel), register);
     assert_eq!(tree.names("docs"), [name]);
 }
