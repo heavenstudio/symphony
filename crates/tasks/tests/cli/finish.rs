@@ -72,7 +72,7 @@ fn a_task_that_finishes_with_a_session_launched_on_it_is_cleaned_up_after() {
 }
 
 #[test]
-fn a_verdict_that_finishes_a_task_is_cleaned_up_after() {
+fn an_approve_leaves_the_executors_terminal_to_the_land_that_finishes_the_task() {
     let p = Terminals::new("verdict");
     let worker = launched_on(&p, "sim/a");
     let board = p.board();
@@ -85,15 +85,24 @@ fn a_verdict_that_finishes_a_task_is_cleaned_up_after() {
     board.take_role("sim/a", &reviewer, "reviewer").unwrap();
     let ran = p.as_(&reviewer, &["verdict", "sim/a", "approve", "fine"]);
     // In a checkout whose justfile runs no land of its own: its default branch and the default
-    // landing are named.
+    // landing are named. Done is not landed: the land may still ask the executor for something.
     assert_eq!(
         ran.out,
         format!(
             "sim/a is approved: done on the board, not on main until it lands; `just land sim/a \
-             --as HANDLE` lands it\n{}",
-            closed_line("sim/a", &worker)
+             --as HANDLE` lands it\n→ kept pane t1 of {worker} ({})\n",
+            symphony_board::launch::NOT_LANDED
         )
     );
+    assert_eq!(p.addresses(), ["t1"]);
+    assert!(
+        board.task_sessions("sim/a").unwrap()[0].closed.is_none(),
+        "its record stays open"
+    );
+    // `finish` is the cleanup of a finished task whoever asks; a land asks once it closed the task.
+    let ran = p.run(&["finish", "sim/a"]);
+    assert_eq!(ran.out, closed_line("sim/a", &worker));
+    assert_eq!(p.addresses(), Vec::<String>::new());
 }
 
 #[test]

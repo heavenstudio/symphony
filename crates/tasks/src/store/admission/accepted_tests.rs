@@ -93,6 +93,15 @@ fn standing(f: &Fixture, slug: &str) -> Vec<(u64, Option<String>)> {
         .collect()
 }
 
+/// `slug`'s accepted outputs, read as admission reads them, by the board's own reader: the outputs
+/// [`Store::workflow_actions_with_outputs`] answers beside the actions, read alone.
+fn outputs_of(store: &Store, slug: &str) -> Outputs {
+    let reader = crate::workflow::board_service("reader");
+    (store.retrying(|| store.decided(slug, &reader, None)))
+        .map(|decided| super::outputs(&decided))
+        .unwrap()
+}
+
 fn takes(output: Option<&str>) -> Outputs {
     Outputs {
         own: None,
@@ -114,21 +123,18 @@ fn a_dependant_takes_the_output_standing_and_none_superseded_until_another_is_ac
             vec![RefusalCode::Dependency]
         );
         assert_eq!(claim(&[("sim/up", "sim/up@1")]), none_standing);
-        assert_eq!(f.store.accepted_outputs("sim/down").unwrap(), takes(None));
+        assert_eq!(outputs_of(&f.store, "sim/down"), takes(None));
 
         let first = accepted(&f.store, "sim/up");
         assert_eq!(first, "sim/up@4");
         assert_eq!(
-            f.store.accepted_outputs("sim/up").unwrap(),
+            outputs_of(&f.store, "sim/up"),
             Outputs {
                 own: Some(first.clone()),
                 takes: Vec::new(),
             }
         );
-        assert_eq!(
-            f.store.accepted_outputs("sim/down").unwrap(),
-            takes(Some("sim/up@4"))
-        );
+        assert_eq!(outputs_of(&f.store, "sim/down"), takes(Some("sim/up@4")));
         assert_eq!(previewed(&f.store, "sim/down"), vec![]);
         assert_eq!(
             claim(&[]),
@@ -138,7 +144,7 @@ fn a_dependant_takes_the_output_standing_and_none_superseded_until_another_is_ac
 
         // Reopened, its output is superseded, and none stands until another is accepted.
         taking(&f.store, "sim/up", &owner, "reopen", &[]).unwrap();
-        assert_eq!(f.store.accepted_outputs("sim/down").unwrap(), takes(None));
+        assert_eq!(outputs_of(&f.store, "sim/down"), takes(None));
         assert_eq!(claim(&[("sim/up", &first)]), none_standing);
         let second = accepted(&f.store, "sim/up");
         assert_eq!(second, "sim/up@8");
@@ -199,8 +205,8 @@ fn a_dependant_takes_the_output_standing_and_none_superseded_until_another_is_ac
 }
 
 /// The actions and the outputs from one read: what [`Store::workflow_actions`] and
-/// [`Store::accepted_outputs`] answer apart, whoever reads, for the round trips of the actions
-/// alone, and refused as the actions are.
+/// [`outputs_of`] answer apart, whoever reads, for the round trips of the actions alone, and
+/// refused as the actions are.
 #[test]
 fn the_actions_and_the_outputs_come_from_one_read_as_each_reads_them_apart() {
     for backend in BACKENDS {
@@ -213,7 +219,7 @@ fn the_actions_and_the_outputs_come_from_one_read_as_each_reads_them_apart() {
         let together = |slug: &str| f.store.workflow_actions_with_outputs(slug, &birch, &host);
         let apart = |slug: &str, principal: &Principal| {
             let next = f.store.workflow_actions(slug, principal, &host).unwrap();
-            (next, f.store.accepted_outputs(slug).unwrap())
+            (next, outputs_of(&f.store, slug))
         };
         let (next, outputs) = together("sim/down").unwrap();
         assert_eq!((next.clone(), outputs.clone()), apart("sim/down", &birch));
@@ -351,10 +357,7 @@ fn an_activation_keeps_an_output_where_it_stands_and_supersedes_it_where_dependa
         };
         activated(outputs().replace("label = \"Approved\"", "label = \"Signed off\""));
         assert_eq!(standing(&f, "sim/up").len(), 4, "kept where it stands");
-        assert_eq!(
-            f.store.accepted_outputs("sim/down").unwrap(),
-            takes(Some(&output))
-        );
+        assert_eq!(outputs_of(&f.store, "sim/down"), takes(Some(&output)));
         let approved = "legacy = \"done\", satisfies_dependencies = true, completion = \"none\"";
         assert!(outputs().contains(approved));
         activated(outputs().replace(
@@ -362,7 +365,7 @@ fn an_activation_keeps_an_output_where_it_stands_and_supersedes_it_where_dependa
             "legacy = \"done\", satisfies_dependencies = false, completion = \"none\"",
         ));
         assert_eq!(standing(&f, "sim/up").last(), Some(&(5, None)));
-        assert_eq!(f.store.accepted_outputs("sim/down").unwrap(), takes(None));
+        assert_eq!(outputs_of(&f.store, "sim/down"), takes(None));
         assert_eq!(f.store.get("sim/up").unwrap().status, "done");
     }
 }

@@ -53,6 +53,19 @@ const REGENERABLE: [&str; 11] = [
     ".codex/hooks*",
 ];
 
+/// What an operating system's file manager writes into a folder a person opens there, at any depth:
+/// nobody's work, so it goes with a worktree whether the project's ignore file names it or not. A
+/// worktree reads the ignore file of its own branch, so a line added on the default branch later
+/// reaches none that exists.
+const OS_METADATA: [&str; 6] = [
+    ".DS_Store",
+    "*/.DS_Store",
+    "Thumbs.db",
+    "*/Thumbs.db",
+    "desktop.ini",
+    "*/desktop.ini",
+];
+
 /// Whether `text` matches `pattern` as Python's `fnmatch.fnmatchcase` matches it, for the patterns
 /// above: `*` any run of characters (a `/` too), `?` any one; anything else itself.
 pub fn fnmatch(pattern: &str, text: &str) -> bool {
@@ -84,7 +97,20 @@ pub fn fnmatch(pattern: &str, text: &str) -> bool {
 /// work is `finished` lets what is ignored in it go, as it does its caches ([`FINISHED_OUTPUT`]). A
 /// status git cannot give is something left behind: it keeps the worktree.
 pub fn left_behind(path: &Path, finished: bool, artifacts: Option<&str>) -> Vec<String> {
-    file_status(path, finished, artifacts).left
+    left_behind_with(path, finished, artifacts, &[])
+}
+
+/// [`left_behind`] where the project names ignored paths of its own that go with a merged
+/// worktree: `disposable`, its `[board] sweep_disposable` ([`crate::project::disposable`]), each
+/// matched as the board's own are ([`DISPOSABLE`]) and, as they are, nowhere under the artifacts
+/// folder, nor a folder holding it, which git names whole.
+pub fn left_behind_with(
+    path: &Path,
+    finished: bool,
+    artifacts: Option<&str>,
+    disposable: &[String],
+) -> Vec<String> {
+    file_status(path, finished, artifacts, disposable).left
 }
 
 /// Keep the native ignored-directory decisions beside the verdict, so a clean proof can prune
@@ -107,7 +133,17 @@ pub(in crate::sweep) fn regenerable(name: &str) -> bool {
     REGENERABLE.iter().any(|pattern| fnmatch(pattern, name))
 }
 
-fn ignored_disposable(name: &str, finished: bool, artifacts: Option<&str>) -> bool {
+/// Whether `name` is a file manager's metadata ([`OS_METADATA`]), untracked or ignored.
+pub(in crate::sweep) fn os_metadata(name: &str) -> bool {
+    OS_METADATA.iter().any(|pattern| fnmatch(pattern, name))
+}
+
+fn ignored_disposable(
+    name: &str,
+    finished: bool,
+    artifacts: Option<&str>,
+    project: &[String],
+) -> bool {
     // What is below the artifacts folder, `` for the folder itself.
     let below = artifacts.and_then(|folder| {
         let rest = name.strip_prefix(folder)?;
@@ -119,7 +155,14 @@ fn ignored_disposable(name: &str, finished: bool, artifacts: Option<&str>) -> bo
     });
     let root_log = below.is_some_and(|tail| !tail.contains('/') && tail.ends_with(".log"));
     let goes = |patterns: &[&str]| patterns.iter().any(|pattern| fnmatch(pattern, name));
-    let disposable = below.is_none() && goes(&DISPOSABLE);
+    // Git names an ignored folder whole (`out/`), so one that holds the artifacts folder
+    // (`out/shots`) holds its evidence, which a project's pattern never lets go with it: the
+    // evidence is set aside from the folder's own names alone (`sweep::aside`).
+    let holds_artifacts = artifacts.is_some_and(|folder| {
+        name.ends_with('/') && format!("{}/", folder.trim_end_matches('/')).starts_with(name)
+    });
+    let named = !holds_artifacts && project.iter().any(|pattern| fnmatch(pattern, name));
+    let disposable = below.is_none() && (goes(&DISPOSABLE) || named);
     root_log || disposable || (finished && (goes(&FINISHED_OUTPUT) || below.is_some()))
 }
 
@@ -127,6 +170,7 @@ pub(in crate::sweep) fn file_status(
     path: &Path,
     finished: bool,
     artifacts: Option<&str>,
+    disposable: &[String],
 ) -> FileStatus {
     let Some(text) = stdout(
         path,
@@ -147,8 +191,8 @@ pub(in crate::sweep) fn file_status(
         let status = line.get(..2).unwrap_or(line);
         let raw = line.get(3..).unwrap_or("");
         let named = raw.trim_matches('"');
-        if (matches!(status, "!!" | "??") && regenerable(named))
-            || (status == "!!" && ignored_disposable(named, finished, artifacts))
+        if (matches!(status, "!!" | "??") && (regenerable(named) || os_metadata(named)))
+            || (status == "!!" && ignored_disposable(named, finished, artifacts, disposable))
         {
             // Quoted or non-ASCII status paths need a lossless decoder before they can justify
             // pruning. Leave those for the bounded inventory to read or conservatively refuse.
@@ -171,8 +215,9 @@ pub(in crate::sweep) fn file_status(
     }
 }
 
-/// Remove only untracked regenerable output, so the non-forced worktree removal can still let
-/// Git protect every tracked edit and every other untracked file.
+/// Remove only untracked regenerable output and a file manager's metadata ([`OS_METADATA`]), so
+/// the non-forced worktree removal can still let Git protect every tracked edit and every other
+/// untracked file. A pathspec's `*` crosses `/`, so each metadata name is cleaned at any depth.
 pub(in crate::sweep) fn clean_regenerable(path: &Path) -> bool {
     succeeds(
         path,
@@ -188,6 +233,12 @@ pub(in crate::sweep) fn clean_regenerable(path: &Path) -> bool {
             "symphony/.target.clear.*",
             "symphony/build/",
             ".codex/hooks*",
+            ".DS_Store",
+            "*/.DS_Store",
+            "Thumbs.db",
+            "*/Thumbs.db",
+            "desktop.ini",
+            "*/desktop.ini",
         ],
     )
 }
@@ -262,7 +313,7 @@ mod tests {
     fn the_projects_artifacts_folder_is_evidence_and_its_top_logs_go() {
         for folder in ["artifacts", "out/shots"] {
             let at = |rest: &str| format!("{folder}{rest}");
-            let goes = |name: &str, finished| ignored_disposable(name, finished, Some(folder));
+            let goes = |name: &str, finished| ignored_disposable(name, finished, Some(folder), &[]);
             assert!(goes(&at("/verify.log"), false), "{folder}: a top log goes");
             assert!(!goes(&at("/deep/verify.log"), false), "{folder}");
             assert!(!goes(&at("/a.png"), false), "{folder}: open work keeps it");
@@ -272,14 +323,80 @@ mod tests {
             assert!(!goes(&at("x/a.png"), true), "{folder}x is another folder");
         }
         // The folder is the project's alone: another one named artifacts is none of it.
-        let other = |name: &str| ignored_disposable(name, true, Some("out/shots"));
+        let other = |name: &str| ignored_disposable(name, true, Some("out/shots"), &[]);
         assert!(!other("artifacts/a.png"));
         assert!(!other("artifacts/verify.log"));
         // With no folder the project file names, nothing is evidence.
         for name in ["artifacts/a.png", "artifacts/verify.log"] {
-            assert!(!ignored_disposable(name, true, None), "{name}");
+            assert!(!ignored_disposable(name, true, None, &[]), "{name}");
         }
-        assert!(ignored_disposable(".DS_Store", false, None));
+        assert!(ignored_disposable(".DS_Store", false, None, &[]));
+    }
+
+    #[test]
+    fn a_file_managers_metadata_is_named_at_any_depth_and_nothing_like_it_is() {
+        for name in [".DS_Store", "sim/.DS_Store", "a/b/Thumbs.db", "desktop.ini"] {
+            assert!(os_metadata(name), "{name}");
+        }
+        for name in [
+            "notes.DS_Store",
+            ".DS_Store/",
+            "sim/.DS_Store.bak",
+            "Desktop.ini.txt",
+        ] {
+            assert!(!os_metadata(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn what_the_project_names_goes_as_the_boards_own_does_and_never_its_artifacts() {
+        let project = ["node_modules/", "*/node_modules/", "*.tsbuildinfo"].map(String::from);
+        let goes = |name: &str| ignored_disposable(name, false, Some("artifacts"), &project);
+        for name in [
+            "node_modules/",
+            "web/node_modules/",
+            "apps/web/node_modules/",
+            "tsconfig.tsbuildinfo",
+            "web/tsconfig.app.tsbuildinfo",
+        ] {
+            assert!(goes(name), "{name}");
+            assert!(
+                !ignored_disposable(name, true, Some("artifacts"), &[]),
+                "{name}: no project names it, and it is kept"
+            );
+        }
+        // A file beside the folder, another folder and a local setting are none of them.
+        for name in ["node_modules.txt", "dist/", ".env", "web/node_modules/x.js"] {
+            assert!(!goes(name), "{name}");
+        }
+        // Open work's evidence stays evidence, whatever the project names.
+        assert!(!goes("artifacts/node_modules/"));
+        assert!(!goes("artifacts/shots/tsconfig.tsbuildinfo"));
+    }
+
+    #[test]
+    fn what_the_project_names_never_takes_a_folder_that_holds_its_artifacts() {
+        // Git names an ignored folder whole: `out/` stands for everything in it, evidence too.
+        let project = ["out/", "o*/", "*/node_modules/"].map(String::from);
+        let goes =
+            |name: &str, finished| ignored_disposable(name, finished, Some("out/shots"), &project);
+        for finished in [false, true] {
+            assert!(!goes("out/", finished), "finished: {finished}");
+        }
+        // Beside the folder, inside the same parent, and beyond it, what the project names goes.
+        for name in [
+            "out/cache/",
+            "out/web/node_modules/",
+            "outer/",
+            "web/node_modules/",
+        ] {
+            assert!(goes(name, false), "{name}");
+        }
+        // A folder whose name only begins like the parent's holds none of it.
+        let shots = |name: &str| ignored_disposable(name, false, Some("out/shots"), &project);
+        assert!(shots("o/"), "o/ matches o*/ and holds no out/shots");
+        // With no artifacts folder there is no evidence to hold, and the named parent goes.
+        assert!(ignored_disposable("out/", false, None, &project));
     }
 
     #[test]
