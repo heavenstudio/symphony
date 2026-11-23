@@ -2085,9 +2085,13 @@ orchestrator_tasks (line 2) is "sixteen"; not a whole number`).
   orchestrator_tasks): it gains none until one of them is done or cancelled or it lets one go`.
   The board gives it none: a filing passes it over and says so ([Tasks and
   roles](#tasks-and-roles), **Filed**), and the board's give at a leave, a reopen and every read
-  of the whole board takes the next that stays and is under it, else marks the task waiting. The
-  owner's hand-over, and a move that keeps moved work with the orchestrator it had, are held to
-  no limit, as the owner's moves and hand-overs are not to the cap.
+  of the whole board takes the next that stays and is under it, else marks the task waiting. Where
+  the places left are fewer than the tasks with no orchestrator, a pass gives first the tasks that
+  wait on nothing, each dependency the board holds being done, and then the ones that still wait on
+  another, which nobody can start whoever orchestrates them, each group in the board's order
+  (`crates/tasks/src/orchestration.rs`). The owner's hand-over, and a move that keeps moved work
+  with the orchestrator it had, are held to no limit, as the owner's moves and hand-overs are not
+  to the cap.
 - **A task with no orchestrator is well.** It waits for one under its limit that stays: `just
   tasks show` says so and names the `role` command any orchestrator under its limit takes it with,
   every orchestrator hears it, and the board's health counts it and warns of none ([Board

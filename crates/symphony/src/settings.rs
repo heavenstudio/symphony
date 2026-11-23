@@ -101,12 +101,13 @@ impl Machine {
 
 /// The class of `key` in the top-level table `table` of the project file: reviewed where the
 /// local settings file's reader refuses it as holding a command or deciding what lands, the whole
-/// table or the key by name; a preference otherwise.
+/// table or the key by name, and the table said whole (`key` empty) where it holds a key so
+/// refused; a preference otherwise.
 pub fn class(table: &str, key: &str) -> SettingClass {
     let reviewed = local::PROTECTED.contains(&table)
         || local::PROTECTED_KEYS
             .iter()
-            .any(|(of, keys)| *of == table && keys.contains(&key));
+            .any(|(of, keys)| *of == table && (key.is_empty() || keys.contains(&key)));
     if reviewed {
         SettingClass::Reviewed
     } else {

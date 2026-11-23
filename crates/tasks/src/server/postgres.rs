@@ -4,9 +4,9 @@
 //! [its card](../../../../docs/operations/analysis/postgresql-binary-source.md#postgresql-binary-source)).
 //! It serves the board whose
 //! home's durable engine identity names it ([`Home::board_server`]), and a board not made yet,
-//! whose first start writes that identity before it makes the data ([`Postgres::make`]), as a
-//! start does for a cluster it finds with none; a board on SurrealDB becomes PostgreSQL's by the
-//! move alone ([`super::moving`]).
+//! whose first start writes that identity before it makes the data ([`Postgres::serve`]), as a
+//! start does for a cluster it finds with none, running or not; a board on SurrealDB becomes
+//! PostgreSQL's by the move alone ([`super::moving`]).
 //!
 //! Its data is `postgresql/` in the board's folder, made by `initdb` at the first start in a folder
 //! beside it and renamed into place, so an `initdb` cut short never leaves a half-made one where a
@@ -183,9 +183,15 @@ impl Postgres {
     }
 
     /// [`Postgres::ensure`] under the caller's starters' lock, also while that caller holds the
-    /// board stopped: the move's own server on the held data ([`super::moving`]).
+    /// board stopped: the move's own server on the held data ([`super::moving`]). A home that
+    /// names no engine yet is named PostgreSQL's first, once its programs' release is one the
+    /// board runs on ([`Home::identified`]), whatever it holds: a board not made yet, before its
+    /// first start makes it, and a cluster found with no identity (placed by hand, or by a build
+    /// from before the identity), before the start serves it, whether it finds its server
+    /// running or starts it.
     pub(super) fn serve(&self) -> Result<Serving, ServerError> {
         let version = self.version()?;
+        self.home.identified()?;
         // The record is read once for a server that serves, as every command of a board whose
         // server outlives its starter finds it, and again only after a wait.
         let mut record = self.recorded();
@@ -227,13 +233,9 @@ impl Postgres {
 
     /// The data made by `initdb` when it is not there (it holds no `PG_VERSION`), in a folder
     /// beside it, which an earlier `initdb` cut short may have left and which is made anew, then
-    /// renamed into place. A home that names no engine yet is named PostgreSQL's first
-    /// ([`Home::identified`]), whether its data is there or not: a board not made yet is made
-    /// here by its first start, and a cluster found with no identity (placed by hand, or by a
-    /// build from before the identity) is given it by the start that serves it. What `initdb`
+    /// renamed into place, in a home [`Postgres::serve`] has named PostgreSQL's. What `initdb`
     /// says goes to the log.
     fn make(&self) -> Result<(), ServerError> {
-        self.home.identified()?;
         let data = self.data();
         if data.join("PG_VERSION").is_file() {
             return Ok(());
@@ -372,13 +374,15 @@ impl Postgres {
 
     /// What `postmaster.pid` says, when the process it names is a live server of this data: a
     /// record a server that was killed left, or one whose pid went to another process, is none,
-    /// and so is one whose process `ps` could not be run to tell of ([`Postgres::recorded_now`]).
+    /// and so is one whose process `ps` could not tell of, not run or failing
+    /// ([`Postgres::recorded_now`]).
     fn recorded(&self) -> Option<PidFile> {
         self.recorded_now().unwrap_or(None)
     }
 
     /// [`Postgres::recorded`], refused, saying why, where the record names a live process and
-    /// `ps` could not be run to tell whether it is this data's server: which says neither.
+    /// `ps`, not run or failing, could not tell whether it is this data's server: which says
+    /// neither.
     fn recorded_now(&self) -> Result<Option<PidFile>, String> {
         let Some(record) = fs::read_to_string(self.data().join("postmaster.pid"))
             .ok()
@@ -405,7 +409,7 @@ impl Postgres {
     }
 
     /// Whether `pid` runs this board's `postgres` on its data, as the supervisor starts it.
-    /// Refused, saying why, when `ps` could not be run, which tells neither.
+    /// Refused, saying why, when `ps` could not be run or failed, which tells neither.
     fn serves(&self, pid: i64) -> Result<bool, String> {
         self.serves_as_said(output(command("ps").args([
             "-ww",
@@ -417,9 +421,15 @@ impl Postgres {
     }
 
     /// [`Postgres::serves`], by what `ps` said of the process, `said`. One it says nothing of
-    /// (it exits 1 for a pid with no process) is not this data's server.
+    /// (it exits 1 for a pid with no process, with nothing on its error output) is not this
+    /// data's server; one it exits on saying why on its error output, ps itself failing, tells
+    /// neither, as a ps that could not be run.
     fn serves_as_said(&self, said: std::io::Result<std::process::Output>) -> Result<bool, String> {
         let said = said.map_err(|why| format!("ps could not be run: {why}"))?;
+        let failed = String::from_utf8_lossy(&said.stderr);
+        if !said.status.success() && !failed.trim().is_empty() {
+            return Err(format!("ps failed ({}): {}", said.status, failed.trim()));
+        }
         let line = String::from_utf8_lossy(&said.stdout);
         let line = line.trim();
         let data = self.data().display().to_string();
@@ -569,9 +579,9 @@ impl Postgres {
     /// reaches and which says the load; then it is stopped. One whose record still names it, a
     /// live server of the data of the same pid, still runs: pg_ctl's wait met its bound, or it
     /// could not signal it. A record naming a live server of another pid is never taken for the
-    /// one the stop read: it is refused, naming both. One whose process `ps` could not be run to
-    /// tell of is refused at once, as neither gone nor running, rather than waited for as gone.
-    /// None is signalled again.
+    /// one the stop read: it is refused, naming both. One whose process `ps`, not run or failing,
+    /// could not tell of is refused at once, as neither gone nor running, rather than waited for
+    /// as gone. None is signalled again.
     fn stop_failed(&self, record: &PidFile, said: &str) -> Result<(), ServerError> {
         self.stop_judged(record, said, self.recorded_now())
     }

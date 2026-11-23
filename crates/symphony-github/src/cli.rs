@@ -2,7 +2,8 @@
 //!
 //! `status` reads what is kept and the committed settings and writes nothing anywhere, and so
 //! does `describe`, which says it as the exchange's entry on the Settings page
-//! ([`crate::describe`]); `tokens` says of each token file whether its token is current, never the token.
+//! ([`crate::describe`]); `tokens` says of each token file whether its token is current, never the
+//! token.
 //! `publish`, `resolve` and `drop` write only the adapter's own folder, and `resolve` and `drop`
 //! make none where nothing is kept. `preview` reads GitHub when the adapter is turned on and
 //! writes nothing there or on the board; turned off, it reads nothing there, and neither it nor
