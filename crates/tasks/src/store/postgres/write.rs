@@ -20,6 +20,12 @@ pub(in crate::store) const SEEN: &str = "IF EXISTS (SELECT 1 FROM jsonb_array_el
     RAISE EXCEPTION 'stale'; \
 END IF;";
 
+/// Whether a session `v -> 'add'` gives a role has left: the sessions read by `session_handle`, all
+/// of them by one condition (`= ANY`), whatever number the server guesses a list holds.
+pub(in crate::store) const ADDED_GONE: &str = "EXISTS (SELECT 1 FROM session s \
+        WHERE s.handle = ANY (ARRAY(SELECT a ->> 'handle' FROM jsonb_array_elements(v -> 'add') AS a)) \
+        AND s.left_at IS NOT NULL)";
+
 /// The rule's write: stale unless the actor is there and has not left, the task is at the version
 /// read and every session it took to be gone is as it was read; then the actor, the witnesses
 /// and the incoming holders fenced, the actor seen, the roles dropped and added, the task moved
@@ -38,8 +44,7 @@ UPDATE session SET last_seen = greatest(last_seen, (v ->> 'now')::double precisi
     WHERE handle = v ->> 'actor'; \
 DELETE FROM role WHERE id IN (SELECT jsonb_build_array(v ->> 'slug', d ->> 'handle', d ->> 'role') \
     FROM jsonb_array_elements(v -> 'drop') AS d); \
-IF EXISTS (SELECT 1 FROM jsonb_array_elements(v -> 'add') AS a \
-        JOIN session s ON s.handle = a ->> 'handle' WHERE s.left_at IS NOT NULL) THEN \
+IF {ADDED_GONE} THEN \
     RAISE EXCEPTION 'stale'; \
 END IF; \
 INSERT INTO role (id, slug, handle, role, since, expires) \

@@ -97,6 +97,8 @@
 //! `setting:⟨key⟩` is a stored preference, from the first additive step on schema 28
 //! ([`ADDED`], `crate::settings`): the setting's key, the value it holds, its revision and every
 //! change of it. Schemaless and with no event: its readers read it at each read of the settings.
+//! The second additive step on schema 28 is PostgreSQL's index of `session` by `handle`
+//! (`session_handle`), where a session is read by its handle rather than by its id.
 //!
 //! `writer:[host, path]` is a program that opens the board to write, the schema it was built at and
 //! when it was last seen (`store/writers.rs`), from schema 18: schemaless and with no event, as
@@ -170,16 +172,27 @@ pub struct Addition {
 /// This build's additive steps on [`VERSION`], in order: a breaking step empties it, its
 /// definitions going into [`DEFINE`] and the PostgreSQL tables, as what they added is then the
 /// contract's.
-pub const ADDED: &[Addition] = &[Addition {
-    surreal: "DEFINE TABLE IF NOT EXISTS setting SCHEMALESS;",
-    postgres: "CREATE TABLE IF NOT EXISTS setting (id jsonb PRIMARY KEY, \
-               doc jsonb NOT NULL CHECK (jsonb_typeof(doc) = 'object'));",
-    tables: &["setting"],
-    why: "the table setting, the board's store of preferences (crate::settings): a build without \
-          it never reads or writes the table and reads every setting from the files alone, so a \
-          stored value holds only for builds that have the step, and no rule on a table there \
-          before reads it",
-}];
+pub const ADDED: &[Addition] = &[
+    Addition {
+        surreal: "DEFINE TABLE IF NOT EXISTS setting SCHEMALESS;",
+        postgres: "CREATE TABLE IF NOT EXISTS setting (id jsonb PRIMARY KEY, \
+                   doc jsonb NOT NULL CHECK (jsonb_typeof(doc) = 'object'));",
+        tables: &["setting"],
+        why: "the table setting, the board's store of preferences (crate::settings): a build \
+              without it never reads or writes the table and reads every setting from the files \
+              alone, so a stored value holds only for builds that have the step, and no rule on a \
+              table there before reads it",
+    },
+    Addition {
+        surreal: "",
+        postgres: "CREATE INDEX IF NOT EXISTS session_handle ON session (handle);",
+        tables: &[],
+        why: "an index of session by handle on PostgreSQL, where a write's actor, an inbox's \
+              reader and a channel's session are read by handle, not by the row's id: a build \
+              without it reads the same rows by scanning the table, and writes them as it did; \
+              SurrealDB reads a session by its record id and has nothing to add",
+    },
+];
 
 /// How many additive steps this build has on its contract: [`ADDED`]'s length.
 pub const ADDITIONS: i64 = {

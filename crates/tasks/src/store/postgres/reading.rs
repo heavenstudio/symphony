@@ -21,9 +21,10 @@ const NOTHING_BESIDE: Beside = Beside {
     has_callbacks: "false",
 };
 
-/// Whether any session that has not left keeps a callback address.
-const HAS_CALLBACKS: &str = "EXISTS (SELECT 1 FROM callback_state c \
-    WHERE c.doc ? 'address' \
+/// Whether any session that has not left keeps a callback address: the channels by
+/// `callback_state_address` (`super::callbacks::registrations`).
+pub(in crate::store) const HAS_CALLBACKS: &str = "EXISTS (SELECT 1 FROM callback_state c \
+    WHERE c.doc ->> 'address' IS NOT NULL \
     AND (SELECT s.left_at FROM session s WHERE s.handle = c.doc ->> 'handle') IS NULL)";
 
 /// Whether the task `v ->> 'slug'` is there.

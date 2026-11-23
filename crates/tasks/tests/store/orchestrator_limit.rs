@@ -454,6 +454,27 @@ fn a_take_written_between_a_gives_read_and_its_write_has_it_decide_again(backend
 }
 
 on_both! {
+fn a_receiver_leaving_between_a_gives_read_and_its_write_has_it_decide_again(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
+    let store = limited(&f, 2);
+    let amber = f.session("orchestrator");
+    orchestrating(&f, &store, &amber, "tools/a", 1);
+    f.task("tools/free");
+    settle(&f, &[&amber]);
+    // While the pass decides on the board it read, amber, whom it gives the task to, leaves.
+    let (leaver, handle) = (f.other(), amber.clone());
+    let late = f.late(move || leaver.leave(&handle).unwrap()).limiting(Limits {
+        orchestrator_tasks: 2,
+        ..Limits::default()
+    });
+    let given = late.give_unowned(None).unwrap();
+    assert!(given.gave.is_empty(), "{given:?}");
+    assert!(given.waiting.contains(&"tools/free".to_string()), "{given:?}");
+    assert!(orchestrators_of(&f, "tools/free").is_empty());
+}
+}
+
+on_both! {
 fn a_quiet_orchestrators_work_waits_while_the_one_that_stays_is_full(backend: Backend) {
     let f = Fixture::on(backend, Seed::default());
     let store = limited(&f, 1);
