@@ -23,6 +23,7 @@ mod go;
 mod hc;
 mod last_look;
 mod launch;
+mod off;
 mod procs;
 mod reap;
 mod reap_unread;
@@ -155,6 +156,21 @@ impl Hc for Hooked<'_> {
 /// so a loaded machine's slow looks never run it out before the terminal ends by its count of them.
 const ENDING: std::time::Duration = test_time::backstop(std::time::Duration::from_secs(10));
 
+/// The folder of a world's agent programs, the search path its launches look for them on.
+pub const PROGRAMS: &str = "agents-bin";
+
+/// `folder` made, holding a runnable stand-in for each program of `names`: what a launch finds on
+/// its search path (no fake hc runs it).
+pub fn programs(folder: &Path, names: &[&str]) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::create_dir_all(folder).unwrap();
+    for name in names {
+        let program = folder.join(name);
+        fs::write(&program, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
 /// The id of the project's space in a new world's Herdr app.
 pub const SPACE: &str = "sp-lamp";
 
@@ -186,6 +202,8 @@ impl World {
         let folder = Folder::new();
         let repo = folder.0.join("lamp-works");
         fixtures::repository(&repo);
+        // The agents' programs a launch looks for on its search path ([`World::machine`]).
+        programs(&folder.0.join(PROGRAMS), &["claude", "codex"]);
         let wt = folder.0.join("lamp-works-wt");
         let (f, orch) = fixtures::board();
         let mut env = Env {
@@ -271,6 +289,7 @@ impl World {
             mode: "auto".into(),
             board_env: Vec::new(),
             bounds: None,
+            path: Some(self.folder.0.join(PROGRAMS).into_os_string()),
         }
     }
 

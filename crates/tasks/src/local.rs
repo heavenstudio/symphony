@@ -5,8 +5,8 @@
 //! ([`crate::launch::Defaults::configured`]) and the Symphony's project load all take what
 //! [`beside`] read, so each takes the same override.
 //!
-//! It holds preferences alone: `[agents] launch` (`default`, `model`, `effort`),
-//! `[agents.models]` (a role's model) and `[limits]`. A setting that holds a command or a program
+//! It holds preferences alone: `[agents] launch` (`default`, `model`, `effort`, and the agents'
+//! switches, `[agents.launch.on]`), `[agents.models]` (a role's model) and `[limits]`. A setting that holds a command or a program
 //! the Symphony runs, or that decides what lands ([`PROTECTED`], [`PROTECTED_KEYS`]), is refused
 //! there by name and never read from it: a file no commit records must not change the landing gate
 //! or run a command, which would be a way around review that leaves no trace. Any other table or
@@ -22,9 +22,16 @@
 //! [`Place`]): one set of rules and one pair of lists says what either place may hold, so a setting
 //! refused in the file is refused in the store by the same line. The store holds one preference
 //! more, `[agents] panes` ([`PANES`]), which the local file has no place for.
+//!
+//! The launch default cannot be turned off ([`crate::launch::defaults`]): a local file that turns
+//! off the default it names, or, naming none, the default the files and the store under it give
+//! ([`beside_with`]), is refused whole with the line that says to pick another default first.
 
-use crate::launch::defaults::{ROLES, agent};
+use crate::launch::defaults::{
+    AGENT_KEY, AGENTS, ON, ON_TABLES, ROLES, agent, default_off, switch, written_agent,
+};
 use crate::limits;
+use crate::settings::Stored;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use toml::Value;
@@ -110,6 +117,8 @@ pub struct Local {
     pub limits: BTreeMap<&'static str, usize>,
     /// `[agents] panes`, which the board's store alone holds ([`Place::Store`]).
     pub panes: Option<String>,
+    /// `[agents.launch.on]`: each agent's switch it writes, in [`AGENTS`]' order.
+    pub on: [Option<bool>; 2],
     text: String,
 }
 
@@ -136,8 +145,14 @@ impl Local {
             models,
             limits,
             panes,
+            on,
             ..
         } = other;
+        for (into, written) in self.on.iter_mut().zip(on) {
+            if written.is_some() {
+                *into = *written;
+            }
+        }
         for (into, written) in self.launch.iter_mut().zip(launch) {
             if written.is_some() {
                 into.clone_from(written);
@@ -182,19 +197,76 @@ pub fn path_beside(project_file: &Path) -> PathBuf {
     project_file.with_file_name(FILE)
 }
 
-/// The local file beside the project file at `project_file`, as [`parse`] reads it: none when
-/// there is no file.
+/// The local file beside the project file at `project_file`, as [`beside_with`] reads it over a
+/// board's store that holds nothing.
 ///
 /// # Errors
 ///
 /// Everything wrong with it, each said whole: the file is then read by nobody ([`left_out`]).
 pub fn beside(project_file: &Path) -> Result<Option<Local>, Vec<String>> {
+    beside_with(project_file, &Stored::default())
+}
+
+/// The local file beside the project file at `project_file`, as [`parse`] reads it, over what the
+/// board's store holds in force (`stored`): none when there is no file.
+///
+/// # Errors
+///
+/// Everything wrong with it, each said whole: the file is then read by nobody ([`left_out`]).
+/// Besides what [`parse`] refuses, a switch that turns off the launch default under it, where it
+/// names none: the store's in force, else the project file's, else the board's own.
+pub fn beside_with(project_file: &Path, stored: &Stored) -> Result<Option<Local>, Vec<String>> {
     let path = path_beside(project_file);
-    match std::fs::read_to_string(&path) {
-        Ok(text) => parse(&path, &text).map(Some),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(vec![format!("cannot read {}: {error}", path.display())]),
+    let local = match std::fs::read_to_string(&path) {
+        Ok(text) => parse(&path, &text)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(vec![format!("cannot read {}: {error}", path.display())]),
+    };
+    if agent(AGENT_KEY, local.launch[0].as_deref())
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        // The default it names, judged with its switches by [`judge`].
+        return Ok(Some(local));
     }
+    let in_store = stored.holds("agents.launch.default").then(|| {
+        agent(AGENT_KEY, stored.held.launch[0].as_deref())
+            .ok()
+            .flatten()
+    });
+    let committed = || {
+        let text = std::fs::read_to_string(project_file).ok()?;
+        let named = written_agent(&text)?;
+        let line = limits::line(&text, &["agents", "launch"], "default");
+        Some((named, line))
+    };
+    let (under, chosen) = match (in_store.flatten(), committed()) {
+        (Some(named), _) => (named, format!("{} {AGENT_KEY}", crate::settings::SAID)),
+        (None, Some((named, line))) => {
+            let at = limits::Written {
+                at: format!("{} {AGENT_KEY}", crate::project::FILE),
+                line,
+            };
+            (named, at.said())
+        }
+        (None, None) => (AGENTS[0], "the board's own".to_string()),
+    };
+    let at = AGENTS.iter().position(|known| *known == under).unwrap_or(0);
+    if local.on[at] == Some(false) {
+        let name = format!("[{}] {under}", ON_TABLES.join("."));
+        let name = limits::Written {
+            at: name,
+            line: local.line(&ON_TABLES, under),
+        }
+        .named();
+        return Err(vec![format!(
+            "{}: {}",
+            path.display(),
+            default_off(&name, under, &chosen)
+        )]);
+    }
+    Ok(Some(local))
 }
 
 /// `problem` with a local file as a reader that runs on says it: none of the file is read.
@@ -306,6 +378,21 @@ pub fn judge(
                     };
                     for (key, value) in written {
                         let name = named(&tables, Some(key));
+                        if tables[1] == "launch" && key == ON {
+                            let Value::Table(switches) = value else {
+                                let why = "it is a table of each agent's switch";
+                                problems.push(wrong(name, value, why));
+                                continue;
+                            };
+                            for (agent, value) in switches {
+                                let name = named(&ON_TABLES, Some(agent));
+                                match switch(&name, agent, value) {
+                                    Ok((at, on)) => local.on[at] = Some(on),
+                                    Err(why) => problems.push(format!("{said}: {why}")),
+                                }
+                            }
+                            continue;
+                        }
                         let Some(at) = known.iter().position(|k| k == key) else {
                             problems.push(unknown(said, &name));
                             continue;
@@ -360,6 +447,17 @@ pub fn judge(
                 }
             }
             (_, None) => problems.push(not_local(place, said, &named(&[table], None))),
+        }
+    }
+    // A file that turns off the default it names does not load; the store's entries are judged
+    // one by one, and its write against the default in force (`Store::store_setting`).
+    let own = agent(AGENT_KEY, local.launch[0].as_deref()).ok().flatten();
+    if let Some(own) = own.filter(|_| place == Place::File) {
+        let at = AGENTS.iter().position(|known| *known == own).unwrap_or(0);
+        if local.on[at] == Some(false) {
+            let chosen = named(&["agents", "launch"], Some("default"));
+            let name = named(&ON_TABLES, Some(own));
+            problems.push(format!("{said}: {}", default_off(&name, own, &chosen)));
         }
     }
     if problems.is_empty() {

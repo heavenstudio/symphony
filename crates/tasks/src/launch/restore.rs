@@ -166,6 +166,15 @@ fn restore_one(
             session.handle
         )));
     }
+    // An agent turned off, or whose program this machine lacks, is not started again: its record
+    // stays closed ([`super::off`]).
+    let agent = agent_of(&session.claude_session);
+    if let Some(why) = machine.refusing(store, agent)? {
+        return Err(Error::Refused(format!(
+            "no restore of {}: {why}",
+            session.handle
+        )));
+    }
     // Through a recipe an agent runs unasked, a record names a folder it makes again and starts an
     // agent in: only one in the project ([`super::Bounds`]), whenever the record was written, and
     // used as the check resolved it, not resolved again.

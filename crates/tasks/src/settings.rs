@@ -5,7 +5,8 @@
 //! files alone.
 //!
 //! An entry is keyed by its setting, the tables and key the project file names it by, joined by
-//! dots (`limits.low_volume`, `agents.launch.model`, `agents.models.reviewer`, `agents.panes`),
+//! dots (`limits.low_volume`, `agents.launch.model`, `agents.models.reviewer`, `agents.panes`,
+//! `agents.launch.on.codex`),
 //! and keeps every change made to it, not only the last ([`Change`]): a removed entry keeps its
 //! record and holds no value, so the file's value is in force again.
 //!
@@ -100,12 +101,19 @@ pub fn named(key: &str) -> String {
 }
 
 /// `text`, a value as a command line gives it, as the value `key` holds: a whole number for a
-/// limit, text for any other. Text that is no number stays text, which the limit's own rule
-/// refuses ([`judged`]).
+/// limit, a switch for an agent's (`true` or `on`, `false` or `off`), text for any other. Text
+/// that is neither stays text, which the setting's own rule refuses ([`judged`]).
 pub fn value_of(key: &str, text: &str) -> Value {
-    let limit = path(key).is_ok_and(|(tables, _)| tables == [crate::limits::TABLE]);
+    let tables = path(key).map(|(tables, _)| tables).unwrap_or_default();
+    if tables == crate::launch::defaults::ON_TABLES {
+        match text.trim() {
+            "true" | "on" => return Value::Boolean(true),
+            "false" | "off" => return Value::Boolean(false),
+            _ => {}
+        }
+    }
     match text.trim().parse::<i64>() {
-        Ok(n) if limit => Value::Integer(n),
+        Ok(n) if tables == [crate::limits::TABLE] => Value::Integer(n),
         _ => Value::String(text.to_string()),
     }
 }

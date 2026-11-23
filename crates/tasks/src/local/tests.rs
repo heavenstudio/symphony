@@ -453,3 +453,130 @@ fn a_watched_project_file_is_read_again_when_the_local_file_changes() {
     assert_eq!(watched.now().machine_agents, Some(9), "gone: the committed");
     std::fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn an_agents_switch_is_read_with_its_line_and_a_wrong_one_refused() {
+    let local = parsed("[agents.launch.on]\ncodex = false\nclaude = true\n").unwrap();
+    assert_eq!(local.on, [Some(false), Some(true)]);
+    assert_eq!(local.line(&ON_TABLES, "codex"), Some(2));
+    assert_eq!(
+        local
+            .written("[agents.launch.on] codex", &ON_TABLES, "codex")
+            .said(),
+        "symphony.local.toml [agents.launch.on] codex, line 2"
+    );
+    for (text, problem) in [
+        (
+            "[agents.launch.on]\ngemini = false\n",
+            "/r/symphony.local.toml: [agents.launch.on] gemini (line 2) is not an agent a launch \
+             starts: it is one of codex, claude",
+        ),
+        (
+            "[agents.launch.on]\ncodex = 0\n",
+            "/r/symphony.local.toml: [agents.launch.on] codex (line 2) is 0; a switch is true (on) \
+             or false (off)",
+        ),
+        (
+            "[agents.launch]\non = false\n",
+            "/r/symphony.local.toml: [agents.launch] on (line 2) is false; it is a table of each \
+             agent's switch",
+        ),
+    ] {
+        assert_eq!(problems(text), [problem], "{text}");
+    }
+}
+
+#[test]
+fn a_local_file_that_turns_off_the_default_it_names_does_not_load() {
+    assert_eq!(
+        problems("[agents.launch]\ndefault = \"claude\"\n[agents.launch.on]\nclaude = false\n"),
+        [
+            "/r/symphony.local.toml: [agents.launch.on] claude (line 4) turns off claude, the launch \
+          default ([agents.launch] default (line 2)), which cannot be off: pick another default \
+          first"
+        ]
+    );
+    // Naming another default, it turns the committed one off.
+    let local =
+        parsed("[agents.launch]\ndefault = \"claude\"\n[agents.launch.on]\ncodex = false\n")
+            .unwrap();
+    assert_eq!(local.on, [Some(false), None]);
+}
+
+#[test]
+fn a_local_file_naming_no_default_is_judged_against_the_one_under_it() {
+    let off = "[agents.launch.on]\ncodex = false\n";
+    // Under no project file the default is the board's own, codex: refused, and none of it read.
+    let root = folder("off-own", None, Some(off));
+    let file = root.join(crate::project::FILE);
+    let said = beside(&file).unwrap_err();
+    assert_eq!(
+        said,
+        [format!(
+            "{}: [agents.launch.on] codex (line 2) turns off codex, the launch default (the \
+             board's own), which cannot be off: pick another default first",
+            root.join(FILE).display()
+        )]
+    );
+    assert_eq!(Defaults::configured(&root).unwrap().off("codex"), None);
+    // Under a project file naming codex, the same, naming its line.
+    std::fs::write(&file, "[agents.launch]\ndefault = \"codex\"\n").unwrap();
+    assert!(beside(&file).unwrap_err()[0].contains(
+        "the launch default (symphony.toml [agents] launch default, line 2), which cannot be off"
+    ));
+    // Under one naming claude it holds, and codex is off.
+    std::fs::write(&file, "[agents.launch]\ndefault = \"claude\"\n").unwrap();
+    let defaults = Defaults::configured(&root).unwrap();
+    assert_eq!(
+        defaults.off("codex").map(|switch| switch.said()).as_deref(),
+        Some("symphony.local.toml [agents.launch.on] codex, line 2")
+    );
+    // A default the board's store holds is the one under it, over the project file's.
+    std::fs::write(&file, "").unwrap();
+    let mut held = Local::default();
+    held.launch[0] = Some("claude".into());
+    let stored = Stored {
+        held,
+        keys: vec!["agents.launch.default".into()],
+        problems: Vec::new(),
+    };
+    assert!(beside_with(&file, &stored).unwrap().is_some());
+    assert!(
+        Defaults::configured_with(&root, &stored)
+            .unwrap()
+            .off("codex")
+            .is_some()
+    );
+    let mut codex = stored.clone();
+    codex.held.launch[0] = Some("codex".into());
+    std::fs::write(&file, "[agents.launch]\ndefault = \"claude\"\n").unwrap();
+    assert!(
+        beside_with(&file, &codex).unwrap_err()[0]
+            .contains("the launch default (the board's store [agents] launch default)")
+    );
+    // And the limits it writes are read by nobody once it is refused.
+    std::fs::write(root.join(FILE), format!("{off}[limits]\nlow_volume = 1\n")).unwrap();
+    std::fs::write(&file, "").unwrap();
+    let read = crate::limits::read_at(&file);
+    assert_eq!(read.limits.low_volume, crate::limits::LOW_VOLUME);
+    assert!(
+        read.problems[0]
+            .ends_with("none of symphony.local.toml is read, the committed settings hold")
+    );
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn the_boards_store_takes_a_switch_alone_without_a_default() {
+    let one = crate::settings::judged("agents.launch.on.codex", &Value::Boolean(false)).unwrap();
+    assert_eq!(one.on, [Some(false), None]);
+    let mut merged = Local::default();
+    merged.over_local(&one);
+    merged.over_local(
+        &crate::settings::judged("agents.launch.on.claude", &Value::Boolean(true)).unwrap(),
+    );
+    assert_eq!(merged.on, [Some(false), Some(true)]);
+    assert!(
+        crate::settings::judged("agents.launch.on.codex", &Value::String("off".into())).is_err()
+    );
+}

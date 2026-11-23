@@ -232,13 +232,15 @@ pub(super) struct FileStamps {
     pub(super) unknown: Unknown,
 }
 
-/// The `[agents.launch]` table.
+/// The `[agents.launch]` table. Its `on`, each agent's switch, the board reads itself
+/// (`symphony_board::launch::Defaults`), and [`super::Project::parse`] refuses what it refuses.
 #[derive(Default, Deserialize)]
 #[serde(default)]
 pub(super) struct FileLaunch {
     pub(super) default: Option<String>,
     pub(super) model: Option<String>,
     pub(super) effort: Option<String>,
+    pub(super) on: Option<toml::Value>,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }

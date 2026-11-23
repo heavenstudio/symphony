@@ -365,3 +365,69 @@ fn a_local_files_value_wins_over_a_stored_one_and_is_named_as_before() {
         "reviewer                 local   symphony.local.toml [agents.models] reviewer, line 5"
     );
 }
+
+#[test]
+fn a_project_that_writes_no_switch_prints_no_agents() {
+    let lines = shown("[agents.launch]\ndefault = \"claude\"\n", None);
+    assert!(
+        !lines.iter().any(|line| line.starts_with("AGENTS")),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn each_agents_switch_is_a_row_with_where_it_was_written() {
+    let lines = shown(
+        "[agents.launch]\ndefault = \"claude\"\n\n[agents.launch.on]\ncodex = false\n",
+        None,
+    );
+    let at = lines
+        .iter()
+        .position(|line| line.starts_with("AGENTS"))
+        .unwrap();
+    assert_eq!(
+        lines[at..],
+        [
+            "AGENTS a launch may start, each by its switch ([agents.launch.on])",
+            "codex                    off     [agents.launch.on] codex, line 5",
+            "claude                   on      the launch default",
+        ]
+    );
+}
+
+#[test]
+fn a_switch_turning_off_the_default_in_another_place_is_said_not_to_hold() {
+    let text = "[agents.launch]\ndefault = \"codex\"\n";
+    let read = limits::parse(PATH, text);
+    let mut models = Defaults::parse(PATH, text).unwrap();
+    models.on[0] = Some(crate::launch::defaults::Switch {
+        on: false,
+        at: limits::Written {
+            at: "the board's store [agents.launch.on] codex".into(),
+            line: None,
+        },
+    });
+    let lines = lines(
+        Some(&PathBuf::from(PATH)),
+        text,
+        &read,
+        Some(&models),
+        None,
+        None,
+        &Stored::default(),
+    );
+    let at = lines
+        .iter()
+        .position(|line| line.starts_with("AGENTS"))
+        .unwrap();
+    assert_eq!(
+        lines[at + 1],
+        "codex                    on          [agents.launch.on] codex turns off codex (the \
+         board's store [agents.launch.on] codex), which does not hold: codex is the launch \
+         default, which wins; pick another default to turn it off"
+    );
+    assert_eq!(
+        lines[at + 2],
+        "claude                   on          default"
+    );
+}

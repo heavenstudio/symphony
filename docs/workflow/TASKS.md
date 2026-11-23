@@ -1881,19 +1881,30 @@ assessor = "haiku"
   apply, from a diff and their guidelines, so with no model written it runs on the smallest its
   agent offers. An agent starting a subagent passes the model `just tasks limits` names for the
   subagent's role.
+- **An agent turned off.** `[agents.launch.on]` turns an agent off (`codex = false`), in any of
+  the places a preference is written: `just tasks launch` naming it, the staffing pass and a
+  restore of a closed pane of it (a reviewer's resume among them) are refused before anything is
+  made, naming it and where it was turned off, and the staffing pass gives an idle one no new
+  work. One already running is not stopped, and turning it on again is the switch alone. The
+  launch default cannot be off: a file or the store refuses such a switch, saying to pick another
+  default first, and one written before the default moved to its agent does not hold. A launch of
+  an agent whose program this machine lacks on its search path is refused with that reason,
+  whatever its switch says
+  ([PROJECT_FILE](../operations/PROJECT_FILE.md#agentslaunch), `crates/tasks/src/launch/off.rs`).
 - **`just tasks limits`** prints each limit, the pipeline alarm's thresholds
   ([The pipeline alarm](#the-pipeline-alarm)) and each role's model, each with where it came
   from (`[limits] low_volume, line 8`, `[agents] launch model, line 12`, `the board's store
   [limits] low_volume, over 4 ([limits] low_volume, line 8)`, `the smallest claude offers`, or
   `default`), the
-  machine's count of agents under `machine_agents`, and each key of `[limits]` this build does
-  not know, left out.
+  machine's count of agents under `machine_agents`, where any place writes a switch each agent
+  on or off with where from (the launch default saying when a switch that would turn it off does
+  not hold), and each key of `[limits]` this build does not know, left out.
 - **A change holds at once.** Every command reads the file as it stands, and a store kept open
   (the Symphony's server keeps its reader and its data worker's) reads it again at its next
   read whenever the file's length or time changed: no restart.
 - **The board's store.** A preference stored on the board (`just tasks settings set KEY VALUE`)
   is read after the project file and before the local file: a limit, `[agents] launch`'s agent,
-  model or effort, a role's model or `[agents] panes`. It holds from the next command, `just
+  model or effort, an agent's switch, a role's model or `[agents] panes`. It holds from the next command, `just
   tasks limits` names the store for it with the committed value it stands over, and `just tasks
   settings remove KEY` puts the file's value back. Each change is kept in the entry's record
   (`just tasks settings list`); what the store may hold, and how a value is judged, is
