@@ -498,6 +498,7 @@ fn a_commit_waiting_for_its_delivery_is_said_beside_its_setting() {
             branch: "docs/owner-save-2".into(),
             shown: true,
             state: State::Held("its task was cancelled".into()),
+            by: String::new(),
             keys: vec!["limits.low_volume".into()],
         }],
         ..holding(&[("limits.low_volume", json!(3))])

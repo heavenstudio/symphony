@@ -10,7 +10,8 @@ and follow its model, validation and landing policy. Generic Symphony supplies n
 data.
 
 1. Run `just symphony-status --tidy`, then `just symphony-cli triage stats --root .`. Use live
-   numbers, never remembered approval rates.
+   numbers, never remembered approval rates. Under delivery by pull request the tidy keeps its
+   changes as saves, as the chat-doc skill's Answer says.
 2. Read open notes and inspect every candidate. An approval with a note still creates work: use
    apply-review for document changes.
 3. Record a design as answered only when the owner's exact words decide it, by the rule in the

@@ -15,7 +15,9 @@ reviewing live, connect as the chat-doc skill describes and answer each event as
 way step 3 answers a note; a chat message (💬 Send) is conversation, never a verdict.
 
 1. **Tidy, then read the verdicts.** `just symphony-status --tidy` marks plain approvals resolved
-   and regroups the register. Then `just symphony-status --open` and `--json`, which names each
+   and regroups the register; where the project delivers by pull request it and the replies of
+   step 3 keep their changes as saves, and a document's own change waits for a task's worktree,
+   as the chat-doc skill's Answer says. Then `just symphony-status --open` and `--json`, which names each
    card's file and line. A card sits at the place in its document where the thing it decides is
    said, so read each open card in its document, with the prose around it; the register holds
    only the cards no document says the subject of. Note every owner note, those on approved
