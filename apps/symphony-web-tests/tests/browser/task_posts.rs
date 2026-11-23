@@ -53,12 +53,20 @@ fn a_post_naming_components_draws_its_words_once_and_an_unknown_element_its_cont
     for id in [2, 3] {
         page.reveal(&format!("#message-{id}"));
     }
-    // Shown, not only mounted: the thread stays hidden under its ghost until it settles, and
-    // hidden words have no `innerText`.
-    assert!(page.wait_for(
-        "document.querySelectorAll('#task-thread .entry.agent').length === 2 && document.querySelector('#task-thread').closest('.settle').dataset.settled === 'true'",
-        SHOWN
-    ));
+    // Rendered, not only mounted, and words not rendered have no `innerText`: the thread stays
+    // hidden under its ghost until it settles, and its region is a slot of its own
+    // (`content-visibility: auto`, viewport.tsx) once it settles and its last entry mounts, whose
+    // content the browser renders only once a frame has found the slot on the screen. That frame
+    // is the next one, so a reader never sees the region empty, but a read before it would.
+    assert!(
+        page.wait_for(
+            "(texts => texts.length === 2 && texts.every(text => text.checkVisibility({visibilityProperty: true, contentVisibilityAuto: true})))\
+                ([...document.querySelectorAll('#task-thread .entry.agent .entry-text')])",
+            SHOWN
+        ),
+        "the entries were never rendered: {}",
+        page.eval("document.querySelector('#task-thread')?.innerText")
+    );
     let drawn = page.eval(
         "[...document.querySelectorAll('#task-thread .entry.agent .entry-text')].map(text => ({\
             words: text.innerText,\
