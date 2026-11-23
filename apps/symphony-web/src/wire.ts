@@ -13,6 +13,7 @@ export const BOARD_CARDS = 5;
 export const ASK_LATE_SECONDS = 600;
 export const FILE_QUERY = "raw";
 export const REPORTS_PATH = "/api/reports";
+export const REPORTS_LANDED_PATH = "/api/reports/landed";
 export const SETTINGS_PATH = "/api/settings";
 export const SETTING_WRITE_PATH = "/api/setting";
 export const RUNS_PATH = "/api/runs";

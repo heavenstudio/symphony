@@ -104,6 +104,7 @@ fn constants() -> String {
         ("ASK_LATE_SECONDS", api::ASK_LATE_SECONDS.to_string()),
         ("FILE_QUERY", text(api::FILE_QUERY)),
         ("REPORTS_PATH", text(api::REPORTS_PATH)),
+        ("REPORTS_LANDED_PATH", text(api::REPORTS_LANDED_PATH)),
         ("SETTINGS_PATH", text(api::SETTINGS_PATH)),
         ("SETTING_WRITE_PATH", text(api::SETTING_WRITE_PATH)),
         ("RUNS_PATH", text(api::RUNS_PATH)),

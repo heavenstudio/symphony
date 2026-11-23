@@ -16,6 +16,7 @@ import { FRESH, type Freshness, shown } from "./cache";
 import { chunkFailed, useChunk } from "./chunk";
 import { useFrame } from "./frame";
 import { TaskGatesPanel } from "./gates";
+import { taskKind } from "./kind";
 import { PageNotices } from "./live";
 import { useMount } from "./mount";
 import type { NextActionsProps } from "./nextactions";
@@ -706,6 +707,9 @@ export function TaskHead({ page, scope, connected }: TaskHeadProps) {
         <WorkflowPart scope={scope} slug={slug} place={task.workflow} updated={task.updated} />
       )}
       <ul className="facts">
+        {taskKind(task.fields) !== null && (
+          <li className="kind">{`kind: ${taskKind(task.fields)}`}</li>
+        )}
         {task.parent !== null && (
           <li>
             {"part of "}
