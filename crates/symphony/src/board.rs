@@ -368,6 +368,12 @@ pub fn register_files(root: &Path) -> Vec<PathBuf> {
 
 /// `--tidy`: supersede and resolve the cards of every document, a register's and those inline
 /// alike, regroup every register, then move answered callouts to the ledger. Its exit code.
+///
+/// The whole tidy is worked out before a file is written, so a card it cannot tidy leaves every
+/// file as it was. In a checkout on the default branch of a project that delivers by pull request
+/// ([`crate::commit::delivers`]) it writes nothing at all, as an owner's save writes nothing
+/// there: a tracked edit left in that checkout stops every delivered land. A tidy there that
+/// would change a file is refused, naming the files and the way that does write them.
 pub fn tidy(root: &Path, now: Option<&str>, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     tidy_with(root, now, crate::register::sort_register, out, err)
 }
@@ -375,48 +381,35 @@ pub fn tidy(root: &Path, now: Option<&str>, out: &mut dyn Write, err: &mut dyn W
 /// How a tidy regroups a register, its cards read by the project's card kinds.
 pub type Sort = fn(&str, &Plugins) -> Result<String, ReviewError>;
 
-/// One register tidied: its new text, the slugs resolved and those superseded.
+/// One register tidied from its text `original`: its new text, the slugs resolved and those
+/// superseded.
 fn tidy_text(
-    path: &Path,
+    original: &str,
     stamp: &str,
     sort: Sort,
     plugins: &Plugins,
 ) -> Result<(String, Vec<String>, Vec<String>), ReviewError> {
-    let original = read_text(path).map_err(|e| ReviewError(os_error(&e, path)))?;
-    let (text, superseded) = supersede(&original, stamp);
+    let (text, superseded) = supersede(original, stamp);
     let (text, changed) = resolve(&text, stamp, plugins);
     let text = sort(&text, plugins)?;
-    check_nothing_lost(&original, &text, "tidying")?;
-    check_nothing_repeated(&original, &text, "tidying")?;
+    check_nothing_lost(original, &text, "tidying")?;
+    check_nothing_repeated(original, &text, "tidying")?;
     Ok((text, changed, superseded))
 }
 
-/// One register tidied and written.
-fn tidy_file(
-    path: &Path,
-    stamp: &str,
-    sort: Sort,
-    plugins: &Plugins,
-) -> Result<(String, Vec<String>, Vec<String>), ReviewError> {
-    let tidied = tidy_text(path, stamp, sort, plugins)?;
-    write_whole(path, &tidied.0).map_err(|e| ReviewError(os_error(&e, path)))?;
-    Ok(tidied)
-}
-
 /// What a tidy says of one file: the cards it resolved, and those it superseded when any.
-fn said(out: &mut dyn Write, changed: &[String], superseded: &[String]) {
-    let _ = writeln!(
-        out,
-        "resolved: {}",
-        if changed.is_empty() {
-            "(none)".to_string()
-        } else {
-            changed.join(", ")
-        }
-    );
-    if !superseded.is_empty() {
-        let _ = writeln!(out, "superseded: {}", superseded.join(", "));
-    }
+fn said(changed: &[String], superseded: &[String]) -> String {
+    let resolved = if changed.is_empty() {
+        "(none)".to_string()
+    } else {
+        changed.join(", ")
+    };
+    let superseded = if superseded.is_empty() {
+        String::new()
+    } else {
+        format!("superseded: {}\n", superseded.join(", "))
+    };
+    format!("resolved: {resolved}\n{superseded}")
 }
 
 /// Every document of the project at `root` that holds a card and no register region, `regions`
@@ -433,6 +426,124 @@ pub fn inline_files(root: &Path, regions: &[PathBuf]) -> Vec<PathBuf> {
         .collect();
     symphony_board::order::sort_by_key(&mut found, &|path| path.to_string_lossy().to_string());
     found
+}
+
+/// One write of a tidy: the file, its new text, what the tidy says once it is written, and the
+/// words a failure to write it opens with.
+struct Step {
+    path: PathBuf,
+    text: String,
+    said: String,
+    failed: String,
+}
+
+impl Step {
+    /// The step's text written over its file whole, its folder made first.
+    fn write(&self) -> Result<(), String> {
+        if let Some(folder) = self.path.parent() {
+            std::fs::create_dir_all(folder).map_err(|e| os_error(&e, folder))?;
+        }
+        write_whole(&self.path, &self.text)
+            .map_err(|e| format!("{}{}", self.failed, os_error(&e, &self.path)))
+    }
+}
+
+/// A tidy worked out, nothing written yet: its writes in the order it reaches them, a file's
+/// later write over its earlier one.
+#[derive(Default)]
+struct Plan {
+    steps: Vec<Step>,
+}
+
+impl Plan {
+    /// The text of `path` as the tidy leaves it so far: its last write here, else the file's own.
+    fn read(&self, path: &Path) -> std::io::Result<String> {
+        match self.steps.iter().rev().find(|step| step.path == path) {
+            Some(step) => Ok(step.text.clone()),
+            None => read_text(path),
+        }
+    }
+
+    /// The files the tidy changes, named from `root`, each once in the order it reaches them: a
+    /// file written with the text it already holds is not changed.
+    fn changes(&self, root: &Path) -> Vec<String> {
+        let mut reached: Vec<&Path> = Vec::new();
+        for step in &self.steps {
+            if !reached.contains(&step.path.as_path()) {
+                reached.push(&step.path);
+            }
+        }
+        reached
+            .into_iter()
+            .filter(|path| read_text(path).ok() != self.read(path).ok())
+            .map(|path| relative(path, root))
+            .collect()
+    }
+}
+
+/// The tidy of the project at `root`, worked out and nothing written; the first file it cannot
+/// tidy, as the line it is refused with.
+fn plan(
+    root: &Path,
+    project: &Project,
+    stamp: &str,
+    sort: Sort,
+    plugins: &Plugins,
+) -> Result<Plan, String> {
+    let mut plan = Plan::default();
+    let regions = register_files(root);
+    for path in &regions {
+        let rel = relative(path, root);
+        let failed = format!("{rel} not tidied: ");
+        let (text, changed, superseded) = plan
+            .read(path)
+            .map_err(|e| ReviewError(os_error(&e, path)))
+            .and_then(|original| tidy_text(&original, stamp, sort, plugins))
+            .map_err(|problem| format!("{failed}{problem}"))?;
+        let said = format!("{}regrouped {rel}\n", said(&changed, &superseded));
+        plan.steps.push(Step {
+            path: path.clone(),
+            text,
+            said,
+            failed,
+        });
+    }
+    // A document whose cards all sit inline has nothing to regroup: its cards are resolved and
+    // superseded where they are, and it is named only when one was.
+    for path in inline_files(root, &regions) {
+        let rel = relative(&path, root);
+        let failed = format!("{rel} not tidied: ");
+        let (text, changed, superseded) = plan
+            .read(&path)
+            .map_err(|e| ReviewError(os_error(&e, &path)))
+            .and_then(|original| tidy_text(&original, stamp, sort, plugins))
+            .map_err(|problem| format!("{failed}{problem}"))?;
+        if changed.is_empty() && superseded.is_empty() {
+            continue;
+        }
+        let said = format!("{}tidied {rel}\n", said(&changed, &superseded));
+        plan.steps.push(Step {
+            path,
+            text,
+            said,
+            failed,
+        });
+    }
+    archive(root, project, stamp, &mut plan)?;
+    Ok(plan)
+}
+
+/// The line a tidy of a checkout on the default branch of a project that delivers by pull
+/// request is refused with, `changes` the files it would change: the host alone writes that
+/// branch, and a task's branch is the way a change reaches it.
+fn delivered(project: &Project, changes: &[String]) -> String {
+    format!(
+        "✖ not tidied: this project delivers by pull request ([land] delivery), so a tidy writes \
+         nothing in a checkout on {}, and this one would change {}. Run `just symphony-status \
+         --tidy` in a task's worktree instead: its pull request delivers what the tidy writes.",
+        project.default_branch,
+        changes.join(", ")
+    )
 }
 
 /// [`tidy`] with the regroup given, so a test can hand it one that drops a line.
@@ -456,60 +567,47 @@ pub fn tidy_with(
     let stamp = now
         .filter(|now| !now.is_empty())
         .map_or_else(now_stamp, str::to_string);
-    let regions = register_files(root);
-    for path in &regions {
-        let rel = relative(path, root);
-        let (_, changed, superseded) = match tidy_file(path, &stamp, sort, &plugins) {
-            Ok(tidied) => tidied,
-            Err(problem) => {
-                let _ = writeln!(err, "✖ {rel} not tidied: {problem}");
-                return 1;
-            }
-        };
-        said(out, &changed, &superseded);
-        let _ = writeln!(out, "regrouped {rel}");
-    }
-    // A document whose cards all sit inline has nothing to regroup: its cards are resolved and
-    // superseded where they are, and it is named only when one was.
-    for path in inline_files(root, &regions) {
-        let rel = relative(&path, root);
-        match tidy_text(&path, &stamp, sort, &plugins) {
-            Ok((_, changed, superseded)) if changed.is_empty() && superseded.is_empty() => {}
-            Ok((text, changed, superseded)) => {
-                if let Err(e) = write_whole(&path, &text) {
-                    let _ = writeln!(err, "✖ {rel} not tidied: {}", os_error(&e, &path));
-                    return 1;
-                }
-                said(out, &changed, &superseded);
-                let _ = writeln!(out, "tidied {rel}");
-            }
-            Err(problem) => {
-                let _ = writeln!(err, "✖ {rel} not tidied: {problem}");
-                return 1;
-            }
-        }
-    }
-    match archive(root, &stamp, out) {
-        Ok(()) => 0,
+    let plan = match plan(root, &project, &stamp, sort, &plugins) {
+        Ok(plan) => plan,
         Err(problem) => {
             let _ = writeln!(err, "✖ {problem}");
-            1
+            return 1;
         }
+    };
+    // Where the host alone writes the default branch, the checkout on it is written by nothing
+    // here, as an owner's save writes nothing there (`commit::pending`).
+    if crate::commit::on_main(root) && crate::commit::delivers(root) {
+        let changes = plan.changes(root);
+        if !changes.is_empty() {
+            let _ = writeln!(err, "{}", delivered(&project, &changes));
+            return 1;
+        }
+        for step in &plan.steps {
+            let _ = out.write_all(step.said.as_bytes());
+        }
+        return 0;
     }
+    for step in &plan.steps {
+        if let Err(problem) = step.write() {
+            let _ = writeln!(err, "✖ {problem}");
+            return 1;
+        }
+        let _ = out.write_all(step.said.as_bytes());
+    }
+    0
 }
 
-/// Move every answered callout of the project's documents to the ledger in its first history
-/// folder, saying which files gave some. A project without a history folder keeps them on their
-/// pages.
-fn archive(root: &Path, stamp: &str, out: &mut dyn Write) -> Result<(), ReviewError> {
-    let project = Project::of(root);
+/// Move every answered callout of the project's documents, as the tidy leaves them so far, to
+/// the ledger in its first history folder: the writes that does, each document's saying how many
+/// it gave. A project without a history folder keeps them on their pages.
+fn archive(root: &Path, project: &Project, stamp: &str, plan: &mut Plan) -> Result<(), String> {
     let Some(history) = project.history().into_iter().next() else {
         return Ok(());
     };
-    let fail = |e: std::io::Error, path: &Path| ReviewError(os_error(&e, path));
+    let fail = |e: std::io::Error, path: &Path| os_error(&e, path);
     let mut entries: Vec<String> = Vec::new();
-    for path in document_files(root, &project) {
-        let (text, taken) = archive_callouts(&read_text(&path).map_err(|e| fail(e, &path))?);
+    for path in document_files(root, project) {
+        let (text, taken) = archive_callouts(&plan.read(&path).map_err(|e| fail(e, &path))?);
         if taken.is_empty() {
             continue;
         }
@@ -519,21 +617,28 @@ fn archive(root: &Path, stamp: &str, out: &mut dyn Write) -> Result<(), ReviewEr
                 .iter()
                 .map(|comment| ledger_entry(&rel, comment, stamp)),
         );
-        write_whole(&path, &text).map_err(|e| fail(e, &path))?;
-        let _ = writeln!(out, "archived: {rel} ({})", taken.len());
+        let said = format!("archived: {rel} ({})\n", taken.len());
+        plan.steps.push(Step {
+            path,
+            text,
+            said,
+            failed: String::new(),
+        });
     }
     if entries.is_empty() {
         return Ok(());
     }
     let ledger = root.join(history).join(LEDGER);
-    if let Some(folder) = ledger.parent() {
-        std::fs::create_dir_all(folder).map_err(|e| fail(e, folder))?;
-    }
     let old = if ledger.exists() {
         read_text(&ledger).map_err(|e| fail(e, &ledger))?
     } else {
         LEDGER_HEAD.to_string()
     };
-    let new = format!("{}\n\n{}", old.trim_end_matches('\n'), entries.join("\n"));
-    write_whole(&ledger, &new).map_err(|e| fail(e, &ledger))
+    plan.steps.push(Step {
+        text: format!("{}\n\n{}", old.trim_end_matches('\n'), entries.join("\n")),
+        path: ledger,
+        said: String::new(),
+        failed: String::new(),
+    });
+    Ok(())
 }
