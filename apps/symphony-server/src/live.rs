@@ -3782,15 +3782,8 @@ mod tests {
             base: String::new(),
             new: "# Topic\n".into(),
         };
-        let branch = symphony::commit::pending::keep(&root, edit, "fox-1").unwrap();
-        let entry = journal.join(format!(
-            "{:020}.json",
-            branch
-                .strip_prefix(symphony::commit::pending::BRANCHES)
-                .unwrap()
-                .parse::<u64>()
-                .unwrap()
-        ));
+        let number = symphony::commit::pending::keep(&root, edit, "fox-1").unwrap();
+        let entry = journal.join(format!("{number:020}.json"));
         assert!(entry.is_file());
         assert!(hub.sweep(), "the kept save is missed");
         let dirty = std::mem::take(&mut *hub.dirty.lock().unwrap());
