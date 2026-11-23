@@ -200,6 +200,19 @@ project knows its blueprint and what it left.
   manual says its support for submodules in several checkouts of one repository is incomplete and
   advises against it. The checkout holds the blueprint twice.
 
+**Several boards in one project.** Today a project has one board and one project file. Were a
+project to hold several boards, each could start from a blueprint of its own, and the record is
+then one for each board, kept beside that board's settings: its blueprint's address, its version
+and what that blueprint put. Each board follows or leaves its blueprint apart from the others,
+and each blueprint's new version is a task of its own on the board it belongs to.
+
+Some places are the repository's and not a board's: the skills folder, the justfile, the rules
+at the root. Two blueprints write there side by side, so each puts its files under its own name,
+and every such file is in exactly one record. Taking a second blueprint that would write a file
+or a key the first one put is refused by name. A submodule changes none of this: there would be
+one for each blueprint, their files would still be copied into the same shared places, and each
+worktree would fetch them all.
+
 - [?] **blueprint-in-project** — You asked whether a blueprint could be added to a project as a Git submodule inside its repository. Either way the blueprint's files are copied to where they are read (the skills folder, the project file at the root), since each reader looks in a fixed place. The choice is how the project remembers its blueprint. A: a record alone. One committed file names the blueprint's address, its version and what it put; Symphony fetches the blueprint when it needs to compare or update. B: a submodule as well, inside the project's repository, at the version taken. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/blueprints#What the project holds of its blueprint]]
   [2026-11-23 11:23] agent — Posted for the board task `app/blueprints`, from your note on **blueprint-home**: "Could use submodules to add it to a symphony project (inside the project repo?)".
 
