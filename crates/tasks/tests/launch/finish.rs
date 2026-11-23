@@ -112,6 +112,13 @@ fn an_approve_records_an_executors_terminal_that_is_gone_as_closed_and_keeps_non
         Vec::<String>::new()
     );
     assert!(w.has_terminal(&docked));
+    // A land of a slug the board does not hold says so, and closes nothing.
+    let [line] = <[_; 1]>::try_from(landed(w.store(), &w.hc(), &*m.processes, "sim/none")).unwrap();
+    assert!(
+        line.starts_with("could not clean up the sessions of sim/none: "),
+        "{line}"
+    );
+    assert!(w.has_terminal(&docked));
 }
 
 #[test]
