@@ -1,13 +1,15 @@
 //! The reads a write, a recipient or a tick sends that PostgreSQL planned with a sequential scan of
 //! session, message or callback_state until each was given an index to read by: a session by its
 //! handle (`session_handle`, the second additive step on schema 28), the landings by the word in
-//! `words`, the channels by `callback_state_address` and the session addresses by their ids' range.
+//! `words`, the channels by `callback_state_address` and the session addresses by their ids' range;
+//! and those that read the rows of a list (`jsonb_array_elements`), which the server guesses holds
+//! a hundred and so hashes the whole table for, by all of their keys in one condition (`= ANY`).
 //!
 //! Each is planned as the store sends it ([`request`]) with sequential scans off, so the server
 //! takes an index wherever one serves the condition, whatever the board's size: a scan left is one
 //! no index serves, as the board crate's `perf` tests read a plan.
 
-use super::{Pg, Request, callbacks, messages, request, session_urls};
+use super::{Pg, Request, callbacks, messages, reading, request, session_urls, work, write};
 use crate::Database;
 use crate::pg::Step;
 use crate::store::messages::DELIVERED;
@@ -38,6 +40,15 @@ fn unindexed(node: &Value) -> Vec<String> {
         found.extend(unindexed(child));
     }
     found
+}
+
+/// Whether `node`'s plan reads `table` by an index condition of `= ANY`: every key of a list in one
+/// condition, on an index scan of it or, of a bitmap's, as the condition its heap scan rechecks.
+fn by_any(node: &Value, table: &str) -> bool {
+    let any = |field: &str| node[field].as_str().is_some_and(|c| c.contains("= ANY "));
+    let here = node["Relation Name"].as_str() == Some(table) && (any("Index Cond") || any("Recheck Cond"));
+    let under = node["Plans"].as_array().into_iter().flatten();
+    here || under.into_iter().any(|child| by_any(child, table))
 }
 
 /// The plan PostgreSQL gives the read `statement` with `vars`, as the store sends it, on `f`'s
@@ -97,12 +108,56 @@ fn a_session_the_landings_the_channels_and_the_session_addresses_are_each_read_b
         ),
         ("the registrations", callbacks::registrations(), json!({})),
         ("the session addresses", session_urls::read(), json!({})),
+        (
+            "whether a session keeps a channel",
+            Pg::read(reading::HAS_CALLBACKS),
+            json!({}),
+        ),
     ];
     let wrong: Vec<String> = (reads.iter())
         .filter_map(|(what, statement, vars)| {
             let plan = planned(&f, statement, vars);
             let found = unindexed(&plan);
             (!found.is_empty()).then(|| format!("{what}: {found:?} in {plan:#}"))
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{}", wrong.join("\n\n"));
+}
+
+#[test]
+fn the_rows_a_list_names_are_read_by_all_of_its_keys_in_one_index_condition() {
+    // A join over a list's elements is planned by the server's guess of a hundred of them: by a
+    // probe of the index for each on a board this small, by hashing the whole table on one at the
+    // live board's scale. `= ANY` of the list is one condition of the index at any size.
+    let f = board();
+    let reads = [
+        (
+            "the candidates that listen",
+            work::LISTENING,
+            json!({"candidates": ["amber-heron", "swift-hare"]}),
+            "callback_state",
+        ),
+        // Two conditions of writes' blocks, read as the blocks read them, over the same `v`.
+        (
+            "a write's incoming holders gone",
+            Pg::read(format!("({})", write::ADDED_GONE)),
+            json!({"add": [{"handle": "amber-heron", "role": "executor"}]}),
+            "session",
+        ),
+        (
+            "a pass's receivers gone",
+            Pg::read(format!("({})", work::RECEIVER_GONE)),
+            json!({"receivers": ["amber-heron", "swift-hare"]}),
+            "session",
+        ),
+    ];
+    let wrong: Vec<String> = (reads.iter())
+        .filter_map(|(what, statement, vars, table)| {
+            let plan = planned(&f, statement, vars);
+            let found = unindexed(&plan);
+            let keyed = by_any(&plan, table);
+            (!found.is_empty() || !keyed)
+                .then(|| format!("{what}: {found:?}, {table} by = ANY: {keyed}, in {plan:#}"))
         })
         .collect();
     assert!(wrong.is_empty(), "{}", wrong.join("\n\n"));

@@ -338,9 +338,9 @@ on_both! {
         assert!(why.starts_with("the board's store is not on this board yet"), "{why}");
         let why = refused(reader.remove_setting("limits.low_volume", "amber-heron"));
         assert!(why.starts_with("the board's store is not on this board yet"), "{why}");
-        // The build that may move it adds the step, and the store is there.
+        // The build that may move it adds its steps, the store's among them, and the store is there.
         let writer = open(&Opening::write());
-        assert_eq!(writer.additions().unwrap(), 1);
+        assert_eq!(writer.additions().unwrap(), symphony_board::schema::ADDITIONS);
         assert!(set(&writer, "limits.low_volume", "1").1);
         assert_eq!(reader.stored().keys, ["limits.low_volume"]);
     }
