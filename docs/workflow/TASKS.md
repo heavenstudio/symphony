@@ -1716,7 +1716,8 @@ landing](#the-default-landing)).
   before there, then, for each red run there that kept a log (a run of a pipeline,
   [RUNS](RUNS.md)), the newest of its command or one before it, a `LOG` line with when it ran and
   the log's path, where the command's own output says what failed, at its end, whatever its
-  runner; `REFUSED`, when there are any, a row for each run there its runner refused, with
+  runner, and under it the first five tests it failed with their binaries, then how many more,
+  where its end line in the day files names them ([RUNS](RUNS.md)); `REFUSED`, when there are any, a row for each run there its runner refused, with
   the refusal's line ([what clears what](#what-clears-a-red-run)); `TESTS`, the `tests` stamp met or not with its reader's line; `CHECK`, the
   project's `[verdicts] check` as the task page's check gate reads it, its newest run there by
   anyone or `no run`; and `ELSEWHERE`, how many of the task's runs are at other commits, none of

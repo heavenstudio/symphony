@@ -2,14 +2,17 @@
 //! of the test's own (`TASKS_WORK`): each command the task ran at its branch's tip with its newest
 //! result, a red then green of one command green with the red said, a run at an earlier tip not
 //! shown as this tip's, the project's `[verdicts] check` with no run said; `--tip` reads at another
-//! commit; and its refusals.
+//! commit; a red run's log named with the tests its end line in the day files says it failed; and
+//! its refusals.
 
 use crate::recorder::git_says;
 use crate::slots::in_project;
 use crate::{Case, git, scratch};
 use std::fs;
 use std::path::Path;
-use symphony_board::cli::machine_work::recorded::{self, FOLDER_VAR, Phase, Record, Step};
+use symphony_api::FailedTest;
+use symphony_board::cli::machine_work::recorded::{self, FOLDER_VAR, Phase, Record, Run, Step};
+use symphony_board::runs::{self, LOCK_WAIT};
 use symphony_board::sys::local_minute;
 
 const SLUG: &str = "tools/query";
@@ -37,8 +40,13 @@ fn commit(root: &Path, file: &str) -> String {
 /// A run of `label` for `task` at `commit`, by `handle`, kept in `work` as the recorder keeps one
 /// that finished with `exit`, begun at `n` thousand seconds and taking `n` seconds.
 fn ran(work: &Path, n: u32, task: Option<&str>, label: &str, commit: &str, exit: i32) {
+    recorded::keep(work, &finished(n, task, label, commit, exit)).unwrap();
+}
+
+/// The record of [`ran`]'s run, not kept.
+fn finished(n: u32, task: Option<&str>, label: &str, commit: &str, exit: i32) -> Record {
     let started = 1000.0 * f64::from(n);
-    let record = Record {
+    Record {
         version: 1,
         operation_id: format!("{n:032x}"),
         parent_id: None,
@@ -67,8 +75,7 @@ fn ran(work: &Path, n: u32, task: Option<&str>, label: &str, commit: &str, exit:
         reason: String::new(),
         run: None,
         reading: None,
-    };
-    recorded::keep(work, &record).unwrap();
+    }
 }
 
 /// The project, `SLUG` filed and claimed, and the case reading the runs from a work folder of its
@@ -171,6 +178,59 @@ fn runs_says_each_command_at_the_tip_and_the_check_with_no_run_there() {
     );
     assert!(
         lines[5].starts_with("ELSEWHERE 3 runs of the task at other commits, the newest at "),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_red_run_that_kept_a_log_names_it_and_the_tests_its_end_line_says_it_failed() {
+    let (c, root, work) = project("runs-failed");
+    let tip = commit(&root, "tests/query.rs");
+    let folder = scratch("runs-failed-runs");
+    let label = "just test-rs -p q";
+    let log = "logs/1970-01-01/a.log";
+    let mut red = finished(3, Some(SLUG), label, &tip, 101);
+    red.run = Some(Run {
+        pipeline: "test-rs".into(),
+        step: None,
+        trigger: "amber-heron".into(),
+        project: None,
+        tree: None,
+        dirty: Some(false),
+        rerun_of: None,
+        cpu_s: None,
+        cpu_partial: None,
+        runs: Some(folder.display().to_string()),
+        log: Some(log.into()),
+        log_bytes: None,
+        refused: None,
+    });
+    recorded::keep(&work, &red).unwrap();
+    // Its end line, as its recorder wrote it from its log: seven tests failed.
+    let mut end = runs::line(&red).unwrap();
+    end.failed = Some(
+        (1..=7)
+            .map(|i| FailedTest {
+                suite: Some("tests/q.rs (q)".into()),
+                name: format!("query::case_{i}"),
+                line: "assertion `left == right` failed".into(),
+            })
+            .collect(),
+    );
+    runs::append(&folder, &end, red.ended_at.unwrap(), LOCK_WAIT).unwrap();
+    let out = c.ok("", &["runs", SLUG]);
+    let lines: Vec<&str> = out.lines().collect();
+    let first = lines.iter().position(|line| line.contains("LOG")).unwrap();
+    let mut expected = vec![format!(
+        "  LOG of the red `{label}` at {}, what failed is at its end: {}",
+        local_minute(3003.0),
+        folder.join(log).display()
+    )];
+    expected.extend((1..=5).map(|i| format!("    failed query::case_{i} in tests/q.rs (q)")));
+    expected.push("    and 2 more failed".into());
+    assert_eq!(lines[first..first + expected.len()], expected, "{out}");
+    assert!(
+        lines[first + expected.len()].starts_with("TESTS not met"),
         "{out}"
     );
 }

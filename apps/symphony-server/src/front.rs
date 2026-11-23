@@ -1351,9 +1351,10 @@ fn main_checkout(root: &Path) -> bool {
 
 /// What a server of its own says of the idle-session sweep as it starts serving `root`: that it
 /// runs it; that it runs none though its project file asks, and why; or, in a main checkout whose
-/// file does not ask, that nothing closes its idle agents' terminals and what does. Nothing for a
-/// folder with no project file (a test's), nor for a linked worktree whose file does not ask (a
-/// preview's), where the key would change nothing.
+/// file does not ask, that it runs none, that the machine's one server sweeps the project if it
+/// serves it, and what else closes its idle agents' terminals. Nothing for a folder with no project
+/// file (a test's), nor for a linked worktree whose file does not ask (a preview's), where the key
+/// would change nothing.
 fn own_sweep_line(root: &Path, sweeps: bool) -> Option<&'static str> {
     if sweeps {
         return Some("· this server of its own runs the idle-session sweep ([board] own_sweep)");
@@ -1368,8 +1369,9 @@ fn own_sweep_line(root: &Path, sweeps: bool) -> Option<&'static str> {
         );
     }
     main_checkout(root).then_some(
-        "· a server of its own runs no idle-session sweep: idle agents' terminals stay until \
-         `just tasks clean`, or set [board] own_sweep = true in symphony.toml",
+        "· a server of its own runs no idle-session sweep: the machine's one server sweeps the \
+         project if it serves it; if not, idle agents' terminals stay until `just tasks clean`, \
+         or set [board] own_sweep = true in symphony.toml",
     )
 }
 
