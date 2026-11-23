@@ -182,6 +182,7 @@ person asks, under which projects fall behind until someone does.
 
     **Earlier verdicts checked.** Your note on **blueprint-shape** gives the shape and does not say what starts an update or whether anyone reads it. **settings-page-shape** keeps settings that run commands off the page's saves; a blueprint's version is a commit under every option here, so it does not decide this. **blueprint-home** (B) says where a version comes from, not how it lands.
   [2026-11-23 12:21] owner · approved — A
+  [2026-11-23 12:22] agent — Recorded: A. A new version reaches a project that follows by itself: Symphony files the update when the blueprint has a newer tag, runs the project's own checks and lands it once they pass, with no reviewer. An update whose checks fail does not land and stays on the project's board. The section above this card now says so.
 
 ### What the project holds of its blueprint
 
