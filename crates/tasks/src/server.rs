@@ -32,9 +32,10 @@
 //! `artifacts/`) is a fixture's: its server is not detached but supervised ([`OWNED_START`]), and
 //! ends when the process that started it ends, however it ends.
 //!
-//! Beside SurrealDB, the board's PostgreSQL ([`postgres`]) starts and stops for a board in a
-//! scratch place alone, under the same starters' lock. The home's durable engine identity selects
-//! what repository discovery and the machine server read ([`Home::board_server`]).
+//! Beside SurrealDB, the board's PostgreSQL ([`postgres`]) starts and stops under the same
+//! starters' lock. The home's durable engine identity selects what repository discovery and the
+//! machine server read ([`Home::board_server`]); a home with none is SurrealDB's while it holds a
+//! SurrealDB store, and a board not made yet is made on PostgreSQL ([`backend`]).
 
 use crate::port::{self, NotStarted, Start};
 use crate::rpc;

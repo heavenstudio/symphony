@@ -260,6 +260,28 @@ fn one_holder_of_the_lock_at_a_time() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A copy of the lock's descriptor kept past its drop, as a process started while it was held
+/// keeps one, holds nothing: the drop unlocks it, where a close alone would release it only with
+/// its last copy, and the next run would be refused as a second writer.
+#[test]
+fn a_copy_of_the_locks_descriptor_kept_past_its_drop_holds_nothing() {
+    let dir = dir("lock-copy");
+    let store = Store::open(&dir).unwrap();
+    let held = store.lock().unwrap();
+    let copy = held.0.try_clone().unwrap();
+    assert!(store.lock().is_err(), "held, whatever copies it has");
+    drop(held);
+    let again = store
+        .lock()
+        .expect("a copy of its descriptor held it past the drop");
+    // The copy, closed at last, lets go of nothing the new holder holds.
+    drop(copy);
+    assert!(store.lock().is_err(), "the new holder holds it still");
+    drop(again);
+    assert!(store.lock().is_ok());
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_flag_says_what_it_is() {
     assert!(Flag::Conflict.said().contains("both sides changed"));

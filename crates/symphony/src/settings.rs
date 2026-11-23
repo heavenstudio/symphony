@@ -1,8 +1,12 @@
 //! The Settings page's read ([`symphony_api::SettingsPage`]): everything in force for the project
 //! at a root, each value with where it was written, as a list of entries in one shape. It reads
-//! and never writes, runs no program and reaches no outside service: a program an entry needs is
-//! looked for on the search path, and the GitHub exchange's settings are read from the commit of
-//! the default branch, as that program reads them.
+//! and never writes, and reaches no outside service: a program an entry needs is looked for on the
+//! search path, and the one program it runs is one that describes itself, for its entry alone.
+//!
+//! The Symphony's own entries come first; then what is not its own, in that same shape
+//! ([`described`]): a program's, the answer of one command (the GitHub exchange's, `symphony-github
+//! describe`), and each describer's of the plugins the project selects, its class judged so that
+//! no describer lowers one.
 //!
 //! A value of the project file is the one the file writes while the project loads, else its
 //! default; while the file does not load the project runs on every default, and the page says so
@@ -41,13 +45,11 @@ use symphony_board::settings::Stored;
 use symphony_board::{alarm, builds};
 use toml::Value;
 
+use crate::plugins::Plugins;
 use crate::project::{FILE, LOCAL_FILE, PANES, Project, Releases};
 use stored::Board;
 
-/// The GitHub exchange's settings file, at the root of the tree the default branch commits
-/// (docs/operations/GITHUB.md), and its program.
-pub const GITHUB_FILE: &str = "symphony-github.toml";
-const GITHUB_PROGRAM: &str = "symphony-github";
+pub mod described;
 
 /// What of this machine the read looks at: where its programs are found.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -368,9 +370,12 @@ pub fn page_with(root: &Path, machine: &Machine, board_held: &Board) -> Settings
                 agent(machine, &defaults, "claude", "Claude Code"),
                 agent(machine, &defaults, "codex", "Codex"),
                 herdr(machine, &file, &project, &stored),
-                github(machine, &main),
+                described::program(machine, &main, &described::GITHUB),
                 plugins(&file, &project),
-            ],
+            ]
+            .into_iter()
+            .chain(described::plugins(&Plugins::at(&project, root), root))
+            .collect(),
         },
         SettingsSection {
             id: "models".into(),
@@ -498,157 +503,6 @@ fn herdr(machine: &Machine, file: &FileRead, project: &Project, stored: &Stored)
             "herdr",
             "Herdr panes",
             "Agents' terminals in Herdr, which the pages can show and go to.",
-        )
-    }
-}
-
-/// `file` of the tree the branch `branch` commits in the repository of the checkout `main`: none
-/// when that tree holds none, or there is no such repository or commit.
-fn committed(main: &Path, branch: &str, file: &str) -> Result<Option<String>, String> {
-    // No repository, or no commit of the branch yet, holds no file.
-    let Ok(repo) = gix::open(main) else {
-        return Ok(None);
-    };
-    let Ok(id) = repo.rev_parse_single(branch) else {
-        return Ok(None);
-    };
-    let commit = id
-        .object()
-        .map_err(|e| e.to_string())?
-        .peel_to_commit()
-        .map_err(|e| e.to_string())?;
-    let tree = commit.tree().map_err(|e| e.to_string())?;
-    let Some(entry) = tree.lookup_entry_by_path(file).map_err(|e| e.to_string())? else {
-        return Ok(None);
-    };
-    let blob = repo.find_blob(entry.id()).map_err(|e| e.to_string())?;
-    String::from_utf8(blob.data.clone())
-        .map(Some)
-        .map_err(|e| e.to_string())
-}
-
-/// The default branch as the GitHub program names it: `[project] default_branch` of the
-/// `symphony.toml` the main checkout's HEAD commits, `main` where none is committed or it names
-/// none. An edit of the working file names no branch until it is committed.
-fn committed_branch(main: &Path) -> Result<String, String> {
-    let text = committed(main, "HEAD", "symphony.toml")?.unwrap_or_default();
-    let table = toml::from_str::<toml::Table>(&text).map_err(|e| e.message().to_string())?;
-    Ok(table
-        .get("project")
-        .and_then(|project| project.get("default_branch"))
-        .and_then(Value::as_str)
-        .unwrap_or("main")
-        .to_string())
-}
-
-/// What the page can say of the GitHub exchange without running its program.
-enum Exchange {
-    /// Nothing turns it on: no committed file, one that leaves `enabled` out or false, or one that
-    /// does not read, or a project file at HEAD that does not read and so names no branch. The
-    /// program runs each as off.
-    Off(String),
-    /// The committed file writes `enabled = true`, with what else it writes. Whether the program
-    /// accepts the file is its own to say: one it refuses runs as off.
-    Written(String),
-}
-
-/// The GitHub exchange, by what the default branch's committed settings write. The page runs no
-/// program and holds no copy of its rules, so it says what the file writes and claims the
-/// exchange on for none: a file its program refuses runs as off, which that program's own status
-/// tells. Its settings decide what lands and what is written to an outside service, so they are
-/// reviewed.
-fn github(machine: &Machine, main: &Path) -> SettingsEntry {
-    let branch = committed_branch(main);
-    let on_branch = match &branch {
-        Ok(branch) => format!("{GITHUB_FILE} on {branch}"),
-        Err(_) => GITHUB_FILE.to_string(),
-    };
-    let text = match &branch {
-        Ok(branch) => committed(main, &format!("refs/heads/{branch}"), GITHUB_FILE),
-        Err(problem) => Err(problem.clone()),
-    };
-    let table = match &text {
-        Ok(Some(text)) => toml::from_str::<toml::Table>(text)
-            .map(Some)
-            .map_err(|e| e.message().to_string()),
-        Ok(None) => Ok(None),
-        Err(problem) => Err(problem.clone()),
-    };
-    let enabled = match &table {
-        Ok(Some(table)) => table.get("enabled").and_then(Value::as_bool) == Some(true),
-        _ => false,
-    };
-    let exchange = match (&branch, &table) {
-        (Err(problem), _) => Exchange::Off(format!(
-            "Off: {FILE} at HEAD does not read ({problem}), so it names no branch to read \
-             {GITHUB_FILE} on."
-        )),
-        (_, Err(problem)) => Exchange::Off(format!("Off: {on_branch} does not read ({problem}).")),
-        (_, Ok(None)) => Exchange::Off(format!("Off: no {on_branch}.")),
-        (_, Ok(Some(table))) => {
-            let word = |key: &str| table.get(key).map_or_else(|| "off".to_string(), shown);
-            let writes = format!(
-                "repository {}, issues {}, pull requests {}, releases {}",
-                word("repository"),
-                word("issues"),
-                word("pull_requests"),
-                word("releases")
-            );
-            if enabled {
-                Exchange::Written(format!(
-                    "{on_branch} writes enabled = true; {writes}. Whether the exchange runs is \
-                     its program's to say: a file it refuses, or a token it lacks, leaves it \
-                     off (docs/operations/GITHUB_SETUP.md)."
-                ))
-            } else {
-                Exchange::Off(format!("Off: {on_branch} does not enable it; {writes}."))
-            }
-        }
-    };
-    let written = match (&text, &table) {
-        (Ok(Some(text)), Ok(Some(table))) if table.contains_key("enabled") => Some(Written {
-            at: "enabled".into(),
-            line: limits::line(text, &[], "enabled"),
-        }),
-        _ => None,
-    };
-    let found = builds::of_main(main, GITHUB_PROGRAM, &machine.beyond);
-    SettingsEntry {
-        state: match exchange {
-            Exchange::Off(why) => state("Off", Some(false), why),
-            Exchange::Written(why) => state("Enabled in its file", None, why),
-        },
-        needs: vec![EntryNeed {
-            what: format!("the {GITHUB_PROGRAM} program"),
-            met: found.is_some(),
-            said: match found {
-                Some(path) => format!("Found on this machine: {}.", path.display()),
-                None => "Not found on this machine: nothing is exchanged from here.".into(),
-            },
-        }],
-        settings: vec![Setting {
-            key: "enabled".into(),
-            name: "What its committed file writes for the exchange".into(),
-            kind: SettingKind::Switch,
-            value: if enabled { "on" } else { "off" }.into(),
-            choices: Vec::new(),
-            source: match written {
-                Some(written) => SettingSource {
-                    scope: Some(SettingScope::Project),
-                    said: format!("{on_branch}, {}", written.said()),
-                    file: Some(GITHUB_FILE.into()),
-                    line: written.line.and_then(|line| u32::try_from(line).ok()),
-                    over: None,
-                },
-                None => default(&format!("no {on_branch}")),
-            },
-            scopes: vec![SettingScope::Project],
-            class: SettingClass::Reviewed,
-        }],
-        ..entry(
-            "github",
-            "GitHub",
-            "Issues exchanged, lands delivered by pull request, releases published.",
         )
     }
 }

@@ -6,7 +6,6 @@
 
 use std::collections::BTreeSet;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
 
 use super::reference::{REFERENCE, listed, read};
 use crate::Tree;
@@ -46,23 +45,6 @@ fn settings(page: &SettingsPage) -> Vec<&Setting> {
         .flat_map(|section| &section.entries)
         .flat_map(|entry| &entry.settings)
         .collect()
-}
-
-/// `git` with `args` in `root`.
-fn git(root: &Path, args: &[&str]) {
-    let done = symphony_board::sys::output(
-        symphony_board::sys::Command::new("git")
-            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
-            .args(["-c", "commit.gpgsign=false"])
-            .args(args)
-            .current_dir(root)
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE")
-            .env_remove("GIT_COMMON_DIR"),
-    )
-    .unwrap();
-    assert!(done.status.success(), "{args:?}: {done:?}");
 }
 
 #[test]
@@ -118,11 +100,18 @@ fn a_project_with_no_file_shows_every_default_and_says_none_is_written() {
         "The Symphony's four: tests, review, pictures, owner."
     );
     assert_eq!(stamps.source.said, "default: no [stamps] written");
+    // Its state is its program's to say, and this machine has none.
     let github = entry(&page, "github");
-    assert_eq!(github.state.as_ref().unwrap().on, Some(false));
+    let state = github.state.as_ref().unwrap();
+    assert_eq!((state.word.as_str(), state.on), ("Unknown", None));
     assert_eq!(
-        github.state.as_ref().unwrap().why,
-        "Off: no symphony-github.toml on main."
+        state.why,
+        "Unknown: its state is its program's to say, and this machine has no symphony-github: \
+         nothing is exchanged from here."
+    );
+    assert!(
+        github.settings.is_empty(),
+        "the page reads no file of its own"
     );
     let workflow = setting(&page, "workflow", "[workflow]");
     assert_eq!(workflow.value, "The board's own, built-in v1.");
@@ -694,138 +683,103 @@ fn an_agent_says_whether_this_machine_has_its_program() {
     assert!(!entry(&page, "github").needs[0].met);
 }
 
-#[test]
-fn github_is_read_from_what_the_default_branch_commits_never_the_working_file() {
-    let tree = Tree::new();
-    git(&tree.root, &["init", "-q", "-b", "main"]);
-    tree.write("a.txt", "a");
-    git(&tree.root, &["add", "a.txt"]);
-    git(&tree.root, &["commit", "-q", "-m", "a"]);
-    let text = "# The exchange.\nenabled = true\nrepository = \"lamp/shop\"\nissues = \"import\"\n";
-    tree.write("symphony-github.toml", text);
-    let uncommitted = page(&tree.root, &bare());
-    let github = entry(&uncommitted, "github");
-    assert_eq!(
-        github.state.as_ref().unwrap().on,
-        Some(false),
-        "a working file enables nothing"
+/// A machine whose search path is `bin` of `tree`, holding a `symphony-github` that runs
+/// `script` for `describe` and refuses any other words.
+fn github(tree: &Tree, script: &str) -> Machine {
+    let program = tree.write(
+        "bin/symphony-github",
+        &format!("#!/bin/sh\n[ \"$*\" = describe ] || exit 2\n{script}\n"),
     );
-    git(&tree.root, &["add", "symphony-github.toml"]);
-    git(&tree.root, &["commit", "-q", "-m", "on"]);
-    let committed = page(&tree.root, &bare());
-    let github = entry(&committed, "github");
-    // The file is one its program refuses (enabled with no token file, import with no labels),
-    // which runs as off: the page says what the file writes and claims the exchange on for none.
-    let state = github.state.as_ref().unwrap();
-    assert_eq!(
-        (state.word.as_str(), state.on),
-        ("Enabled in its file", None)
-    );
-    assert_eq!(
-        state.why,
-        "symphony-github.toml on main writes enabled = true; repository lamp/shop, issues import, \
-         pull requests off, releases off. Whether the exchange runs is its program's to say: a \
-         file it refuses, or a token it lacks, leaves it off (docs/operations/GITHUB_SETUP.md)."
-    );
-    assert!(!state.why.contains("On"), "{state:?}");
-    assert_eq!(github.needs.len(), 1, "the page claims no token or App");
-    let enabled = &github.settings[0];
-    assert_eq!(enabled.class, SettingClass::Reviewed);
-    assert_eq!(enabled.value, "on");
-    assert_eq!(
-        enabled.source.said,
-        "symphony-github.toml on main, enabled, line 2"
-    );
-    assert_eq!(enabled.source.line, Some(2));
-    // One committed that does not read is off, and says why.
-    tree.write("symphony-github.toml", "enabled = \n");
-    git(&tree.root, &["commit", "-q", "-am", "broken"]);
-    let broken = page(&tree.root, &bare());
-    let state = entry(&broken, "github").state.clone().unwrap();
-    assert_eq!(state.on, Some(false));
-    assert!(
-        state
-            .why
-            .starts_with("Off: symphony-github.toml on main does not read ("),
-        "{state:?}"
-    );
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    Machine::path(Some(tree.path("bin").into_os_string()))
 }
 
-/// The branch is the one the main checkout's HEAD commits in its project file, as the program
-/// reads it: a working edit of the project file names none, and a file that leaves `enabled` out
-/// or false is off.
+/// What a program answering for the exchange prints: its entry, its id another than the page's,
+/// its state saying the folder it ran in, a need of its own and a setting it calls a preference of
+/// the machine's.
+const ANSWER: &str = r#"printf '{"id":"elsewhere","name":"GitHub","about":"Its own words.","state":{"word":"On","on":true,"why":"Enabled, run in %s."},"needs":[{"what":"the token file","met":false,"said":"Not found."}],"settings":[{"key":"enabled","name":"Whether it runs","kind":"switch","value":"on","source":{"scope":"project","said":"symphony-github.toml on main enabled, line 1","file":"symphony-github.toml","line":1},"scopes":["project","machine"],"class":"preference"}]}\n' "$(pwd -P)""#;
+
 #[test]
-fn github_reads_the_branch_head_commits_and_a_file_that_does_not_enable_is_off() {
+fn github_is_its_programs_own_answer_run_in_the_main_checkout_and_judged() {
     let tree = Tree::new();
-    git(&tree.root, &["init", "-q", "-b", "main"]);
-    tree.write("symphony.toml", "[project]\ndefault_branch = \"trunk\"\n");
-    tree.write(
-        "symphony-github.toml",
-        "enabled = true\nrepository = \"lamp/shop\"\n",
-    );
-    git(&tree.root, &["add", "."]);
-    git(&tree.root, &["commit", "-q", "-m", "on main"]);
-    // HEAD names trunk, which no branch is: nothing is committed there.
-    let none = page(&tree.root, &bare());
-    let state = entry(&none, "github").state.clone().unwrap();
-    assert_eq!(state.on, Some(false));
-    assert_eq!(state.why, "Off: no symphony-github.toml on trunk.");
-    git(&tree.root, &["branch", "trunk"]);
-    let trunk = page(&tree.root, &bare());
-    let github = entry(&trunk, "github");
-    assert_eq!(github.state.as_ref().unwrap().on, None);
-    assert_eq!(
-        github.settings[0].source.said,
-        "symphony-github.toml on trunk, enabled, line 1"
-    );
-    // A working edit of the project file names no branch until it is committed.
-    tree.write("symphony.toml", "[project]\ndefault_branch = \"main\"\n");
-    let edited = page(&tree.root, &bare());
-    assert!(
-        entry(&edited, "github").settings[0]
-            .source
-            .said
-            .contains("on trunk"),
-    );
-    git(&tree.root, &["checkout", "-q", "--", "symphony.toml"]);
-    // Committed with the exchange not enabled: off, and said with what it writes.
-    tree.write(
-        "symphony-github.toml",
-        "enabled = false\nrepository = \"lamp/shop\"\n",
-    );
-    git(&tree.root, &["commit", "-q", "-am", "off"]);
-    git(&tree.root, &["branch", "-f", "trunk"]);
-    let off = page(&tree.root, &bare());
-    let state = entry(&off, "github").state.clone().unwrap();
-    assert_eq!((state.word.as_str(), state.on), ("Off", Some(false)));
+    tree.write("symphony.toml", PROJECT);
+    let machine = github(&tree, ANSWER);
+    let page = page(&tree.root, &machine);
+    let github = entry(&page, "github");
+    assert_eq!(github.name, "GitHub");
+    assert_eq!(github.about, "Its own words.");
+    let state = github.state.as_ref().unwrap();
+    assert_eq!((state.word.as_str(), state.on), ("On", Some(true)));
     assert_eq!(
         state.why,
-        "Off: symphony-github.toml on trunk does not enable it; repository lamp/shop, issues \
-         off, pull requests off, releases off."
+        format!(
+            "Enabled, run in {}.",
+            tree.root.canonicalize().unwrap().display()
+        )
     );
-    // A project file HEAD commits that does not read names no branch: off, and said.
-    tree.write("symphony.toml", "[project\n");
-    git(&tree.root, &["commit", "-q", "-am", "broken"]);
-    let broken = page(&tree.root, &bare());
-    let state = entry(&broken, "github").state.clone().unwrap();
-    assert_eq!(state.on, Some(false));
-    // It names the project file that does not read, and the branch it would have named none.
-    let (message, rest) = state
-        .why
-        .strip_prefix("Off: symphony.toml at HEAD does not read (")
-        .and_then(|why| why.rsplit_once(')'))
-        .unwrap_or_else(|| panic!("{state:?}"));
+    // The program the page ran is its first need, then the ones it says.
+    let needs: Vec<(&str, bool)> = (github.needs.iter())
+        .map(|need| (need.what.as_str(), need.met))
+        .collect();
+    assert_eq!(
+        needs,
+        [
+            ("the symphony-github program", true),
+            ("the token file", false)
+        ]
+    );
+    assert_eq!(
+        github.needs[0].said,
+        format!(
+            "Found on this machine: {}.",
+            tree.path("bin/symphony-github").display()
+        )
+    );
+    // Its settings decide what lands: reviewed, whatever it says, and the project's alone.
+    let [enabled] = github.settings.as_slice() else {
+        panic!("{:?}", github.settings);
+    };
+    assert_eq!(enabled.class, SettingClass::Reviewed);
+    assert_eq!(enabled.scopes, [SettingScope::Project]);
+    assert_eq!(enabled.value, "on");
+    assert_eq!(enabled.source.line, Some(1));
+}
+
+#[test]
+fn github_absent_failing_or_answering_what_does_not_read_is_said_and_the_page_still_drawn() {
+    let tree = Tree::new();
+    tree.write("symphony.toml", PROJECT);
+    let said = |machine: &Machine| {
+        let page = page(&tree.root, machine);
+        assert_eq!(page.sections.len(), 5, "every section is drawn");
+        let github = entry(&page, "github").clone();
+        assert_eq!(github.needs[0].what, "the symphony-github program");
+        let state = github.state.unwrap();
+        assert_eq!((state.word.as_str(), state.on), ("Unknown", None));
+        (github.needs[0].met, state.why)
+    };
+    let (met, why) = said(&bare());
+    assert!(!met);
+    assert!(why.contains("this machine has no symphony-github"), "{why}");
+    let failing = github(&tree, "echo half; echo 'no settings here' >&2; exit 3");
+    assert_eq!(
+        said(&failing),
+        (
+            true,
+            "Unknown: its program could not say: symphony-github describe exited 3: no settings \
+             here."
+                .into()
+        )
+    );
+    let garbled = github(&tree, "echo 'not an entry'");
+    let (met, why) = said(&garbled);
+    assert!(met);
     assert!(
-        !message.is_empty() && !message.contains("symphony"),
-        "{state:?}"
-    );
-    assert_eq!(
-        rest,
-        ", so it names no branch to read symphony-github.toml on."
-    );
-    assert_eq!(
-        entry(&broken, "github").settings[0].source.said,
-        "default: no symphony-github.toml"
+        why.starts_with(
+            "Unknown: its program could not say: symphony-github describe printed what does not \
+             read as an entry: "
+        ),
+        "{why}"
     );
 }
 
@@ -982,9 +936,9 @@ fn every_setting_the_page_shows_has_the_class_and_the_scopes_of_its_key() {
             .strip_prefix('[')
             .and_then(|k| k.trim_start_matches('[').split_once(']'))
         else {
-            // GitHub's own file and the device's are no key of the project file.
+            // The device's is no key of the project file.
             assert!(
-                ["enabled", "appearance"].contains(&setting.key.as_str()),
+                ["appearance"].contains(&setting.key.as_str()),
                 "{}",
                 setting.key
             );

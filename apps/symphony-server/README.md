@@ -288,9 +288,11 @@ dispatch no callback, give no work and keep no owner's asks, the schema rule ref
 write, and every page says so on the notice until the board and the build agree. The exception is
 a board whose step is declared to keep the Symphony writing: its ticks and saves write it as at
 the build's own schema, and the notice says nothing of it (`Hub::read_only_ahead`). A board that
-took a read and answered it later than the 3 s wait, on its one resend too, is slow: 504, "the
-task board is slow", never "cannot be reached". The wait bounds the board tick and each sending's
-whole answer, so a read sent twice stays inside the client's 15 s request limit. Native routes apply both
+took a read on a connection that worked and did not answer it within the 3 s wait is slow: 504,
+"the task board is slow", never "cannot be reached". On PostgreSQL the wait bounds each write of a
+request and each read of its answer, and a request is never sent again, as the server may have run
+it; a board still on SurrealDB sends a read once more, so it waits at most twice the wait, inside
+the client's 15 s request limit. Native routes apply both
 the peer gate and the Host check; sandboxed frames cannot read the API.
 
 `just symphony` installs the release client with the shared server, in

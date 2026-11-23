@@ -19,14 +19,19 @@ What the owner sees of it in the app is told in two product specs:
 
 ## Where it lives
 
-A SurrealDB database (namespace `sf`, database `tasks`) whose server keeps its
-data, its address and its log in the git common dir, `.git/symphony/tasks/`, so every
-worktree reaches the same board, a claim is one transaction, and none of it
-shows up in `git status`. Whatever needs the board starts the server when it is
-not running: the first `just tasks`, `just symphony` as it starts, a page of the
-Symphony. It starts detached, so it outlives whoever started it, and that is
-also the restart: a server that was killed is started again on the same data.
-A start says so in one line on stderr, as it takes seconds.
+A PostgreSQL database (`tasks`) on the machine's own PostgreSQL, 18 or later
+([the setting](../operations/PROJECT_FILE.md#board)), whose server keeps its data and its log in
+the git common dir, `.git/symphony/tasks/`, so every worktree reaches the same
+board, a claim is one transaction, and none of it shows up in `git status`. The
+first `just tasks` makes the board there, and is refused with the setup guidance
+on a machine without PostgreSQL. Whatever needs a board that is made starts its
+server when it is not running: a `just tasks`, `just symphony` as it starts, a page
+of the Symphony, which never makes a board. It starts detached, so it outlives
+whoever started it, and that is also the restart: a server that was killed is
+started again on the same data. A start says so in one line on stderr, as it
+takes seconds. A board made before PostgreSQL was a new board's runs on SurrealDB
+(namespace `sf`, database `tasks`, its address recorded beside its store) until
+its store is moved ([POSTGRESQL](../operations/POSTGRESQL.md)).
 The heartbeat hook never starts it. `TASKS_SERVER` (an address) and
 `TASKS_DATABASE` reach another board, as the tests do. It is working state, not
 history: `just tasks export` writes a readable snapshot to
@@ -1144,7 +1149,7 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
 | What the watcher reads | What follows |
 | --- | --- |
 | A check that is not the Symphony's red at the head (a CI the repository adds), or the host reporting the pull request in conflict with the default branch | the task back to in progress (from done by review): its executor merges the default branch once, or puts the check right, and moves it to review, which dispatches it again |
-| The pull request closed unmerged, by someone | back to in progress, naming it, moved as its orchestrator whoever's write's dispatch found it (an assessor's included); the next dispatch opens another |
+| The pull request closed unmerged, by someone | back to in progress, naming it, the move made as its orchestrator whoever started the dispatch that found it, an assessor too; the next dispatch opens another |
 | Neither merged nor red once `[land] merge_within_minutes` (30) passed since its evidence stood (review time counts for nothing) | the task stays where it is, the work not at fault: `just land SLUG` arms it again |
 | Any of these where the task cannot go back (cancelled or closed, a document save, which stays pending and shown, or what the regenerator made, which it cancels and makes again) | `tools/delivery-failed-SLUG` filed to `@orchestrator`, naming the pull request and why; a second failure is a line on the one open |
 

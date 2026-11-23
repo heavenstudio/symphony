@@ -74,17 +74,22 @@ local value the committed one, or the store's where it holds one), the scopes it
 and its class. A setting is *reviewed* when
 the local settings file refuses its table or key by name (`PROTECTED` and `PROTECTED_KEYS` in
 `crates/tasks/src/local.rs`, the one list) and a *preference* otherwise; a reviewed table is said
-as a sentence with its file and line. Its parts are the integrations and tools (the launch
-agents, Herdr's panes, GitHub, and the plugins), the models and limits, the project's name,
-documents and theme, the reviewed settings (the landing, the board's commands, the stamps, the
-releases and the workflow, whose sentence names its mappings and approval authorities) and the
-device's appearance. GitHub is said by what the `symphony-github.toml` the default branch commits
-writes, the branch being the one the main checkout's HEAD names, as that program reads it. The
-page runs no program and holds no copy of its rules, so a file that writes `enabled = true` is
-said as enabled in its file and never as on: a file the program refuses runs as off, which its
-own status tells. A project file that does not load is said at the top of the page with what
-holds in its place, as is a local file that is refused, a store that cannot be read and an entry
-of it that is not.
+as a sentence with its file and line. Its parts are the integrations and tools (the launch agents,
+Herdr's panes, GitHub, the plugins and what each plugin describes), the models and limits, the
+project's name, documents and theme, the reviewed settings (the landing, the board's commands, the
+stamps, the releases and the workflow, whose sentence names its mappings and approval authorities)
+and the device's appearance. GitHub is said by its own program: the page runs
+`symphony-github describe` ([GITHUB](GITHUB.md#the-commands)) as this machine finds it, the main
+checkout's build first, in the main checkout, and draws the entry it prints, its state and why,
+what it needs and each setting at the line that writes it, every one reviewed. The page holds no
+copy of its rules, and a machine without the program, or one that fails or gives no answer in 10
+seconds, is said in its place as unknown, with the page drawn all the same. Each plugin the
+project selects adds the entries of its describers after the Symphony's own
+([PLUGIN_PROTOCOL](../engineering/PLUGIN_PROTOCOL.md#settings-describers)), drawn alike; a
+description declares and runs nothing, and a key the local file refuses is shown reviewed whatever
+its describer calls it. A project file that does not load is said at the top of the page with what
+holds in its place, as is a local file that is refused, a store that cannot be read and an
+entry of it that is not.
 
 The page writes [the board's store](#the-boards-store) and nothing else, by one route,
 `/api/setting` (`crates/symphony/src/save/settings.rs`). Each preference the store keeps has a
@@ -453,11 +458,13 @@ A generator, in `[land] generators` or `[verdicts] generators`, usually written 
 | `slot_locks` | none | the folder of the project's test-slot locks, which the agents view probes; under `.git/`, the git common dir |
 | `assessments` | none: an assessment is refused | the folder of the project's landing assessments; under `.git/`, the git common dir |
 
-A project's board needs no PostgreSQL: it runs on the SurrealDB `symphony init` fetches
-([getting started](GETTING_STARTED.md#2-set-the-project-up)). Only a board whose home names
-PostgreSQL uses what follows. Its setup requires version 18 or later, installed by the machine's
-package manager. Without an explicit `postgresql`, discovery takes the first executable `postgres` on `PATH`;
-`initdb`, `pg_ctl` and `psql` must be executable in the same folder. On a Mac with Homebrew:
+A project's board runs on the machine's PostgreSQL: a board not made yet is made on it by its
+first command ([getting started](GETTING_STARTED.md#2-set-the-project-up)), and only a board made
+on SurrealDB before that, which holds its store and names no other engine, still runs there
+until it is moved ([POSTGRESQL](POSTGRESQL.md)). Its setup requires version 18 or later,
+installed by the machine's package manager. Without an explicit `postgresql`, discovery takes the
+first executable `postgres` on `PATH`; `initdb`, `pg_ctl` and `psql` must be executable in the
+same folder. On a Mac with Homebrew:
 
 ```sh
 brew install postgresql@18
@@ -467,8 +474,9 @@ export PATH="$(brew --prefix postgresql@18)/bin:$PATH"
 For another installation, put its `bin` folder on `PATH` or set `[board] postgresql` to its
 absolute path. An explicit value always wins, including when it is invalid. A missing tool,
 failed version probe or server older than 18 fails with setup guidance; discovery never skips
-an incompatible installation to select another. It inspects programs only, starting no database:
-a board uses PostgreSQL once its home names it ([POSTGRESQL](POSTGRESQL.md)).
+an incompatible installation to select another. It inspects programs only, starting no database.
+A board not made yet on a machine without it is refused with that guidance, and nothing is made;
+`symphony init` asks for it until discovery finds it.
 
 ## `[board.external_postgresql]`
 

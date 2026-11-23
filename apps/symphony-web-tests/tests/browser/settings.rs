@@ -69,6 +69,7 @@ fn the_settings_page_draws_every_entry_within_a_desk_and_a_phone_with_the_stores
             texts(&mut chrome, ".setting-entry h3"),
             [
                 "Herdr panes",
+                "Catalogue",
                 "The model each role runs on",
                 "Landing",
                 "Workflow",

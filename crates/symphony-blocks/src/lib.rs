@@ -2,9 +2,10 @@
 //! return, as the server sends it and the client draws it. Document content as data ([`Block`],
 //! [`Span`] and what they hold, never rendered HTML), what a page draws that markup cannot
 //! ([`Media`] and its [`Viewer`]), a board field's value ([`FieldValue`]), a task's gate ([`Gate`]),
-//! a home region ([`Region`]), a card's pictures ([`Picture`]), a navigation entry ([`NavItem`]) and
-//! a board action's offer ([`TaskOffer`]). Serde only, so one definition builds for the server and a
-//! plugin's process, and is written out as the client's TypeScript.
+//! a home region ([`Region`]), a card's pictures ([`Picture`]), a navigation entry ([`NavItem`]), a
+//! board action's offer ([`TaskOffer`]) and a Settings page's entry ([`SettingsEntry`]). Serde
+//! only, so one definition builds for the server and a plugin's process, and is written out as the
+//! client's TypeScript.
 //!
 //! The kit is `symphony-plugin`, this crate and `symphony-docs`, one version for the three
 //! (`symphony_plugin`'s doc says what each holds); this crate depends on no other workspace crate.
@@ -15,9 +16,10 @@
 //!
 //! The lists grow in a minor of the kit: a new kind of [`Block`], [`Span`] or [`Media`], a new
 //! word one carries ([`CalloutKind`], [`FigureSize`], [`ContainerKind`], [`InlineKind`],
-//! [`VectorKind`], [`CardState`], [`CardGroup`], [`ThreadAuthor`]) or a new [`GateState`] is no
-//! new major. So each is `#[non_exhaustive]`: a plugin makes a variant as before, and a match on
-//! one outside this crate ends with `_`. [`FieldValue`] alone is matched whole: a number or text,
+//! [`VectorKind`], [`CardState`], [`CardGroup`], [`ThreadAuthor`]), a new [`GateState`] or a new
+//! word a setting carries ([`SettingScope`], [`SettingClass`], [`SettingKind`]) is no new major.
+//! So each is `#[non_exhaustive]`: a plugin makes a variant as before, and a match on one outside
+//! this crate ends with `_`. [`FieldValue`] alone is matched whole: a number or text,
 //! as JSON has them. A struct here is built by its fields, so a field added to one is a new major.
 //!
 //! ```
@@ -53,11 +55,16 @@ mod blocks;
 mod field_value;
 mod gates;
 mod media;
+mod settings;
 
 pub use blocks::*;
 pub use field_value::FieldValue;
 pub use gates::{Gate, GatePast, GateState};
 pub use media::{GalleryItem, Media, View, Viewer};
+pub use settings::{
+    EntryNeed, EntryState, Setting, SettingClass, SettingKind, SettingScope, SettingSource,
+    SettingsEntry,
+};
 
 /// One picture a card shows.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -21,14 +21,16 @@ use symphony_board::lock::Recovered as _;
 use symphony_plugin::authority::{Operation, Signed};
 use symphony_plugin::protocol::{
     Alive, AnswerGates, ApprovalNeedsAgent, Ask, Attest, AutoApprovable, CacheVersion, CardGates,
-    Changed, CheckDocs, CheckProse, Chosen, Deliver, DocComponents, Draw, Forget, KeptWhile, Offer,
-    Pictures, Recognises, RegisterAgent, Render, Resolve, RunCommand, Serve, ShowRegion, Slot,
-    Submit, TriageCategory, Validate,
+    Changed, CheckDocs, CheckProse, Chosen, Deliver, Describe, DocComponents, Draw, Forget,
+    KeptWhile, Offer, Pictures, Recognises, RegisterAgent, Render, Resolve, RunCommand, Serve,
+    ShowRegion, Slot, Submit, TriageCategory, Validate,
 };
-use symphony_plugin::vocabulary::{Block, FieldValue, Gate, NavItem, Picture, Region, TaskOffer};
+use symphony_plugin::vocabulary::{
+    Block, FieldValue, Gate, NavItem, Picture, Region, SettingsEntry, TaskOffer,
+};
 use symphony_plugin::{
-    Authority, BoardAction, BoardField, Card, CardKind, Command, Component, DocCheck, Docs,
-    Drawing, FieldKind, File, Gates, Generator, HomeRegion, Page, Plugin, Problem, ProseRule,
+    Authority, BoardAction, BoardField, Card, CardKind, Command, Component, Describer, DocCheck,
+    Docs, Drawing, FieldKind, File, Gates, Generator, HomeRegion, Page, Plugin, Problem, ProseRule,
     Renderer, Reply, Route, Submission, Submitted, TaskRef, Theme, Transport, Watch,
 };
 
@@ -287,6 +289,7 @@ struct Measured {
     board_fields: Vec<On<dyn BoardField>>,
     gates: Vec<On<dyn Gates>>,
     authorities: Vec<On<dyn Authority>>,
+    describers: Vec<On<dyn Describer>>,
     watches: Vec<On<dyn Watch>>,
     doc_checks: Vec<On<dyn DocCheck>>,
     prose_rules: Vec<On<dyn ProseRule>>,
@@ -321,6 +324,7 @@ impl Measured {
             board_fields: each(plugin.board_fields(), meter, |f| f.name().into()),
             gates: each(plugin.gates(), meter, |g| g.name().into()),
             authorities: each(plugin.authorities(), meter, |a| a.adapter().into()),
+            describers: each(plugin.describers(), meter, |d| d.id().into()),
             watches: each(plugin.watches(), meter, |w| w.paths().join(", ")),
             doc_checks: each(plugin.doc_checks(), meter, |c| c.name().into()),
             prose_rules: each(plugin.prose_rules(), meter, |r| r.name().into()),
@@ -373,6 +377,9 @@ impl Plugin for Measured {
     }
     fn authorities(&self) -> Vec<&dyn Authority> {
         objects!(self.authorities, Authority)
+    }
+    fn describers(&self) -> Vec<&dyn Describer> {
+        objects!(self.describers, Describer)
     }
     fn watches(&self) -> Vec<&dyn Watch> {
         objects!(self.watches, Watch)
@@ -546,6 +553,15 @@ impl Authority for On<dyn Authority> {
         within: Duration,
     ) -> Result<Signed, String> {
         self.time::<Attest>(|a| a.attest(root, operation, within))
+    }
+}
+
+impl Describer for On<dyn Describer> {
+    fn id(&self) -> &str {
+        self.inner.id()
+    }
+    fn describe(&self, root: &Path) -> Result<SettingsEntry, String> {
+        self.time::<Describe>(|d| d.describe(root))
     }
 }
 

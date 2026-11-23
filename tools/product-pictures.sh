@@ -9,8 +9,8 @@
 # is the project picker; from its `=theme` line on, the copy's own server's again, the copy with a
 # theme of its own. Every picture is taken at one moment (NOW below, on the board's clock and the
 # page's), in UTC, so a page that draws an age or a time is the same picture on any day. It touches
-# no shared server, no project's board and no terminal, and ends the servers it started, the board
-# servers they started with them.
+# no shared server, no project's board and no terminal, and ends the servers it started, the
+# board's PostgreSQL they started with them.
 #
 #   tools/product-pictures.sh          retake every picture
 #   tools/product-pictures.sh NAME...  retake those named (the list's first word)
@@ -35,19 +35,19 @@ finish() {
         kill "$pid" 2>/dev/null || true
         wait "$pid" 2>/dev/null || true
     done
-    # Each repository's board server, which the Symphony's started (the second project's too, by the
-    # one server's first read of it, though it holds no board), ends once its starters have: it is
-    # no child of this script's to wait for, so it is ended by the pid it recorded and looked at
-    # until it is gone (ten seconds at most), as it writes in the folder removed next.
-    for repository in "$work/project" "$work/pantry"; do
-        board="$(jq -r '.pid // empty' "$repository/.git/symphony/tasks/server.json" 2>/dev/null || true)"
-        [ -n "$board" ] || continue
+    # The copy's board server, the PostgreSQL its last starter, the Symphony's, started, ends once
+    # its starters have: it is no child of this script's to wait for, so it is ended by the pid its
+    # data records (the first line of postmaster.pid) and looked at until it is gone (ten seconds at
+    # most), as it writes in the folder removed next. The second project holds no board, and the
+    # one server's read of it makes and starts none.
+    board="$(head -n 1 "$work/project/.git/symphony/tasks/postgresql/postmaster.pid" 2>/dev/null || true)"
+    if [ -n "$board" ]; then
         kill "$board" 2>/dev/null || true
         for _ in $(seq 100); do
             kill -0 "$board" 2>/dev/null || break
             sleep 0.1
         done
-    done
+    fi
     rm -rf "$work"
 }
 trap finish EXIT
@@ -69,9 +69,8 @@ shot="$("$root/tools/rs-bin.sh" --build symphony)"
 serve="$("$root/tools/rs-bin.sh" --build symphony-server)"
 tasks="$("$root/tools/rs-bin.sh" --build tasks)"
 copy="$("$root/tools/rs-bin.sh" --build tasks-copy)"
-# The board's database is the pinned SurrealDB the board's own tests run.
-SYMPHONY_SURREAL="${SYMPHONY_SURREAL:-$(bash "$root/tools/surreal.sh")}"
-export SYMPHONY_SURREAL
+# The board's database is the machine's PostgreSQL, 18 or later, on which the copy's first board
+# command makes its board, as a project's is (docs/operations/PROJECT_FILE.md#board).
 # TASKS_RECORDER=off: nothing here is a build or a test of a task's. No hook, sweep or terminal of
 # this machine's is the copy's: a board command there starts none, and the terminals' two
 # programs are false, so the one server's own sweep of the copy's board reaches none either.
@@ -85,8 +84,9 @@ mkdir "$work/machine"
 mkdir "$work/bin"
 ln -s "$tasks" "$work/bin/tasks"
 
-# The copy's board is made by its first command, as a project's is; the server makes none. The
-# board's own server ends with the command that started it, and the Symphony's then holds it.
+# The copy's board is made by its first command, on PostgreSQL, as a project's is; the server
+# makes none. The board's own server ends with the command that started it, and the Symphony's
+# then holds it.
 (cd "$work/project" && TASKS_NOW=$((NOW - 30 * 86400)) "$tasks" list >/dev/null 2>"$work/board.log") || {
     cat "$work/board.log" >&2
     echo "product-pictures: the fixture's board was not made" >&2

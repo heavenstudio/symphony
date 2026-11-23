@@ -86,9 +86,8 @@ const OWN: [Own; 4] = [
                   [plugins] crates and process, [verdicts], [land], [releases], [stamps], the \
                   workflow's [workflow], [[workflow_mappings]] and [[workflow_authorities]], \
                   [board] on_review, on_land, machine_work_reader, postgresql, \
-                  external_postgresql and assessments); a change \
-                  that does \
-                  more than one thing, or one the assessor cannot place",
+                  external_postgresql and assessments); a change that does more than one thing, \
+                  or one the assessor cannot place",
         skips: "documents alone (a design, a reference page, a record); the values the project \
                 file gives settings the Symphony already reads (a model, an agent, a limit, a \
                 count, a name), written, changed or removed, with the guide's and the rules' \

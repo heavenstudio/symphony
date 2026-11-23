@@ -4250,6 +4250,18 @@
                   "class": "preference"
                 }
               ]
+            },
+            {
+              "id": "plugin-shop-catalogue",
+              "name": "Catalogue",
+              "about": "Described by the plugin shop.",
+              "state": { "word": "Read", "why": "Twelve lamps listed." },
+              "source": {
+                "scope": "project",
+                "said": "catalogue.toml, line 1",
+                "file": "catalogue.toml",
+                "line": 1
+              }
             }
           ]
         },
@@ -4333,12 +4345,18 @@
             {
               "id": "workflow",
               "name": "Workflow",
-              "about": "The stages a task moves through.",
-              "state": {
-                "word": "Built in",
-                "why": "The board's own workflow: no [workflow] written."
-              },
-              "source": { "said": "default: no [workflow] written" }
+              "about": "The stages a task moves through and what each move requires.",
+              "settings": [
+                {
+                  "key": "[workflow]",
+                  "name": "The workflow tasks move by",
+                  "kind": "sentence",
+                  "value": "The board's own, built-in v1.",
+                  "source": { "said": "default: no [workflow] written" },
+                  "scopes": ["project"],
+                  "class": "reviewed"
+                }
+              ]
             }
           ]
         },

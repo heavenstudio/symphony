@@ -194,7 +194,8 @@ impl Inner {
 
 impl Board for MemBoard {
     fn state_folder(&self) -> Result<PathBuf, BoardError> {
-        Ok(self.folder.clone())
+        let folder = self.folder.clone();
+        self.inner().lose("state_folder", folder)
     }
 
     fn tasks(&self) -> Result<Vec<Task>, BoardError> {

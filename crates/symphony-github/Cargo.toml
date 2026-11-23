@@ -26,6 +26,9 @@ sha2.workspace = true
 data-encoding = "2"
 
 [dev-dependencies]
+# The Settings page's entry, read back from what `describe` prints as the page reads it: the
+# adapter spells the shape itself (`src/describe/shape.rs`), linking no member.
+symphony-blocks = { path = "../symphony-blocks" }
 # The scratch board its exchange tests run on, reached as the program reaches it: `tasks api`.
 symphony-board = { path = "../tasks" }
 symphony-env = { path = "../symphony-env" }

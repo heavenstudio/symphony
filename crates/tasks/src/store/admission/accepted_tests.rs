@@ -198,6 +198,99 @@ fn a_dependant_takes_the_output_standing_and_none_superseded_until_another_is_ac
     }
 }
 
+/// The actions and the outputs from one read: what [`Store::workflow_actions`] and
+/// [`Store::accepted_outputs`] answer apart, whoever reads, for the round trips of the actions
+/// alone, and refused as the actions are.
+#[test]
+fn the_actions_and_the_outputs_come_from_one_read_as_each_reads_them_apart() {
+    for backend in BACKENDS {
+        let f = board(backend);
+        let (birch, host) = (agent_session("birch"), Host::local());
+        let stops = |next: &NextActions| {
+            let claim = next.actions.iter().find(|a| a.edge == "claim").unwrap();
+            claim.unavailable.clone()
+        };
+        let together = |slug: &str| f.store.workflow_actions_with_outputs(slug, &birch, &host);
+        let apart = |slug: &str, principal: &Principal| {
+            let next = f.store.workflow_actions(slug, principal, &host).unwrap();
+            (next, f.store.accepted_outputs(slug).unwrap())
+        };
+        let (next, outputs) = together("sim/down").unwrap();
+        assert_eq!((next.clone(), outputs.clone()), apart("sim/down", &birch));
+        assert_eq!(outputs, takes(None));
+        assert_eq!(stops(&next), vec![RefusalCode::Dependency]);
+
+        let output = accepted(&f.store, "sim/up");
+        let (next, outputs) = together("sim/down").unwrap();
+        assert_eq!((next.clone(), outputs.clone()), apart("sim/down", &birch));
+        assert_eq!(outputs, takes(Some(&output)));
+        assert_eq!(stops(&next), vec![]);
+        // Its own output, and no edge leaving its pair takes another's.
+        let owner = local_owner();
+        let up = f
+            .store
+            .workflow_actions_with_outputs("sim/up", &owner, &host);
+        let (_, outputs) = up.clone().unwrap();
+        assert_eq!(up.unwrap(), apart("sim/up", &owner));
+        assert_eq!(
+            outputs,
+            Outputs {
+                own: Some(output),
+                takes: Vec::new()
+            }
+        );
+
+        let requests = || f.store.database().requests();
+        let before = requests();
+        f.store.workflow_actions("sim/down", &birch, &host).unwrap();
+        let alone = requests() - before;
+        assert!(alone > 0, "the actions read the board");
+        let before = requests();
+        together("sim/down").unwrap();
+        assert_eq!(
+            requests() - before,
+            alone,
+            "the outputs cost no round trip of their own"
+        );
+
+        let unknown = together("sim/none");
+        assert_eq!(
+            unknown,
+            Err(f
+                .store
+                .workflow_actions("sim/none", &birch, &host)
+                .unwrap_err())
+        );
+        assert!(
+            matches!(&unknown, Err(Error::Refused(why)) if why.starts_with("unknown_id")),
+            "{unknown:?}"
+        );
+    }
+}
+
+/// On a board with no workflow active, the one read is refused as the actions are.
+#[test]
+fn the_one_read_is_refused_as_the_actions_are_on_a_board_no_workflow_holds() {
+    for backend in BACKENDS {
+        let f = Fixture::on(backend, Seed::default().task("sim/up", "ready"));
+        let (owner, host) = (local_owner(), Host::local());
+        let refused = f
+            .store
+            .workflow_actions_with_outputs("sim/up", &owner, &host);
+        assert_eq!(
+            refused,
+            Err(f
+                .store
+                .workflow_actions("sim/up", &owner, &host)
+                .unwrap_err())
+        );
+        assert!(
+            matches!(&refused, Err(Error::Refused(why)) if why.starts_with("unsupported_activation")),
+            "{refused:?}"
+        );
+    }
+}
+
 #[test]
 fn a_supersession_between_an_admissions_read_and_its_write_wins_and_one_after_it_loses() {
     for backend in BACKENDS {

@@ -152,7 +152,7 @@ describe("the page's route and its address", () => {
     expect(anchorElement()).toBeNull();
   });
 
-  it("has the shell land a heading its fragment names by its text", () => {
+  it("hands the shell's reviewLand the heading its fragment names by its text", () => {
     const element = { parentElement: null, scrollIntoView: vi.fn() };
     const landed: unknown[] = [];
     vi.stubGlobal("HTMLDetailsElement", class {});
