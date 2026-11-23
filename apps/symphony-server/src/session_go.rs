@@ -66,20 +66,10 @@ pub(crate) fn local<B>(
 fn paned(hub: &Hub, handle: &str) -> Result<(SessionGo, String), (StatusCode, String)> {
     let project = symphony::project::Project::of(&hub.root);
     // The board's store's setting over the project file's, read on the board the page reads share
-    // ([`Hub::reader`]), never one opened anew; a board that does not answer holds none, and the
-    // file's is in force. Where the board failed the read, that store is forgotten, as every
-    // reader of it forgets it ([`Hub::reader_failed`]), so the next read opens the board where
-    // its server is then.
-    let stored = match hub.reader() {
-        Ok(store) => match store.stored_entries() {
-            Ok(entries) => Stored::of(&entries),
-            Err(why) => {
-                if matches!(why, symphony_board::Error::Db(_)) {
-                    hub.reader_failed(&store);
-                }
-                Stored::unread(&why.to_string())
-            }
-        },
+    // ([`Hub::on_reader`]), never one opened anew; a board that does not answer holds none, and the
+    // file's is in force.
+    let stored = match hub.on_reader(symphony_board::Store::stored_entries) {
+        Ok(entries) => Stored::of(&entries),
         Err(why) => Stored::unread(&why),
     };
     let panes = stored.panes(&project.agents.panes);
