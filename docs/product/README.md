@@ -108,6 +108,9 @@ An analysis holds a proposal and its evidence: an approved design can still awai
   agent's answer.
 - [Reports and monitoring](analysis/reports-and-monitoring.md) — what a project's runs, task pages
   and reports would show, and where each figure comes from.
+- [What a landed task cost, drawn](analysis/reports-landed-cost.md) — a concept: the Reports
+  page's cost per landed task as charts, with the cost of a changed line, by kind and by review
+  rounds, over time and task by task.
 - [A Settings page](analysis/settings-page.md) — a concept: where a project's settings live now,
   what on and off mean for its integrations and tools, and a page that shows what is in force and
   writes the preferences alone.
