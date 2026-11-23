@@ -134,10 +134,7 @@ fn a_dependant_takes_the_output_standing_and_none_superseded_until_another_is_ac
                 takes: Vec::new(),
             }
         );
-        assert_eq!(
-            outputs_of(&f.store, "sim/down"),
-            takes(Some("sim/up@4"))
-        );
+        assert_eq!(outputs_of(&f.store, "sim/down"), takes(Some("sim/up@4")));
         assert_eq!(previewed(&f.store, "sim/down"), vec![]);
         assert_eq!(
             claim(&[]),
@@ -360,10 +357,7 @@ fn an_activation_keeps_an_output_where_it_stands_and_supersedes_it_where_dependa
         };
         activated(outputs().replace("label = \"Approved\"", "label = \"Signed off\""));
         assert_eq!(standing(&f, "sim/up").len(), 4, "kept where it stands");
-        assert_eq!(
-            outputs_of(&f.store, "sim/down"),
-            takes(Some(&output))
-        );
+        assert_eq!(outputs_of(&f.store, "sim/down"), takes(Some(&output)));
         let approved = "legacy = \"done\", satisfies_dependencies = true, completion = \"none\"";
         assert!(outputs().contains(approved));
         activated(outputs().replace(

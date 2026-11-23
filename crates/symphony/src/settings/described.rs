@@ -243,8 +243,10 @@ fn reviewed(setting: Setting) -> Setting {
 /// name, and the table said whole by its name alone.
 pub fn protected(key: &str) -> bool {
     let key = key.trim();
-    let bracketed = (key.strip_prefix("[[").and_then(|rest| rest.split_once("]]")))
-        .or_else(|| key.strip_prefix('[').and_then(|rest| rest.split_once(']')));
+    let bracketed = (key
+        .strip_prefix("[[")
+        .and_then(|rest| rest.split_once("]]")))
+    .or_else(|| key.strip_prefix('[').and_then(|rest| rest.split_once(']')));
     let (tables, last) = match bracketed {
         Some((tables, last)) => (tables, last.trim()),
         None => key.rsplit_once('.').unwrap_or(("", key)),

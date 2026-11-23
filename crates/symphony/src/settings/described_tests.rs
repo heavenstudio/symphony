@@ -6,8 +6,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use symphony_api::{
-    Setting, SettingClass, SettingKind, SettingScope, SettingSource, SettingsEntry,
-    SettingsSection,
+    Setting, SettingClass, SettingKind, SettingScope, SettingSource, SettingsEntry, SettingsSection,
 };
 use symphony_board::sys;
 use symphony_plugin::{Describer, Plugin};
@@ -220,7 +219,11 @@ fn a_setting_given_the_boards_scope_alone_is_left_with_none_and_drawn_with_no_co
         scopes: vec![SettingScope::Board],
         ..setting("[every] shade", SettingClass::Preference)
     };
-    let judged = judged(described(vec![alone.clone()]), "plugin-every-a".into(), false);
+    let judged = judged(
+        described(vec![alone.clone()]),
+        "plugin-every-a".into(),
+        false,
+    );
     let [shade] = judged.settings.as_slice() else {
         panic!("{judged:?}");
     };
