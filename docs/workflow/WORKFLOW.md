@@ -633,8 +633,9 @@ A task the board's own writers keep carries none, and its wire is the text it wa
 `GET /api/workflow-actions?slug=SLUG` (`WORKFLOW_ACTIONS_PATH`) answers that task's
 `ActionsRead` for the local owner: its `NextActions`, a preview and never a permit, and `takes`,
 the accepted output standing for each task it depends on where an edge leaving its pair depends on
-`accepted_output` (`Store::accepted_outputs`, none standing as null), empty otherwise. A hosted
-visitor is refused it, as the apply route refuses one.
+`accepted_output` (`Store::accepted_outputs`, none standing as null), empty otherwise, both from
+one read (`Store::workflow_actions_with_outputs`). A hosted visitor is refused it, as the apply
+route refuses one.
 `GET /api/workflow-guards?slug=SLUG` (`WORKFLOW_GUARDS_PATH`) answers that task's `TaskGuards`,
 the local owner's too: each authority the active activation commits, with the epoch and
 generation the board accepted from it, whether it is in conflict, the admissions counted on it
