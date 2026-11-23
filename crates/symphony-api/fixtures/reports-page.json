@@ -136,12 +136,11 @@
       },
       "landed": {
         "tasks": 2,
-        "priced": 1,
         "median": 1.46,
         "p90": 1.46,
-        "lined": 1,
         "lined_cost": 1.46,
-        "lines": 150
+        "lines": 150,
+        "unread": 0
       }
     },
     {

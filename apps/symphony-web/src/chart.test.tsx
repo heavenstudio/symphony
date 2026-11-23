@@ -436,7 +436,7 @@ describe("a period with no value", () => {
       cover: [1, 0, 0.5],
     };
     expect([gap(landed, 0), gap(landed, 1), gap(landed, 2)]).toEqual([false, true, true]);
-    const said = { ...landed, none: "no task landed" };
+    const said = { ...landed, none: ["no task landed", "no task landed", "no task landed"] };
     expect([gap(said, 0), gap(said, 1), gap(said, 2)]).toEqual([false, true, false]);
     expect([valued(said, 0), valued(said, 2)]).toEqual([true, false]);
     // A hidden series keeps its record: the period is no gap, and no value is shown either.
@@ -447,18 +447,22 @@ describe("a period with no value", () => {
     const landed: ChartData = {
       ...chart("dollars", [series("Median", "line", [5, null, null])]),
       cover: [1, 0, 5 / 11],
-      none: "no task landed",
+      none: ["no line changed", "no line changed", "lines not read"],
       whens: ["3 landed", null, null],
       extras: [["median $13.39 a task"], [], []],
     };
-    const readout = (at: number) =>
-      renderToStaticMarkup(<Readout chart={landed} axis={{ ...AXIS, marks: [] }} at={at} />)
+    const readout = (at: number, shown = landed) =>
+      renderToStaticMarkup(<Readout chart={shown} axis={{ ...AXIS, marks: [] }} at={at} />)
         .replace(/<[^>]+>/g, " ")
         .replace(/\s+/g, " ")
         .trim();
     expect(readout(0)).toBe("Mon 9 Nov · 3 landed Median $5 median $13.39 a task");
     expect(readout(1)).toBe("Tue 10 Nov · no data recorded");
-    expect(readout(2)).toBe("Wed 11 Nov · no task landed · 5 of 11 h recorded");
+    expect(readout(2)).toBe("Wed 11 Nov · lines not read · 5 of 11 h recorded");
+    // A period its chart has no word for reads out its series, each with no data.
+    expect(readout(2, { ...landed, none: ["no line changed"] })).toBe(
+      "Wed 11 Nov · 5 of 11 h recorded Median no data",
+    );
     expect(card(landed, 2)).toContain('class="chart-col on"');
     expect(card(landed, 1)).toContain('class="chart-col gap on"');
   });

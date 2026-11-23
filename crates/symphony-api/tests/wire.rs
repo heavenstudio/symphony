@@ -423,15 +423,23 @@ fn the_reports_page_reads_and_writes_back_as_the_same_json_its_gaps_none() {
     assert_eq!(page.buckets[1].spend, None);
     // A period's landed tasks, those with tokens priced among them; a period with none has none.
     let landed = page.buckets[0].landed.unwrap();
-    assert_eq!((landed.tasks, landed.priced, landed.lines), (2, 1, 150));
+    assert_eq!((landed.tasks, landed.lines, landed.unread), (2, 150, 0));
     assert_eq!((landed.median, landed.p90), (Some(1.46), Some(1.46)));
     assert_eq!(page.buckets[1].landed, None);
     assert_eq!(page.prices, "2026-11-16");
-    // A period from a server that wrote no landed tasks reads with none.
+    // A period from a server that wrote no landed tasks reads with none, and one from a server
+    // that counted no landing's unread lines, but the priced and the lined, with none unread.
     let mut old_bucket = serde_json::to_value(&page.buckets[0]).unwrap();
+    let mut counted = old_bucket.clone();
     old_bucket.as_object_mut().unwrap().remove("landed");
     let old_bucket: symphony_api::ReportBucket = serde_json::from_value(old_bucket).unwrap();
     assert_eq!(old_bucket.landed, None);
+    let counts = counted["landed"].as_object_mut().unwrap();
+    counts.remove("unread");
+    counts.insert("priced".into(), 1.into());
+    counts.insert("lined".into(), 1.into());
+    let counted: symphony_api::ReportBucket = serde_json::from_value(counted).unwrap();
+    assert_eq!(counted.landed, Some(landed));
     let old: symphony_api::report_page::ReportMark =
         serde_json::from_str(r#"{"at":1.0,"commit":"c","subject":"s"}"#).unwrap();
     assert_eq!(old.changed, Vec::<String>::new());

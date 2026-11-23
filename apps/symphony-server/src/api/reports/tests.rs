@@ -1093,28 +1093,55 @@ fn a_period_counts_the_tasks_landed_in_it_once_each_at_their_last_landing() {
             // a/again is Wednesday's: its Monday landing is in no period.
             Some(BucketLanded {
                 tasks: 2,
-                priced: 1,
                 median: Some(4.0),
                 p90: Some(4.0),
-                lined: 1,
                 lined_cost: 4.0,
                 lines: 50,
+                unread: 0,
             }),
             None,
             Some(BucketLanded {
                 tasks: 1,
-                priced: 1,
                 median: Some(16.0),
                 p90: Some(16.0),
-                lined: 1,
                 lined_cost: 16.0,
                 lines: 400,
+                unread: 0,
             }),
         ]
     );
     // A window that holds only Wednesday sees its landing alone.
     let today = super::page(&folders(&tree), Grain::Day, 1, wednesday(), none);
     assert_eq!(today.buckets[0].landed.map(|landed| landed.tasks), Some(1));
+}
+
+#[test]
+fn a_period_counts_its_priced_landings_whose_lines_were_not_read() {
+    let tree = Tree::new();
+    report(&tree, MONDAY, vec![hour(MONDAY, 0, 0)], |day| {
+        day.landed = vec![
+            landed("a/unread", MONDAY + HOUR, vec![opus("executor", 1, 2)]),
+            kinded(
+                landed("a/unlined", MONDAY + HOUR, vec![opus("executor", 1, 1)]),
+                "docs",
+                0,
+            ),
+            // No tokens, no lines read: in no figure of the priced.
+            landed("a/none", MONDAY + 2.0 * HOUR, vec![]),
+        ];
+    });
+    let page = page(&folders(&tree), Grain::Day, 1, MONDAY + 12.0 * HOUR, none);
+    assert_eq!(
+        page.buckets[0].landed,
+        Some(BucketLanded {
+            tasks: 3,
+            median: Some(6.0),
+            p90: Some(7.6),
+            lined_cost: 0.0,
+            lines: 0,
+            unread: 1,
+        })
+    );
 }
 
 #[test]
@@ -1156,6 +1183,12 @@ fn the_landed_tab_prices_each_task_once_at_its_last_landing_with_its_figures_and
         ]
     );
     assert_eq!(page.without, 1);
+    // The tab and the periods read the same landings: each task once, at its last landing.
+    let periods = super::page(&folders(&tree), Grain::Day, 3, wednesday(), none);
+    let landed: u32 = (periods.buckets.iter())
+        .filter_map(|bucket| bucket.landed.map(|landed| landed.tasks))
+        .sum();
+    assert_eq!(landed, count(page.tasks.len()) + page.without);
     assert_eq!(
         page.figures,
         LandedFigures {
@@ -1200,8 +1233,8 @@ fn a_landed_tab_with_no_landing_no_folder_or_a_file_that_does_not_read_says_so()
     assert_eq!((empty.without, empty.figures.tasks), (0, 0));
     assert_eq!((empty.figures.median, empty.kinds_from), (None, None));
     assert!(empty.kinds.is_empty() && empty.reviews.is_empty() && empty.unread.is_empty());
-    let none = landed_page(&Err("no common dir".into()), Grain::Week, 28, wednesday());
-    assert_eq!(none.unread, ["reports: no common dir"]);
+    let no_folder = landed_page(&Err("no common dir".into()), Grain::Week, 28, wednesday());
+    assert_eq!(no_folder.unread, ["reports: no common dir"]);
     let path = tree
         .path("reports")
         .join(report_file(&run_day(MONDAY + 2.0 * DAY)));
@@ -1213,6 +1246,9 @@ fn a_landed_tab_with_no_landing_no_folder_or_a_file_that_does_not_read_says_so()
         "{:?}",
         broken.unread
     );
+    // Named as the periods' read names it, by the one reader of the two.
+    let periods = page(&folders(&tree), Grain::Day, 3, wednesday(), none);
+    assert_eq!(periods.unread, broken.unread);
     std::fs::remove_file(&path).unwrap();
     std::fs::create_dir(&path).unwrap();
     let folder = landed_page(&Ok(tree.path("reports")), Grain::Day, 3, wednesday());

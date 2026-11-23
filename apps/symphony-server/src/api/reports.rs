@@ -212,8 +212,7 @@ pub(crate) fn page(
     let mut unread = Vec::new();
     let mut budget = REPORTS_READ_BYTES;
     let mut reds: Vec<(String, f64, f64)> = Vec::new();
-    // The tasks landed in the window, the newest day's first, so a task landed again is its last
-    // landing's.
+    // The tasks landed in the window, as [`report_day`] gathers them.
     let mut landings: Vec<Landed> = Vec::new();
     let place = |at: f64| {
         let after = spans.partition_point(|span| span.0 <= at);
@@ -231,37 +230,25 @@ pub(crate) fn page(
     // Newest day first, so the bytes left go to the days nearest now.
     for day in days_read(from, to) {
         let [report, agents, health] = day_files(folders, &run_day(day));
-        if let Some(path) = report {
-            match read(&path, &mut budget) {
-                Ok(None) => {}
-                Ok(Some(text)) => match serde_json::from_str::<ReportDay>(&text) {
-                    Ok(report) => {
-                        for hour in &report.hours {
-                            if let Some(at) = place(hour.start) {
-                                sums[at].hour(hour);
-                            }
-                        }
-                        if grain != Grain::Hour
-                            && let Some(at) = place(report.start)
-                        {
-                            sums[at].day(&report);
-                        }
-                        landings.extend(
-                            (report.landed.iter().rev())
-                                .filter(|task| from <= task.at && task.at < to)
-                                .cloned(),
-                        );
-                        for red in &report.reds {
-                            if let (Some(closed), "done") = (red.closed, red.status.as_str())
-                                && !reds.iter().any(|(slug, _, _)| *slug == red.slug)
-                            {
-                                reds.push((red.slug.clone(), red.filed, closed));
-                            }
-                        }
-                    }
-                    Err(e) => unread.push(format!("{}: {e}", path.display())),
-                },
-                Err(why) => unread.push(why),
+        if let Some(report) = report
+            .and_then(|path| report_day(&path, (from, to), &mut budget, &mut unread, &mut landings))
+        {
+            for hour in &report.hours {
+                if let Some(at) = place(hour.start) {
+                    sums[at].hour(hour);
+                }
+            }
+            if grain != Grain::Hour
+                && let Some(at) = place(report.start)
+            {
+                sums[at].day(&report);
+            }
+            for red in &report.reds {
+                if let (Some(closed), "done") = (red.closed, red.status.as_str())
+                    && !reds.iter().any(|(slug, _, _)| *slug == red.slug)
+                {
+                    reds.push((red.slug.clone(), red.filed, closed));
+                }
             }
         }
         if let Some(path) = agents {
@@ -362,8 +349,8 @@ fn wire(spend: &symphony_board::usage::Spend, prices: &Prices) -> Spend {
 /// The Landed tasks tab's answer of a window of `days` by `grain` at `now`, from the roll-up's day
 /// files in `folder` alone ([`LandedPage`]): every top-level task landed in the window, each once at
 /// its last landing in it, priced at the table this build embeds, with the window's figures, by
-/// kind and by reviews ([`spend`]). A file is read as [`page`] reads it, newest day first, within
-/// the same bounds; one it cannot read is named in [`LandedPage::unread`].
+/// kind and by reviews ([`spend`]). Its day files are read by [`page`]'s reader, newest day first,
+/// within the same bounds; one it cannot read is named in [`LandedPage::unread`].
 pub(crate) fn landed_page(
     folder: &Result<PathBuf, String>,
     grain: Grain,
@@ -381,19 +368,7 @@ pub(crate) fn landed_page(
             let mut budget = REPORTS_READ_BYTES;
             for day in days_read(from, to) {
                 let path = folder.join(report_file(&run_day(day)));
-                match read(&path, &mut budget) {
-                    Ok(None) => {}
-                    Ok(Some(text)) => match serde_json::from_str::<ReportDay>(&text) {
-                        // Newest day first, so a task landed again is its last landing's.
-                        Ok(report) => landings.extend(
-                            (report.landed.iter().rev())
-                                .filter(|task| from <= task.at && task.at < to)
-                                .cloned(),
-                        ),
-                        Err(e) => unread.push(format!("{}: {e}", path.display())),
-                    },
-                    Err(why) => unread.push(why),
-                }
+                report_day(&path, (from, to), &mut budget, &mut unread, &mut landings);
             }
         }
     }
@@ -463,6 +438,40 @@ pub(crate) fn landed_page(
         prices: prices.read.clone(),
         unread,
     }
+}
+
+/// The roll-up's day file at `path`, read within `budget` ([`read`]), with the tasks it landed in
+/// the window from `from` to `to` added to `landings`, its latest landing first; none for a day with
+/// no file, or one that does not read, which `unread` then names. The one reader of the landed
+/// tasks of [`page`] and [`landed_page`]: each reads its days newest first, so a task landed again
+/// is met first at its last landing in the window, and the two count the same landings.
+fn report_day(
+    path: &Path,
+    (from, to): (f64, f64),
+    budget: &mut u64,
+    unread: &mut Vec<String>,
+    landings: &mut Vec<Landed>,
+) -> Option<ReportDay> {
+    let text = match read(path, budget) {
+        Ok(text) => text?,
+        Err(why) => {
+            unread.push(why);
+            return None;
+        }
+    };
+    let report = match serde_json::from_str::<ReportDay>(&text) {
+        Ok(report) => report,
+        Err(e) => {
+            unread.push(format!("{}: {e}", path.display()));
+            return None;
+        }
+    };
+    landings.extend(
+        (report.landed.iter().rev())
+            .filter(|task| from <= task.at && task.at < to)
+            .cloned(),
+    );
+    Some(report)
 }
 
 /// The text of the day file at `path`, its bytes taken from `budget`; none when there is none. A
@@ -742,12 +751,11 @@ impl Sums {
                 let summary = spend::summary(&self.landed);
                 BucketLanded {
                     tasks: self.landings,
-                    priced: count(summary.tasks),
                     median: summary.median.map(rounded),
                     p90: summary.p90.map(rounded),
-                    lined: count(summary.lined),
                     lined_cost: rounded(summary.lined_cost),
                     lines: summary.lines,
+                    unread: count(summary.unread),
                 }
             }),
         }

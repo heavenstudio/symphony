@@ -125,10 +125,10 @@ export interface ChartData {
   /** What it says in place of the plot when the window cannot show it (lead time by the hour). */
   instead: string | null;
   /**
-   * What the readout says of a period its source recorded with no value in any series (`no task
+   * What the readout says of each period its source recorded with no value in any series (`no task
    * landed`): such a period is drawn empty, not hatched. Without it a period with no value is a gap.
    */
-  none?: string;
+  none?: string[];
   /** What the readout says after each period's name (`8 landed`), none where it says nothing. */
   whens?: (string | null)[];
   /** What the readout says after the series' values in each period (`median $13.39 a task`). */
@@ -626,7 +626,7 @@ export function Readout({ chart, axis, at }: { chart: ChartData; axis: Axis; at:
   const recorded = part === undefined || whole === undefined ? null : coverage(part, whole);
   const empty = gap(chart, at);
   // A period its source recorded with nothing to draw, said in the chart's own words.
-  const none = !empty && !valued(chart, at) ? (chart.none ?? null) : null;
+  const none = !empty && !valued(chart, at) ? (chart.none?.[at] ?? null) : null;
   const when = chart.whens?.[at] ?? null;
   return (
     <div className="chart-readout" aria-live="polite">

@@ -2862,12 +2862,11 @@ fn report_bucket(start: f64) -> api::ReportBucket {
         }),
         landed: Some(api::report_page::BucketLanded {
             tasks: 3,
-            priced: 2,
             median: Some(1.5),
             p90: Some(2.8),
-            lined: 1,
             lined_cost: 2.0,
             lines: 400,
+            unread: 1,
         }),
     }
 }

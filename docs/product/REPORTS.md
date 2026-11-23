@@ -95,7 +95,8 @@ and **Show the table**.
 Under the group's heading the page sums the window: the estimated dollars and the tokens in all.
 A period that landed no task has no point on **Cost per landed task**, and says *no task landed*
 over the plot rather than *no data recorded*; one whose landings changed no counted line has none
-on **Cost per 100 lines changed**. Under the charts the page says what every dollar is: an
+on **Cost per 100 lines changed**, and says *no line changed*, or *lines not read* where a task it
+landed came before lines were kept and its roll-up counted no line of git. Under the charts the page says what every dollar is: an
 estimate at the providers' list prices, with the day those prices were read, never money spent,
 as a subscription is not billed by the token. A figure marked **+ unpriced** leaves out the
 tokens of a model the price list does not name, and the page names those models.

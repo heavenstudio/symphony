@@ -279,16 +279,19 @@ pub struct BucketLanded {
     /// The tasks landed in it, with tokens recorded or not: what **All in** divides the period's
     /// whole cost by.
     pub tasks: u32,
-    /// Of them, those with a priced cost, the median and the p90 of what one cost, in dollars.
-    pub priced: u32,
+    /// Of them, those with a priced cost: the median and the p90 of what one cost, in dollars.
     #[serde(default)]
     pub median: Option<f64>,
     #[serde(default)]
     pub p90: Option<f64>,
-    /// Of those, the ones whose landing changed a counted line, what they cost and their lines.
-    pub lined: u32,
+    /// What those whose landing changed a counted line cost, and their lines.
     pub lined_cost: f64,
     pub lines: u64,
+    /// How many of those with a priced cost landed with no lines read (before they were kept): a
+    /// period with no line of a landing and no git line recorded says its lines were not read
+    /// rather than that none changed.
+    #[serde(default)]
+    pub unread: u32,
 }
 
 /// One period of a window.
