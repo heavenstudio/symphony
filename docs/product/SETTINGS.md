@@ -5,8 +5,9 @@ Settings is everything in force for the project and where each value comes from,
 each role runs on, the limits the board holds work to, the project's name, folders and look, what
 a land does, and what this browser keeps. It is for the owner, who wants to know why an agent
 started on the model it did or why the board started no more work, and to change a preference
-without editing a file. It changes the preferences the board keeps and nothing else: a setting
-that runs a command or decides what lands is shown here and changed by a reviewed task.
+without editing a file. It writes the preferences the board keeps, and commits one to the project
+file when asked; a setting that runs a command or decides what lands is shown here and changed by
+a reviewed task.
 
 ![The Settings page, wide](pictures/settings-wide.png)
 

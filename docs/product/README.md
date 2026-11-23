@@ -59,9 +59,11 @@ is the project picker with one of each. Those after its `=theme` line are of the
 server again, with a theme of its own (`tools/product-pictures/theme.toml`). The script reaches no
 shared server, no project's board and no terminal, and stops the servers it started. The Settings
 page draws the paths of the files it reads and of the programs it finds, so the script works in
-one folder, `/tmp/symphony-product-pictures`, one run at a time (a second waits for the first),
-and its servers find a stand-in for the agents' and Herdr's programs and its own build of the
-GitHub exchange's before any of the machine's.
+one folder, `/tmp/symphony-product-pictures`, one run at a time (a second waits for the first,
+half an hour at most), and its servers find a stand-in for the agents' and Herdr's programs and
+its own build of the GitHub exchange's before any of the machine's. A run stopped with Ctrl-C or
+`kill` ends its servers as it goes; one killed outright leaves them, and the next run ends them
+first.
 
 - **A new picture** is a line in `pictures.txt`: its name, the widths a document shows it at, the
   page's path and, for a state that takes a press to reach, the steps of `symphony shot` that
