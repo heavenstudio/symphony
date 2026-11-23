@@ -357,8 +357,7 @@ fn a_failed_stop_takes_only_its_own_pid_for_running_and_a_ps_that_cannot_run_for
 #[test]
 fn a_server_is_its_programs_postgres_on_its_data_and_a_ps_that_cannot_run_is_unknown() {
     use std::os::unix::process::ExitStatusExt as _;
-    let pg = Home::new(Path::new("/nowhere/board"))
-        .postgresql(Path::new("/nowhere/bin"));
+    let pg = Home::new(Path::new("/nowhere/board")).postgresql(Path::new("/nowhere/bin"));
     let said = |code: i32, line: &str, error: &str| {
         Ok(std::process::Output {
             status: std::process::ExitStatus::from_raw(code << 8),
