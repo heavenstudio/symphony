@@ -25,7 +25,7 @@ use tower::ServiceExt;
 
 /// This machine's tailnet names, as `tailscale status` gives them.
 const STATUS: &str =
-    r#"{"Self": {"DNSName": "mac.tail.ts.net.", "TailscaleIPs": ["100.83.24.15"]}}"#;
+    r#"{"Self": {"DNSName": "mac.tail.ts.net.", "UserID": 11, "TailscaleIPs": ["100.83.24.15"]}}"#;
 const HERE: &str = "127.0.0.1:2";
 const OWN_TAILNET: &str = "100.83.24.15:2";
 const PHONE: &str = "100.83.24.99:2";
@@ -274,7 +274,13 @@ impl Served {
         hub.refresh_page("", &root).unwrap();
         observe(&hub, &f);
         let peer_gate = Gate::new(
-            Arc::new(|_| Ok(Some(r#"{"Node": {}}"#.into()))),
+            // Every peer is a node under the login this machine is under.
+            Arc::new(|_| {
+                Ok(Some(
+                    r#"{"Node": {}, "UserProfile": {"ID": 11, "LoginName": "owner@example.com"}}"#
+                        .into(),
+                ))
+            }),
             Arc::new(Instant::now),
         )
         .with_status(Arc::new(|| Ok(STATUS.into())));

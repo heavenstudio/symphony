@@ -447,6 +447,7 @@ async fn a_started_server_keeps_every_worker_it_owns_until_it_returns() {
             install: None,
         },
         false,
+        hand_off_asked(),
     )
     .await
     .unwrap();
@@ -529,6 +530,7 @@ async fn the_one_server_sweeps_every_project_it_serves_each_in_its_own_record() 
             install: None,
         },
         false,
+        hand_off_asked(),
     )
     .await
     .unwrap();

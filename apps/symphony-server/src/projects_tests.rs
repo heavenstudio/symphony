@@ -25,7 +25,7 @@ impl Machine {
     }
 
     /// [`Machine::new`], its starter judging who may reach it by `gate`.
-    fn with_gate(gate: Gate) -> Machine {
+    pub(super) fn with_gate(gate: Gate) -> Machine {
         let tree = Tree::new();
         for (id, color) in [("alpha", "#a00"), ("beta", "#0b0")] {
             tree.write(&format!("{id}/docs/README.md"), "# Docs\n");
@@ -38,16 +38,29 @@ impl Machine {
             );
         }
         tree.write("install/client/public/index.html", SHELL);
-        let machine = tree.path("machine");
+        let projects = Machine::serving(&tree, "machine", gate, &["alpha", "beta"]);
+        Machine { tree, projects }
+    }
+
+    /// Another server over this machine's checkouts and install folder, its own machine folder
+    /// `folder` registering `ids` of `alpha` (its starter) and `beta`, judging who may reach it by
+    /// `gate`: what this machine's answers are compared with, the same checkouts on both.
+    pub(super) fn beside(&self, folder: &str, gate: Gate, ids: &[&str]) -> Arc<Projects> {
+        Machine::serving(&self.tree, folder, gate, ids)
+    }
+
+    /// A server over `tree`'s checkouts whose machine folder `folder` registers `ids`, its starter
+    /// `alpha` judging who may reach it by `gate`.
+    fn serving(tree: &Tree, folder: &str, gate: Gate, ids: &[&str]) -> Arc<Projects> {
+        let machine = tree.path(folder);
         let mut registry = Registry::default();
-        for id in ["alpha", "beta"] {
+        for id in ids {
             registry.add(Entry::of(&tree.path(id)).unwrap()).unwrap();
         }
         registry.write(&machine).unwrap();
         let root = tree.path("alpha").canonicalize().unwrap();
         let starter = Shared::project(1, 1, &root, Some(&tree.path("install")), gate, "/alpha");
-        let projects = Projects::made(&machine, &starter, Warming::OnRequest);
-        Machine { tree, projects }
+        Projects::made(&machine, &starter, Warming::OnRequest)
     }
 
     async fn get(&self, path: &str, headers: &[(&str, &str)]) -> Response {
@@ -59,7 +72,7 @@ impl Machine {
     }
 
     /// `path` asked by `client` of the Host `host`.
-    async fn named(
+    pub(super) async fn named(
         &self,
         client: &str,
         host: &str,
@@ -1355,12 +1368,14 @@ async fn the_project_list_says_why_a_project_is_refused_and_nothing_else_of_it()
 /// route but `/api/front` does, and nobody else.
 #[tokio::test]
 async fn the_project_list_answers_this_machines_tailnet_name_and_front_does_not() {
+    // The phone is under the login this machine is under.
     let peer = |_: &str| {
         Ok(Some(
-            r#"{"Node":{"Name":"phone.tailnet-name.ts.net."}}"#.to_string(),
+            r#"{"Node":{"Name":"phone.tailnet-name.ts.net."},"UserProfile":{"ID":11,"LoginName":"owner@example.com"}}"#.to_string(),
         ))
     };
-    let names = || Ok(r#"{"Self":{"DNSName":"studio.tailnet-name.ts.net."}}"#.to_string());
+    let names =
+        || Ok(r#"{"Self":{"DNSName":"studio.tailnet-name.ts.net.","UserID":11}}"#.to_string());
     let machine = Machine::with_gate(
         Gate::new(Arc::new(peer), Arc::new(Instant::now)).with_status(Arc::new(names)),
     );

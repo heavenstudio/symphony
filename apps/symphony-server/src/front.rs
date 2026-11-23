@@ -449,8 +449,10 @@ async fn head(mut request: Request, next: Next) -> Response {
     )
 }
 
-/// Every request, before any route: this machine or a confirmed tailnet peer, and no repository
-/// metadata, whether the path would reach a native file handler or the legacy app.
+/// Every request, before any route: a visitor on this project's board ([`admitted`]), or one the
+/// one server's dispatch let in to it already, and no repository metadata, whether the path would
+/// reach a native file handler or the legacy app. A visitor the board has not added is refused as
+/// an address the gate refuses: a server of its own holds no other project to answer as.
 async fn judge(
     State(shared): State<Arc<Shared>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -460,8 +462,13 @@ async fn judge(
     // The peer as judged, for the routes that ask where a request came from: the extractor reads
     // a connection's address or a test's mock alike, a plain extension read only the first.
     request.extensions_mut().insert(ConnectInfo(peer));
-    if crate::hosted::admission(&request).is_none() && !peer_allowed(&shared, peer.ip()).await {
-        return peer_refused();
+    if crate::hosted::admission(&request).is_none()
+        && request.extensions().get::<Admitted>().is_none()
+    {
+        let Some(admitted) = admitted(&shared, peer.ip()).await else {
+            return peer_refused();
+        };
+        request.extensions_mut().insert(admitted);
     }
     let Some(path) = crate::api::decode_path(request.uri().path()) else {
         return missing(&shared, &request, StatusCode::BAD_REQUEST);
@@ -498,19 +505,72 @@ async fn judge(
     next.run(request).await
 }
 
-/// Whether a request from `ip` may be answered: this machine's, or a peer on its tailnet that
-/// `shared`'s gate confirms ([`Gate::allows`], asked on the blocking pool, as it may wait on
-/// `tailscale`). A gate that panics refuses.
-pub(crate) async fn peer_allowed(shared: &Arc<Shared>, ip: IpAddr) -> bool {
-    ip.is_loopback() || {
-        let shared = shared.clone();
-        crate::spawn::blocking(move || shared.gate.allows(ip))
-            .await
-            .unwrap_or(false)
+/// Who the gate let a request in as. The first gate that judges a request puts it there: the one
+/// server's dispatch for a project's routes, else the project's own [`judge`].
+#[derive(Clone, Debug)]
+pub(crate) struct Admitted {
+    /// The actor every save it asks takes, and whose principal its reads of what it may do ask
+    /// as: the visitor's on the board ([`Gate::member`]).
+    pub actor: symphony_plugin::Actor,
+    /// Whether the visitor is the person at the machine, to whom alone what is the machine's is
+    /// said ([`crate::gate::Visitor::Machine`]).
+    pub machine: bool,
+}
+
+impl Admitted {
+    /// `visitor`, on a board as `actor`.
+    pub(crate) fn of(visitor: &crate::gate::Visitor, actor: symphony_plugin::Actor) -> Admitted {
+        Admitted {
+            actor,
+            machine: *visitor == crate::gate::Visitor::Machine,
+        }
+    }
+
+    /// Who a request whose extensions are `extensions` was let in as: the actor a gate put on it,
+    /// else the person at the machine `shared`'s gate admits, for a request a test hands a route
+    /// itself, past every gate.
+    pub(crate) fn actor(
+        shared: &Shared,
+        extensions: &axum::http::Extensions,
+    ) -> symphony_plugin::Actor {
+        extensions.get::<Admitted>().map_or_else(
+            || shared.gate.person().clone(),
+            |admitted| admitted.actor.clone(),
+        )
+    }
+
+    /// Whether a request whose extensions are `extensions` is the person at the machine's: as a
+    /// gate admitted it, else, handed to a route past every gate, it is.
+    pub(crate) fn machine(extensions: &axum::http::Extensions) -> bool {
+        extensions
+            .get::<Admitted>()
+            .is_none_or(|admitted| admitted.machine)
     }
 }
 
-/// What a peer [`peer_allowed`] refuses is answered.
+/// Who a request from `ip` is from as `shared`'s gate judges it ([`Gate::visitor`], asked on the
+/// blocking pool, as it may wait on `tailscale`); none when it may not be answered. Loopback is
+/// the person at the machine at once. A gate that panics refuses.
+pub(crate) async fn visitor(shared: &Arc<Shared>, ip: IpAddr) -> Option<crate::gate::Visitor> {
+    if ip.is_loopback() {
+        return Some(crate::gate::Visitor::Machine);
+    }
+    let shared = shared.clone();
+    crate::spawn::blocking(move || shared.gate.visitor(ip))
+        .await
+        .ok()
+        .flatten()
+}
+
+/// Who a request from `ip` is let in to `shared`'s board as ([`visitor`], then
+/// [`Gate::member`]); none when the gate refuses it or the board has not added its visitor.
+pub(crate) async fn admitted(shared: &Arc<Shared>, ip: IpAddr) -> Option<Admitted> {
+    let visitor = visitor(shared, ip).await?;
+    let actor = shared.gate.member(&shared.root, &visitor)?;
+    Some(Admitted::of(&visitor, actor))
+}
+
+/// What a request the gate refuses is answered ([`visitor`], [`admitted`]).
 pub(crate) fn peer_refused() -> Response {
     (
         StatusCode::FORBIDDEN,
@@ -532,12 +592,26 @@ fn missing(shared: &Shared, request: &Request, status: StatusCode) -> Response {
 
 /// `GET /api/front`: this server and its app, for the starters on this machine, which ask by
 /// loopback's name. A page another site rebinds to this machine names that site in its
-/// Host, and reads nothing (the app's routes are the app's to judge by Host, as it does).
-async fn front(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Response {
-    if let Some(refused) = loopback_refused(&headers) {
+/// Host, and reads nothing (the app's routes are the app's to judge by Host, as it does). It is
+/// the machine's, and a visitor a board added who is not the person at it reads nothing either.
+async fn front(State(shared): State<Arc<Shared>>, request: Request) -> Response {
+    if let Some(refused) = loopback_refused(request.headers()) {
         return refused;
     }
+    if !Admitted::machine(request.extensions()) {
+        return machines_alone();
+    }
     Json(shared.status()).into_response()
+}
+
+/// What a route that is the machine's alone answers a visitor who is not the person at it:
+/// `/api/front`, which names the server's own state and every project it serves.
+pub(crate) fn machines_alone() -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        "Forbidden: this route answers the person at this machine alone\n",
+    )
+        .into_response()
 }
 
 /// `/api/front`'s refusal of a request whose Host does not name loopback ([`names_loopback`]),
@@ -900,7 +974,10 @@ pub fn serve(serve: Serve) -> i32 {
 
 /// The server, until it is stopped (SIGTERM, SIGINT, SIGHUP) or, for a server of its own port, until
 /// the process that started it ends. `open` opens its page once it listens. A server of its own
-/// is refused the one server's port before it binds anything.
+/// is refused the one server's port before it binds anything. Its signals are watched before
+/// anything outside can see it (its port recorded, a listener bound, its URL printed): one sent as
+/// it starts is kept, and acted on once its start is done, so a stop then still clears its port
+/// record.
 pub fn run(serve: Serve, open: bool) -> i32 {
     if serve.home.is_none()
         && let Some(why) = crate::cli::refused_port(serve.port)
@@ -920,28 +997,45 @@ pub fn run(serve: Serve, open: bool) -> i32 {
         }
     };
     runtime.block_on(async {
-        match start(serve, open).await {
-            Ok(started) => started.serve_until_stopped(signalled()).await,
+        let stop = signalled();
+        let asked = serve.home.is_some().then(hand_off_asked).flatten();
+        match start(serve, open, asked).await {
+            Ok(started) => started.serve_until_stopped(stop).await,
             Err(status) => status,
         }
     })
 }
 
-/// SIGTERM, SIGINT or SIGHUP; never, when they cannot be watched.
-async fn signalled() {
+/// SIGTERM, SIGINT or SIGHUP, watched from this call on: one sent before the future is first
+/// polled is kept, and resolves it then. Never, when they cannot be watched. It is called inside
+/// the runtime.
+fn signalled() -> impl Future<Output = ()> + Send + 'static {
     use tokio::signal::unix::{SignalKind, signal};
-    let (Ok(mut term), Ok(mut int), Ok(mut hup)) = (
+    let watched = (
         signal(SignalKind::terminate()),
         signal(SignalKind::interrupt()),
         signal(SignalKind::hangup()),
-    ) else {
-        return std::future::pending().await;
-    };
-    tokio::select! {
-        _ = term.recv() => {}
-        _ = int.recv() => {}
-        _ = hup.recv() => {}
+    );
+    async move {
+        let (Ok(mut term), Ok(mut int), Ok(mut hup)) = watched else {
+            return std::future::pending().await;
+        };
+        tokio::select! {
+            _ = term.recv() => {}
+            _ = int.recv() => {}
+            _ = hup.recv() => {}
+        }
     }
+}
+
+/// SIGUSR1, a hand-off asked of the one server ([`handover_when_asked`]), watched from this call
+/// on, so one asked before its loop starts is kept; none, said, when it cannot be watched. It is
+/// called inside the runtime.
+fn hand_off_asked() -> Option<tokio::signal::unix::Signal> {
+    use tokio::signal::unix::{SignalKind, signal};
+    signal(SignalKind::user_defined1())
+        .inspect_err(|_| eprintln!("· Symphony server: cannot watch for hand-off requests"))
+        .ok()
 }
 
 /// Stop the server once `signal` resolves. Stop waits for the hub's tick in flight, so it runs on
@@ -974,8 +1068,14 @@ struct Started {
     drain: Duration,
 }
 
-/// Listen, start the owned workers and print the URL; a failed start is its exit status.
-async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
+/// Listen, start the owned workers and print the URL; a failed start is its exit status. `asked`
+/// is the one server's watch for a hand-off request ([`hand_off_asked`]), none for a server of its
+/// own.
+async fn start(
+    mut serve: Serve,
+    open: bool,
+    asked: Option<tokio::signal::unix::Signal>,
+) -> Result<Started, i32> {
     // The release this server is, read once, now: what it serves and follows for its life.
     if let Some((_, manifest)) = symphony::machine::release::this() {
         eprintln!("· Symphony: the server of the release {}", manifest.release);
@@ -1155,8 +1255,8 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     if let Some(projects) = &projects {
         background.workers.push(projects.watch());
     }
-    if serve.home.is_some() {
-        handover_when_asked(&shared);
+    if let Some(asked) = asked {
+        handover_when_asked(&shared, asked);
     }
     let url = format!("http://127.0.0.1:{port}/");
     println!("→ Symphony at {url}  (pid {})", shared.pid);
@@ -1179,14 +1279,9 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     })
 }
 
-/// A starter whose build must replace this server asks with SIGUSR1, its request in the machine
-/// folder ([`crate::host::Handover`]); the reload worker, woken, reads it at once.
-fn handover_when_asked(shared: &Arc<Shared>) {
-    use tokio::signal::unix::{SignalKind, signal};
-    let Ok(mut asked) = signal(SignalKind::user_defined1()) else {
-        eprintln!("· Symphony server: cannot watch for hand-off requests");
-        return;
-    };
+/// A starter whose build must replace this server asks with SIGUSR1, `asked`, its request in the
+/// machine folder ([`crate::host::Handover`]); the reload worker, woken, reads it at once.
+fn handover_when_asked(shared: &Arc<Shared>, mut asked: tokio::signal::unix::Signal) {
     let shared = shared.clone();
     crate::spawn::task(async move {
         loop {
@@ -1631,6 +1726,9 @@ mod nosniff_tests;
 
 #[cfg(test)]
 mod broken_stderr_tests;
+
+#[cfg(test)]
+mod signals_tests;
 
 #[cfg(test)]
 mod session_tests;

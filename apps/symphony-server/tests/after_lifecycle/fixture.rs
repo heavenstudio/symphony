@@ -1128,6 +1128,11 @@ impl Repo {
     }
 
     pub fn private(&self, root: &Path) -> Process {
+        self.run(self.private_command(root))
+    }
+
+    /// The command of [`Repo::private`]: a server of its own serving `root`, on a port it picks.
+    pub fn private_command(&self, root: &Path) -> Command {
         let mut command = self.command(&self.tree);
         command.args([
             "--root",
@@ -1137,7 +1142,7 @@ impl Repo {
             "--host",
             "127.0.0.1",
         ]);
-        self.run(command)
+        command
     }
 
     pub fn stop(&self) {
