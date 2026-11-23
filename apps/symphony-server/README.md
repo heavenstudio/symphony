@@ -272,7 +272,7 @@ The task board opts into read-only Build/Test placement with `activity=1`; its
 status filter, counts and cursor use one filtered machine snapshot. The returned
 `lifecycle_counts` retain the underlying task totals. Without that opt-in,
 queries keep lifecycle status and paging semantics.
-Search uses SurrealDB full-text indexes over titles, briefs, slugs and thread
+Search uses the board's full-text word index over titles, briefs, slugs and thread
 messages, ordered by BM25 relevance with an exact slug first. Matching remains
 in the database; a message-only match keeps its task in the returned results.
 Canonical `/tasks`, `/task/…`, `/reports`, `/settings` and `/agents` routes serve the client shell.

@@ -122,7 +122,7 @@ pub(crate) fn open_row(name: &str) -> bool {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskRow {
-    /// SQLite's row id: the order tasks were created in (`sid` in SurrealDB, whose `id` is the record's).
+    /// SQLite's row id: the order tasks were created in (`sid` on the board, whose `id` is the record's).
     #[serde(alias = "sid")]
     pub id: i64,
     pub slug: String,
@@ -246,7 +246,7 @@ pub struct DeliveryKeyRow {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AskRow {
-    /// The order asks were opened in: `ask N` (`sid` in SurrealDB, whose `id` is the record's).
+    /// The order asks were opened in: `ask N` (`sid` on the board, whose `id` is the record's).
     #[serde(alias = "sid")]
     pub id: i64,
     /// `verdict`, `message` (a card's), `comment`, `chat` or `task` (a message on a task's thread).
@@ -383,7 +383,7 @@ fn two() -> i64 {
     2
 }
 
-/// A boolean as SQLite writes it (0 or 1) or as SurrealDB does.
+/// A boolean as SQLite writes it (0 or 1) or as the board does.
 fn flag<'de, D: Deserializer<'de>>(from: D) -> Result<bool, D::Error> {
     #[derive(Deserialize)]
     #[serde(untagged)]

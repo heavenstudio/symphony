@@ -118,7 +118,6 @@ A project sets none of these to run. Each changes where something is found.
 
 | Variable | What it names |
 | --- | --- |
-| `SYMPHONY_SURREAL` | a SurrealDB binary to run a board still on SurrealDB on, in place of the pinned one in the repository's git folder; a new board is made on PostgreSQL ([`[board] postgresql`](PROJECT_FILE.md#board)) |
 | `SYMPHONY_CHROME` | the Chrome `shot` drives, in place of the installed one |
 | `SYMPHONY_WT_DIR` | the folder a launched agent's worktree is made under, in place of `<project>-wt/` beside the checkout |
 | `SYMPHONY_MACHINE_DIR` | the machine folder (the server's registry and the installed release), which tests point at a temporary one |

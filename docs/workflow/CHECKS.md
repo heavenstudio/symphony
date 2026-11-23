@@ -138,29 +138,28 @@ An additive step may define:
 Anything else is breaking: a field on any other table, a field a row must have, a field retyped or
 removed, an assertion changed, a unique index, an event or a trigger on a table there before, a
 database-wide definition changed, a step that writes rows. The catalogue test holds it (below):
-each step has its own files (`ENGINE-VERSION.STEPS.txt`), each the one before with only what the
+each step has its own file (`postgresql-VERSION.STEPS.txt`), each the one before with only what the
 list allows; the tables a step declares (`Addition::tables`) are the ones its definitions add; and
 a board with rows in it, moved by the step, keeps every row as it was. What no catalogue shows is
 the reviewer's, as for a declared step below: a rule held in code that a build without the step
 skips, a meaning changed, a table such a build must write. The step's `why` says how a build
 without it reads and writes around it.
 
-What each side does, on both engines:
+What each side does:
 
 - A build behind the board's steps reads and writes it as it is. Every read of an open table's row
   passes a field it does not know, as the store's reader hands the row only the fields its struct
   names (`rows::open_row`), and every write of one sets named fields, so the field stays: no
-  statement replaces such a row whole (`store/surreal/fence_tests.rs`). The whole-board dump reads
+  statement replaces such a row whole (`tests/store/contract.rs`). The whole-board dump reads
   each row exactly, handed every field, which its struct refuses by name, as a copy would drop it. The code of a step asks
   `Store::additions` before it reads or writes what the step defines.
 - A build ahead adds its steps where it may move the board ([BOARD_OPERATIONS](../operations/BOARD_OPERATIONS.md#which-build-moves-a-live-board)),
   holding no writer, and uses the board as it is where it may not. The guard refuses, in the
   write's own transaction, a write naming a table of a step the board lacks, whatever its quoting
-  or nesting, in the statement as it is sent on either engine; and the database refuses a field or
-  a table it does not define, a SurrealDB board being STRICT. Nothing of a refused write is
-  written.
-- A whole-board copy, its staging, a recovery's rebind, and the dump that a copy, an export or a
-  move to another engine reads, are held to the build's own steps exactly; the dump also refuses a
+  or nesting, in the statement as it is sent; and the database refuses a field or a table it
+  does not define. Nothing of a refused write is written.
+- A whole-board copy, its staging, a recovery's rebind, and the dump that a copy or an export
+  reads, are held to the build's own steps exactly; the dump also refuses a
   field it does not know, naming it.
 
 A breaking step raises the version and empties `schema::ADDED`, its steps' definitions going into
@@ -177,10 +176,9 @@ Symphony one schema behind never meets; nothing is declared under it. A schema s
 tables of its own, with their fields, indexes and events, and definitions of the database's own
 changes nothing the Symphony one schema behind writes. Such a step may be declared to keep that Symphony writing: its version is listed in `schema::COMPATIBLE`
 (`crates/tasks/src/schema.rs`) with one line saying why, and nothing is listed by default. Its
-migration then writes, beside the version and in the same transaction on both engines, the oldest
+migration then writes, beside the version and in the same transaction, the oldest
 schema whose Symphony may write the board (`meta:schema`'s `writable_from`): the version before
-for a listed step, its own version otherwise. The schema guard reads that record in each write, on
-both engines. A store the Symphony's reader opened (`symphony::taskview::connect`: the server, its
+for a listed step, its own version otherwise. The schema guard reads that record in each write. A store the Symphony's reader opened (`symphony::taskview::connect`: the server, its
 page saves and the `symphony` commands that reach the board through it) writes a board one schema
 ahead only while the record names its schema or an older one. Every other case is refused, as for
 a step not listed ([BOARD_OPERATIONS](../operations/BOARD_OPERATIONS.md#who-writes-a-board)):
@@ -191,13 +189,9 @@ a step not listed ([BOARD_OPERATIONS](../operations/BOARD_OPERATIONS.md#who-writ
 - a whole-board copy's staging;
 - a recovery's rebind.
 
-The declaration is checked where the database shows it. Each schema's definitions are committed,
-one file per engine (`crates/tasks/tests/store/catalogue/ENGINE-VERSION.txt`):
-
-- on SurrealDB, every table, field, index and event, and the database's analyzers, functions and
-  parameters;
-- on PostgreSQL, every column, constraint, index and trigger, and the functions in the board's
-  schema.
+The declaration is checked where the database shows it. Each schema's definitions are committed
+(`crates/tasks/tests/store/catalogue/postgresql-VERSION.txt`): every column, constraint, index
+and trigger, and the functions in the board's schema.
 
 The store test (`just test-rs -p symphony-board --test store catalogue`) holds a fresh board of
 this build to its version's files, and holds a declared version to the files of the version
@@ -743,7 +737,7 @@ binary this workspace delivers (`symphony-server`, `symphony`, `tasks` and
 `[profile.release]`, and runs `symphony-build size-budget`, which prints each size beside its
 budget (`symphony-build`, the commands only this repository's build and release run use, is no
 binary it delivers, and has no line; nor has `tasks-move`, which a release installs beside
-`tasks` for the one move of a board's store and no project links or runs by a recipe, its bytes
+`tasks` to put a snapshot back over a board and no project links or runs by a recipe, its bytes
 said in the release's manifest and the install's line).
 Past a line it fails, naming the size, the budget and how to see what grew: `cargo bloat --release
 --crates --bin NAME` (`cargo install cargo-bloat --root DIR`, never a workspace dependency) beside
@@ -775,7 +769,7 @@ A binary links what it may run, and a test holds a library out of one that never
 (`tests/links.rs` of `symphony`): the JSON Schema validator, which would add a fifth to its size:
 a schema check is a library call a consumer's code makes (`symphony::schema::validate`), and
 `symphony serve` answers `validate` as a function it lacks. And it holds the board's migration out
-of it, with both databases' schema texts: `symphony` opens a board only to read, by the reader's
+of it, with the schema's text: `symphony` opens a board only to read, by the reader's
 entry (`Store::read_as`, `Store::reading`), which names no migration, where an opening by the rule
 (`Store::opening`) links it for the writer it may be handed.
 

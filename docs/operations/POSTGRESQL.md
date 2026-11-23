@@ -1,47 +1,38 @@
 # PostgreSQL board lifecycle
 
-PostgreSQL serves the board whose home names it, and a board not made yet: wherever its home
-is, the first board command makes it on PostgreSQL. A board on SurrealDB becomes one only by a
-move of its store, `tasks-move postgresql`
-([the cutover procedure](analysis/board-pg-cutover.md#one-boards-move)). The machine server and
-the board commands use the same home selection. This repository's board is on PostgreSQL since
-2026-11-21 ([its move](analysis/board-pg-cutover.md#this-repositorys-board-moved-2026-11-21));
-each other project's board moves after its own pin, by the `tasks-move` the release installs
-beside its `tasks`, run by its path in the machine folder
-(`current/bin/tasks-move postgresql --as HANDLE`, [the command a project runs](analysis/board-pg-cutover.md#one-boards-move)).
+PostgreSQL serves every board: wherever its home is, the first board command makes it on
+PostgreSQL, and the machine server and the board commands use the same home selection. A board
+still on SurrealDB is refused ([below](#a-board-still-on-surrealdb)).
 
 ## The board home owns its engine
 
-The home keeps `backend.json` beside `server.json`, `hold` and `lock`. Its complete shape is
-`{"format":1,"engine":"postgresql"}` or `{"format":1,"engine":"surrealdb"}`. Without it, a
-home that holds a SurrealDB store (`data/`, or the `reclaim/old` a reclaim cut short leaves) is a
-SurrealDB board, made before the identity, and keeps opening as one. A home that holds neither
-engine's data is a board not made yet, PostgreSQL's: the start that makes its cluster writes
+The home keeps `backend.json` beside `hold` and `lock`. Its complete shape is
+`{"format":1,"engine":"postgresql"}`. A home that holds no board's data is a board not made yet:
+the start that makes its cluster writes
 `{"format":1,"engine":"postgresql"}` first, under the starters' lock, so no cluster is ever made
 without the identity that selects it. A machine without PostgreSQL 18 or later is refused that
-start with the setup guidance ([the setting](PROJECT_FILE.md#board)), and nothing is made; the
-board is never made on SurrealDB in its place. A read of the board by the Symphony starts a
+start with the setup guidance ([the setting](PROJECT_FILE.md#board)), and nothing is made. A read
+of the board by the Symphony starts a
 board's server but never makes a board: one not made yet reads as none. Unknown formats, invalid
-JSON, unknown engines, an incomplete PostgreSQL data folder, or data of the wrong engine refuse
-explicitly. PostgreSQL data without an identity opens as PostgreSQL, never as SurrealDB.
+JSON, unknown engines, an incomplete PostgreSQL data folder, or SurrealDB's data refuse
+explicitly. PostgreSQL data without an identity opens as PostgreSQL.
 
 `Home::initialize_backend` names a scratch home's engine before it is made, under the starters'
-lock: a fixture's SurrealDB board, or its PostgreSQL one. It accepts no existing identity of
-another engine and no data of the other engine. It writes and syncs a temporary file, renames it
+lock: a fixture's PostgreSQL board. It accepts no identity of another engine and no SurrealDB
+data. It writes and syncs a temporary file, renames it
 into place, then syncs the home. Repeating the same identity
-keeps it. The PostgreSQL cluster is `postgresql/`; a retained SurrealDB store belongs outside the
-active home's `data/` before that home can identify itself as PostgreSQL.
+keeps it. The PostgreSQL cluster is `postgresql/`.
 
-An identity changes only by a move of the board's store. While a move's or a restore's journal
-(`move.json`) stands in the home, nothing reads it as either engine: every start and reach is
-refused, naming the journal, until its holder settles it.
+While a restore's journal (`move.json`), or one an earlier release's move left, stands in the
+home, nothing reads it: every start and reach is refused, naming the journal, until its holder
+settles it ([below](#holds-snapshots-and-recovery)).
 
 `Home::board_server` selects the engine for repository discovery, including the machine server's
 board reader. `[board] postgresql` names the machine's programs, never the selected engine; absent
 that override, the first executable `postgres` on `PATH` supplies the folder. Discovery validates
 PostgreSQL 18 or later and its same-folder companion tools before starting anything. A
 PostgreSQL server listens on its private Unix socket alone. On a scratch home it ends with the
-process that started it; on any other it outlives its starter, as the board's SurrealDB server
+process that started it; on any other it outlives its starter, as a detached server
 does, and the next command finds it by its cluster's own record. On a scratch home a command
 run right after another meets that one's server on its way out: its start waits for the
 server's end, which the kernel reports, and then starts its own. That holds whether the
@@ -61,11 +52,20 @@ messages to the owner) is sent a statement a list and answered an item a row, al
 and one snapshot: the server's memory under thirty commands at once is
 [measured](analysis/board-store-baseline.md#postgresqls-memory-peak-measured-2026-11-18).
 
+## A board still on SurrealDB
+
+A home whose identity names SurrealDB (`{"format":1,"engine":"surrealdb"}`), or that names none
+and holds a SurrealDB store (`data/`), is a board still on SurrealDB. It is never served, and
+never taken for a board not made yet: every start and reach of it is refused, and the refusal
+says how it moves. A board still on SurrealDB moves to PostgreSQL with an earlier release's
+`tasks-move postgresql --as HANDLE` (release-2026-11-22.3 has it), run from its project's main
+checkout, then `tasks recovery rebind`, before it takes this release. The steps around it are
+[one board's move](analysis/board-pg-cutover.md#one-boards-move).
+
 ## The whole board, read and written
 
 `tasks-copy --board --out` writes the dump of the board the run reaches, and `tasks-copy
---board` copies a dump into it, in the database the board's home names: one board read out of
-PostgreSQL and out of SurrealDB is one document, byte for byte. `tasks-copy ADDR` takes a
+--board` copies a dump into it, in the database the board's home names. `tasks-copy ADDR` takes a
 PostgreSQL server by its socket's folder, `postgresql:/PATH`. A PostgreSQL board that cannot be
 read is refused as PostgreSQL's, naming its database and socket and `just tasks database`,
 which says what serves it and whether it is held.
@@ -108,27 +108,33 @@ and its leases and each recipient's committed revision read; the snapshot is cop
 folder (`restoring/`), served there once, and every lease written ended, its revision past the
 greater of the snapshot's and the replaced cluster's. A holder that took its lease after the
 snapshot holds a revision the snapshot never saw, which the next taker would otherwise be handed
-too: as after a move, it finds a lease that is no longer its own. A cluster in place that cannot
+too: it finds a lease that is no longer its own. A cluster in place that cannot
 be served or read does not stop the restore, which is the way back from one that broke: each
 lease is then moved on by more takes than any holder made, and the command says so. The copy is
-then switched in under the
-journal a move runs under: the cluster in place is moved into `moved/STAMP-postgresql/`, the copy
+then switched in under a journal (`move.json`): the cluster in place is moved into
+`moved/STAMP-postgresql/`, the copy
 moved in, the journal marked committed, the home's recovery bindings revoked. Nothing is deleted,
 the snapshot included. A failure before the commit leaves the board on the cluster it had; one
-cut short is settled by its holder's next `tasks-move`, a restore or a move, undone before
+cut short is settled by its holder's next `tasks-move`, undone before
 the commit and finished after. The restored board refuses every bound write until
 `just tasks recovery rebind`. The record of the highest schema the board was seen at stays
 outside the database, so a snapshot of an older schema restores a board that went back, which
 every opening refuses as it does any other.
 
+`tasks-move postgresql --as HANDLE` (or `surrealdb`) settles a journal an earlier release's move
+between the engines left, finishing what committed and undoing what did not, under the same
+hold. It moves no board between the engines, and nothing moves a board to SurrealDB. Its
+`--help` says both forms.
+
 ## Free space and versions
 
-Autovacuum makes dead space reusable. `tasks-reclaim` on a PostgreSQL home runs
+Autovacuum makes dead space reusable. `tasks-reclaim` runs
 `VACUUM (FULL, ANALYZE)` on the board database, without an export or a data swap. This
 [PostgreSQL rewrite](https://www.postgresql.org/docs/18/sql-vacuum.html) returns space to the
 filesystem, needs temporary disk room, and locks each table exclusively while rewriting it.
 
-The shared schema rule and writer inventory apply on both engines: a migration is atomic, recent
+The schema rule and the writer inventory are
+[BOARD_OPERATIONS](BOARD_OPERATIONS.md#the-schema-contract)'s: a migration is atomic, recent
 older writers must be accounted for, and older readers keep their one-version window. Each
 PostgreSQL write reads the schema row `FOR SHARE`, so an older repeatable-read snapshot meets a
 migration as a serialization conflict before it can write after that migration. A live-source

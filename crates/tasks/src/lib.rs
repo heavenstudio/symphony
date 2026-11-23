@@ -1,24 +1,24 @@
-//! The task board's rules over SurrealDB: a
-//! session's health ([`health`]); sessions registering, beating, leaving ([`NewSession`], [`Beat`]);
-//! tasks made and arranged in a tree ([`NewTask`]), joined, released, moved ([`can_transition`]),
-//! landed; claim, reserve, verdict and done, `next`, threads, inboxes and their acknowledgement, and
-//! the record of launched sessions ([`NewLaunch`]) ([`Store`]), over a local SurrealDB server
-//! ([`rpc`]); the board read in one round trip; and the copy of a whole board into it ([`Store::copy`],
-//! the `tasks-copy` binary). The board's own server keeps its data in the git common dir ([`git`])
-//! and is started by whatever needs it ([`server`]), on a loopback port reserved for it ([`port`]).
+//! The task board's rules over PostgreSQL: a session's health ([`health`]); sessions registering,
+//! beating, leaving ([`NewSession`], [`Beat`]); tasks made and arranged in a tree ([`NewTask`]),
+//! joined, released, moved ([`can_transition`]), landed; claim, reserve, verdict and done, `next`,
+//! threads, inboxes and their acknowledgement, and the record of launched sessions ([`NewLaunch`])
+//! ([`Store`]), over the board's own PostgreSQL ([`pg`]); the board read in one round trip; and the
+//! copy of a whole board into it ([`Store::copy`], the `tasks-copy` binary). The board's own
+//! server keeps its data in the git common dir ([`git`]) and is started by whatever needs it
+//! ([`server`]).
 //!
 //! A rule reads what it decides on, decides here (a session's health needs this machine's process
 //! table), and writes in one transaction that first checks the task's `version` is still the one it
-//! read. SurrealDB's transactions are optimistic: where SQLite's `BEGIN IMMEDIATE` makes a second
-//! writer wait, here it fails at commit ("can be retried"), and so does a write whose task moved
-//! since its read; either way the rule reads and decides again. A write that needs nothing decided
-//! here (a session seen, leaving) checks and refuses inside its one transaction instead. They only
-//! meet where both write the same record, so writes that must not pass each other write one: the
-//! task's `version`, the message counter, an agent's own counter for its binding.
-//! Transactional mutation events also advance the structural `counter:board_structure` for changes to board
-//! inputs, except session mutations, which advance their own per-handle revisions. Authorization
-//! and liveness guards fence the sessions they depend on. Callback readers combine both markers
-//! to reuse unchanged board inputs without making independent heartbeats write one counter.
+//! read. The transactions are optimistic: where SQLite's `BEGIN IMMEDIATE` makes a second writer
+//! wait, here one fails at commit and can be retried, and so does a write whose task moved since
+//! its read; either way the rule reads and decides again. A write that needs nothing decided here
+//! (a session seen, leaving) checks and refuses inside its one transaction instead. They only meet
+//! where both write the same row, so writes that must not pass each other write one: the task's
+//! `version`, the message counter, an agent's own counter for its binding. Mutation triggers also
+//! advance the structural counter (`counter` `board_structure`) for changes to board inputs, except
+//! session mutations, which advance their own per-handle revisions. Authorization and liveness
+//! guards fence the sessions they depend on. Callback readers combine both markers to reuse
+//! unchanged board inputs without making independent heartbeats write one counter.
 
 #[cfg(test)]
 extern crate self as symphony_board;
@@ -129,12 +129,10 @@ Copy a whole board, read as a dump on standard input, into its database,
 replacing what that held, in one transaction: into DATABASE (default tasks) on
 the server at ADDR, or, with --board, into the board this run reaches. With
 --board --out it writes that board's dump instead, in the shape the copy
-reads, and changes nothing. The board is read and written in the database it
-is in, SurrealDB or PostgreSQL, and its dump is the same from either.
+reads, and changes nothing.
 
 positional arguments:
-  ADDR            the server: SurrealDB's HOST:PORT (namespace sf), or
-                  PostgreSQL's socket folder as postgresql:/PATH
+  ADDR            the server: PostgreSQL's socket folder as postgresql:/PATH
   DATABASE        the database there (default: tasks)
 
 options:
@@ -157,8 +155,8 @@ const COPY_SCRATCH: &str = "`TASKS_DATABASE=NAME` with `--board`, or `tasks-copy
 /// or `tasks-copy --board --out`, which writes that
 /// board's dump on one line, in the shape the copy reads, and changes nothing: how a test seeds a
 /// board too big to build call by call, and reads it back. The board is read and written in the
-/// database it is in ([`cli::Reached::database`]), SurrealDB or PostgreSQL, by the one reader and
-/// the one copy both have ([`Store::dump`], [`Store::copy`]), and a refusal names that database.
+/// database it is in ([`cli::Reached::database`]), by the one reader and the one copy
+/// ([`Store::dump`], [`Store::copy`]), and a refusal names that database.
 /// `args` without the program name; what it says goes to `out`, a refusal to `err`; the exit code
 /// is returned.
 pub fn copy_main(
@@ -222,11 +220,9 @@ fn copy(
         _ => return Err(COPY_USAGE.into()),
     };
     let (addr, db) = (database.addr(), database.database().to_string());
-    let postgresql = database.is_postgresql();
-    // A refusal names the database the board is in, by its own name: the store's own says
-    // SurrealDB of either.
+    // A refusal names the database the board is in, and where.
     let refused = |why: Error| match why {
-        Error::Db(said) if postgresql => format!(
+        Error::Db(said) => format!(
             "PostgreSQL: {said} (the board's database {db} at {addr}: `just tasks database` \
              says what serves it and whether it is held)"
         ),
@@ -253,12 +249,7 @@ fn copy(
         .map_err(|e| format!("cannot read the dump: {e}"))?;
     let dump = rows::Dump::from_json(&text)?;
     store.copy(&dump).map_err(refused)?;
-    // A PostgreSQL board has no namespace: its database is named alone.
-    let place = if postgresql {
-        db.clone()
-    } else {
-        format!("{NAMESPACE}/{db}")
-    };
+    let place = &db;
     Ok(Some(format!(
         "{} tasks, {} links, {} sessions, {} roles, {} messages, {} deliveries, {} barred keys, {} task sessions, {} delivery keys, {} asks, {} usage rows{} into {place} at {addr}",
         dump.tasks.len(),
@@ -285,35 +276,28 @@ fn copy(
 const RECLAIM_USAGE: &str =
     "usage: tasks-reclaim, in a checkout of the board's repository, or tasks-reclaim --dir FOLDER";
 
-/// The reclaim's `--help`: what it does, its one option and the variable it reads.
+/// The reclaim's `--help`: what it does and its one option.
 pub const RECLAIM_HELP: &str =
     "usage: tasks-reclaim, in a checkout of the board's repository, or tasks-reclaim --dir FOLDER
 
-Rebuild the store of the board in this checkout's git common dir from an export
-of itself, which holds only what is live: its server is stopped meanwhile and
-started again on the new store. The old store is kept as a snapshot, and the
-line it ends with says where and until when.
-
-For a scratch home identified as PostgreSQL, run VACUUM FULL and ANALYZE on
-the board database instead: no export or swap, with an exclusive lock per
-table and temporary disk room for its rewrite.
+Give the dead space of the board in this checkout's git common dir back to the
+filesystem: PostgreSQL's VACUUM FULL and ANALYZE of its board database, with an
+exclusive lock per table and temporary disk room for its rewrite. Its rows and
+schema are kept, and nothing is exported or swapped. A board still on SurrealDB
+is refused, naming how it moves.
 
 options:
   -h, --help        show this help message and exit
   --version         say the version and exit
   --dir FOLDER      a board folder elsewhere, a copy of the board's to rehearse on
-
-environment:
-  SYMPHONY_SURREAL  the SurrealDB binary that serves the store, in place of
-                    the pinned one beside the common dir
 ";
 
-/// `tasks-reclaim`: the store of the board in the git common dir of `env`'s working directory rebuilt
-/// from an export of itself ([`server::Home::reclaim`]), the board's server down meanwhile; or, with
-/// `--dir FOLDER`, the store of a board folder of that shape elsewhere, a copy to rehearse on. Either
-/// way served by the pinned `surreal` beside that common dir, or `SYMPHONY_SURREAL`'s. What it did
-/// goes to `out`, a refusal to `err`; the exit code is returned.
-/// A scratch PostgreSQL home instead reclaims its board database by VACUUM FULL and ANALYZE.
+/// `tasks-reclaim`: the dead space of the board in the git common dir of `env`'s working
+/// directory given back by PostgreSQL's VACUUM FULL and ANALYZE ([`server::Postgres::reclaim`]),
+/// its server running meanwhile; or, with `--dir FOLDER`, of a board folder of that shape
+/// elsewhere, a copy to rehearse on. Either way served by the PostgreSQL programs of the project
+/// it runs in. A board still on SurrealDB is refused, naming how it moves ([`server::GONE`]).
+/// What it did goes to `out`, a refusal to `err`; the exit code is returned.
 pub fn reclaim_main(
     args: &[String],
     env: &cli::Env,
@@ -330,20 +314,17 @@ pub fn reclaim_main(
         return 0;
     }
     let reclaimed = reclaim_home(args, env).and_then(|home| {
-        if home.backend().map_err(|e| e.to_string())? == server::Engine::PostgreSql {
-            let project = project::find(&env.cwd, None)?;
-            home.project_postgresql(&project.place.root)
-                .and_then(|pg| pg.reclaim(DATABASE))
-                .map_err(|e| e.to_string())?;
-            return Ok(Reclaim::PostgreSql);
+        if home.backend().map_err(|e| e.to_string())? == server::Engine::SurrealDb {
+            return Err(home.on_surrealdb("Nothing was reclaimed").to_string());
         }
-        home.reclaim()
-            .map(Reclaim::Surreal)
+        let project = project::find(&env.cwd, None)?;
+        home.project_postgresql(&project.place.root)
+            .and_then(|pg| pg.reclaim(DATABASE))
             .map_err(|e| e.to_string())
     });
     match reclaimed {
-        Ok(done) => {
-            let _ = writeln!(out, "{}", reclaim_said(&done));
+        Ok(()) => {
+            let _ = writeln!(out, "{RECLAIMED}");
             0
         }
         Err(why) => {
@@ -353,16 +334,14 @@ pub fn reclaim_main(
     }
 }
 
-/// What a reclaim did, by the engine its board home is identified as.
-enum Reclaim {
-    Surreal(server::Reclaimed),
-    PostgreSql,
-}
+/// The line `tasks-reclaim` ends with on success.
+const RECLAIMED: &str = "tasks-reclaim: PostgreSQL reclaimed the board's dead space with VACUUM \
+                         FULL and ANALYZE; its rows and schema were kept";
 
 /// The board home `tasks-reclaim`'s `args` name: with none, the one in the git common dir of
 /// `env`'s working directory; with `--dir FOLDER`, that folder, read from the working directory,
-/// whatever repository it runs in, served by the same `surreal` as that repository's board.
-/// Arguments of no form are refused with the usage before any repository is looked for.
+/// whatever repository it runs in. Arguments of no form are refused with the usage before any
+/// repository is looked for.
 fn reclaim_home(args: &[String], env: &cli::Env) -> Result<server::Home, String> {
     let folder = match args {
         [] => None,
@@ -370,85 +349,15 @@ fn reclaim_home(args: &[String], env: &cli::Env) -> Result<server::Home, String>
         _ => return Err(RECLAIM_USAGE.to_string()),
     };
     let common = git::common_dir(&env.cwd).map_err(|e| e.to_string())?;
-    let home = server::Home::in_common(
-        &common,
-        env.read(symphony_env::SURREAL).map(std::path::Path::new),
-    );
     Ok(match folder {
-        Some(folder) => server::Home::new(&folder, home.surreal()),
-        None => home,
+        Some(folder) => server::Home::new(&folder),
+        None => server::Home::in_common(&common),
     })
-}
-
-/// The line `tasks-reclaim` ends with on success: what `done` did to the board.
-fn reclaim_said(done: &Reclaim) -> String {
-    match done {
-        Reclaim::PostgreSql => "tasks-reclaim: PostgreSQL reclaimed the board's dead space with \
-                                VACUUM FULL and ANALYZE; its rows and schema were kept"
-            .to_string(),
-        Reclaim::Surreal(done) => format!(
-            "tasks-reclaim: the board's store took {} and takes {}; {} databases carried, each \
-             exported the same from both stores; their exports are in {}; {}; the board's \
-             server is pid {} at {}",
-            size(done.before),
-            size(done.after),
-            done.databases.len(),
-            done.exports.display(),
-            old_store_kept(&done.kept),
-            done.running.pid,
-            done.running.addr
-        ),
-    }
-}
-
-/// Where `tasks-reclaim` says the old store is kept, and until when: a snapshot, kept as any is
-/// ([`server::snapshot`]), the room it takes freed only once it is removed.
-fn old_store_kept(kept: &server::Kept) -> String {
-    let path = kept.path();
-    let how = match kept {
-        server::Kept::Cloned(_) => "a copy-on-write clone",
-        server::Kept::Copied(_) => "a plain copy, as this volume cannot clone",
-        server::Kept::Already(_) => "a snapshot taken before, which holds it as it was",
-    };
-    let until = if server::snapshot::holds_log(path) {
-        "its write-ahead log holds writes, so it is kept until the owner removes it".to_string()
-    } else {
-        format!(
-            "its log is empty, so it is kept among the newest {} such snapshots, which later \
-             starts' snapshots prune, unless the owner removes it first",
-            server::snapshot::KEEP
-        )
-    };
-    format!(
-        "the old store is kept at {} ({how}): {until} (`rm -rf {}`), and the room it takes comes \
-         back only then",
-        path.display(),
-        path.display()
-    )
-}
-
-/// `bytes` as a person reads it, to a tenth: GiB from one on, else MiB.
-pub(crate) fn size(bytes: u64) -> String {
-    let mib = bytes as f64 / f64::from(1 << 20);
-    if mib >= 1024.0 {
-        format!("{:.1} GiB", mib / 1024.0)
-    } else {
-        format!("{mib:.1} MiB")
-    }
 }
 
 #[cfg(test)]
 mod reclaim_tests {
     use super::*;
-
-    #[test]
-    fn a_size_is_said_in_mib_below_one_gib_and_in_gib_from_it() {
-        assert_eq!(size(0), "0.0 MiB");
-        assert_eq!(size(575_736 * 1024), "562.2 MiB");
-        assert_eq!(size((1 << 30) - 1), "1024.0 MiB");
-        assert_eq!(size(1 << 30), "1.0 GiB");
-        assert_eq!(size(109_490_057_216), "102.0 GiB");
-    }
 
     #[test]
     fn arguments_of_no_form_are_refused_before_a_board_is_reached() {
@@ -483,7 +392,7 @@ mod reclaim_tests {
             assert!(err.is_empty());
         }
         assert!(RECLAIM_HELP.starts_with(RECLAIM_USAGE));
-        for word in ["--dir FOLDER", "SYMPHONY_SURREAL", "snapshot"] {
+        for word in ["--dir FOLDER", "VACUUM FULL", "SurrealDB"] {
             assert!(RECLAIM_HELP.contains(word), "{word}");
         }
         // Beside another argument it is no form of the reclaim's.
@@ -508,12 +417,9 @@ mod reclaim_tests {
             Place(dir.canonicalize().unwrap())
         }
 
-        fn env(&self, cwd: &str, surreal: Option<&str>) -> cli::Env {
+        fn env(&self, cwd: &str) -> cli::Env {
             cli::Env {
-                vars: surreal
-                    .map(|path| (symphony_env::SURREAL.name.to_string(), path.to_string()))
-                    .into_iter()
-                    .collect(),
+                vars: Default::default(),
                 cwd: self.0.join(cwd),
             }
         }
@@ -534,35 +440,24 @@ mod reclaim_tests {
         let place = Place::new("repository");
         let common = place.0.join("repo/.git");
         for cwd in ["repo", "repo/sub"] {
-            let home = reclaim_home(&[], &place.env(cwd, Some("/named/surreal"))).unwrap();
+            let home = reclaim_home(&[], &place.env(cwd)).unwrap();
             assert_eq!(home.dir(), common.join("symphony/tasks"), "{cwd}");
-            assert_eq!(home.surreal(), std::path::Path::new("/named/surreal"));
         }
-        // With no binary named, the pinned one beside that common dir.
-        let pinned = server::Home::in_common(&common, None);
-        let home = reclaim_home(&[], &place.env("repo", None)).unwrap();
-        assert_eq!(home.surreal(), pinned.surreal());
-        assert!(home.surreal().starts_with(&common), "{:?}", home.surreal());
     }
 
     #[test]
-    fn a_folder_named_wins_over_the_repository_it_runs_in_and_keeps_its_surreal() {
+    fn a_folder_named_wins_over_the_repository_it_runs_in() {
         let place = Place::new("folder");
         let common = place.0.join("repo/.git");
         let elsewhere = place.0.join("bare/board");
         let absolute = strings(&["--dir", elsewhere.to_str().unwrap()]);
-        let home = reclaim_home(&absolute, &place.env("repo", Some("/named/surreal"))).unwrap();
+        let home = reclaim_home(&absolute, &place.env("repo")).unwrap();
         assert_eq!(home.dir(), elsewhere);
         assert!(!home.dir().starts_with(&common));
-        assert_eq!(home.surreal(), std::path::Path::new("/named/surreal"));
         // A relative folder is read from the working directory, not from the repository's top.
         let relative = strings(&["--dir", "copy"]);
-        let home = reclaim_home(&relative, &place.env("repo/sub", None)).unwrap();
+        let home = reclaim_home(&relative, &place.env("repo/sub")).unwrap();
         assert_eq!(home.dir(), place.0.join("repo/sub/copy"));
-        assert_eq!(
-            home.surreal(),
-            server::Home::in_common(&common, None).surreal()
-        );
         // Selecting a board makes none: nothing was written in either place.
         assert!(!elsewhere.exists());
         assert!(!common.join("symphony").exists());
@@ -571,7 +466,7 @@ mod reclaim_tests {
     #[test]
     fn a_reclaim_outside_any_repository_is_refused_with_or_without_a_folder() {
         let place = Place::new("outside");
-        let env = place.env("bare", Some("/named/surreal"));
+        let env = place.env("bare");
         for args in [strings(&[]), strings(&["--dir", "board"])] {
             let why = reclaim_home(&args, &env).err().expect("no repository");
             assert_ne!(why, RECLAIM_USAGE, "{args:?}");
@@ -591,71 +486,30 @@ mod reclaim_tests {
         );
     }
 
-    fn surreal_reclaim(kept: server::Kept) -> Reclaim {
-        Reclaim::Surreal(server::Reclaimed {
-            before: 575_736 * 1024,
-            after: 3 << 20,
-            databases: vec!["symphony/tasks".to_string(), "symphony/other".to_string()],
-            exports: "/board/reclaim/exports".into(),
-            kept,
-            running: server::Running {
-                addr: "127.0.0.1:4242".to_string(),
-                pid: 77,
-                version: "3".to_string(),
-            },
-        })
+    /// A board home still on SurrealDB is refused, naming how it moves, and nothing is
+    /// reclaimed or started there.
+    #[test]
+    fn a_board_still_on_surrealdb_is_refused_naming_how_it_moves() {
+        let place = Place::new("surrealdb");
+        let board = place.0.join("repo/.git/symphony/tasks");
+        std::fs::create_dir_all(board.join("data")).unwrap();
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        assert_eq!(reclaim_main(&[], &place.env("repo"), &mut out, &mut err), 2);
+        assert!(out.is_empty());
+        let said = String::from_utf8(err).unwrap();
+        assert!(
+            said.starts_with("❌ tasks-reclaim: the board in "),
+            "{said}"
+        );
+        assert!(said.contains(server::GONE), "{said}");
+        assert!(said.ends_with("Nothing was reclaimed\n"), "{said}");
+        assert!(!board.join("postgresql").exists());
     }
 
     #[test]
-    fn a_surrealdb_reclaim_says_its_sizes_databases_exports_old_store_and_server() {
-        let place = Place::new("said");
-        let old = place.0.join("snapshots/old");
-        std::fs::create_dir_all(old.join("wal")).unwrap();
-        let old_text = old.display();
-        let line = |how: &str, until: &str| {
-            format!(
-                "tasks-reclaim: the board's store took 562.2 MiB and takes 3.0 MiB; 2 databases \
-                 carried, each exported the same from both stores; their exports are in \
-                 /board/reclaim/exports; the old store is kept at {old_text} ({how}): {until} \
-                 (`rm -rf {old_text}`), and the room it takes comes back only then; the board's \
-                 server is pid 77 at 127.0.0.1:4242"
-            )
-        };
-        let empty = "its log is empty, so it is kept among the newest 3 such snapshots, which \
-                     later starts' snapshots prune, unless the owner removes it first";
-        for (kept, how) in [
-            (server::Kept::Cloned(old.clone()), "a copy-on-write clone"),
-            (
-                server::Kept::Copied(old.clone()),
-                "a plain copy, as this volume cannot clone",
-            ),
-            (
-                server::Kept::Already(old.clone()),
-                "a snapshot taken before, which holds it as it was",
-            ),
-        ] {
-            assert_eq!(reclaim_said(&surreal_reclaim(kept)), line(how, empty));
-        }
-        // An empty segment is no log; one with writes keeps the snapshot until the owner removes it.
-        std::fs::write(old.join("wal/0001.wal"), "").unwrap();
+    fn a_reclaim_says_the_vacuum_and_names_no_store_export_or_server() {
         assert_eq!(
-            reclaim_said(&surreal_reclaim(server::Kept::Cloned(old.clone()))),
-            line("a copy-on-write clone", empty)
-        );
-        std::fs::write(old.join("wal/0001.wal"), "writes").unwrap();
-        assert_eq!(
-            reclaim_said(&surreal_reclaim(server::Kept::Cloned(old.clone()))),
-            line(
-                "a copy-on-write clone",
-                "its write-ahead log holds writes, so it is kept until the owner removes it"
-            )
-        );
-    }
-
-    #[test]
-    fn a_postgresql_reclaim_says_the_vacuum_and_names_no_store_export_or_server() {
-        assert_eq!(
-            reclaim_said(&Reclaim::PostgreSql),
+            RECLAIMED,
             "tasks-reclaim: PostgreSQL reclaimed the board's dead space with VACUUM FULL and \
              ANALYZE; its rows and schema were kept"
         );

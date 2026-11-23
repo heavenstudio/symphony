@@ -1,17 +1,14 @@
-//! `tasks snapshot [--list]`: a snapshot of the store of the board the run's project keeps in its
-//! common dir ([`crate::server::snapshot`]), taken now under the lock every start of its server
-//! takes, and refused while a process serves it; `--list` names those kept, the newest first. It
-//! opens no board: what it reads and writes is the board's folder. A board `TASKS_SERVER` names has
-//! no store here, and a process Cargo runs from a repository never touches that repository's own
-//! ([`crate::live::cargo_refusal`]).
+//! `tasks snapshot [--list]`: a snapshot of the PostgreSQL data of the board the run's project
+//! keeps in its common dir ([`crate::server::Postgres::snapshot`]), taken now under the lock every
+//! start of its server takes, and refused while its server runs; `--list` names those kept, the
+//! newest first. It opens no board: what it reads and writes is the board's folder. A board
+//! `TASKS_SERVER` names has no data here, a board still on SurrealDB is refused, naming how it
+//! moves ([`crate::server::GONE`]), and a process Cargo runs from a repository never touches that
+//! repository's own ([`crate::live::cargo_refusal`]).
 
 use super::{Clock, Env, args::Parsed, machine};
-use crate::server::{
-    Home,
-    snapshot::{KEEP, KEPT},
-};
+use crate::server::{Engine, Home};
 use std::io::Write;
-use std::path::Path;
 
 pub(super) fn run(parsed: &Parsed, env: &Env, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     match said(parsed, env) {
@@ -42,66 +39,36 @@ fn said(parsed: &Parsed, env: &Env) -> Result<String, String> {
     if let Some(why) = crate::live::cargo_refusal(&live, crate::live::cargo_here()) {
         return Err(why);
     }
-    let home = Home::in_common(&common, env.read(symphony_env::SURREAL).map(Path::new));
+    let home = Home::in_common(&common);
     let board = format!("the {} board's store", project.id);
-    if home.backend().map_err(|why| why.to_string())? == crate::server::Engine::PostgreSql {
-        let pg = home
-            .project_postgresql(&project.place.root)
-            .map_err(|why| why.to_string())?;
-        return if parsed.flag("list") {
-            let paths = pg.snapshots().map_err(|why| why.to_string())?;
-            Ok(if paths.is_empty() {
-                format!("no PostgreSQL snapshot of {board} is kept")
-            } else {
-                paths
-                    .iter()
-                    .map(|path| path.display().to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
+    if home.backend().map_err(|why| why.to_string())? == Engine::SurrealDb {
+        let nothing = if parsed.flag("list") {
+            "No snapshot was listed"
         } else {
-            let path = pg
-                .snapshot(Clock::of(env)?.now())
-                .map_err(|why| why.to_string())?;
-            Ok(format!(
-                "✔ took a PostgreSQL snapshot of {board}: {}",
-                path.display()
-            ))
+            "No snapshot was taken"
         };
+        return Err(home.on_surrealdb(nothing).to_string());
     }
+    let pg = home
+        .project_postgresql(&project.place.root)
+        .map_err(|why| why.to_string())?;
     if parsed.flag("list") {
-        let kept = home.snapshots()?;
-        if kept.is_empty() {
-            return Ok(format!(
-                "no snapshot of {board} is kept in {}",
-                home.snapshots_folder().display()
-            ));
-        }
-        return Ok(kept
-            .iter()
-            .map(|one| {
-                format!(
-                    "{}  {}{}",
-                    one.name,
-                    one.path.display(),
-                    if one.log { KEPT } else { "" }
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n"));
+        let paths = pg.snapshots().map_err(|why| why.to_string())?;
+        return Ok(if paths.is_empty() {
+            format!("no PostgreSQL snapshot of {board} is kept")
+        } else {
+            paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        });
     }
-    let taken = home.snapshot(Clock::of(env)?.now())?;
-    let removed = if taken.removed.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "; of those whose write-ahead log is empty the newest {KEEP} are kept, so {} went",
-            taken.removed.join(", ")
-        )
-    };
+    let path = pg
+        .snapshot(Clock::of(env)?.now())
+        .map_err(|why| why.to_string())?;
     Ok(format!(
-        "✔ took a snapshot of {board}: {}{}{removed}",
-        taken.snapshot.path.display(),
-        if taken.snapshot.log { KEPT } else { "" }
+        "✔ took a PostgreSQL snapshot of {board}: {}",
+        path.display()
     ))
 }

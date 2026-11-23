@@ -239,7 +239,7 @@ fn a_server_is_outgoing_when_its_record_names_it_and_its_starter_has_ended() {
 /// met is left, the refusal saying pg_ctl's words, that the wait stalled and the load.
 #[test]
 fn a_stop_whose_server_took_its_record_with_it_is_stopped_once_its_process_has_ended() {
-    let pg = Home::new(Path::new("/nowhere/board"), Path::new("/s"))
+    let pg = Home::new(Path::new("/nowhere/board"))
         .patience(std::time::Duration::ZERO)
         .postgresql(Path::new("/nowhere/bin"));
     let record = |pid| PidFile {
@@ -276,7 +276,7 @@ fn a_stop_whose_server_took_its_record_with_it_is_stopped_once_its_process_has_e
 
 #[test]
 fn programs_that_are_not_there_are_refused_naming_the_setting_and_the_install() {
-    let refused = Home::new(Path::new("/tmp/board"), Path::new("/s"))
+    let refused = Home::new(Path::new("/tmp/board"))
         .postgresql(Path::new("/nowhere/pg/bin"))
         .version()
         .unwrap_err()
@@ -332,7 +332,7 @@ impl StandIn {
             fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
         }
-        let pg = Home::new(&dir.join("board"), Path::new("/s"))
+        let pg = Home::new(&dir.join("board"))
             .telling(|_| {})
             .postgresql(&bin);
         StandIn { dir, pg }

@@ -5,7 +5,8 @@ schema contract between the builds that read and write it, which build moves a l
 writes it, its server, snapshots and holds, what the command may write, a server that will not
 end, a board that went back or was copied, and the health the server records of it. Using the
 board, its tasks, roles, landing and commands, is [TASKS](../workflow/TASKS.md); a program reads and writes
-it through [its JSON APIs](../engineering/BOARD_API.md); a PostgreSQL home is [POSTGRESQL](POSTGRESQL.md).
+it through [its JSON APIs](../engineering/BOARD_API.md); the board's PostgreSQL, its engine identity and
+a board still on SurrealDB are [POSTGRESQL](POSTGRESQL.md).
 
 ## The schema contract
 
@@ -18,8 +19,8 @@ additive steps either has. One with fewer steps than the board reads and writes 
 row the fields it does not know. One with more adds them where it may move the board (below), in
 one transaction, as any move, holding no writer; where it may not, it uses the board as it is: a
 write naming a table of a step the board lacks is refused before anything is written, and the
-board refuses a field or a table it does not define. A whole-board copy, export or move to another
-engine runs only on a board with the build's own steps. A newer contract migrates an older board
+board refuses a field or a table it does not define. A whole-board copy or export runs only on a
+board with the build's own steps. A newer contract migrates an older board
 forward once, its steps and the new version in one transaction before any other write. An older
 build is refused
 before it writes, naming the project, the program to rebuild (its file name and
@@ -41,15 +42,15 @@ listening there, from any folder), moves forward only by a build its default
 branch says is its own, by what that branch commits: never what a checkout
 holds, nor the branch the main checkout has out. The default branch is
 `[project] default_branch` in the main checkout's `symphony.toml`, else `main`.
-For a scratch PostgreSQL home's durable engine selection, holds, snapshots and recovery, see
-[PostgreSQL board lifecycle](POSTGRESQL.md). PostgreSQL activation on a live board is not enabled.
+For the board's engine identity, holds, snapshots and recovery, see
+[PostgreSQL board lifecycle](POSTGRESQL.md).
 
 Where it commits the board's schema source (`crates/tasks/src/schema.rs`, as this
 repository does), that is any command of a build of that very file, byte for
 byte, wherever it was built: main's build moves the board at its first command
 once a schema lands, and only such a build makes the board when it is not made
-yet. A PostgreSQL board also checks `crates/tasks/src/store/postgres/schema.rs` from the same
-default-branch commit. Where it commits none (a consuming project, which pins a build), it is only
+yet. The same holds of the board's definitions, `crates/tasks/src/store/postgres/schema.rs`, at
+the same default-branch commit. Where it commits none (a consuming project, which pins a build), it is only
 `just tasks migrate` run in the main checkout, which says whether it made the
 board, moved it from one version to the next, added the additive steps it lacked, or found
 nothing to move; there
@@ -106,14 +107,11 @@ that `just tasks migrate` must not be run, and where the recovery is described
 - the heartbeat (`tasks beat`, the hook's), quietly, since it never refuses a tool call: it binds
   nothing and writes no key. It reads the board's schema only when the record is above its build's:
   below that, a board that went back is at another schema than its build's, and the schema guard
-  refuses its one write;
-- `tasks-reclaim`, while the board's server runs, before it stops it, and with none running, on
-  the reclaim's own start on the store.
+  refuses its one write.
 
 Nothing else reads the record: `just tasks schema` reports what it says (exit 1 while the board
 went back), `just tasks snapshot` opens no board, nor do `just tasks database`, its hold and its
-release (the hold is step 2 of [the recovery](#a-board-that-went-back), so it stops a board that
-went back as any other). Otherwise the store adds the version it found to the record when it is
+release (so the hold stops a board that went back as any other), nor `tasks-reclaim`. Otherwise the store adds the version it found to the record when it is
 higher, and the one it migrated to. A scratch board keeps no record, nor does a server an address
 names that is no project's board server.
 Builds from before the record neither read nor write it: the protection holds for a project only
@@ -211,187 +209,60 @@ a board left behind it.
 
 ## The store and its server
 
-The store takes about what it holds. Every server the board starts keeps each
-value beside its key, where compaction drops the versions a rewrite leaves, and
-logs at most 256 MiB of writes before it moves them to an sstable. SurrealKV's
-default had sent every value over 4 KiB to a value log that only grows: 102 GiB
-held a board of 0.5 GiB. The `tasks-reclaim` binary, the owner's to run from the main checkout,
-rebuilds a store that grew that way. It stops the server and keeps the store as a
-[snapshot](#the-store-and-its-server) before any server of its own starts on it: a clone, a plain copy where
-the volume cannot clone, and no reclaim where it can be neither (nothing exported or removed, the
-server started again on the store). On a volume that cannot clone, that copy needs free room equal
-to the whole store, beside what the exports and the new store take: make that room first, as the
-refusal says, with the store's size. It then exports every database, imports them into a new store,
-and checks that store's exports byte for byte against the old ones. Only then does it swap the
-stores and remove the old one, which that snapshot keeps; `tasks-reclaim` says where, and until
-when. It is kept as any snapshot is: until the owner removes it while its write-ahead log holds
-writes (a store no server ran on that ended uncleanly or went back, whose log the reclaim's own
-server would replay and its clean stop remove), else among the newest three whose log is empty;
-the room the old store takes comes back only once it is removed. The exports stay in
-`symphony/tasks/reclaim/exports/`. `--dir FOLDER` rehearses on a copy of `symphony/tasks/` (`cp -c`, a clone).
+The board's store is a PostgreSQL cluster of its own, `symphony/tasks/postgresql/` in the git
+common dir, served by the machine's PostgreSQL on a Unix socket alone: its identity, its programs
+and its socket are [POSTGRESQL](POSTGRESQL.md)'s. Whatever needs the board starts its server when
+it is not running, and the server outlives its starter; a scratch board's ends with the process
+that started it. Every start, stop, hold, release, snapshot, restore and reclaim takes the
+starters' lock (`symphony/tasks/lock`), one at a time. A command that waits on another's says on
+stderr, after a second and then every 30 s, what it waits on: the holder's pid, since when, and
+what it does (`symphony/tasks/lock.json`, while it holds the lock). The Symphony's reads wait at
+most 5 s, then fail naming the same.
 
-The `tasks-move` binary, the owner's to run the same way, moves the board's store to the other
-engine (`tasks-move postgresql --as HANDLE`, `tasks-move surrealdb --as HANDLE`) and puts a
-snapshot of a PostgreSQL board back over it (`tasks-move --restore SNAPSHOT --as HANDLE`): held,
-exported, copied, every row compared, then switched under a journal with a commit point. It
-moves the board's own database alone: a scratch board (`--database NAME`) in the same store
-stays in the old store, which is kept whole in `symphony/tasks/moved/`, and the move names each,
-so a scratch board on the new engine starts empty. A failure before the commit point leaves the
-board on the engine it was on, nothing is deleted, and a move cut short is settled by its
-holder's next `tasks-move`
-([one board's move](analysis/board-pg-cutover.md#one-boards-move),
-[POSTGRESQL](POSTGRESQL.md#holds-snapshots-and-recovery)).
+The server is never killed. A stop is PostgreSQL's fast shutdown (its clients cut off, what they
+had not committed rolled back, the rest written), waited for by `pg_ctl` for the board's patience
+at most: one still stopping by then is left to finish, the stop says so, and it is never sent a
+second signal ([Stuck servers](#stuck-servers)). A start waits for the server's word that it is
+ready, or that it ended, for the same patience at most; one that says neither is left running,
+never signalled, and the caller told so: it is replaying its log, or stuck. The server's log is
+`symphony/tasks/postgresql.log`. Nobody else signals, starts or restarts the board's server by
+hand.
 
-**Snapshots.** `just tasks snapshot` clones the board's store, `symphony/tasks/data`, into
-`symphony/tasks/snapshots/YYYY-MM-DDTHH-MM-SSZ` (the time it was taken, in UTC; `.N` after another taken
-in the same second); `--list` names those kept, the newest first
-(`crates/tasks/src/server/snapshot.rs`). It takes the lock every start of the board's server
-takes, so no start begins while it clones, and it holds the store's own lock, `symphony/tasks/data/LOCK`,
-the one SurrealKV holds while a server has the store open, whatever path that server was given (a
-trailing slash, a link, a relative path): it is refused while the recorded server or any other
-process has the store open, and no server opens it while the clone is made. A snapshot is never a
-copy of files a server is writing, so a running board's store is snapshotted only once it is
-stopped (under the hold, below). The clone is copy-on-write, one `clonefile` on macOS and
-`cp -R --reflink=always` on Linux, and a plain copy only before a replay (below) or a reclaim:
-elsewhere a volume that cannot clone takes none. It is made under `snapshots/.taking` and renamed
-once whole, so a snapshot listed is whole; one cut short is removed by the next. The launcher takes
-one before each start of a board's server, under the same lock, once it has found the board not
-held: outside a scratch place before every start (`Home::snapshot_before_start`), and on every board
-before a replay (`Home::keep`). `tasks-reclaim` keeps one of the old store the same way, on every
-board, once it has stopped the board's server and before its own servers start on the store.
-Each is the store as the last server left it, its write-ahead log not yet replayed, which a start
-that loses its log, and a later clean stop on the older state, take with them. A start that finds
-the store as a snapshot already holds it, its log and manifest file for file (an earlier start that
-failed left it so), takes none more. The server's log, `symphony/tasks/server.log`, says the snapshot
-each start took, or why it took none; a snapshot that cannot be taken keeps no start from going on
-but a replay's. A board `TASKS_SERVER` names has no store here to snapshot, and the command opens
-no board.
+Work on the data itself, a snapshot, a restore or a swap, holds the database stopped:
+`just tasks database hold "WHY" --as HANDLE` writes `symphony/tasks/hold`, then stops the server
+cleanly, and until its release every board command and the Symphony are refused, naming who holds
+it, since when and why. A stop that fails leaves the hold standing, and its holder runs the same
+command again to finish it. Only its holder releases it (`just tasks database release --as
+HANDLE`), or another handle naming the holder (`--of HOLDER`), which it says: a release by mistake
+in the middle of a swap is what the hold is there to stop. No role decides it, as the board, which
+holds the roles, is not read while it is held. Each hold and release is a line of
+`symphony/tasks/hold.log`. The hold reads no record of the schema the board was seen at, so it
+stops a board that went back as any other.
 
-Which are kept: a server that stops cleanly leaves its store's `wal/` empty, so a snapshot whose
-write-ahead log holds anything was taken after a server ended uncleanly (killed, crashed, cut off),
-before a replay, or of a store that went back, and it may be the only copy of what that log holds.
-Each such snapshot is kept until the owner removes it, and the taking, `--list`, the server's log
-and `just tasks database` say so (`kept until the owner removes it`). Of the others, the newest
-three are kept, and each taking removes the older ones by name. A snapshot shares every block with
-the store when it is taken and keeps the old blocks as the store's server rewrites its tables and
-value log, so each grows towards the size of the whole store as it was then: `df` shows what they
-cost, while `du` counts a clone's shared blocks as its own. A `tasks-reclaim` frees nothing while
-snapshots of the old store are kept: the room comes back once they are removed. The owner removes
-one with `rm -rf symphony/tasks/snapshots/NAME`; nothing runs on a snapshot, so that is safe at any time.
+**Snapshots.** `just tasks snapshot` copies the complete stopped cluster, its WAL included, into
+`symphony/tasks/postgresql-snapshots/YYYY-MM-DDTHH-MM-SSZ` (the time it was taken, in UTC; `.N`
+after another taken in the same second); `--list` names those kept, the newest first
+([POSTGRESQL](POSTGRESQL.md#holds-snapshots-and-recovery)). It is refused while a server runs on
+the cluster or its status cannot be read, so a running board is snapshotted under the hold. The
+copy is copy-on-write, `clonefile` on macOS and `cp --reflink=always` on Linux, and a plain copy
+where the volume cannot clone. It is made under `postgresql-snapshots/.taking` and renamed once
+whole, so a snapshot listed is whole; one cut short is replaced by the next. Each is kept until
+the owner removes it (`rm -rf symphony/tasks/postgresql-snapshots/NAME`; nothing runs on a
+snapshot, so that is safe at any time). A board `TASKS_SERVER` names has no store here to
+snapshot, and the command opens no board.
 
-The server is never killed. Whatever stops it asks it once to end and waits
-while it writes what it holds to disk and closes its store. It is never asked
-twice, by any command: SurrealDB takes a second signal for an immediate
-shutdown, before its store is closed, so the board writes each ask down first
-(`symphony/tasks/ending/PID`) and a later command only waits for it. One that has not
-answered yet is still starting, replaying its log, and is never signalled, ended
-or joined by a second: a command that waited a minute for it says so, and the
-next one waits again. A write the board answered for is on disk, and survives a
-kill or a power cut. A start whose log may not fit the board's memory (one a
-server started without the board's settings left) replays it first in a private
-server and stops that one cleanly, so none of it is lost to a later kill.
+**Reclaiming space.** The `tasks-reclaim` binary, the owner's to run from the main checkout, runs
+`VACUUM (FULL, ANALYZE)` on the board's database while its server runs, and is refused while the
+board is held ([POSTGRESQL](POSTGRESQL.md#free-space-and-versions)).
 
-A replay is the one start that can remove what no server applied. A store that
-went back (a start that replayed its log in pieces and ended before its next
-flush, as an older build's kill of a starting server does, or a crash in a
-private replay of a log over 2 GiB, which its largest memtable splits too) holds a log segment
-its manifest counts as written: every server on it skips that segment, and its
-clean stop removes it. So a replay never runs without a snapshot of the store as
-it is, taken before the private replay's server starts, on every board, scratch
-or not: a clone in `symphony/tasks/snapshots/`; a plain copy, said as one, on a volume
-that cannot clone; neither, and the start is refused and nothing replayed. Its
-write-ahead log holds the log the replay applies, so it is kept until the owner
-removes it once the board reads as it should. The start says where on its stderr
-and in the server's log, and `just tasks database` lists it. In the server's log
-the replay says itself after that snapshot's line: `· a private replay of the
-store's log begins`, then its server's own lines and its clean stop's `Goodbye!`,
-then `· the private replay is through`, then the board's server's lines. A replay
-runs only on a log a server left without its clean close, so they are few. A
-board that reads older than it was after a replay went back: hold it, and
-recover from a clone of that snapshot, never from the snapshot itself nor the
-board's own data ([A board that went back](#a-board-that-went-back)).
-
-A replay's server is never the board's server. The start records the replay in
-`symphony/tasks/replay.json`, with its server's pid and address as soon as it has
-them, until that server has closed the store cleanly. A starter that ends in the
-middle of a replay (a Symphony stopped while its start replays, a command
-killed) leaves the replay's server running, detached, to finish alone under the
-replay's memtable. While the record stands, every server on the data is taken
-for the replay's, whichever pid the record names and whether or not
-`server.json` names it, so none is adopted as the board's and none started
-beside it. Until it answers it is never signalled: a command waits for it as
-for any server still starting, and the Symphony's reads are refused naming the
-replay, so its pages say the board is starting. Once it answers, the next start
-stops it cleanly, which writes what it replayed to the store's tables and
-empties the log, and starts the board's own server under the board's memtable,
-with nothing left to replay. In the server's log `· the private replay's record
-stands, and …` names which server it was (the one the record names, or another
-on the data, and whether `server.json` names it), then come its `Goodbye!` and
-`· the private replay is through`, before the board's server's lines. The hold
-and a reclaim stop it the same way. The record is removed only once nothing it
-may name runs: the pid it names has ended, or it names none, and every listing
-of every process (`ps`) for a second shows no server on the data (`· the private
-replay begun above has no server running and was not said through`); the next
-start then replays what log is left. The record writes down when its server's
-process started, as each ask to end does: a pid that a process started at
-another time has now, after a reboot in the middle of a replay say, is not taken for
-that server, so a record or an ask left behind holds nothing up and needs no
-hand. Where whether its server runs cannot be told for two seconds, a `ps` that
-fails or the named server running off the data, the command is refused saying
-so, nothing is adopted or removed, and the next command asks again; `just tasks
-database` says the same, and what the owner does should it last ([Stuck
-servers](#stuck-servers)). A build from before the record takes such a server
-for the board's.
-
-A command that waits on another's start, stop, hold or snapshot (the starters'
-lock, `symphony/tasks/lock`) says on stderr, after a second and then every 30 s, what
-it waits on: the holder's pid, since when, and what it does, a private replay
-with its log's size among them (`symphony/tasks/lock.json`, while it holds the lock).
-The Symphony's reads wait at most 5 s, then fail naming the same, and wait no
-longer for a server on the data that runs and does not answer (a replay whose
-starter has gone, as a Symphony restarted in the middle of one leaves, which the
-refusal names as that replay). When the
-Symphony is itself the one to start the board, and the start is to replay the
-log, it runs that start on a thread of its own: the read that found it to make
-is refused at once, naming it, as is each read after it until the start is
-through; a start that fails is said to the next read, once, and the read after
-that starts it again. Either way its pages answer 503 while a replay runs, rather
-than waiting minutes, and say the board is starting, with the log's size ([Board
-health](#board-health)).
-
-A server that does not answer is replaying its log or hangs, and the refusal
-says which to look for: how long it has run and on how much CPU, and the size of
-the log. A replay works the CPU all along (a log of gigabytes takes minutes) and
-answers once it is through; a server whose CPU time (`ps -o time= -p PID`) stands
-still across a minute hangs. The board never ends one, as it cannot tell the
-two apart, and a replay cut off can lose what it had not yet written: the owner
-holds the board (below), which leaves that server running, says it, and keeps
-anything from starting another, ends it (`kill PID`), and releases the hold.
-Nobody else signals, starts or restarts the board's server by hand.
-
-Work on the data itself, a snapshot, a replay on a clone or a swap, holds the
-database stopped: `just tasks database hold "WHY" --as HANDLE` stops the server
-cleanly and writes `symphony/tasks/hold`, and until its release every board command
-and the Symphony are refused, naming who holds it, since when and why. Only its
-holder releases it (`just tasks database release --as HANDLE`), or another
-handle naming the holder (`--of HOLDER`), which it says: a release by mistake in
-the middle of a swap is what the hold is there to stop. No role decides it, as
-the board, which holds the roles, is not read while it is held. Each hold and
-release is a line of `symphony/tasks/hold.log`. The hold reads no record of the
-schema the board was seen at, so it stops a board that went back as any other:
-it is step 2 of that recovery. A clean stop removes the log segments the store's
-manifest counts as written, the hold's included: on a store that went back, keep
-the log first (step 1 there), the snapshot taken before the start on the older
-state, else a clone of `data/` (`cp -c -R`) while its server still runs.
-
-Only builds that carry these rules keep them: an older build starts a server
-under a hold, and ends one that has not answered within a minute, in the middle
-of its replay, which is how a store goes back. They hold once each build that
-reaches the board carries them: this repository's main checkout's
-`.target/bin/tasks`, relinked by its next `just tasks` after the landing; the
-shared Symphony server, which reads every project's board, at its restart (the
-owner's word); and each consuming project's host, once its pin moves past the
-landing and the host is rebuilt and restarted.
+**Putting a snapshot back.** The `tasks-move` binary, the owner's to run the same way, puts a
+snapshot back over the board it was taken from (`tasks-move --restore SNAPSHOT --as HANDLE`):
+held, copied, then switched under a journal (`symphony/tasks/move.json`) with a commit point, the
+cluster it replaced kept in `symphony/tasks/moved/`. A failure before the commit point leaves the
+board on the cluster it had, nothing is deleted, and a switch cut short is settled by its holder's
+next `tasks-move`. `tasks-move postgresql --as HANDLE` (or `surrealdb`) only settles a journal an
+earlier release's move left, and moves no board between the engines
+([POSTGRESQL](POSTGRESQL.md#holds-snapshots-and-recovery)).
 
 ## What the command may write
 
@@ -448,147 +319,39 @@ where the project says.
 
 ## Stuck servers
 
-The board asks a server once to end and kills none, so two things can outlast
-its commands, and both are the owner's.
-
-A server still running ten minutes after its one ask (`symphony/tasks/ending/PID`
-names it, with when it was asked and when its process started) is left to
-finish, and the stop says so, naming its pid, that file and its log; every later
-stop only waits on it again. A server writing a large memtable takes minutes. One
-whose CPU time (`ps -o time= -p PID`) stands still across a minute has hung: the
-owner holds the board (`just tasks database hold "WHY" --as HANDLE`, which holds
-from the moment it begins, while its stop still waits on the server, and after
-it says the server still closes, so nothing starts another), ends it by hand
-(`kill -9 PID`: the writes it held are in its log, which the next start replays)
-and releases the hold. The ask is forgotten by the next stop or start once its
-process has ended, or once another process, which started at another time, has
-its pid.
-
-A private replay's record (`symphony/tasks/replay.json`) whose server cannot be told
-to run or not (a `ps` that keeps failing, a kernel that does not say when the
-process with its pid started, or the server it names running while neither it
-nor any other process is a server on the data) refuses every command
-that would start or stop the board's server, and `just tasks database` says why.
-Once `ps` can tell, the next command settles it alone. Should it never, the owner
-removes the record by hand once `ps -ww -axo pid,command` lists no `surreal
-start` on the board's `data`.
+The board asks its server once to stop and kills none, so a server can outlast its commands, and
+that is the owner's. A server still running when its stop's wait runs out (the board's patience,
+`pg_ctl`'s own bound) is left to finish: the stop says so, naming its pid, the machine's load and
+its log (`symphony/tasks/postgresql.log`), and it is never signalled again. A hold whose stop
+ended so stays standing, so nothing starts another server meanwhile, and its holder runs the hold
+again to finish it once that server has ended. A server that does not say it is ready within the
+patience of its start is left running, never signalled, and the start refused saying so: it is
+replaying its log, or stuck.
 
 ## A board that went back
 
 A board refused as one that went back holds an older store than the one it was seen at: what was
-written since is not in it, and may still be in the files the store left. Run nothing that writes,
-`just tasks migrate` above all, which would write on top of the older state. `just tasks schema`
-says what the store holds and what the record says, and exits 1 while the board went back; every
-page of the project says it on the server's notice, the project picker under its name, and
-`just tasks status` first among its warnings ([Board health](#board-health)).
+written since is not in it. Run nothing that writes, `just tasks migrate` above all, which would
+write on top of the older state. `just tasks schema` says what the store holds and what the
+record says, and exits 1 while the board went back; every page of the project says it on the
+server's notice, the project picker under its name, and `just tasks status` first among its
+warnings ([Board health](#board-health)).
 
 When the older board is meant, a fresh store or a restore the owner chose, the owner accepts it:
 `just tasks schema --accept VERSION`, `none` for a store with no board, is refused unless the
 board holds exactly that version, and adds an `accepted` line to the record, which counts from
-there. The board is then read, and moved forward, as any board behind its build is. A restore
-from a snapshot puts a clone of it in place with the database held (below), `symphony/tasks/data`
-renamed aside first: `cp -c -R symphony/tasks/snapshots/NAME symphony/tasks/data`, never the snapshot itself.
+there. The board is then read, and moved forward, as any board behind its build is.
 
-**Recovering what was lost** is the owner's, or done on the owner's word, by hand, in the board's
-folder (`symphony/tasks/` in the git common dir). `CLONE` below is a clone of the copy step 1 keeps, and
-every server started is one of your own, on a clone, on a port of your own.
-
-1. **Keep the log before anything stops the server.** A server on the older state that stops
-   cleanly removes every write-ahead log segment below the manifest's log number as obsolete
-   (`Cleaned up … obsolete WAL files during shutdown`), the unapplied ones among them, and the hold
-   stops it cleanly. The copy to recover from is the oldest snapshot whose write-ahead log holds
-   writes among those taken since the board's server last stopped cleanly: the launcher took it
-   before the first start after the unclean end, with the log the server before it left, not yet
-   replayed. `just tasks snapshot --list` marks those snapshots (`kept until the owner removes
-   it`), and `symphony/tasks/server.log` names the snapshot taken before each start, in order, with a
-   clean stop's `Goodbye!` between two starts. A snapshot taken before a private replay is such a
-   copy, whether the store had gone back before it or the replay itself was cut off: in
-   `server.log` its line is followed by `· a private replay of the store's log begins`, the replay
-   server's own lines and its clean stop's `Goodbye!`, then `· the private replay is through`; a
-   replay whose starter ended before it was through has its end said by the next start instead,
-   `· the private replay's record stands, and …` just before that `Goodbye!`, naming the server it
-   stopped. That `Goodbye!` is the replay's and never counts as the board's server
-   stopping cleanly: it is the stop that removes a segment no server applied, so the snapshot
-   before it holds what the board lost. Nor do a reclaim's: after its keep's line (`· a snapshot
-   of the store before this reclaim`), the `Goodbye!` lines up to the next start's snapshot line
-   are its own servers', on the old store and on the new one. Where a build wrote none of these
-   lines, the times tell. SurrealDB dates each of its lines in UTC but its `Goodbye!`, which
-   follows its stop's last dated line, and each server's first line is its warning that
-   authentication is disabled; a snapshot is named by the UTC second it was taken, just before the
-   start whose lines follow it, and a start by a build that takes snapshots, outside a scratch
-   place, always writes its snapshot line first. A build from before the replay's two lines shows
-   a replay as two servers' lines after one snapshot line, the second server's first line dated
-   within a second of the first's last, with no snapshot line between. A clean stop and then a
-   start by a build that writes no snapshot line show the same lines, the start's first line
-   dated when that start came; one that came within a second of the stop reads as a replay, and
-   `symphony/tasks/hold.log` dates each hold and release, whose stop a start may follow at once. Clone
-   it out of `snapshots/` at once
-   (`cp -c -R symphony/tasks/snapshots/NAME symphony/tasks/data.evidence-DATE`; `cp -R --reflink=always` on
-   Linux, `cp -R -p` where the volume cannot clone, as the board's own plain copy is made). With
-   none (no build that takes snapshots made that start), clone the data folder the same way at
-   once, while the server on the older state still runs: it keeps the segments below
-   its log number until it stops, and no build that reads the record writes to the board meanwhile
-   ([the record](#the-record-of-the-highest-schema-seen) says which do). Never start anything on that copy: each step
-   below works on a clone of it (`cp -c -R`), so each try starts again from it.
-2. **Hold the database.** `just tasks database hold "WHY" --as HANDLE` stops the recorded server
-   cleanly and writes `symphony/tasks/hold`, and no start of the database happens until `just tasks
-   database release --as HANDLE`, so no board command starts it on the old path between the
-   swap's two renames (step 8).
-3. **Read the log number.** `CLONE/manifest/00000000000000000000.manifest` records it: the first
-   segment a start replays, every segment below it taken to be in sstables already and skipped.
-   It is the big-endian 8-byte number at bytes 10 to 17 of the file, after its format version (2
-   bytes) and next table id (8): `printf '%d\n' 0x$(xxd -s 10 -l 8 -p
-   CLONE/manifest/00000000000000000000.manifest)`. `ls -l CLONE/wal` lists the segments, each named
-   by its number in 20 digits (`00000000000000000017.wal`). In a store that went back the log
-   number reads N+1 while segment N is still in `wal/`: the engine moved past a segment it never
-   applied. What servers wrote on the older state is in the segments from N+1 up, and may be at
-   the end of segment N as well: the server whose replay split N goes on writing to N, the segment
-   it has open (in one reproduction it appended 923 bytes there and wrote no N+1), while a server
-   started later on the older state writes from a segment of its own. Writes at the end of N are
-   replayed with it in step 5, after the ones the board lost, in the order they were made, and
-   step 4 cannot remove them; step 6's counts show them. To leave them out, recover from a copy
-   taken before that server started, whose segment N ends before them, where there is one (the
-   snapshot a build that takes them took before that start). When
-   several segments lie below the log number, N is the lowest of them; when none does, nothing is
-   skipped, and step 4 has nothing to do: a snapshot taken before a replay of a store that had not
-   gone back reads so, its whole log still to replay, and step 5 replays it all.
-4. **Point the clone at segment N, and remove the segments from N+1 up**, which must not be
-   replayed on top of it: `printf '%016x' N | xxd -r -p | dd
-   of=CLONE/manifest/00000000000000000000.manifest bs=1 seek=10 count=8 conv=notrunc` writes N
-   there, and step 3's read then says N; then `rm -f CLONE/wal/NNNNNNNNNNNNNNNNNNNN.wal` for
-   segment N+1 and each one after it.
-5. **Replay it in a server of your own.** On a port of your own, never the board's, with the
-   value-log threshold the board's own servers use, and a memtable that holds the largest segment,
-   so its replay never splits it (a replay that splits a segment records the next one's number at
-   its first flush, and an end before it flushes the rest loses that rest):
-   `SURREAL_SURREALKV_VLOG_THRESHOLD=67108864 SURREAL_SURREALKV_MAX_MEMTABLE_SIZE=BYTES
-   "$SYMPHONY_SURREAL" start --unauthenticated --log info --bind 127.0.0.1:PORT surrealkv://CLONE`,
-   `BYTES` twice the largest segment's size in `ls -l CLONE/wal`, at most 4294967295 (SurrealKV's
-   largest memtable): a memtable takes more of each write than the log holds of it, which is why
-   the board's own replay takes twice its log, so one just above a segment's size can still split
-   it. Record its pid, and wait until it answers (`curl -s http://127.0.0.1:PORT/health`); never
-   end it while it replays.
-6. **Verify by schema, counts and newest change.** `TASKS_SERVER=127.0.0.1:PORT just tasks
-   schema` reads the clone's schema and writes nothing; the counts and the newest message by
-   `"$SYMPHONY_SURREAL" sql --endpoint http://127.0.0.1:PORT --namespace sf --database tasks` with
-   `RETURN [array::len(SELECT VALUE id FROM task), array::len(SELECT VALUE id FROM message),
-   math::max(SELECT VALUE ts FROM message)];`. The schema is the one the record says, and the
-   counts and the newest message are above what the store that went back holds, read the same way
-   on a clone of it. Nothing else is run against it: a writer at its build's schema would move it.
-7. **Stop it cleanly.** One SIGTERM to the pid you recorded, then wait for the process to end,
-   never a second signal or a kill while it closes its store. At `--log info` it says `All
-   memtables flushed successfully on shutdown` (the warning `No runtime available for closing the
-   store correctly` is printed by every shutdown, clean ones too); its log is then in sstables, and
-   the next start replays nothing.
-8. **Swap, under the hold.** With the database still held, rename `symphony/tasks/data` aside
-   (`data.rolled-back-DATE`) and the recovered clone to `symphony/tasks/data`, then `just tasks
-   database release --as HANDLE`: the next board command starts the database on it.
-   `just tasks schema` then says the board is at the schema it was seen at, and the record needs
-   no acceptance. The copies kept in steps 1 and 8 and the snapshots that hold a log are the
-   owner's to remove once the board is whole again ([Snapshots](#the-store-and-its-server)).
-
-The first recovery done this way, with that day's numbers, is in
-[history](../history/board-went-back-2026-11-12.md).
+**Recovering what was lost** is the owner's, or done on the owner's word. A board's store goes
+back when an older one takes its place: a snapshot put back over it, its cluster's files put back
+by hand, or a copy of an older dump. A snapshot that holds the board at the schema it was seen at
+is put back over it with `tasks-move --restore SNAPSHOT --as HANDLE`
+([POSTGRESQL](POSTGRESQL.md#holds-snapshots-and-recovery)), then `just tasks recovery rebind`;
+`just tasks schema` then says the board is at the schema it was seen at, and the record needs no
+acceptance. A restore keeps the cluster it replaced in `symphony/tasks/moved/STAMP-postgresql/`,
+so a restore that sent the board back leaves what it lost there, to be put back as any
+database's files are ([below](#a-board-that-was-copied-or-restored)): under the hold, with
+`symphony/tasks/postgresql` renamed aside first, never removed.
 
 ## A board that was copied or restored
 
@@ -617,18 +380,12 @@ ordinary write, and in no dump.
   replaces the rows, so a token read before a copy is refused after it, and one read before a
   copy that failed still holds. A build of a schema before 22 copies without replacing it, which
   is why the generation came with a schema step: such a build is refused the board.
-  A copy that cannot finish leaves the board as it was and says why in one line. On PostgreSQL
-  the copy is one request, which the server itself ends thirty seconds short of the wait of the
+  A copy that cannot finish leaves the board as it was and says why in one line. The copy is one
+  request, which the server itself ends thirty seconds short of the wait of the
   program that sent it (270 s of the client's 300), saying the rows of each table it had copied
   and the table it was at: left to run past its caller's wait it would replace the board after
   the caller was told it failed, which only a copy whose commit and answer take those thirty
-  seconds still can. On SurrealDB the copy stages its rows and swaps them in in one
-  transaction, which must fit the memtable of the server it runs on: one the server does not
-  commit is said with the rows and bytes it staged and the setting
-  (`SURREAL_SURREALKV_MAX_MEMTABLE_SIZE`, 256 MiB on a server the board starts), and what it
-  staged is removed a table at a time, or by the next copy before it stages. So a copy made
-  while another stages takes the other's staging, and the other is refused at its swap, which
-  first counts each staging table against the rows it sent: the later copy is the one kept. How large a board each takes is measured in
+  seconds still can. How large a board it takes is measured in
   [the store's baseline](analysis/board-store-baseline.md#a-board-ten-times-the-size-measured-2026-11-18).
 
 The generation is a row of the database, so putting the database's files back puts it back too.
@@ -643,14 +400,14 @@ board to the new one. A rebind never adopts the generation it found, so one cut 
 leaves the board refusing, and is run again. `revoke` and `rebind` change the project's own board
 only from its main checkout; a scratch database (`--database NAME`) has a file of its own.
 
-**Putting a database's files back**, from a snapshot or a recovered clone
+**Putting a database's files back** by hand, a cluster a restore kept aside say
 ([a board that went back](#a-board-that-went-back)), is in this order: `just tasks recovery revoke` first, before
 the restored data is in place and served; the swap, under the hold; then, once the board is the
 one to keep, `just tasks recovery rebind`. A copy made by a store that holds no binding (a
 scratch program's, `tasks-copy`) leaves the binding naming the generation before it, which
-refuses until a rebind. A PostgreSQL restore into a new board
-([POSTGRESQL](POSTGRESQL.md#holds-snapshots-and-recovery)) revokes that board's bindings itself
-before its data is in place.
+refuses until a rebind. A restore, over the board or into a new one
+([POSTGRESQL](POSTGRESQL.md#holds-snapshots-and-recovery)), revokes the bindings of the board it
+restores itself, before that board is served.
 
 The binding is this machine's file. A store is handed its authority and finds none by itself
 (`Store::recovering`, the `recovery::Authority` trait): a board reached by `TASKS_SERVER` alone
@@ -687,8 +444,8 @@ pass that failed more than ten minutes ago, with none since, is warned of no mor
 every page of the project says so on the server's notice (beside a failed server update, when
 there is one), told when it starts and when it ends, and the project picker says so under the
 project's name; both read the server's memory, not the board (`apps/symphony-server/src/live/health.rs`).
-A project with no board, its server answering that none is made yet or no store (`symphony/tasks/data`)
-and no SurrealDB here to run one on (`symphony_board::board_health::absent`), is not unwell: no
+A project with no board, its server answering that none is made yet
+(`symphony_board::board_health::absent`), is not unwell: no
 pass of it is counted, and the picker says plainly that it has no task board. So is a project whose
 folder is gone, or no longer holds the repository its server found there: the server says so once
 in its log, then reads, maintains and records nothing more of it, answers its pages' reads and saves
@@ -726,9 +483,8 @@ folder left without its `.git`, starting and acting on that checkout's board:
 Only the machine's shared installation runs the cancel's cleanup and the reap. Each matters only
 for a project the server serves whose folder sits inside another git checkout; one in no checkout
 finds no repository above it, and no board. A board's
-start, stop or hold makes no folder at or above the repository's common dir again; a start whose board folder goes while its server starts (SurrealDB makes every missing
-folder of its store's path) ends that server and records none. A board whose store is there is never no board: when the SurrealDB
-that serves it is missing (a version bump before the new binary is fetched, `SYMPHONY_SURREAL` naming a file that is not there), or its server answers with an
+start, stop or hold makes no folder at or above the repository's common dir again. A board whose
+store is there is never no board: when its server cannot be started, or answers with an
 older schema or not at all, its passes fail and it is unwell and says so.
 `tasks status` also warns when the record is more than a minute old, naming the server's pid and
 whether it still runs: no dispatch pass has been recorded since.
@@ -752,7 +508,7 @@ name, its board's worst signal, and, only while the dot is not green, one line u
 the dot's colour saying why; `/api/projects` sends that line as the project's `unwell`. One
 function judges both (`Hub::standing`, `apps/symphony-server/src/live/health.rs`), from the
 server's memory alone: drawing it reads no board. Red is every page's notice above, in its words
-and alone: a dispatch or sweep failing, a board that went back, one replaying its log. Amber is a
+and alone: a dispatch or sweep failing, a board that went back. Amber is a
 board slow over the last hour, its writes at a p90 of a second or more (`SLOW_MS`, the record's
 slow request) or any request unanswered in it, said with the figures that say so, `Board slow
 (writes 3 s, 48 unanswered this hour)`, the p90 to the nearest whole second; or work waiting to
@@ -799,16 +555,6 @@ written since is lost, that nothing was written, not to run `just tasks migrate`
 section says how to recover it (`crates/tasks/src/live/seen.rs`, `Rollback::line_in`). The record
 holds that line as `rollback`, written at once when it starts and when it ends, and `tasks status`
 warns of it first. The next store that opens the board, accepted or recovered, clears it.
-
-**A board replaying its log** cannot be reached until the start replaying it is through, the
-server's own, run apart from its reads, or another's it waited on ([the store and its
-server](#the-store-and-its-server)). While the server's reach of the board is refused for one, every page's
-notice and the picker say, in place of the dispatch's words, that the board is starting: its
-store's log, of the size the start measured, is replayed in a private server before the board's
-server starts (a log of gigabytes takes minutes), and the board answers once that is through
-(`symphony_board::server::replaying_in`). Each such tick is a failed dispatch pass all the same,
-which `tasks status` says with the refusal; a reach that finds no replay, the board's server up or
-any other refusal, ends it.
 
 **A disk running full** is warned of in the same two places: `tasks status` when the disk holding
 the record has less free than `SYMPHONY_LOW_DISK_GB` gigabytes (20 when unset; `0` turns it off, and a

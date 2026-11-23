@@ -117,7 +117,7 @@ fn start_postgresql() -> PgServer {
     }
     std::fs::create_dir_all(&dir).unwrap();
     let programs = symphony_board::server::postgres::discover_programs(&project_root()).unwrap();
-    let pg = Home::new(&dir.join("board"), Path::new("/no/surreal"))
+    let pg = Home::new(&dir.join("board"))
         .telling(|_| {})
         .postgresql(&programs);
     let serving = pg

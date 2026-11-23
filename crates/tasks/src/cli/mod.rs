@@ -590,7 +590,7 @@ enum Reaching {
 }
 
 /// How long the Symphony's read waits on another's start of the board's server (the starters'
-/// lock) before it is refused, naming that start: a start without a replay takes about a second.
+/// lock) before it is refused, naming that start: a start takes about a second.
 const READ_WAIT: Duration = Duration::from_secs(5);
 
 /// The machine folder `env` names ([`crate::project::machine_folder`]), if it names one.
@@ -652,12 +652,11 @@ fn reach_board(
         common: common.clone(),
     });
     guard(&live)?;
-    let mut home = Home::in_common(common, env.read(symphony_env::SURREAL).map(Path::new));
+    let mut home = Home::in_common(common);
     if how == Reaching::Read {
         // The Symphony's thread that reads the board serves its pages too: it is refused, naming
-        // the start under way, rather than wait out a replay of minutes, another's or its own,
-        // which runs on a thread of its own.
-        home = home.waiting_at_most(READ_WAIT).starting_apart();
+        // the start, stop or hold under way, rather than wait it out.
+        home = home.waiting_at_most(READ_WAIT);
     }
     // Held, every reach is refused naming the hold, one that would only read the record too.
     if let Some(hold) = home.held() {
@@ -679,15 +678,14 @@ fn reach_board(
     let start = !matches!(how, Reaching::Running | Reaching::Peek);
     let running = home
         .board_server(&project.place.root, start)
-        .map_err(|error| match error {
-            // Where the board's server comes from is the project's board guide's to say, and what
-            // a board not made yet is made on, which its start could not make it on.
-            crate::server::ServerError::NoSurreal(_)
-            | crate::server::ServerError::Unserved { .. } => {
+        .map_err(|error| {
+            // What a board not made yet is made on, which its start could not make it on, is the
+            // project's board guide's to say.
+            if unmade && start {
                 format!("{error} ({}#where-it-lives)", project.guide())
+            } else {
+                error.to_string()
             }
-            error if unmade && start => format!("{error} ({}#where-it-lives)", project.guide()),
-            error => error.to_string(),
         })?;
     Ok(Reached {
         client: Client::new(&running.addr, NAMESPACE, db),

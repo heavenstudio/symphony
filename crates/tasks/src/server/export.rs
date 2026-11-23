@@ -25,12 +25,7 @@ impl Home {
     /// on SurrealDB is refused, naming how it moves. Nothing is started.
     fn postgresql_now(&self) -> Result<(Postgres, Running), ServerError> {
         if self.backend()? == Engine::SurrealDb {
-            return Err(ServerError::Io(format!(
-                "the board in {} is on SurrealDB, which this build reads no more: {}. Nothing is \
-                 read or exported",
-                self.dir.display(),
-                super::GONE
-            )));
+            return Err(self.on_surrealdb("Nothing is read or exported"));
         }
         if self.unmade()? {
             return Err(ServerError::NotUp(format!(

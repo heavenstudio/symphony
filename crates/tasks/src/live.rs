@@ -1,11 +1,11 @@
 //! A project's live board, and which builds may move it forward.
 //!
 //! A project's live board is the `tasks` database on its repository's board server, the one on the
-//! data in its common dir (`symphony/tasks/data`), however a run reaches it: through its project,
-//! or by an address, a `TASKS_SERVER` or a client made for it, which is known by the server
-//! listening there and the data it serves, wherever the run is ([`served`], [`find`]). Only where
-//! this machine cannot say who listens there is it known by the record of the run's repository, or
-//! of a registered project, that names its port ([`recorded`]). Any other board
+//! data in its common dir (`symphony/tasks/postgresql`), however a run reaches it: through its
+//! project, or by an address, a `TASKS_SERVER` or a client made for it, which is known by the
+//! server listening there and the data it serves, wherever the run is ([`served`], [`find`]). Only
+//! where this machine cannot say who listens there is it known by the record of the run's
+//! repository, or of a registered project, that names its port ([`recorded`]). Any other board
 //! is a scratch one, which every writer moves forward as the schema rule says
 //! ([`crate::schema::decide`]).
 //!
@@ -43,7 +43,7 @@ pub mod seen;
 /// Where a repository that commits the board's own source keeps its schema: this repository's.
 pub const SOURCE: &str = "crates/tasks/src/schema.rs";
 
-/// The PostgreSQL definitions a build moving a live PostgreSQL board must also match.
+/// The PostgreSQL definitions a build moving a live board must also match ([`may_move`]).
 pub const POSTGRES_SOURCE: &str = "crates/tasks/src/store/postgres/schema.rs";
 const OWN_POSTGRES_DIGEST: &str = env!("BOARD_POSTGRES_SCHEMA_SHA256");
 
@@ -454,31 +454,14 @@ pub fn cargo_refusal_here(live: Option<&Live>, addr: &str, database: &str) -> Op
 /// Whether a writer opening for `migrating` (`tasks migrate`) may move `live`, found at `found`
 /// (none: not made yet), forward to `own`, its schema `this_build` when the build's own
 /// ([`crate::Schema::this_build`]): the refusal, in its words, when it may not. The build that may
-/// is the one whose source is what the repository's default branch commits ([`committed`]), never
-/// what a checkout holds: where it commits the board's source, only a build of that very text, under
-/// any command, and making the board is judged as moving it is; where it commits none, only `tasks
-/// migrate`, run in the main checkout, or in any checkout of a repository with none, while any
-/// writer makes a board not made yet. A refusal names a scratch board as `scratch` says, in the words
-/// the program opening it takes ([`SCRATCH_FLAG`], [`SCRATCH_VARIABLE`]).
+/// is the one whose source is what the repository's default branch commits, never what a checkout
+/// holds: where it commits the board's source, only a build of that very text, its common version
+/// source ([`SOURCE`]) and its PostgreSQL definitions ([`POSTGRES_SOURCE`]) both read from the one
+/// commit, under any command, and making the board is judged as moving it is; where it commits
+/// none, only `tasks migrate`, run in the main checkout, or in any checkout of a repository with
+/// none, while any writer makes a board not made yet. A refusal names a scratch board as `scratch`
+/// says, in the words the program opening it takes ([`SCRATCH_FLAG`], [`SCRATCH_VARIABLE`]).
 pub fn may_move(
-    live: &Live,
-    this_build: bool,
-    migrating: bool,
-    found: Option<i64>,
-    own: i64,
-    scratch: &str,
-) -> Result<(), String> {
-    let committed = match named_branch(live) {
-        Ok(named) => committed(&live.common, named.as_deref()),
-        Err(refused) => refused,
-    };
-    judged(live, &committed, this_build, migrating, found, own, scratch)
-}
-
-/// [`may_move`] for PostgreSQL: this repository's common version source and its PostgreSQL
-/// definitions must both be the ones the default branch commits. A consuming project that
-/// commits neither keeps the ordinary migration rule.
-pub fn may_move_postgresql(
     live: &Live,
     this_build: bool,
     migrating: bool,
