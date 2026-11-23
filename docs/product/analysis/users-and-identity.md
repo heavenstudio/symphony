@@ -25,7 +25,9 @@ the modules and documents read.
 - **A group owns what waits to be decided.** A card or a task belongs to a group, or to one
   person. Its members are told, and any one of them settles it
   ([decided](#who-in-a-group-decides)). They also move, prioritize and cancel the group's tasks,
-  and anyone who may speak files one ([decided](#who-acts-on-a-task)).
+  and anyone who may speak files one ([decided](#who-acts-on-a-task)). The Settings page is a
+  place like any other, and its group's members change its settings
+  ([decided](#who-changes-settings)).
 - **Three things one owner does today come apart.** Speaking to people, deciding, and directing
   agents are held separately. Anyone on a board speaks to anyone, anywhere. The words of someone
   who may not direct agents reach no agent until someone who may passes them on
@@ -37,6 +39,8 @@ the modules and documents read.
   does that, with OAuth 2, and hands the Symphony signed data saying who the person is. The core
   only verifies it ([how](#how-a-provider-plugs-in)). The Symphony ships one such service, and
   any other that signs the same way replaces it.
+- **A project's plugin is told who sent a write, and nothing more.** Never what a person may do,
+  never how to reach them, and nobody on a read ([decided](#what-a-plugin-is-told-of-who-asked)).
 - **Not on a board, a person cannot see it exists.** That holds for a machine of the tailnet
   under another login as for a hosted visitor ([decided](#a-tailnet-machine-under-another-login)).
 - **A machine with one person changes in nothing.** With nobody named on a board, the person at
@@ -713,7 +717,7 @@ The place it is in, unless a name is written on it
 What follows:
 
 - **The map is the board's own**, as its groups are, so two boards of one project can send the
-  same folder to different groups.
+  same folder to different groups. Its admins keep it ([below](#who-changes-settings)).
 - **A name written on a card is in the file**, so a group's name is public as a person's is. A
   board with no group of that name treats the card as unnamed and falls back to the map.
 - **An agent posting a card writes nothing** in the usual case, and names a group only when the
@@ -924,58 +928,49 @@ What follows:
   [2026-11-22 20:10] agent — Recorded, B: the note beside a verdict is part of the decision and is written with it, on the card, where agents read it. A person who may decide and may not direct agents says why on the cards their group owns; their words anywhere else stay held until passed on. Written in [[analysis/users-and-identity#The note beside a verdict]]. What follows from B: the note opens an ask on that card, as your notes do today, so an agent answers it there; work it asks for beyond what the card decides is the card's to file and not to start, which still needs someone who may direct agents.
   [2026-11-22 20:13] agent · resolved
 
-## This round
+## Outside a card or a task
 
-Two choices are open, each about what a power covers outside a card or a task: the Settings page,
-and a project's plugins.
+What deciding covers on the Settings page, and what a project's plugin is told of who asked.
 
 ### Who changes settings
 
-**Base.** Today the owner changes every setting the Settings page offers. [The settings
-concept](settings-page.md) keeps a change from the page in the board's store, where it
-holds at once, and offers beside it a control that makes it the project's: a commit straight to
-the default branch, on a green settings check. A setting that holds a command the server runs is
-reviewed, a task and a reviewer, and never changed from the page.
-
-It left to this concept who may change the project's preferences once there are several people,
-and named [the places a permission attaches](settings-page.md#who-may-change-what):
+The group the Settings page maps to ([its card](#settings-who-changes), A). [The settings
+concept](settings-page.md) keeps a change from the page in the board's store, where it holds at
+once, and offers beside it a control that makes it the project's, a commit on a green settings
+check. It left to this concept who may do that with several people, at [the places a permission
+attaches](settings-page.md#who-may-change-what):
 
 | Where a value is changed | Who changes it, with people |
 | --- | --- |
 | this device | each person, with no power |
 | this machine (`symphony.local.toml`) | whoever runs that machine's server, in a terminal |
-| the board's store, and making a value the project's | **this card** |
+| the board's store, and making a value the project's | the members of the Settings page's group |
 | a reviewed setting | a task and a reviewer, as today |
 
 ![Who changes a preference in the board's store and makes it the project's](users-and-identity/settings-who.svg)
 
-- **A, the group the Settings page maps to.** The Settings page is a place, as a folder of
-  documents is, so the board's map gives it a group: the default group, unless an admin maps it
-  to another. Its members change a stored value and make it the project's. Deciding covers it,
-  and no power is added.
-- **B, the board's admins.** Settings are administered, as who is on the board is.
-- **C, a power of its own**, to configure, given to a group or a person apart from deciding.
+- **The Settings page is a place**, as a folder of documents is. The board's map gives it a
+  group: the default group, unless an admin maps it to another.
+- **Its members change a stored value and make it the project's.** Deciding covers it, and no
+  power is added. Any one of them does it, and a later change by another overrides it, as with a
+  card ([above](#who-in-a-group-decides)).
 
-Under every option a commit the page makes names who asked and is authored by their git handle,
-a reviewed setting stays a task and a reviewer, and a person a board has not added sees no
-Settings page of it.
+What follows:
 
-**Recommended: A.** A model, a limit or an agent switched off is a decision about how the board's
-work is done, and the group that owns the work makes it. A uses what is decided already: a task's
-acts are deciding and add no power ([its card](#task-acts-who)), the place gives
-the group ([its card](#owning-group-how-named)), and any one member settles
-([its card](#group-answer-settles)). B gives configuration to whoever manages
-people, who on a company's board is often not who runs the work. C costs a sixth power to give.
-
-Two costs under every option, A's as much as the others':
-
+- **An admin keeps the map of places**, the Settings page among them, as an admin keeps who is on
+  the board ([its card](#people-kept-where)). A single card or task is still handed to another
+  group by any member of its own ([its card](#owning-group-how-named)).
+- **A change names who made it.** A commit the page makes is authored by their git handle, and a
+  stored change is kept in the store's record under their short name.
+- **On a board with nobody named**, the person at the machine is the default group and changes
+  every setting, as today.
 - **A preference spends someone's credits.** A costlier model for the board's shared agents runs
   on their host's credits. What a host may limit is a [later round's](#later-rounds).
 - **Making a value the project's reaches beyond the board.** It changes the committed file every
   clone and every board of the project reads. With one board for a project, that board's say is
   the whole of it; several boards for one project is a concept of its own.
 
-- [x] **settings-who-changes** — Today you change every setting the Settings page offers. Its concept, now on main, keeps a change in the board's store, where it holds at once, and a control beside it makes the value the project's, a commit. It left to this concept who may do that once there are several people. A: the group the Settings page maps to; the page is a place like a folder of documents, so any member of its group changes a stored value and makes it the project's, and no power is added. B: the board's admins, as with who is on the board. C: a power of its own, to configure, given apart from deciding. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Who changes settings]]
+- [r] **settings-who-changes** — Today you change every setting the Settings page offers. Its concept, now on main, keeps a change in the board's store, where it holds at once, and a control beside it makes the value the project's, a commit. It left to this concept who may do that once there are several people. A: the group the Settings page maps to; the page is a place like a folder of documents, so any member of its group changes a stored value and makes it the project's, and no power is added. B: the board's admins, as with who is on the board. C: a power of its own, to configure, given apart from deciding. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Who changes settings]]
   [2026-11-22 20:13] agent — Posted for the board task `app/users-and-identity`, the question the settings concept (`app/settings-page`) left to this one. A concept: nothing is built by this card.
 
     ![Who changes a preference in the board's store and makes it the project's](users-and-identity/settings-who.svg)
@@ -1006,45 +1001,42 @@ Two costs under every option, A's as much as the others':
 
     None decides this.
   [2026-11-23 00:41] owner · approved — A
+  [2026-11-23 00:52] agent — Recorded, A: the Settings page is a place in the board's map, the default group's unless an admin maps it to another, and the members of its group change a stored value and make it the project's. Deciding covers it, and no power is added. Written in [[analysis/users-and-identity#Who changes settings]]. What follows from A: the map of places is an admin's to keep, for every place as the card said of this one ("unless an admin maps it to another"), as an admin keeps the board's people under **people-kept-where** (B). A single card or task is still handed to another group by any member, as **owning-group-how-named** said under every option. So the first item of Later rounds is answered with no card. A change names who made it: a commit is authored by their git handle, a stored change kept under their short name.
+  [2026-11-23 00:52] agent · resolved
 
 ### What a plugin is told of who asked
 
-**Base.** A plugin's call carries no person. A board action's submission is the owner's answer
-(`symphony_plugin::Submission`, its payload and note), and the line the board says for it on the
-task is said as the owner. An approval authority is the one call already handed who asked (the
-principal in `symphony_plugin::authority::Operation`), to sign what was decided. Reads, a card's
-renderers, a home region, a route, are drawn alike for everyone and kept until the board's inputs
-change ([PLUGIN_PROTOCOL](../../engineering/PLUGIN_PROTOCOL.md)).
-
-With people, the core admits every call before a plugin is asked: a person a board has not added
-never reaches its plugins, and one who may only read reaches none of its actions. What is left
-is what the plugin is told.
+Who sent a write, and nothing more ([its card](#plugin-told-who), C). Today a plugin's call
+carries no person: a board action's submission is the owner's answer
+(`symphony_plugin::Submission`, its payload and note), and an approval authority is the one call
+handed who asked (the principal in `symphony_plugin::authority::Operation`)
+([PLUGIN_PROTOCOL](../../engineering/PLUGIN_PROTOCOL.md)).
 
 ![What a project's plugin is told of the person who asked](users-and-identity/plugin-told.svg)
 
-- **A, nothing.** The core admits the call and writes the board's line under the person's name,
-  and the plugin never knows who it was.
-- **B, the person's public part and what they hold, on every call made for a person.** Their
-  short name, display name and git handles, with their groups and powers on the board. A plugin
-  can draw or refuse by them.
-- **C, the public part on a write alone.** A board action's submission carries the short name,
-  display name and git handles of who sent it, and an authority's call keeps its principal. Reads
-  carry nobody, and no call carries powers.
+- **The core decides first.** Every call is admitted before a plugin is asked: a person a board
+  has not added never reaches its plugins, and one who may only read reaches none of its actions.
+- **A write names who sent it.** A board action's submission carries the short name, display name
+  and git handles of who sent it, so what the plugin writes for them (a commit, a file, a record
+  of its own) names them and is authored as them. An approval authority keeps the principal it is
+  handed today.
+- **Reads carry nobody.** A card's renderers, a home region, a route, a board action's offer, a
+  watch and a doc check are drawn alike for everyone, and stay kept until the board's inputs
+  change.
+- **No call carries powers.** A plugin never says who may do what.
 
-Under every option a plugin is handed no email and no chat username
-([a person's profile](#a-persons-profile)), and whether a call is allowed is the core's to say
-before it is made.
+What follows:
 
-**Recommended: C.** What a plugin writes for a person (a commit, a file, a record of its own) can
-name them and be authored as them, as the board's own saves are. Who may do what stays the core's
-alone, on the owner's line between signing in and what a person may do. Reads stay alike for
-everyone, so they stay kept. B makes each plugin a second place deciding who may do what, and
-every read one per person. A leaves a plugin's commits authored as the machine.
+- **An authority is told a person by their short name**, never by their sign-in's subject, which
+  can be an email: no plugin is handed an email or a chat username.
+- **Mail and chat are no project plugin's to send**, since only the server knows where a person
+  is reached. What sends them is [asked this round](#who-sends-a-notice).
+- **The kit's `Submission` gains who sent it**, shipped beside what it holds today under the
+  kit's version rules, so a plugin built against an older kit keeps working. The line the board
+  says on the task for a submission names the person.
+- **A plugin's commands** are run in a terminal, as the machine's account, as today.
 
-Under B or C the kit's types gain a field, shipped beside what they hold today under the kit's
-version rules, so a plugin built against an older kit keeps working.
-
-- [x] **plugin-told-who** — A project's plugin is told nothing of who asked today: a board action's answer is taken as yours. With several people the core admits every call before a plugin is asked, so who may do what is settled before the plugin runs. What is left is what the plugin is told. A: nothing; the board's own line names the person, and the plugin's own commit is authored as the machine. B: on every call made for a person, their public part (short name, display name, git handles) and their groups and powers there. C: the public part on a write alone, a board action's answer; reads carry nobody, and no call carries powers. Recommended: C. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#What a plugin is told of who asked]]
+- [r] **plugin-told-who** — A project's plugin is told nothing of who asked today: a board action's answer is taken as yours. With several people the core admits every call before a plugin is asked, so who may do what is settled before the plugin runs. What is left is what the plugin is told. A: nothing; the board's own line names the person, and the plugin's own commit is authored as the machine. B: on every call made for a person, their public part (short name, display name, git handles) and their groups and powers there. C: the public part on a write alone, a board action's answer; reads carry nobody, and no call carries powers. Recommended: C. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#What a plugin is told of who asked]]
   [2026-11-22 20:13] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
 
     ![What a project's plugin is told of the person who asked](users-and-identity/plugin-told.svg)
@@ -1070,6 +1062,122 @@ version rules, so a plugin built against an older kit keeps working.
 
     None decides this.
   [2026-11-23 00:40] owner · approved — C
+  [2026-11-23 00:52] agent — Recorded, C: a board action's submission carries the short name, display name and git handles of who sent it; reads carry nobody; no call carries powers; an approval authority keeps the principal it has today. Written in [[analysis/users-and-identity#What a plugin is told of who asked]]. What follows from C: an authority is told a person by their short name, never by their sign-in's subject, which can be an email, since the card said no plugin is handed one. The kit's Submission gains who sent it beside what it holds, under the kit's version rules, so an older plugin keeps working. And as only the server knows where a person is reached, mail and chat are no project plugin's to send: **notice-sender** asks what sends them.
+  [2026-11-23 00:52] agent · resolved
+
+## This round
+
+Two choices are open, each about how a person shows outside the board's rows: their name on the
+lines they write, and the notices sent to them.
+
+### How a person's name is written
+
+**Base.** Every line a person writes today is `owner`'s. A card's line reads like
+`owner · approved — A` after its date, a message on a task's thread has the sender `owner`, and a
+comment in a document (a `[!comment]` callout) names nobody, being the owner's. An agent's line
+reads `agent —`. The readers of the record find a person's line by `owner ·`: the tidy pass,
+the queue, the rule that an approved card decides a later one, the sweep that keeps a worktree
+holding a line no commit has.
+
+With people a line carries the person's short name ([a person's profile](#a-persons-profile)).
+The choice is how.
+
+![How a person's name is written on a card's lines](users-and-identity/name-on-lines.svg)
+
+- **A, the name in the owner's place:** `ana · approved — A`. A person's line is any line that
+  is not an agent's, and `agent` and `owner` are never given to anyone as a short name.
+- **B, the owner's word, then the name:** `owner ana · approved — A`. `owner` stays the mark of
+  a person's line, and the name follows it.
+
+Under both a comment names who left it and a thread's message its sender, by the same short name.
+A line already written is never rewritten, and the lines written as `owner` read as the machine's
+person's. On a board with nobody named, new lines keep reading `owner ·`.
+
+**Recommended: A.** The line says who in the word a reader looks at. Once several people decide,
+`owner` names nobody in particular: a card has an owning group, and its line is one member's. B
+keeps every reader that looks for `owner ·` as it is, at the cost of a word that no longer says
+what it means. A asks each reader to take any line that is not an agent's as a person's, and
+keeps two words from being anyone's name.
+
+- [ ] **person-name-on-lines** — Once several people are on a board, each line a person writes on a card carries their short name where it says `owner` today. The choice is how it is written. A: the name takes the owner's place, `ana · approved — A`; a person's line is any line that is not an agent's, and `agent` and `owner` are never anyone's name. B: the word stays and the name follows, `owner ana · approved — A`. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#How a person's name is written]]
+  [2026-11-23 00:52] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
+
+    ![How a person's name is written on a card's lines](users-and-identity/name-on-lines.svg)
+
+    **Base (today).** Your lines read `owner · approved — A` after their date. A message of yours on a task's thread has the sender `owner`, and a comment of yours in a document names nobody. An agent's line reads `agent —`. The tidy pass, the queue and the rule that an approved card decides a later one find a person's line by `owner ·`.
+
+    **A, the name in the owner's place.**
+    - `ana · approved — A`. A person's line is any line that is not an agent's.
+    - `agent` and `owner` are never given to anyone as a short name.
+
+    **B, the owner's word, then the name.**
+    - `owner ana · approved — A`. `owner` stays the mark of a person's line.
+    - Every reader that looks for `owner ·` stays as it is.
+
+    **Under both** a comment names who left it and a message its sender, by the same short name. A line already written is never rewritten, and the lines written as `owner` read as the machine's person's. On a board with nobody named, new lines keep reading `owner ·`.
+
+    **Why A.** The line says who in the word a reader looks at. Once several people decide, `owner` names nobody in particular: a card has an owning group, and its line is one member's. B saves each reader a change at the cost of a word that no longer says what it means.
+
+    **Earlier verdicts checked.**
+    - **person-profile-where** (B) puts the short name on a person's lines. It does not say whether `owner` stays beside it.
+    - **group-answer-settles** (A) settles a card by one member's answer, under that member's name. It does not say how the name is written.
+
+    Neither decides this.
+
+### Who sends a notice
+
+**Base.** A notice reaches the owner on the page (the queue, the Activity panel) and in the Mac
+app; nothing is sent by mail or chat. A person's profile holds their emails, their chat usernames
+(Slack) and which notices they want by which way ([a person's profile](#a-persons-profile)). The
+server keeps it, and no project's plugin is handed an address
+([above](#what-a-plugin-is-told-of-who-asked)). The choice is what sends a notice outside the
+page.
+
+![What sends a notice outside the page](users-and-identity/notice-sender.svg)
+
+- **A, nothing outside the page.** Notices stay on the page and in the Mac app, and a profile's
+  addresses wait.
+- **B, a notice program, the server's plugin.** A separate program the server's settings name, as
+  the sign-in service is. The server hands it one person's notice and the address their profile
+  names for the way they chose. It keeps the Slack token or the mail server's password, and any
+  program that takes the same message replaces it.
+- **C, the core sends them**, with each service's credentials in the server's settings.
+
+Under every option the board decides who is told (the members of the group that owns the thing),
+a person's preferences say which notices reach them and by which way, and the page and the Mac
+app show every notice.
+
+**Recommended: B.** A chat token and a mail password stay outside the core, as the sign-in
+service keeps the OAuth secret, on the line drawn for signing in. A leaves unused the chat
+usernames the owner named for a person's record. C puts each chat service's interface and secret
+in the core.
+
+- [ ] **notice-sender** — Today a notice reaches you only on the page and in the Mac app. A person's profile can hold their email and their Slack username, and which notices they want by which way; what sends a notice by mail or Slack? A: nothing; notices stay on the page and in the Mac app. B: a notice program, the server's plugin like the sign-in service, outside the core; the server hands it one person's notice and address, and it keeps the Slack token or the mail password. C: the core sends them itself, with each service's credentials in the server's settings. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Who sends a notice]]
+  [2026-11-23 00:52] agent — Posted for the board task `app/users-and-identity`, from your note on **public-name-where-declared**, which named "communication usernames and preferences (for example slack user)" for a person's record. A concept: nothing is built by this card.
+
+    ![What sends a notice outside the page](users-and-identity/notice-sender.svg)
+
+    **Base (today).** A notice reaches you on the page (the queue, the Activity panel) and in the Mac app. Nothing is sent by mail or chat. The server keeps a person's profile, and no project's plugin is handed an address (**plugin-told-who**, C).
+
+    **A, nothing outside the page.** Notices stay on the page and in the Mac app, and a profile's addresses wait.
+
+    **B, a notice program.**
+    - A separate program the server's settings name, as the sign-in service is: the server's plugin, outside the core.
+    - The server hands it one person's notice and the address their profile names for the way they chose.
+    - It keeps the Slack token or the mail server's password. Any program that takes the same message replaces it.
+
+    **C, the core sends them**, with each service's credentials in the server's settings.
+
+    **Under every option** the board decides who is told (the members of the group that owns the thing), a person's preferences say which notices and by which way, and the page and the Mac app show every notice.
+
+    **Why B.** A chat token and a mail password stay outside the core, as the sign-in service keeps the OAuth secret, on the line you drew for signing in. A leaves the chat usernames you named unused. C puts each chat service's interface and secret in the core.
+
+    **Earlier verdicts checked.**
+    - **person-profile-where** (B) keeps a person's addresses and preferences with the server. It does not say what sends to them.
+    - **plugin-told-who** (C) hands a project's plugin no address, so no project plugin sends one. Each option here is the server's.
+    - **identity-provider-how-added** (B) and **sign-in-service-shipped** (B) put signing in outside the core. They are about signing in, not notices.
+
+    None decides this.
 
 ## Sessions
 
@@ -1113,14 +1221,15 @@ another person directed. Today's rule asks for a fresh session, not another pers
 Each step can ship alone, and a machine with one person sees none of them.
 
 1. **The actor seam.** Every write takes an actor. The local host supplies the local owner, and
-   every line reads as it does today.
+   every line reads as it does today. A board action's submission tells its plugin who sent it.
 2. **Tailscale's login read.** The gate keeps who a peer is. A peer under the machine's own
    login is its person. A peer under another login is that login's person, and until a board
    adds them the server shows them nothing.
 3. **People, groups and powers on a board.** The rows, the People page, names on lines.
 4. **Ownership.** A card and a task have their group, from the board's map of places or a name
    written on them; queues and notices follow it, and any member's answer settles what the
-   group owns. Its members move, prioritize and cancel its tasks.
+   group owns. Its members move, prioritize and cancel its tasks. The Settings page is one of
+   the places, and its group's members change its settings.
 5. **Speaking apart from directing agents.** A person's words reach people always. The board
    holds the words of someone who may not direct agents, and passing them on makes them an ask.
    The note beside a verdict is written with it.
@@ -1153,13 +1262,9 @@ admin. The first person named is the first moment anything differs.
 
 Not carded yet.
 
-- What each power covers beyond a task's acts: who changes a board's map of places, who hands a
-  thing to another group.
 - Whether a board weighs one group's tasks over another's, where both are staffed from one
   priority scale.
-- How a person's line reads in a document and on a thread.
-- A profile's notices: which a person gets, by which way (mail, Slack), and what a chat plugin
-  is handed to send one.
+- Which notices a person gets, and the ways each comes by default.
 - Queues and notices per person and per group.
 - Shared agents: whose machine and credits host them, what a host may limit, and how an agent on
   another machine proves its handle to a board.

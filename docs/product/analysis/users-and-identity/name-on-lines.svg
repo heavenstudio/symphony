@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="420" viewBox="0 0 760 420" role="img" aria-labelledby="title desc">
+<title id="title">How a person's name is written on a card's lines</title>
+<desc id="desc">Two ways to write a person's short name on the lines of a card. Under A the name takes the owner's place: ana · approved — A, then agent — Recorded, A, then li · question. A person's line is any line that is not an agent's, and agent and owner are never anyone's name. Under B the word owner stays and the name follows: owner ana · approved — A, then owner li · question; owner then names nobody in particular once several people decide. Under both a comment names who left it and a message its sender, and the lines already written as owner stay, as do new ones on a board with nobody named. Recommended: A.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--question:#946a00;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--question:#e0b84c;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.inner{fill:var(--muted);stroke:var(--border)}
+.new{fill:none;stroke:var(--primary);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.h{font-size:15px;font-weight:600}
+.t{font-size:17px;font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+.red{fill:var(--dislike)}
+</style>
+<rect class="page" width="760" height="420"/>
+<text class="t" x="24" y="34">How a person's name is written on a card's lines</text>
+<rect class="card" x="24" y="60" width="232" height="276" rx="8"/>
+<text class="h" x="38" y="86">A: the name in its place</text>
+<text class="m" x="38" y="106">recommended</text>
+<rect class="new" x="38" y="122" width="204" height="74" rx="5"/>
+<text class="mono" x="48" y="143">ana · approved — A</text>
+<text class="mono" x="48" y="163">agent — Recorded, A</text>
+<text class="mono" x="48" y="183">li · question</text>
+<text class="m" x="48" y="226">A person's line is any</text>
+<text class="m" x="48" y="245">line not an agent's.</text>
+<text class="m" x="48" y="281">agent and owner are</text>
+<text class="m" x="48" y="300">never anyone's name.</text>
+<rect class="card" x="264" y="60" width="232" height="276" rx="8"/>
+<text class="h" x="278" y="86">B: owner, then the name</text>
+<text class="m" x="278" y="106">the word kept</text>
+<rect class="inner" x="278" y="122" width="204" height="74" rx="5"/>
+<text class="mono" x="288" y="143">owner ana · approved — A</text>
+<text class="mono" x="288" y="163">agent — Recorded, A</text>
+<text class="mono" x="288" y="183">owner li · question</text>
+<text class="m" x="288" y="226">Every reader of owner ·</text>
+<text class="m" x="288" y="245">stays as it is.</text>
+<text class="red" x="288" y="281">owner names nobody in</text>
+<text class="red" x="288" y="300">particular once several decide.</text>
+<rect class="card" x="504" y="60" width="232" height="276" rx="8"/>
+<text class="h" x="518" y="86">Under both</text>
+<text class="m" x="518" y="106">what does not change</text>
+<rect class="inner" x="518" y="122" width="204" height="69" rx="5"/>
+<text x="528" y="142">A comment names who</text>
+<text x="528" y="161">left it, a message its</text>
+<text x="528" y="180">sender: the short name.</text>
+<rect class="inner" x="518" y="201" width="204" height="69" rx="5"/>
+<text x="528" y="221">Lines written as owner</text>
+<text x="528" y="240">stay; with nobody named,</text>
+<text x="528" y="259">new ones read so too.</text>
+<rect class="card" x="24" y="352" width="712" height="48" rx="8"/>
+<text x="40" y="378">A line already written is never rewritten, under both.</text>
+</svg>
