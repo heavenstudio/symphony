@@ -111,21 +111,14 @@ pub fn class(table: &str, key: &str) -> SettingClass {
 
 /// The scopes `key` of the table `path` leads to may be written in: the project's; the board's
 /// where its store keeps it, which is where the page writes it; and the machine's too where the
-/// local settings file may hold it. The store keeps what the local file may hold, and `[agents]
-/// panes` besides (`symphony_board::local::Place::Store`).
+/// local settings file may hold it, as the board's judge of both places says
+/// ([`local::Place::keeps`]).
 pub fn scopes(path: &[&str], key: &str) -> Vec<SettingScope> {
-    let machine = match path {
-        [table] => *table == limits::TABLE && limits::KEYS.contains(&key),
-        ["agents", "launch"] => local::LAUNCH.contains(&key),
-        ["agents", "models"] => ROLES.contains(&key),
-        _ => false,
-    };
-    let board = machine || (path == ["agents"] && key == "panes");
     let mut scopes = vec![SettingScope::Project];
-    if board {
+    if local::Place::Store.keeps(path, key) {
         scopes.push(SettingScope::Board);
     }
-    if machine {
+    if local::Place::File.keeps(path, key) {
         scopes.push(SettingScope::Machine);
     }
     scopes

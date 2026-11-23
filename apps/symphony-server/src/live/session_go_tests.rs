@@ -7,7 +7,7 @@ use crate::front::{Shared, router};
 use crate::gate::Gate;
 use crate::testing::{
     Tree,
-    board::{Fixture, NOW, Seed},
+    board::{Fixture, HOST, NOW, Seed},
     repository, store_on,
 };
 use axum::body::{Body, to_bytes};
@@ -16,10 +16,12 @@ use axum::http::{HeaderMap, Request, StatusCode, header};
 use serde_json::{Value, json};
 use std::net::SocketAddr;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use symphony_board::launch::LaunchError;
 use symphony_board::launch::hc::Hc;
+use symphony_board::rpc::Client;
 use tower::ServiceExt;
 
 /// This machine's tailnet names, as `tailscale status` gives them.
@@ -168,11 +170,13 @@ struct Served {
     shared: Arc<Shared>,
     runtime: tokio::runtime::Runtime,
     app: axum::Router,
-    #[expect(
-        dead_code,
-        reason = "keeps the board and its repository for the test's length"
-    )]
+    /// The repository and the board, kept for the test's length.
     held: (Tree, Fixture),
+    /// How many times the hub opened the board for the page reads ([`Hub::reader`]).
+    opened: Arc<AtomicUsize>,
+    /// Whether the next opening hands back a store whose server went: nothing listens where it
+    /// was.
+    gone: Arc<AtomicBool>,
 }
 
 impl Served {
@@ -241,7 +245,26 @@ impl Served {
         let f = Fixture::new(seed);
         let mut hub = Hub::new(&root, &root.join("build/client"));
         let board = f.other_client();
-        hub.connect_reader = Box::new(move |_| Ok(store_on(&board)));
+        let (opened, gone) = (
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let (opening, going) = (opened.clone(), gone.clone());
+        hub.connect_reader = Box::new(move |_| {
+            opening.fetch_add(1, Ordering::SeqCst);
+            if going.swap(false, Ordering::SeqCst) {
+                let left = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                let addr = left.local_addr().unwrap().to_string();
+                drop(left);
+                return Ok(symphony_board::Store::unchecked(
+                    Client::new(&addr, "sf", "gone").waiting(Duration::from_secs(1)),
+                    Box::new(|| NOW),
+                    Box::new(|_| false),
+                    HOST,
+                ));
+            }
+            Ok(store_on(&board))
+        });
         if let Some(kept) = kept {
             let handed = kept.clone();
             hub.panes = Box::new(move |_: &Path| Box::new(handed.clone()) as Box<dyn Hc>);
@@ -266,6 +289,8 @@ impl Served {
             runtime,
             app,
             held: (tree, f),
+            opened,
+            gone,
         }
     }
 
@@ -339,6 +364,11 @@ impl Served {
             "/api/agent-focus",
             Some(json!({"handle": handle})),
         )
+    }
+
+    /// The board the project is served on.
+    fn board(&self) -> &symphony_board::Store {
+        &self.held.1.store
     }
 
     fn screen(&self, peer: &str, handle: &str) -> (StatusCode, Value) {
@@ -520,6 +550,81 @@ fn a_project_that_does_not_address_its_panes_asks_hc_nothing() {
         );
     }
     assert!(kept.calls().is_empty());
+}
+
+/// The board's store's `[agents] panes` holds over the project file's, read on the board the page
+/// reads share ([`Hub::reader`]): opened once and kept, so each later focus or screen read sends
+/// the board the store's one read and opens it no more.
+#[test]
+fn the_stores_panes_hold_over_the_files_read_on_the_board_the_hub_holds() {
+    for (file, stored) in [("none", "hc"), ("hc", "none")] {
+        let kept = Kept::default();
+        let s = Served::new(file, &kept);
+        let value = symphony_board::settings::value_of("agents.panes", stored);
+        s.board()
+            .store_setting("agents.panes", &value, "owner")
+            .unwrap();
+        let mut sent = Vec::new();
+        for _ in 0..3 {
+            let before = super::read_paths_tests::requests(s.board());
+            let (status, body) = s.screen(PHONE, "amber");
+            sent.push(super::read_paths_tests::requests(s.board()) - before);
+            if stored == "hc" {
+                assert_eq!(status, StatusCode::OK, "{file} under {stored}: {body}");
+                assert_eq!(body["text"], SCREEN);
+            } else {
+                assert_eq!(
+                    status,
+                    StatusCode::FORBIDDEN,
+                    "{file} under {stored}: {body}"
+                );
+                assert_eq!(
+                    body["error"],
+                    "this project does not address its agents' panes ([agents] panes = \"none\")"
+                );
+            }
+        }
+        assert_eq!(s.opened.load(Ordering::SeqCst), 1, "{file} under {stored}");
+        assert_eq!(sent[1..], [1, 1], "{file} under {stored}: {sent:?}");
+        if stored == "none" {
+            assert!(kept.calls().is_empty(), "{:?}", kept.calls());
+        }
+    }
+}
+
+/// A store the board failed the panes read on is forgotten, as every reader of the store the page
+/// reads share forgets it ([`Hub::reader_failed`]): that read holds the project file's panes, and
+/// the next opens the board anew, where its server is now, and reads the store's.
+#[test]
+fn a_store_the_board_failed_the_panes_read_on_is_dropped_and_the_next_read_opens_the_board_anew() {
+    let kept = Kept::default();
+    let s = Served::new("none", &kept);
+    let value = symphony_board::settings::value_of("agents.panes", "hc");
+    s.board()
+        .store_setting("agents.panes", &value, "owner")
+        .unwrap();
+    assert_eq!(
+        s.opened.load(Ordering::SeqCst),
+        0,
+        "no read opened the board yet"
+    );
+    s.gone.store(true, Ordering::SeqCst);
+    let (status, body) = s.screen(PHONE, "amber");
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(
+        body["error"],
+        "this project does not address its agents' panes ([agents] panes = \"none\")"
+    );
+    for _ in 0..2 {
+        let (status, body) = s.screen(PHONE, "amber");
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["text"], SCREEN);
+    }
+    assert_eq!(
+        s.opened.load(Ordering::SeqCst),
+        2,
+        "the failed store is opened anew once, then kept"
+    );
 }
 
 #[test]
