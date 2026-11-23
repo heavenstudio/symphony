@@ -200,6 +200,9 @@ pub struct Save {
     /// Whether the page shows its words ([`shown`]): not once they no longer apply to the
     /// default branch here.
     pub shown: bool,
+    /// Whether it is inert ([`inert`]): one of a tidy whose first save is not in the journal,
+    /// which nothing shows or delivers, and whose state says why.
+    pub inert: bool,
     pub state: State,
     /// Who saved it when not the owner, as its entry names them ([`keep`]); empty for the owner.
     pub by: String,
@@ -403,23 +406,24 @@ pub fn saves(root: &Path) -> Vec<Save> {
 /// [`saves`], of the document `only` alone when one is named: a page asks for its own.
 fn listed(root: &Path, only: Option<&str>) -> Vec<Save> {
     let all = entries(root);
-    let mut entries = entries(root);
-    entries.retain(|(_, saved)| only.is_none_or(|file| saved.edit.rel == file));
-    if entries.is_empty() || !on_main(root) {
+    let asked = |saved: &QueuedPublication| only.is_none_or(|file| saved.edit.rel == file);
+    if !all.iter().any(|(_, saved)| asked(saved)) || !on_main(root) {
         return Vec::new();
     }
     // Each document as the saves before this one leave it, as `shown` folds them.
     let mut texts: BTreeMap<String, Option<String>> = BTreeMap::new();
-    entries
-        .into_iter()
+    (all.iter())
+        .filter(|(_, saved)| asked(saved))
         .filter_map(|(sequence, saved)| {
-            let delivery = saved.delivery?;
+            let sequence = *sequence;
+            let delivery = saved.delivery.clone()?;
             let edit = &saved.edit;
             let text = texts
                 .entry(edit.rel.clone())
                 .or_insert_with(|| std::fs::read_to_string(root.join(&edit.rel)).ok());
+            let inert = inert(&all, &delivery);
             let merged = (text.as_deref())
-                .filter(|_| !inert(&all, &delivery))
+                .filter(|_| !inert)
                 .and_then(|text| merge(root, text, &edit.base, &edit.new).ok());
             let shown = merged.is_some();
             if let Some(merged) = merged {
@@ -449,9 +453,10 @@ fn listed(root: &Path, only: Option<&str>) -> Vec<Save> {
             };
             Some(Save {
                 sequence,
-                file: saved.edit.rel,
+                file: saved.edit.rel.clone(),
                 branch,
                 shown,
+                inert,
                 state,
                 by: delivery.by,
                 keys,
@@ -607,13 +612,6 @@ pub fn note(root: &Path, file: &str) -> Option<String> {
         return None;
     }
     let default = Project::of(root).default_branch.clone();
-    let all = entries(root);
-    let inert_save = |save: &Save| {
-        (all.iter())
-            .find(|(number, _)| *number == save.sequence)
-            .and_then(|(_, saved)| saved.delivery.as_ref())
-            .is_some_and(|delivery| inert(&all, delivery))
-    };
     let each: Vec<String> = saves
         .iter()
         .map(|save| {
@@ -624,7 +622,7 @@ pub fn note(root: &Path, file: &str) -> Option<String> {
             // inert save's says none of its tidy is shown).
             let unshown = match (&save.shown, &save.state) {
                 (true, _) | (_, State::Conflicted) => "",
-                (false, _) if inert_save(save) => "",
+                (false, _) if save.inert => "",
                 (false, _) => {
                     "; its words no longer apply to this page as it is here, so they are not \
                      shown: they are kept"

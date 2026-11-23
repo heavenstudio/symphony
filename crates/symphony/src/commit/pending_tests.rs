@@ -114,6 +114,7 @@ fn a_note_names_its_saves_by_whose_they_are() {
         file: "docs/a.md".into(),
         branch: "docs/owner-save-1".into(),
         shown: true,
+        inert: false,
         state: State::Queued,
         by: by.into(),
         keys: Vec::new(),
@@ -544,6 +545,16 @@ fn a_tidy_that_could_not_keep_its_first_save_shows_nothing() {
              to this page as it is here, so they are not shown: they are kept). Nothing is lost \
              meanwhile, and nothing here is committed to `main`."
         )
+    );
+    // Each save says whether it is inert, which the note reads rather than the journal again:
+    // the tidy's alone, not the one kept alone nor the one whose words no longer apply.
+    let listed: Vec<(u64, bool, bool)> = saves(&tree.root)
+        .iter()
+        .map(|save| (save.sequence, save.shown, save.inert))
+        .collect();
+    assert_eq!(
+        listed,
+        [(2, false, true), (3, true, false), (4, false, false)]
     );
 }
 

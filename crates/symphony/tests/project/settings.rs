@@ -500,6 +500,7 @@ fn a_commit_waiting_for_its_delivery_is_said_beside_its_setting() {
             file: "symphony.toml".into(),
             branch: "docs/owner-save-2".into(),
             shown: true,
+            inert: false,
             state: State::Held("its task was cancelled".into()),
             by: String::new(),
             keys: vec!["limits.low_volume".into()],

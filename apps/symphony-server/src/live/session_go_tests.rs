@@ -627,6 +627,89 @@ fn a_store_the_board_failed_the_panes_read_on_is_dropped_and_the_next_read_opens
     );
 }
 
+/// The value the settings page `page` gives the setting `key`, and its source as said.
+fn setting_of<'a>(page: &'a Value, key: &str) -> (&'a str, &'a str) {
+    let found = (page["sections"].as_array().unwrap().iter())
+        .flat_map(|section| section["entries"].as_array().unwrap())
+        .flat_map(|entry| entry["settings"].as_array().into_iter().flatten())
+        .find(|setting| setting["key"] == key)
+        .unwrap_or_else(|| panic!("no {key} on the page"));
+    (
+        found["value"].as_str().unwrap(),
+        found["source"]["said"].as_str().unwrap(),
+    )
+}
+
+/// The settings read takes the board's store over the project file on the board the page reads
+/// share ([`Hub::on_reader`]), as the panes read does: opened once and kept, so each later read
+/// sends the board the store's reads alone (its entries, and the sessions and open launch records
+/// each agent's count is made of) and opens it no more.
+#[test]
+fn the_settings_read_holds_the_stores_values_read_on_the_board_the_hub_holds() {
+    let kept = Kept::default();
+    let s = Served::new("none", &kept);
+    let value = symphony_board::settings::value_of("agents.panes", "hc");
+    s.board()
+        .store_setting("agents.panes", &value, "owner", std::path::Path::new(""))
+        .unwrap();
+    let mut sent = Vec::new();
+    for _ in 0..3 {
+        let before = super::read_paths_tests::requests(s.board());
+        let (status, page) = s.ask(HERE, "GET", symphony_api::SETTINGS_PATH, None);
+        sent.push(super::read_paths_tests::requests(s.board()) - before);
+        assert_eq!(status, StatusCode::OK, "{page}");
+        assert_eq!(
+            setting_of(&page, "[agents] panes"),
+            ("hc", "the board's store [agents] panes")
+        );
+    }
+    assert_eq!(s.opened.load(Ordering::SeqCst), 1, "opened once, then kept");
+    assert_eq!(sent[1..], [3, 3], "{sent:?}");
+}
+
+/// A store the board failed the settings read on is forgotten, as every reader of the store the
+/// page reads share forgets it ([`Hub::reader_failed`]): that read says the store unread and holds
+/// the project file's values, and the next opens the board anew, where its server is now.
+#[test]
+fn a_store_the_board_failed_the_settings_read_on_is_dropped_and_the_next_read_opens_the_board_anew()
+{
+    let kept = Kept::default();
+    let s = Served::new("none", &kept);
+    let value = symphony_board::settings::value_of("agents.panes", "hc");
+    s.board()
+        .store_setting("agents.panes", &value, "owner", std::path::Path::new(""))
+        .unwrap();
+    s.gone.store(true, Ordering::SeqCst);
+    let (status, page) = s.ask(HERE, "GET", symphony_api::SETTINGS_PATH, None);
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(
+        setting_of(&page, "[agents] panes"),
+        ("none", "symphony.toml [agents] panes, line 2")
+    );
+    let unread = page["problems"].as_array().unwrap();
+    assert!(
+        unread.iter().any(|problem| {
+            let problem = problem.as_str().unwrap();
+            problem.starts_with("the board's store cannot be read (")
+                && problem.ends_with("); none of it is read, the files' settings hold")
+        }),
+        "{unread:?}"
+    );
+    for _ in 0..2 {
+        let (status, page) = s.ask(HERE, "GET", symphony_api::SETTINGS_PATH, None);
+        assert_eq!(status, StatusCode::OK, "{page}");
+        assert_eq!(
+            setting_of(&page, "[agents] panes"),
+            ("hc", "the board's store [agents] panes")
+        );
+    }
+    assert_eq!(
+        s.opened.load(Ordering::SeqCst),
+        2,
+        "the failed store is opened anew once, then kept"
+    );
+}
+
 #[test]
 fn the_pages_say_whether_they_were_asked_here_and_where_each_role_holder_goes() {
     let kept = Kept::default();

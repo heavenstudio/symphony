@@ -698,6 +698,42 @@ describe("the page", () => {
     }
   });
 
+  it("draws a plugin's description of a key the store keeps as its describer's, with no control", () => {
+    // A describer that gives one of the Symphony's own stored keys, as the server leaves it: none
+    // of the board's scope ([`judged`] in crates/symphony/src/settings/described.rs).
+    const page = JSON.parse(JSON.stringify(SAMPLE)) as Page;
+    const own = settingOf("models", "[limits] low_volume");
+    const described: Setting = {
+      ...own,
+      name: "The shop's low volume",
+      value: "9",
+      source: { scope: "project", said: "catalogue.toml low_volume, line 4" },
+      scopes: own.scopes.filter((scope) => scope !== "board"),
+    };
+    const plugin = page.sections
+      .flatMap((section) => section.entries)
+      .find((entry) => entry.id === "plugin-shop-catalogue");
+    if (!plugin) throw new Error("no plugin entry");
+    plugin.settings = [described];
+    const html = renderToStaticMarkup(
+      <SettingsView page={page} error={null} missing={false} reread={() => undefined} />,
+    );
+    const entry = (id: string) =>
+      html.slice(html.indexOf(`id="setting-${id}"`)).split("</article>")[0] ?? "";
+    const theirs = entry("plugin-shop-catalogue");
+    expect(theirs).toContain('<span class="setting-value">9</span>');
+    expect(theirs).toContain(
+      '<span class="setting-from">[limits] low_volume · catalogue.toml low_volume, line 4</span>',
+    );
+    expect(theirs).not.toContain("setting-control");
+    expect(theirs).not.toContain("setting-stored");
+    expect(theirs).not.toMatch(/<(button|input|select|textarea|form)\b/);
+    // The Symphony's own rows keep their controls, that key's among them, and the page draws no
+    // other.
+    expect(entry("models").match(/class="setting-control"/g)).toHaveLength(3);
+    expect(html.match(/class="setting-control"/g)).toHaveLength(3);
+  });
+
   it("says what does not load, the files read and one not written", () => {
     const html = draw(SAMPLE);
     expect(html).toContain(

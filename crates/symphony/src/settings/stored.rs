@@ -44,7 +44,7 @@ impl Default for Board {
 }
 
 impl Board {
-    /// The board of the project at `root`, as the server reads it for the page.
+    /// The board of the project at `root`, opened for this read alone.
     pub fn of(root: &Path) -> Board {
         let store = crate::taskview::connect(root);
         let entries = (store.as_ref().map_err(Clone::clone))
@@ -52,6 +52,17 @@ impl Board {
         let running = (store.as_ref().map_err(Clone::clone)).and_then(|store| {
             symphony_board::launch::running::by_agent(store).map_err(|e| e.to_string())
         });
+        Board::with(root, entries, running)
+    }
+
+    /// The board of the project at `root` as a reader read it, on a store it holds: the store's
+    /// `entries` and the sessions each agent runs (`running`), or why each could not be read, with
+    /// the saves of the project file its checkout keeps waiting.
+    pub fn with(
+        root: &Path,
+        entries: Result<Vec<Entry>, String>,
+        running: Result<[usize; 2], String>,
+    ) -> Board {
         Board {
             entries,
             waiting: pending::saves(root)

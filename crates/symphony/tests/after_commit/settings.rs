@@ -364,9 +364,10 @@ pub(super) fn a_stored_value_made_the_projects_is_one_commit_and_its_entry_goes(
     assert_eq!(status, 409);
     assert_eq!(
         why,
-        "not removed: symphony.toml on main writes [agents] panes = \"hc\" already, but this \
-         checkout's own symphony.toml does not take it yet: the board's entry stays, in force \
-         over the checkout's own edit of the line, until the checkout takes the commit"
+        "not made the project's again: symphony.toml on main writes [agents] panes = \"hc\" \
+         already, but this checkout's own symphony.toml does not take it yet: the board's entry \
+         stays, in force over the checkout's own edit of the line, until the checkout takes the \
+         commit"
     );
     assert_eq!(git(&root, &["rev-parse", "main"]), main);
     assert_eq!(entry(f, "agents.panes"), Some(json!("hc")));

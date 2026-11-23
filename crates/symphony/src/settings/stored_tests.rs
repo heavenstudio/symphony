@@ -147,6 +147,7 @@ fn the_list_holds_each_setting_the_store_keeps_with_its_entry_and_no_other() {
             file: "symphony.toml".into(),
             branch: "docs/owner-save-4".into(),
             shown: true,
+            inert: false,
             state: State::Waiting,
             by: String::new(),
             keys: vec!["agents.models.reviewer".into()],

@@ -107,7 +107,8 @@ impl Place {
     /// Whether it keeps `key` of the table `path` leads to: a key of `[agents] launch`
     /// ([`LAUNCH`]), an agent's switch ([`AGENTS`]), a role's model ([`ROLES`]) or a key of
     /// `[limits]` in either place, and `[agents] panes` in the board's store alone. The one list of
-    /// what each place keeps, which the Settings page reads for where a setting may be written.
+    /// what each place keeps: [`judge`] takes a key of `[agents]` itself only where it says so, and
+    /// the Settings page reads it for where a setting may be written.
     pub fn keeps(self, path: &[&str], key: &str) -> bool {
         match path {
             [limits::TABLE] => limits::KEYS.contains(&key),
@@ -310,7 +311,13 @@ pub fn judge(
                     let (known, into): (&[&str], &mut [Option<String>]) = match key.as_str() {
                         "launch" => (&LAUNCH, &mut local.launch),
                         "models" => (&ROLES, &mut local.models),
-                        "panes" if place == Place::Store => {
+                        // A key of `[agents]` itself is judged only where the one list says the
+                        // place keeps it ([`Place::keeps`]): none is taken that it does not name.
+                        own if !place.keeps(&["agents"], own) => {
+                            problems.push(not_local(place, said, &named(&["agents"], Some(own))));
+                            continue;
+                        }
+                        "panes" => {
                             let name = named(&["agents"], Some(key));
                             match value {
                                 Value::String(text) if PANES.contains(&text.as_str()) => {
@@ -324,6 +331,7 @@ pub fn judge(
                             }
                             continue;
                         }
+                        // One the list names and no arm here judges is refused all the same.
                         _ => {
                             problems.push(not_local(place, said, &named(&["agents"], Some(key))));
                             continue;

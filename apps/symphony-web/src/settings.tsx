@@ -6,10 +6,12 @@
 // The page knows no entry by name. The server describes each thing in one shape (its name, what
 // it is for, its state and why, what it needs and whether this machine has it, and its settings,
 // each with its key, kind, value, source, scopes and class), and `Entry` draws every one of them.
-// What it writes is the read's `stored` list, by each setting's key: a setting it names gets a
-// control chosen by its kind (a switch, a choice, a number, a text), never by its name, and a value
-// the store holds gets "Make it the project's" and "Remove" beside it. Every other setting is
-// drawn as its value alone, a reviewed one with the task that changes it.
+// What it writes is the read's `stored` list, by each setting's key: a setting it names, written
+// in the board's scope, gets a control chosen by its kind (a switch, a choice, a number, a text),
+// never by its name, and a value the store holds gets "Make it the project's" and "Remove" beside
+// it. Every other setting is drawn as its value alone, a reviewed one with the task that changes
+// it, and so is a plugin's description of one of the store's keys, which its describer never
+// writes in the board's scope.
 
 import { type FormEvent, useEffect, useState } from "react";
 import { Button } from "./button";
@@ -538,7 +540,9 @@ export interface Writes {
 function Row({ setting, writes }: { setting: Setting; writes?: Writes | undefined }) {
   const [scope, name] = scopeTag(setting.source);
   const sentence = setting.kind === "sentence";
-  const stored = writes?.stored.get(setting.key);
+  // The store's list names the Symphony's own settings, each written in the board's scope: a
+  // plugin's description of the same key never is, and is drawn as its describer's alone.
+  const stored = setting.scopes.includes("board") ? writes?.stored.get(setting.key) : undefined;
   return (
     <div className="setting-row" data-kind={setting.kind} data-class={setting.class}>
       <dt>
