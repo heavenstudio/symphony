@@ -167,6 +167,9 @@ fn a_test_hosts_actor_is_the_sender_and_mover_the_board_records_and_the_plugins_
     let (f, tree) = (Fixture::empty(), Tree::new());
     let handle = f.session("worker");
     seeded(&f, &handle);
+    // Work the actor's session holds blocked, which the action releases back to review.
+    f.store.claim("sim/held", &handle).unwrap();
+    f.store.hold_blocked("sim/held", &handle).unwrap();
     let actor = ana(&handle);
     let asked = on_the_board(&f, &actor, &tree.root);
     assert_eq!(
@@ -194,9 +197,14 @@ fn a_test_hosts_actor_is_the_sender_and_mover_the_board_records_and_the_plugins_
         (lines.iter()).any(|(_, text)| text.contains(&handle) && text.contains("cancelled")),
         "the cancel is the actor's: {lines:?}"
     );
-    // Released work is moved back to review as the actor, which a session holding no role on it
-    // may not do: the board refuses it, and the next landing moves it.
-    assert_eq!(f.store.get("sim/held").unwrap().status, "ready");
+    // Released work is moved back to review as the actor: its thread names them as the mover.
+    assert_eq!(f.store.get("sim/held").unwrap().status, "review");
+    let moved = format!("{handle} moved it blocked → review");
+    assert!(
+        thread(&f, "sim/held").contains(&(handle.clone(), moved)),
+        "{:?}",
+        thread(&f, "sim/held")
+    );
 }
 
 #[test]
@@ -242,6 +250,9 @@ fn a_board_actions_note_its_own_approve_and_a_field_are_the_actors_and_an_unknow
     };
     // With a note, the line waits on an agent: it opens the task's ask, as the actor.
     ok(act("sign", "tip", "check the dock"));
+    // The work it releases is ready, which no move takes to review: the board refuses the move,
+    // and the save still answers.
+    assert_eq!(f.store.get("sim/held").unwrap().status, "ready");
     // The Symphony's own approve, where no plugin's action has its name.
     let approve = crate::gates::stamps::OWNER_APPROVE;
     ok(act(approve, "c0ffee1", ""));

@@ -1,7 +1,8 @@
 //! A custom workflow through the Symphony's routes, on a fixture project's own board: the active
-//! definition and a task's place read, the local owner's next actions previewed, an edge taken,
-//! repeated under its key and refused as stale from the revision it left, and the feed saying the
-//! board activated a workflow so a page reads the definition again (docs/workflow/WORKFLOW.md, "The app").
+//! definition and a task's place read, the local owner's next actions previewed, an edge refused to
+//! another person the gate admits and taken by the owner, repeated under its key and refused as
+//! stale from the revision it left, and the feed saying the board activated a workflow so a page
+//! reads the definition again (docs/workflow/WORKFLOW.md, "The app").
 
 use super::boards_tests::{Project, answer, asked, env, writer};
 use crate::front::Shared;
@@ -12,7 +13,8 @@ use std::time::Duration;
 use symphony_api::workflow::{OperationRequest, Source};
 use symphony_board::workflow::{Custom, Host, agent_session, local_owner, written};
 use symphony_board::{NewSession, NewTask};
-use symphony_plugin::execution::Principal;
+use symphony_plugin::execution::{Principal, PrincipalKind};
+use symphony_plugin::{Actor, Sender};
 
 /// The wall-clock backstop of a wait for the hub's read: only a stall reaches it.
 const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(30));
@@ -199,6 +201,21 @@ fn the_owner_reads_a_workflow_and_takes_an_edge_through_the_pages_routes() {
             "input_revisions": {}, "idempotency_key": key, "inputs": {}}})
     };
     let applied = request("page:flow/one:1:block:a", &next["snapshot"]);
+    // An edge is the gate's person's to take, never the local owner's for them: a test host's gate
+    // admitting another person asks Block as them, and the board refuses it naming them. Nothing
+    // moves: the owner's take of the same request, below, is the task's next revision.
+    let ana = Actor::new(
+        Sender::new("ana", "Ana Lima", vec!["ana-l".into()]),
+        Principal::new(PrincipalKind::Human, "test-host".into(), "u-ana".into()),
+    );
+    let theirs = crate::testing::open_gate().admitting(ana);
+    let other = Shared::new(1, 1234, &project.root, None, theirs);
+    let (status, refused) = answer(&other, asked("POST", "/api/workflow-apply", Some(&applied)));
+    other.stop();
+    assert_eq!(status, 400, "{refused}");
+    let unauthorized = "unauthorized: test-host/u-ana may not take edge block on flow/one: it \
+                        needs the project capability owner";
+    assert_eq!(refused, json!({"error": unauthorized}));
     let (status, taken) = answer(
         &shared,
         asked("POST", "/api/workflow-apply", Some(&applied)),

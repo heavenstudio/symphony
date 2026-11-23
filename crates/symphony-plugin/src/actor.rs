@@ -74,8 +74,12 @@ mod tests {
         assert_eq!((actor.sender, actor.principal), (sender, principal));
     }
 
+    /// A sender's `git` is no later field (the submission's `sender` is, and gives the default):
+    /// the person at the machine says theirs as none, and one with no `git` at all is refused, as
+    /// the protocol refuses a field missing that its type gives no default.
     #[test]
-    fn a_sender_reads_back_as_written_and_with_no_git_handles_when_none_are_said() {
+    fn a_sender_reads_back_as_written_with_its_git_handles_or_none_and_one_without_git_is_refused()
+    {
         let sender = Sender::new("ana", "Ana Lima", vec!["ana-l".into(), "al".into()]);
         let text = serde_json::to_string(&sender).unwrap();
         assert_eq!(
@@ -83,6 +87,14 @@ mod tests {
             r#"{"name":"ana","display":"Ana Lima","git":["ana-l","al"]}"#
         );
         assert_eq!(serde_json::from_str::<Sender>(&text).unwrap(), sender);
-        assert!(serde_json::from_str::<Sender>(r#"{"name":"ana","display":"Ana"}"#).is_err());
+        let owner = Sender::new("owner", "owner", Vec::new());
+        let text = serde_json::to_string(&owner).unwrap();
+        assert_eq!(text, r#"{"name":"owner","display":"owner","git":[]}"#);
+        assert_eq!(serde_json::from_str::<Sender>(&text).unwrap(), owner);
+        let missing = serde_json::from_str::<Sender>(r#"{"name":"ana","display":"Ana"}"#);
+        assert_eq!(
+            missing.unwrap_err().to_string(),
+            "missing field `git` at line 1 column 30"
+        );
     }
 }

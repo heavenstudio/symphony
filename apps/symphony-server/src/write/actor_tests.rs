@@ -99,6 +99,7 @@ async fn a_save_hosted_admission_let_in_is_refused_here_and_writes_nothing() {
 fn no_server_write_takes_the_local_owner_where_the_gates_person_is_in_hand() {
     let actorless = [
         "local_owner()",
+        "local_actor()",
         "saves.post(",
         "saves.post_with_order(",
         "saves.apply_workflow(",
