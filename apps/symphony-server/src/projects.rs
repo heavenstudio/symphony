@@ -15,6 +15,14 @@
 //! list's page saying so, never another project's.
 //! Every route but `/api/front`, which loopback's name alone reaches, answers a Host naming this
 //! machine alone.
+//!
+//! Each request is judged once, by the starter's gate: who it is from ([`crate::gate::Visitor`])
+//! and which boards have added them ([`crate::gate::Gate::member`]). A project whose board has not
+//! added the visitor is, to them, one this server does not hold: it is in no list, and every path
+//! under its id answers as an id nobody registered. `/api/front` and the list's installation id
+//! are the machine's, answered to the person at it alone. A project's router takes the visitor's
+//! actor on its board with the request ([`crate::front::Admitted`]).
+//!
 //! A project's state is its registered root's under its id: until the server stops, the registry
 //! is read again whenever its file changes, at a request or at the server's own look, which a
 //! watcher of the machine folder wakes ([`Projects::watch`]), and a changed root or id is served
@@ -51,6 +59,7 @@ use tower::ServiceExt;
 
 use crate::backstop::{self, Backstop, Wake, Waker};
 use crate::front::Shared;
+use crate::gate::Visitor;
 use crate::host::{Build, Lack};
 use crate::live::{Signal, Standing};
 
@@ -274,6 +283,20 @@ impl Projects {
         self.read().served.clone()
     }
 
+    /// The projects served whose board `visitor` is on, each with the actor they are there
+    /// ([`crate::gate::Gate::member`], the starter's gate asked): to them every other project is
+    /// one this server does not hold.
+    fn reached_by(&self, visitor: &Visitor) -> Vec<(Served, symphony_plugin::Actor)> {
+        let gate = &self.starter.gate;
+        self.served()
+            .into_iter()
+            .filter_map(|served| {
+                let actor = gate.member(&served.entry.root, visitor)?;
+                Some((served, actor))
+            })
+            .collect()
+    }
+
     /// What is served now, held, the registry read again when its file changed.
     fn read(&self) -> std::sync::MutexGuard<'_, Held> {
         // A panic while reading leaves the list before it whole: the new one is stored last, in
@@ -480,9 +503,9 @@ async fn dispatch(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     request: Request,
 ) -> Response {
-    if !crate::front::peer_allowed(&projects.starter, peer.ip()).await {
+    let Some(visitor) = crate::front::visitor(&projects.starter, peer.ip()).await else {
         return crate::front::peer_refused();
-    }
+    };
     let path = request.uri().path().to_string();
     // `/api/front` holds to loopback's name alone; every other route to a name of this machine.
     if path != symphony_api::FRONT_PATH {
@@ -505,14 +528,27 @@ async fn dispatch(
         }
     }
     let reading = projects.clone();
-    let Ok(served) = crate::spawn::blocking(move || reading.served()).await else {
+    let judged = visitor.clone();
+    let Ok(reached) = crate::spawn::blocking(move || reading.reached_by(&judged)).await else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
+    // From here on a project the visitor is not on is one this server does not hold.
+    let served: Vec<Served> = reached.iter().map(|(served, _)| served.clone()).collect();
+    let admitted = |project: &Served| {
+        reached
+            .iter()
+            .find(|(served, _)| Arc::ptr_eq(&served.shared, &project.shared))
+            .map(|(_, actor)| crate::front::Admitted::of(&visitor, actor.clone()))
+    };
+    let machine = visitor == Visitor::Machine;
     if path == symphony_api::FRONT_PATH {
+        if !machine {
+            return crate::front::machines_alone();
+        }
         return front(&projects, &served, request.headers());
     }
     if path == symphony_api::PROJECTS_PATH {
-        return listing(&projects, &served);
+        return listing(&projects, &served, machine);
     }
     if path == "/" {
         return home(&served);
@@ -536,7 +572,7 @@ async fn dispatch(
                 request.headers(),
             );
         }
-        return forward(project, &format!("/{rest}"), request).await;
+        return forward(project, &format!("/{rest}"), request, admitted(project)).await;
     }
     if let Some(plain) = respelled(&served, &path) {
         return redirect(&plain, request.uri());
@@ -560,7 +596,7 @@ async fn dispatch(
     if navigation(request.method(), request.headers()) {
         return redirect(&format!("/{}{path}", owner.entry.id), request.uri());
     }
-    forward(owner, &path, request).await
+    forward(owner, &path, request, admitted(owner)).await
 }
 
 /// A redirect to `path`, keeping `uri`'s query.
@@ -695,8 +731,17 @@ pub(crate) fn referred<'a>(headers: &HeaderMap, served: &'a [Served]) -> Option<
     served.iter().find(|served| served.entry.id == first)
 }
 
-/// `request` answered by `project`'s router at `inner`, its redirects kept under the project.
-async fn forward(project: &Served, inner: &str, mut request: Request) -> Response {
+/// `request` answered by `project`'s router at `inner`, as the dispatch `admitted` its visitor
+/// there, its redirects kept under the project.
+async fn forward(
+    project: &Served,
+    inner: &str,
+    mut request: Request,
+    admitted: Option<crate::front::Admitted>,
+) -> Response {
+    if let Some(admitted) = admitted {
+        request.extensions_mut().insert(admitted);
+    }
     let target = match request.uri().query() {
         Some(query) => format!("{inner}?{query}"),
         None => inner.to_string(),
@@ -734,10 +779,13 @@ fn front(projects: &Projects, served: &[Served], headers: &HeaderMap) -> Respons
 
 /// `GET /api/projects`: the server and each project it serves as data, for the desktop app
 /// ([`symphony_api::ProjectList`]): what the project list at `/` says of each, from the hubs'
-/// memory, so it reads no board.
-fn listing(projects: &Projects, served: &[Served]) -> Response {
+/// memory, so it reads no board. The machine's installation id is said to the person at it
+/// (`machine`) alone.
+fn listing(projects: &Projects, served: &[Served], machine: bool) -> Response {
     Json(symphony_api::ProjectList {
-        installation: symphony::machine::installation_id_in(&projects.machine).ok(),
+        installation: machine
+            .then(|| symphony::machine::installation_id_in(&projects.machine).ok())
+            .flatten(),
         pin: symphony::machine::PIN,
         projects: served.iter().map(listed).collect(),
     })
@@ -1024,3 +1072,7 @@ mod tests;
 #[cfg(test)]
 #[path = "projects/maintained_tests.rs"]
 mod maintained_tests;
+
+#[cfg(test)]
+#[path = "projects/visitors_tests.rs"]
+mod visitors_tests;

@@ -22,9 +22,16 @@ const PAGE: &str =
 /// The card's question saved through the router of `shared`, its payload naming another actor,
 /// which no save takes: the page as it then reads.
 async fn asked(shared: &Arc<Shared>, root: &Path) -> String {
-    let app = router(shared.clone()).layer(MockConnectInfo(
-        "127.0.0.1:5000".parse::<SocketAddr>().unwrap(),
-    ));
+    let (status, body) = asked_from(shared, "127.0.0.1:5000").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    shared.saves.get().unwrap().close();
+    std::fs::read_to_string(root.join("docs/TOPIC.md")).unwrap()
+}
+
+/// The card's question saved through the router of `shared` from `client`: the status and body
+/// it is answered.
+async fn asked_from(shared: &Arc<Shared>, client: &str) -> (StatusCode, String) {
+    let app = router(shared.clone()).layer(MockConnectInfo(client.parse::<SocketAddr>().unwrap()));
     let payload = r#"{"path":"docs/TOPIC.md","slug":"one","state":"question","note":"Which one?","actor":"mallory"}"#;
     let request = Request::post("/api/decision")
         .header(header::HOST, HOST)
@@ -37,9 +44,75 @@ async fn asked(shared: &Arc<Shared>, root: &Path) -> String {
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
-    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    (status, String::from_utf8_lossy(&body).into_owned())
+}
+
+/// A gate whose whois names a colleague's laptop at [`LAPTOP`], under a login other than this
+/// machine's, and whose roster adds that login to the board at `added` alone, as Ana.
+fn laptop_gate(added: &Path, ana: &Actor) -> crate::gate::Gate {
+    let (added, ana) = (added.to_path_buf(), ana.clone());
+    crate::gate::Gate::new(
+        Arc::new(|address: &str| {
+            Ok((address == LAPTOP_IP).then(|| {
+                r#"{"Node": {"Name": "laptop"}, "UserProfile": {"ID": 12, "LoginName": "ana@example.com"}}"#.to_string()
+            }))
+        }),
+        Arc::new(std::time::Instant::now),
+    )
+    .with_status(Arc::new(|| {
+        Ok(r#"{"Self": {"DNSName": "studio.tail.ts.net.", "UserID": 11}}"#.to_string())
+    }))
+    .with_roster(Arc::new(move |root: &Path, visitor: &crate::gate::Visitor| {
+        let her = matches!(visitor, crate::gate::Visitor::Login(login) if login.name == "ana@example.com");
+        (her && root == added).then(|| ana.clone())
+    }))
+}
+
+const LAPTOP_IP: &str = "100.101.102.104";
+const LAPTOP: &str = "100.101.102.104:5000";
+
+/// A visitor under another login whom the board added saves as the actor the board names them,
+/// never as the person at the machine; on a board that has not added them, a server of its own
+/// refuses them before any route, and nothing is written.
+#[tokio::test]
+async fn a_visitor_a_board_added_saves_as_themselves_and_one_it_did_not_writes_nothing() {
+    let ana = Actor::new(
+        Sender::new("ana", "Ana Lima", vec![]),
+        Principal::new(
+            PrincipalKind::Human,
+            "tailscale".into(),
+            "ana@example.com".into(),
+        ),
+    );
+    let tree = Tree::new();
+    let root = repository_holding(&tree, "main", "docs/TOPIC.md", PAGE);
+    let shared = Shared::new(1, 8123, &root, None, laptop_gate(&root, &ana));
+    let (status, body) = asked_from(&shared, LAPTOP).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
     shared.saves.get().unwrap().close();
-    std::fs::read_to_string(root.join("docs/TOPIC.md")).unwrap()
+    let page = std::fs::read_to_string(root.join("docs/TOPIC.md")).unwrap();
+    assert!(
+        page.lines()
+            .any(|l| l.ends_with("] ana · question — Which one?")),
+        "{page}"
+    );
+    assert!(!page.contains("owner ·"), "{page}");
+
+    let elsewhere = Tree::new();
+    let other = repository_holding(&elsewhere, "main", "docs/TOPIC.md", PAGE);
+    let shared = Shared::new(1, 8123, &other, None, laptop_gate(&root, &ana));
+    let (status, body) = asked_from(&shared, LAPTOP).await;
+    assert_eq!(
+        (status, body.as_str()),
+        (
+            StatusCode::FORBIDDEN,
+            "Forbidden: the Symphony answers only this machine and its tailnet\n"
+        )
+    );
+    assert_eq!(
+        std::fs::read_to_string(other.join("docs/TOPIC.md")).unwrap(),
+        PAGE
+    );
 }
 
 #[tokio::test]
@@ -108,6 +181,7 @@ fn no_server_write_takes_the_local_owner_where_the_gates_person_is_in_hand() {
     for (file, code) in [
         ("write.rs", include_str!("../write.rs")),
         ("attempts.rs", include_str!("../attempts.rs")),
+        ("api.rs", include_str!("../api.rs")),
     ] {
         let code = code.split("\n#[cfg(test)]\nmod tests").next().unwrap();
         assert!(code.lines().count() > 100, "{file} read whole");

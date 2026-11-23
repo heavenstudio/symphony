@@ -26,6 +26,12 @@ impl Machine {
 
     /// [`Machine::new`], its starter judging who may reach it by `gate`.
     fn with_gate(gate: Gate) -> Machine {
+        Machine::holding(gate, &["alpha", "beta"])
+    }
+
+    /// [`Machine::with_gate`] whose registry holds `ids` of `alpha` (the starter) and `beta`, both
+    /// written in its tree all the same.
+    pub(super) fn holding(gate: Gate, ids: &[&str]) -> Machine {
         let tree = Tree::new();
         for (id, color) in [("alpha", "#a00"), ("beta", "#0b0")] {
             tree.write(&format!("{id}/docs/README.md"), "# Docs\n");
@@ -40,7 +46,7 @@ impl Machine {
         tree.write("install/client/public/index.html", SHELL);
         let machine = tree.path("machine");
         let mut registry = Registry::default();
-        for id in ["alpha", "beta"] {
+        for id in ids {
             registry.add(Entry::of(&tree.path(id)).unwrap()).unwrap();
         }
         registry.write(&machine).unwrap();
@@ -59,7 +65,7 @@ impl Machine {
     }
 
     /// `path` asked by `client` of the Host `host`.
-    async fn named(
+    pub(super) async fn named(
         &self,
         client: &str,
         host: &str,
@@ -1350,12 +1356,14 @@ async fn the_project_list_says_why_a_project_is_refused_and_nothing_else_of_it()
 /// route but `/api/front` does, and nobody else.
 #[tokio::test]
 async fn the_project_list_answers_this_machines_tailnet_name_and_front_does_not() {
+    // The phone is under the login this machine is under.
     let peer = |_: &str| {
         Ok(Some(
-            r#"{"Node":{"Name":"phone.tailnet-name.ts.net."}}"#.to_string(),
+            r#"{"Node":{"Name":"phone.tailnet-name.ts.net."},"UserProfile":{"ID":11,"LoginName":"owner@example.com"}}"#.to_string(),
         ))
     };
-    let names = || Ok(r#"{"Self":{"DNSName":"studio.tailnet-name.ts.net."}}"#.to_string());
+    let names =
+        || Ok(r#"{"Self":{"DNSName":"studio.tailnet-name.ts.net.","UserID":11}}"#.to_string());
     let machine = Machine::with_gate(
         Gate::new(Arc::new(peer), Arc::new(Instant::now)).with_status(Arc::new(names)),
     );
