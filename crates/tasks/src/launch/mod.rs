@@ -710,6 +710,10 @@ fn open(
     let place = place(hc, &m.project(), start.stream)?;
     let mut argv = vec!["env".to_string(), format!("TASKS_SESSION={}", start.handle)];
     argv.extend(m.board_env.iter().map(|(k, v)| format!("{k}={v}")));
+    if start.agent == "codex" {
+        // Its shell sees what `codex_args` sets, and the terminal, known only once it runs.
+        argv.extend(hc::IN_ITS_TERMINAL.map(String::from));
+    }
     argv.push(start.agent.into());
     argv.extend(start.args.iter().cloned());
     let labels = [

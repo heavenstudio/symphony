@@ -160,7 +160,8 @@ pub struct Reap<'a> {
 /// board's open launch records put in one of them, and the threads its launch records name of which
 /// no open record names a live terminal ([`Presence::gone`]), all from one read of the records that
 /// name a Codex thread and of only what this judges of each (`Store::codex_launches`): a record
-/// the board cannot read elsewhere is no information here, and stops no sweep.
+/// the board cannot read elsewhere is no information here, and stops no sweep. A record naming no
+/// terminal is none either: a thread is launched only by a record that says where.
 pub fn presence(store: &Store, live: &[Object]) -> Result<Presence, Error> {
     let address = |t: &Object| Some(text_of(t, "address")).filter(|a| !a.is_empty());
     let listed: BTreeSet<String> = live.iter().filter_map(address).collect();
@@ -173,6 +174,10 @@ pub fn presence(store: &Store, live: &[Object]) -> Result<Presence, Error> {
         let Some(thread) = record.claude_session.strip_prefix(crate::launch::CODEX) else {
             continue;
         };
+        // A record naming no terminal says nothing of where its thread ran (`launch::gone`).
+        if record.pane.is_empty() {
+            continue;
+        }
         let insert = |set: &mut BTreeSet<String>| set.insert(thread.to_string());
         insert(&mut launched);
         if record.open && listed.contains(&record.pane) {

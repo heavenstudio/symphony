@@ -299,7 +299,8 @@ pub struct Callback {
     #[serde(default)]
     pane_watch: attach::PaneWatch,
     /// The hc terminal the registering agent ran in (`HC_TERMINAL_ID`), if it ran in one: a
-    /// Codex thread is present while that terminal runs Codex.
+    /// Codex thread is present while that terminal runs Codex. The board hands it to the Codex it
+    /// starts (`launch::hc::IN_ITS_TERMINAL`), whose shell would otherwise not see it.
     #[serde(default)]
     pub terminal: Option<String>,
     /// How many times the handle has registered since its row was made: a number a registration
@@ -346,9 +347,9 @@ impl Callback {
 pub struct Presence {
     pub terminals: BTreeSet<String>,
     pub threads: BTreeSet<String>,
-    /// The threads the board launched (a launch record, open or closed, names them) that no open
-    /// launch record puts in a terminal hc lists live: every terminal the board ran each in is
-    /// closed or gone.
+    /// The threads the board launched (a launch record, open or closed, names them and the
+    /// terminal it ran them in) that no open launch record puts in a terminal hc lists live: every
+    /// terminal the board ran each in is closed or gone.
     pub gone: BTreeSet<String>,
 }
 
@@ -637,15 +638,19 @@ impl Store {
     /// The idle sweep confirms native reachability rather than treating absent tool calls as an
     /// exit. A socket must accept a connection; a Codex thread must still occupy a terminal: one a
     /// recorded launch puts it in, else the terminal it registered from, which must still run
-    /// Codex. A thread registered from no terminal (Codex's shell sees no `HC_TERMINAL_ID` when its
-    /// environment policy keeps only the core variables) is retired once every terminal the board
-    /// launched it in is closed or gone ([`Presence::gone`]);
+    /// Codex: a Codex the board launched or restored registers from its terminal, so one restored
+    /// is present in its new terminal before its record names it. That terminal is known by its
+    /// address alone, so another Codex in the same address would keep the registration confirmed:
+    /// the rule leans on hc never giving an address out twice (its addresses count up). A thread
+    /// registered from no terminal (a Codex resumed by hand, whose shell sees no `HC_TERMINAL_ID`
+    /// when its environment policy keeps only the core variables, or one an older build started) is
+    /// retired once every terminal the board launched it in is closed or gone ([`Presence::gone`]);
     /// one whose open launch record names a live terminal that does not run Codex (yet) is kept
-    /// unconfirmed, and one no launch records is neither confirmed nor retired: hc cannot say
-    /// where it runs. A session's health never decides: a Codex waiting between turns calls no
-    /// tool, but its terminal runs Codex. A dry run reports the same channels without changing
-    /// their heartbeat. No payload or credentials are sent by the socket probe. Without `codex`
-    /// (hc did not answer) no thread is confirmed or retired.
+    /// unconfirmed, and one no launch records is neither confirmed nor retired: hc cannot say where
+    /// it runs. A session's health never decides: a Codex waiting between turns calls no tool, but
+    /// its terminal runs Codex. A dry run reports the same channels without changing their
+    /// heartbeat. No payload or credentials are sent by the socket probe. Without `codex` (hc did
+    /// not answer) no thread is confirmed or retired.
     pub(crate) fn callback_presence(
         &self,
         codex: Option<&Presence>,

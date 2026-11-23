@@ -324,3 +324,37 @@ fn the_hooks_beat_leaves_the_delivery_to_the_channel_it_registers_to_a_detached_
         "the taken lease's release",
     );
 }
+
+#[test]
+fn a_board_command_before_its_launch_is_recorded_is_connected_at_the_next_one() {
+    let l = Launched::new("early");
+    let (path, _listener) = l.socket("early");
+    // The session's first board command runs before its restore records the conversation.
+    let early = || {
+        bash(&format!("just tasks inbox --as {}", l.handle))
+            .session("conv-early")
+            .0
+    };
+    l.beat(&path, &early());
+    assert_eq!(l.address(), None);
+    assert!(!l.folder.join("conv-early.channel").exists());
+    // Recorded since: its next board command registers the socket, and remembers it.
+    let store = l.case.store();
+    store
+        .create(&NewTask::new("sim/b", "B task", &l.handle))
+        .unwrap();
+    store
+        .record_launch(&NewLaunch {
+            claude_session: "conv-early".into(),
+            pane: "t2".into(),
+            ..NewLaunch::new("sim/b", &l.handle, "executor")
+        })
+        .unwrap();
+    l.beat(&path, &early());
+    assert_eq!(l.address(), uds(&path));
+    assert_eq!(
+        std::fs::read_to_string(l.folder.join("conv-early.channel")).unwrap(),
+        path.to_string_lossy()
+    );
+    let _ = std::fs::remove_file(path);
+}
