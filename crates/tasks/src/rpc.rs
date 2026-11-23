@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 mod descriptor;
 mod read;
 
+pub(crate) use read::SLOW;
 pub use read::{Kind, slow};
 
 /// How long a request may wait on the server: a whole board's copy, on a loaded machine, is the longest.
