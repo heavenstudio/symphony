@@ -25,7 +25,7 @@ enum Board {
     Fails,
     /// It panics, as a defect in connecting, reading or probing would.
     Panics,
-    /// It returns [`SLOW`], as a board that took a read and answered it late, twice, does.
+    /// It returns [`SLOW`], as a board whose PostgreSQL took a request and answered it late does.
     Slow,
     /// It returns what a project with no board says: none is made yet, and a reader never makes one.
     Absent,
@@ -48,7 +48,7 @@ async fn within<T>(what: &str, work: impl Future<Output = T>) -> T {
 }
 
 /// A board read's failure on a server that took the request and gave no answer within the wait.
-pub(super) const SLOW: &str = "the board's database: the server at 127.0.0.1:1 is slow: no answer within 3s: read failed on a freshly opened socket after 0 completed requests: Resource temporarily unavailable (os error 35); the request only reads, so it went once more, on a new connection: read failed on a freshly opened socket after 0 completed requests: Resource temporarily unavailable (os error 35); it was not sent a third time";
+pub(super) const SLOW: &str = "the board's database: the board's PostgreSQL at /tmp/symphony-pg-board is slow: no answer within 3s: Resource temporarily unavailable (os error 35); the request may have run there, so it was not sent again";
 
 struct Held {
     hub: Arc<Hub>,

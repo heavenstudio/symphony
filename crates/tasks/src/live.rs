@@ -113,7 +113,7 @@ pub enum Recorded {
     /// The port it records.
     Port(u16),
     /// A record naming no address, or a port spelled as no number: it names no port it can be told
-    /// apart from, so it counts as any (`tools/rs-bin.sh` reads it the same way).
+    /// apart from, so it counts as any.
     Unreadable,
 }
 
@@ -254,8 +254,8 @@ pub fn named_server(
     by_server(served(addr), machine).unwrap_or_else(|| named_by_record(addr, cwd, machine))
 }
 
-/// The board of `cwd`'s repository when its record names the port of `addr` (or names none it can
-/// be told apart from, as the launcher reads it), else none.
+/// The board of `cwd`'s repository when `addr` names it ([`names_address`]: its PostgreSQL's socket,
+/// or a port its record names or none it can be told apart from), else none.
 fn named_by_record(addr: &str, cwd: &Path, machine: Option<&Path>) -> Option<Live> {
     let common = git::read(cwd)?;
     names_address(&common, addr, false).then(|| live(&common, named(&common, machine)))

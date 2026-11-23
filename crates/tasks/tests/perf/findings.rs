@@ -169,8 +169,10 @@ fn walk(node: &Value, hashed: &BTreeSet<String>, per_row: Option<&str>, found: &
         let subplan = (text(child, "Parent Relationship") == Some("SubPlan"))
             .then(|| text(child, "Subplan Name"))
             .flatten();
-        // A hashed subplan takes nothing from the rows above it, so the server builds its table
-        // once, however often the subplan holding it runs.
+        // A hashed subplan's table is built once, however often the subplan holding it runs, only
+        // while it reads no value of an outer row: PostgreSQL builds it again each time a
+        // parameter it reads changes. The plan does not say which it reads, and the walk passes
+        // a hashed subplan as one built once.
         let per_row = match subplan {
             Some(name) if hashed.contains(name) => None,
             Some(name) => Some(name),

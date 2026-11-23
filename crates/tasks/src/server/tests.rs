@@ -15,12 +15,16 @@ fn a_board_server_names_the_common_dir_of_the_data_it_serves_and_nothing_else_is
     let data = common.join(FOLDER).join(postgres::DATA);
     let line = format!("{POSTGRES} -D {}", data.display());
     assert_eq!(board_served(&line), Some(common.clone()), "{line}");
-    // Other data, data in no git common dir, another program, and the SurrealDB server an
-    // earlier release ran on the board's old store.
+    // Other data, data in no git common dir, a folder of the board's last name elsewhere in the
+    // common dir, another program, and the SurrealDB server an earlier release ran on the board's
+    // old store.
     let loose = root.join("loose").join(FOLDER);
     fs::create_dir_all(&loose).unwrap();
+    let elsewhere = common.join("elsewhere/tasks");
+    fs::create_dir_all(&elsewhere).unwrap();
     for line in [
         format!("{POSTGRES} -D {}", loose.join(postgres::DATA).display()),
+        format!("{POSTGRES} -D {}", elsewhere.join(postgres::DATA).display()),
         format!("{POSTGRES} -D {}", common.join(FOLDER).join(DATA).display()),
         format!("{POSTGRES} -D {}-old", data.display()),
         format!("/opt/bin/not-postgres -D {}", data.display()),

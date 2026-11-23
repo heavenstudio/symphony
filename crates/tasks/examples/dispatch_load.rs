@@ -4,7 +4,7 @@
 //!
 //!     cargo run --release -p symphony-board --example dispatch_load -- --server ADDR --database NAME \
 //!         --tasks BIN [--dump FILE] [--recipients 93] [--orchestrators 5] [--writers 40] \
-//!         [--surreal-pid PID] [--settle 300]
+//!         [--server-pid PID] [--settle 300]
 //!
 //! It writes only the named non-live database on the server at ADDR (`--dump` replaces it with that
 //! board first) and never the live board. Each recipient is a session of its own with a UDS listener
@@ -52,7 +52,8 @@ struct Options {
     orchestrators: usize,
     writers: usize,
     settle: usize,
-    surreal: Option<String>,
+    /// The database server's process, whose CPU the report counts.
+    server_pid: Option<String>,
 }
 
 impl Options {
@@ -74,7 +75,7 @@ impl Options {
             orchestrators: number(args, "--orchestrators", 5)?,
             writers: number(args, "--writers", 40)?,
             settle: number(args, "--settle", 300)?,
-            surreal: arg(args, "--surreal-pid").map(String::from),
+            server_pid: arg(args, "--server-pid").map(String::from),
         })
     }
 
@@ -88,7 +89,7 @@ impl Options {
 
     /// The database server's CPU seconds so far, when its pid was given.
     fn cpu(&self) -> Option<f64> {
-        self.surreal.as_deref().and_then(cpu_seconds)
+        self.server_pid.as_deref().and_then(cpu_seconds)
     }
 }
 

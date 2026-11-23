@@ -58,7 +58,8 @@ and one snapshot: the server's memory under thirty commands at once is
 ## A board still on SurrealDB
 
 A home whose identity names SurrealDB (`{"format":1,"engine":"surrealdb"}`), or that names none
-and holds a SurrealDB store (`data/`), is a board still on SurrealDB. It is never served, and
+and holds a SurrealDB store (`data/`, or `reclaim/old`, where an earlier release's reclaim cut
+short between its moves left it), is a board still on SurrealDB. It is never served, and
 never taken for a board not made yet: every start and reach of it is refused, and the refusal
 says how it moves. A board still on SurrealDB moves to PostgreSQL with an earlier release's
 `tasks-move postgresql --as HANDLE` (release-2026-11-22.3 has it), run from its project's main
