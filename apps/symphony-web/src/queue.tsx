@@ -3,9 +3,9 @@
 // contents near the viewport, while each group's anchor stays for the home's links.
 
 import { useEffect, useRef, useState } from "react";
+import { useFreshen } from "./board-page";
 import { Button } from "./button";
 import { answered, boardItem, drawn, failed, keepLater, QUEUE, readKept } from "./cache";
-import { useFreshen } from "./live";
 import { PostponeControls } from "./postpone";
 import { href, scoped } from "./project";
 import { getIf, said } from "./request";

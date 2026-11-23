@@ -4,37 +4,3 @@
 .task-diff h2 {
   margin: 0;
 }
-.task-diff details {
-  border-top: 1px solid var(--border);
-  padding: 0.7rem 0;
-}
-.task-diff summary {
-  cursor: pointer;
-  overflow-wrap: anywhere;
-}
-.task-diff-path {
-  font-family: var(--font-mono, monospace);
-}
-.task-diff-counts {
-  display: inline-block;
-  margin-left: 1rem;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-.task-diff [data-change="added"] {
-  color: var(--like);
-}
-.task-diff [data-change="removed"] {
-  color: var(--dislike);
-}
-.task-diff-patch {
-  overflow-x: auto;
-  max-height: 32rem;
-  padding: 1rem;
-  background: var(--muted);
-  font-size: 0.8rem;
-  line-height: 1.5;
-}
-.task-diff-patch pre {
-  margin: 0;
-}

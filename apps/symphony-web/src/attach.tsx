@@ -6,25 +6,22 @@
 // A composer takes `useAttach` with a key of its own, marks its form `data-attach` with its `zone`
 // and draws `AttachControls` inside it. A file reaches it three ways: the picker, a paste (a
 // screenshot on the clipboard) or a drop anywhere on the form. Each is sent to UPLOAD_PATH at once,
-// one at a time, and shown as a chip; the post carries one line per file (`compose`), which is how
-// the posted item keeps showing it. The chips are saved with the draft, so a reload keeps them.
+// one at a time, by attach-upload.ts (a chunk imported as the first file comes), and shown as a
+// chip; the post carries one line per file (`compose`), which is how the posted item keeps showing
+// it. The chips are saved with the draft, so a reload keeps them.
 // One set of document listeners routes paste, drop and the picker's change to the composer whose
 // zone holds the event's target.
 
 import { useEffect, useReducer, useRef, useState } from "react";
+import type { take } from "./attach-upload";
 import { Button } from "./button";
-import { here, project } from "./project";
+import { snapshot } from "./shared";
 import { load, save } from "./storage";
 import STYLE from "./styles/attach.css?inline";
-import { deadline } from "./timing";
-import { UPLOAD_ACCEPT, UPLOAD_MAX_BYTES, UPLOAD_PATH, type Upload } from "./wire";
-import { fixed } from "./words";
+import { UPLOAD_ACCEPT, type Upload } from "./wire";
 
 /** The most files one post carries. */
 export const MAX_FILES = 10;
-
-/** How long an upload waits for the server: a phone on a slow link sends 10 MB well within it. */
-export const UPLOAD_MS = 120_000;
 
 /** Where this device keeps a composer's files, beside its draft. */
 export function storageKey(key: string): string {
@@ -74,121 +71,44 @@ export function compose(text: string, files: readonly Upload[]): string {
   return typed.trim() === "" ? lines : `${typed}\n\n${lines}`;
 }
 
-/** A file bigger than the server takes, said before any byte is sent. */
-export function tooLarge(name: string, bytes: number): string | null {
-  if (bytes <= UPLOAD_MAX_BYTES) return null;
-  const megabytes = UPLOAD_MAX_BYTES / (1024 * 1024);
-  return `${name} is ${fixed(bytes / (1024 * 1024), 1)} MB; uploads are at most ${Math.floor(megabytes)} MB`;
-}
-
-/** Whether `value` is an upload as the server answers it. */
-export function isUpload(value: unknown): value is Upload {
-  if (typeof value !== "object" || value === null) return false;
-  const { url, name, picture, bytes, markup } = value as Record<string, unknown>;
-  return (
-    typeof url === "string" &&
-    typeof name === "string" &&
-    typeof picture === "boolean" &&
-    typeof bytes === "number" &&
-    typeof markup === "string"
-  );
-}
-
-/**
- * Send one file as the raw body; the server answers its stored line, or why it refused. Aborted,
- * and said so, when no answer came in UPLOAD_MS.
- */
-export async function upload(file: File): Promise<Upload> {
-  const controller = new AbortController();
-  const ended = deadline(UPLOAD_MS, () => controller.abort());
-  try {
-    const url = `${here(project(), UPLOAD_PATH)}?name=${encodeURIComponent(file.name)}`;
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        method: "POST",
-        signal: controller.signal,
-        body: file,
-        headers: { "Content-Type": file.type === "" ? "application/octet-stream" : file.type },
-      });
-    } catch (error) {
-      if (controller.signal.aborted) throw new Error("no answer from the server; try again");
-      throw error;
-    }
-    let value: unknown;
-    try {
-      value = await response.json();
-    } catch {
-      if (controller.signal.aborted) throw new Error("no answer from the server; try again");
-      throw new Error(`the server answered ${response.status}`);
-    }
-    if (!response.ok) {
-      const said = (value as { error?: unknown } | null)?.error;
-      throw new Error(typeof said === "string" ? said : `the server answered ${response.status}`);
-    }
-    if (!isUpload(value)) throw new Error("the server's answer is no upload");
-    return value;
-  } finally {
-    ended();
-  }
-}
-
 /** A composer's attachments: the files stored so far, the ones on their way, the last refusal. */
 export interface Attachments {
   files: Upload[];
   pending: string[];
+  /**
+   * The names of the files given to the composer whose sending has not started (`sendAfter`): on
+   * their way all the same, so its post waits for them from the moment they are given, but not
+   * counted against MAX_FILES, to which `take` holds each batch in its turn.
+   */
+  queued: string[];
   trouble: string | null;
 }
 
-/**
- * The files of one batch taken in turn, one upload at a time, into `held` (`changed` after each
- * change): past MAX_FILES the rest are refused at once, and a file past the server's size is
- * named and skipped. A file the server already holds under its address is held once. `kept` saves
- * the files held; `alive` says whether the composer is still there to take an answer.
- */
-export async function take(
-  batch: readonly File[],
-  held: Attachments,
-  changed: () => void,
-  kept: () => void,
-  alive: () => boolean,
-  send: (file: File) => Promise<Upload> = upload,
-): Promise<void> {
-  for (const file of batch) {
-    const name = file.name;
-    if (held.files.length + held.pending.length >= MAX_FILES) {
-      held.trouble = `At most ${MAX_FILES} files per post`;
-      changed();
-      break;
-    }
-    const large = tooLarge(name, file.size);
-    if (large !== null) {
-      held.trouble = large;
-      changed();
-      continue;
-    }
-    held.pending = [...held.pending, name];
-    changed();
-    let stored: Upload | null = null;
-    let why = "";
-    try {
-      stored = await send(file);
-    } catch (error) {
-      why = error instanceof Error ? error.message : String(error);
-    }
-    if (!alive()) return;
-    const at = held.pending.indexOf(name);
-    if (at >= 0) held.pending = held.pending.filter((_, one) => one !== at);
-    if (stored !== null) {
-      const added = stored;
-      if (!held.files.some((one) => one.url === added.url)) held.files = [...held.files, added];
-      held.trouble = null;
-      kept();
-    } else {
-      held.trouble = `${name}: ${why}`;
-    }
-    changed();
+/** `names` out of `held`'s queue, one of each: a batch's, whose names are the first queued. */
+function unqueue(held: Attachments, names: readonly string[]): void {
+  const left = [...held.queued];
+  for (const name of names) {
+    const at = left.indexOf(name);
+    if (at >= 0) left.splice(at, 1);
   }
+  held.queued = left;
+}
+
+/**
+ * What a composer's form shows of `held`: its files, those on their way (sending, or queued while
+ * their sending comes), and its last refusal. One on its way holds its post (`busy`).
+ */
+export function shownOf(
+  held: Attachments,
+): Pick<Attach, "files" | "pending" | "trouble" | "busy" | "empty"> {
+  const pending = [...held.pending, ...held.queued];
+  return {
+    files: held.files,
+    pending,
+    trouble: held.trouble,
+    busy: pending.length > 0,
+    empty: held.files.length === 0,
+  };
 }
 
 /** A mounted composer: its mount's id and what takes its files. */
@@ -291,11 +211,57 @@ export interface Attach {
   remove(url: string): void;
 }
 
+/** The files' sending (attach-upload.ts), imported as a composer is given its first file. */
+const sending = () => import("./attach-upload");
+
+/**
+ * What a composer says where the files' sending did not come, once the shell said the page's build
+ * is there (where it is gone, the page loads again): the files are not taken, and are given again.
+ */
+export const UNSENT =
+  "The files could not be sent: this page could not load its uploads. Try again.";
+
+/**
+ * A composer's `files`, taken into `held` after the batches `before` them (attach-upload.ts `take`,
+ * whose `changed`, `kept` and `alive` these are) once their sending has come. They are queued at
+ * once, so the post waits for them while it comes, and leave the queue in the tick `take` holds
+ * the first pending. Where it did not come, they leave it and UNSENT is said, unless the composer
+ * left or the page's build is gone (the page then loads again).
+ */
+export function sendAfter(
+  before: Promise<void>,
+  files: File[],
+  held: Attachments,
+  changed: () => void,
+  kept: () => void,
+  alive: () => boolean,
+  load: () => Promise<{ take: typeof take }> = sending,
+): Promise<void> {
+  const names = files.map((file) => file.name);
+  held.queued = [...held.queued, ...names];
+  changed();
+  return before.then(load).then(
+    (chunk) => {
+      unqueue(held, names);
+      return chunk.take(files, held, changed, kept, alive);
+    },
+    async () => {
+      const shell = snapshot("reviewShell") as { gone(): Promise<boolean> } | undefined;
+      const quiet = !alive() || (await shell?.gone()) === true;
+      unqueue(held, names);
+      if (quiet) return;
+      held.trouble = UNSENT;
+      changed();
+    },
+  );
+}
+
 /** A composer's attachments, under `key` (unique among the composers mounted at once). */
 export function useAttach(key: string): Attach {
   const [held] = useState<Attachments>(() => ({
     files: restored(load(storageKey(key)) ?? ""),
     pending: [],
+    queued: [],
     trouble: null,
   }));
   const [, drawn] = useReducer((n: number) => n + 1, 0);
@@ -309,14 +275,13 @@ export function useAttach(key: string): Attach {
     zones.set(key, {
       id,
       take(files) {
-        queue = queue.then(() =>
-          take(
-            files,
-            held,
-            () => alive && drawn(),
-            () => keep.current(),
-            () => alive,
-          ),
+        queue = sendAfter(
+          queue,
+          files,
+          held,
+          () => alive && drawn(),
+          () => keep.current(),
+          () => alive,
         );
       },
     });
@@ -330,11 +295,7 @@ export function useAttach(key: string): Attach {
   }, [key, held]);
   return {
     zone: key,
-    files: held.files,
-    pending: held.pending,
-    trouble: held.trouble,
-    busy: held.pending.length > 0,
-    empty: held.files.length === 0,
+    ...shownOf(held),
     compose: (text) => compose(text, held.files),
     clear() {
       held.files = [];
