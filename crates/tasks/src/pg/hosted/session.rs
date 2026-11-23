@@ -486,12 +486,16 @@ impl Session {
     async fn ended(&self, error: &tokio_postgres::Error, sent: &AtomicBool, open: bool) -> Ended {
         let Some(server) = error.as_db_error() else {
             // A row the client could not read is the client's own failure on a connection
-            // whose transaction is still open: it ends with the connection, uncommitted.
+            // whose transaction is still open: it ends with the connection, uncommitted. The
+            // server answered it.
             if error.to_string().starts_with("error deserializing") {
-                return Ended::broken(Refusal::Unsupported(
-                    "a statement answered a column of a type the hosted client does not read"
-                        .into(),
-                ));
+                return Ended {
+                    answered: true,
+                    ..Ended::broken(Refusal::Unsupported(
+                        "a statement answered a column of a type the hosted client does not read"
+                            .into(),
+                    ))
+                };
             }
             return Ended::broken(if sent.load(Ordering::SeqCst) {
                 Refusal::Unknown("the connection was lost after the commit was sent")
@@ -504,7 +508,7 @@ impl Session {
         }
         let said = failed(server, self.backend);
         let clean = !open || self.client.batch_execute("ROLLBACK").await.is_ok();
-        Ended { said, clean }
+        Ended::refused(said, clean)
     }
 
     /// A session the server ended, an operator's act or a failover: nothing of its request was
@@ -530,7 +534,7 @@ impl Session {
                         let said = failed(server, self.backend);
                         // The script's own transaction, if it left one failed, is rolled back.
                         let clean = self.client.batch_execute("ROLLBACK").await.is_ok();
-                        Err(Ended { said, clean })
+                        Err(Ended::refused(said, clean))
                     }
                     None => Err(Ended::broken(Refusal::Unknown(
                         "the connection was lost while a script that commits ran",

@@ -382,3 +382,50 @@ fn a_script_the_server_ends_or_does_not_answer_is_unknown_and_is_not_sent_again(
         );
     }
 }
+
+/// The board's health counts a request as unanswered only when it got no answer, a session the
+/// server ended or a wait run out, never for an error the server answered: a raised exception, a
+/// row a constraint refused, a column the client does not read.
+#[test]
+fn only_a_request_that_got_no_answer_is_unanswered_in_the_boards_health() {
+    let unanswered = |client: &symphony_board::pg::hosted::Client| {
+        let (queries, _) = client.queries().report(symphony_board::sweep::trigger::now());
+        (queries.count, queries.failed)
+    };
+    for major in MAJORS {
+        let project = cluster::cluster(major).project();
+        table(&project);
+        let client = project.client("web");
+        let before = unanswered(&client).0;
+        let thrown = client.request(&[Step::bare(
+            "DO $$ BEGIN RAISE EXCEPTION 'the board says no'; END $$",
+        )]);
+        assert_eq!(thrown, Err(DbError::Thrown("the board says no".into())));
+        refused(client.request(&[Step::bare("INSERT INTO t VALUES (1, 1)")]));
+        refused(client.request(&[Step::bare("SELECT now()")]));
+        assert_eq!(
+            unanswered(&client),
+            (before + 3, 0),
+            "PostgreSQL {major}: each answered"
+        );
+        refused(client.request(&[Step::bare("SELECT pg_terminate_backend(pg_backend_pid())")]));
+        let operator = project.cluster.operator(&project.name);
+        operator.simple("SELECT pg_advisory_lock(4245)").unwrap();
+        let hasty = client.bounded(Duration::from_millis(500));
+        let late = refused(hasty.request(&[Step::bare("SELECT pg_advisory_xact_lock(4245)")]));
+        assert!(
+            late.contains("the server did not answer in time"),
+            "PostgreSQL {major}: {late}"
+        );
+        test_time::wait::until_true("the cancelled session to end", READY, || {
+            project.cluster.sessions(&project.name) == 0
+        })
+        .unwrap();
+        operator.simple("SELECT pg_advisory_unlock(4245)").unwrap();
+        assert_eq!(
+            unanswered(&client),
+            (before + 5, 2),
+            "PostgreSQL {major}: the ended session and the wait run out went unanswered"
+        );
+    }
+}

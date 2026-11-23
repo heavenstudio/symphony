@@ -122,18 +122,32 @@ fn correlation(backend: i32) -> String {
     format!("backend {backend} at {now}")
 }
 
-/// How a request ended without its answers: what the store is told, and whether the connection
-/// may be lent again.
+/// How a request ended without its answers: what the store is told, whether the connection
+/// may be lent again, and whether the server answered it, with what `said` says (the board's
+/// health counts a request with no answer as failed, never one the server refused).
 struct Ended {
     said: DbError,
     clean: bool,
+    answered: bool,
 }
 
 impl Ended {
+    /// A request whose connection ended, or whose wait ran out, before the server answered it.
     fn broken(refusal: Refusal) -> Ended {
         Ended {
             said: refusal.into(),
             clean: false,
+            answered: false,
+        }
+    }
+
+    /// A request the server answered with an error, the connection `clean` once its transaction
+    /// is rolled back.
+    fn refused(said: DbError, clean: bool) -> Ended {
+        Ended {
+            said,
+            clean,
+            answered: true,
         }
     }
 }
@@ -469,8 +483,9 @@ impl Client {
         })
     }
 
-    /// `work` on a connection of the pool, counted once in the board's telemetry: the
-    /// connection returned to the pool only when the work left it clean.
+    /// `work` on a connection of the pool, counted once in the board's telemetry, failed only when
+    /// it got no answer (no connection, one lost, a wait run out), never for an error the server
+    /// answered: the connection returned to the pool only when the work left it clean.
     #[track_caller]
     fn measured<F, W>(&self, write: bool, work: F) -> Result<Vec<Answer>, DbError>
     where
@@ -480,20 +495,25 @@ impl Client {
         let source = std::panic::Location::caller();
         self.requests.fetch_add(1, Ordering::SeqCst);
         let began = Instant::now();
-        let answered = (|| {
+        // The outer error is a request with no answer, the inner the server's answer.
+        let sent = (|| -> Result<Result<Vec<Answer>, DbError>, DbError> {
             let mut lease = self.lease()?;
             let session = Arc::clone(lease.connection());
             let driver = &self.shared.pool.connector().driver;
             match driver.run(work(session)) {
                 Ok(Ok(answers)) => {
                     lease.keep();
-                    Ok(answers)
+                    Ok(Ok(answers))
                 }
                 Ok(Err(ended)) => {
                     if ended.clean {
                         lease.keep();
                     }
-                    Err(ended.said)
+                    if ended.answered {
+                        Ok(Err(ended.said))
+                    } else {
+                        Err(ended.said)
+                    }
                 }
                 Err(refusal) => Err(refusal.into()),
             }
@@ -503,9 +523,9 @@ impl Client {
             ms: began.elapsed().as_secs_f64() * 1000.0,
             source,
             write,
-            failed: answered.is_err(),
+            failed: sent.is_err(),
         });
-        answered
+        sent.flatten()
     }
 }
 
