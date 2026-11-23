@@ -124,10 +124,10 @@ fn a_tidy_on_the_default_branch_of_a_project_that_delivers_keeps_each_change_and
     assert_eq!(
         out,
         "resolved: done\nregrouped docs/DECISIONS.md\narchived: docs/NOTES.md (1)\nkept for \
-         delivery: docs/DECISIONS.md (docs/owner-save-1), docs/history/review-ledger.md \
-         (docs/owner-save-2), docs/NOTES.md (docs/owner-save-3). This project delivers by pull \
-         request ([land] delivery), so a tidy writes no file in a checkout on main: the pages show \
-         it now, and each file's own pull request delivers it.\n"
+         delivery: docs/DECISIONS.md (save 1), docs/history/review-ledger.md (save 2), \
+         docs/NOTES.md (save 3). This project delivers by pull request ([land] delivery), so a \
+         tidy writes no file in a checkout on main: the pages show it now, and a pull request \
+         delivers it.\n"
     );
     // Nothing of the checkout written, not even replaced by the same text.
     assert_eq!(tree.read("docs/DECISIONS.md"), REGISTER);
@@ -188,7 +188,7 @@ fn a_kept_tidy_leaves_the_answered_comments_on_their_pages_while_main_holds_no_l
             "resolved: done\nregrouped docs/DECISIONS.md\narchived: none of 1 answered comments, \
              as main does not hold docs/history/review-ledger.md yet: they stay on their pages \
              until a tidy in a task's worktree moves them\nkept for delivery: docs/DECISIONS.md \
-             (docs/owner-save-1). "
+             (save 1). "
         ),
         "{out}"
     );
@@ -358,8 +358,8 @@ fn a_reply_on_the_default_branch_of_a_project_that_delivers_is_kept_and_writes_n
     assert_eq!(
         out,
         format!(
-            "replied on ask in {path}, kept as docs/owner-save-1: this project delivers by pull \
-             request, so the page shows it now and its own pull request delivers it\n"
+            "replied on ask in {path}, kept as save 1: this project delivers by pull request, so \
+             the page shows it now and a pull request delivers it\n"
         )
     );
     // Main's checkout is left as it was, the file not even replaced.
@@ -426,7 +426,7 @@ fn an_answer_on_a_comment_there_is_kept_the_same_way() {
     let path = tree.path("docs/NOTES.md");
     let (code, out, err) = reply(&asks, &[path.to_str().unwrap(), "L3", "Because."]);
     assert_eq!((code, err.as_str()), (0, ""), "{out}");
-    assert!(out.contains("kept as docs/owner-save-1"), "{out}");
+    assert!(out.contains("kept as save 1"), "{out}");
     assert_eq!(tree.read("docs/NOTES.md"), COMMENTED);
     let shown = pending::shown(&tree.root, "docs/NOTES.md", COMMENTED.into());
     assert!(shown.contains("> > [!resolved] Because."), "{shown}");

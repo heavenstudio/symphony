@@ -871,3 +871,126 @@ pub(super) fn an_agents_reply_kept_from_main_is_delivered_behind_the_owners_save
     assert_eq!(git(&root, &["status", "--porcelain"]), "");
     f.clean_workers();
 }
+
+/// An agent's reply on the card `slug` of `file` from main's checkout, at `minute` past 21:00.
+fn replied(root: &Path, file: &str, slug: &str, text: &str, minute: u8) {
+    let page = root.join(file);
+    let now = format!("2026-11-22 21:{minute:02}");
+    let (code, said) = agent_reply(&[
+        page.to_str().unwrap(),
+        slug,
+        text,
+        "--now",
+        &now,
+        "--as",
+        "fox-1",
+    ]);
+    assert_eq!(code, 0, "{said}");
+}
+
+pub(super) fn an_agents_saves_whose_turn_has_come_go_as_one_task(f: &Fixture) {
+    let root = delivering(f);
+    let saves = ClosingSaves::start(&root);
+    let message = json!({"path":"docs/a.md","slug":"one","text":"what would two look like?"});
+    assert_eq!(
+        saves.post("", "/api/message", message),
+        json!({"ok":true,"delivery":"pending"})
+    );
+    drop(saves);
+    let owner = pending::saves(&root)[0].branch.clone();
+
+    // A reply behind the owner's save, and two on another page, the second written after the
+    // first: all kept, nothing of the checkout written.
+    replied(&root, "docs/a.md", "one", "Like the first, smaller.", 10);
+    replied(&root, "docs/b.md", "two", "Drafted.", 11);
+    replied(&root, "docs/b.md", "two", "Pictured too.", 12);
+    assert_eq!(git(&root, &["status", "--porcelain"]), "");
+    pass(&root);
+
+    // The two of b.md go as one commit on the first's branch, filed as one task; the reply on
+    // a.md waits for the owner's save it answers.
+    let kept = pending::saves(&root);
+    assert_eq!(kept.len(), 4, "{kept:?}");
+    let batch = kept[2].branch.clone();
+    assert_eq!(batch, format!("docs/owner-save-{}", kept[2].sequence));
+    assert_eq!(kept[3].branch, batch);
+    assert_eq!(
+        (&kept[1].state, &kept[2].state, &kept[3].state),
+        (&State::Queued, &State::Waiting, &State::Waiting)
+    );
+    let mut made = vec![owner.clone(), batch.clone()];
+    made.sort();
+    assert_eq!(branches(&root), made);
+    assert_eq!(
+        git(&root, &["rev-parse", &format!("{batch}^")]),
+        git(&root, &["rev-parse", "main"])
+    );
+    let delivered = git(&root, &["diff", "main", &batch]);
+    let added: Vec<&str> = (delivered.lines())
+        .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
+        .collect();
+    assert_eq!(
+        added,
+        [
+            "+  [2026-11-22 21:11] agent — Drafted.",
+            "+  [2026-11-22 21:12] agent — Pictured too."
+        ],
+        "{delivered}"
+    );
+    let message = git(&root, &["log", "-1", "--format=%B", &batch]);
+    assert_eq!(message, "docs: an agent's saves (fox-1)\n\ndocs/b.md");
+    let store = f.store();
+    let task = store.get(&batch).unwrap();
+    assert_eq!(task.status, "review");
+    assert_eq!(task.title, "Deliver an agent's saves of docs/b.md");
+    assert!(
+        task.body.starts_with(
+            "An agent (fox-1) saved 2 replies or tidied files of docs/b.md in the checkout on main"
+        ),
+        "{}",
+        task.body
+    );
+    let second = format!("docs/owner-save-{}", kept[3].sequence);
+    assert!(store.get(&second).is_err(), "{second} was filed");
+    // A pass again files nothing twice and moves no branch.
+    let tip = git(&root, &["rev-parse", &batch]);
+    pass(&root);
+    assert_eq!(git(&root, &["rev-parse", &batch]), tip);
+    assert_eq!(branches(&root), made);
+
+    // A later reply on b.md waits for that batch, as one on a.md waits for the owner's save.
+    replied(&root, "docs/b.md", "two", "One more.", 13);
+    landed(&root, &owner, &owner);
+    git(&root, &["merge", "-q", "--ff-only", "origin/main"]);
+    pass(&root);
+    let kept = pending::saves(&root);
+    assert_eq!(kept.len(), 4, "{kept:?}");
+    let alone = kept[0].branch.clone();
+    assert_eq!(alone, format!("docs/owner-save-{}", kept[0].sequence));
+    assert_eq!(
+        (kept[1].branch.as_str(), kept[2].branch.as_str()),
+        (batch.as_str(), batch.as_str())
+    );
+    assert_eq!(kept[3].state, State::Queued);
+    let message = git(&root, &["log", "-1", "--format=%B", &alone]);
+    assert_eq!(message, "docs: an agent's save (fox-1)\n\ndocs/a.md");
+    assert_eq!(
+        store.get(&alone).unwrap().title,
+        "Deliver an agent's save of docs/a.md"
+    );
+
+    // The batch's one receipt proves both its saves, and the reply after it goes next.
+    landed(&root, &batch, &batch);
+    git(&root, &["merge", "-q", "--ff-only", "origin/main"]);
+    pass(&root);
+    let left: Vec<String> = (pending::saves(&root).into_iter().map(|save| save.branch)).collect();
+    let last = format!("docs/owner-save-{}", pending::saves(&root)[1].sequence);
+    assert_eq!(left, [alone, last.clone()]);
+    let text = git(&root, &["show", &format!("{last}:docs/b.md")]);
+    assert!(
+        text.contains("Pictured too.") && text.contains("One more."),
+        "{text}"
+    );
+    assert_eq!(git(&root, &["status", "--porcelain"]), "");
+    f.clean_workers();
+}

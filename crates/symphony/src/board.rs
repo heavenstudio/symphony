@@ -390,7 +390,7 @@ pub fn register_files(root: &Path) -> Vec<PathBuf> {
 /// owner's save writes none there: a tracked edit left in that checkout stops every delivered
 /// land. It reads each document there as the page shows it, the saves still waiting laid on it,
 /// and keeps each file it changes as a save of its own ([`crate::commit::pending::keep`]), which
-/// the page shows at once and a pull request of its own delivers. A ledger that branch does not
+/// the page shows at once and a pull request delivers. A ledger that branch does not
 /// hold yet could not be delivered, so there the answered comments stay on their pages, and the
 /// tidy says so.
 pub fn tidy(root: &Path, now: Option<&str>, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
@@ -593,17 +593,17 @@ fn plan(
     Ok(plan)
 }
 
-/// What a tidy kept for delivery says once it is done, `kept` the files it kept, each with the
-/// branch that delivers it.
-fn kept_said(project: &Project, kept: &[(String, String)]) -> String {
+/// What a tidy kept for delivery says once it is done, `kept` the files it kept, each with its
+/// save's number.
+fn kept_said(project: &Project, kept: &[(String, u64)]) -> String {
     let each: Vec<String> = kept
         .iter()
-        .map(|(file, branch)| format!("{file} ({branch})"))
+        .map(|(file, number)| format!("{file} (save {number})"))
         .collect();
     format!(
         "kept for delivery: {}. This project delivers by pull request ([land] delivery), so a \
-         tidy writes no file in a checkout on {}: the pages show it now, and each file's own \
-         pull request delivers it.\n",
+         tidy writes no file in a checkout on {}: the pages show it now, and a pull request \
+         delivers it.\n",
         each.join(", "),
         project.default_branch
     )
@@ -690,7 +690,7 @@ fn keep_for_delivery(
             new: change.after,
         };
         match crate::commit::pending::keep(root, edit, "") {
-            Ok(branch) => kept.push((file, branch)),
+            Ok(number) => kept.push((file, number)),
             Err(problem) => {
                 if !kept.is_empty() {
                     let _ = out.write_all(kept_said(project, &kept).as_bytes());

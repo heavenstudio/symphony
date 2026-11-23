@@ -51,7 +51,7 @@ const REPLY_USAGE: &str =
 const REPLY_HELP: &str = "An agent's line under a card, appended the way the app appends the owner's, or the
 answer that resolves a comment. In a checkout on the default branch of a project that delivers
 by pull request it writes no file: it is kept as a save, shown on the page at once and delivered
-by a pull request of its own.
+by a pull request.
 
 positional arguments:
   path          the document, by its path from here
@@ -220,7 +220,7 @@ fn status_in(
 /// owner's ask it answers. In a checkout on the default branch of a project that delivers by pull
 /// request it writes no file: the line is written on the page as the saves still waiting leave
 /// it, and kept as a save of its own ([`crate::commit::pending::keep`]), which the page shows at
-/// once and its own pull request delivers.
+/// once and a pull request delivers.
 pub fn reply_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     reply_in(args, &process_env(), out, err)
 }
@@ -351,11 +351,11 @@ fn reply_in(
             new,
         };
         return match crate::commit::pending::keep(&top, edit, by.as_deref().unwrap_or_default()) {
-            Ok(branch) => {
+            Ok(number) => {
                 let _ = writeln!(
                     out,
-                    "replied on {slug} in {path}, kept as {branch}: this project delivers by \
-                     pull request, so the page shows it now and its own pull request delivers it"
+                    "replied on {slug} in {path}, kept as save {number}: this project delivers \
+                     by pull request, so the page shows it now and a pull request delivers it"
                 );
                 0
             }

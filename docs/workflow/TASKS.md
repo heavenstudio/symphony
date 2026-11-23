@@ -1284,11 +1284,21 @@ they generate stays as it is.
 An agent's reply (`just symphony-reply`) and a tidy (`just symphony-status --tidy`) run in the
 checkout on the default branch are kept the same way, one save for each file they change. Each
 is written against the page as the saves still waiting leave it, under the lock the app's saves
-take. So a reply follows the owner's line it answers on the page, and it is committed on its
-branch only once the owner's save before it is delivered. Its entry names the agent's session,
-and its task is filed as an agent's save of that page rather than the owner's. The server
-watches the journal's folder, so a save another process keeps there is shown and taken up at
-once, with no document changed.
+take. So a reply follows the owner's line it answers on the page, and it is committed only
+once the owner's save before it is delivered. Its entry names the agent's session, and its task
+is filed as an agent's save rather than the owner's. The server watches the journal's folder, so
+a save another process keeps there is shown and taken up at once, with no document changed.
+
+One pass delivers an agent's saves as one task. The first agent's save whose turn has come
+takes with it every later agent's save whose turn has come too, of any document: one whose
+every earlier save of its document is delivered, on no way to the default branch, or going with
+it. They are committed in the order kept, as one commit on the first's branch, and filed as one
+task; each entry names that branch and its commit (`members` in the first's), so each is proved,
+held and closed by that branch's receipt, land and task. An owner's save never goes with one, so
+a pass splits only where one document's saves meet an owner's save still on its way, or a batch
+already on its way: the later saves of that document wait for it, and go with the next pass's
+batch. A save that no longer applies after those before it is left out, with every later save of
+its document, and waits as well.
 
 ### What the generators make, delivered by a pull request
 

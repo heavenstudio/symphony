@@ -336,7 +336,7 @@ Where the project delivers by pull request (`[land] delivery`,
 `just symphony-reply` write no file in a checkout on the default branch, just as an
 owner's save writes none there. Each reads the page as the saves still waiting
 leave it. Each file it changes is kept as an agent's save, which the page shows at
-once and its own pull request delivers
+once and a pull request delivers, with the agent's other saves whose turn has come
 ([TASKS](TASKS.md#a-document-save-under-delivery)). A ledger that branch does not
 hold yet could not be delivered, so a tidy there leaves the answered comments on
 their pages and says so. In a task's worktree both write their files as anywhere,

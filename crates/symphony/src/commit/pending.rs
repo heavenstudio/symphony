@@ -18,7 +18,10 @@
 //!   `docs/owner-save-N`, N the entry's own number, on the default branch here. A later save of
 //!   the same document waits for the one before it to be delivered, and is committed on the
 //!   default branch that then holds it: no branch stands on another's undelivered commit, and
-//!   each head is assessed as its own. It is shown meanwhile, as every kept save is.
+//!   each head is assessed as its own. It is shown meanwhile, as every kept save is. An agent's
+//!   save takes with it the later agent's saves whose turn has come in the same pass
+//!   ([`joining`]), one commit on its branch, so a sitting of replies and tidies is one task; an
+//!   owner's save is always one of its own.
 //! - **A task delivers it.** The branch is filed on the board as the owner's task of that slug,
 //!   under a receipt of the branch and its commit, so a pass run again files nothing twice, and
 //!   moved to review. What it needs is its assessor's to say from its diff, as for any task; the
@@ -53,8 +56,8 @@ use symphony_board::land::delivery::{Journal, RECEIPTS, Receipt, Stage};
 use symphony_board::lock::Recovered as _;
 
 use super::{
-    Edit, JOURNAL, OutputJob, QueuedPublication, checked, common_dir, git, made, main_ref, merge,
-    on_main, record, report, run, saved_uploads, shared_lock,
+    Edit, JOURNAL, OutputJob, QueuedPublication, apply, checked, common_dir, git, made, main_ref,
+    merge, on_main, record, report, run, saved_uploads, shared_lock,
 };
 use crate::project::Project;
 
@@ -92,9 +95,32 @@ pub(super) struct Delivery {
     /// ([`keep`]). Empty, and left out of the entry, for an owner's save.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     by: String,
+    /// The later agent's saves committed on this save's branch with it, by their entries'
+    /// numbers ([`joining`]): each takes that branch up as its own. Left out of the entry with
+    /// none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    members: Vec<u64>,
 }
 
 impl Delivery {
+    /// The branch and task that deliver the save `sequence`: the one it was committed on, else
+    /// the one named after it, which it is committed on unless it goes with an earlier agent's
+    /// save ([`joining`]).
+    fn slug(&self, sequence: u64) -> String {
+        if self.branch.is_empty() {
+            format!("{BRANCHES}{sequence}")
+        } else {
+            self.branch.clone()
+        }
+    }
+
+    /// Whether the save is still on its way to the default branch: not closed with no
+    /// delivery, and committed on its branch or not stopped short of it. A later save of its
+    /// document waits for it.
+    fn on_its_way(&self) -> bool {
+        !self.closed && (!self.tip.is_empty() || self.problem.is_empty())
+    }
+
     /// A save kept now, in the checkout at `root`.
     pub(super) fn saved(root: &Path) -> Self {
         Self {
@@ -238,9 +264,8 @@ fn proves(root: &Path, receipt: &Receipt, edit: &Edit) -> bool {
 /// The binding is the receipt's identity, never the text: a conflict settled on the branch
 /// leaves the owner's words beside lines the edit was not written against, and the land proved
 /// the squash against that assessed head before it kept the receipt.
-fn own(root: &Path, sequence: u64, tip: &str) -> Option<Receipt> {
-    let slug = format!("{BRANCHES}{sequence}");
-    Receipt::read(&lands(root)?, &slug).filter(|receipt| {
+fn own(root: &Path, slug: &str, tip: &str) -> Option<Receipt> {
+    Receipt::read(&lands(root)?, slug).filter(|receipt| {
         receipt.slug == slug
             && !tip.is_empty()
             && within(root, tip, &receipt.head)
@@ -252,12 +277,11 @@ fn own(root: &Path, sequence: u64, tip: &str) -> Option<Receipt> {
 /// commit holds the edit, its parent does not, and it is no older than the save: not held by
 /// `base`, the default branch as the save was kept. Equal text an earlier delivery brought is
 /// some other owner action's, and proves nothing of this one; a save with no `base` is covered
-/// by none.
-fn covering(root: &Path, sequence: u64, edit: &Edit, base: &str) -> Option<Receipt> {
+/// by none. `own` is the save's own task, whose receipt is never another's.
+fn covering(root: &Path, own: &str, edit: &Edit, base: &str) -> Option<Receipt> {
     if base.is_empty() {
         return None;
     }
-    let own = format!("{BRANCHES}{sequence}");
     let read = std::fs::read_dir(lands(root)?.join(RECEIPTS)).ok()?;
     read.filter_map(|entry| {
         let text = std::fs::read(entry.ok()?.path()).ok()?;
@@ -292,23 +316,25 @@ fn standing(root: &Path, sequence: u64, edit: &Edit, delivery: &Delivery) -> Sta
         receipt: Box::new(receipt),
         covered,
     };
-    if let Some(receipt) = own(root, sequence, &delivery.tip) {
+    let slug = delivery.slug(sequence);
+    if let Some(receipt) = own(root, &slug, &delivery.tip) {
         return proved(receipt, false);
     }
     if !holds(root, &tracking(root), edit) {
         return Standing::Open;
     }
-    match covering(root, sequence, edit, &delivery.base) {
+    match covering(root, &slug, edit, &delivery.base) {
         Some(receipt) => proved(receipt, true),
         None => Standing::Unproved,
     }
 }
 
-/// Where the land of the save `sequence`'s task stands, by the delivery journal it keeps while
-/// it runs: held for a person with why, or asking the host for the merge. None before either,
-/// as with no land run yet: its task approved, the save still waits for its pull request.
-fn landing(root: &Path, sequence: u64) -> Option<State> {
-    let journal = Journal::read(&lands(root)?, &format!("{BRANCHES}{sequence}"))?;
+/// Where the land of the task `slug` that delivers a save stands, by the delivery journal it
+/// keeps while it runs: held for a person with why, or asking the host for the merge. None
+/// before either, as with no land run yet: its task approved, the save still waits for its pull
+/// request.
+fn landing(root: &Path, slug: &str) -> Option<State> {
+    let journal = Journal::read(&lands(root)?, slug)?;
     match journal.held {
         Some(why) => Some(State::Held(format!(
             "its delivery is held for reconciliation: {why}"
@@ -356,13 +382,14 @@ fn listed(root: &Path, only: Option<&str>) -> Vec<Save> {
             if let Some(merged) = merged {
                 *text = Some(merged);
             }
+            let branch = delivery.slug(sequence);
             let state = match standing(root, sequence, edit, &delivery) {
                 Standing::Proved { here: true, .. } => return None,
                 Standing::Proved { .. } => State::Following,
                 Standing::Unproved => State::Held(unproved(root)),
                 Standing::Open if !delivery.problem.is_empty() => State::Held(delivery.problem),
                 Standing::Open if delivery.tip.is_empty() => State::Queued,
-                Standing::Open => landing(root, sequence).unwrap_or(if shown {
+                Standing::Open => landing(root, &branch).unwrap_or(if shown {
                     State::Waiting
                 } else {
                     State::Conflicted
@@ -371,7 +398,7 @@ fn listed(root: &Path, only: Option<&str>) -> Vec<Save> {
             Some(Save {
                 sequence,
                 file: saved.edit.rel,
-                branch: format!("{BRANCHES}{sequence}"),
+                branch,
                 shown,
                 state,
                 by: delivery.by,
@@ -392,8 +419,9 @@ pub fn kept(root: &Path) -> bool {
 /// it (an agent's handle; `agent` when blank). What `symphony reply` and `--tidy` do in a
 /// checkout on the default branch of a project that delivers by pull request, where they write
 /// no file: the pages show it at once ([`shown`]), and the next pass of a server's committer
-/// commits it on a branch of its own and files its task, behind any earlier save of the
-/// document, as for the owner's. Its branch, by which it is delivered.
+/// commits it and files its task, behind any earlier save of the document, as for the owner's,
+/// with the other agent's saves whose turn has come in that pass ([`joining`]). Its entry's
+/// number, the order it was kept in.
 ///
 /// `edit.base` is the document as [`shown`] leaves it, read under [`super::write_lock`], which
 /// the caller holds until this returns: a save of the server's is written against that text
@@ -402,7 +430,7 @@ pub fn kept(root: &Path) -> bool {
 /// # Errors
 ///
 /// The journal could not be written.
-pub fn keep(root: &Path, edit: Edit, by: &str) -> Result<String, String> {
+pub fn keep(root: &Path, edit: Edit, by: &str) -> Result<u64, String> {
     let by = by.trim();
     let by = if by.is_empty() { "agent" } else { by };
     let backlog = super::Backlog::new(root)?;
@@ -419,7 +447,7 @@ pub fn keep(root: &Path, edit: Edit, by: &str) -> Result<String, String> {
     };
     // Written whole and renamed into place, its lease let go at once: the server takes it up.
     drop(OutputJob::write_journal(&path, &saved)?);
-    Ok(format!("{BRANCHES}{}", backlog.sequence))
+    Ok(backlog.sequence)
 }
 
 /// Whether the default branch of the checkout at `root` holds the file `file`: a save of a file
@@ -537,46 +565,149 @@ fn behind(root: &Path, sequence: u64, file: &str) -> bool {
     entries(root).into_iter().any(|(earlier, saved)| {
         earlier < sequence
             && saved.edit.rel == file
-            && saved.delivery.is_some_and(|delivery| {
-                !delivery.closed && (!delivery.tip.is_empty() || delivery.problem.is_empty())
-            })
+            && saved.delivery.is_some_and(|delivery| delivery.on_its_way())
     })
 }
 
-/// The edit committed on its branch, on the default branch here: the branch and its commit. A
-/// branch a pass before made and never journaled is taken up, once it holds the edit. `by` is
-/// who saved it, empty for the owner ([`Delivery::by`]).
-fn committed(
-    root: &Path,
+/// The agent's saves kept after the agent's save `leader` that go on its branch with it, in the
+/// order kept: each not yet committed, stopped or taken by another, whose every earlier save of
+/// its document is delivered, on no way to the default branch, or going with it. An owner's save
+/// never goes with one, so it holds back every later save of its document, as any save still on
+/// its way does: a reply waits behind the owner's save it answers.
+fn joining(root: &Path, leader: u64) -> Vec<(u64, QueuedPublication)> {
+    let entries = entries(root);
+    let taken: std::collections::BTreeSet<u64> = (entries.iter())
+        .filter_map(|(_, saved)| saved.delivery.as_ref())
+        .flat_map(|delivery| delivery.members.iter().copied())
+        .collect();
+    let mut held_back = std::collections::BTreeSet::new();
+    let mut joining = Vec::new();
+    for (sequence, saved) in entries {
+        let Some(delivery) = &saved.delivery else {
+            continue;
+        };
+        let free = sequence > leader
+            && !delivery.by.is_empty()
+            && delivery.tip.is_empty()
+            && delivery.problem.is_empty()
+            && !delivery.closed
+            && !taken.contains(&sequence);
+        if free && !held_back.contains(&saved.edit.rel) {
+            joining.push((sequence, saved));
+        } else if sequence != leader && delivery.on_its_way() {
+            held_back.insert(saved.edit.rel.clone());
+        }
+    }
+    joining
+}
+
+/// The branch an earlier agent's save took the save `sequence` onto ([`joining`]), with its
+/// commit, once that one is committed: the branch that delivers it too.
+fn led(root: &Path, sequence: u64) -> Option<(String, String)> {
+    entries(root).into_iter().find_map(|(_, saved)| {
+        let delivery = saved.delivery?;
+        (delivery.members.contains(&sequence) && !delivery.tip.is_empty())
+            .then_some((delivery.branch, delivery.tip))
+    })
+}
+
+/// A save going on a branch: its entry's number, its edit, and who saved it, empty for the owner
+/// ([`Delivery::by`]).
+struct Batched<'a> {
     sequence: u64,
-    edit: &Edit,
-    by: &str,
-) -> Result<(String, String), String> {
-    let branch = format!("{BRANCHES}{sequence}");
+    edit: &'a Edit,
+    by: &'a str,
+}
+
+/// Of `batch`, the leader's save first, the saves that apply on the default branch's commit
+/// `parent` each after those before it, in the order kept: the leader's alone fails, and a later
+/// one that no longer applies is left out with every later save of its document, which was
+/// written against it. Their edits, and the numbers of those after the leader.
+fn applying(root: &Path, parent: &str, batch: &[Batched]) -> Result<(Vec<Edit>, Vec<u64>), String> {
+    let mut edits = vec![batch[0].edit.clone()];
+    apply(root, parent, &edits).map_err(String::from)?;
+    let mut members = Vec::new();
+    let mut left: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    for save in &batch[1..] {
+        if left.contains(save.edit.rel.as_str()) {
+            continue;
+        }
+        edits.push(save.edit.clone());
+        if apply(root, parent, &edits).is_ok() {
+            members.push(save.sequence);
+        } else {
+            edits.pop();
+            left.insert(&save.edit.rel);
+        }
+    }
+    Ok((edits, members))
+}
+
+/// The saves of `batch` committed as one commit on the branch named after the first, on the
+/// default branch here: the branch, its commit, and the numbers of the later saves it holds
+/// ([`applying`]). A save alone, the owner's always, is one edit as it always was. A branch a
+/// pass before made and never journaled is taken up, once it holds the first save, and holds
+/// the later ones it was made of: made again from its parent, it is the same tree.
+fn committed(root: &Path, batch: &[Batched]) -> Result<(String, String, Vec<u64>), String> {
+    let first = &batch[0];
+    let branch = format!("{BRANCHES}{}", first.sequence);
     let name = format!("refs/heads/{branch}");
     if let Ok(tip) = git(root, &["rev-parse", "--verify", "-q", &name]) {
-        if holds(root, &name, edit) {
-            return Ok((branch, tip));
+        if !holds(root, &name, first.edit) {
+            return Err(format!(
+                "the branch {branch} is there and does not hold this save"
+            ));
         }
-        return Err(format!(
-            "the branch {branch} is there and does not hold this save"
-        ));
+        if batch.len() == 1 {
+            return Ok((branch, tip, Vec::new()));
+        }
+        let parent = git(root, &["rev-parse", &format!("{name}^")])?;
+        let (edits, members) = applying(root, &parent, batch)?;
+        let (saved, _) = saved_uploads(root, &edits);
+        let made = made(root, &parent, &edits, &saved).map_err(String::from)?;
+        if made.tree != git(root, &["rev-parse", &format!("{name}^{{tree}}")])? {
+            return Err(format!(
+                "the branch {branch} is there and does not hold the saves that go with this one"
+            ));
+        }
+        return Ok((branch, tip, members));
     }
     let default = &Project::of(root).default_branch;
     let parent = git(root, &["rev-parse", "--verify", "-q", &main_ref(root)])?;
-    let edits = std::slice::from_ref(edit);
-    let (saved, refused) = saved_uploads(root, edits);
-    let made = made(root, &parent, edits, &saved).map_err(String::from)?;
+    let (edits, members) = if batch.len() == 1 {
+        (vec![first.edit.clone()], Vec::new())
+    } else {
+        applying(root, &parent, batch)?
+    };
+    let (saved, refused) = saved_uploads(root, &edits);
+    let made = made(root, &parent, &edits, &saved).map_err(String::from)?;
     if made.same {
         return Err(format!(
             "{default} here holds its text and the remote {default} does not: nothing here is \
              delivered until the two agree"
         ));
     }
-    let message = if by.is_empty() {
-        format!("docs: owner verdicts\n\n{}", edit.rel)
+    let message = if first.by.is_empty() {
+        format!("docs: owner verdicts\n\n{}", first.edit.rel)
     } else {
-        format!("docs: an agent's save ({by})\n\n{}", edit.rel)
+        let held = batch
+            .iter()
+            .filter(|save| save.sequence == first.sequence || members.contains(&save.sequence));
+        let (mut by, mut files): (Vec<&str>, Vec<&str>) = (Vec::new(), Vec::new());
+        for save in held {
+            if !by.contains(&save.by) {
+                by.push(save.by);
+            }
+            if !files.contains(&save.edit.rel.as_str()) {
+                files.push(&save.edit.rel);
+            }
+        }
+        let saves = if members.is_empty() { "save" } else { "saves" };
+        format!(
+            "docs: an agent's {saves} ({})\n\n{}",
+            by.join(", "),
+            files.join("\n")
+        )
     };
     let commit = git(
         root,
@@ -588,11 +719,13 @@ fn committed(
     for note in &refused {
         report(root, note);
     }
-    Ok((branch, commit))
+    Ok((branch, commit, members))
 }
 
-/// The branch filed on the board as the owner's task, in review: once, by its receipt.
-fn filed(root: &Path, delivery: &Delivery, edit: &Edit) -> Result<(), String> {
+/// The branch filed on the board as the owner's task, in review: once, by its receipt. `saves`
+/// are what the branch holds, the first save's and then those that went with it ([`joining`]),
+/// each an edit and who saved it.
+fn filed(root: &Path, delivery: &Delivery, saves: &[(Edit, String)]) -> Result<(), String> {
     use symphony_board::{BEFORE_WORK, NewTask};
     let owner = crate::postpone::OWNER;
     let store = crate::taskview::connect(root)?;
@@ -601,10 +734,21 @@ fn filed(root: &Path, delivery: &Delivery, edit: &Edit) -> Result<(), String> {
     let receipt = format!("document-save:{slug}:{}", delivery.tip);
     if (store.owner_saved(&receipt).map_err(|e| e.to_string())?).is_empty() {
         let project = Project::of(root);
-        let page = project.route(&edit.rel).unwrap_or_else(|| edit.rel.clone());
         let default = &project.default_branch;
-        // An agent's save, kept from the checkout on the default branch ([`keep`]), is filed
-        // the same way, in words that say whose it is.
+        let (mut pages, mut files, mut by) = (Vec::new(), Vec::new(), Vec::new());
+        for (edit, who) in saves {
+            let page = project.route(&edit.rel).unwrap_or_else(|| edit.rel.clone());
+            if !pages.contains(&page) {
+                pages.push(page);
+                files.push(edit.rel.as_str());
+            }
+            if !by.contains(&who.as_str()) {
+                by.push(who.as_str());
+            }
+        }
+        let page = pages[0].clone();
+        // An agent's saves, kept from the checkout on the default branch ([`keep`]), are filed
+        // the same way, in words that say whose they are.
         let (title, saved, whose, own) = if delivery.by.is_empty() {
             (
                 format!("Deliver the owner's save of {page}"),
@@ -612,17 +756,35 @@ fn filed(root: &Path, delivery: &Delivery, edit: &Edit) -> Result<(), String> {
                 "the owner's save".to_string(),
                 " and its text is the owner's own",
             )
-        } else {
+        } else if saves.len() == 1 {
             (
                 format!("Deliver an agent's save of {page}"),
                 format!(
                     "An agent ({}) saved a reply or a tidy of {page} in the checkout on {default}",
-                    delivery.by
+                    by.join(", ")
                 ),
                 "the agent's save".to_string(),
                 "",
             )
+        } else {
+            let more = match pages.len() {
+                1 => String::new(),
+                n => format!(" and {} more", n - 1),
+            };
+            (
+                format!("Deliver an agent's saves of {page}{more}"),
+                format!(
+                    "An agent ({}) saved {} replies or tidied files of {} in the checkout on \
+                     {default}",
+                    by.join(", "),
+                    saves.len(),
+                    pages.join(", ")
+                ),
+                "the agent's saves".to_string(),
+                "",
+            )
         };
+        let files = files.join(", ");
         let new = NewTask {
             slug: slug.clone(),
             title,
@@ -636,10 +798,10 @@ fn filed(root: &Path, delivery: &Delivery, edit: &Edit) -> Result<(), String> {
                  what it needs, then land it, which delivers it by its pull request. The \
                  Symphony keeps the save and shows it as pending until the delivery's receipt \
                  proves it on the remote {default}.",
-                delivery.tip, edit.rel
+                delivery.tip, files
             ),
             priority: 1,
-            links: vec![page],
+            links: pages,
             ..NewTask::default()
         };
         store
@@ -690,21 +852,48 @@ fn closed(root: &Path, delivery: &Delivery) -> Result<Option<String>, String> {
 
 /// Said once on the task of a save another task's delivery brought: nothing more is delivered
 /// by it, and closing it is its orchestrator's.
-fn covered(root: &Path, delivery: &Delivery, by: &Receipt) -> Result<(), String> {
+fn covered(
+    root: &Path,
+    sequence: u64,
+    edit: &Edit,
+    delivery: &Delivery,
+    by: &Receipt,
+) -> Result<(), String> {
     let store = crate::taskview::connect(root)?;
-    let text = format!(
-        "The owner's save this task delivers is on the remote default branch already: the \
-         delivery of {} brought it as {} (pull request #{} of {}, from its head {}). Nothing \
-         more is delivered by {}: close it as covered by that landing.",
-        by.slug, by.squash, by.pull, by.name, by.head, delivery.branch
+    let brought = format!(
+        "the delivery of {} brought it as {} (pull request #{} of {}, from its head {})",
+        by.slug, by.squash, by.pull, by.name, by.head
     );
+    let alone = delivery.branch == format!("{BRANCHES}{sequence}") && delivery.members.is_empty();
+    // A save that went with others ([`joining`]) is one of the task's: the task is covered only
+    // once each of them is said to be.
+    let (text, key) = if alone {
+        (
+            format!(
+                "The owner's save this task delivers is on the remote default branch already: \
+                 {brought}. Nothing more is delivered by {}: close it as covered by that landing.",
+                delivery.branch
+            ),
+            format!("document-save-covered:{}", by.squash),
+        )
+    } else {
+        (
+            format!(
+                "The save of {} kept as {sequence}, one of those {} delivers, is on the remote \
+                 default branch already: {brought}. Close it as covered by that landing only once \
+                 each save it delivers is said so here.",
+                edit.rel, delivery.branch
+            ),
+            format!("document-save-covered:{}:{sequence}", by.squash),
+        )
+    };
     store
         .say_keyed(
             &delivery.branch,
             crate::postpone::OWNER,
             &text,
             Some("@orchestrator"),
-            &format!("document-save-covered:{}", by.squash),
+            &key,
         )
         .map(|_| ())
         .map_err(|e| e.to_string())
@@ -735,7 +924,8 @@ impl OutputJob {
             Standing::Proved { covered: false, .. } => false,
             Standing::Proved { receipt, .. } => {
                 // Its own task, if it has one, is told before the entry goes.
-                match delivery.filed.then(|| covered(root, &delivery, &receipt)) {
+                match (delivery.filed).then(|| covered(root, sequence, &edit, &delivery, &receipt))
+                {
                     Some(Err(why)) => {
                         delivery.problem = format!("its task was not told it is covered: {why}");
                         true
@@ -764,28 +954,79 @@ impl OutputJob {
         delivery: &mut Delivery,
     ) -> Result<(), String> {
         if delivery.tip.is_empty() {
-            if behind(root, sequence, &edit.rel) {
+            if let Some((branch, tip)) = led(root, sequence) {
+                // Gone with an earlier agent's save onto its branch: that branch delivers it.
+                (delivery.branch, delivery.tip) = (branch, tip);
                 delivery.problem.clear();
-                return Ok(());
-            }
-            match committed(root, sequence, edit, &delivery.by) {
-                Ok((branch, tip)) => {
-                    (delivery.branch, delivery.tip) = (branch, tip);
+                self.saved.delivery = Some(delivery.clone());
+                self.save()?;
+            } else {
+                if behind(root, sequence, &edit.rel) {
                     delivery.problem.clear();
-                    // Journaled before its task is filed: the task's receipt names this commit.
-                    self.saved.delivery = Some(delivery.clone());
-                    self.save()?;
-                }
-                Err(why) => {
-                    delivery.problem = why;
                     return Ok(());
+                }
+                // An agent's save takes the agent's saves whose turn has come with it.
+                let by = delivery.by.clone();
+                let joining = if by.is_empty() {
+                    Vec::new()
+                } else {
+                    joining(root, sequence)
+                };
+                let mut batch = vec![Batched {
+                    sequence,
+                    edit,
+                    by: &by,
+                }];
+                batch.extend(joining.iter().filter_map(|(number, saved)| {
+                    Some(Batched {
+                        sequence: *number,
+                        edit: &saved.edit,
+                        by: &saved.delivery.as_ref()?.by,
+                    })
+                }));
+                match committed(root, &batch) {
+                    Ok((branch, tip, members)) => {
+                        (delivery.branch, delivery.tip) = (branch, tip);
+                        delivery.members = members;
+                        delivery.problem.clear();
+                        // Journaled before its task is filed: the task's receipt names this
+                        // commit, and the saves that went with it take the branch up from here.
+                        self.saved.delivery = Some(delivery.clone());
+                        self.save()?;
+                    }
+                    Err(why) => {
+                        delivery.problem = why;
+                        return Ok(());
+                    }
                 }
             }
         }
         if !delivery.filed {
-            if let Err(why) = filed(root, delivery, edit) {
-                delivery.problem = format!("its task is not on the board yet: {why}");
-                return Ok(());
+            if delivery.branch == format!("{BRANCHES}{sequence}") {
+                let mut saves = vec![(edit.clone(), delivery.by.clone())];
+                let entries = entries(root);
+                for member in &delivery.members {
+                    if let Some((_, saved)) = entries.iter().find(|(number, _)| number == member) {
+                        let by = saved.delivery.as_ref().map(|d| d.by.clone());
+                        saves.push((saved.edit.clone(), by.unwrap_or_default()));
+                    }
+                }
+                if let Err(why) = filed(root, delivery, &saves) {
+                    delivery.problem = format!("its task is not on the board yet: {why}");
+                    return Ok(());
+                }
+            } else {
+                // Its task is the one of the save it went with, which files it.
+                let found = crate::taskview::connect(root)
+                    .and_then(|store| store.get(&delivery.branch).map_err(|e| e.to_string()));
+                if let Err(why) = found {
+                    delivery.problem = format!(
+                        "its task {} is not on the board yet, filed by the save it went with: \
+                         {why}",
+                        delivery.branch
+                    );
+                    return Ok(());
+                }
             }
             delivery.filed = true;
         }

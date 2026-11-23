@@ -2,10 +2,64 @@
 //! words become, and what a folder that is no checkout answers.
 
 use super::{
-    Delivery, QueuedPublication, Save, State, flat, kept, note, saves, sequence_of, shown, whose,
+    BRANCHES, Delivery, QueuedPublication, Save, State, flat, joining, kept, led, note, saves,
+    sequence_of, shown, whose,
 };
 use crate::test_tree::Tree;
 use std::path::Path;
+
+/// A temporary folder that is a repository on `main`, with nothing committed: a git common
+/// folder for the journal to be read from.
+fn repository() -> Tree {
+    let tree = Tree::new();
+    let done = symphony_board::sys::output(
+        symphony_board::sys::Command::new("git")
+            .args(["init", "-q", "-b", "main"])
+            .current_dir(&tree.root),
+    )
+    .unwrap();
+    assert!(done.status.success(), "{done:?}");
+    tree
+}
+
+/// A journal entry of `file`, saved by `by` (empty for the owner), as far as `delivery` went.
+fn entry(tree: &Tree, sequence: u64, file: &str, by: &str, delivery: Delivery) {
+    let saved = QueuedPublication {
+        edit: crate::commit::Edit {
+            rel: file.into(),
+            base: String::new(),
+            new: format!("{sequence}"),
+        },
+        publication: None,
+        dirty_retry: false,
+        dirty_reported: false,
+        delivery: Some(Delivery {
+            by: by.into(),
+            ..delivery
+        }),
+    };
+    let folder = tree
+        .root
+        .join(".git")
+        .join(symphony_board::folders::SERVER)
+        .join(super::JOURNAL);
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join(format!("{sequence:020}.json"));
+    std::fs::write(path, serde_json::to_string(&saved).unwrap()).unwrap();
+}
+
+/// Committed on its branch: `tip` its commit.
+fn committed(sequence: u64, tip: &str) -> Delivery {
+    Delivery {
+        branch: format!("{BRANCHES}{sequence}"),
+        tip: tip.into(),
+        ..Delivery::default()
+    }
+}
+
+fn numbers(joining: Vec<(u64, QueuedPublication)>) -> Vec<u64> {
+    joining.into_iter().map(|(sequence, _)| sequence).collect()
+}
 
 #[test]
 fn a_journal_entrys_number_is_its_file_name() {
@@ -82,4 +136,111 @@ fn an_owners_entry_names_no_one_and_an_agents_names_its_session() {
     let written = serde_json::to_string(&agent).unwrap();
     assert!(written.contains("\"by\":\"fox-1\""), "{written}");
     assert_eq!(serde_json::from_str::<Delivery>(&written).unwrap(), agent);
+}
+
+#[test]
+fn an_agents_save_takes_the_later_agents_saves_whose_turn_has_come_of_any_document() {
+    let tree = repository();
+    entry(&tree, 1, "docs/a.md", "fox-1", Delivery::default());
+    entry(&tree, 2, "docs/b.md", "fox-1", Delivery::default());
+    entry(&tree, 3, "docs/a.md", "", Delivery::default());
+    entry(&tree, 4, "docs/c.md", "agent", Delivery::default());
+    entry(&tree, 5, "docs/a.md", "fox-1", Delivery::default());
+    // The owner's save of a.md goes with none, and holds back the agent's after it there.
+    assert_eq!(numbers(joining(&tree.root, 1)), [2, 4]);
+    // An earlier save is never taken: a leader takes only those kept after it.
+    assert_eq!(numbers(joining(&tree.root, 2)), [4]);
+    assert_eq!(numbers(joining(&tree.root, 4)), Vec::<u64>::new());
+}
+
+#[test]
+fn a_save_still_on_its_way_holds_back_the_later_saves_of_its_document_and_no_other() {
+    let tree = repository();
+    entry(&tree, 1, "docs/a.md", "", committed(1, "c1"));
+    entry(&tree, 2, "docs/b.md", "fox-1", Delivery::default());
+    entry(&tree, 3, "docs/a.md", "fox-1", Delivery::default());
+    entry(&tree, 4, "docs/b.md", "fox-1", Delivery::default());
+    // 4 follows 2 on b.md, which goes with it; 3 waits behind the owner's 1 on a.md.
+    assert_eq!(numbers(joining(&tree.root, 2)), [4]);
+    // Each later save of a held-back document waits, whatever its own turn.
+    entry(&tree, 5, "docs/a.md", "fox-1", Delivery::default());
+    assert_eq!(numbers(joining(&tree.root, 2)), [4]);
+}
+
+#[test]
+fn a_save_on_no_way_to_the_default_branch_holds_back_nothing() {
+    let tree = repository();
+    let closed = Delivery {
+        closed: true,
+        ..committed(1, "c1")
+    };
+    entry(&tree, 1, "docs/a.md", "", closed);
+    let stopped = Delivery {
+        problem: "conflicts with main".into(),
+        ..Delivery::default()
+    };
+    entry(&tree, 2, "docs/a.md", "fox-1", stopped);
+    entry(&tree, 3, "docs/b.md", "fox-1", Delivery::default());
+    entry(&tree, 4, "docs/a.md", "fox-1", Delivery::default());
+    // The stopped save retries alone and goes with none, as does a closed one.
+    assert_eq!(numbers(joining(&tree.root, 3)), [4]);
+}
+
+#[test]
+fn a_save_another_took_or_already_committed_is_not_taken_again() {
+    let tree = repository();
+    let leading = Delivery {
+        members: vec![2],
+        ..committed(1, "c1")
+    };
+    entry(&tree, 1, "docs/a.md", "fox-1", leading);
+    entry(&tree, 2, "docs/b.md", "fox-1", Delivery::default());
+    entry(&tree, 3, "docs/c.md", "fox-1", committed(3, "c3"));
+    entry(&tree, 4, "docs/d.md", "fox-1", Delivery::default());
+    entry(&tree, 5, "docs/b.md", "fox-1", Delivery::default());
+    entry(&tree, 6, "docs/c.md", "fox-1", Delivery::default());
+    // 2 is 1's, and so b.md waits for it; 3 is committed, and c.md waits for it.
+    assert_eq!(numbers(joining(&tree.root, 4)), Vec::<u64>::new());
+    assert_eq!(
+        led(&tree.root, 2),
+        Some((format!("{BRANCHES}1"), "c1".into()))
+    );
+    assert_eq!(led(&tree.root, 4), None);
+}
+
+#[test]
+fn a_save_is_delivered_by_the_branch_it_went_on_else_by_its_own() {
+    assert_eq!(Delivery::default().slug(7), format!("{BRANCHES}7"));
+    assert_eq!(committed(3, "c3").slug(7), format!("{BRANCHES}3"));
+    // On its way unless closed, or stopped short of a branch.
+    assert!(Delivery::default().on_its_way());
+    assert!(committed(3, "c3").on_its_way());
+    let stopped = Delivery {
+        problem: "a board that does not answer".into(),
+        ..Delivery::default()
+    };
+    assert!(!stopped.on_its_way());
+    let stopped_after = Delivery {
+        problem: "its task could not be read".into(),
+        ..committed(3, "c3")
+    };
+    assert!(stopped_after.on_its_way());
+    let closed = Delivery {
+        closed: true,
+        ..committed(3, "c3")
+    };
+    assert!(!closed.on_its_way());
+}
+
+#[test]
+fn an_entry_names_the_saves_that_went_with_it_and_nothing_with_none() {
+    let lone = serde_json::to_string(&Delivery::default()).unwrap();
+    assert!(!lone.contains("members"), "{lone}");
+    let leading = Delivery {
+        members: vec![4, 9],
+        ..Delivery::default()
+    };
+    let written = serde_json::to_string(&leading).unwrap();
+    assert!(written.contains(r#""members":[4,9]"#), "{written}");
+    assert_eq!(serde_json::from_str::<Delivery>(&written).unwrap(), leading);
 }

@@ -285,6 +285,14 @@ fn an_agents_reply_kept_from_main_is_delivered_behind_the_owners_save_it_answers
 }
 
 #[test]
+fn an_agents_saves_whose_turn_has_come_go_as_one_task() {
+    isolated(
+        "an_agents_saves_whose_turn_has_come_go_as_one_task",
+        delivery::an_agents_saves_whose_turn_has_come_go_as_one_task,
+    );
+}
+
+#[test]
 fn the_land_of_a_pending_saves_task_is_said_from_its_journal() {
     isolated(
         "the_land_of_a_pending_saves_task_is_said_from_its_journal",
