@@ -1369,10 +1369,21 @@ fn a_board_not_running_is_red_alone_and_one_from_before_the_writer_record_is_its
     let (fixture, _) = refreshing();
     let alpha = a_project(&fixture, "alpha", &[]);
     let old = a_project(&fixture, "old", &[]);
-    registered(&fixture, &[("alpha", &alpha, &[]), ("old", &old, &[])]);
-    // alpha's board is there, its database not running; old's from schema 17, before writers.
+    let fresh = a_project(&fixture, "fresh", &[]);
+    registered(
+        &fixture,
+        &[
+            ("alpha", &alpha, &[]),
+            ("old", &old, &[]),
+            ("fresh", &fresh, &[]),
+        ],
+    );
+    // alpha's board is there (its store, as a board from before the identity keeps it), its
+    // database not running; old's from schema 17, before writers; fresh's folder holds what a
+    // session's heartbeat wrote before any board was made there, and no board.
     let common = alpha.join(".git");
-    fs::create_dir_all(common.join("symphony/tasks")).unwrap();
+    fs::create_dir_all(common.join("symphony/tasks/data")).unwrap();
+    fs::create_dir_all(fresh.join(".git/symphony/tasks/keys")).unwrap();
     let (old_board, _, _) = board_at(&old, 17);
     let builder = builder(&fixture, 19);
     let surreal = super::board::surreal().to_string_lossy().into_owned();
@@ -1397,6 +1408,20 @@ fn a_board_not_running_is_red_alone_and_one_from_before_the_writer_record_is_its
     assert!(
         !common.join("symphony/tasks/server.json").exists(),
         "nothing started it"
+    );
+    // A board not made yet is no database down: nothing to move, and no update fails for it.
+    assert!(
+        out.contains("release: refresh: fresh: its board is not made yet: nothing to move\n"),
+        "{out}"
+    );
+    assert!(!out.contains("updates: fresh@"), "{out}");
+    assert_eq!(
+        fs::read_dir(fresh.join(".git/symphony/tasks"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>(),
+        ["keys"],
+        "nothing was made or started for it"
     );
     let own = format!(
         "release: refresh: old: the project's to finish: its board is at schema 17, from before \
