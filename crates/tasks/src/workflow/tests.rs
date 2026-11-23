@@ -666,3 +666,16 @@ fn a_built_in_position_built_alone_is_the_one_built_in_v1_declares() {
         assert_eq!(builtin::position_at(&undeclared), None, "{undeclared:?}");
     }
 }
+
+#[test]
+fn the_local_actor_is_the_local_owner_named_owner_with_no_git_handles() {
+    // The name the board knows its one person by, which every line of theirs carries.
+    let actor = local_actor();
+    assert_eq!(actor.name(), "owner");
+    assert_eq!(
+        actor.sender,
+        symphony_plugin::Sender::new("owner", "owner", Vec::new())
+    );
+    assert_eq!(actor.principal, local_owner());
+    assert_eq!(actor.principal.kind, PrincipalKind::Human);
+}

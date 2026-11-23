@@ -123,8 +123,9 @@ pub struct Version {
 /// project's artifacts folder ([`PageData::artifacts`]); minor 3 asks a register read's card kinds
 /// in one request ([`ReadCards`]); minor 4 asks an approval authority for an attestation
 /// ([`Attest`], [`Declaration::authorities`]); minor 5 asks a describer for its Settings page entry
-/// ([`Describe`], [`Declaration::describers`]); every other call is 1's.
-pub const PROTOCOL: Version = Version { major: 0, minor: 5 };
+/// ([`Describe`], [`Declaration::describers`]); minor 6 tells a board action's submission who sent
+/// it ([`Submit::sender`]); every other call is 1's.
+pub const PROTOCOL: Version = Version { major: 0, minor: 6 };
 
 /// This build's protocol.
 impl Default for Version {
@@ -399,16 +400,18 @@ macro_rules! loopback_only {
 /// [`Request`] they all go on the wire as. [`Request`] is `#[non_exhaustive]`, so a call a later
 /// minor adds is a new variant and no new major of this crate. A request is `#[non_exhaustive]` too,
 /// made outside this crate by its `new`, which takes every field in the call's braces: a field
-/// added there changes `new`'s arguments, a new major of this crate. No call has a field a later
-/// minor added yet. The first such field gives this macro a group of its own after the call's
-/// fields, each `#[serde(default)]` and left out of `new`, which fills it with its default, so the
-/// field is a minor of this crate as of the protocol, set on the request after `new`.
+/// added there changes `new`'s arguments, a new major of this crate. A field a later minor adds
+/// goes in the call's `+ later { … }` group after its braces instead, each `#[serde(default)]` and left out
+/// of `new`, which fills it with its default, so the field is a minor of this crate as of the
+/// protocol, set on the request after `new` ([`Submit::sender`]).
 macro_rules! calls {
     ($(
         $(#[$doc:meta])*
         $name:ident = $tag:literal since $since:literal $(, $only:ident only)? => $answer:ty {
             $( $(#[$field_doc:meta])* $field:ident : $type:ty ),* $(,)?
-        }
+        } $(+ later {
+            $( $(#[$later_doc:meta])* $later:ident : $later_type:ty ),* $(,)?
+        })?
     )*) => {
         /// Every call a plugin answers, as it goes on the wire: one member, named by its seam and
         /// call, holding its fields. A later minor adds a call, so a match on it outside this crate
@@ -438,12 +441,14 @@ macro_rules! calls {
             #[non_exhaustive]
             pub struct $name {
                 $( $(#[$field_doc])* pub $field: $type, )*
+                $($( $(#[$later_doc])* #[serde(default)] pub $later: $later_type, )*)?
             }
 
             impl $name {
-                /// The request of these fields, every field its call has.
+                /// The request of these fields, every field its call came with; a field a later
+                /// minor added is its default, set on the request after.
                 pub fn new($($field: $type),*) -> $name {
-                    $name { $($field),* }
+                    $name { $($field,)* $($($later: Default::default(),)*)? }
                 }
             }
 
@@ -472,7 +477,7 @@ macro_rules! calls {
 }
 
 // A field added to a call's braces below changes its `new`, a new major of this crate: a field a
-// later minor adds goes in a group `new` leaves out, which `calls!`'s doc describes.
+// later minor adds goes in the call's `later` group, which `new` leaves out (`calls!`'s doc).
 calls! {
     /// What a plugin declares: asked once, before any other call, naming the host's protocol.
     Declare = "plugin.declare" since 1 => Declaration { protocol: Version }
@@ -561,6 +566,12 @@ calls! {
         root: PathBuf,
         task: TaskData,
         submission: Submission,
+    } + later {
+        /// Who sent it (minor 6), handed to
+        /// [`BoardAction::submit_from`](crate::BoardAction::submit_from); none from a host of an
+        /// older minor, whose submission the plugin answers by
+        /// [`BoardAction::submit`](crate::BoardAction::submit).
+        sender: Option<crate::Sender>,
     }
 
     /// [`BoardField::validate`](crate::BoardField::validate).

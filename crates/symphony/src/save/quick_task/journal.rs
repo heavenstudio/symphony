@@ -18,7 +18,15 @@ pub(in crate::save) struct Record {
     body: String,
     priority: i64,
     links: Vec<String>,
+    /// Who asked for it, by their short name: `owner`, as a record written before it was kept says.
+    #[serde(default = "the_machines_person")]
+    by: String,
     payload: Value,
+}
+
+/// Who a record written before records named who asked was asked by: the person at the machine.
+fn the_machines_person() -> String {
+    symphony_board::workflow::local_actor().sender.name
 }
 
 impl Record {
@@ -29,7 +37,7 @@ impl Record {
             body: self.body.clone(),
             priority: self.priority,
             links: self.links.clone(),
-            by: "owner".into(),
+            by: self.by.clone(),
             status: "concept".into(),
             ..symphony_board::NewTask::default()
         }
@@ -126,6 +134,11 @@ pub(in crate::save) fn reserve(
         body: new.body.clone(),
         priority: new.priority,
         links: new.links.clone(),
+        // A filing that names nobody is the machine's person's, as a record from before names were
+        // kept reads.
+        by: Some(new.by.clone())
+            .filter(|by| !by.is_empty())
+            .unwrap_or_else(the_machines_person),
         payload: json!([scope, payload]),
     };
     let result = (|| {
