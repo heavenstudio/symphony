@@ -1,19 +1,20 @@
-//! The class a description may not lower ([`protected`], [`judged`]), the scope it may not take,
-//! the anchors of the plugins' entries ([`plugins`]), and the run of a program's command
-//! ([`run`]): what it printed, or why not, with its time bounded.
+//! The class a description may not lower ([`protected`], [`judged`]), the scope it may not take
+//! or give as its value's source, the anchors of the plugins' entries ([`plugins`]), and the run
+//! of a program's command ([`run`]): what it printed, or why not, with its time bounded.
 
 use std::path::Path;
 use std::time::Duration;
 
 use symphony_api::{
     Setting, SettingClass, SettingKind, SettingScope, SettingSource, SettingsEntry,
+    SettingsSection,
 };
 use symphony_board::sys;
 use symphony_plugin::{Describer, Plugin};
 
 use super::{judged, plugins, protected, run};
 use crate::plugins::Plugins;
-use crate::settings::class;
+use crate::settings::{class, stored};
 
 #[test]
 fn a_key_the_local_file_refuses_is_protected_however_it_is_spelt() {
@@ -37,6 +38,10 @@ fn a_key_the_local_file_refuses_is_protected_however_it_is_spelt() {
         "[project.cargo] wrapper",
         "[board.on_land]",
         "project.cargo.wrapper",
+        // A list of tables, as the page spells one, takes its table's class.
+        "[[workflow_mappings]] guard",
+        "[[workflow_authorities]]",
+        " [[ workflow_mappings ]] guard ",
     ] {
         assert!(protected(key), "{key}");
     }
@@ -48,13 +53,16 @@ fn a_key_the_local_file_refuses_is_protected_however_it_is_spelt() {
         "[agents] launch model",
         "[project] name",
         "[board] port",
-        // Not `[board]`'s own key, but one of a table below it, of the key `x`.
+        // Not `[board]`'s own key, but one of a table below it, of the key `x`, said whole or not.
         "[board.x] on_land",
+        "[board.x]",
+        "[[entrypoints]] route",
         "[agents]",
         "[every] shade",
         "enabled",
         "",
         "[",
+        "[[",
     ] {
         assert!(!protected(key), "{key}");
     }
@@ -166,6 +174,72 @@ fn no_description_is_written_in_the_boards_store_whatever_its_describer_says() {
             vec![SettingScope::Project],
         ]
     );
+}
+
+#[test]
+fn no_description_says_its_value_comes_from_the_boards_store_whatever_its_describer_says() {
+    let from = |key: &str, scope: Option<SettingScope>| {
+        let mut one = setting(key, SettingClass::Preference);
+        one.source.scope = scope;
+        one
+    };
+    let settings = vec![
+        from("[every] shade", Some(SettingScope::Board)),
+        // Reviewed, its source is judged all the same.
+        from("[land] delivery", Some(SettingScope::Board)),
+        from("[every] tint", Some(SettingScope::Machine)),
+        from("[every] hue", Some(SettingScope::Project)),
+        from("[every] tone", None),
+    ];
+    for all in [false, true] {
+        let judged = judged(described(settings.clone()), "a".into(), all);
+        let sources: Vec<_> = (judged.settings.iter()).map(|s| s.source.scope).collect();
+        assert_eq!(
+            sources,
+            [
+                None,
+                None,
+                Some(SettingScope::Machine),
+                Some(SettingScope::Project),
+                None
+            ],
+            "every setting reviewed: {all}"
+        );
+        let shade = &judged.settings[0].source;
+        assert_eq!(
+            (shade.said.as_str(), shade.file.as_deref(), shade.line),
+            ("a.toml, line 1", Some("a.toml"), Some(1)),
+            "its describer's words beside the tag stay"
+        );
+    }
+}
+
+#[test]
+fn a_setting_given_the_boards_scope_alone_is_left_with_none_and_drawn_with_no_control() {
+    let alone = Setting {
+        scopes: vec![SettingScope::Board],
+        ..setting("[every] shade", SettingClass::Preference)
+    };
+    let judged = judged(described(vec![alone.clone()]), "plugin-every-a".into(), false);
+    let [shade] = judged.settings.as_slice() else {
+        panic!("{judged:?}");
+    };
+    assert_eq!(
+        shade,
+        &Setting {
+            scopes: Vec::new(),
+            ..alone
+        },
+        "a preference still, its value and its source as said"
+    );
+    // The page draws a control only for a setting the store's list names, and names none for it.
+    let page = [SettingsSection {
+        id: "plugins".into(),
+        title: "Plugins".into(),
+        about: String::new(),
+        entries: vec![judged],
+    }];
+    assert!(stored::list(&page, &stored::Board::default(), None, "main").is_empty());
 }
 
 /// A describer of the id it holds: one whose id starts `broken` cannot say.
