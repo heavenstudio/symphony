@@ -321,6 +321,10 @@ impl Callback {
 pub struct Presence {
     pub terminals: BTreeSet<String>,
     pub threads: BTreeSet<String>,
+    /// The threads the board launched (a launch record, open or closed, names them) that no open
+    /// launch record puts in a terminal hc lists live: every terminal the board ran each in is
+    /// closed or gone.
+    pub gone: BTreeSet<String>,
 }
 
 impl Store {
@@ -608,10 +612,15 @@ impl Store {
     /// The idle sweep confirms native reachability rather than treating absent tool calls as an
     /// exit. A socket must accept a connection; a Codex thread must still occupy a terminal: one a
     /// recorded launch puts it in, else the terminal it registered from, which must still run
-    /// Codex. A thread registered from no terminal, that no launch records, is neither confirmed
-    /// nor retired: hc cannot say where it runs. A dry run reports the same channels without
-    /// changing their heartbeat. No payload or credentials are sent by the socket probe. Without
-    /// `codex` (hc did not answer) no thread is confirmed or retired.
+    /// Codex. A thread registered from no terminal (Codex's shell sees no `HC_TERMINAL_ID` when its
+    /// environment policy keeps only the core variables) is retired once every terminal the board
+    /// launched it in is closed or gone ([`Presence::gone`]);
+    /// one whose open launch record names a live terminal that does not run Codex (yet) is kept
+    /// unconfirmed, and one no launch records is neither confirmed nor retired: hc cannot say
+    /// where it runs. A session's health never decides: a Codex waiting between turns calls no
+    /// tool, but its terminal runs Codex. A dry run reports the same channels without changing
+    /// their heartbeat. No payload or credentials are sent by the socket probe. Without `codex`
+    /// (hc did not answer) no thread is confirmed or retired.
     pub(crate) fn callback_presence(
         &self,
         codex: Option<&Presence>,
@@ -657,6 +666,8 @@ impl Store {
                     true
                 } else if let Some(terminal) = &callback.terminal {
                     codex.terminals.contains(terminal)
+                } else if codex.gone.contains(thread) {
+                    false
                 } else {
                     continue;
                 }

@@ -1,8 +1,8 @@
 //! `describe`: the exchange's entry on the project's Settings page, in the shape every entry
 //! takes (`symphony_blocks::SettingsEntry`, spelt here as [`shape`]), printed as JSON for the
-//! server that runs this command to read it. It says what `status` says, from the same two places: the settings the
-//! default branch commits, each with the line that writes it, and what this program keeps. It
-//! reads no remote and writes nothing, not even its folder.
+//! server that runs this command to read it. It says what `status` says, from the same two
+//! places: the settings the default branch commits, each with the line that writes it, and what
+//! this program keeps. It reads no remote and writes nothing, not even its folder.
 //!
 //! Every setting is reviewed: the file decides what lands and what is written to an outside
 //! service, so a change of it is a reviewed task's, and the page that shows it writes none.
