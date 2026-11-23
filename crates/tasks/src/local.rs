@@ -103,6 +103,21 @@ impl Place {
             Place::Store => "[agents] launch, [agents.models], [agents] panes and [limits]",
         }
     }
+
+    /// Whether it keeps `key` of the table `path` leads to: a key of `[agents] launch`
+    /// ([`LAUNCH`]), an agent's switch ([`AGENTS`]), a role's model ([`ROLES`]) or a key of
+    /// `[limits]` in either place, and `[agents] panes` in the board's store alone. The one list of
+    /// what each place keeps, which the Settings page reads for where a setting may be written.
+    pub fn keeps(self, path: &[&str], key: &str) -> bool {
+        match path {
+            [limits::TABLE] => limits::KEYS.contains(&key),
+            ["agents", "launch"] => LAUNCH.contains(&key),
+            ["agents", "launch", ON] => AGENTS.contains(&key),
+            ["agents", "models"] => ROLES.contains(&key),
+            ["agents"] => self == Place::Store && key == "panes",
+            _ => false,
+        }
+    }
 }
 
 /// What a local file writes, each value as written, with the text its lines are found in.

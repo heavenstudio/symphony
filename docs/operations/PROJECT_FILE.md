@@ -115,7 +115,10 @@ store's record of its changes and two controls:
   checkout holds, whose message names the key, the value before and the value after (`settings:
   [limits] low_volume from 4 to 3`); each main checkout takes it with its own edits of the file
   merged on, or keeps its file as it is where they meet and says so. Once it stands the entry is
-  removed, while it still holds the value committed, and the file's value is in force. Where the
+  removed, while it still holds the value committed, and the file's value is in force; but where
+  a main checkout kept its file, the entry stays in force over that checkout's own edit until it
+  takes the commit, and making the value the project's again then removes it (before then, it is
+  refused and the entry stays). Where the
   project delivers by pull request (`[land] delivery`), the edit is kept and delivered as a
   document save is ([a land dispatched at
   review](../workflow/TASKS.md#a-land-dispatched-at-review)): made against the project file as

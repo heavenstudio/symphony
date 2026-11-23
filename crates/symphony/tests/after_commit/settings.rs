@@ -1,10 +1,11 @@
 //! The Settings page's write (`SETTING_WRITE_PATH`, `symphony::save`) on a private repository and
 //! a private board: a preference kept in the board's store is in force at once, the store named
 //! as its source over the committed value; made the project's, it is one commit on main naming
-//! the key, the old value and the new, the file's comments and order kept and the entry removed;
-//! refused with nothing written where the settings check is red or the key is not a preference;
-//! and where the project delivers by pull request it waits on a branch of its own, its entry in
-//! force, until its delivery is proved.
+//! the key, the old value and the new, the file's comments and order kept and the entry removed,
+//! but kept in force over a checkout's own edit of the line until the checkout takes it; refused
+//! with nothing written where the settings check is red or the key is not a preference; and where
+//! the project delivers by pull request it waits on a branch of its own, its entry in force,
+//! until its delivery is proved.
 use super::*;
 use symphony::commit::pending::{self, State};
 use symphony::settings::stored::Board;
@@ -329,13 +330,19 @@ pub(super) fn a_stored_value_made_the_projects_is_one_commit_and_its_entry_goes(
     write(&root.join("symphony.toml"), &mine);
     written(&saves, "agents.panes", "store", Some(json!("hc")));
     let met = written(&saves, "agents.panes", "commit", None);
+    let met = met["said"].as_str().unwrap();
+    let kept = "; the board's entry stays, in force over that edit, until the checkout takes the \
+                commit: make [agents] panes the project's again then, which removes it";
+    // The checkout is named as git lists it, its path resolved.
     assert!(
-        met["said"]
-            .as_str()
-            .unwrap()
-            .contains("has uncommitted edits the commit does not merge into"),
+        met.contains(&format!(
+            "; symphony.toml in {} has uncommitted edits the commit does not merge into; its \
+             file is left as it is: ",
+            root.canonicalize().unwrap().display()
+        )) && met.ends_with(kept),
         "{met}"
     );
+    assert!(!met.contains("the board's entry is removed"), "{met}");
     let on_main = f.main("symphony.toml");
     assert!(on_main.contains("panes = \"hc\"\n"), "{on_main}");
     assert!(
@@ -346,7 +353,39 @@ pub(super) fn a_stored_value_made_the_projects_is_one_commit_and_its_entry_goes(
         std::fs::read_to_string(root.join("symphony.toml")).unwrap(),
         mine
     );
+    // The committed value stays in force over the checkout's own edit, by the entry.
+    assert_eq!(entry(f, "agents.panes"), Some(json!("hc")));
+    let (value, scope, ..) = shown(&root, "[agents] panes");
+    assert_eq!((value.as_str(), scope), ("hc", Some(SettingScope::Board)));
+    // Made the project's again before the checkout takes the commit, it is refused: main writes
+    // the value already, and the entry stays in force over the checkout's own edit.
+    let main = git(&root, &["rev-parse", "main"]);
+    let (status, why) = refused(&saves, json!({"key":"agents.panes","action":"commit"}));
+    assert_eq!(status, 409);
+    assert_eq!(
+        why,
+        "not removed: symphony.toml on main writes [agents] panes = \"hc\" already, but this \
+         checkout's own symphony.toml does not take it yet: the board's entry stays, in force \
+         over the checkout's own edit of the line, until the checkout takes the commit"
+    );
+    assert_eq!(git(&root, &["rev-parse", "main"]), main);
+    assert_eq!(entry(f, "agents.panes"), Some(json!("hc")));
+    assert_eq!(
+        std::fs::read_to_string(root.join("symphony.toml")).unwrap(),
+        mine
+    );
+    // Once the checkout takes the commit, making it the project's again removes the entry alone.
+    git(&root, &["checkout", "--", "symphony.toml"]);
+    let taken = written(&saves, "agents.panes", "commit", None);
+    assert_eq!(
+        taken["said"],
+        "symphony.toml on main writes [agents] panes = \"hc\" already: the board's entry is \
+         removed, and the file's value is in force"
+    );
+    assert_eq!(git(&root, &["rev-parse", "main"]), main);
     assert_eq!(entry(f, "agents.panes"), None);
+    let (value, scope, ..) = shown(&root, "[agents] panes");
+    assert_eq!((value.as_str(), scope), ("hc", Some(SettingScope::Project)));
     drop(saves);
     f.clean_workers();
 }
