@@ -16,9 +16,9 @@ use tungstenite::{Message, WebSocket};
 
 use crate::profiles::{self, next_profile};
 use crate::{
-    BACKSTOP_FLOOR, BrowserGroup, CLEANUP_CPU, Chrome, End, LAUNCH_BACKSTOP, Leash, Owner, POLL,
-    PROTOCOL_CPU, ROOTED, WaitBudget, chrome_args, cleanup_profile, devtools_endpoint, find,
-    listed, load_said, process, signal_group,
+    BACKSTOP_FLOOR, BrowserGroup, CLEANUP_CPU, Chrome, End, FRAME_PROBE, LAUNCH_BACKSTOP, Leash,
+    Owner, POLL, PROTOCOL_CPU, ROOTED, WaitBudget, chrome_args, cleanup_profile, devtools_endpoint,
+    find, listed, load_said, process, signal_group,
 };
 
 /// This test binary as the leash: it runs [`browser_leash`] alone.
@@ -1583,11 +1583,12 @@ fn marker(command: &Value) -> bool {
         || (command["method"] == "Target.getTargets" && command.get("sessionId").is_none())
 }
 
-/// A probe of the page under test.
+/// A probe of the page under test: a frame of its, awaited.
 fn probe(command: &Value) -> bool {
     command["sessionId"] == "page"
         && command["method"] == "Runtime.evaluate"
-        && command["params"]["expression"] == "0"
+        && command["params"]["expression"] == FRAME_PROBE
+        && command["params"]["awaitPromise"] == true
 }
 
 /// The driver on a stand-in browser whose commands `serve` answers, with a page session `page`,
@@ -3327,6 +3328,71 @@ fn a_real_page_blocked_in_its_renderer_spends_nothing_and_a_stopped_browser_ends
     );
     chrome.backstop = BACKSTOP_FLOOR;
     assert_eq!(chrome.eval("window.held").unwrap(), json!(1));
+}
+
+/// A page behind another tab draws no frame while its main thread answers every task, as a page
+/// whose compositor waits on starved raster work does on a loaded machine. A wait on a promise its
+/// frames keep spends nothing of its allowance meanwhile: the backstop ends it, naming the page's
+/// stall, never its allowance with a false condition. Back in front, the page draws, and the same
+/// wait is met.
+#[test]
+fn a_real_page_that_draws_no_frame_spends_nothing_of_a_wait_on_its_frames() {
+    let Some(binary) = find() else {
+        eprintln!("no Chrome: real browser capability unavailable");
+        return;
+    };
+    let mut chrome = Chrome::launch(&binary, &leash()).unwrap();
+    chrome.open("data:text/html,<p>ready</p>").unwrap();
+    let frame = "new Promise(drew => requestAnimationFrame(() => drew(true)))";
+    let allowance = Duration::from_millis(250);
+    assert!(
+        chrome.wait_for(frame, allowance).unwrap(),
+        "in front, the page draws"
+    );
+
+    let opened = chrome
+        .browser_call("Target.createTarget", json!({"url": "about:blank"}))
+        .unwrap();
+    let attached = chrome
+        .browser_call(
+            "Target.attachToTarget",
+            json!({"targetId": opened["targetId"], "flatten": true}),
+        )
+        .unwrap();
+    let other = attached["sessionId"].as_str().unwrap().to_owned();
+    chrome
+        .call_on(&other, "Page.bringToFront", json!({}))
+        .unwrap();
+    // Its main thread answers.
+    assert_eq!(
+        chrome.eval("document.visibilityState").unwrap(),
+        json!("hidden")
+    );
+    chrome.backstop = Duration::from_millis(1500);
+    let started = Instant::now();
+    let behind = chrome.wait_for(frame, allowance);
+    let took = started.elapsed();
+    chrome.backstop = BACKSTOP_FLOOR;
+    let behind = behind.expect_err("a page that draws no frame never meets a wait on its frames");
+    assert!(behind.stalled(), "{behind}");
+    assert!(
+        behind.to_string().starts_with(&format!(
+            "{frame}: the page under test stalled: its renderer took part in 0 of "
+        )),
+        "{behind}"
+    );
+    // The backstop, not the allowance's ten turns, ended it; how much later than the backstop a
+    // loaded machine let it end is no part of the promise (RULES.md `tests/no-test-fails-on-load`).
+    assert!(
+        took >= Duration::from_millis(1500),
+        "the wait ended {took:?} after its start, its backstop 1.5 s"
+    );
+
+    chrome.call("Page.bringToFront", json!({})).unwrap();
+    assert!(
+        chrome.wait_for(frame, allowance).unwrap(),
+        "back in front, the page draws again"
+    );
 }
 
 #[test]
