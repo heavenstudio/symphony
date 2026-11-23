@@ -70,6 +70,14 @@ pub(in crate::store) fn open_sessions() -> Pg<'static> {
     )
 }
 
+pub(in crate::store) fn codex_launches() -> Pg<'static> {
+    super::list_of(
+        "jsonb_build_object('claude_session', l.claude_session, 'pane', l.pane, 'open', l.closed IS NULL)".into(),
+        "task_session l WHERE starts_with(l.claude_session, v ->> 'prefix') AND l.claude_session <> v ->> 'prefix'",
+        "l.slug, l.handle",
+    )
+}
+
 fn recorded(close: bool, held: bool) -> Pg<'static> {
     let guard = if held { HOLDS } else { "" };
     let same = if held {

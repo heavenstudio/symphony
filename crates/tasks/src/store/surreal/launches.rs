@@ -117,6 +117,10 @@ pub(in crate::store) fn open_sessions() -> String {
     task_sessions("WHERE closed = NONE ORDER BY started, slug, handle")
 }
 
+/// The task sessions whose conversation is a Codex thread (`$prefix` and more), open or closed, as
+/// that conversation, its terminal and whether it is open, and no other field.
+pub(in crate::store) const CODEX_LAUNCHES: &str = "RETURN SELECT claude_session, pane, closed = NONE AS open FROM task_session WHERE string::starts_with(claude_session, $prefix) AND claude_session != $prefix;";
+
 /// The record of `$slug` and `$handle` closed at `$now` ([`closing`], unguarded): true. Needs
 /// `$why`, `$restore`, `$said`, `$lost` and `$unrecorded`.
 pub(in crate::store) fn close() -> String {

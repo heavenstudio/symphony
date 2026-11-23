@@ -313,7 +313,8 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
         "say" => {
             let to = p.get("to").map(recipient);
-            let m = store.say(&c.arg("slug"), &c.actor()?, &c.arg("text"), to.as_deref())?;
+            let text = said(c)?;
+            let m = store.say(&c.arg("slug"), &c.actor()?, &text, to.as_deref())?;
             c.say(&format!("sent #{} on {}", m.id, m.slug));
         }
         "launch" => panes::launch(store, c)?,
@@ -666,6 +667,43 @@ fn recipient(to: &str) -> String {
     }
 }
 
+/// The line `say` posts: its `text` argument, or what `--file` names (stdin for `-`), so a long
+/// post is written as a file and never quoted for a shell; the store trims its ends as it trims any
+/// line (`Store::say`). One of the two, never both and never neither.
+fn said(c: &mut Context) -> Result<String, Stop> {
+    let p = c.parsed;
+    match (p.get("file"), p.get("text")) {
+        (Some(_), Some(_)) => Err(Stop::Refused(
+            "say takes its line as TEXT or from --file, never both".into(),
+        )),
+        (None, None) => Err(Stop::Refused(
+            "say needs its line: TEXT, or --file FILE (- for stdin)".into(),
+        )),
+        (None, Some(text)) => Ok(text.to_string()),
+        (Some(file), None) => file_or_stdin(c, file, "line", "--file"),
+    }
+}
+
+/// What `file` holds, by its path from the command's folder, or stdin for `-`: the text an option
+/// `flag` names, `what` in its refusals (`no body file X: --body-file names it …`).
+fn file_or_stdin(c: &mut Context, file: &str, what: &str, flag: &str) -> Result<String, Stop> {
+    if file == "-" {
+        let mut text = String::new();
+        c.input
+            .read_to_string(&mut text)
+            .map_err(|e| Stop::Refused(format!("cannot read the {what} from stdin: {e}")))?;
+        return Ok(text);
+    }
+    std::fs::read_to_string(c.env.cwd.join(file)).map_err(|e| {
+        Stop::Refused(match e.kind() {
+            std::io::ErrorKind::NotFound => format!(
+                "no {what} file {file}: {flag} names it by its path from here, or - for stdin"
+            ),
+            _ => format!("cannot read the {what} file {file}: {e}"),
+        })
+    })
+}
+
 /// `create SLUG TITLE`: a new task from its arguments and its body (the `body` argument, a file, or
 /// stdin for `-`), refused when the brief names the worktree of a dependency that has not landed
 /// ([`imported_worktree`]).
@@ -680,22 +718,7 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
         )));
     }
     let body = match p.get("body_file") {
-        Some("-") => {
-            let mut body = String::new();
-            c.input
-                .read_to_string(&mut body)
-                .map_err(|e| Stop::Refused(format!("cannot read the body from stdin: {e}")))?;
-            body
-        }
-        Some(file) => std::fs::read_to_string(c.env.cwd.join(file)).map_err(|e| {
-            Stop::Refused(match e.kind() {
-                std::io::ErrorKind::NotFound => format!(
-                    "no body file {file}: --body-file names it by its path from here, or - \
-                     for stdin"
-                ),
-                _ => format!("cannot read the body file {file}: {e}"),
-            })
-        })?,
+        Some(file) => file_or_stdin(c, file, "body", "--body-file")?,
         None => c.arg("body"),
     };
     // Asked once, and only for a dependency not done; outside a repository git lists none.

@@ -313,6 +313,7 @@ whose documentation says what it is asked:
 | `nav` | entries in the header and the home's links, after the Symphony's own |
 | `home_regions` | a region of the home page |
 | `board_actions` | a button on a task, and what its submission does |
+| `gates` | what a task needs to land beside the Symphony's own gates, answered for its branch's tip ([gates](PLUGIN_PROTOCOL.md#gates)) |
 | `watches` | paths whose change drops what the plugin cached |
 | `doc_checks` | a check over the project's documents, run by `just symphony-status --lint` |
 | `commands` | a command of the project's `symphony`, run as `just symphony-cli NAME` ([its commands](PLUGIN_PROTOCOL.md#its-commands)) |
@@ -320,8 +321,8 @@ whose documentation says what it is asked:
 | `describers` | an entry of its own on the Settings page, each setting with its source; it declares and runs nothing ([settings describers](PLUGIN_PROTOCOL.md#settings-describers)) |
 | `theme` | a theme package, below |
 
-Five seams are a linked plugin's alone: board fields, gates, prose rules, generators and
-transports. A plugin that declares one of them is refused under `[plugins.process]`, by name.
+Four seams are a linked plugin's alone: board fields, prose rules, generators and transports. A
+plugin that declares one of them is refused under `[plugins.process]`, by name.
 
 ## A theme
 
