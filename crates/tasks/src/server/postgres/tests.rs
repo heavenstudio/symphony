@@ -274,6 +274,141 @@ fn a_stop_whose_server_took_its_record_with_it_is_stopped_once_its_process_has_e
     );
 }
 
+/// A stop whose `pg_ctl` failed judges the data's record as it reads it again: the same pid
+/// still runs and is refused as pg_ctl's wait met its bound; a record of another pid is never
+/// taken for the server the stop read, and is refused naming both; and a process `ps` could not
+/// be run to tell of is refused at once, never waited for as one that took its record with it.
+#[test]
+fn a_failed_stop_takes_only_its_own_pid_for_running_and_a_ps_that_cannot_run_for_neither() {
+    let pg = Home::new(Path::new("/nowhere/board"), Path::new("/s"))
+        .patience(std::time::Duration::from_secs(5))
+        .postgresql(Path::new("/nowhere/bin"));
+    let record = |pid| PidFile {
+        pid,
+        socket: pg.socket(),
+        ready: true,
+        stopping: false,
+    };
+    let said = "pg_ctl: server does not shut down";
+    let log = "its log is /nowhere/board/postgresql.log";
+
+    let refused = pg
+        .stop_judged(&record(86894), said, Ok(Some(record(86894))))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        refused.starts_with(&format!(
+            "the board's PostgreSQL (pid 86894) was asked to stop, and pg_ctl, which waits 5 s at \
+             most for its end, says it has not ended ({said}; load average "
+        )),
+        "{refused}"
+    );
+    assert!(
+        refused.ends_with(&format!(
+            "it is left to finish, never signalled again; {log}"
+        )),
+        "{refused}"
+    );
+
+    let refused = pg
+        .stop_judged(&record(86894), said, Ok(Some(record(86895))))
+        .unwrap_err()
+        .to_string();
+    assert_eq!(
+        refused,
+        format!(
+            "the board's PostgreSQL (pid 86894) was asked to stop, pg_ctl failed ({said}), and \
+             its data's record now names another server of it, pid 86895, which this stop did \
+             not read: neither is signalled again; {log}"
+        )
+    );
+
+    // A process that still runs: waited for as gone, the stop would meet its patience.
+    let mut running = command("/bin/cat")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    let pid = i64::from(running.id());
+    let unknown = pg.stop_judged(
+        &record(pid),
+        said,
+        Err("ps could not be run: Resource temporarily unavailable".into()),
+    );
+    drop(running.stdin.take());
+    running.wait().unwrap();
+    assert_eq!(
+        unknown.unwrap_err().to_string(),
+        format!(
+            "the board's PostgreSQL (pid {pid}) was asked to stop, pg_ctl failed ({said}), and \
+             whether it still runs could not be told (ps could not be run: Resource temporarily \
+             unavailable): it is left to finish, never signalled again; {log}"
+        )
+    );
+
+    // No record, and the process the stop read has ended: stopped.
+    assert!(pg.stop_judged(&record(ENDED), said, Ok(None)).is_ok());
+}
+
+/// Whether a process is this board's server is what `ps` says its command line is: the board's
+/// `postgres -D` on its data, nothing else, and nothing for a pid `ps` says nothing of. A `ps`
+/// that could not be run tells neither, and says why.
+#[test]
+fn a_server_is_its_programs_postgres_on_its_data_and_a_ps_that_cannot_run_is_unknown() {
+    use std::os::unix::process::ExitStatusExt as _;
+    let pg = Home::new(Path::new("/nowhere/board"), Path::new("/s"))
+        .postgresql(Path::new("/nowhere/bin"));
+    let ps = |code: i32, line: &str| {
+        Ok(std::process::Output {
+            status: std::process::ExitStatus::from_raw(code << 8),
+            stdout: line.as_bytes().to_vec(),
+            stderr: Vec::new(),
+        })
+    };
+    let serves = |said| pg.serves_as_said(said);
+    assert_eq!(
+        serves(ps(0, "/nowhere/bin/postgres -D /nowhere/board/postgresql\n")),
+        Ok(true)
+    );
+    for (line, what) in [
+        ("", "no process of that pid"),
+        ("/bin/sh /nowhere/bin/postgres -D /nowhere/board/postgresql", "a script by its name"),
+        ("/elsewhere/bin/postgres -D /nowhere/board/postgresql", "another PostgreSQL's"),
+        ("/nowhere/bin/postgres -D /nowhere/other/postgresql", "another board's"),
+        ("/nowhere/bin/postgres -D /nowhere/board/postgresql.making", "a data beside it"),
+        ("/bin/cat", "another program"),
+    ] {
+        assert_eq!(serves(ps(0, line)), Ok(false), "{what}");
+    }
+    assert_eq!(serves(ps(1, "")), Ok(false), "ps exits 1 for a pid with no process");
+    assert_eq!(
+        serves(Err(std::io::Error::other("no process could be made"))),
+        Err("ps could not be run: no process could be made".into())
+    );
+}
+
+/// The data's record is a live server of the data, or none: no record, one cut short, one
+/// naming a process that has ended, or one naming a live process that is not this data's
+/// server (this test's own, which `ps` is run on).
+#[test]
+fn a_record_counts_only_for_a_live_server_of_the_data() {
+    let board = StandIn::installation("record", "18.7");
+    let data = board.pg.data();
+    assert_eq!(board.pg.recorded_now(), Ok(None), "no record");
+    fs::create_dir_all(&data).unwrap();
+    let at = |pid: i64| {
+        let text = recorded("ready   ").replacen("86894", &pid.to_string(), 1);
+        fs::write(data.join("postmaster.pid"), text).unwrap();
+    };
+    fs::write(data.join("postmaster.pid"), "86894\n").unwrap();
+    assert_eq!(board.pg.recorded_now(), Ok(None), "cut short");
+    at(ENDED);
+    assert_eq!(board.pg.recorded_now(), Ok(None), "its process has ended");
+    at(i64::from(std::process::id()));
+    assert_eq!(board.pg.recorded_now(), Ok(None), "not this data's server");
+    assert_eq!(board.pg.recorded(), None);
+}
+
 #[test]
 fn programs_that_are_not_there_are_refused_naming_the_setting_and_the_install() {
     let refused = Home::new(Path::new("/tmp/board"), Path::new("/s"))
@@ -568,6 +703,35 @@ fn discovered_tools_initialize_a_clean_scratch_board_with_owned_fixtures_only() 
     assert!(!pg.socket().exists());
 }
 
+/// A start that finds a complete cluster in a home that names no engine (placed by hand, or by a
+/// build from before the identity) names the home PostgreSQL's before it serves the cluster, and
+/// makes nothing: no `initdb` runs and what the data holds stays.
+#[test]
+fn a_cluster_found_with_no_identity_is_given_it_by_its_start_and_never_made_again() {
+    let found = StandIn::new(
+        "found",
+        &[
+            ("postgres", &postgres("18.7", "exit 1")),
+            ("initdb", "echo 'initdb ran' >&2; exit 1"),
+        ],
+    );
+    fs::create_dir_all(found.pg.data()).unwrap();
+    fs::write(found.pg.data().join("PG_VERSION"), "18\n").unwrap();
+    fs::write(found.pg.data().join("kept"), "").unwrap();
+    assert_eq!(found.pg.home.identity().unwrap(), None);
+    // The stand-in serves nothing: the start gets as far as the server, past any initdb.
+    let refused = found.refused();
+    assert!(refused.contains("did not start"), "{refused}");
+    assert_eq!(
+        found.pg.home.identity().unwrap(),
+        Some(crate::server::Engine::PostgreSql)
+    );
+    assert!(found.pg.data().join("kept").is_file());
+    assert!(!found.dir.join("board/postgresql.making").exists());
+    let log = fs::read_to_string(found.pg.log()).unwrap_or_default();
+    assert!(!log.contains("initdb ran"), "{log}");
+}
+
 #[test]
 fn a_release_older_than_the_oldest_or_none_is_refused_naming_it() {
     let old = StandIn::new("old", &[("postgres", &postgres("17.2", "exit 1"))]);
@@ -580,6 +744,7 @@ fn a_release_older_than_the_oldest_or_none_is_refused_naming_it() {
         !old.pg.data().exists(),
         "nothing is made for a release refused"
     );
+    assert!(old.pg.home.unmade().unwrap(), "and no engine is named");
     let none = StandIn::new("none", &[("postgres", "echo 'not a database'")]);
     let refused = none.refused();
     assert!(

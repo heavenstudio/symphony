@@ -657,14 +657,15 @@ impl Landing<'_> {
 
     /// `task` as a dispatch goes on with it at `tip`, its branch's head: back in review, by the
     /// board's own move from done ([`Store::move_to`]), where its reviewer approved it, no landing
-    /// has closed it ([`crate::orchestration::unlanded`]) and the approve does not name `tip`. A
-    /// delivery takes an approve naming the head alone ([`super::evidence`]), so a head moved
-    /// under an approved task (a merge of the default branch that settles a conflict, a fix)
-    /// waits on a fresh one, which only a task in review is given: said once to its orchestrator,
-    /// which starts its assessor and resumes its reviewer as at any move to review. The move is
-    /// its orchestrator's ([`acting`]), whoever's write started the dispatch: an assessor's holds
-    /// no role that may send it back. Any other task as it is. One that does not go back (no
-    /// orchestrator, and who dispatched it may not move it) is refused, naming the move that does.
+    /// has closed it ([`crate::orchestration::unlanded`]) and the approve does not name `tip`; any
+    /// other task as it is. A delivery takes an approve naming the head alone
+    /// ([`super::evidence`]), so a head moved under an approved task (a merge of the default
+    /// branch that settles a conflict, a fix) waits on a fresh one, which only a task in review is
+    /// given: said once to its orchestrator, which starts its assessor and resumes its reviewer as
+    /// at any move to review. The move is its orchestrator's ([`acting`]), whoever's write started
+    /// the dispatch: an assessor's holds no role that may send it back. One that does not go back
+    /// (no orchestrator, and who dispatched it may not move it) is refused, naming the move that
+    /// does.
     fn reviewed_again(&mut self, task: Task, tip: &str) -> Result<Task, Stop> {
         let slug = self.slug;
         if crate::orchestration::unlanded(&task).is_none() {
