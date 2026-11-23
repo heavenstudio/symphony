@@ -303,8 +303,9 @@ it. Its class is not the describer's to lower: a setting whose key the local set
 decide what runs and what lands) is shown reviewed, written in the project's scope alone, whatever
 its describer calls it, and a describer may mark a setting of its own reviewed. Nor is the board's
 scope its describer's to take: the board's store keeps the Symphony's own preferences alone, so a
-description's setting is shown without it and the page draws no control for one. A plugin built
-before the seam declares none and is asked nothing.
+description's setting is shown without it, among the scopes it may be written in and as its
+value's source alike, and the page draws no control for one. A plugin built before the seam
+declares none and is asked nothing.
 
 ## The line
 

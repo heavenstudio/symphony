@@ -70,6 +70,11 @@ first.
   reach it (`--click`, `--type`, `--key`). A state the fixture lacks is added to the fixture, a
   task's to `board.sh`, a run's or an hour's to `records.sh`. Only a picture a document shows is taken and committed.
 - **One command retakes them all**, or those named: `tools/product-pictures.sh queue`.
+- **No picture says the board is unwell.** A failed pass of the fixture board's callback dispatch,
+  as a loaded machine can make, has every page say so for a minute or more. So the script reads
+  each page once it has captured it, and puts no picture in place whose page said "The task board
+  is unwell" or "is starting": it waits until the server's notice no longer says it and takes that
+  picture again.
 - **A retake that changes nothing writes the same bytes**, so after one, `git status docs/product`
   lists exactly the pictures that had gone stale. That holds on one Chrome, one set of fonts and
   one machine's scroll bars (macOS draws a wide page's bar or not by its *Show scroll bars*

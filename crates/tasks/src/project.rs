@@ -309,6 +309,90 @@ pub fn artifacts(root: &Path) -> Option<String> {
     inside("[project] artifacts", &named).ok()
 }
 
+/// The key of the ignored paths a project names as going with a merged worktree, in `[board]`.
+pub const DISPOSABLE_KEY: &str = "sweep_disposable";
+
+/// Whether `pattern` is one the sweep takes among a project's own disposable paths
+/// ([`disposable`]): a path from the project's root as git names an ignored one, a folder ending in
+/// `/`, matched as the board's own are ([`crate::sweep::git::fnmatch`]: `*` any run of characters,
+/// a `/` too, and `?` any one).
+///
+/// # Errors
+///
+/// Why not: it is empty, leaves the project, is written in a way git names no path, or names
+/// nothing of its own, so that every ignored file would go.
+pub fn disposable_pattern(pattern: &str) -> Result<(), String> {
+    let refused = |why: &str| Err(format!("{pattern:?} {why}"));
+    if pattern.is_empty() {
+        return refused("is empty");
+    }
+    if pattern.starts_with('/') {
+        return refused("starts with `/`; it is a path from the project's root");
+    }
+    if pattern.contains('\\') || pattern.chars().any(char::is_control) {
+        return refused("holds a backslash or a control character, which no path git names holds");
+    }
+    if pattern.split('/').any(|part| matches!(part, "." | "..")) {
+        return refused("holds a `.` or `..` part; it names a path inside the project");
+    }
+    if !pattern.chars().any(|c| !matches!(c, '*' | '?' | '/' | '.')) {
+        return refused("names nothing of its own, so every ignored file would go");
+    }
+    Ok(())
+}
+
+/// The ignored paths that go with a merged worktree beside the board's own
+/// ([`crate::sweep::git::DISPOSABLE`]), as the project file at the main checkout `root` names them
+/// (`[board] sweep_disposable`): another stack's dependency and build folders, which a checkout
+/// makes again. None when there is no file, it names none, or it does not read: an array that is
+/// not all patterns the sweep takes ([`disposable_pattern`], which the Symphony's lint refuses by)
+/// names none, so nothing goes on a guess. Only that key is read; the rest of the file is the
+/// Symphony's.
+pub fn disposable(root: &Path) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(root.join(FILE)) else {
+        return Vec::new();
+    };
+    let Ok(table) = text.parse::<toml::Table>() else {
+        return Vec::new();
+    };
+    let Some(written) = table
+        .get("board")
+        .and_then(|board| board.get(DISPOSABLE_KEY))
+        .and_then(toml::Value::as_array)
+    else {
+        return Vec::new();
+    };
+    let mut patterns = Vec::new();
+    for value in written {
+        match value.as_str() {
+            Some(pattern) if disposable_pattern(pattern).is_ok() => {
+                if !patterns.iter().any(|known| known == pattern) {
+                    patterns.push(pattern.to_string());
+                }
+            }
+            _ => return Vec::new(),
+        }
+    }
+    patterns
+}
+
+/// The key by which a project has a server of its own run the idle-session sweep, in `[board]`.
+pub const OWN_SWEEP_KEY: &str = "own_sweep";
+
+/// Whether the project file at `root` has a server of its own run the idle-session sweep for it
+/// (`[board] own_sweep = true`): a project served by no other server, as one that runs a source
+/// build with no release on the machine, whose finished agents' terminals nothing else would
+/// close. False when there is no file, it does not read, or the key is unwritten or not `true`:
+/// a server of its own sweeps on no guess, since a preview's board may be a copy that names
+/// another board's terminals. Only that key is read; the rest of the file is the Symphony's.
+pub fn own_sweep(root: &Path) -> bool {
+    std::fs::read_to_string(root.join(FILE))
+        .ok()
+        .and_then(|text| text.parse::<toml::Table>().ok())
+        .and_then(|table| table.get("board")?.get(OWN_SWEEP_KEY)?.as_bool())
+        .unwrap_or(false)
+}
+
 /// The convention's documents folder, read when a project file names no `[[entrypoints]]`.
 const DOCS: &str = "docs";
 
@@ -699,6 +783,88 @@ mod tests {
             assert_eq!(artifacts(&root).as_deref(), folder, "{text}");
         }
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_projects_disposable_paths_are_the_files_and_none_where_one_is_not_a_pattern() {
+        let root = std::env::temp_dir().join(format!(
+            "symphony-project-disposable-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        assert!(disposable(&root).is_empty(), "no file");
+        for (text, patterns) in [
+            ("[project]\nid = \"x\"\n", vec![]),
+            ("[board]\nguide = \"G.md\"\n", vec![]),
+            (
+                "[board]\nsweep_disposable = [\"node_modules/\", \"*/node_modules/\", \"*.tsbuildinfo\"]\n",
+                vec!["node_modules/", "*/node_modules/", "*.tsbuildinfo"],
+            ),
+            (
+                "[board]\nsweep_disposable = [\"dist/\", \"dist/\"]\n",
+                vec!["dist/"],
+            ),
+            // One that is no pattern, and the project names none: nothing goes on a guess.
+            ("[board]\nsweep_disposable = [\"dist/\", \"*\"]\n", vec![]),
+            ("[board]\nsweep_disposable = [\"dist/\", 3]\n", vec![]),
+            ("[board]\nsweep_disposable = \"dist/\"\n", vec![]),
+            ("[board\nsweep_disposable = [\"dist/\"]\n", vec![]),
+        ] {
+            std::fs::write(root.join(FILE), text).unwrap();
+            assert_eq!(disposable(&root), patterns, "{text}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_server_of_its_own_sweeps_only_where_the_project_file_says_so() {
+        let root =
+            std::env::temp_dir().join(format!("symphony-project-own-sweep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        assert!(!own_sweep(&root), "no file");
+        for (text, sweeps) in [
+            ("[board]\nown_sweep = true\n", true),
+            ("[board]\nown_sweep = false\n", false),
+            ("[board]\nguide = \"G.md\"\n", false),
+            // Written as anything but `true`, or in a file that does not read: no sweep on a guess.
+            ("[board]\nown_sweep = \"true\"\n", false),
+            ("[board]\nown_sweep = 1\n", false),
+            ("[agents]\nown_sweep = true\n", false),
+            ("[board\nown_sweep = true\n", false),
+        ] {
+            std::fs::write(root.join(FILE), text).unwrap();
+            assert_eq!(own_sweep(&root), sweeps, "{text}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_disposable_pattern_names_a_path_of_its_own_inside_the_project() {
+        for pattern in [
+            "node_modules/",
+            "*/dist/",
+            "web/.cache/*",
+            "*.tsbuildinfo",
+            ".env.local",
+        ] {
+            assert_eq!(disposable_pattern(pattern), Ok(()), "{pattern}");
+        }
+        for (pattern, why) in [
+            ("", "is empty"),
+            ("/dist/", "starts with `/`"),
+            ("a\\b", "backslash"),
+            ("../dist/", "`.` or `..` part"),
+            ("web/./dist/", "`.` or `..` part"),
+            ("*", "names nothing of its own"),
+            ("*/", "names nothing of its own"),
+            ("*/*.*", "names nothing of its own"),
+            ("??", "names nothing of its own"),
+        ] {
+            let said = disposable_pattern(pattern).unwrap_err();
+            assert!(said.contains(why), "{pattern}: {said}");
+        }
     }
 
     #[test]

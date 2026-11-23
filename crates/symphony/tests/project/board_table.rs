@@ -1,6 +1,8 @@
 //! `symphony.toml`'s `[board]` table: the guide, what a review starts, the cap on an
-//! orchestrator's open tasks, when the pipeline alarm raises, the cap on the evidence the sweep
-//! sets aside and the folder of the machine's PostgreSQL, each key's default and what it refuses.
+//! orchestrator's open tasks, when the pipeline alarm raises, the ignored paths that go with a
+//! merged worktree, whether a server of its own sweeps idle sessions, the cap on the evidence the
+//! sweep sets aside and the folder of the machine's PostgreSQL, each key's default and what it
+//! refuses.
 
 use super::manifest::{parsed, refused};
 
@@ -92,6 +94,66 @@ fn the_board_table_names_when_the_pipeline_alarm_raises_and_none_takes_the_board
             let text = format!("[board]\n{key} = {value}\n");
             assert!(refused(&text).contains(key), "{text}");
         }
+    }
+}
+
+#[test]
+fn the_board_table_takes_the_disposable_paths_the_sweep_takes_and_refuses_the_rest() {
+    // The board reads the patterns itself; the project refuses what the board would not take.
+    let tree = super::Tree::new();
+    let text = "[board]\nsweep_disposable = [\"node_modules/\", \"*/dist/\"]\n";
+    assert!(parsed(text).is_ok(), "{text}");
+    tree.write("symphony.toml", text);
+    assert_eq!(
+        symphony_board::project::disposable(&tree.root),
+        ["node_modules/", "*/dist/"]
+    );
+    for (value, why) in [
+        ("[\"*\"]", "names nothing of its own"),
+        ("[\"/dist/\"]", "starts with `/`"),
+        ("[\"../dist/\"]", "`.` or `..` part"),
+        ("[\"dist/\", \"\"]", "is empty"),
+        ("[\"a\\\\b\"]", "backslash"),
+    ] {
+        let text = format!("[board]\nsweep_disposable = {value}\n");
+        let said = refused(&text);
+        assert!(
+            said.contains("[board] sweep_disposable: "),
+            "{text}: {said}"
+        );
+        assert!(said.contains(why), "{text}: {said}");
+        // And the board, reading the same file, takes none of it.
+        tree.write("symphony.toml", &text);
+        assert!(
+            symphony_board::project::disposable(&tree.root).is_empty(),
+            "{text}"
+        );
+    }
+    assert!(refused("[board]\nsweep_disposable = \"dist/\"\n").contains("sweep_disposable"));
+}
+
+#[test]
+fn the_board_table_holds_whether_a_server_of_its_own_sweeps_to_a_boolean_as_the_server_reads_it() {
+    // The server reads the key itself; the project refuses what is no boolean.
+    let tree = super::Tree::new();
+    for (text, sweeps) in [
+        ("[board]\nown_sweep = true\n", true),
+        ("[board]\nown_sweep = false\n", false),
+        ("", false),
+    ] {
+        assert!(parsed(text).is_ok(), "{text}");
+        tree.write("symphony.toml", text);
+        assert_eq!(
+            symphony_board::project::own_sweep(&tree.root),
+            sweeps,
+            "{text}"
+        );
+    }
+    for value in ["\"true\"", "1"] {
+        let text = format!("[board]\nown_sweep = {value}\n");
+        assert!(refused(&text).contains("own_sweep"), "{text}");
+        tree.write("symphony.toml", &text);
+        assert!(!symphony_board::project::own_sweep(&tree.root), "{text}");
     }
 }
 

@@ -1,6 +1,7 @@
-//! Resuming an existing Codex turn is not the same as starting a fresh conversation.
+//! Resuming an existing Codex turn is not the same as starting a fresh conversation, and a resumed
+//! conversation of either agent can open on a question.
 
-use super::{close_terminal, restored, told};
+use super::{close_terminal, launched, restored, told};
 use crate::common::refused;
 use crate::{FAKE, Hooked, World};
 use serde_json::json;
@@ -144,6 +145,37 @@ fn a_resumed_codex_blocked_on_a_person_is_still_reported_and_cleaned_up() {
     assert!(w.live().is_empty());
     assert!(w.calls_of(&["send", pane]).is_empty());
     assert!(w.calls_of(&["queue"]).is_empty());
+    assert!(w.calls_of(&["keys", pane]).is_empty());
+    assert_eq!(w.store().task_sessions("sim/jump").unwrap(), before);
+}
+
+#[test]
+fn a_restore_blocked_on_a_dialog_hc_only_calls_open_says_what_the_terminal_showed() {
+    let mut w = World::new();
+    let s = launched(&w).row;
+    close_terminal(&w, &s);
+    // A question a resumed conversation can open with, which hc's status names only as a dialog.
+    let dialog = w.dir().join("dialog.txt");
+    let screen = "  This conversation is long and old.\n\n  Resume it whole or from a summary?\n\n\
+                  ❯ 1. Resume from summary\n  2. Resume whole\n  3. Don't ask again\n";
+    fs::write(&dialog, screen).unwrap();
+    w.set("FAKE_HC_BLOCKED", "1");
+    w.set("FAKE_HC_BLOCKED_SCREEN", dialog.to_str().unwrap());
+    let before = w.store().task_sessions("sim/jump").unwrap();
+    let why = refused(restored(&w, "sim/jump", Some(&s.handle)));
+    let removed = w.calls_of(&["rm"]);
+    let pane = &removed.last().unwrap()[1];
+    // The terminal is closed with the failed restore, so the refusal is where the question stays.
+    assert_eq!(
+        why,
+        format!(
+            "the agent in terminal {pane} waits on a person before it took its first message: \
+             dialog open; its terminal showed: This conversation is long and old. | Resume it \
+             whole or from a summary? | ❯ 1. Resume from summary | 2. Resume whole | 3. Don't ask \
+             again"
+        )
+    );
+    assert!(w.live().is_empty());
     assert!(w.calls_of(&["keys", pane]).is_empty());
     assert_eq!(w.store().task_sessions("sim/jump").unwrap(), before);
 }

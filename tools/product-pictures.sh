@@ -106,10 +106,14 @@ running=""
 # Every server started, each followed by its output's reader.
 started=()
 
-# What still runs against WORK, by its pids: whatever names WORK on its command line, a server's
-# --root and --home, the board's PostgreSQL and its supervisor their data folder.
+# What still runs against WORK, by its pids: a server, by the --root or --home it was started with
+# here, and the copy's board's PostgreSQL and its supervisor, by their data folder in the copy's
+# git common dir. Nothing else that names WORK is matched, the shell that started this run among
+# them.
 against_work() {
-    pgrep -u "$(id -u)" -f -- "$work/" || true
+    pgrep -u "$(id -u)" -f -- \
+        "--root $work/project( |\$)|--home $work/machine( |\$)|$work/project/\\.git/symphony/tasks/" ||
+        true
 }
 
 # `clear_work`: WORK removed, and first whatever still runs against it: a server a run killed
@@ -316,6 +320,57 @@ machine() {
 }
 
 own="$base"
+
+# What a page says of the board's health, as its words: the server's notice while the board is
+# unwell or starting, and the project picker's line under a project in that state: one pattern,
+# which JavaScript and awk read alike. A page is read for them by `health`, which gives the first
+# such line it shows, or an empty one.
+unwell='The task board is (unwell|starting)'
+health="(document.body.innerText.match(/${unwell}[^\\n]*/) || [\"\"])[0]"
+
+# `well FEED`: returns once the server whose project's pages are under FEED says nothing of the
+# board's health on its notice: the server's events on the project's feed, the notice as it stands
+# first and then each change of it, read until one does not say it. It waits on nothing but that
+# event; the server ends the feed's request at its next ping (five seconds apart at most) once it
+# has been read. It fails when the feed ends first, its server gone.
+well() {
+    local version
+    version="$(curl --silent --show-error --fail "$1/api/board" | jq -er .version)" || return 1
+    { curl --silent --show-error --no-buffer "$1/api/feed?since=$version" || true; } |
+        awk -v unwell="$unwell" '
+            /^event: / { event = substr($0, 8) }
+            /^data: / && event == "server" && $0 !~ unwell { well = 1; exit }
+            /^$/ { event = "" }
+            END { exit !well }'
+}
+
+# `take PICTURE FEED SHOT-ARGUMENT…`: pictures/PICTURE.png shot with SHOT-ARGUMENT… (the page, its
+# view and its line's steps), never with a word of the board's health on it. The shot reads the
+# page (`health`) just before it captures it into WORK (`--shot`) and again just after, the shot's
+# own last capture a throwaway, and the picture is put in place when neither read found a word of
+# it: a notice shown at the capture was there at the first read, or came after it and was still
+# there at the second, as one stays until the board's passes have been ok for a minute
+# (board_health's CLEARS_AFTER). A picture refused is taken again once FEED's server says it no
+# longer says it (`well`).
+take() {
+    local picture=$1 feed=$2 said
+    shift 2
+    while :; do
+        waited "$shot" shot "$@" --eval "$health" --shot "$work/picture.png" --eval "$health" \
+            --out "$work/after.png" >"$work/said"
+        said="$(tail -n 2 "$work/said" | grep -vx '""' | head -n 1 || true)"
+        if [ -z "$said" ]; then
+            mv "$work/picture.png" "$out/$picture.png"
+            return
+        fi
+        echo "product-pictures: $picture said $said; taken again once the board is well" >&2
+        if ! waited well "$feed"; then
+            echo "product-pictures: $picture: the server's feed ended before the board was well" >&2
+            exit 1
+        fi
+    done
+}
+
 # Which server the line read next is taken from: the copy's own, or the machine's one server.
 from=own
 taken=0
@@ -345,21 +400,26 @@ while read -r name widths path steps || [ -n "$name" ]; do
         exit 1
         ;;
     esac
+    # The feed whose notice says the copy's board's health: its own server's, at its root, or the
+    # one server's, under the copy's id (tools/product-pictures/fixture/symphony.toml), which the
+    # picker's line of it says.
     if [ "$from" = machine ]; then
         [ -n "$machine" ] || machine
         base="$machine"
+        feed="$machine/orchard"
     else
         base="$own"
+        feed="$own"
     fi
-    # What shot prints is a line's `--eval` value, the page set up for its picture and nothing to
-    # read: only its errors are said, and one ends the run.
+    # What shot prints before `health`'s two lines is a line's `--eval` value, the page set up for
+    # its picture and nothing to read: only its errors are said, and one ends the run.
     if [ "$widths" != wide ]; then
         # shellcheck disable=SC2086 # a line's steps are shot's own options, split on spaces
-        waited "$shot" shot "$base$path" --out "$out/$name-phone.png" --phone --scheme light --clock "$NOW" --timeout 60 $steps >/dev/null
+        take "$name-phone" "$feed" "$base$path" --phone --scheme light --clock "$NOW" --timeout 60 $steps
     fi
     if [ "$widths" != phone ]; then
         # shellcheck disable=SC2086
-        waited "$shot" shot "$base$path" --out "$out/$name-wide.png" --size 1280x800 --scheme light --clock "$NOW" --timeout 60 $steps >/dev/null
+        take "$name-wide" "$feed" "$base$path" --size 1280x800 --scheme light --clock "$NOW" --timeout 60 $steps
     fi
     taken=$((taken + 1))
 done <"$list"

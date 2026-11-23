@@ -177,6 +177,7 @@ impl Event {
     }
 }
 
+mod channel;
 mod place;
 mod usage;
 
