@@ -180,7 +180,7 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         let home =
             symphony_board::server::Home::in_common(&self.root.join(".git"), Some(&surreal()));
-        let _ = home.stop();
+        let _ = home.stop_board();
     }
 }
 

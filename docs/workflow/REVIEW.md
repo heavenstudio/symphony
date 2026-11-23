@@ -327,6 +327,14 @@ answered `> [!comment]` into `docs/history/review-ledger.md`, word for word, so
 pages keep only what is still open. Nothing is deleted: the cards stay where
 they are and the comments in the ledger.
 
+A tidy works out every file it changes before it writes one, so a card it cannot
+tidy leaves them all as they were. Where the project delivers by pull request
+(`[land] delivery`, [GITHUB_SETUP](../operations/GITHUB_SETUP.md#delivery-by-pull-request)),
+it writes nothing in a checkout on the default branch, as an owner's save writes
+nothing there: a tidy there with something to change is refused, naming the files.
+The same tidy run in a task's worktree writes them, and that task's pull request
+delivers them.
+
 ### Slugs in prose
 
 **Documents say what the design is, not how it was decided.** A card slug in a

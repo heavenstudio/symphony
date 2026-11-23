@@ -46,12 +46,11 @@ fn pushed(
         .apply_attested(&owner, &Host::local(), request, given))
     .map(drop)
     .map_err(|refused| {
-        let said = refused.to_string();
-        let guard = guards(&said)
+        let guard = guards(&refused)
             .then(|| f.store.guard_refusal(&owner, request, given).unwrap())
             .flatten()
             .map(Box::new);
-        (said, guard)
+        (refused.to_string(), guard)
     })
 }
 
@@ -156,7 +155,62 @@ fn a_refusal_no_guard_gives_reads_no_guard() {
         ("guard_unavailable_too: x", false),
         ("", false),
     ] {
-        assert_eq!(guards(words), guard, "{words}");
+        let refused = symphony_board::Error::Refused(words.into());
+        assert_eq!(guards(&refused), guard, "{words}");
+    }
+}
+
+/// A refusal is a guard's by its code alone, read from the words as the board writes a refusal:
+/// whatever those words say after it, another code's word included, and never from a board that
+/// could not be reached, whatever its words.
+#[test]
+fn a_guards_refusal_is_known_by_its_code_whatever_its_words_say() {
+    use symphony_api::workflow::RefusalCode::{self, *};
+    // Each code named once, and from those names both the match that decides it and the list
+    // the test walks: a code added to the board fails to compile until it is decided, and a code
+    // decided is a code tested.
+    macro_rules! decided {
+        ($($guard:ident)|+ => true, $($other:ident)|+ => false) => {
+            (
+                |code: RefusalCode| match code {
+                    $($guard)|+ => true,
+                    $($other)|+ => false,
+                },
+                [$($guard,)+ $($other,)+],
+            )
+        };
+    }
+    let (a_guards, every) = decided!(
+        GuardUnavailable | StaleInput | Unauthorized => true,
+        StaleTask
+        | StaleWorkflow
+        | StaleActivation
+        | UnknownId
+        | RemovedId
+        | Dependency
+        | Capacity
+        | HumanWait
+        | UnsupportedActivation
+        | UnsupportedWriter
+        | UnsupportedAdapter
+        | ExplicitActionRequired => false
+    );
+    for code in every {
+        for words in [
+            "",
+            "edge accept is guarded",
+            "unauthorized: words that begin with a guard's code",
+            "stale_task: words that begin with another code",
+        ] {
+            let refused = symphony_board::Error::Refused(Refusal::new(code, words).to_string());
+            assert_eq!(guards(&refused), a_guards(code), "{refused}");
+        }
+    }
+    for words in [
+        "guard_unavailable: edge accept is guarded",
+        "unauthorized: x",
+    ] {
+        assert!(!guards(&symphony_board::Error::Db(words.into())), "{words}");
     }
 }
 

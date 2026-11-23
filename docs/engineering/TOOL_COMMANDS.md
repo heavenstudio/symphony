@@ -101,10 +101,11 @@ all linked worktrees. Obtain the absolute common directory with
 `git rev-parse --path-format=absolute --git-common-dir`; `landing-checks` returns the complete
 path. Create its parent folder if needed, open the file for append with create enabled, acquire
 the exclusive advisory file lock, and keep the descriptor open through validation and swap.
-Release it by closing the descriptor. Do not unlink or replace the lock file: that changes the
-identity other processes hold. On macOS and Linux this is the `flock(2)` exclusive lock used by
-Rust's `File::lock`; a create-exclusive sentinel file is not the same lock. Candidate generation
-and verification run before acquiring it. A folder outside a Git checkout has no such lock.
+Release it by unlocking it, then closing the descriptor. Do not unlink or replace the lock file:
+that changes the identity other processes hold. On macOS and Linux this is the `flock(2)`
+exclusive lock used by Rust's `File::lock`; a create-exclusive sentinel file is not the same
+lock. Candidate generation and verification run before acquiring it. A folder outside a Git
+checkout has no such lock.
 
 This names the lock's existing identity and scope, so a consumer can take it itself without
 linking the library. Other library uses migrate under their own contracts; these commands do
