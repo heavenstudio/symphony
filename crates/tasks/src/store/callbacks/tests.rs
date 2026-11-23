@@ -884,7 +884,7 @@ fn stored_states_of_every_recipient_in_one_read(backend: crate::store_fixture::B
         recipient_on(store, cedar, false),
     ];
     let all: Vec<&Callback> = recipients.iter().collect();
-    let (stored, sent) = requests(store, || store.stored_states(&all).unwrap());
+    let (stored, sent) = requests(store, || store.stored_states(&all, true).unwrap());
     assert_eq!(sent, 1, "one read for every recipient");
     assert_eq!(
         stored.keys().map(String::as_str).collect::<Vec<_>>(),
@@ -959,6 +959,17 @@ fn stored_states_of_every_recipient_in_one_read(backend: crate::store_fixture::B
             "a visit under its lease reads no clock for its stored state"
         );
     }
+    // An observing pass's plans settle whatever waits: every recipient's state, with no due line.
+    let observed = clock_reads(&|| {
+        let observed = clocked.stored_states(&all, false).unwrap();
+        let read: Vec<_> = observed.values().map(|s| (sum(s), s.pending)).collect();
+        let planned: Vec<_> = stored.values().map(|s| (sum(s), false)).collect();
+        assert_eq!(read, planned);
+    });
+    assert_eq!(
+        observed, 0,
+        "an observing pass reads no clock for its plans"
+    );
     let (pending, sent) = requests(store, || store.pending(&all).unwrap());
     assert_eq!(
         (pending, sent),
@@ -967,7 +978,7 @@ fn stored_states_of_every_recipient_in_one_read(backend: crate::store_fixture::B
     let seated = [recipient_on(store, birch, true)];
     let seated: Vec<&Callback> = seated.iter().collect();
     assert!(
-        store.stored_states(&seated).unwrap()[birch].pending,
+        store.stored_states(&seated, true).unwrap()[birch].pending,
         "the seat hears the chat"
     );
     assert_eq!(store.pending(&seated).unwrap(), [birch.to_string()].into());
@@ -983,7 +994,7 @@ fn stored_states_of_every_recipient_in_one_read(backend: crate::store_fixture::B
     );
     let (nothing, sent) = requests(store, || {
         (
-            store.stored_states(&[]).unwrap(),
+            store.stored_states(&[], true).unwrap(),
             store.pending(&[]).unwrap(),
         )
     });

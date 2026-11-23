@@ -1063,8 +1063,9 @@ impl Store {
         let initial_sequence = sequence;
         let mut observed = true;
         let mut pull_at = f64::INFINITY;
-        // Every recipient's stored state in one read: each one's plan reads it from there.
-        let mut stored = self.stored_states(&here)?;
+        // Every recipient's stored state in one read: each one's plan reads it from there, with its
+        // due line where the pass delivers (an observing one settles whatever waits).
+        let mut stored = self.stored_states(&here, pass != Pass::Observe)?;
         for callback in here {
             let env = crate::cli::Env::of_process();
             let visit = Visit::new(pass, &env, self, holdings.as_ref());
@@ -1159,7 +1160,7 @@ impl Store {
     ) -> Result<(bool, f64), Error> {
         let stored = match ahead {
             Some(stored) => stored,
-            None => self.stored_one(callback, true)?,
+            None => self.stored_one(callback, visit.pass != Pass::Observe)?,
         };
         let pending = stored.pending;
         let Some(look) = self.look(handle, callback, board, sequence, visit, stored)? else {
@@ -1711,24 +1712,11 @@ impl Store {
         }
     }
 
-    /// Each of `recipients`' stored state ([`Stored`]) with its due line, by handle, all of them in
-    /// one read: the stored state of a pass's every recipient, which their plans read, as only a
-    /// visit under its lease reads its recipient's again ([`Store::stored_one`]).
-    fn stored_states(&self, recipients: &[&Callback]) -> Result<BTreeMap<String, Stored>, Error> {
-        self.read_stored(recipients, true)
-    }
-
-    /// `callback`'s recipient's stored state, read alone ([`Store::stored_states`]), with its due
-    /// line when `due`, and with no read of the clock when not.
-    fn stored_one(&self, callback: &Callback, due: bool) -> Result<Stored, Error> {
-        let handle = callback.handle.as_str();
-        (self.read_stored(&[callback], due)?.remove(handle))
-            .ok_or_else(|| Error::Db(format!("the board read no callback state for {handle}")))
-    }
-
-    /// Each of `recipients`' stored state by handle, in one read, with whether a line of its outbox
-    /// is due now when `due` ([`Stored::pending`]).
-    fn read_stored(
+    /// Each of `recipients`' stored state ([`Stored`]) by handle, all of them in one read, with
+    /// whether a line of its outbox is due now when `due` ([`Stored::pending`]), and no read of the
+    /// clock when not: the stored state of a pass's every recipient, which their plans read, as
+    /// only a visit under its lease reads its recipient's again ([`Store::stored_one`]).
+    fn stored_states(
         &self,
         recipients: &[&Callback],
         due: bool,
@@ -1751,6 +1739,14 @@ impl Store {
             .into_iter()
             .map(|stored| (stored.handle.clone(), stored))
             .collect_map())
+    }
+
+    /// `callback`'s recipient's stored state, read alone ([`Store::stored_states`]), with its due
+    /// line when `due`.
+    fn stored_one(&self, callback: &Callback, due: bool) -> Result<Stored, Error> {
+        let handle = callback.handle.as_str();
+        (self.stored_states(&[callback], due)?.remove(handle))
+            .ok_or_else(|| Error::Db(format!("the board read no callback state for {handle}")))
     }
 
     /// The handles of `recipients` with a line of their outbox due now, all of them in one read: the
