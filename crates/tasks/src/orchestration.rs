@@ -475,11 +475,14 @@ pub fn unowned_tops(tasks: &[Task]) -> Vec<&Task> {
 /// every dependency on `tasks` is done ([`crate::waits_on::Look::free`], as the digest's
 /// `ready_unstaffed` reads it) can be worked on now, so where the limit on the open tasks an
 /// orchestrator holds leaves places for only some, they go to those before a task that still waits
-/// on another, which nobody can start whoever orchestrates it.
-pub fn first_free<'t>(tasks: &[Task], mut tops: Vec<&'t Task>) -> Vec<&'t Task> {
+/// on another, which nobody can start whoever orchestrates it. A partition, not a sort by the
+/// key: a stable sort links some 33 KB of code into each binary for a two-valued key.
+pub fn first_free<'t>(tasks: &[Task], tops: Vec<&'t Task>) -> Vec<&'t Task> {
     let look = crate::waits_on::Look::new(tasks, &[]);
-    tops.sort_by_key(|top| !look.free(top));
-    tops
+    let (mut free, waiting): (Vec<&Task>, Vec<&Task>) =
+        tops.into_iter().partition(|top| look.free(top));
+    free.extend(waiting);
+    free
 }
 
 /// What a read of the whole board says of the board's give, before anything else is read: none to

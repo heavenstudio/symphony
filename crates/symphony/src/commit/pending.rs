@@ -521,7 +521,9 @@ fn written(
 pub struct Unkept {
     /// Which of its edits failed.
     pub at: usize,
-    /// How many of its later edits were written before it, which nothing shows or delivers.
+    /// How many of its later edits were written before it: they stay in the journal until a
+    /// person removes them, each listed as held on its page's note ([`note`]), and nothing shows
+    /// or delivers them.
     pub left: usize,
     /// Why.
     pub problem: String,
@@ -605,15 +607,24 @@ pub fn note(root: &Path, file: &str) -> Option<String> {
         return None;
     }
     let default = Project::of(root).default_branch.clone();
+    let all = entries(root);
+    let inert_save = |save: &Save| {
+        (all.iter())
+            .find(|(number, _)| *number == save.sequence)
+            .and_then(|(_, saved)| saved.delivery.as_ref())
+            .is_some_and(|delivery| inert(&all, delivery))
+    };
     let each: Vec<String> = saves
         .iter()
         .map(|save| {
             let task = &save.branch;
             let stands = save.state.said(&default);
             // Never left out of the page without a word: the owner's answer is kept, and why
-            // it is not drawn is said beside it.
+            // it is not drawn is said beside it, where its state does not say it already (an
+            // inert save's says none of its tidy is shown).
             let unshown = match (&save.shown, &save.state) {
                 (true, _) | (_, State::Conflicted) => "",
+                (false, _) if inert_save(save) => "",
                 (false, _) => {
                     "; its words no longer apply to this page as it is here, so they are not \
                      shown: they are kept"
@@ -701,15 +712,13 @@ fn before(entries: &[(u64, QueuedPublication)], sequence: u64, file: &str, excep
 /// Why the saves one tidy kept as `together` go nowhere, when they do not: on no way to the
 /// default branch as a whole, as a save alone that could not be committed is, so none of them is
 /// waited for. Their first not in the journal (the tidy could not keep it, as it is written
-/// last), held short of its branch or closed, or one of them gone once all were kept. None while
-/// they may go, and once their first is committed, where each entry stands for itself.
+/// last, or it was dropped before its commit as another delivery brought it: the journal keeps
+/// nothing that tells the two apart), held short of its branch or closed, or one of them gone
+/// once all were kept. None while they may go, and once their first is committed, where each
+/// entry stands for itself.
 fn stopped(entries: &[(u64, QueuedPublication)], together: Together) -> Option<String> {
     let Some((_, first)) = entries.iter().find(|(number, _)| *number == together.first) else {
-        return Some(
-            "the tidy that kept it could not keep the first of its saves, so none of them is \
-             shown or delivered"
-                .into(),
-        );
+        return Some(NO_FIRST.into());
     };
     let delivery = first.delivery.as_ref()?;
     if !delivery.tip.is_empty() {
@@ -732,6 +741,12 @@ fn stopped(entries: &[(u64, QueuedPublication)], together: Together) -> Option<S
     (left != together.count).then(|| short(left, together.count))
 }
 
+/// Why the saves of a tidy whose first is not in the journal go nowhere ([`stopped`]): true of a
+/// first the tidy could not keep and of one another delivery brought.
+const NO_FIRST: &str = "the first of the saves its tidy kept is not in the journal: the tidy \
+                        could not keep it, or another delivery brought it, so none of them is \
+                        shown or delivered";
+
 /// Why the saves of a tidy no longer whole go nowhere: `left` of its `count`.
 fn short(left: u64, count: u64) -> String {
     format!("{left} of the {count} saves its tidy kept are left, and none goes without the others")
@@ -748,8 +763,9 @@ fn going(entries: &[(u64, QueuedPublication)], delivery: &Delivery) -> bool {
                 .is_none_or(|together| stopped(entries, together).is_none()))
 }
 
-/// Whether the agent's save `delivery` is inert: one of a tidy that could not keep the first of
-/// its saves, which nothing shows or delivers ([`keep_together`]).
+/// Whether the agent's save `delivery` is inert: one of a tidy whose first save is not in the
+/// journal, never kept or dropped as another delivery brought it, which nothing shows or
+/// delivers ([`keep_together`], [`stopped`]).
 fn inert(entries: &[(u64, QueuedPublication)], delivery: &Delivery) -> bool {
     delivery.tip.is_empty()
         && delivery

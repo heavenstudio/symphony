@@ -1326,9 +1326,12 @@ so its commit fails), when its task closed with no delivery, or when it is no lo
 kept, one of them dropped as another delivery brought it. Each of its saves then says why on its
 page, and none holds back a later save of its files: an owner's save of one of its pages goes,
 and so does a later tidy's ledger. The tidy writes its first entry last, so a tidy that could
-not keep all of its saves has no first in the journal. Those it did keep are never shown or
-delivered and hold back nothing, and the tidy says on its error output that nothing of it was
-kept.
+not keep all of its saves has no first in the journal, and neither has one whose first was
+dropped before its commit as another delivery brought it: the journal cannot tell the two apart,
+and each of the saves left says either may be why. Those saves stay in the journal until a
+person removes them, each listed as held on its page's note; none is shown or delivered, and
+none holds back a later save. A tidy that could not keep all of its saves says so on its error
+output: nothing of it is kept, and how many of its saves stay in the journal, and where.
 
 ### What the generators make, delivered by a pull request
 
