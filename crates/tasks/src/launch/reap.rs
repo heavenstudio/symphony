@@ -58,7 +58,8 @@
 //! log (its stderr) of each once per change of reason; a dry run lists them all.
 //!
 //! Native channels are checked during the sweep, independently of tool activity: a Codex thread is
-//! present while hc runs Codex in its terminal ([`crate::Presence`]). That does not exempt a
+//! present while hc runs Codex in its terminal ([`crate::Presence`]), and its registration is
+//! retired once every terminal the board launched it in is closed or gone. That does not exempt a
 //! finished idle worker's terminal from the rules above.
 //!
 //! Right before the close, the program, owner, status, processes, board work and screen are read
@@ -85,7 +86,7 @@ use super::screen;
 use super::{Processes, procs};
 use crate::rows::TaskSessionRow;
 use crate::{Callback, Error, Presence, Store};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -153,25 +154,38 @@ pub struct Reap<'a> {
     pub min_idle: f64,
 }
 
-/// What hc's live terminals say of Codex agents: the terminals running Codex, and the threads the
-/// board's open launch records put in one of them.
+/// What hc's live terminals say of Codex agents: the terminals running Codex, the threads the
+/// board's open launch records put in one of them, and the threads its launch records name of which
+/// no open record names a live terminal ([`Presence::gone`]), all from one read of the records.
 pub fn presence(store: &Store, live: &[Object]) -> Result<Presence, Error> {
-    let terminals: std::collections::BTreeSet<String> = live
-        .iter()
+    let address = |t: &Object| Some(text_of(t, "address")).filter(|a| !a.is_empty());
+    let listed: BTreeSet<String> = live.iter().filter_map(address).collect();
+    let terminals: BTreeSet<String> = (live.iter())
         .filter(|t| hc::agent(t) == Some("codex"))
-        .map(|t| text_of(t, "address"))
-        .filter(|a| !a.is_empty())
+        .filter_map(address)
         .collect();
-    let threads = store
-        .open_task_sessions()?
-        .into_iter()
-        .filter(|s| terminals.contains(&s.pane))
-        .filter_map(|s| {
-            let thread = s.claude_session.strip_prefix(crate::launch::CODEX)?;
-            (!thread.is_empty()).then(|| thread.to_string())
-        })
-        .collect();
-    Ok(Presence { terminals, threads })
+    let (mut threads, mut held, mut launched) = Default::default();
+    for record in store.all_task_sessions()? {
+        let Some(thread) = (record.claude_session.strip_prefix(crate::launch::CODEX))
+            .filter(|thread| !thread.is_empty())
+        else {
+            continue;
+        };
+        let insert = |set: &mut BTreeSet<String>| set.insert(thread.to_string());
+        insert(&mut launched);
+        if record.closed.is_none() && listed.contains(&record.pane) {
+            insert(&mut held);
+            if terminals.contains(&record.pane) {
+                insert(&mut threads);
+            }
+        }
+    }
+    let gone = launched.difference(&held).cloned().collect();
+    Ok(Presence {
+        terminals,
+        threads,
+        gone,
+    })
 }
 
 /// One sweep (the module doc says which terminals close); what it could not record goes to `warn`.
