@@ -226,6 +226,7 @@ worktree would fetch them all.
 
     **Earlier verdicts checked.** **blueprint-home** (B) decides that a blueprint is its own repository and is fetched, not how the project holds it.
   [2026-11-23 12:22] owner · question — There can be multiple boards for the same project, which means, even multiple templates for it. How would that work in case we pick up on A?
+  [2026-11-23 12:23] agent — Under A the record is one for each board, not one for the project. Each board's record sits beside that board's settings and names its blueprint's address, its version and what that blueprint put. So each board follows, or leaves, its own blueprint, and each blueprint's new version arrives as its own task on the board it belongs to. Some places belong to the repository and not to a board: the skills folder, the justfile, the rules at the root. Two blueprints write there side by side, each under its own name, and taking a second blueprint that would write over what the first put is refused. A submodule would not change this: there would be one for each blueprint, their files would still be copied into the same shared places, and every task's worktree would fetch all of them. One caution: today a project has one board and one project file, so several boards in one project is a design of its own that this assumes. The card's options stand as written, reading A as one record for each board; the section above the card now says this.
 
 ## Where blueprints live
 
