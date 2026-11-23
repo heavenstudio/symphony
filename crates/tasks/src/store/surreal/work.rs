@@ -155,6 +155,10 @@ pub(in crate::store) const RED: &str =
 pub(in crate::store) const ARM: &str =
     "UPDATE type::record('task', $slug) SET fields._board.arm = $arm RETURN NONE;";
 
+/// The kind a task is filed as, written with the task ([`crate::kind`]).
+pub(in crate::store) const KIND: &str =
+    "UPDATE type::record('task', $slug) SET fields._board.kind = $kind RETURN NONE;";
+
 /// The checks a pass's write makes first, before any statement of its own moves a version or a
 /// `last_seen`: each task as read, each dropped holder as read. Needs `$fenced` and `$seen`.
 pub(in crate::store) const FENCES: &str = "
@@ -221,6 +225,30 @@ IF $task = NONE {{ THROW $missing }};
 UPDATE type::record('task', $slug) SET priority = $priority, version += 1 RETURN NONE;
 LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' + <string>$priority;
 {}",
+        logged("$slug", "$actor", "'system'", "$said", "NONE")
+    )
+}
+
+/// Gives the open task `$slug` the kind `$kind` and says so, with the one it replaced, on its
+/// thread, by `$actor`: a session's write when `acts`, else the owner's. A task of that kind
+/// already is left as it is; `$missing` refuses a task not there, and `$closed` one done or
+/// cancelled.
+pub(in crate::store) fn set_kind(acts: bool) -> String {
+    let act = if acts { ACT } else { "" };
+    format!(
+        "{act}
+LET $task = (SELECT status, fields._board.kind AS kind FROM ONLY type::record('task', $slug));
+IF $task = NONE {{ THROW $missing }};
+IF $task.status IN ['done', 'cancelled'] {{
+    LET $refusal = $closed + $task.status + ': only an open task is given a kind';
+    THROW $refusal;
+}};
+IF $task.kind != $kind {{
+    UPDATE type::record('task', $slug) SET fields._board.kind = $kind, version += 1 RETURN NONE;
+    LET $said = IF $task.kind = NONE {{ $actor + ' gave it the kind ' + $kind }}
+        ELSE {{ $actor + ' changed its kind ' + <string>$task.kind + ' → ' + $kind }};
+    {}
+}};",
         logged("$slug", "$actor", "'system'", "$said", "NONE")
     )
 }
@@ -375,6 +403,8 @@ pub(in crate::store) struct Creating {
     pub(in crate::store) red: bool,
     /// It is filed on an arm ([`ARM`]).
     pub(in crate::store) arm: bool,
+    /// It is filed as a kind ([`KIND`]).
+    pub(in crate::store) kind: bool,
     /// A custom workflow is active, and it starts at the initial pair (`super::workflow::PLACED`).
     pub(in crate::store) placed: bool,
 }
@@ -390,13 +420,14 @@ pub(in crate::store) fn create(new: &Creating) -> String {
         String::new()
     };
     let arm_mark = if new.arm { ARM } else { "" };
+    let kind_mark = if new.kind { KIND } else { "" };
     let (unplaced, placed) = if new.placed {
         ("", super::workflow::PLACED)
     } else {
         (UNPLACED, "")
     };
     format!(
-        "{act}{unplaced}{CREATE}\n{placed}\n{stamp}\n{marked}\n{arm_mark}\n{}\n{}",
+        "{act}{unplaced}{CREATE}\n{placed}\n{stamp}\n{marked}\n{arm_mark}\n{kind_mark}\n{}\n{}",
         logged("$slug", "$actor", "'system'", "$said", "NONE"),
         block_cancelled_dependencies(false)
     )

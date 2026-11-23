@@ -54,6 +54,17 @@ pub fn day(day: &ReportDay) -> Vec<u8> {
         out.text("slug", &landed.slug);
         out.number("at", landed.at);
         out.list("spent", &landed.spent, sum);
+        // Each left out where there is none, as serde leaves it out, so a file of tasks with
+        // neither is written as it was before they were kept.
+        if let Some(kind) = &landed.kind {
+            out.text("kind", kind);
+        }
+        if let Some(lines) = &landed.lines {
+            out.object("lines");
+            out.count("added", lines.added);
+            out.count("removed", lines.removed);
+            out.close();
+        }
         out.close();
     });
     out.close();

@@ -13,6 +13,7 @@ export const BOARD_CARDS = 5;
 export const ASK_LATE_SECONDS = 600;
 export const FILE_QUERY = "raw";
 export const REPORTS_PATH = "/api/reports";
+export const REPORTS_LANDED_PATH = "/api/reports/landed";
 export const SETTINGS_PATH = "/api/settings";
 export const SETTING_WRITE_PATH = "/api/setting";
 export const RUNS_PATH = "/api/runs";
@@ -403,48 +404,151 @@ export type ReportMark = {
   changed: Array<string>;
 };
 
-export type LandedSpend = {
+export type Spend = { tokens: AgentTokens; cost: AgentCost };
+
+export type LandedPage = {
+  grain: Grain;
   /**
-   * The landed tasks the board recorded tokens for.
+   * The days the window reaches back, as [`Grain::days`] took the ask.
    */
-  tasks: number;
+  days: number;
   /**
-   * The landed tasks it recorded none for: in no figure here.
+   * The first second of its first period and where it ends, as [`ReportsPage`]'s.
+   */
+  from: number;
+  to: number;
+  /**
+   * Each one the board recorded tokens for, the dearest first, then by slug: the first ten are
+   * the dearest, and all of them the dots and the table.
+   */
+  tasks: Array<LandedRow>;
+  /**
+   * Those it recorded none for: in no figure.
    */
   without: number;
   /**
-   * The median estimated cost of those with a priced token, in US dollars; none with none.
+   * The window's figures, of the tasks with a priced cost.
    */
-  median: number | null;
+  figures: LandedFigures;
   /**
-   * The dearest of them, at most ten, the dearest first.
+   * By the kind each was given, those that cost the most in all first, the tasks given none
+   * last.
    */
-  dearest: Array<LandedTask>;
+  kinds: Array<KindRow>;
   /**
-   * What they took up to their first review, all told.
+   * By how many reviews each took, the fewest first, the last one of four or more.
    */
-  first_round: Spend;
+  reviews: Array<ReviewRow>;
   /**
-   * What they took in every round after it: each review, and the fixes it asked for.
+   * When the first landing of the window that names a kind landed; none when none does, as in
+   * a window from before kinds were kept.
    */
-  later_rounds: Spend;
+  kinds_from: number | null;
   /**
-   * How many of them took anything after their first round.
+   * The day the price table's prices were read (`YYYY-MM-DD`).
    */
-  again: number;
+  prices: string;
+  /**
+   * What was not read, each in a sentence naming its file and why: a task it held is missing.
+   */
+  unread: Array<string>;
 };
 
-export type LandedTask = {
+export type LandedRow = {
   slug: string;
   /**
    * When it landed.
    */
   at: number;
-  tokens: AgentTokens;
-  cost: AgentCost;
+  /**
+   * Its kind; none for one given none.
+   */
+  kind: string | null;
+  /**
+   * What its work up to its first review cost, and every round after it.
+   */
+  first: number;
+  later: number;
+  /**
+   * Its tokens, all told.
+   */
+  tokens: number;
+  /**
+   * Whether some of its tokens had no price, and are in no dollar here; one none of whose had
+   * one has no cost to rank, and is in no figure.
+   */
+  unpriced: boolean;
+  /**
+   * How many reviews it took: the last round it took tokens in, less the first.
+   */
+  reviews: number;
+  /**
+   * The lines its landing changed, added and removed; none where they were not read.
+   */
+  lines: number | null;
 };
 
-export type Spend = { tokens: AgentTokens; cost: AgentCost };
+export type LandedFigures = {
+  /**
+   * The tasks with a priced cost.
+   */
+  tasks: number;
+  median: number | null;
+  mean: number | null;
+  p90: number | null;
+  /**
+   * What they cost, all told, and what their review rounds cost of it.
+   */
+  cost: number;
+  later: number;
+  /**
+   * Those back after review: reviewed twice or more, a round past the second.
+   */
+  back: number;
+  /**
+   * Those whose landing changed a counted line, what those cost and their lines.
+   */
+  lined: number;
+  lined_cost: number;
+  lines: number;
+  /**
+   * Those whose landing changed no counted line, and those whose lines were not read.
+   */
+  unlined: number;
+  unread: number;
+};
+
+export type KindRow = {
+  /**
+   * The kind; none for the tasks given none.
+   */
+  kind: string | null;
+  tasks: number;
+  median: number | null;
+  /**
+   * What they cost, all told.
+   */
+  cost: number;
+  /**
+   * Of them, what those whose landing changed a counted line cost, and those lines.
+   */
+  lined_cost: number;
+  lines: number;
+};
+
+export type ReviewRow = {
+  /**
+   * The reviews; the last row's is four, for four or more.
+   */
+  reviews: number;
+  tasks: number;
+  /**
+   * The mean cost of one's first round and of its review rounds.
+   */
+  first: number;
+  later: number;
+  median: number | null;
+};
 
 export type SettingsPage = {
   /**

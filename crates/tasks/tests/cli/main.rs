@@ -31,6 +31,7 @@ mod machine_work;
 // Each run's scratch in a folder of its own under the temp folder, swept when a killed run left it.
 #[path = "../../../chrome-devtools/src/harness_scratch.rs"]
 mod harness_scratch;
+mod kind;
 mod launch;
 mod launch_rollback;
 mod limits;

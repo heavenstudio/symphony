@@ -6,6 +6,9 @@ that landed and the board's own health, as charts on one time axis. It is for th
 changes a limit, a rule or a skill and wants to see what that did to the speed and the quality of
 what lands. Nothing on it can be changed: it is read from what the machine recorded each hour.
 
+It has two tabs. **Over time** draws each period of the window; **Landed tasks**
+(`/<project>/reports?view=landed`) draws the tasks landed in it, one by one, and what each cost.
+
 ![Reports for the last 24 hours, wide](pictures/reports-wide.png)
 
 ## What the owner does here
@@ -21,12 +24,17 @@ what lands. Nothing on it can be changed: it is read from what the machine recor
 - **Looks for what a change did.** A dashed line crosses every chart where the project's settings
   or its agents' instructions changed.
 - **Reads a chart as a table.** **Show the table** under a chart lists every period's values.
+- **Reads what a landed task cost.** **Landed tasks** says which tasks cost the most, what a task
+  of each kind costs, what the review rounds added and which tasks were dear for their size; a
+  task's name opens its page.
 
 ## What it shows
 
 From the top: the heading with the grain and window chosen, the two rows of buttons that choose
-them, the four figures, the changes marked in the window, then the charts under a heading per
-group, and under the charts of tokens what the window and its landed tasks cost.
+them, the two tabs, then the tab shown. **Over time** holds its four figures, the changes marked in
+the window, then the charts under a heading per group. **Landed tasks** is [below](#landed-tasks).
+Both tabs read the window chosen, and the address names the tab, so a reload or a link opens the
+same one.
 
 ### The window
 
@@ -69,6 +77,8 @@ says *kept by the day*.
 | | **Machine load** | the peak and the average of the machine's load |
 | **Tokens and cost** | **Estimated cost** | what the agents' model calls would cost at list prices, by role |
 | | **Tokens** | the tokens those calls took, by role |
+| | **Cost per landed task** | the median and the **p90** cost of a task landed in the period, with its subtasks, and **All in**: every token of the period, the orchestrators' with them, over the tasks landed in it |
+| | **Cost per 100 lines changed** | what the landed tasks cost for 100 of the lines their landings changed, and **All in**: every token of the period over every line that reached the default branch in it |
 | **Decisions and code** | **Decisions** | cards answered and auto-approved, and a line of those still open |
 | | **Commits** | commits and merges that reached the default branch |
 | | **Lines changed** | lines added, above the axis, and removed, below it |
@@ -82,13 +92,45 @@ and **Show the table**.
 
 ### Tokens and cost
 
-Under the two charts of tokens the page sums the window: the estimated dollars and the tokens in
-all; then **Cost per landed task**, with how many tasks landed with tokens recorded, the median
-cost of one with its subtasks, the ten dearest, each a link to its page, and what the first
-rounds cost against the review rounds after them. Every dollar is an estimate at the providers'
-list prices, with the day those prices were read: never money spent, as a subscription is not
-billed by the token. A figure marked **+ unpriced** leaves out the tokens of a model the price
-list does not name, and the page names those models.
+Under the group's heading the page sums the window: the estimated dollars and the tokens in all.
+A period that landed no task has no point on **Cost per landed task**, and says *no task landed*
+over the plot rather than *no data recorded*; one whose landings changed no counted line has none
+on **Cost per 100 lines changed**. Under the charts the page says what every dollar is: an
+estimate at the providers' list prices, with the day those prices were read, never money spent,
+as a subscription is not billed by the token. A figure marked **+ unpriced** leaves out the
+tokens of a model the price list does not name, and the page names those models.
+
+## Landed tasks
+
+![The Landed tasks tab, wide](pictures/reports-landed-wide.png)
+
+Each task landed in the window with tokens recorded, priced once with its subtasks, at its last
+landing in the window: by task, not by period. A sentence says how many, then four figures, each
+a link to its chart, and four charts.
+
+| Figure | Says | Under it |
+| --- | --- | --- |
+| **Landed** | the tasks landed with tokens recorded | how many landed with none, which no figure counts |
+| **Median a task** | the median cost of a task with its subtasks | the mean and the **p90** |
+| **Per 100 lines changed** | what 100 of the lines the landings changed cost | of how many tasks and lines, how many changed no counted line and how many landed before lines were kept |
+| **Back after review** | the tasks reviewed twice or more | of how many, and what the review rounds cost of the whole |
+
+| Chart | Shows |
+| --- | --- |
+| **Dearest tasks** | the ten tasks that cost the most, a bar each: the work up to its first review, and every round after it. Each name opens the task; **Show all N as a table** lists every task landed, with its kind, its parts, tokens, reviews and lines |
+| **By kind** | the median cost of a task of each kind it was filed with (feature, fix, red, tests, docs), the kinds that cost the most in all first, each in its own colour; how many, what in all and what 100 lines cost under each. A task given no kind, or landed before kinds were kept, is under **No kind**, grey and last |
+| **By review rounds** | the mean cost of a task by how many reviews it took, none to four or more, its first round and its review rounds stacked; how many tasks under each column |
+| **Every task, cost against size** | every task as a dot of its kind's colour, its cost against the lines its landing changed, both on a log scale: a dot above the others cost more for its size. A tap names the task, its cost, its lines and what 100 of them cost, and links its page. A task that changed no counted line, or landed before lines were kept, has no dot, and the chart says how many |
+
+A press on a name in a legend hides that part, kind or series, as on **Over time**. Generated
+files and lock files are left out of a task's lines, as **Lines changed** leaves them out.
+
+Under the charts the tab says what no figure on it counts: a Codex session's tokens, which no hook
+records, so a task a Codex agent worked looks cheap; the orchestrators' tokens, which are on no
+task and count only in **All in** on **Over time**; and a session's last answer after its last
+tool call. A window in which no task landed says so in place of the charts, its figures at **–**.
+
+![The Landed tasks tab on a phone](pictures/reports-landed-phone.png)
 
 ## Gaps are not zeros
 
@@ -126,11 +168,12 @@ page reads its window again every five minutes, and at once when another window 
 
 | State | What the page shows |
 | --- | --- |
-| Loading, first visit | grey lines that stand in for four figures and two charts, which a screen reader reads as *Loading the reports…* |
+| Loading, first visit | grey lines that stand in for four figures and two charts, which a screen reader reads as *Loading the reports…*, or *Loading the landed tasks…* on **Landed tasks** |
 | Loading, a later visit | at once, the window as this device last kept it, with *Shown from this device, saved 14:32. Checking for changes…* until the server has answered |
 | Nothing recorded yet | *No roll-up yet.*, when the first is due, the four figures at **–** and no chart |
 | A file could not be read | **N files not read: their hours show as gaps**, which opens to name each file and why |
-| The read fails | **The reports could not be read.**, why, and that it is trying again; what was shown stays |
+| The read fails | **The reports could not be read.**, or **The landed tasks could not be read.**, why, and that it is trying again; what was shown stays |
+| No task landed in the window | on **Landed tasks**: *No top-level task landed in the window.*, or how many landed with no tokens recorded, the four figures at **–** and no chart |
 | The read fails over a kept copy | the kept copy, with *Not reachable* in place of *Checking for changes…* |
 | Lead time, by the hour | in the chart's place: *The roll-up keeps lead time by the day: switch to Days or Weeks to see it.* |
 | A chart below the screen | its outline, drawn as it comes near the screen |
@@ -155,7 +198,11 @@ only the newest three are listed, so the first chart stays on the first screen.
   span has none, and is a gap.
 - A session with two roles counts in both in **Agents at work**; the line counts it once.
 - A link to one chart (`/<project>/reports#chart-cost`) opens the page at that chart, until a
-  window is chosen.
+  window is chosen. A figure's link on **Landed tasks** does the same for its chart.
+- A task landed twice in the window, sent back by its landing and landed again, is one task on
+  **Landed tasks**, at its last landing, with every token it took.
+- Day files written before kinds and lines were kept still read: their tasks are under **No kind**
+  and have no dot.
 - A change that reaches the default branch outside the window is not marked, and a change to a
   guide is never marked.
 

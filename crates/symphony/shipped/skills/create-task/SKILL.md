@@ -17,7 +17,9 @@ page says how to prepare the brief. Not attached to the board yet, get a handle 
    work's own words. An open task that covers it gets a post (`just tasks say`), not a second
    task; a finished one is named in the new brief.
 3. **Pick the slug**, `area/name` (`app`, `tests`, `tools`, `docs`, `skills`, …): it becomes the
-   branch name, so keep it short and distinct.
+   branch name, so keep it short and distinct. **Name its kind** with `--kind`, what its work is:
+   `feature`, `fix`, `red`, `tests` or `docs`. The board never reads one from the slug, and
+   Reports groups the landed tasks by it, a task with none under No kind.
 4. **Priority and stage.** `--priority` is 0 (most urgent) to 4. `--stage` is `ready` (the
    default, work with no design step), `design` or `concept` (an owner-signed design document is
    still needed, which agents never sign off themselves) or `backlog` (a parked follow-up).
@@ -41,7 +43,7 @@ page says how to prepare the brief. Not attached to the board yet, get a handle 
      question), addressed --to @orchestrator, --to @reviewer or --to HANDLE
    ```
 
-7. **File it**: `just tasks create SLUG "title" --priority N --stage STAGE --link … --depends …
-   --parent … --body-file PATH --as HANDLE`. Its line says who orchestrates it, or that it waits
+7. **File it**: `just tasks create SLUG "title" --kind KIND --priority N --stage STAGE --link …
+   --depends … --parent … --body-file PATH --as HANDLE`. Its line says who orchestrates it, or that it waits
    for an orchestrator. Tell the owner the slug in one line. Starting an executor on it is a
    separate step, the task-orchestrator skill's.

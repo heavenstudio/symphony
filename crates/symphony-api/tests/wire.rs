@@ -421,11 +421,17 @@ fn the_reports_page_reads_and_writes_back_as_the_same_json_its_gaps_none() {
     );
     assert_eq!(spend[1].cost.unpriced[0].model, "gpt-x");
     assert_eq!(page.buckets[1].spend, None);
-    let landed = page.landed.as_ref().unwrap();
-    assert_eq!((landed.tasks, landed.without, landed.again), (1, 1, 1));
-    assert_eq!(landed.median, Some(1.46));
-    assert_eq!(landed.dearest[0].slug, "sim/jump");
+    // A period's landed tasks, those with tokens priced among them; a period with none has none.
+    let landed = page.buckets[0].landed.unwrap();
+    assert_eq!((landed.tasks, landed.priced, landed.lines), (2, 1, 150));
+    assert_eq!((landed.median, landed.p90), (Some(1.46), Some(1.46)));
+    assert_eq!(page.buckets[1].landed, None);
     assert_eq!(page.prices, "2026-11-16");
+    // A period from a server that wrote no landed tasks reads with none.
+    let mut old_bucket = serde_json::to_value(&page.buckets[0]).unwrap();
+    old_bucket.as_object_mut().unwrap().remove("landed");
+    let old_bucket: symphony_api::ReportBucket = serde_json::from_value(old_bucket).unwrap();
+    assert_eq!(old_bucket.landed, None);
     let old: symphony_api::report_page::ReportMark =
         serde_json::from_str(r#"{"at":1.0,"commit":"c","subject":"s"}"#).unwrap();
     assert_eq!(old.changed, Vec::<String>::new());
@@ -436,7 +442,7 @@ fn the_reports_page_reads_and_writes_back_as_the_same_json_its_gaps_none() {
         (empty.buckets.len(), empty.first, empty.marks.len()),
         (0, None, 0)
     );
-    assert_eq!((empty.landed, empty.prices.as_str()), (None, ""));
+    assert_eq!(empty.prices, "");
     for (word, grain) in [
         ("hour", Grain::Hour),
         ("day", Grain::Day),
@@ -456,6 +462,40 @@ fn the_reports_page_reads_and_writes_back_as_the_same_json_its_gaps_none() {
     assert_eq!(Grain::Day.days(None), 14);
 }
 
+/// The Landed tasks tab's read: each task a row, a kind of none and lines not read written as
+/// null, and a page with no landing, as a window with none answers, reading with every list empty.
+#[test]
+fn the_landed_tasks_read_round_trips_and_an_empty_one_reads_with_nothing() {
+    use symphony_api::report_page::LandedPage;
+    let (written, fixture) = round_trip::<LandedPage>("reports-landed.json");
+    assert_eq!(written, fixture);
+    let page: LandedPage = serde_json::from_str(&self::fixture("reports-landed.json")).unwrap();
+    assert_eq!(page.grain, symphony_api::Grain::Week);
+    let [charts, guide] = &page.tasks[..] else {
+        panic!("two rows: {:?}", page.tasks)
+    };
+    assert_eq!(
+        (charts.slug.as_str(), charts.kind.as_deref(), charts.reviews),
+        ("app/charts", Some("feature"), 2)
+    );
+    assert_eq!((charts.lines, charts.unpriced), (Some(640), true));
+    assert_eq!(
+        (guide.slug.as_str(), guide.kind.as_deref(), guide.reviews),
+        ("docs/guide", None, 0)
+    );
+    assert_eq!((guide.lines, guide.unpriced), (None, false));
+    assert_eq!((page.figures.back, page.figures.unread), (1, 1));
+    assert_eq!(page.kinds.last().unwrap().kind, None, "no kind last");
+    assert_eq!(page.reviews[1].reviews, 2);
+    let empty: LandedPage =
+        serde_json::from_str(r#"{"grain":"day","days":7,"from":0.0,"to":3600.0}"#).unwrap();
+    assert!(empty.tasks.is_empty() && empty.kinds.is_empty() && empty.reviews.is_empty());
+    assert_eq!(
+        (empty.without, empty.figures.tasks, empty.figures.median),
+        (0, 0, None)
+    );
+    assert_eq!((empty.kinds_from, empty.prices.as_str()), (None, ""));
+}
 #[test]
 fn a_route_is_a_document_page_under_an_entrypoint_unless_the_symphony_answers_it() {
     let project: symphony_api::ProjectView =
@@ -694,6 +734,38 @@ fn a_day_file_reads_and_writes_back_as_the_same_json_and_its_hours_sum_to_the_sp
     assert_eq!(day.hours[0].workflow, None);
     let first = serde_json::to_value(&day.hours[0]).unwrap();
     assert!(first.get("workflow").is_none(), "{first}");
+}
+
+/// A landed task of a day file names its kind and the lines its landing brought; one of a file
+/// written before they were kept reads with neither, and writes neither back.
+#[test]
+fn a_landed_task_names_its_kind_and_lines_and_one_of_an_older_day_file_neither() {
+    use symphony_api::ReportDay;
+    let day: ReportDay = serde_json::from_str(&fixture("report-day.json")).unwrap();
+    let jump = &day.landed[0];
+    assert_eq!(jump.kind.as_deref(), Some("feature"));
+    assert_eq!(
+        jump.lines
+            .map(|lines| (lines.added, lines.removed, lines.changed())),
+        Some((120, 30, 150))
+    );
+    let mut before: Value = serde_json::from_str(&fixture("report-day.json")).unwrap();
+    for landed in before["landed"].as_array_mut().unwrap() {
+        let landed = landed.as_object_mut().unwrap();
+        landed.remove("kind");
+        landed.remove("lines");
+    }
+    let before: ReportDay = serde_json::from_value(before).unwrap();
+    assert_eq!(
+        (before.landed[0].kind.as_ref(), before.landed[0].lines),
+        (None, None)
+    );
+    let written = serde_json::to_value(&before).unwrap();
+    let landed = written["landed"][0].as_object().unwrap();
+    assert!(
+        !landed.contains_key("kind") && !landed.contains_key("lines"),
+        "{landed:?}"
+    );
 }
 
 /// A figure per status is written as a map of the statuses whose figure is not zero, by name, as a

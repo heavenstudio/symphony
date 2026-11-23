@@ -119,7 +119,7 @@ on_both! {
         assert!(task.holders("executor").contains(&exe.as_str()));
         // The board's own field: a plugin's field write cannot reach it.
         let field = f.store.set_field("tools/size", "_board", "gates", &serde_json::json!("x"), &orch);
-        assert!(refused(field).ends_with("its gate decisions by its orchestrator (tasks gate)"));
+        assert!(refused(field).ends_with("its gate decisions by its orchestrator (tasks gate), its kind where it is filed or by tasks kind"));
         assert_eq!(f.store.get("tools/size").unwrap().gates().len(), 2);
     }
 
