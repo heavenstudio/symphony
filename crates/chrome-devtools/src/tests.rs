@@ -16,9 +16,9 @@ use tungstenite::{Message, WebSocket};
 
 use crate::profiles::{self, next_profile};
 use crate::{
-    BACKSTOP_FLOOR, BrowserGroup, CLEANUP_CPU, Chrome, End, LAUNCH_BACKSTOP, Leash, Owner, POLL,
-    PROTOCOL_CPU, ROOTED, WaitBudget, chrome_args, cleanup_profile, devtools_endpoint, find,
-    listed, load_said, process, signal_group,
+    BACKSTOP_FLOOR, BrowserGroup, CLEANUP_CPU, Chrome, End, FRAME_PROBE, LAUNCH_BACKSTOP, Leash,
+    Owner, POLL, PROTOCOL_CPU, ROOTED, WaitBudget, chrome_args, cleanup_profile, devtools_endpoint,
+    find, listed, load_said, process, signal_group,
 };
 
 /// This test binary as the leash: it runs [`browser_leash`] alone.
@@ -1583,11 +1583,12 @@ fn marker(command: &Value) -> bool {
         || (command["method"] == "Target.getTargets" && command.get("sessionId").is_none())
 }
 
-/// A probe of the page under test.
+/// A probe of the page under test: a frame of its, awaited.
 fn probe(command: &Value) -> bool {
     command["sessionId"] == "page"
         && command["method"] == "Runtime.evaluate"
-        && command["params"]["expression"] == "0"
+        && command["params"]["expression"] == FRAME_PROBE
+        && command["params"]["awaitPromise"] == true
 }
 
 /// The driver on a stand-in browser whose commands `serve` answers, with a page session `page`,
@@ -3327,6 +3328,94 @@ fn a_real_page_blocked_in_its_renderer_spends_nothing_and_a_stopped_browser_ends
     );
     chrome.backstop = BACKSTOP_FLOOR;
     assert_eq!(chrome.eval("window.held").unwrap(), json!(1));
+}
+
+/// A page behind another tab draws no frame while its main thread answers every task, as a page
+/// whose compositor waits on starved raster work does on a loaded machine. A wait on a promise its
+/// frames keep counts none of its turns meanwhile: each such wait ends at its backstop, as the
+/// page's stall, with none counted, until more observer turns have passed without the page than
+/// the allowance's ten, however few of them a loaded machine gives one wait. Back in front, the
+/// page draws, and the same wait is met.
+///
+/// The turns are what these waits prove, so each keeps the ten turns 250 ms gives and takes the
+/// protocol's CPU allowance, as the test of a page blocked in its renderer does: Chrome's own work
+/// in its first seconds would spend 250 ms of its CPU on a loaded machine, which bounds that work,
+/// not the page's turns (RULES.md `tests/no-test-fails-on-load`).
+#[test]
+fn a_real_page_that_draws_no_frame_spends_nothing_of_a_wait_on_its_frames() {
+    let Some(binary) = find() else {
+        eprintln!("no Chrome: real browser capability unavailable");
+        return;
+    };
+    let mut chrome = Chrome::launch(&binary, &leash()).unwrap();
+    chrome.open("data:text/html,<p>ready</p>").unwrap();
+    let frame = "new Promise(drew => requestAnimationFrame(() => drew(true)))";
+    assert!(
+        chrome.wait_for(frame, PROTOCOL_CPU).unwrap(),
+        "in front, the page draws"
+    );
+
+    let opened = chrome
+        .browser_call("Target.createTarget", json!({"url": "about:blank"}))
+        .unwrap();
+    let attached = chrome
+        .browser_call(
+            "Target.attachToTarget",
+            json!({"targetId": opened["targetId"], "flatten": true}),
+        )
+        .unwrap();
+    let other = attached["sessionId"].as_str().unwrap().to_owned();
+    chrome
+        .call_on(&other, "Page.bringToFront", json!({}))
+        .unwrap();
+    // Its main thread answers each look, a turn of a condition that needs no frame.
+    assert!(
+        chrome
+            .wait_for("document.visibilityState === 'hidden'", PROTOCOL_CPU)
+            .unwrap(),
+        "the page goes behind the other tab"
+    );
+    let (mut passed, mut waits) = (0, 0);
+    test_time::until(
+        "more observer turns without the page than a wait's allowance",
+        test_time::backstop(Duration::from_secs(3)),
+        || {
+            chrome.backstop = Duration::from_millis(1500);
+            let mut budget = chrome.page_budget(Duration::from_millis(250)).unwrap();
+            chrome.backstop = BACKSTOP_FLOOR;
+            assert_eq!(budget.max_polls, 10);
+            budget.cpu = process::Budget::new(PROTOCOL_CPU, &chrome.owner.members().unwrap());
+            let behind = chrome.eval_bounded(frame, &mut budget).unwrap();
+            waits += 1;
+            assert_eq!(
+                behind, None,
+                "a page that draws no frame never meets a wait on its frames"
+            );
+            assert!(
+                budget.stalled() && budget.polls == 0,
+                "the backstop ends each wait with none of its turns counted: {:?} after {} \
+                 counted",
+                budget.end,
+                budget.polls
+            );
+            assert!(
+                budget
+                    .stall()
+                    .starts_with("the page under test stalled: its renderer took part in 0 of "),
+                "{}",
+                budget.stall()
+            );
+            passed += budget.page.as_ref().unwrap().passed;
+            (passed > budget.max_polls).then_some(())
+        },
+    )
+    .unwrap_or_else(|stall| panic!("{stall}: {passed} observer turns passed in {waits} waits"));
+
+    chrome.call("Page.bringToFront", json!({})).unwrap();
+    assert!(
+        chrome.wait_for(frame, PROTOCOL_CPU).unwrap(),
+        "back in front, the page draws again"
+    );
 }
 
 #[test]

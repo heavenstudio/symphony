@@ -5,6 +5,13 @@
 //! [`Store::dispatch_detached`]), so the command answers without waiting on any recipient. The
 //! Symphony server's clock drains retries and observes actionable PULL/STALE/LOST changes. No agent
 //! keeps a monitor alive.
+//!
+//! A pass sends the board as many requests for many recipients as for one, but for those it visits
+//! under their lease: it reads every recipient's stored state with whether a line of its outbox is
+//! due, and the pane lines queued for each, in one read apiece ([`Store::stored_states`],
+//! [`Store::pending`]), and only a visit under its lease reads its recipient's again. A board
+//! keeps every registered channel's recipient whatever its session's health, dozens of them, and
+//! a pass a second.
 
 use super::callback_peer::{self as peer, Owner};
 use super::callback_state::{State, stored_seen};
@@ -13,11 +20,13 @@ use super::postgres::callbacks as pg;
 use super::pull_account::{Account, PullPlan};
 use super::queued_lines::{Hearing, Queued, Rescoped};
 use super::statement::Statement;
+use super::transaction::unshaped;
 use super::{Error, Store, refused};
 use crate::cli::agents::{Answer, Pane};
 use crate::cli::{attach, probes, pull};
 use crate::lock::Recovered as _;
 use crate::maps::Collect as _;
+use crate::objects::Fields;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -112,13 +121,29 @@ impl Event {
     }
 }
 
-/// A recipient's callback state as a dispatch reads it, with when its PULL was last checked and
-/// the lines still queued for it, which a hand-over can take back ([`Hearing::rescope`]).
-#[derive(Deserialize)]
+/// A recipient's callback state as a dispatch reads it, with when its PULL was last checked, the
+/// lines still queued for it, which a hand-over can take back ([`Hearing::rescope`]), and whether a
+/// line of its outbox was due when it was read. A pass's plans read every recipient's at once
+/// ([`Store::stored_states`]); a visit under its lease reads its own without the due line, false
+/// there, as it asks its outbox afresh ([`Store::stored_one`]).
 struct Stored {
     state: Option<State>,
     checked_pull: f64,
     queued: Vec<Queued>,
+    pending: bool,
+}
+
+impl Stored {
+    /// The stored state a recipient's `row` holds, read by field ([`recipient_rows`]): the due
+    /// line false where the read took none.
+    fn of(row: &Fields) -> Result<Stored, serde_json::Error> {
+        Ok(Stored {
+            state: row.optional("state")?,
+            checked_pull: row.field("checked_pull")?,
+            queued: row.field("queued")?,
+            pending: row.defaulted("pending")?,
+        })
+    }
 }
 
 /// A recipient's observation as written: whether the dispatcher still held the recipient's lease,
@@ -273,7 +298,8 @@ pub struct Callback {
     #[serde(default)]
     pane_watch: attach::PaneWatch,
     /// The hc terminal the registering agent ran in (`HC_TERMINAL_ID`), if it ran in one: a
-    /// Codex thread is present while that terminal runs Codex.
+    /// Codex thread is present while that terminal runs Codex. The board hands it to the Codex it
+    /// starts (`launch::hc::IN_ITS_TERMINAL`), whose shell would otherwise not see it.
     #[serde(default)]
     pub terminal: Option<String>,
     /// How many times the handle has registered since its row was made: a number a registration
@@ -320,9 +346,9 @@ impl Callback {
 pub struct Presence {
     pub terminals: BTreeSet<String>,
     pub threads: BTreeSet<String>,
-    /// The threads the board launched (a launch record, open or closed, names them) that no open
-    /// launch record puts in a terminal hc lists live: every terminal the board ran each in is
-    /// closed or gone.
+    /// The threads the board launched (a launch record, open or closed, names them and the
+    /// terminal it ran them in) that no open launch record puts in a terminal hc lists live: every
+    /// terminal the board ran each in is closed or gone.
     pub gone: BTreeSet<String>,
 }
 
@@ -600,15 +626,19 @@ impl Store {
     /// The idle sweep confirms native reachability rather than treating absent tool calls as an
     /// exit. A socket must accept a connection; a Codex thread must still occupy a terminal: one a
     /// recorded launch puts it in, else the terminal it registered from, which must still run
-    /// Codex. A thread registered from no terminal (Codex's shell sees no `HC_TERMINAL_ID` when its
-    /// environment policy keeps only the core variables) is retired once every terminal the board
-    /// launched it in is closed or gone ([`Presence::gone`]);
+    /// Codex: a Codex the board launched or restored registers from its terminal, so one restored
+    /// is present in its new terminal before its record names it. That terminal is known by its
+    /// address alone, so another Codex in the same address would keep the registration confirmed:
+    /// the rule leans on hc never giving an address out twice (its addresses count up). A thread
+    /// registered from no terminal (a Codex resumed by hand, whose shell sees no `HC_TERMINAL_ID`
+    /// when its environment policy keeps only the core variables, or one an older build started) is
+    /// retired once every terminal the board launched it in is closed or gone ([`Presence::gone`]);
     /// one whose open launch record names a live terminal that does not run Codex (yet) is kept
-    /// unconfirmed, and one no launch records is neither confirmed nor retired: hc cannot say
-    /// where it runs. A session's health never decides: a Codex waiting between turns calls no
-    /// tool, but its terminal runs Codex. A dry run reports the same channels without changing
-    /// their heartbeat. No payload or credentials are sent by the socket probe. Without `codex`
-    /// (hc did not answer) no thread is confirmed or retired.
+    /// unconfirmed, and one no launch records is neither confirmed nor retired: hc cannot say where
+    /// it runs. A session's health never decides: a Codex waiting between turns calls no tool, but
+    /// its terminal runs Codex. A dry run reports the same channels without changing their
+    /// heartbeat. No payload or credentials are sent by the socket probe. Without `codex` (hc did
+    /// not answer) no thread is confirmed or retired.
     pub(crate) fn callback_presence(
         &self,
         codex: Option<&Presence>,
@@ -827,7 +857,7 @@ impl Store {
         let sample = std::cell::OnceCell::new();
         let panes = || (sample.get_or_init(|| crate::cli::probes::hc_terminals(env))).clone();
         self.watch_pane(&board, &callback, &open, &panes, &visit)?;
-        self.dispatch_one(handle, &callback, &mut board, &mut sequence, &visit)?;
+        self.dispatch_one(handle, &callback, &mut board, &mut sequence, &visit, None)?;
         Ok((visit.printed(), sequence))
     }
 
@@ -931,7 +961,7 @@ impl Store {
         if callbacks.is_empty() {
             return Ok(true);
         }
-        self.dispatch_board(&callbacks, pass)
+        self.dispatch_board(&callbacks, pass, None)
             .map(|(_, reached)| reached)
     }
 
@@ -946,9 +976,10 @@ impl Store {
         if callbacks.is_empty() {
             return Ok(None);
         }
-        let (board, _) = self.callback_board()?;
-        self.watch_panes(&board, &callbacks)?;
-        self.dispatch_board(&callbacks, Pass::Deliver)
+        let read = self.callback_board()?;
+        // The board the watch looked at serves the dispatch too, once the watch wrote nothing.
+        let watched = self.watch_panes(&read.0, &callbacks)?;
+        self.dispatch_board(&callbacks, Pass::Deliver, (!watched).then_some(read))
             .map(|(board, _)| Some(board))
     }
 
@@ -958,14 +989,23 @@ impl Store {
     }
 
     /// The board as the pass read it, and whether the pass reached every recipient on this host: one
-    /// whose lease another dispatcher held is left to that one, and to the next pass.
+    /// whose lease another dispatcher held is left to that one, and to the next pass. The pass reads
+    /// the board, or takes `read`, a board and its marker the caller read just before and wrote
+    /// nothing since.
     fn dispatch_board(
         &self,
         callbacks: &BTreeMap<String, Callback>,
         pass: Pass,
+        read: Option<(super::Board, u64)>,
     ) -> Result<(super::Board, bool), Error> {
         // Each pass reads the messages afresh, once for every recipient ([`Store::fresh_board`]).
-        let (mut board, mut sequence) = self.fresh_board()?;
+        let (mut board, mut sequence) = match read {
+            Some(read) => {
+                *self.inbox_pool.lock().recover() = None;
+                read
+            }
+            None => self.fresh_board()?,
+        };
         // A giving store's delivering pass (a write's detached dispatcher) gives what no
         // orchestrator holds first, so its recipients hear the give; an observing one keeps the
         // board as its write left it.
@@ -1009,11 +1049,14 @@ impl Store {
                         matches!(session.health, crate::Health::Live | crate::Health::Left)
                     })
             });
+        let here: Vec<&Callback> = (callbacks.values())
+            .filter(|c| c.host == self.host)
+            .collect();
         if idle {
             let mut reached = true;
-            for (handle, callback) in callbacks.iter().filter(|(_, c)| c.host == self.host) {
-                if pass == Pass::Deliver && self.callback_pending(handle, callback.chat)? {
-                    reached &= self.dispatch_agent(handle)?;
+            if pass == Pass::Deliver {
+                for handle in self.pending(&here)? {
+                    reached &= self.dispatch_agent(&handle)?;
                 }
             }
             return Ok((board, reached));
@@ -1021,11 +1064,16 @@ impl Store {
         let initial_sequence = sequence;
         let mut observed = true;
         let mut pull_at = f64::INFINITY;
-        for (handle, callback) in callbacks.iter().filter(|(_, c)| c.host == self.host) {
+        // Every recipient's stored state in one read: each one's plan reads it from there, with its
+        // due line where the pass delivers (an observing one settles whatever waits).
+        let mut stored = self.stored_states(&here, pass != Pass::Observe)?;
+        for callback in here {
             let env = crate::cli::Env::of_process();
             let visit = Visit::new(pass, &env, self, holdings.as_ref());
+            let handle = callback.handle.as_str();
+            let ahead = taken(&mut stored, handle);
             let (handled, due) =
-                self.dispatch_one(handle, callback, &mut board, &mut sequence, &visit)?;
+                self.dispatch_one(handle, callback, &mut board, &mut sequence, &visit, ahead)?;
             observed &= handled;
             pull_at = pull_at.min(due);
         }
@@ -1097,9 +1145,11 @@ impl Store {
         Ok(held)
     }
 
-    /// One recipient's visit, planned without its lease: whether it was reached, and when its PULL
-    /// is next due. One whose PULL is due is made again under the lease at once ([`Store::leased`]),
-    /// and one the plan finds anything to record, queue or deliver for, once it has planned.
+    /// One recipient's visit, planned without its lease from its stored state, `ahead` when the pass
+    /// read it with every other recipient's ([`Store::stored_states`]): whether it was reached, and
+    /// when its PULL is next due. One whose PULL is due is made again under the lease at once
+    /// ([`Store::leased`]), and one the plan finds anything to record, queue or deliver for, once it
+    /// has planned.
     fn dispatch_one(
         &self,
         handle: &str,
@@ -1107,8 +1157,14 @@ impl Store {
         board: &mut super::Board,
         sequence: &mut u64,
         visit: &Visit<'_>,
+        ahead: Option<Stored>,
     ) -> Result<(bool, f64), Error> {
-        let Some(look) = self.look(handle, callback, board, sequence, visit)? else {
+        let stored = match ahead {
+            Some(stored) => stored,
+            None => self.stored_one(callback, visit.pass != Pass::Observe)?,
+        };
+        let pending = stored.pending;
+        let Some(look) = self.look(handle, callback, board, sequence, visit, stored)? else {
             return Ok((true, f64::INFINITY));
         };
         if look.due {
@@ -1139,10 +1195,7 @@ impl Store {
                 recorded == look.legacy
             })
             && !self.could_hear(handle, look.message_floor, board.latest_message)?;
-        if settled
-            && (current || unreached)
-            && (visit.pass == Pass::Observe || !self.callback_pending(handle, callback.chat)?)
-        {
+        if settled && (current || unreached) && (visit.pass == Pass::Observe || !pending) {
             return Ok((true, look.pull_at));
         }
         self.leased(handle, callback, board, sequence, visit, look.pull_at)
@@ -1167,7 +1220,10 @@ impl Store {
         if delivering {
             (*board, *sequence) = self.callback_board()?;
         }
-        let Some(mut look) = self.look(handle, callback, board, sequence, visit)? else {
+        // Under the lease the recipient's stored state is read again, alone, and its outbox asked
+        // afresh below: the read takes no due line, nor the clock one needs.
+        let stored = self.stored_one(callback, false)?;
+        let Some(mut look) = self.look(handle, callback, board, sequence, visit, stored)? else {
             return Ok((true, f64::INFINITY));
         };
         let lines = self.changed_lines(handle, board, &look)?;
@@ -1198,7 +1254,7 @@ impl Store {
                     )
                 })?;
             }
-            if !delivering || !self.callback_pending(handle, callback.chat)? {
+            if !delivering || !self.callback_pending(callback)? {
                 return Ok((true, look.pull_at));
             }
             return self
@@ -1255,8 +1311,8 @@ impl Store {
         Ok((true, look.pull_at))
     }
 
-    /// `handle` as a visit reads it against `board` ([`Look`]): none when there is nothing to
-    /// observe of it ([`Store::stored_state`]), or it is no session here.
+    /// `handle` as a visit reads it against `board` from its `stored` state ([`Look`]): none when
+    /// there is nothing to observe of it ([`Store::stored_state`]), or it is no session here.
     fn look(
         &self,
         handle: &str,
@@ -1264,9 +1320,10 @@ impl Store {
         board: &mut super::Board,
         sequence: &mut u64,
         visit: &Visit<'_>,
+        stored: Stored,
     ) -> Result<Option<Look>, Error> {
         let Some((mut state, checked_pull, queued)) =
-            self.stored_state(handle, callback, board, sequence, visit)?
+            self.stored_state(handle, callback, board, sequence, visit, stored)?
         else {
             return Ok(None);
         };
@@ -1401,7 +1458,7 @@ impl Store {
         }))
     }
 
-    /// `handle`'s stored state, as a visit reads it against `board`: its callback state, when its
+    /// `handle`'s `stored` state, as a visit reads it against `board`: its callback state, when its
     /// PULL was last checked, and the lines still queued for it. None when there is nothing to
     /// observe: no state, or, for a write's observation, one recorded at or past this board. A
     /// state recorded past the board, or before observations were sequenced, reads the board again.
@@ -1412,12 +1469,14 @@ impl Store {
         board: &mut super::Board,
         sequence: &mut u64,
         visit: &Visit<'_>,
+        stored: Stored,
     ) -> Result<Option<(State, f64, Vec<Queued>)>, Error> {
         let Stored {
             state,
             checked_pull,
             queued,
-        } = self.retrying(|| self.read(Statement::from(pg::stored()), json!({"handle":handle})))?;
+            ..
+        } = stored;
         let Some(mut state) = state else {
             return Ok(None);
         };
@@ -1501,9 +1560,13 @@ impl Store {
     ) -> Result<Vec<Event>, Error> {
         let mut events = Vec::new();
         if let Some(Inbox { floor, first }) = inbox {
+            let latest = board.latest_message;
             let messages = match first {
                 true => self.inbox(handle)?,
-                false => self.inbox_pooled(handle, floor, board.latest_message)?,
+                // The pass's pool says no message since the cursor could reach it: its inbox holds
+                // nothing after the cursor, and is not read ([`Store::could_hear`]).
+                false if !self.could_hear(handle, floor, latest)? => Vec::new(),
+                false => self.inbox_pooled(handle, floor, latest)?,
             };
             for message in messages.into_iter().filter(|message| {
                 message.id > floor
@@ -1650,13 +1713,60 @@ impl Store {
         }
     }
 
-    fn callback_pending(&self, handle: &str, chat: bool) -> Result<bool, Error> {
-        self.retrying(|| {
-            self.read(
-                Statement::from(pg::pending()),
-                json!({"handle":handle, "chat":chat, "now":self.now()}),
-            )
-        })
+    /// Each of `recipients`' stored state ([`Stored`]) with its handle, in their order, all of them
+    /// in one read, with whether a line of its outbox is due now when `due` ([`Stored::pending`]),
+    /// and no read of the clock when not: the stored state of a pass's every recipient, which their
+    /// plans read ([`taken`]), as only a visit under its lease reads its recipient's again
+    /// ([`Store::stored_one`]).
+    fn stored_states(
+        &self,
+        recipients: &[&Callback],
+        due: bool,
+    ) -> Result<Vec<(String, Stored)>, Error> {
+        if recipients.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut vars = json!({"recipients": addressed(recipients)});
+        if due {
+            vars["now"] = json!(self.now());
+        }
+        let answer: Value = self.retrying(|| {
+            let statement = match due {
+                true => Statement::from(pg::stored_due()),
+                false => Statement::from(pg::stored()),
+            };
+            self.read(statement, vars.clone())
+        })?;
+        recipient_rows(&answer, "struct Stored", Stored::of)
+    }
+
+    /// `callback`'s recipient's stored state, read alone ([`Store::stored_states`]), with its due
+    /// line when `due`.
+    fn stored_one(&self, callback: &Callback, due: bool) -> Result<Stored, Error> {
+        let handle = callback.handle.as_str();
+        taken(&mut self.stored_states(&[callback], due)?, handle)
+            .ok_or_else(|| Error::Db(format!("the board read no callback state for {handle}")))
+    }
+
+    /// The handles of `recipients` with a line of their outbox due now, all of them in one read: the
+    /// owner's chat events only for the one holding the seat ([`Callback::chat`]).
+    fn pending(&self, recipients: &[&Callback]) -> Result<BTreeSet<String>, Error> {
+        if recipients.is_empty() {
+            return Ok(BTreeSet::new());
+        }
+        let vars = json!({"recipients": addressed(recipients), "now": self.now()});
+        let answer: Value =
+            self.retrying(|| self.read(Statement::from(pg::pending()), vars.clone()))?;
+        let due = recipient_rows(&answer, "struct Due", |row| row.field::<bool>("pending"))?;
+        Ok((due.into_iter())
+            .filter(|(_, pending)| *pending)
+            .map(|(handle, _)| handle)
+            .collect())
+    }
+
+    /// Whether a line of `callback`'s outbox is due now ([`Store::pending`]).
+    fn callback_pending(&self, callback: &Callback) -> Result<bool, Error> {
+        Ok(self.pending(&[callback])?.contains(&callback.handle))
     }
 
     /// Send what waits for `handle` by `send`, in batches, and record each batch's outcome, under
@@ -1812,6 +1922,39 @@ fn deliver_batches<T>(
         end = pending.len();
     }
     Ok(())
+}
+
+/// `recipients` as a read of their outboxes names them: each one's handle, and whether it holds the
+/// owner's chat seat.
+fn addressed(recipients: &[&Callback]) -> Value {
+    (recipients.iter())
+        .map(|callback| json!({"handle": callback.handle, "chat": callback.chat}))
+        .collect()
+}
+
+/// Each row of `answer`, a read of many recipients (a list of objects of `what`, each naming its
+/// recipient's `handle`), in its order, with that handle and the rest of it as `row` reads it.
+/// Read by field through the board's one value reader ([`crate::objects::fields`]), so no reader
+/// of a list of rows, nor of a row, is linked for each such read (tools/size-budget.toml); an
+/// answer not in that shape is refused in the words the store's decoder refuses one with.
+fn recipient_rows<T>(
+    answer: &Value,
+    what: &'static str,
+    row: fn(&Fields) -> Result<T, serde_json::Error>,
+) -> Result<Vec<(String, T)>, Error> {
+    let read = |item: &Value| {
+        let fields = crate::objects::fields(item, what)?;
+        Ok((fields.field("handle")?, row(&fields)?))
+    };
+    (crate::objects::items(answer).and_then(|items| items.iter().map(read).collect()))
+        .map_err(unshaped)
+}
+
+/// The row `handle` names among `rows` ([`recipient_rows`]), taken out of them: none where the read
+/// gave none for it.
+fn taken<T>(rows: &mut Vec<(String, T)>, handle: &str) -> Option<T> {
+    let at = rows.iter().position(|(named, _)| named == handle)?;
+    Some(rows.swap_remove(at).1)
 }
 
 /// The slot holdings `visit` observed, which an orchestrator's look and its PULL are read with.

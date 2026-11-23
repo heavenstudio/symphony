@@ -4,7 +4,7 @@
 //! the same PostgreSQL major. Routine free space is reused by autovacuum; `reclaim` asks
 //! PostgreSQL to return it to the filesystem with VACUUM FULL, without exporting or swapping data.
 
-use super::{DATA, Postgres, Serving, command, fs, io, output};
+use super::{DATA, Postgres, Serving, fs, io, output, server_command};
 use crate::server::snapshot::{clone, copy, named, order, stamp};
 use crate::server::starters::Doing;
 use crate::server::{Hold, ServerError};
@@ -343,7 +343,7 @@ impl Postgres {
 
     fn stopped_at(&self, data: &Path) -> Result<(), ServerError> {
         let pg_ctl = self.program("pg_ctl");
-        let said = output(command(&pg_ctl).args(["status", "-D"]).arg(data))
+        let said = output(server_command(&pg_ctl).args(["status", "-D"]).arg(data))
             .map_err(io("could not run", &pg_ctl))?;
         if said.status.code() == Some(3) {
             Ok(())

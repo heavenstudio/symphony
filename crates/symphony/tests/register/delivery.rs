@@ -561,6 +561,72 @@ fn a_tidy_that_cannot_keep_a_change_says_which_and_writes_no_file_either() {
 }
 
 #[test]
+fn a_tidy_that_keeps_some_of_its_saves_says_they_stay_listed_as_held_as_their_pages_say() {
+    let tree = ledgered();
+    // Its first entry, written last, cannot be written: a folder stands where it goes.
+    let folder = tree.path(".git/symphony/server/verdict-publications");
+    let first = folder.join(format!("{:020}.json", 1));
+    std::fs::create_dir_all(&first).unwrap();
+    let (code, out, err) = tidy(&tree.root, "2026-11-22 21:00", "fox-1");
+    std::fs::remove_dir(&first).unwrap();
+    assert_eq!(code, 1, "{out}");
+    let lines: Vec<&str> = err.lines().collect();
+    assert_eq!(lines.len(), 3, "{err}");
+    assert!(
+        lines[0].starts_with("✖ docs/DECISIONS.md not kept for delivery: "),
+        "{err}"
+    );
+    assert_eq!(
+        lines[1],
+        "  nothing of this tidy is kept: the pages and main stay as they were"
+    );
+    assert_eq!(
+        lines[2],
+        format!(
+            "  (2 of its saves written before it stay in the journal ({}) until a person removes \
+             them: each is listed as held on its page's note, and none is shown, delivered or \
+             holds back another save)",
+            pending::journal_below()
+        )
+    );
+    // The two it wrote are listed as held, as it said, and neither is shown.
+    let saves = pending::saves(&tree.root);
+    let listed: Vec<(&str, &str, bool)> = (saves.iter())
+        .map(|save| (save.file.as_str(), save.branch.as_str(), save.shown))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("docs/history/review-ledger.md", "docs/owner-save-1", false),
+            ("docs/NOTES.md", "docs/owner-save-1", false)
+        ]
+    );
+    let no_first = "the first of the saves its tidy kept is not in the journal: the tidy could \
+                    not keep it, or another delivery brought it, so none of them is shown or \
+                    delivered";
+    for save in &saves {
+        assert_eq!(
+            save.state,
+            pending::State::Held(no_first.into()),
+            "{save:?}"
+        );
+    }
+    assert_eq!(
+        pending::shown(&tree.root, "docs/NOTES.md", NOTES.into()),
+        NOTES
+    );
+    let note = pending::note(&tree.root, "docs/NOTES.md").unwrap();
+    assert!(
+        note.contains(&format!(
+            "`docs/owner-save-1` (kept, not delivered: {no_first}). Nothing is lost"
+        )),
+        "{note}"
+    );
+    assert_eq!(tree.read("docs/NOTES.md"), NOTES);
+    assert_eq!(dirt(&tree.root), "");
+}
+
+#[test]
 fn a_tidy_keeps_its_saves_in_the_name_of_the_session_tidying() {
     let tree = ledgered();
     let (code, out, err) = tidy(&tree.root, "2026-11-22 21:00", "fox-1");

@@ -388,9 +388,12 @@ attaches, with no new sorting:
 
 **Blueprints.** A blueprint is a set of the same settings given a name. The page meets it in the
 source of a value: a value comes from the default, the project file, the board's store or the
-local file, and a blueprint is one more layer between the default and the project file. The page's source line
-is then where a person sees which values are the blueprint's and which the project wrote over
-it, and where "back to the blueprint's" is offered. Two things this concept asks of that one: a
+local file, and a blueprint adds no place to that order: its values are in the project file,
+with a record of which of them it put ([its analysis](blueprints.md#how-a-project-takes-one)).
+The page's source line is then where a person sees which values are the blueprint's. A
+preference kept in the board's store changes nothing the blueprint put; committing one over a
+value the blueprint set makes the project its own version of the blueprint, and the page says so
+first. Two things this concept asks of that one: a
 blueprint's settings sort into preferences and reviewed by the same line, so taking a blueprint
 that sets a command is a reviewed landing and never a click; and a blueprint lists the entries it
 turns on by the names their descriptions give, which is a reason for descriptions.

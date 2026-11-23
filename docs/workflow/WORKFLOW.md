@@ -260,11 +260,11 @@ first makes the admission decide again and refuses it, and an admission written 
 output standing then. What a supersession does to a dependant already admitted or delivered is
 not this check's (`tools/workflow-revision-guards`). `just tasks workflow actions SLUG` prints the
 task's own output standing and, where an edge leaving its pair depends on accepted outputs, the
-one standing for each task it depends on, which `workflow apply … --accept SLUG=OUTPUT` names;
-`Store::accepted_outputs` reads the same. The board's claim names the ones it reads
-(`just tasks claim`, a launch, the staffing pass), and it and `workflow actions` take them from
-the read that gave the revision they name (`Store::workflow_actions_with_outputs`). PULL and the
-staffing pass find such an edge open by the outputs standing too ([Operations](#operations)).
+one standing for each task it depends on, which `workflow apply … --accept SLUG=OUTPUT` names.
+The board's claim names the ones it reads (`just tasks claim`, a launch, the staffing pass), and
+it and `workflow actions` take them from the read that gave the revision they name
+(`Store::workflow_actions_with_outputs`). PULL and the staffing pass find such an edge open by the
+outputs standing too ([Operations](#operations)).
 
 ## External effects
 
@@ -634,9 +634,9 @@ A task the board's own writers keep carries none, and its wire is the text it wa
 `GET /api/workflow-actions?slug=SLUG` (`WORKFLOW_ACTIONS_PATH`) answers that task's
 `ActionsRead` for the local owner: its `NextActions`, a preview and never a permit, and `takes`,
 the accepted output standing for each task it depends on where an edge leaving its pair depends on
-`accepted_output` (`Store::accepted_outputs`, none standing as null), empty otherwise, both from
-one read (`Store::workflow_actions_with_outputs`). A hosted visitor is refused it, as the apply
-route refuses one.
+`accepted_output` (none standing as null), empty otherwise, both from one read
+(`Store::workflow_actions_with_outputs`). A hosted visitor is refused it, as the apply route
+refuses one.
 `GET /api/workflow-guards?slug=SLUG` (`WORKFLOW_GUARDS_PATH`) answers that task's `TaskGuards`,
 the local owner's too: each authority the active activation commits, with the epoch and
 generation the board accepted from it, whether it is in conflict, the admissions counted on it

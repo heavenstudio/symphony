@@ -13,14 +13,14 @@ use std::time::Duration;
 use symphony_board::cli::{Env, main_detaching};
 use symphony_board::sys::hostname;
 
-/// A socket of the test's own that keeps every frame sent to it.
-struct Listener {
-    path: PathBuf,
+/// A socket of the test's own that keeps every frame sent to it, and goes with it.
+pub(crate) struct Listener {
+    pub(crate) path: PathBuf,
     socket: UnixListener,
 }
 
 impl Listener {
-    fn new(name: &str) -> Listener {
+    pub(crate) fn new(name: &str) -> Listener {
         let path = PathBuf::from(format!(
             "/tmp/symphony-detached-{}-{name}.sock",
             std::process::id()
@@ -33,7 +33,7 @@ impl Listener {
 
     /// The event lines sent until one holds `marker`, waited for up to the backstop of
     /// `allowance`: a detached dispatcher delivers it once a loaded machine runs it.
-    fn until(&self, marker: &str, allowance: Duration) -> Vec<String> {
+    pub(crate) fn until(&self, marker: &str, allowance: Duration) -> Vec<String> {
         let mut lines = Vec::new();
         let held = test_time::until(
             format!("a delivered line holds {marker:?}"),
@@ -164,7 +164,7 @@ fn api(env: &Env, program: &Path, call: &Value) -> Ran {
 }
 
 /// This host's dispatch lease as it stands.
-fn lease(case: &Case) -> Value {
+pub(crate) fn lease(case: &Case) -> Value {
     case.store()
         .raw()
         .row("callback_lease", json!(["dispatch", hostname()]))
@@ -172,9 +172,29 @@ fn lease(case: &Case) -> Value {
         .unwrap()
 }
 
+/// This host's dispatch lease held by a dispatcher that died: one a write starts asks it for a pass
+/// and waits, until the lease lapses ([`lapse`]).
+pub(crate) fn held_by_the_dead(case: &Case) {
+    case.store()
+        .raw()
+        .row("callback_lease", json!(["dispatch", hostname()]))
+        .put(json!({"until": NOW + 3600.0, "revision": 1, "asked": 0, "served": 0}))
+        .unwrap();
+}
+
+/// The dead holder's lease on this host lapses ([`held_by_the_dead`]): a dispatcher waiting on it
+/// takes the host over.
+pub(crate) fn lapse(case: &Case) {
+    case.store()
+        .raw()
+        .row("callback_lease", json!(["dispatch", hostname()]))
+        .set(json!({"until": 0}))
+        .unwrap();
+}
+
 /// Wait until `done`, which a detached dispatcher brings about, up to the backstop of the minute it
 /// once had.
-fn until(done: impl Fn() -> bool, what: &str) {
+pub(crate) fn until(done: impl Fn() -> bool, what: &str) {
     test_time::until_true(what, test_time::backstop(Duration::from_secs(60)), done).unwrap();
 }
 
@@ -184,13 +204,8 @@ fn a_post_queues_its_line_answers_and_the_dispatcher_it_starts_outwaits_a_dead_h
     let listener = Listener::new("handed");
     let (recipient, writer) = board(&case, "tools/handed", &listener);
     let tasks = Path::new(env!("CARGO_BIN_EXE_tasks"));
-    // A dispatcher that died holding this host's lease: the one the post starts asks it for a
-    // pass and waits.
-    case.store()
-        .raw()
-        .row("callback_lease", json!(["dispatch", hostname()]))
-        .put(json!({"until": NOW + 3600.0, "revision": 1, "asked": 0, "served": 0}))
-        .unwrap();
+    // The one the post starts asks the dead holder for a pass and waits.
+    held_by_the_dead(&case);
     let ran = say(
         &case,
         tasks,
@@ -232,12 +247,8 @@ fn a_post_queues_its_line_answers_and_the_dispatcher_it_starts_outwaits_a_dead_h
         || lease(&case)["asked"] == json!(1),
         "the post's dispatcher's ask",
     );
-    // The dead holder's lease lapses: the waiting dispatcher takes the host over and delivers.
-    case.store()
-        .raw()
-        .row("callback_lease", json!(["dispatch", hostname()]))
-        .set(json!({"until": 0}))
-        .unwrap();
+    // The waiting dispatcher takes the host over and delivers.
+    lapse(&case);
     let lines = listener.until(&format!("MSG #{id} "), Duration::from_secs(60));
     let delivered = lines
         .iter()

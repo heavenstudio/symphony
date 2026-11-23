@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="368" viewBox="0 0 760 368" role="img" aria-labelledby="title desc">
+<title id="title">C: the Symphony signs people in itself</title>
+<desc id="desc">Under C the browser is signed in nowhere yet. The Symphony&#x27;s server draws a sign-in page, sends the person to Google or GitHub to confirm who they are, and then keeps a session for each browser, sign-out and a secret of its own. It needs nothing in front of it. It is the most code, all of it the kind where a mistake lets someone in.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--question:#946a00;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--question:#e0b84c;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.inner{fill:var(--muted);stroke:var(--border)}
+.hot{fill:none;stroke:var(--dislike);stroke-width:1.5}
+.new{fill:none;stroke:var(--primary);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.b{font-weight:600}
+.h{font-size:15px;font-weight:600}
+.t{font-size:17px;font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+.red{fill:var(--dislike)}
+.blue{fill:var(--primary)}
+.arrow{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip)}
+.both{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip);marker-start:url(#tail)}
+.no{stroke:var(--dislike);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+.tipfill{fill:var(--muted-foreground)}
+</style>
+<defs><marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M0,0 L10,5 L0,10 z"/></marker><marker id="tail" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M10,0 L0,5 L10,10 z"/></marker></defs>
+<rect class="page" width="760" height="368"/>
+<text class="t" x="24" y="34">C: the Symphony signs people in itself</text>
+<rect class="card" x="24" y="60" width="150" height="170" rx="8"/>
+<text class="h" x="38" y="86">A person&#x27;s</text>
+<text class="h" x="38" y="106">browser</text>
+<text class="m" x="38" y="134">not signed in</text>
+<text class="m" x="38" y="153">anywhere yet</text>
+<path class="both" d="M174,145 L206,145"/>
+<rect class="card" x="210" y="60" width="320" height="170" rx="8"/>
+<rect class="new" x="210" y="60" width="320" height="170" rx="8"/>
+<text class="h" x="224" y="86">The Symphony&#x27;s server</text>
+<text class="m" x="224" y="106">signs people in itself</text>
+<rect class="hot" x="224" y="122" width="292" height="28" rx="5"/>
+<text x="234" y="141">a sign-in page</text>
+<rect class="hot" x="224" y="156" width="292" height="28" rx="5"/>
+<text x="234" y="175">a session for each browser, and sign-out</text>
+<rect class="hot" x="224" y="190" width="292" height="28" rx="5"/>
+<text x="234" y="209">a secret it must keep</text>
+<path class="both" d="M530,145 L562,145"/>
+<rect class="card" x="566" y="60" width="170" height="170" rx="8"/>
+<text class="h" x="580" y="86">Google or GitHub</text>
+<text class="m" x="580" y="112">confirms who</text>
+<text class="m" x="580" y="131">the person is</text>
+<rect class="card" x="24" y="252" width="712" height="92" rx="8"/>
+<text x="40" y="278">It needs nothing in front: no Tailscale and no proxy.</text>
+<text class="red" x="40" y="300">The most code, and all of it the kind where a mistake lets someone in.</text>
+<text class="red" x="40" y="322">The Symphony would hold sessions and a secret, which it holds nowhere today.</text>
+</svg>

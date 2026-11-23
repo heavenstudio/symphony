@@ -147,10 +147,12 @@ fn the_list_holds_each_setting_the_store_keeps_with_its_entry_and_no_other() {
             file: "symphony.toml".into(),
             branch: "docs/owner-save-4".into(),
             shown: true,
+            inert: false,
             state: State::Waiting,
             by: String::new(),
             keys: vec!["agents.models.reviewer".into()],
         }],
+        running: None,
     };
     let over = local("[agents.models]\nreviewer = 'r'\n");
     let listed = list(&drawn, &board, Some(&over), "main");
@@ -213,6 +215,7 @@ fn a_store_that_cannot_be_read_lists_each_setting_with_no_entry_and_says_why() {
     let board = Board {
         entries: Err("connection refused".into()),
         waiting: Vec::new(),
+        running: None,
     };
     let listed = list(&drawn, &board, None, "main");
     assert_eq!(listed.len(), 1);

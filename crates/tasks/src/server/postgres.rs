@@ -12,7 +12,8 @@
 //! start looks: UTF-8, PostgreSQL's own `C.UTF-8` locale (no ICU and no library's collation, the
 //! same on every machine), the superuser [`USER`], trusted on the socket alone. A later start finds
 //! it and makes nothing. Its settings are this module's ([`settings`]), written over the data's
-//! `postgresql.conf` at each start, so a server started by hand on it has them too.
+//! `postgresql.conf` at each start, so a server started by hand on it has them too. Each of its
+//! programs the board runs runs in the `C` locale, whatever its caller's ([`LOCALE`]).
 //!
 //! It listens on a Unix socket alone, never on TCP, in a folder of its own under `/tmp`
 //! ([`socket_folder`]), private to this user: macOS refuses a socket path over 103 bytes, which a
@@ -32,7 +33,7 @@
 use super::scratch::{Lifeline, scratch};
 use super::starters::Doing;
 use super::{Home, ServerError, io, last_argument_is};
-use crate::sys::{Stdio, command, gone, load_said, output, pid_alive, wait_output};
+use crate::sys::{Command, Stdio, command, gone, load_said, output, pid_alive, wait_output};
 use std::fs;
 use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
@@ -63,6 +64,11 @@ const SOCKETS: &str = "/tmp";
 pub const SOCKET_PATH_MAX: usize = 103;
 /// The socket's file in its folder, PostgreSQL's name for port 5432.
 pub const SOCKET_FILE: &str = ".s.PGSQL.5432";
+/// The locale every PostgreSQL program the board runs is given (`LC_ALL`), whatever its caller's
+/// ([`server_command`]): with none, as launchd and a cleared environment start a process, macOS's
+/// postmaster stops at its start, "postmaster became multithreaded during startup". `C` is on
+/// every machine, and is the data's own (`--no-locale`) and its messages' (`lc_messages`).
+const LOCALE: &str = "C";
 
 /// The supervisor of a board's PostgreSQL, run by `sh -c` with the server `"$0"`, its data `"$1"`,
 /// its log `"$2"` and whose it is `"$3"` ([`OWNED`], or [`APART`] with no watchdog and nothing as
@@ -244,7 +250,7 @@ impl Postgres {
         }
         let initdb = self.program("initdb");
         let said = output(
-            command(&initdb)
+            server_command(&initdb)
                 .arg("-D")
                 .arg(&making)
                 .args([
@@ -465,7 +471,8 @@ impl Postgres {
             Stdio::null()
         };
         let postgres = self.program("postgres");
-        let child = command("/bin/sh")
+        // The supervisor's locale is the server's, which it starts.
+        let child = server_command("/bin/sh")
             .new_session()
             .default_signals()
             .arg("-c")
@@ -550,7 +557,7 @@ impl Postgres {
         let version = self.version().unwrap_or_default();
         let pg_ctl = self.program("pg_ctl");
         let said = output(
-            command(&pg_ctl)
+            server_command(&pg_ctl)
                 .arg("stop")
                 .arg("-D")
                 .arg(self.data())
@@ -770,6 +777,14 @@ fn setup_help() -> String {
     )
 }
 
+/// A command for `program`, a PostgreSQL program the board runs on its server or the supervisor
+/// that starts one, in the board's locale whatever its caller's ([`LOCALE`]).
+fn server_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = command(program);
+    command.env("LC_ALL", LOCALE);
+    command
+}
+
 fn version_at(programs: &Path) -> Result<String, String> {
     let postgres = programs.join("postgres");
     if !executable(&postgres) {
@@ -779,7 +794,7 @@ fn version_at(programs: &Path) -> Result<String, String> {
             setup_help()
         ));
     }
-    let said = output(command(&postgres).arg("--version")).map_err(|error| {
+    let said = output(server_command(&postgres).arg("--version")).map_err(|error| {
         format!(
             "could not run {}: {error}; {}",
             postgres.display(),

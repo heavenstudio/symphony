@@ -70,6 +70,11 @@ first.
   reach it (`--click`, `--type`, `--key`). A state the fixture lacks is added to the fixture, a
   task's to `board.sh`, a run's or an hour's to `records.sh`. Only a picture a document shows is taken and committed.
 - **One command retakes them all**, or those named: `tools/product-pictures.sh queue`.
+- **No picture says the board is unwell.** A failed pass of the fixture board's callback dispatch,
+  as a loaded machine can make, has every page say so for a minute or more. So the script reads
+  each page just before it captures it and again just after, and puts no picture in place whose
+  page said "The task board is unwell" or "is starting" at either read: it waits until the
+  server's notice no longer says it and takes that picture again.
 - **A retake that changes nothing writes the same bytes**, so after one, `git status docs/product`
   lists exactly the pictures that had gone stale. That holds on one Chrome, one set of fonts and
   one machine's scroll bars (macOS draws a wide page's bar or not by its *Show scroll bars*
@@ -95,15 +100,22 @@ An analysis holds a proposal and its evidence: an approved design can still awai
 
 - [The agents page, orchestrator-first](analysis/agents-page.md) — three layouts of an Agents page
   that opens on the orchestrators.
+- [Blueprints](analysis/blueprints.md) — a concept: a ready-made setup a project starts from and
+  keeps following until it changes what the blueprint put there.
 - [The board at a glance](analysis/board-design.md) — what a board says before anything is opened:
   what is stuck, on whom it waits and for how long.
 - [Owner asks](analysis/owner-asks.md) — what becomes of what the owner says that waits on an
   agent's answer.
 - [Reports and monitoring](analysis/reports-and-monitoring.md) — what a project's runs, task pages
   and reports would show, and where each figure comes from.
+- [What a landed task cost, drawn](analysis/reports-landed-cost.md) — a concept: the Reports
+  page's cost per landed task as charts, with the cost of a changed line, by kind and by review
+  rounds, over time and task by task.
 - [A Settings page](analysis/settings-page.md) — a concept: where a project's settings live now,
   what on and off mean for its integrations and tools, and a page that shows what is in force and
   writes the preferences alone.
+- [Users and identity](analysis/users-and-identity.md) — a concept: several people on a board,
+  signed in by a service outside the core, with what each may do kept by the board.
 - [Desktop client analysis](analysis/desktop-client.md) — the design and evidence behind the Mac
   app.
 - [Product documentation review, November 2026](analysis/product-docs-review-2026-11.md) — what a

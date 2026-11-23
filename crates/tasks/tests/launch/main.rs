@@ -9,6 +9,11 @@ mod children;
 #[allow(dead_code)]
 mod common;
 
+// The agents' programs a launch finds, stand-ins in a folder of the test's own.
+#[path = "../support/stand_ins.rs"]
+#[allow(dead_code)]
+mod stand_ins;
+
 mod attempts;
 mod cleanup;
 mod cleanup_kept;
@@ -23,6 +28,7 @@ mod go;
 mod hc;
 mod last_look;
 mod launch;
+mod off;
 mod procs;
 mod reap;
 mod reap_unread;
@@ -155,6 +161,9 @@ impl Hc for Hooked<'_> {
 /// so a loaded machine's slow looks never run it out before the terminal ends by its count of them.
 const ENDING: std::time::Duration = test_time::backstop(std::time::Duration::from_secs(10));
 
+/// The folder of a world's agent programs, the search path its launches look for them on.
+pub const PROGRAMS: &str = "agents-bin";
+
 /// The id of the project's space in a new world's Herdr app.
 pub const SPACE: &str = "sp-lamp";
 
@@ -186,6 +195,8 @@ impl World {
         let folder = Folder::new();
         let repo = folder.0.join("lamp-works");
         fixtures::repository(&repo);
+        // The agents' programs a launch looks for on its search path ([`World::machine`]).
+        stand_ins::stand_ins(&folder.0.join(PROGRAMS), &["claude", "codex"]);
         let wt = folder.0.join("lamp-works-wt");
         let (f, orch) = fixtures::board();
         let mut env = Env {
@@ -271,6 +282,7 @@ impl World {
             mode: "auto".into(),
             board_env: Vec::new(),
             bounds: None,
+            path: Some(self.folder.0.join(PROGRAMS).into_os_string()),
         }
     }
 

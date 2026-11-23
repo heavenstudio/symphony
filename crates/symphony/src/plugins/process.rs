@@ -33,19 +33,20 @@
 //! default answers it. A gates answer is waited for as long as a linked one may run, the gates'
 //! ceiling ([`Limits::gates`]), not a call's wait, and at most [`GATES_AT_ONCE`] are asked at once,
 //! so a slow answer never holds the worker the plugin's other calls are answered on
-//! ([`seams::RemoteGates`]). A call that gets no answer (the process down, no answer in time, a refusal,
-//! an answer that does not read) is shown where its answer would go: a component's in its place on
-//! the page ([`super::error`]), a card kind's as the kind's default, as if the plugin said nothing
-//! of the card, and each other seam's as [`seams`] says. A page's components share their `once`
-//! values in the plugin as they do linked: every call of one [`Page`] names its render
-//! ([`PageData::render`]). A register read asks every card kind of every card in one request
-//! ([`Remote::read_cards`], [`ReadCards`]), its answers kept for that read.
+//! ([`seams::RemoteGates`]): one given up holds its turn until its cancel resolves, as the SDK's
+//! worker runs it on until then ([`GatesTurn`]). A call that gets no answer (the process down, no
+//! answer in time, a refusal, an answer that does not read) is shown where its answer would go: a
+//! component's in its place on the page ([`super::error`]), a card kind's as the kind's default, as
+//! if the plugin said nothing of the card, and each other seam's as [`seams`] says. A page's
+//! components share their `once` values in the plugin as they do linked: every call of one [`Page`]
+//! names its render ([`PageData::render`]). A register read asks every card kind of every card in
+//! one request ([`Remote::read_cards`], [`ReadCards`]), its answers kept for that read.
 //!
 //! **Measured.** Under `[plugins] timing` each call writes its line to the project's
 //! record ([`super::measure`]) as a process call: the plugin's own time, as it says it, the host's
 //! whole wait for the answer, and the bytes of the two lines.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::{self, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -390,10 +391,14 @@ pub struct Remote {
 }
 
 /// A gates answer's turn among the [`GATES_AT_ONCE`] a remote asks at once, given back when it is
-/// dropped.
-pub(super) struct GatesTurn<'a>(&'a Remote);
+/// dropped. Its call holds it until the call resolves: answered or failed, or given up and its
+/// cancel resolved, by a late answer or the process's end ([`Remote::after_cancel`]). The SDK
+/// runs a call given up on its worker until it answers, as it takes no cancel, so a turn given
+/// back with the call would let another answer take the worker the plugin's other calls are
+/// answered on.
+pub(super) struct GatesTurn(&'static Remote);
 
-impl Drop for GatesTurn<'_> {
+impl Drop for GatesTurn {
     fn drop(&mut self) {
         *self.0.gates_asked.lock().recover() -= 1;
         self.0.gates_ended.notify_one();
@@ -440,12 +445,13 @@ struct Connection {
     ended: Condvar,
 }
 
-/// The calls a connection's answers go to, by id; the ones given up whose answers may still come;
-/// whether it is ending, and once it has ended, when and how.
+/// The calls a connection's answers go to, by id; the ones given up whose answers may still come,
+/// each with the gates turn it holds until then; whether it is ending, and once it has ended, when
+/// and how.
 #[derive(Default)]
 struct Waiting {
     calls: BTreeMap<u64, mpsc::Sender<Result<Reply, String>>>,
-    given_up: BTreeSet<u64>,
+    given_up: BTreeMap<u64, Option<GatesTurn>>,
     ending: bool,
     ended: Option<(Instant, String)>,
 }
@@ -937,8 +943,10 @@ impl Remote {
                 us,
                 bytes,
             }));
-        } else if waiting.given_up.remove(&id) {
+        } else if let Some(turn) = waiting.given_up.remove(&id) {
             drop(waiting);
+            // Its cancel resolved: the gates turn it held is given back.
+            drop(turn);
             self.log(&format!(
                 "call {id} was answered after it was given up: dropped"
             ));
@@ -993,12 +1001,16 @@ impl Remote {
             None => format!("its process{pid} {how}"),
         };
         self.log(&why);
-        let calls = {
+        let (calls, given_up) = {
             let mut waiting = connection.waiting.lock().recover();
             waiting.ended = Some((Instant::now(), why.clone()));
-            waiting.given_up.clear();
-            std::mem::take(&mut waiting.calls)
+            (
+                std::mem::take(&mut waiting.calls),
+                std::mem::take(&mut waiting.given_up),
+            )
         };
+        // Their cancels resolved with it: the gates turns its calls given up held are given back.
+        drop(given_up);
         connection.ended.notify_all();
         for call in calls.into_values() {
             let _ = call.send(Err(why.clone()));
@@ -1010,27 +1022,36 @@ impl Remote {
     /// body for every call ([`Self::asked`]), so each seam a process answers adds little to the
     /// binary.
     pub fn ask<A: Ask>(&self, name: &str, request: A) -> Result<A::Answer, Failure> {
-        self.ask_within(name, request, self.limits.wait)
+        self.ask_within(name, request, self.limits.wait, None)
     }
 
-    /// [`Self::ask`], its answer waited for `wait` rather than a call's wait.
+    /// [`Self::ask`], its answer waited for `wait` rather than a call's wait, holding `turn`, a
+    /// gates answer's, until the call resolves ([`GatesTurn`]).
     pub(super) fn ask_within<A: Ask>(
         &self,
         name: &str,
         request: A,
         wait: Duration,
+        turn: Option<GatesTurn>,
     ) -> Result<A::Answer, Failure> {
         let mut answer = None;
-        self.asked(name, Call::of::<A>(), request.into(), wait, &mut |raw| {
-            answer = Some(answer_of(A::TAG, raw)?);
-            Ok(())
-        })?;
+        self.asked(
+            name,
+            Call::of::<A>(),
+            request.into(),
+            wait,
+            turn,
+            &mut |raw| {
+                answer = Some(answer_of(A::TAG, raw)?);
+                Ok(())
+            },
+        )?;
         answer.ok_or_else(|| Failure::Down(format!("its answer to {} was not read", A::TAG)))
     }
 
     /// A gates answer's turn among the [`GATES_AT_ONCE`] it asks at once, waited for
     /// [`Limits::gates`] at most; why there is none once that passed.
-    pub(super) fn gates_turn(&self) -> Result<GatesTurn<'_>, String> {
+    pub(super) fn gates_turn(&self) -> Result<GatesTurn, String> {
         let asked = self.gates_asked.lock().recover();
         let (mut asked, _) = self
             .gates_ended
@@ -1044,11 +1065,12 @@ impl Remote {
             ));
         }
         *asked += 1;
-        Ok(GatesTurn(self))
+        Ok(GatesTurn(self.this()))
     }
 
     /// [`Self::ask`] of every call: `request` sent as `call`, recorded, its answer waited for
-    /// `wait` and handed to `read`; nothing once `read` took it, or why there is no answer.
+    /// `wait` and handed to `read`, `turn` held until the call resolves; nothing once `read` took
+    /// it, or why there is no answer.
     #[inline(never)]
     fn asked(
         &self,
@@ -1056,6 +1078,7 @@ impl Remote {
         call: Call,
         request: Request,
         wait: Duration,
+        turn: Option<GatesTurn>,
         read: ReadAnswer<'_>,
     ) -> Result<(), Failure> {
         if !call.piped {
@@ -1072,7 +1095,7 @@ impl Remote {
                     return Err(Failure::Newer(agreed));
                 }
                 // How the process ended is in its log already, once.
-                self.sent_within(&connection, request, wait, read)
+                self.sent_within(&connection, request, wait, turn, read)
                     .inspect_err(|why| {
                         if !why.starts_with("its process") {
                             self.log(&format!("{} of {name}: {why}", call.tag));
@@ -1111,7 +1134,7 @@ impl Remote {
     fn declaration_on(&self, connection: &Arc<Connection>) -> Result<Declaration, String> {
         let mut declared = None;
         let asked = Declare::new(PROTOCOL).into();
-        self.sent_within(connection, asked, self.limits.declare, &mut |raw| {
+        self.sent_within(connection, asked, self.limits.declare, None, &mut |raw| {
             declared = Some(answer_of(Declare::TAG, raw)?);
             Ok(())
         })?;
@@ -1119,12 +1142,14 @@ impl Remote {
     }
 
     /// `request` sent on `connection` and its answer handed to `read` within `wait`: the request
-    /// line's bytes and the reply; or why there is none.
+    /// line's bytes and the reply; or why there is none. `turn` is held until the call resolves: a
+    /// call given up hands it to the connection until its cancel does ([`Self::given_up`]).
     fn sent_within(
         &self,
         connection: &Arc<Connection>,
         request: Request,
         wait: Duration,
+        turn: Option<GatesTurn>,
         read: ReadAnswer<'_>,
     ) -> Result<(usize, Reply), String> {
         let id = self.ids.fetch_add(1, Ordering::Relaxed);
@@ -1153,14 +1178,15 @@ impl Remote {
         })?;
         let reply = match answered.recv_timeout(wait) {
             Ok(reply) => reply?,
-            Err(mpsc::RecvTimeoutError::Timeout) => match self.given_up(connection, id, sent, wait)
-            {
-                // Answered, or failed, as it was given up.
-                None => answered
-                    .recv()
-                    .map_err(|_| "its answers stopped".to_string())??,
-                Some(why) => return Err(why),
-            },
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                match self.given_up(connection, id, sent, wait, turn) {
+                    // Answered, or failed, as it was given up.
+                    None => answered
+                        .recv()
+                        .map_err(|_| "its answers stopped".to_string())??,
+                    Some(why) => return Err(why),
+                }
+            }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 return Err("its answers stopped".into());
             }
@@ -1199,17 +1225,20 @@ impl Remote {
     /// no answer, or none when it was answered or failed meanwhile. A process that did not take
     /// even its request in that wait reads no more and is ended. Else the call is cancelled, and a
     /// process that has not answered it [`Limits::cancel`] later is ended ([`Self::after_cancel`]).
+    /// The gates `turn` it holds stays with it until then: a late answer or the process's end
+    /// gives it back.
     fn given_up(
         &self,
         connection: &Arc<Connection>,
         id: u64,
         sent: u64,
         wait: Duration,
+        turn: Option<GatesTurn>,
     ) -> Option<String> {
         {
             let mut waiting = connection.waiting.lock().recover();
             waiting.calls.remove(&id)?;
-            waiting.given_up.insert(id);
+            waiting.given_up.insert(id, turn);
         }
         if connection.written.load(Ordering::SeqCst) < sent {
             self.end(
@@ -1237,7 +1266,8 @@ impl Remote {
     /// The call `id`, given up and sent a `cancel`, once [`Limits::cancel`] has passed since: a
     /// process that has not answered it is ended, and one that has is kept.
     fn after_cancel(&self, connection: &Connection, id: u64) {
-        if connection.waiting.lock().recover().given_up.contains(&id) {
+        let unanswered = (connection.waiting.lock().recover().given_up).contains_key(&id);
+        if unanswered {
             let cancel = self.limits.cancel;
             self.end(
                 connection,

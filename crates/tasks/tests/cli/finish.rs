@@ -1,7 +1,9 @@
 //! `finish`, and the cleanup after a task finishes, on the launch commands' private board and
 //! throwaway repository.
 
-use crate::launch::Terminals;
+use crate::launch::{Terminals, git};
+use crate::recorder::git_says;
+use symphony_board::land::RECIPE;
 use symphony_board::{NewLaunch, NewSession, NewTask};
 
 /// A task `sim/a` with a session launched on `on` (it, or an instruction subtask under it), in the
@@ -71,29 +73,84 @@ fn a_task_that_finishes_with_a_session_launched_on_it_is_cleaned_up_after() {
     }
 }
 
-#[test]
-fn a_verdict_that_finishes_a_task_is_cleaned_up_after() {
-    let p = Terminals::new("verdict");
-    let worker = launched_on(&p, "sim/a");
+/// `sim/a`, which `worker` executes, moved to review and approved `approve: text` by its reviewer
+/// on the command line: its executor's terminal stays, its record open.
+fn approved(p: &Terminals, worker: &str, text: &str) {
     let board = p.board();
-    board.move_to("sim/a", "review", &worker).unwrap();
+    board.move_to("sim/a", "review", worker).unwrap();
     let reviewer = board
         .register(&NewSession::new("reviewer"))
         .unwrap()
         .row
         .handle;
     board.take_role("sim/a", &reviewer, "reviewer").unwrap();
-    let ran = p.as_(&reviewer, &["verdict", "sim/a", "approve", "fine"]);
+    let ran = p.as_(&reviewer, &["verdict", "sim/a", "approve", text]);
     // In a checkout whose justfile runs no land of its own: its default branch and the default
-    // landing are named.
+    // landing are named. Done is not landed: the land may still ask the executor for something.
     assert_eq!(
         ran.out,
         format!(
             "sim/a is approved: done on the board, not on main until it lands; `just land sim/a \
-             --as HANDLE` lands it\n{}",
-            closed_line("sim/a", &worker)
+             --as HANDLE` lands it\n→ kept pane t1 of {worker} ({})\n",
+            symphony_board::launch::NOT_LANDED
         )
     );
+    assert_eq!(p.addresses(), ["t1"]);
+    assert!(
+        board.task_sessions("sim/a").unwrap()[0].closed.is_none(),
+        "its record stays open"
+    );
+}
+
+#[test]
+fn an_approve_leaves_the_executors_terminal_to_the_land_that_finishes_the_task() {
+    let p = Terminals::new("verdict");
+    let worker = launched_on(&p, "sim/a");
+    approved(&p, &worker, "fine");
+    // `finish` is the cleanup of a finished task whoever asks; a land asks once it closed the task.
+    let ran = p.run(&["finish", "sim/a"]);
+    assert_eq!(ran.out, closed_line("sim/a", &worker));
+    assert_eq!(p.addresses(), Vec::<String>::new());
+}
+
+#[test]
+fn a_land_that_closes_the_task_closes_the_executors_terminal_its_approve_kept() {
+    let mut p = Terminals::new("landed");
+    let worker = launched_on(&p, "sim/a");
+    // The task's branch, one commit ahead of main, where the main checkout stays.
+    let repo = p.env.cwd.clone();
+    git(&repo, &["switch", "-q", "-c", "sim/a"]);
+    std::fs::write(repo.join("lamp.txt"), "lit\n").unwrap();
+    git(&repo, &["add", "lamp.txt"]);
+    git(&repo, &["commit", "-q", "-m", "light the lamp"]);
+    let tip = git_says(&repo, &["rev-parse", "HEAD"]);
+    git(&repo, &["switch", "-q", "main"]);
+    approved(&p, &worker, &format!("{tip}: fine"));
+    let orch = p.board().get("sim/a").unwrap().created_by;
+    // A land refused (`just tasks land`, by no recipe) closes nothing.
+    let refused = p.as_(&orch, &["land", "sim/a"]);
+    assert_ne!(refused.code, 0, "{}", refused.out);
+    assert!(
+        refused.err.contains("runs only as `just land SLUG`"),
+        "{}",
+        refused.err
+    );
+    assert_eq!(p.addresses(), ["t1"]);
+    // As `just land` runs it, its recipe setting the marker; with no project file, no check runs.
+    p.set(RECIPE, "1");
+    let ran = p.as_(&orch, &["land", "sim/a"]);
+    assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{}", ran.out);
+    assert_eq!(git_says(&repo, &["rev-parse", "main^2"]), tip);
+    let merge = git_says(&repo, &["rev-parse", "main"]);
+    let landed = format!(
+        "landed sim/a on main at {}; not pushed: no origin remote\n{}",
+        &merge[..12],
+        closed_line("sim/a", &worker)
+    );
+    assert!(ran.out.ends_with(&landed), "{}", ran.out);
+    assert_eq!(p.addresses(), Vec::<String>::new());
+    let sessions = p.board().task_sessions("sim/a").unwrap();
+    assert!(sessions[0].closed.is_some(), "its record is closed");
 }
 
 #[test]

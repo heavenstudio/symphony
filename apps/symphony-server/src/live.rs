@@ -635,6 +635,22 @@ impl Hub {
         }
     }
 
+    /// `read`, made on the store the page reads share ([`Hub::reader`]), or why it could not be:
+    /// where the board failed it, the store is forgotten ([`Hub::reader_failed`]), so the next read
+    /// opens the board where its server is then. A refusal of what was asked keeps it.
+    pub(crate) fn on_reader<T>(
+        &self,
+        read: impl FnOnce(&symphony_board::Store) -> Result<T, symphony_board::Error>,
+    ) -> Result<T, String> {
+        let store = self.reader()?;
+        read(&store).map_err(|why| {
+            if matches!(why, symphony_board::Error::Db(_)) {
+                self.reader_failed(&store);
+            }
+            why.to_string()
+        })
+    }
+
     /// `read`, made on `store`, as it is: where the board failed it (503, or 504 for one too slow),
     /// `store` is forgotten ([`Hub::reader_failed`]), as its server may have gone, or moved. A
     /// refusal of what was asked (404, 400, 409) keeps it.

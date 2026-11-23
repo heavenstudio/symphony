@@ -624,11 +624,15 @@ fn codex_is_the_default_without_its_daemon_and_its_thread_is_recorded_once_it_re
         assert_eq!(s.claude_session, "codex:");
         let run = the_run(&w);
         let handle = &s.handle;
+        let wrapper = symphony_board::launch::hc::IN_ITS_TERMINAL;
         assert_eq!(
             started(&run),
             [
                 "env",
                 &format!("TASKS_SESSION={handle}"),
+                wrapper[0],
+                wrapper[1],
+                wrapper[2],
                 "codex",
                 "--no-daemon",
                 "-s",
@@ -1430,7 +1434,9 @@ fn a_chooser_hc_calls_blocked_is_answered_and_only_the_look_right_after_enter_wa
             failed_launch(
                 &w,
                 launched,
-                "the agent in terminal {t} waits on a person before it took its first message",
+                // hc says nothing of what it waits on, so the refusal says what the screen showed.
+                "the agent in terminal {t} waits on a person before it took its first message; \
+                 its terminal showed: › Ask Codex to do anything",
             );
             assert_eq!(w.calls_of(&["send"]), Vec::<Vec<String>>::new());
         }

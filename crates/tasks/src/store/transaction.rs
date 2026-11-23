@@ -213,11 +213,13 @@ fn said_as(body: &Statement, added: &[(String, i64)]) -> Result<(), Failure> {
 
 /// `answer` as the caller's type, each struct of it read from an object ([`crate::objects`]).
 fn decoded<T: DeserializeOwned>(answer: Value) -> Result<T, Failure> {
-    crate::objects::read(&answer).map_err(|e| {
-        Failure::Stop(Error::Db(format!(
-            "an answer not in the board's shape: {e}"
-        )))
-    })
+    crate::objects::read(&answer).map_err(|e| Failure::Stop(unshaped(e)))
+}
+
+/// The refusal of an answer its read does not take, `e` saying why: the decoder's, and a read's
+/// that takes its answer apart by field ([`crate::objects::fields`]).
+pub(super) fn unshaped(e: serde_json::Error) -> Error {
+    Error::Db(format!("an answer not in the board's shape: {e}"))
 }
 
 impl Store {

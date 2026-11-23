@@ -2,7 +2,8 @@
 //! recognizable generated pane rows are withdrawn; messages and other events are untouched.
 
 use super::{
-    Callback, DeliveryError, Error, Event, Queued, Store, Visit, deliver, event_line, session_task,
+    Callback, DeliveryError, Error, Event, Queued, Store, Visit, deliver, event_line,
+    recipient_rows, session_task, taken,
 };
 use crate::Board;
 use crate::cli::agents::{Answer, Pane};
@@ -66,11 +67,13 @@ fn look(
 impl Store {
     /// One HC sample per tick, shared with PULL and agents. Re-read the saved watermark and
     /// pending generated rows under the existing lease before publishing or withdrawing a line.
+    /// Every recipient's queued pane lines are read at once. Whether a watch took a lease to
+    /// record or send what its panes said: with none taken, the watch wrote nothing.
     pub(super) fn watch_panes(
         &self,
         board: &Board,
         callbacks: &BTreeMap<String, Callback>,
-    ) -> Result<(), Error> {
+    ) -> Result<bool, Error> {
         let recipients: Vec<_> = callbacks.values().filter(|c| c.host == self.host).collect();
         let open = if recipients
             .iter()
@@ -88,12 +91,33 @@ impl Store {
                 .get_or_insert_with(|| crate::cli::probes::hc_terminals(&env))
                 .clone()
         };
+        let mut queued = self.queued_panes(&recipients)?;
+        let mut watched = false;
         for callback in recipients {
-            self.watch_one(board, callback, &open, &panes, false, &|text| {
+            let queued = taken(&mut queued, &callback.handle).unwrap_or_default();
+            watched |= self.watch_one(board, callback, &open, &panes, false, queued, &|text| {
                 deliver(callback, text)
             })?;
         }
-        Ok(())
+        Ok(watched)
+    }
+
+    /// The pane lines still queued for each of `recipients`, with its handle, in their order, all
+    /// of them in one read ([`recipient_rows`]).
+    pub(super) fn queued_panes(
+        &self,
+        recipients: &[&Callback],
+    ) -> Result<Vec<(String, Vec<Queued>)>, Error> {
+        if recipients.is_empty() {
+            return Ok(Vec::new());
+        }
+        let handles: Vec<Value> = (recipients.iter())
+            .map(|callback| json!({"handle": callback.handle}))
+            .collect();
+        let vars = json!({"recipients": handles});
+        let answer: Value =
+            self.retrying(|| self.read(Statement::from(pg::queued()), vars.clone()))?;
+        recipient_rows(&answer, "struct Lines", |row| row.field("queued"))
     }
 
     /// The watch for a session with no channel, at its waiting look (`tasks wait`): the panes it
@@ -106,13 +130,21 @@ impl Store {
         panes: &dyn Fn() -> Answer<Vec<Pane>>,
         visit: &Visit,
     ) -> Result<(), Error> {
-        self.watch_one(board, callback, open, panes, true, &|text| {
+        let queued =
+            taken(&mut self.queued_panes(&[callback])?, &callback.handle).unwrap_or_default();
+        self.watch_one(board, callback, open, panes, true, queued, &|text| {
             visit.send(callback, text)
         })
+        .map(|_| ())
     }
 
-    /// One recipient's watch: what its panes say since its saved watermark, queued and sent by
-    /// `send` under its lease, which a collecting look (`collect`) takes with no channel registered.
+    /// One recipient's watch: what its panes say since its saved watermark, with the pane lines
+    /// `queued` for it, queued and sent by `send` under its lease, which a collecting look
+    /// (`collect`) takes with no channel registered. Whether it took the lease.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the watch's one sample, read once a tick for every recipient, and the lines read for each at once"
+    )]
     fn watch_one(
         &self,
         board: &Board,
@@ -120,13 +152,12 @@ impl Store {
         open: &[TaskSessionRow],
         panes: &dyn Fn() -> Answer<Vec<Pane>>,
         collect: bool,
+        queued: Vec<Queued>,
         send: &dyn Fn(&str) -> Result<(), DeliveryError>,
-    ) -> Result<(), Error> {
+    ) -> Result<bool, Error> {
         let handle = callback.handle.as_str();
         // Both looks judge the one sample at the moment of the first.
         let now = self.now();
-        let queued: Vec<Queued> =
-            self.retrying(|| self.read(Statement::from(pg::queued()), json!({"handle":handle})))?;
         let plan = look(
             board,
             handle,
@@ -137,7 +168,7 @@ impl Store {
             &queued,
         );
         if plan.unchanged(&callback.pane_watch) {
-            return Ok(());
+            return Ok(false);
         }
         self.with_callback_lease(handle, collect, |revision| {
             let saved: Saved = self.retrying(|| self.read(
@@ -159,6 +190,6 @@ impl Store {
             ))?;
             self.deliver_pending(handle, callback, revision, send)
         })?;
-        Ok(())
+        Ok(true)
     }
 }

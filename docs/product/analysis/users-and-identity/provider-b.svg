@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="368" viewBox="0 0 760 368" role="img" aria-labelledby="title desc">
+<title id="title">B: a provider is a program of its own</title>
+<desc id="desc">Under B a person is still signed in outside the Symphony. The server asks a separate provider program, named in the server&#x27;s own settings, who sent each request. Anyone writes one in any language and swaps it without a new server. It is the option closest to a plugin. Its costs are a contract the Symphony must keep stable on the path every request takes, and a second process that holds secrets.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--question:#946a00;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--question:#e0b84c;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.inner{fill:var(--muted);stroke:var(--border)}
+.hot{fill:none;stroke:var(--dislike);stroke-width:1.5}
+.new{fill:none;stroke:var(--primary);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.b{font-weight:600}
+.h{font-size:15px;font-weight:600}
+.t{font-size:17px;font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+.red{fill:var(--dislike)}
+.blue{fill:var(--primary)}
+.arrow{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip)}
+.both{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip);marker-start:url(#tail)}
+.no{stroke:var(--dislike);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+.tipfill{fill:var(--muted-foreground)}
+</style>
+<defs><marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M0,0 L10,5 L0,10 z"/></marker><marker id="tail" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M10,0 L0,5 L10,10 z"/></marker></defs>
+<rect class="page" width="760" height="368"/>
+<text class="t" x="24" y="34">B: a provider is a program of its own</text>
+<rect class="card" x="24" y="60" width="150" height="170" rx="8"/>
+<text class="h" x="38" y="86">A person&#x27;s</text>
+<text class="h" x="38" y="106">browser</text>
+<text class="m" x="38" y="134">already signed in</text>
+<text class="m" x="38" y="153">to Tailscale or</text>
+<text class="m" x="38" y="172">the company</text>
+<path class="arrow" d="M174,145 L206,145"/>
+<rect class="card" x="210" y="60" width="200" height="170" rx="8"/>
+<text class="h" x="224" y="86">Signs them in</text>
+<text class="m" x="224" y="106">outside the Symphony</text>
+<rect class="inner" x="224" y="122" width="172" height="40" rx="5"/>
+<text x="234" y="147">Tailscale, on a machine</text>
+<rect class="inner" x="224" y="172" width="172" height="40" rx="5"/>
+<text x="234" y="197">a company&#x27;s proxy</text>
+<path class="arrow" d="M410,145 L442,145"/>
+<rect class="card" x="446" y="60" width="130" height="170" rx="8"/>
+<text class="h" x="460" y="86">The server</text>
+<text x="460" y="112">asks, for</text>
+<text x="460" y="131">each request:</text>
+<text x="460" y="150">who is this?</text>
+<path class="both" d="M576,145 L608,145"/>
+<rect class="card" x="612" y="60" width="124" height="170" rx="8"/>
+<rect class="new" x="612" y="60" width="124" height="170" rx="8"/>
+<text class="h" x="624" y="86">A provider</text>
+<text class="h" x="624" y="106">program</text>
+<text class="m" x="624" y="134">any language,</text>
+<text class="m" x="624" y="153">named in the</text>
+<text class="m" x="624" y="172">server&#x27;s own</text>
+<text class="m" x="624" y="191">settings</text>
+<rect class="card" x="24" y="252" width="712" height="92" rx="8"/>
+<text x="40" y="278">Anyone writes one, and swaps it without a new server: the closest to a plugin.</text>
+<text x="40" y="300">It is the server&#x27;s plugin, never a project&#x27;s: no project file names it.</text>
+<text class="red" x="40" y="322">A contract to keep stable on every request&#x27;s path, and a second process with secrets.</text>
+</svg>

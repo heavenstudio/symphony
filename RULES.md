@@ -341,8 +341,10 @@ scratch repository and a scratch board, never the real worktrees or the live boa
 ### `tools/a-consumers-checkout-is-read-only`
 
 A consuming project's checkout on this machine is read-only to an agent working here: nothing in
-it is changed but what a release's refresh moves there, and an act the owner's word names, such
-as a pin's commit made once by hand ([its card](docs/workflow/RELEASES.md#consumer-manifest-line)).
+it is changed but what a release's refresh moves there, an act the owner's word names, such as a
+pin's commit made once by hand ([its card](docs/workflow/RELEASES.md#consumer-manifest-line)),
+and the filing, staffing and work of a task on that project's own board
+([the orchestrator's page](.agents/skills/task-orchestrator/project.md)).
 
 ### `commits/only-the-land-pushes`
 

@@ -244,11 +244,14 @@ pub(in crate::store) fn last_messages() -> Pg<'static> {
     )
 }
 
+/// The landings no status change follows: the lines holding the word `landed` found by `words`'
+/// index of each line's terms, each by its key, then each slug's thread after its newest.
 pub(in crate::store) fn landings_posted() -> Pg<'static> {
     Pg::read(
-        "(WITH landed AS (SELECT slug, max(sid) AS sid FROM message \
-        WHERE kind IN (SELECT jsonb_array_elements_text(v -> 'delivered')) \
-            AND strpos(text, 'landed ' || slug || ' on main') > 0 GROUP BY slug) \
+        "(WITH landed AS (SELECT m.slug, max(m.sid) AS sid FROM words w JOIN message m ON m.id = w.id -> 1 \
+        WHERE w.terms ? 'landed' AND w.source = 'text' \
+            AND m.kind IN (SELECT jsonb_array_elements_text(v -> 'delivered')) \
+            AND strpos(m.text, 'landed ' || m.slug || ' on main') > 0 GROUP BY m.slug) \
         SELECT coalesce(jsonb_agg(l.slug ORDER BY l.slug), '[]') FROM landed l \
         WHERE NOT EXISTS (SELECT 1 FROM message m WHERE m.slug = l.slug AND m.sid > l.sid \
             AND (m.kind = 'verdict' OR (m.kind = 'system' \

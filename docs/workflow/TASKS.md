@@ -427,6 +427,16 @@ task, whatever worktree or machine it runs in:
 just tasks say sim/jump-departure "the dock ring is at 900" --to @reviewer
 ```
 
+A long line, such as a request for review with its evidence, is written as a file
+in the project's artifacts folder under the task's slug (`artifacts/SLUG/` where the
+project names no other), which git ignores and the sweep sets aside with the
+worktree, never a file the worktree would hold untracked or commit. It is posted
+with `--file PATH` in place of the text (`--file -` reads stdin), so no quote,
+backtick or `$(…)` in it meets a shell; the board trims its ends as it trims any
+line, and a line given both ways, or neither, is refused. `--file PATH` is plain words,
+which the allow rules pass in a Claude or a Codex session alike; stdin fed by a
+heredoc is a redirection, which no Codex rule matches.
+
 `--to` takes a handle, a role (`@executor`, `@reviewer`, `@orchestrator`,
 `@reserved`), or `owner`. Addressed messages reach the matching native callback
 as plain `MSG` event lines. Without an address, an agent's post stays on the
@@ -1308,9 +1318,12 @@ so its commit fails), when its task closed with no delivery, or when it is no lo
 kept, one of them dropped as another delivery brought it. Each of its saves then says why on its
 page, and none holds back a later save of its files: an owner's save of one of its pages goes,
 and so does a later tidy's ledger. The tidy writes its first entry last, so a tidy that could
-not keep all of its saves has no first in the journal. Those it did keep are never shown or
-delivered and hold back nothing, and the tidy says on its error output that nothing of it was
-kept.
+not keep all of its saves has no first in the journal, and neither has one whose first was
+dropped before its commit as another delivery brought it: the journal cannot tell the two apart,
+and each of the saves left says either may be why. Those saves stay in the journal until a
+person removes them, each listed as held on its page's note; none is shown or delivered, and
+none holds back a later save. A tidy that could not keep all of its saves says so on its error
+output: nothing of it is kept, and how many of its saves stay in the journal, and where.
 
 ### What the generators make, delivered by a pull request
 
@@ -1684,22 +1697,27 @@ landing](#the-default-landing)).
   stand (the newest assessment, its tip, who and why, or the catalogue's defaults with none);
   `TIP`, its branch and that branch's tip in the main checkout (none before the branch is made,
   when an assessment reads the brief alone); `GATES`, the task's gate decisions that stand
-  ([below](#gate-decisions)); and `CHECK PATHS`, the paths the branch changes
-  since it left the default branch that `[land] check_paths` names, which the `review` guideline asks
-  for, so an assessor need not find the tests in a diff.
+  ([below](#gate-decisions)); and `CHECK PATHS`, the paths the branch changes since it left the
+  default branch that `[land] check_paths` names, which the `review` guideline asks for, so an
+  assessor need not find the tests in a diff.
 - **`just tasks runs SLUG [--tip SHA]`** prints what the recorder kept of the task at its
   branch's tip in the main checkout, or at the commit `--tip` names there, read as the `tests`
   stamp reads it (`crates/tasks/src/cli/commands/runs.rs`): `TIP`; `RUNS`, a row for each build
   and test command the task and the work under it ran there, its newest run's result (`green`,
   `red`, `running`, `queued`), when, how long, who, why it is red, and how many runs of it came
-  before there; `REFUSED`, when there are any, a row for each run there its runner refused, with
-  the refusal's line ([what clears what](#what-clears-a-red-run)); `TESTS`, the `tests` stamp met or not with its reader's line; `CHECK`, the
-  project's `[verdicts] check` as the task page's check gate reads it, its newest run there by
-  anyone or `no run`; and `ELSEWHERE`, how many of the task's runs are at other commits, none of
-  them the tip's. It is what a reviewer reads in place of building again (RULES.md
-  `workflow/no-second-build-in-review`, [CHECKS](CHECKS.md#no-second-build-in-review)), and what
-  an executor reads before it asks for review. It is refused for a task the board does not hold,
-  outside a checkout of its repository, and with no tip to read.
+  before there, then, for each red run there that kept a log (a run of a pipeline,
+  [RUNS](RUNS.md)), the newest of its command or one before it, a `LOG` line with when it ran and
+  the log's path, where the command's own output says what failed, at its end, whatever its
+  runner, and under it the first five tests it failed with their binaries, then how many more,
+  where its end line in the day files names them ([RUNS](RUNS.md)); `REFUSED`, when there are
+  any, a row for each run there its runner refused, with the refusal's line ([what clears
+  what](#what-clears-a-red-run)); `TESTS`, the `tests` stamp met or not with its reader's line;
+  `CHECK`, the project's `[verdicts] check` as the task page's check gate reads it, its newest
+  run there by anyone or `no run`; and `ELSEWHERE`, how many of the task's runs are at other
+  commits, none of them the tip's. It is what a reviewer reads in place of building again
+  (RULES.md `workflow/no-second-build-in-review`, [CHECKS](CHECKS.md#no-second-build-in-review)),
+  and what an executor reads before it asks for review. It is refused for a task the board does
+  not hold, outside a checkout of its repository, and with no tip to read.
 - **The `owner` stamp** stands on a tip T by one reader, which the land, the task page's gate
   and its Approve offer, and the end of a `check:owner` hold all go by (`read::owner_at`, the
   cards' part `crates/tasks/src/stamps/posted.rs`): the owner's `approve SHA` naming T on the
@@ -1912,19 +1930,32 @@ assessor = "haiku"
   apply, from a diff and their guidelines, so with no model written it runs on the smallest its
   agent offers. An agent starting a subagent passes the model `just tasks limits` names for the
   subagent's role.
+- **An agent turned off.** `[agents.launch.on]` turns an agent off (`codex = false`), in any of
+  the places a preference is written: `just tasks launch` naming it, the staffing pass and a
+  restore of a closed pane of it (a reviewer's resume among them) are refused before anything is
+  made, naming it and where it was turned off, and the staffing pass gives an idle one no new
+  work. One already running is not stopped, and turning it on again is the switch alone. The
+  launch default cannot be off: a file turning off the default it names, and the store, refuse
+  such a switch, saying to pick another default first, and one written in a place under or beside
+  the default's (before the default moved to its agent, or in a local file naming no default) does
+  not hold. A launch of
+  an agent whose program this machine lacks on its search path is refused with that reason,
+  whatever its switch says
+  ([PROJECT_FILE](../operations/PROJECT_FILE.md#agentslaunchon), `crates/tasks/src/launch/off.rs`).
 - **`just tasks limits`** prints each limit, the pipeline alarm's thresholds
   ([The pipeline alarm](#the-pipeline-alarm)) and each role's model, each with where it came
   from (`[limits] low_volume, line 8`, `[agents] launch model, line 12`, `the board's store
   [limits] low_volume, over 4 ([limits] low_volume, line 8)`, `the smallest claude offers`, or
   `default`), the
-  machine's count of agents under `machine_agents`, and each key of `[limits]` this build does
-  not know, left out.
+  machine's count of agents under `machine_agents`, where any place writes a switch each agent
+  on or off with where from (the launch default saying when a switch that would turn it off does
+  not hold), and each key of `[limits]` this build does not know, left out.
 - **A change holds at once.** Every command reads the file as it stands, and a store kept open
   (the Symphony's server keeps its reader and its data worker's) reads it again at its next
   read whenever the file's length or time changed: no restart.
 - **The board's store.** A preference stored on the board (`just tasks settings set KEY VALUE`)
   is read after the project file and before the local file: a limit, `[agents] launch`'s agent,
-  model or effort, a role's model or `[agents] panes`. It holds from the next command, `just
+  model or effort, an agent's switch, a role's model or `[agents] panes`. It holds from the next command, `just
   tasks limits` names the store for it with the committed value it stands over, and `just tasks
   settings remove KEY` puts the file's value back. Each change is kept in the entry's record
   (`just tasks settings list`); what the store may hold, and how a value is judged, is
@@ -2350,7 +2381,13 @@ its role (`executor`, or `reviewer` under `--role reviewer`) when there is one
 ([Limits and models](#limits-and-models)), else a Codex agent (`--no-daemon`; model
 `gpt-6.1-sol`, effort `xhigh`, workspace-write with network access), in an hc terminal of its
 own, `hc run --bg --no-parent --outlive-parent --keep`: no child of the caller's terminal,
-which the app would show under it rather than in a tab. `--kind` and `--model` win over the
+which the app would show under it rather than in a tab. Codex's commands are given its handle and
+its terminal (`TASKS_SESSION`, `HC_TERMINAL_ID`) through `shell_environment_policy.set`, which holds
+under a policy that keeps only the core variables; hc names the terminal only once it runs, so a
+`sh` that becomes Codex hands it the terminal's own (`crates/tasks/src/launch/hc.rs`,
+`IN_ITS_TERMINAL`). Its callback then names its terminal, in which a restored Codex is present
+before its record names it; a thread resumed by hand registers from no terminal and retires once
+every terminal the board ran it in is closed or gone. `--kind` and `--model` win over the
 project's; its models and effort go with its agent, so `--kind` naming the other agent takes the
 board's model for that one (Codex `gpt-6.1-sol` at `xhigh`, Claude `sonnet` at its own effort).
 A table that does not parse, or names another agent, refuses the launch, and so does a machine
@@ -2364,7 +2401,10 @@ projects' terminals are never a destination. Once hc calls the agent ready (`idl
 `done`), its first message goes in by `hc send`, never forced, and the launch is confirmed
 only by that send's receipt (`started`): an agent waiting on a person (a folder-trust
 dialog), never ready, or not starting on the message fails the launch naming the terminal,
-which is killed and removed. It writes its handle, role, agent session
+which is killed and removed. The refusal of an agent waiting on a person carries hc's word
+for what it waits on and, where that word is not on the screen (hc names some dialogs only
+as open), the screen's last lines, since the terminal is gone by the time anyone reads it
+(`crates/tasks/src/launch/startup.rs`, `shows`). It writes its handle, role, agent session
 id, worktree, branch, terminal and start time; `just tasks show` lists them under
 `Sessions:`. No terminal the owner may be looking at is closed: one in the tab the Herdr
 app shows, the agent it shows, or held over them (`herdr-app status`, read last, right
@@ -2467,13 +2507,26 @@ the task; deferrals and dry runs post nothing. A dry run previews even while
 disabled and creates no task, session or terminal.
 
 **Idle agents are closed by the board, not by a reminder.** A task
-that becomes done or cancelled closes its sessions at once; the rest is a sweep the
+that becomes done or cancelled closes its sessions at once, but for the executors of a task an
+approve left done and not landed: its land may still ask its executor for a stamp of its at
+the approved tip, a conflict settled or a red check mended, so their terminals stay, each a line
+of the verdict's output, and close when a land run here closes the task, or at the sweep once
+idle with nothing asked of them, as after a merge the host made
+(`crates/tasks/src/launch/cleanup.rs`, `approved`). The rest is a sweep the
 Symphony's process (`just symphony`) runs every five minutes for each project it serves that
 has a board, each on a schedule of its own in its own checkout, started as the project is
 registered and stopped as it is removed, so one project's failing or hung sweep holds up no
 other's; each writes its own `reap.json` and its own board's health, which `just tasks status`
 reads. A lock in `symphony/tasks/`, beside the board's server, keeps two sweeps (a second
 app's, or `just tasks reap` by hand) from running at once, and nothing goes into any monitor.
+A server of its own (`just symphony --port N`) runs no sweep, since a preview's board may be a
+copy that names another board's terminals, and says so as it starts (a preview in a linked
+worktree whose file does not ask says nothing): a project no other server serves, as one on a
+source build with no release on the machine, sets `[board] own_sweep = true` in its project
+file, and a server of its own in its main checkout then sweeps for it as the one server would,
+unless its environment names another board (`TASKS_SERVER`, `TASKS_DATABASE`;
+`sweeps_of_its_own` in `apps/symphony-server/src/front.rs`). Without either, idle terminals stay
+until `just tasks clean`.
 It closes (`hc kill`,
 then `hc rm`) one of this board's terminals (label `symphony.board`) whose named agent was
 idle (or stuck on the folder-trust prompt) at two sweeps at least five minutes apart,
@@ -2539,8 +2592,13 @@ hold or the main checkout has not followed. Such a worktree and branch are said 
 into main as COMMIT by pull request #N` where a merged one says `merged into main`, and every
 rule below holds for them as for any other. The sweep deletes no retained head, no receipt and
 no branch of the remote.
-Nothing did not land when it has no tracked edit, no untracked file and no ignored file but
-build output and caches, and holds no owner verdict no commit has (an owner's dated line under a
+Nothing did not land when it has no tracked edit, no untracked file but what a file manager
+writes into a folder a person opens (`.DS_Store`, `Thumbs.db`, `desktop.ini`, which go with the
+worktree whether or not its ignore file names them) and no ignored file but
+build output and caches (the board's own list, and the ignored paths the project names in
+`[board] sweep_disposable` of the main checkout's `symphony.toml`, where its stack keeps its
+dependencies and builds elsewhere, such as `node_modules/`), and holds no owner verdict no commit
+has (an owner's dated line under a
 card, in a document of the project's entrypoint folders, that its HEAD does not hold; a worktree
 whose documents git cannot read for one is kept, saying so). No live work holds it when no
 live or stale session is bound to it (a subagent's session is bound to its own `agent-ID`
@@ -2701,11 +2759,20 @@ such as `just land` run under someone's `TASKS_SESSION`) binds nothing. From
 then on each of its tool calls beats for that handle, until a later board
 command names another. A full session with no agent id (one started in an hc terminal, or a
 `claude -p` run) is bound and beats the same way, keyed by its session id, but keeps the first handle
-it names: naming another (registering or relaying for a child) moves nothing. A handle
-with a monitor of its own (an orchestrator) is never bound: its monitor beats for it,
-and a session that names such a handle is barred from binding at all, so the calls of
-an orchestrator never keep a child it registered alive. The hook looks at the board
-only for a board command or a key already bound. A foreground Bash call
+it names: naming another (registering or relaying for a child) moves nothing. A launched
+Claude session's beat also registers the channel its agent did not: before a board command of
+the handle bound to it, where an open launch of that handle records the session's conversation,
+the hook registers the session's own inbox socket (`CLAUDE_CODE_MESSAGING_SOCKET`, which Claude
+Code gives a session's hooks) as `just tasks callback --as HANDLE` would have, so an agent that
+skips that command still hears its messages. It does so once for each socket: a channel the
+session turns off stays off, and a restored conversation, a new process on a new socket, is
+connected again. A socket is remembered only once a launch records the session, so a board command
+run before its launch or restore writes the record is tried again at the next. A session no launch
+records, a subagent, a registration holding the chat seat and a Codex thread are left as they are
+(`crates/tasks/src/cli/beat.rs`, `connect`). A handle with a monitor of its own (an orchestrator) is
+never bound: its monitor beats for it, and a session that names such a handle is barred from binding
+at all, so the calls of an orchestrator never keep a child it registered alive. The hook looks at
+the board only for a board command or a key already bound. A foreground Bash call
 reads live for as long as its timeout allows (at most 10 minutes), so a long
 `verify-full` does not look like silence; of calls running side by side, the
 one that may run longest keeps the mark, and only its own end clears it. A
