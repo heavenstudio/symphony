@@ -243,6 +243,14 @@ fn a_scratch_boards_postgresql_starts_serves_one_connection_on_its_socket_and_st
     assert_eq!(answered, "t|64|128MB|C.UTF-8|ÜNÏCÖDÉ");
     // Found again, not started again.
     assert_eq!(board.pg.ensure().unwrap(), serving);
+    // A running cluster whose home names no engine (as a build from before the identity left
+    // one) is named PostgreSQL's by the start that finds its server, before it serves it.
+    let identity = board.dir.join("board/backend.json");
+    let written = std::fs::read_to_string(&identity).unwrap();
+    assert_eq!(written, r#"{"format":1,"engine":"postgresql"}"#);
+    std::fs::remove_file(&identity).unwrap();
+    assert_eq!(board.pg.ensure().unwrap(), serving);
+    assert_eq!(std::fs::read_to_string(&identity).unwrap(), written);
     let stopped = board.pg.stop().unwrap().expect("it ran");
     assert_eq!(stopped.pid, serving.pid);
     board.none_left();
