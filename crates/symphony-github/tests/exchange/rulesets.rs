@@ -30,7 +30,6 @@ fn changed_at(d: &Delivery, id: i64) -> String {
 
 /// `rulesets ARGS` run with `gh` as the gh CLI.
 fn with_gh(d: &Delivery, gh: &Path, args: &[&str]) -> crate::Ran {
-    let _alone = crate::starting();
     let mut all = vec!["rulesets"];
     all.extend_from_slice(args);
     crate::run_gh(

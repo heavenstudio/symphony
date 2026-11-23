@@ -1528,17 +1528,14 @@ fn a_lost_publication_whose_search_reaches_its_page_ceiling_ends_unknown_and_cre
     let connect = move |_token: Secret| -> Result<Box<dyn Transport>, String> {
         Ok(Box::new(Endless(std::sync::Arc::clone(&github))))
     };
-    let stopped = {
-        let _alone = crate::no_start();
-        crate::run(
-            &["reconcile", "--preview", &digest, "--as", "amber-fox-1"],
-            &rig.board,
-            &rig.settings,
-            &connect,
-            rig.now.get(),
-            vec![rig.dir.0.join("repository")],
-        )
-    };
+    let stopped = crate::run(
+        &["reconcile", "--preview", &digest, "--as", "amber-fox-1"],
+        &rig.board,
+        &rig.settings,
+        &connect,
+        rig.now.get(),
+        vec![rig.dir.0.join("repository")],
+    );
     assert_eq!(stopped.code, 1, "{}", stopped.out);
     assert!(
         stopped
