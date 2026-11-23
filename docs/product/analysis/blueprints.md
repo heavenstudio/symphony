@@ -200,7 +200,7 @@ project knows its blueprint and what it left.
   manual says its support for submodules in several checkouts of one repository is incomplete and
   advises against it. The checkout holds the blueprint twice.
 
-- [ ] **blueprint-in-project** — You asked whether a blueprint could be added to a project as a Git submodule inside its repository. Either way the blueprint's files are copied to where they are read (the skills folder, the project file at the root), since each reader looks in a fixed place. The choice is how the project remembers its blueprint. A: a record alone. One committed file names the blueprint's address, its version and what it put; Symphony fetches the blueprint when it needs to compare or update. B: a submodule as well, inside the project's repository, at the version taken. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/blueprints#What the project holds of its blueprint]]
+- [?] **blueprint-in-project** — You asked whether a blueprint could be added to a project as a Git submodule inside its repository. Either way the blueprint's files are copied to where they are read (the skills folder, the project file at the root), since each reader looks in a fixed place. The choice is how the project remembers its blueprint. A: a record alone. One committed file names the blueprint's address, its version and what it put; Symphony fetches the blueprint when it needs to compare or update. B: a submodule as well, inside the project's repository, at the version taken. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/blueprints#What the project holds of its blueprint]]
   [2026-11-23 11:23] agent — Posted for the board task `app/blueprints`, from your note on **blueprint-home**: "Could use submodules to add it to a symphony project (inside the project repo?)".
 
     **Base.** Nothing is built. A blueprint is a Git repository of its own, as you approved.
@@ -212,6 +212,7 @@ project knows its blueprint and what it left.
     **Why A.** B's gain is convenience for Symphony; its cost falls on every task of every project.
 
     **Earlier verdicts checked.** **blueprint-home** (B) decides that a blueprint is its own repository and is fetched, not how the project holds it.
+  [2026-11-23 12:22] owner · question — There can be multiple boards for the same project, which means, even multiple templates for it. How would that work in case we pick up on A?
 
 ## Where blueprints live
 
