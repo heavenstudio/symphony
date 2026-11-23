@@ -224,14 +224,20 @@ fn leaving_the_server_scope_joins_its_owned_workers() {
 }
 
 /// The status this server's routes give a GET of `path` from `client` with `host`, behind a gate
-/// whose `tailscale whois` knows [`PEER`] alone.
+/// whose `tailscale whois` knows [`PEER`] alone, a node under the login this machine is under.
 async fn status_from(client: &str, path: &str, host: Option<&str>) -> StatusCode {
     let gate = Gate::new(
         Arc::new(|ip: &str| {
-            Ok::<_, String>((ip == PEER).then(|| r#"{"Node": {"Name": "phone"}}"#.to_string()))
+            Ok::<_, String>((ip == PEER).then(|| {
+                r#"{"Node": {"Name": "phone"}, "UserProfile": {"ID": 11, "LoginName": "owner@example.com"}}"#
+                    .to_string()
+            }))
         }),
         Arc::new(Instant::now),
-    );
+    )
+    .with_status(Arc::new(|| {
+        Ok(r#"{"Self": {"DNSName": "studio.ts.net.", "UserID": 11}}"#.to_string())
+    }));
     let shared = Shared::new(1, 1, Path::new("/nowhere"), None, gate);
     let app = router(shared).layer(MockConnectInfo(client.parse::<SocketAddr>().unwrap()));
     let mut request = Request::builder().uri(path);

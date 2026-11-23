@@ -25,7 +25,9 @@ The product references describe [reading a document](../product/DOCUMENT.md) and
 [using a card's verdict editor](../product/CARDS.md). The app serves any file under the project, so a concept
 page's images, SVGs and galleries under `artifacts/` show inline. It writes verdicts under `docs/` (and the owner's approval to land an owner-tier branch, in the landing store),
 and keeps queue-view preferences under `artifacts/review-order/`. It listens on every interface but answers
-only this machine and tailnet peers `tailscale whois` confirms (403 otherwise). The markdown holds the
+only this machine and tailnet peers `tailscale whois` confirms (403 otherwise), and a peer under
+another Tailscale login than this machine's sees no board that has not added it
+([who a request is from](../../apps/symphony-server/README.md#who-a-request-is-from)). The markdown holds the
 owner's answers; view preferences never become verdicts.
 
 ### Queue categories

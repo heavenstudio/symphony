@@ -11,6 +11,36 @@ The public Rust items a consumer calls follow the
 replacement for a release, then remove it in a separate later task with consumer migration
 evidence and the guard list updated.
 
+## Who a request is from
+
+Every request is judged by its client's address before any route (`src/gate.rs`). Loopback is
+allowed without asking, an address of the Tailscale ranges when `tailscale whois` names a node
+of this tailnet for it, and anything else is refused (403). The same whois answer says whose
+node it is, and the gate keeps who the request is from:
+
+- **The person at the machine**: loopback, one of this machine's own tailnet addresses, and a
+  node under the Tailscale login this machine is under (`Self.UserID` in `tailscale status`, the
+  call the Host check already makes), such as the owner's phone. Their writes read `owner`.
+- **Another login's person**: a node under any other user. Tailscale's word says who; no board
+  has added them, so they see nothing.
+- **Nobody**: a tagged node, or one whose answer names no user.
+
+A status call that gives no answer keeps the login it last gave, as it keeps the names. Until one
+has answered, only loopback is the person at the machine: this machine's own tailnet addresses are
+known from that answer too, so every node, the Mac's own included, counts as another login's or as
+nobody's. A Mac that is itself tagged is under no login, so only the Mac reaches its boards.
+
+What a visitor reaches is each board's word (`Gate::member`): the person at the machine is on
+every board, and until a board holds people
+([users and identity](../../docs/product/analysis/users-and-identity.md#the-way-from-one-owner),
+step 3) nobody else is on any. The one server judges each request once and keeps only the
+projects whose board has added its visitor: to them every other project is one the server does
+not hold, in no list, and each path under its id answers as an id nobody registered, the same
+bytes. `/api/front` and the list's installation id are the machine's, answered to the person at
+it alone. A server of its own refuses a visitor its board has not added, as an address the gate
+refuses. A project's router takes the visitor's actor with the request, and every save, workflow
+action and attempt control is that actor's.
+
 ## Hosted admission
 
 `symphony_server::hosted::router(shared, config, host)` is an explicit, additive admission

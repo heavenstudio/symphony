@@ -600,7 +600,7 @@ async fn over_hub(shared: &Arc<Shared>, hub: Arc<Hub>, asked: Asked, request: Re
         symphony_api::TASK_ATTEMPTS_PATH => attempts(shared, hub, &request).await,
         symphony_api::workflow::WORKFLOW_GUARDS_PATH => guards(hub, &request).await,
         symphony_api::workflow::WORKFLOW_PATH | symphony_api::workflow::WORKFLOW_ACTIONS_PATH => {
-            workflow(hub, path, &request).await
+            workflow(shared, hub, path, &request).await
         }
         "/api/tasks" | "/api/task-board" => tasks(hub, path, &request).await,
         // The machine's work alone, for a page that reads the board's listings without it
@@ -621,12 +621,16 @@ async fn over_hub(shared: &Arc<Shared>, hub: Arc<Hub>, asked: Asked, request: Re
     }
 }
 
-/// A task's execution attempts, the board's own read, the same for every branch: the person's
-/// this machine's gate admits, or the visitor's hosted admission verified (`crate::attempts`).
+/// A task's execution attempts, the board's own read, the same for every branch: the actor this
+/// machine's gate admitted the request as ([`crate::front::Admitted`]), or the visitor's hosted
+/// admission verified (`crate::attempts`).
 async fn attempts(shared: &Arc<Shared>, hub: Arc<Hub>, request: &Request) -> Response {
     let slug = query(request, "slug").unwrap_or_default();
     let asker = crate::hosted::admission(request).map_or_else(
-        || crate::attempts::Asker::Local(shared.gate.person().principal.clone()),
+        || {
+            let actor = crate::front::Admitted::actor(shared, request.extensions());
+            crate::attempts::Asker::Local(actor.principal)
+        },
         |admitted| {
             let context = admitted.context();
             crate::attempts::Asker::hosted(&context.actor, &context.policy_revision)
@@ -651,15 +655,17 @@ async fn guards(hub: Arc<Hub>, request: &Request) -> Response {
     answered(read.await, "")
 }
 
-/// The board's active custom workflow, and the local owner's next actions on one task it holds
+/// The board's active custom workflow, and the next actions on one task it holds of the
+/// principal this machine's gate admitted the request as ([`crate::front::Admitted`])
 /// (docs/workflow/WORKFLOW.md, "The app"): the board's own reads, the same for every branch.
-async fn workflow(hub: Arc<Hub>, path: &str, request: &Request) -> Response {
+async fn workflow(shared: &Shared, hub: Arc<Hub>, path: &str, request: &Request) -> Response {
     let slug = query(request, "slug").unwrap_or_default();
     let actions = path == symphony_api::workflow::WORKFLOW_ACTIONS_PATH;
+    let asker = crate::front::Admitted::actor(shared, request.extensions()).principal;
     let read = crate::spawn::blocking(move || {
         let store = hub.reader().map_err(|e| unavailable(&e, ""))?;
         let read = if actions {
-            owner_actions(&store, &slug)
+            next_actions(&store, &slug, &asker)
                 .map(|read| no_store(Json(read)))
                 .map_err(task_failure)
         } else {
@@ -1303,16 +1309,17 @@ async fn plugin_response(shared: &Shared, root: &Path, path: &str, request: &Req
     }
 }
 
-/// The local owner's next actions on `slug`, with the accepted output standing for each task it
-/// depends on where an edge leaving its pair takes them, which the page sends with that edge
+/// `asker`'s next actions on `slug`, with the accepted output standing for each task it depends on
+/// where an edge leaving its pair takes them, which the page sends with that edge
 /// (docs/workflow/WORKFLOW.md, "Accepted outputs"): both from one read of the board.
-fn owner_actions(
+fn next_actions(
     store: &symphony_board::Store,
     slug: &str,
+    asker: &symphony_plugin::execution::Principal,
 ) -> Result<symphony_api::workflow::ActionsRead, symphony_board::Error> {
     let (next, outputs) = store.workflow_actions_with_outputs(
         slug,
-        &symphony_board::workflow::local_owner(),
+        asker,
         &symphony_board::workflow::Host::local(),
     )?;
     let takes = (outputs.takes.into_iter())
