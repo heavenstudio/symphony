@@ -1151,3 +1151,94 @@ fn a_codex_thread_from_no_terminal_retires_once_every_terminal_it_was_launched_i
         assert_eq!(registered(), set(&[&launched, &unplaced]), "{backend:?}");
     }
 }
+
+/// What holds a Codex thread, on both stores: an open launch record naming a terminal hc lists
+/// live, only that. A closed record names no terminal held, though hc lists its address live again
+/// for another program; a record naming no terminal says nothing, so a thread only it names is
+/// neither confirmed nor retired; the thread is the record's whoever's record it is, so a session
+/// registering a thread another handle's record names goes by that record. A restored Codex
+/// registers from its new terminal before its record names it, as the board starts Codex: present
+/// there while that terminal runs Codex, whatever its records say.
+#[test]
+fn a_codex_thread_is_held_only_by_an_open_record_naming_a_live_terminal() {
+    use crate::store_fixture::{Backend, Fixture, Seed};
+    for backend in [Backend::SurrealDb, Backend::PostgreSql] {
+        let seed = Seed::default().task("p/work", "in_progress");
+        let f = Fixture::on(backend, seed.task("p/next", "ready"));
+        let store = &f.store;
+        let [reused, paneless, borrower, owner, restored] = ["worker"; 5].map(|k| f.session(k));
+        let launch = |slug: &str, handle: &str, thread: &str, pane: &str| {
+            let new = crate::NewLaunch {
+                claude_session: format!("codex:{thread}"),
+                pane: pane.into(),
+                ..crate::NewLaunch::new(slug, handle, "executor")
+            };
+            store.record_launch(&new).unwrap();
+        };
+        let close = |slug: &str, handle: &str| {
+            (store.close_task_session(slug, handle, "its program ended", "")).unwrap();
+        };
+        let register = |handle: &str, thread: &str, terminal: Option<&str>| {
+            let address = format!("codex:{thread}");
+            (store.callback_in(handle, Some(&address), false, false, terminal)).unwrap();
+        };
+        let terminal = |address: &str, agent: &str| -> crate::launch::hc::Object {
+            let listed = json!({"address": address, "agent": agent, "state": "live"});
+            listed.as_object().unwrap().clone()
+        };
+        let presence = |live: &[crate::launch::hc::Object]| {
+            crate::launch::reap::presence(store, live).unwrap()
+        };
+        let sweep = |live: &[crate::launch::hc::Object]| {
+            (store.callback_presence(Some(&presence(live)), true)).unwrap()
+        };
+        let registered =
+            || -> BTreeSet<String> { store.callbacks().unwrap().into_keys().collect() };
+        let set = |handles: &[&String]| -> BTreeSet<String> {
+            handles.iter().map(|h| h.to_string()).collect()
+        };
+
+        // `reused`'s record closed on t5, which hc lists live again for another Codex: it holds
+        // nothing, so the thread is gone. `paneless`'s one record names no terminal: not launched.
+        launch("p/work", &reused, "0aaa", "t5");
+        close("p/work", &reused);
+        register(&reused, "0aaa", None);
+        launch("p/work", &paneless, "0bbb", "");
+        register(&paneless, "0bbb", None);
+        // `borrower` registers the thread `owner`'s open record puts in t6, where Codex runs.
+        launch("p/work", &owner, "0ccc", "t6");
+        register(&borrower, "0ccc", None);
+        // `restored`'s record closed with its terminal; its restore started Codex in t7, which
+        // registered from there before the record names t7.
+        launch("p/next", &restored, "0ddd", "t4");
+        close("p/next", &restored);
+        register(&restored, "0ddd", Some("t7"));
+
+        let live = [
+            terminal("t5", "codex"),
+            terminal("t6", "codex"),
+            terminal("t7", "codex"),
+        ];
+        let read = presence(&live);
+        assert_eq!(read.threads, ["0ccc".to_string()].into(), "{backend:?}");
+        assert_eq!(
+            read.gone,
+            ["0aaa", "0ddd"].map(String::from).into(),
+            "{backend:?}"
+        );
+        assert_eq!(sweep(&live), set(&[&borrower, &restored]), "{backend:?}");
+        assert_eq!(
+            registered(),
+            set(&[&paneless, &borrower, &restored]),
+            "{backend:?}"
+        );
+
+        // `owner`'s terminal is gone, though its record is open: the borrowed thread goes with it.
+        // The restored Codex's terminal still runs Codex, and the paneless thread stays.
+        assert_eq!(sweep(&[terminal("t7", "codex")]), set(&[&restored]));
+        assert_eq!(registered(), set(&[&paneless, &restored]), "{backend:?}");
+        // Its terminal is gone: the registration goes with it.
+        assert_eq!(sweep(&[]), BTreeSet::new());
+        assert_eq!(registered(), set(&[&paneless]), "{backend:?}");
+    }
+}

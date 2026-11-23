@@ -624,11 +624,15 @@ fn codex_is_the_default_without_its_daemon_and_its_thread_is_recorded_once_it_re
         assert_eq!(s.claude_session, "codex:");
         let run = the_run(&w);
         let handle = &s.handle;
+        let wrapper = symphony_board::launch::hc::IN_ITS_TERMINAL;
         assert_eq!(
             started(&run),
             [
                 "env",
                 &format!("TASKS_SESSION={handle}"),
+                wrapper[0],
+                wrapper[1],
+                wrapper[2],
                 "codex",
                 "--no-daemon",
                 "-s",

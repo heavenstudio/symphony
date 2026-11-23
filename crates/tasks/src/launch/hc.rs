@@ -33,6 +33,18 @@ pub const BOARD_LABEL: &str = "symphony.board";
 /// The label naming the board session a terminal was started for.
 pub const HANDLE_LABEL: &str = "symphony.handle";
 
+/// What the board starts Codex through, its program and arguments after it, so the commands Codex
+/// runs know the terminal they run in: hc gives a terminal its address only once it runs, so `sh`
+/// hands the terminal's own `HC_TERMINAL_ID` to Codex's shell
+/// (`shell_environment_policy.set`, which Codex applies after its inherited baseline, a
+/// `core` one included), then becomes Codex (`exec`), which keeps the pid and leaves Codex the
+/// terminal's foreground. [`program`] reads past it.
+pub const IN_ITS_TERMINAL: [&str; 3] = [
+    "sh",
+    "-c",
+    r#"exec "$0" -c "shell_environment_policy.set.HC_TERMINAL_ID=\"$HC_TERMINAL_ID\"" "$@""#,
+];
+
 /// hc's and the Herdr app's calls. [`Hc::run`], [`Hc::feed`] and [`Hc::app`] reach them; the rest
 /// read what they answer.
 pub trait Hc {
@@ -626,7 +638,8 @@ pub fn conversation(argv: &[String]) -> Option<String> {
     }
 }
 
-/// The program an argv runs, past `env` and its `KEY=VALUE` settings.
+/// The program an argv runs, past `env` and its `KEY=VALUE` settings, and past the board's
+/// [`IN_ITS_TERMINAL`].
 pub fn program(argv: &[String]) -> &[String] {
     let mut at = 0;
     if argv
@@ -638,7 +651,11 @@ pub fn program(argv: &[String]) -> &[String] {
             at += 1;
         }
     }
-    &argv[at.min(argv.len())..]
+    let rest = &argv[at.min(argv.len())..];
+    match rest.split_at_checked(IN_ITS_TERMINAL.len()) {
+        Some((wrapper, run)) if wrapper == IN_ITS_TERMINAL => run,
+        _ => rest,
+    }
 }
 
 #[cfg(test)]
@@ -704,6 +721,22 @@ mod tests {
         ] {
             assert_eq!(conversation(&words(line)).as_deref(), expected, "{line}");
         }
+        // The board starts Codex through its wrapper: a finished terminal lists that argv.
+        let wrapped = |run: &str| {
+            let mut argv = words("env TASKS_SESSION=a");
+            argv.extend(IN_ITS_TERMINAL.map(str::to_string));
+            argv.extend(words(run));
+            argv
+        };
+        let resumed = wrapped("codex --no-daemon -c x=1 resume th2");
+        assert_eq!(program(&resumed)[0], "codex");
+        assert_eq!(conversation(&resumed).as_deref(), Some("codex:th2"));
+        assert_eq!(conversation(&wrapped("codex --no-daemon")), None);
+        // Another shell's script is no wrapper of the board's: it runs `sh`.
+        let other = words("env A=1 sh -c true codex resume th3");
+        assert_eq!(program(&other)[0], "sh");
+        assert_eq!(conversation(&other), None);
+        assert!(program(&words("env A=1 sh -c")).starts_with(&["sh".to_string()]));
     }
 
     #[test]

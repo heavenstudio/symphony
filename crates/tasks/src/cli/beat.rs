@@ -391,7 +391,10 @@ fn considered(folder: &Path, key: &str) -> Option<PathBuf> {
 /// `callback` with no address would have: once for each socket, so a channel the session turns
 /// off stays off, and a restored conversation, a new process on a new socket, is connected again.
 /// A registration another session holds the chat seat by is left alone. Whatever happens the beat
-/// goes on: a socket that cannot be registered now is tried at the session's next board command.
+/// goes on: a socket that cannot be registered now, or whose session no open launch records yet
+/// (a board command run before its launch or restore writes the record), is tried at the
+/// session's next board command; so a session the board never launched reads its launches at
+/// each.
 fn connect(
     store: &Store,
     env: &Env,
@@ -420,23 +423,25 @@ fn connect(
         .ok()?
         .iter()
         .any(|launch| launch.closed.is_none() && launch.claude_session == beaten.key);
-    if launched {
-        let address = format!("uds:{socket}");
-        let held = store.callbacks().ok()?.remove(handle);
-        if held
-            .as_ref()
-            .is_none_or(|held| held.address != address && !held.chat)
-        {
-            store
-                .callback_in(
-                    handle,
-                    Some(&address),
-                    false,
-                    false,
-                    env.var("HC_TERMINAL_ID"),
-                )
-                .ok()?;
-        }
+    // Not yet launched, as a command run before its launch writes the record is: tried again.
+    if !launched {
+        return None;
+    }
+    let address = format!("uds:{socket}");
+    let held = store.callbacks().ok()?.remove(handle);
+    if held
+        .as_ref()
+        .is_none_or(|held| held.address != address && !held.chat)
+    {
+        store
+            .callback_in(
+                handle,
+                Some(&address),
+                false,
+                false,
+                env.var("HC_TERMINAL_ID"),
+            )
+            .ok()?;
     }
     if let Some(seen) = seen
         && seen

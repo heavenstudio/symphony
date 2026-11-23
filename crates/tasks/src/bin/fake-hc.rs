@@ -12,8 +12,10 @@
 //! / `space.rename` and `do agent.focus` / `pane.focus` (the terminal shown kept as `focused`). A
 //! terminal `run` labels into a space and tab the layout lacks joins it, as the window adopts it.
 //!
-//! An agent `run` starts (its program, past `env` and its settings, is `claude` or `codex`) waits
-//! at its prompt, `idle`, as hc runs one with no template: no `first_message`. `send` gives it its
+//! An agent `run` starts (its program, past `env` and its settings and the board's Codex wrapper,
+//! is `claude` or `codex`) waits at its prompt, `idle`, as hc runs one with no template: no
+//! `first_message`; its foreground is the program as it runs, the wrapper's `-c` given the
+//! terminal's address. `send` gives it its
 //! next message as hc does: refused while it is `blocked` (unless `--force`), else it goes
 //! `working` and the answer says `started` (null for a program that reports no status), `status`
 //! (its word when the text went in) and `turn`. `FAKE_HC_SILENT=N` leaves the first N agents saying
@@ -31,6 +33,7 @@
 
 use serde_json::{Map, Value, json};
 use std::io::{BufRead, Write};
+use symphony_board::launch::hc::IN_ITS_TERMINAL;
 
 /// What Claude's folder-trust dialog asks.
 const TRUST_QUESTION: &str = "Quick safety check: Is this a project you created or one you trust?";
@@ -201,7 +204,9 @@ fn flags<'a>(args: &'a [String], name: &str) -> Vec<&'a str> {
 }
 
 /// The program an argv runs, past `env` and its `KEY=VALUE` settings.
-fn program(argv: &[String]) -> &[String] {
+/// What an argv runs past `env` and its settings: the program, and whether it starts through the
+/// board's wrapper (`IN_ITS_TERMINAL`), which the shell `exec`s away.
+fn started(argv: &[String]) -> (&[String], bool) {
     let mut at = 0;
     if argv.first().is_some_and(|a| a == "env") {
         at = 1;
@@ -209,7 +214,29 @@ fn program(argv: &[String]) -> &[String] {
             at += 1;
         }
     }
-    &argv[at.min(argv.len())..]
+    let rest = &argv[at.min(argv.len())..];
+    match rest.split_at_checked(IN_ITS_TERMINAL.len()) {
+        Some((wrapper, run)) if wrapper == IN_ITS_TERMINAL => (run, true),
+        _ => (rest, false),
+    }
+}
+
+fn program(argv: &[String]) -> &[String] {
+    started(argv).0
+}
+
+/// The program's own argv, as hc lists its foreground once it runs: through the wrapper, its shell
+/// handed it the terminal's address and became it.
+fn foreground(argv: &[String], address: &str) -> Vec<String> {
+    match started(argv) {
+        (run, true) if !run.is_empty() => {
+            let set = format!("shell_environment_policy.set.HC_TERMINAL_ID=\"{address}\"");
+            let mut own = vec![run[0].clone(), "-c".into(), set];
+            own.extend(run[1..].iter().cloned());
+            own
+        }
+        (run, _) => run.to_vec(),
+    }
 }
 
 fn base(word: &str) -> &str {
@@ -238,7 +265,7 @@ fn shown(t: &Map<String, Value>) -> Value {
             .flatten()
             .filter_map(|a| a.as_str().map(str::to_string))
             .collect();
-        let run = program(&argv);
+        let run = foreground(&argv, t["address"].as_str().unwrap_or_default());
         view.insert(
             "foreground".into(),
             json!({"argv": run, "pid": t["pid"], "cwd": t["cwd"],
