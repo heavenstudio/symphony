@@ -833,13 +833,23 @@ fn a_codex_thread_from_no_terminal_retires_once_every_terminal_it_was_launched_i
             let presence = crate::launch::reap::presence(store, live).unwrap();
             store.callback_presence(Some(&presence), refresh).unwrap()
         };
-        let registered = || store.callbacks().unwrap().into_keys().collect::<BTreeSet<_>>();
+        let registered = || {
+            store
+                .callbacks()
+                .unwrap()
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        };
         let set = |handles: &[&String]| -> BTreeSet<String> {
             handles.iter().map(|h| h.to_string()).collect()
         };
 
         let codex = [terminal("t1", "codex"), terminal("t3", "codex")];
-        assert_eq!(sweep(&codex, true), set(&[&launched, &placed]), "{backend:?}");
+        assert_eq!(
+            sweep(&codex, true),
+            set(&[&launched, &placed]),
+            "{backend:?}"
+        );
         assert_eq!(registered(), set(&[&launched, &unplaced, &placed]));
 
         // Its launch's terminal runs something else: kept, unconfirmed. The terminal `placed`
@@ -852,7 +862,10 @@ fn a_codex_thread_from_no_terminal_retires_once_every_terminal_it_was_launched_i
 
         // Its launch's terminal is gone: nothing changes without hc or on a dry run; a sweep
         // retires it. The thread no launch records stays.
-        assert_eq!(store.callback_presence(None, true).unwrap(), BTreeSet::new());
+        assert_eq!(
+            store.callback_presence(None, true).unwrap(),
+            BTreeSet::new()
+        );
         assert_eq!(sweep(&[], false), BTreeSet::new());
         assert_eq!(registered(), set(&[&launched, &unplaced]));
         sweep(&[], true);
