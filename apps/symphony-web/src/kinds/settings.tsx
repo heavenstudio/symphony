@@ -1,7 +1,8 @@
 // The Settings page's module, as the shell loads a page kind: `run` mounts it in its root
 // (`#review-root-settings`, which the shell made and shows), and `stop` aborts its mount's signal and
 // unmounts it, its reads with it, before the shell shows another kind. The page opens no feed and
-// keeps nothing on the device: it reads the settings once, and again only while no answer came.
+// keeps nothing on the device but a field's draft: it reads the settings once, again while no
+// answer came, and again after each write.
 
 import "../settings.css";
 import { flushSync } from "react-dom";

@@ -14,7 +14,9 @@ use symphony_board::lock::Recovered as _;
 
 /// How long the server waits on each board request: its board tick shares the data worker's thread
 /// with every document refresh, and a page gives up on an answer after 15 s (the client's
-/// `request.ts`). A read with no whole answer in that time goes once more
+/// `request.ts`). On PostgreSQL it bounds each write of a request and each read of its answer, and
+/// a request that met it is never sent again ([`symphony_board::pg::Client::waiting`]); on
+/// SurrealDB a read with no whole answer in that time goes once more
 /// ([`symphony_board::rpc::Kind`]), and so waits at most twice this.
 const BOARD_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 

@@ -13,7 +13,6 @@ use std::path::Path;
 
 use symphony_board::launch::defaults::{AGENTS, ASSESSOR, ROLES};
 use symphony_board::local;
-use toml::de::DeTable;
 
 const USAGE: &str = "usage: symphony model ROLE MODEL [--agent AGENT] [--assessor MODEL] [--local]";
 const LOCAL: &str = "--local";
@@ -180,8 +179,7 @@ fn change(
     ))
 }
 
-/// Replace only a value's source span. A missing key goes into the nearest explicit table;
-/// dotted keys reach the remaining path, including when no agents table exists yet.
+/// Replace only each value's source span ([`crate::project::edit::set`]).
 fn edited(text: &str, edit: &Edit<'_>) -> Result<String, String> {
     edit.validate()?;
     let roles = if edit.role == "all" {
@@ -206,67 +204,7 @@ fn edited(text: &str, edit: &Edit<'_>) -> Result<String, String> {
 }
 
 fn set(text: &mut String, path: &[&str], model: &str) -> Result<(), String> {
-    // JSON and TOML share these string escapes, but TOML also requires DEL to be escaped.
-    let quoted = serde_json::Value::String(model.into())
-        .to_string()
-        .replace('\u{7f}', "\\u007F");
-    let parsed = DeTable::parse(text).map_err(|e| format!("symphony.toml: {e}"))?;
-    let mut table = parsed.get_ref();
-    // (insertion point, path already reached, inline table needs a comma)
-    let mut insert = (0, 0, None);
-    for (depth, key) in path.iter().enumerate() {
-        let Some(value) = table.get(*key) else {
-            let (at, reached, inline) = insert;
-            let key = path[reached..].join(".");
-            let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
-            let added = if let Some(comma) = inline {
-                format!("{key} = {quoted}{}", if comma { ", " } else { "" })
-            } else {
-                let leading = if at > 0 && !text[..at].ends_with('\n') {
-                    newline
-                } else {
-                    ""
-                };
-                format!("{leading}{key} = {quoted}{newline}")
-            };
-            text.insert_str(at, &added);
-            return Ok(());
-        };
-        if depth + 1 == path.len() {
-            if value.get_ref().as_str().is_none() {
-                return Err(format!(
-                    "symphony.toml: {} must be a string",
-                    path.join(".")
-                ));
-            }
-            // Keep even the original quoting when the value already matches.
-            if value.get_ref().as_str() != Some(model) {
-                text.replace_range(value.span(), &quoted);
-            }
-            return Ok(());
-        }
-        table = value.get_ref().as_table().ok_or_else(|| {
-            format!(
-                "symphony.toml: {} must be a table",
-                path[..=depth].join(".")
-            )
-        })?;
-        let span = value.span();
-        if span.is_empty() {
-            continue;
-        }
-        match text.as_bytes().get(span.start) {
-            Some(b'{') => insert = (span.start + 1, depth + 1, Some(!table.is_empty())),
-            Some(b'[') => {
-                let at = text[span.end..]
-                    .find('\n')
-                    .map_or(text.len(), |n| span.end + n + 1);
-                insert = (at, depth + 1, None);
-            }
-            _ => {} // an implicit or dotted table: insert through its explicit parent
-        }
-    }
-    Ok(())
+    crate::project::edit::set(text, path, &toml::Value::String(model.into()))
 }
 
 #[cfg(test)]

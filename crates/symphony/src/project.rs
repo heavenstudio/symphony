@@ -25,6 +25,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 mod board;
+pub(crate) mod edit;
 mod file;
 mod model_warnings;
 mod theme;
@@ -384,12 +385,15 @@ impl Project {
     /// wrong.
     pub fn load(root: &Path) -> Result<Project, String> {
         let mut project = match Self::read(root)? {
-            Some(text) => Self::parse(root, &text)?,
-            None => Self::plain(root),
+            Some(text) => Self::checked(root, &text)?,
+            None => {
+                let project = Self::plain(root);
+                project
+                    .check_files(root, &mut Vec::new())
+                    .map_err(|e| format!("{FILE}: {e}"))?;
+                project
+            }
         };
-        project
-            .check_files(root, &mut Vec::new())
-            .map_err(|e| format!("{FILE}: {e}"))?;
         // A local file that is refused leaves the committed settings, as the board reads them:
         // what is wrong with it is [`Project::local_problems`]' to say.
         if let Ok(Some(local)) = Self::local(root) {
@@ -487,6 +491,23 @@ impl Project {
         // The board reads `[stamps]` itself, from the main checkout's committed file, and refuses
         // a catalogue it cannot read where a command needs it; the lint and a load refuse it here.
         symphony_board::stamps::Catalogue::parse(text)?;
+        Ok(project)
+    }
+
+    /// `text` as the project file of the project at `root`, judged as the settings check judges
+    /// the file ([`crate::lint::settings`]): [`Project::parse`], then the files its entrypoints
+    /// name as [`Project::load`] looks at them. What the Settings page runs on the file a commit
+    /// would leave, before it commits it.
+    ///
+    /// # Errors
+    ///
+    /// What [`Project::parse`] refuses, and an entrypoint whose files meet another route, each
+    /// naming the file.
+    pub fn checked(root: &Path, text: &str) -> Result<Project, String> {
+        let project = Self::parse(root, text)?;
+        project
+            .check_files(root, &mut Vec::new())
+            .map_err(|e| format!("{FILE}: {e}"))?;
         Ok(project)
     }
 

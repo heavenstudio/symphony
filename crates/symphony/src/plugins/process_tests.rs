@@ -719,7 +719,7 @@ fn a_plugin_of_another_major_is_refused_killed_and_not_started_again_until_its_p
     let refused = remote.declaration().unwrap_err();
     assert_eq!(
         refused,
-        "its process is refused: the plugin speaks protocol 1.0 and this Symphony 0.4: install a \
+        "its process is refused: the plugin speaks protocol 1.0 and this Symphony 0.5: install a \
          Symphony that speaks protocol 1; it is not started again until its program or the \
          project's settings change"
     );
@@ -2619,5 +2619,102 @@ fn a_plugins_process_answers_its_authorities_as_it_does_linked_and_shows_a_panic
              file is gone"
                 .into()
         )
+    );
+}
+
+/// A project's Settings page describers: `lamp` describes the root it is asked of, `shelf` cannot
+/// say, `broken` panics.
+struct Lamp(&'static str);
+
+static LAMPS: Lamps = Lamps;
+
+struct Lamps;
+
+impl Plugin for Lamps {
+    fn name(&self) -> &str {
+        "lamps"
+    }
+    fn describers(&self) -> Vec<&dyn symphony_plugin::Describer> {
+        static EACH: [Lamp; 3] = [Lamp("lamp"), Lamp("shelf"), Lamp("broken")];
+        EACH.iter()
+            .map(|d| -> &dyn symphony_plugin::Describer { d })
+            .collect()
+    }
+}
+
+impl symphony_plugin::Describer for Lamp {
+    fn id(&self) -> &str {
+        self.0
+    }
+    fn describe(&self, root: &Path) -> Result<symphony_plugin::vocabulary::SettingsEntry, String> {
+        match self.0 {
+            "lamp" => Ok(symphony_plugin::vocabulary::SettingsEntry {
+                id: "lamp".into(),
+                name: "Lamp".into(),
+                about: root.display().to_string(),
+                state: None,
+                needs: Vec::new(),
+                settings: Vec::new(),
+                source: None,
+            }),
+            "shelf" => Err("shelf.toml does not read".into()),
+            _ => panic!("the lamp's file is gone"),
+        }
+    }
+}
+
+#[test]
+fn a_plugins_process_answers_its_describers_as_it_does_linked_and_shows_a_panic_as_its_refusal() {
+    let tree = Tree::new();
+    let remote = Remote::leaked(
+        "lamps",
+        process_in(&tree, "lamps"),
+        peer(&LAMPS, Arc::default()),
+        patient(),
+    );
+    assert_eq!(
+        remote.declaration().map(|d| d.describers.clone()),
+        Ok(vec!["lamp".into(), "shelf".into(), "broken".into()])
+    );
+    let (remote_ones, linked_ones) = (remote.describers(), LAMPS.describers());
+    for (far, near) in remote_ones.iter().zip(&linked_ones).take(2) {
+        assert_eq!(far.id(), near.id());
+        assert_eq!(far.describe(&tree.root), near.describe(&tree.root));
+    }
+    assert_eq!(
+        remote_ones[0].describe(&tree.root).map(|entry| entry.about),
+        Ok(tree.root.display().to_string())
+    );
+    assert_eq!(
+        remote_ones[2].describe(&tree.root),
+        Err(
+            "plugin lamps: it refused describers.describe: lamps panicked: the lamp's file is gone"
+                .into()
+        )
+    );
+}
+
+#[test]
+fn a_describer_declared_under_a_minor_before_the_call_is_never_sent_it() {
+    use symphony_plugin::protocol::Describe;
+    let tree = Tree::new();
+    let seen = Seen::default();
+    let mut declared = Declaration::of(&LAMPS);
+    declared.protocol = Version::new(PROTOCOL.major, Describe::SINCE - 1);
+    let remote = Remote::leaked(
+        "lamps",
+        process_in(&tree, "lamps"),
+        serving_as(&LAMPS, declared, seen.clone()),
+        patient(),
+    );
+    let said = remote.describers()[0].describe(&tree.root).unwrap_err();
+    assert!(
+        said.contains("it speaks protocol 0.4, which has no describers.describe"),
+        "{said}"
+    );
+    let heard = seen.heard();
+    assert!(
+        !heard.iter().any(|line| line.contains(Describe::TAG)),
+        "{heard:?}"
     );
 }

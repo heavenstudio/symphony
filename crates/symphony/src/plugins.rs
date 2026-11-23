@@ -12,8 +12,8 @@ use std::sync::{Arc, OnceLock};
 
 use symphony_plugin::vocabulary::{Block, NavItem, Picture, Presentation, Span};
 use symphony_plugin::{
-    Authority, BoardAction, BoardField, Card, CardKind, Command, Component, DocCheck, Generator,
-    HomeRegion, Page, Plugin, ProseRule, Route, ThreadLine, Watch,
+    Authority, BoardAction, BoardField, Card, CardKind, Command, Component, Describer, DocCheck,
+    Generator, HomeRegion, Page, Plugin, ProseRule, Route, ThreadLine, Watch,
 };
 
 pub use symphony_plugin::Reply;
@@ -429,6 +429,14 @@ impl Plugins {
             let plugin: &'static dyn Plugin = *plugin;
             (plugin.authorities().into_iter()).find(|authority| authority.adapter() == adapter)
         })
+    }
+
+    /// Each Settings page describer, with the name of the plugin it is of, in the project's order
+    /// of its plugins and each plugin's of its describers.
+    pub fn describers(&self) -> Vec<(&str, &dyn Describer)> {
+        (self.list.iter())
+            .flat_map(|p| p.describers().into_iter().map(|d| (p.name(), d)))
+            .collect()
     }
 
     pub fn watches(&self) -> Vec<&dyn Watch> {

@@ -64,13 +64,16 @@ pub(crate) fn local<B>(
 /// of the session, or when it is reached by its web address alone.
 fn paned(hub: &Hub, handle: &str) -> Result<(SessionGo, String), (StatusCode, String)> {
     let project = symphony::project::Project::of(&hub.root);
-    if project.agents.panes != "hc" {
+    // The board's store's setting over the project file's; a board that does not answer holds
+    // none, and the file's is in force.
+    let stored = symphony::taskview::connect(&hub.root)
+        .map(|store| store.stored())
+        .unwrap_or_default();
+    let panes = stored.panes(&project.agents.panes);
+    if panes != "hc" {
         return Err((
             StatusCode::FORBIDDEN,
-            format!(
-                "this project does not address its agents' panes ([agents] panes = {:?})",
-                project.agents.panes
-            ),
+            format!("this project does not address its agents' panes ([agents] panes = {panes:?})"),
         ));
     }
     let go = hub

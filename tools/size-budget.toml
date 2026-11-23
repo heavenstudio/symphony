@@ -29,7 +29,23 @@
 # 2,360,000, where main's own folder had some 19,300 left. No reduction holds: a cut of 4,681
 # would drop a part the task's brief names, and every later build carries the same pages while
 # three builds are kept. The line is that size plus 4 %, by the orchestrator's gate decision.
-client = 2_450_000
+# The landings of 2026-11-22 took the folder past that line together
+# (tests/release-red-verify-size-check-10): 2,406,959 at the last green run's f9e9fb427 (builds of
+# 800,223, 800,212 and 800,215, and 6,309 of page), 2,473,846 at 2422e906e and on main at
+# 7f651be42 (832,908, 830,999 and 803,392, and 6,547 of page). The newest build grew 32,685
+# bytes, by file: the workflow guard panel's nextactions chunk 14,125 (app/workflow-guard-panel,
+# whose guards.tsx is 11.6 KB of it, and app/workflow-pages-follow-ups 1,112), the Settings page
+# 10,393 (settings.js 6,646 and settings.css 3,747, app/settings-page-reads), flow.js 3,153,
+# board.js 724, the shell 485, the shared chunks 402, and a few hundred more from that day's
+# earlier landings. No reduction holds: an attribution of every byte of the build by its source
+# maps finds no module in two chunks and nothing unminified, and the growth is those two pages
+# themselves. The one structural cut, a shared reader for the 549 hand-written wire field checks,
+# takes back some 3 to 4 KB a build, where the line holds three builds of 814,484 each and main's
+# newest is 18,424 past that; and as three builds are kept, the folder after this landing and the
+# next one would be green only with a build of about 775,700, a cut of 59 KB. Measured 2,473,846;
+# the line is that plus 4 %, rounded down to 10,000, by the orchestrator's gate decision.
+# Independent review is required.
+client = 2_570_000
 
 # Each binary's file; symphony-server's less the client above, which it embeds.
 [binaries]

@@ -6,6 +6,8 @@ use symphony_board::{rpc, sys};
 mod delivery;
 #[path = "after_commit/publication_reports.rs"]
 mod publication_reports;
+#[path = "after_commit/settings.rs"]
+mod settings;
 #[path = "after_commit/uploads.rs"]
 mod uploads;
 
@@ -305,6 +307,46 @@ fn the_land_of_a_pending_saves_task_is_said_from_its_journal() {
     isolated(
         "the_land_of_a_pending_saves_task_is_said_from_its_journal",
         delivery::the_land_of_a_pending_saves_task_is_said_from_its_journal,
+    );
+}
+
+#[test]
+fn a_stored_preference_holds_at_once_with_the_store_as_its_source() {
+    isolated(
+        "a_stored_preference_holds_at_once_with_the_store_as_its_source",
+        settings::each_preference_holds_at_once_with_the_store_as_its_source,
+    );
+}
+
+#[test]
+fn a_stored_value_made_the_projects_is_one_commit_and_its_entry_goes() {
+    isolated(
+        "a_stored_value_made_the_projects_is_one_commit_and_its_entry_goes",
+        settings::a_stored_value_made_the_projects_is_one_commit_and_its_entry_goes,
+    );
+}
+
+#[test]
+fn a_red_settings_check_commits_nothing_and_keeps_the_entry() {
+    isolated(
+        "a_red_settings_check_commits_nothing_and_keeps_the_entry",
+        settings::a_red_settings_check_commits_nothing_and_keeps_the_entry,
+    );
+}
+
+#[test]
+fn under_delivery_a_settings_commit_waits_until_its_delivery_is_proved() {
+    isolated(
+        "under_delivery_a_settings_commit_waits_until_its_delivery_is_proved",
+        settings::under_delivery_a_commit_waits_on_its_branch_until_its_delivery_is_proved,
+    );
+}
+
+#[test]
+fn under_delivery_settings_made_the_projects_in_turn_each_deliver() {
+    isolated(
+        "under_delivery_settings_made_the_projects_in_turn_each_deliver",
+        settings::under_delivery_settings_made_the_projects_in_turn_each_deliver,
     );
 }
 

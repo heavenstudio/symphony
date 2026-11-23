@@ -116,6 +116,7 @@ fn a_note_names_its_saves_by_whose_they_are() {
         shown: true,
         state: State::Queued,
         by: by.into(),
+        keys: Vec::new(),
     };
     assert_eq!(whose(&[save("")]), "an owner's save");
     assert_eq!(whose(&[save("fox-1")]), "an agent's save");

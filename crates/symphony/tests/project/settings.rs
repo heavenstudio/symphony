@@ -1,17 +1,21 @@
 //! The Settings page's read (`symphony::settings::page`): each value in force with where it was
-//! written, for a project with no file, with a project file and with a local file over it, and a
-//! project file that does not load said as such; and the class of every key of the reference,
-//! which the read takes from the local settings file's lists.
+//! written, for a project with no file, with a project file, the board's store over it and a
+//! local file over both, and a project file or a store that does not load said as such; and the
+//! class of every key of the reference, which the read takes from the local settings file's
+//! lists.
 
 use std::collections::BTreeSet;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
 
 use super::reference::{REFERENCE, listed, read};
 use crate::Tree;
 use crate::board::HELD_FLOW;
-use symphony::settings::{Machine, class, page, scopes};
+use serde_json::json;
+use symphony::commit::pending::{Save, State};
+use symphony::settings::stored::Board;
+use symphony::settings::{Machine, class, page, page_with, scopes};
 use symphony_api::{Setting, SettingClass, SettingKind, SettingScope, SettingsEntry, SettingsPage};
+use symphony_board::settings::Entry;
 
 /// A machine with nothing on its search path.
 fn bare() -> Machine {
@@ -41,23 +45,6 @@ fn settings(page: &SettingsPage) -> Vec<&Setting> {
         .flat_map(|section| &section.entries)
         .flat_map(|entry| &entry.settings)
         .collect()
-}
-
-/// `git` with `args` in `root`.
-fn git(root: &Path, args: &[&str]) {
-    let done = symphony_board::sys::output(
-        symphony_board::sys::Command::new("git")
-            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
-            .args(["-c", "commit.gpgsign=false"])
-            .args(args)
-            .current_dir(root)
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE")
-            .env_remove("GIT_COMMON_DIR"),
-    )
-    .unwrap();
-    assert!(done.status.success(), "{args:?}: {done:?}");
 }
 
 #[test]
@@ -113,11 +100,18 @@ fn a_project_with_no_file_shows_every_default_and_says_none_is_written() {
         "The Symphony's four: tests, review, pictures, owner."
     );
     assert_eq!(stamps.source.said, "default: no [stamps] written");
+    // Its state is its program's to say, and this machine has none.
     let github = entry(&page, "github");
-    assert_eq!(github.state.as_ref().unwrap().on, Some(false));
+    let state = github.state.as_ref().unwrap();
+    assert_eq!((state.word.as_str(), state.on), ("Unknown", None));
     assert_eq!(
-        github.state.as_ref().unwrap().why,
-        "Off: no symphony-github.toml on main."
+        state.why,
+        "Unknown: its state is its program's to say, and this machine has no symphony-github: \
+         nothing is exchanged from here."
+    );
+    assert!(
+        github.settings.is_empty(),
+        "the page reads no file of its own"
     );
     let workflow = setting(&page, "workflow", "[workflow]");
     assert_eq!(workflow.value, "The board's own, built-in v1.");
@@ -298,6 +292,235 @@ fn a_local_file_holds_over_the_project_file_and_names_what_it_overrides() {
     assert_eq!(agents.source.scope, Some(SettingScope::Machine));
 }
 
+/// A board whose store holds each of `entries`, a key and its value, and nothing waits.
+fn holding(entries: &[(&str, serde_json::Value)]) -> Board {
+    Board {
+        entries: Ok(entries
+            .iter()
+            .map(|(key, value)| Entry {
+                key: (*key).into(),
+                value: Some(value.clone()),
+                revision: 1,
+                changes: Vec::new(),
+            })
+            .collect()),
+        waiting: Vec::new(),
+    }
+}
+
+/// A setting's value, its source's scope, where it is said and what it stands over.
+fn from(setting: &Setting) -> (&str, Option<SettingScope>, &str, Option<&str>) {
+    let source = &setting.source;
+    (
+        &setting.value,
+        source.scope,
+        &source.said,
+        source.over.as_deref(),
+    )
+}
+
+#[test]
+fn the_board_s_store_holds_over_the_project_file_and_the_local_file_over_the_store() {
+    let tree = Tree::new();
+    tree.write("symphony.toml", PROJECT);
+    tree.write(
+        "symphony.local.toml",
+        "[agents.models]\nexecutor = \"fable\"\n\n[limits]\nlow_volume = 1\n",
+    );
+    let board = holding(&[
+        ("agents.panes", json!("none")),
+        ("agents.launch.model", json!("sonnet")),
+        ("agents.launch.effort", json!("high")),
+        ("agents.models.reviewer", json!("fable")),
+        ("agents.models.executor", json!("opus")),
+        ("limits.low_volume", json!(3)),
+        ("limits.machine_agents", json!(2)),
+    ]);
+    let page = page_with(&tree.root, &bare(), &board);
+    assert_eq!(page.problems, Vec::<String>::new());
+    let store = Some(SettingScope::Board);
+    // The store's value, named as its own, over the committed one and where it is written.
+    assert_eq!(
+        from(setting(&page, "herdr", "[agents] panes")),
+        (
+            "none",
+            store,
+            "the board's store [agents] panes",
+            Some("\"hc\" (symphony.toml [agents] panes, line 5)")
+        )
+    );
+    // Herdr's state follows the panes in force.
+    assert_eq!(
+        entry(&page, "herdr").state.as_ref().unwrap().on,
+        Some(false)
+    );
+    assert_eq!(
+        from(setting(&page, "launch", "[agents] launch model")),
+        (
+            "sonnet",
+            store,
+            "the board's store [agents] launch model",
+            Some("\"opus\" (symphony.toml [agents] launch model, line 6)")
+        )
+    );
+    // One the project file does not write stands over none.
+    assert_eq!(
+        from(setting(&page, "launch", "[agents] launch effort")),
+        (
+            "high",
+            store,
+            "the board's store [agents] launch effort",
+            Some("none written")
+        )
+    );
+    assert_eq!(
+        from(setting(&page, "models", "[agents.models] reviewer")),
+        (
+            "fable",
+            store,
+            "the board's store [agents.models] reviewer",
+            Some("\"opus\" (symphony.toml [agents.models] reviewer, line 9)")
+        )
+    );
+    assert_eq!(
+        from(setting(&page, "limits", "[limits] machine_agents")),
+        (
+            "2",
+            store,
+            "the board's store [limits] machine_agents",
+            Some("its default, no limit")
+        )
+    );
+    // The local file's value holds over the store's, which it names.
+    let machine = Some(SettingScope::Machine);
+    assert_eq!(
+        from(setting(&page, "models", "[agents.models] executor")),
+        (
+            "fable",
+            machine,
+            "symphony.local.toml [agents.models] executor, line 2",
+            Some("\"opus\" (the board's store [agents.models] executor)")
+        )
+    );
+    assert_eq!(
+        from(setting(&page, "limits", "[limits] low_volume")),
+        (
+            "1",
+            machine,
+            "symphony.local.toml [limits] low_volume, line 5",
+            Some("3 (the board's store [limits] low_volume)")
+        )
+    );
+    // What the page writes: each setting the store keeps, in force or under the local file's.
+    let held: Vec<(&str, Option<&str>, bool)> = (page.stored.iter())
+        .map(|item| (item.key.as_str(), item.value.as_deref(), item.held))
+        .collect();
+    for expected in [
+        ("agents.panes", Some("none"), true),
+        ("agents.launch.model", Some("sonnet"), true),
+        ("agents.launch.default", None, false),
+        ("agents.models.executor", Some("opus"), false),
+        ("limits.low_volume", Some("3"), false),
+        ("limits.orchestrator_slots", None, false),
+    ] {
+        assert!(held.contains(&expected), "{expected:?} in {held:?}");
+    }
+    // A setting the store does not keep is not written from the page.
+    assert!(
+        page.stored
+            .iter()
+            .all(|item| !item.key.starts_with("land."))
+    );
+    assert!(page.stored.iter().all(|item| item.key != "project.name"));
+}
+
+#[test]
+fn a_store_that_cannot_be_read_or_an_entry_it_refuses_is_said_and_the_files_hold() {
+    let tree = Tree::new();
+    tree.write("symphony.toml", PROJECT);
+    let down = Board {
+        entries: Err("connection refused".into()),
+        waiting: Vec::new(),
+    };
+    let page = page_with(&tree.root, &bare(), &down);
+    assert_eq!(
+        page.problems,
+        [
+            "the board's store cannot be read (connection refused); none of it is read, the \
+          files' settings hold"
+        ]
+    );
+    let panes = setting(&page, "herdr", "[agents] panes");
+    assert_eq!(
+        (panes.value.as_str(), panes.source.scope),
+        ("hc", Some(SettingScope::Project))
+    );
+    // An entry the store does not read is said, and the file's value holds.
+    let refused = holding(&[
+        ("agents.panes", json!("tmux")),
+        ("limits.low_volume", json!(3)),
+    ]);
+    let page = page_with(&tree.root, &bare(), &refused);
+    assert_eq!(page.problems.len(), 1, "{:?}", page.problems);
+    assert!(page.problems[0].contains("tmux"), "{:?}", page.problems);
+    let panes = setting(&page, "herdr", "[agents] panes");
+    assert_eq!(
+        (panes.value.as_str(), panes.source.scope),
+        ("hc", Some(SettingScope::Project))
+    );
+    let item = page
+        .stored
+        .iter()
+        .find(|item| item.key == "agents.panes")
+        .unwrap();
+    assert!(!item.held);
+    assert!(
+        item.refused
+            .as_deref()
+            .is_some_and(|why| why.contains("tmux")),
+        "{item:?}"
+    );
+    let low = setting(&page, "limits", "[limits] low_volume");
+    assert_eq!(
+        (low.value.as_str(), low.source.scope),
+        ("3", Some(SettingScope::Board))
+    );
+}
+
+#[test]
+fn a_commit_waiting_for_its_delivery_is_said_beside_its_setting() {
+    let tree = Tree::new();
+    tree.write("symphony.toml", PROJECT);
+    let board = Board {
+        waiting: vec![Save {
+            sequence: 2,
+            file: "symphony.toml".into(),
+            branch: "docs/owner-save-2".into(),
+            shown: true,
+            state: State::Held("its task was cancelled".into()),
+            by: String::new(),
+            keys: vec!["limits.low_volume".into()],
+        }],
+        ..holding(&[("limits.low_volume", json!(3))])
+    };
+    let page = page_with(&tree.root, &bare(), &board);
+    let item = page
+        .stored
+        .iter()
+        .find(|item| item.key == "limits.low_volume")
+        .unwrap();
+    assert_eq!(
+        item.waiting.as_deref(),
+        Some("docs/owner-save-2: kept, not delivered: its task was cancelled")
+    );
+    let other = page
+        .stored
+        .iter()
+        .find(|item| item.key == "limits.machine_agents")
+        .unwrap();
+    assert_eq!(other.waiting, None);
+}
+
 /// `[agents] launch` written in both files: the local file's agent and model hold over the
 /// committed ones and name them, and an effort it writes empty is none, so the default holds.
 #[test]
@@ -328,7 +551,11 @@ fn a_local_launch_holds_over_the_committed_one_key_by_key() {
         );
         assert_eq!(
             launch.scopes,
-            [SettingScope::Project, SettingScope::Machine]
+            [
+                SettingScope::Project,
+                SettingScope::Board,
+                SettingScope::Machine
+            ]
         );
     }
     let effort = setting(&page, "launch", "[agents] launch effort");
@@ -457,138 +684,103 @@ fn an_agent_says_whether_this_machine_has_its_program() {
     assert!(!entry(&page, "github").needs[0].met);
 }
 
-#[test]
-fn github_is_read_from_what_the_default_branch_commits_never_the_working_file() {
-    let tree = Tree::new();
-    git(&tree.root, &["init", "-q", "-b", "main"]);
-    tree.write("a.txt", "a");
-    git(&tree.root, &["add", "a.txt"]);
-    git(&tree.root, &["commit", "-q", "-m", "a"]);
-    let text = "# The exchange.\nenabled = true\nrepository = \"lamp/shop\"\nissues = \"import\"\n";
-    tree.write("symphony-github.toml", text);
-    let uncommitted = page(&tree.root, &bare());
-    let github = entry(&uncommitted, "github");
-    assert_eq!(
-        github.state.as_ref().unwrap().on,
-        Some(false),
-        "a working file enables nothing"
+/// A machine whose search path is `bin` of `tree`, holding a `symphony-github` that runs
+/// `script` for `describe` and refuses any other words.
+fn github(tree: &Tree, script: &str) -> Machine {
+    let program = tree.write(
+        "bin/symphony-github",
+        &format!("#!/bin/sh\n[ \"$*\" = describe ] || exit 2\n{script}\n"),
     );
-    git(&tree.root, &["add", "symphony-github.toml"]);
-    git(&tree.root, &["commit", "-q", "-m", "on"]);
-    let committed = page(&tree.root, &bare());
-    let github = entry(&committed, "github");
-    // The file is one its program refuses (enabled with no token file, import with no labels),
-    // which runs as off: the page says what the file writes and claims the exchange on for none.
-    let state = github.state.as_ref().unwrap();
-    assert_eq!(
-        (state.word.as_str(), state.on),
-        ("Enabled in its file", None)
-    );
-    assert_eq!(
-        state.why,
-        "symphony-github.toml on main writes enabled = true; repository lamp/shop, issues import, \
-         pull requests off, releases off. Whether the exchange runs is its program's to say: a \
-         file it refuses, or a token it lacks, leaves it off (docs/operations/GITHUB_SETUP.md)."
-    );
-    assert!(!state.why.contains("On"), "{state:?}");
-    assert_eq!(github.needs.len(), 1, "the page claims no token or App");
-    let enabled = &github.settings[0];
-    assert_eq!(enabled.class, SettingClass::Reviewed);
-    assert_eq!(enabled.value, "on");
-    assert_eq!(
-        enabled.source.said,
-        "symphony-github.toml on main, enabled, line 2"
-    );
-    assert_eq!(enabled.source.line, Some(2));
-    // One committed that does not read is off, and says why.
-    tree.write("symphony-github.toml", "enabled = \n");
-    git(&tree.root, &["commit", "-q", "-am", "broken"]);
-    let broken = page(&tree.root, &bare());
-    let state = entry(&broken, "github").state.clone().unwrap();
-    assert_eq!(state.on, Some(false));
-    assert!(
-        state
-            .why
-            .starts_with("Off: symphony-github.toml on main does not read ("),
-        "{state:?}"
-    );
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    Machine::path(Some(tree.path("bin").into_os_string()))
 }
 
-/// The branch is the one the main checkout's HEAD commits in its project file, as the program
-/// reads it: a working edit of the project file names none, and a file that leaves `enabled` out
-/// or false is off.
+/// What a program answering for the exchange prints: its entry, its id another than the page's,
+/// its state saying the folder it ran in, a need of its own and a setting it calls a preference of
+/// the machine's.
+const ANSWER: &str = r#"printf '{"id":"elsewhere","name":"GitHub","about":"Its own words.","state":{"word":"On","on":true,"why":"Enabled, run in %s."},"needs":[{"what":"the token file","met":false,"said":"Not found."}],"settings":[{"key":"enabled","name":"Whether it runs","kind":"switch","value":"on","source":{"scope":"project","said":"symphony-github.toml on main enabled, line 1","file":"symphony-github.toml","line":1},"scopes":["project","machine"],"class":"preference"}]}\n' "$(pwd -P)""#;
+
 #[test]
-fn github_reads_the_branch_head_commits_and_a_file_that_does_not_enable_is_off() {
+fn github_is_its_programs_own_answer_run_in_the_main_checkout_and_judged() {
     let tree = Tree::new();
-    git(&tree.root, &["init", "-q", "-b", "main"]);
-    tree.write("symphony.toml", "[project]\ndefault_branch = \"trunk\"\n");
-    tree.write(
-        "symphony-github.toml",
-        "enabled = true\nrepository = \"lamp/shop\"\n",
-    );
-    git(&tree.root, &["add", "."]);
-    git(&tree.root, &["commit", "-q", "-m", "on main"]);
-    // HEAD names trunk, which no branch is: nothing is committed there.
-    let none = page(&tree.root, &bare());
-    let state = entry(&none, "github").state.clone().unwrap();
-    assert_eq!(state.on, Some(false));
-    assert_eq!(state.why, "Off: no symphony-github.toml on trunk.");
-    git(&tree.root, &["branch", "trunk"]);
-    let trunk = page(&tree.root, &bare());
-    let github = entry(&trunk, "github");
-    assert_eq!(github.state.as_ref().unwrap().on, None);
-    assert_eq!(
-        github.settings[0].source.said,
-        "symphony-github.toml on trunk, enabled, line 1"
-    );
-    // A working edit of the project file names no branch until it is committed.
-    tree.write("symphony.toml", "[project]\ndefault_branch = \"main\"\n");
-    let edited = page(&tree.root, &bare());
-    assert!(
-        entry(&edited, "github").settings[0]
-            .source
-            .said
-            .contains("on trunk"),
-    );
-    git(&tree.root, &["checkout", "-q", "--", "symphony.toml"]);
-    // Committed with the exchange not enabled: off, and said with what it writes.
-    tree.write(
-        "symphony-github.toml",
-        "enabled = false\nrepository = \"lamp/shop\"\n",
-    );
-    git(&tree.root, &["commit", "-q", "-am", "off"]);
-    git(&tree.root, &["branch", "-f", "trunk"]);
-    let off = page(&tree.root, &bare());
-    let state = entry(&off, "github").state.clone().unwrap();
-    assert_eq!((state.word.as_str(), state.on), ("Off", Some(false)));
+    tree.write("symphony.toml", PROJECT);
+    let machine = github(&tree, ANSWER);
+    let page = page(&tree.root, &machine);
+    let github = entry(&page, "github");
+    assert_eq!(github.name, "GitHub");
+    assert_eq!(github.about, "Its own words.");
+    let state = github.state.as_ref().unwrap();
+    assert_eq!((state.word.as_str(), state.on), ("On", Some(true)));
     assert_eq!(
         state.why,
-        "Off: symphony-github.toml on trunk does not enable it; repository lamp/shop, issues \
-         off, pull requests off, releases off."
+        format!(
+            "Enabled, run in {}.",
+            tree.root.canonicalize().unwrap().display()
+        )
     );
-    // A project file HEAD commits that does not read names no branch: off, and said.
-    tree.write("symphony.toml", "[project\n");
-    git(&tree.root, &["commit", "-q", "-am", "broken"]);
-    let broken = page(&tree.root, &bare());
-    let state = entry(&broken, "github").state.clone().unwrap();
-    assert_eq!(state.on, Some(false));
-    // It names the project file that does not read, and the branch it would have named none.
-    let (message, rest) = state
-        .why
-        .strip_prefix("Off: symphony.toml at HEAD does not read (")
-        .and_then(|why| why.rsplit_once(')'))
-        .unwrap_or_else(|| panic!("{state:?}"));
+    // The program the page ran is its first need, then the ones it says.
+    let needs: Vec<(&str, bool)> = (github.needs.iter())
+        .map(|need| (need.what.as_str(), need.met))
+        .collect();
+    assert_eq!(
+        needs,
+        [
+            ("the symphony-github program", true),
+            ("the token file", false)
+        ]
+    );
+    assert_eq!(
+        github.needs[0].said,
+        format!(
+            "Found on this machine: {}.",
+            tree.path("bin/symphony-github").display()
+        )
+    );
+    // Its settings decide what lands: reviewed, whatever it says, and the project's alone.
+    let [enabled] = github.settings.as_slice() else {
+        panic!("{:?}", github.settings);
+    };
+    assert_eq!(enabled.class, SettingClass::Reviewed);
+    assert_eq!(enabled.scopes, [SettingScope::Project]);
+    assert_eq!(enabled.value, "on");
+    assert_eq!(enabled.source.line, Some(1));
+}
+
+#[test]
+fn github_absent_failing_or_answering_what_does_not_read_is_said_and_the_page_still_drawn() {
+    let tree = Tree::new();
+    tree.write("symphony.toml", PROJECT);
+    let said = |machine: &Machine| {
+        let page = page(&tree.root, machine);
+        assert_eq!(page.sections.len(), 5, "every section is drawn");
+        let github = entry(&page, "github").clone();
+        assert_eq!(github.needs[0].what, "the symphony-github program");
+        let state = github.state.unwrap();
+        assert_eq!((state.word.as_str(), state.on), ("Unknown", None));
+        (github.needs[0].met, state.why)
+    };
+    let (met, why) = said(&bare());
+    assert!(!met);
+    assert!(why.contains("this machine has no symphony-github"), "{why}");
+    let failing = github(&tree, "echo half; echo 'no settings here' >&2; exit 3");
+    assert_eq!(
+        said(&failing),
+        (
+            true,
+            "Unknown: its program could not say: symphony-github describe exited 3: no settings \
+             here."
+                .into()
+        )
+    );
+    let garbled = github(&tree, "echo 'not an entry'");
+    let (met, why) = said(&garbled);
+    assert!(met);
     assert!(
-        !message.is_empty() && !message.contains("symphony"),
-        "{state:?}"
-    );
-    assert_eq!(
-        rest,
-        ", so it names no branch to read symphony-github.toml on."
-    );
-    assert_eq!(
-        entry(&broken, "github").settings[0].source.said,
-        "default: no symphony-github.toml"
+        why.starts_with(
+            "Unknown: its program could not say: symphony-github describe printed what does not \
+             read as an entry: "
+        ),
+        "{why}"
     );
 }
 
@@ -745,9 +937,9 @@ fn every_setting_the_page_shows_has_the_class_and_the_scopes_of_its_key() {
             .strip_prefix('[')
             .and_then(|k| k.trim_start_matches('[').split_once(']'))
         else {
-            // GitHub's own file and the device's are no key of the project file.
+            // The device's is no key of the project file.
             assert!(
-                ["enabled", "appearance"].contains(&setting.key.as_str()),
+                ["appearance"].contains(&setting.key.as_str()),
                 "{}",
                 setting.key
             );
@@ -793,13 +985,22 @@ fn every_setting_the_page_shows_has_the_class_and_the_scopes_of_its_key() {
 }
 
 #[test]
-fn only_what_a_local_file_may_hold_is_a_machine_s() {
-    let both = [SettingScope::Project, SettingScope::Machine];
-    assert_eq!(scopes(&["limits"], "machine_agents"), both);
-    assert_eq!(scopes(&["agents", "launch"], "effort"), both);
-    assert_eq!(scopes(&["agents", "models"], "assessor"), both);
+fn only_what_a_local_file_may_hold_is_a_machine_s_and_the_board_keeps_panes_besides() {
+    let all = [
+        SettingScope::Project,
+        SettingScope::Board,
+        SettingScope::Machine,
+    ];
+    assert_eq!(scopes(&["limits"], "machine_agents"), all);
+    assert_eq!(scopes(&["agents", "launch"], "effort"), all);
+    assert_eq!(scopes(&["agents", "models"], "assessor"), all);
+    // The board's store keeps Herdr's panes, which no local file writes.
+    assert_eq!(
+        scopes(&["agents"], "panes"),
+        [SettingScope::Project, SettingScope::Board]
+    );
     for (path, key) in [
-        (&["agents"][..], "panes"),
+        (&["agents"][..], "worktrees"),
         (&["board"][..], "on_land"),
         (&["limits"][..], "misspelt"),
         (&["agents", "models"][..], "writer"),

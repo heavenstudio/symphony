@@ -105,6 +105,7 @@ fn constants() -> String {
         ("FILE_QUERY", text(api::FILE_QUERY)),
         ("REPORTS_PATH", text(api::REPORTS_PATH)),
         ("SETTINGS_PATH", text(api::SETTINGS_PATH)),
+        ("SETTING_WRITE_PATH", text(api::SETTING_WRITE_PATH)),
         ("RUNS_PATH", text(api::RUNS_PATH)),
         ("RUN_PATH", text(api::RUN_PATH)),
         ("RUN_LOG_PATH", text(api::RUN_LOG_PATH)),
@@ -235,6 +236,12 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::SettingScope>(cfg),
         declared::<api::SettingClass>(cfg),
         declared::<api::SettingKind>(cfg),
+        declared::<api::StoredSetting>(cfg),
+        declared::<api::StoredChange>(cfg),
+        declared::<api::SettingAction>(cfg),
+        declared::<api::SettingValue>(cfg),
+        declared::<api::SettingWrite>(cfg),
+        declared::<api::SettingWritten>(cfg),
         // The Runs page's, its schema updates too.
         declared::<api::RunsPage>(cfg),
         declared::<api::RunPage>(cfg),
@@ -2416,18 +2423,18 @@ fn settings_herdr() -> api::SettingsEntry {
 
 /// An entry with a setting a local file writes over the committed one, and one at its default.
 fn settings_models() -> api::SettingsEntry {
-    use api::SettingScope::{Machine, Project};
+    use api::SettingScope::{Board, Machine, Project};
     api::SettingsEntry {
         settings: vec![
             api::Setting {
-                scopes: vec![Project, Machine],
+                scopes: vec![Project, Board, Machine],
                 ..sample_setting(
                     "[agents.models] executor",
                     "The executor's model",
                     api::SettingKind::Text,
                     "fable",
                     api::SettingSource {
-                        over: Some("symphony.toml [agents.models] executor, line 16".into()),
+                        over: Some("\"opus\" (the board's store [agents.models] executor)".into()),
                         ..settings_source(
                             Some(Machine),
                             "symphony.local.toml [agents.models] executor, line 2",
@@ -2437,13 +2444,30 @@ fn settings_models() -> api::SettingsEntry {
                 )
             },
             api::Setting {
-                scopes: vec![Project, Machine],
+                scopes: vec![Project, Board, Machine],
                 ..sample_setting(
                     "[limits] machine_agents",
                     "Agents this machine runs",
                     api::SettingKind::Number,
                     "no limit",
                     settings_source(None, "default: no limit", None),
+                )
+            },
+            api::Setting {
+                scopes: vec![Project, Board, Machine],
+                ..sample_setting(
+                    "[limits] low_volume",
+                    "Open slots below which an orchestrator hears low volume",
+                    api::SettingKind::Number,
+                    "3",
+                    api::SettingSource {
+                        over: Some("4 (symphony.toml [limits] low_volume, line 12)".into()),
+                        ..settings_source(
+                            Some(Board),
+                            "the board's store [limits] low_volume",
+                            None,
+                        )
+                    },
                 )
             },
         ],
@@ -2476,19 +2500,45 @@ fn settings_reviewed() -> Vec<api::SettingsEntry> {
             ..settings_entry("landing", "Landing", "What a land runs.")
         },
         api::SettingsEntry {
-            state: Some(api::EntryState {
-                word: "Built in".into(),
-                on: None,
-                why: "The board's own workflow: no [workflow] written.".into(),
-            }),
-            source: Some(settings_source(
-                None,
-                "default: no [workflow] written",
-                None,
-            )),
-            ..settings_entry("workflow", "Workflow", "The stages a task moves through.")
+            settings: vec![api::Setting {
+                class: api::SettingClass::Reviewed,
+                ..sample_setting(
+                    "[workflow]",
+                    "The workflow tasks move by",
+                    api::SettingKind::Sentence,
+                    "The board's own, built-in v1.",
+                    settings_source(None, "default: no [workflow] written", None),
+                )
+            }],
+            ..settings_entry(
+                "workflow",
+                "Workflow",
+                "The stages a task moves through and what each move requires.",
+            )
         },
     ]
+}
+
+/// An entry a plugin describes (the describers seam) as a sentence alone, with where it is said
+/// and no setting: the one shape that carries a source of its own.
+fn settings_described() -> api::SettingsEntry {
+    api::SettingsEntry {
+        state: Some(api::EntryState {
+            word: "Read".into(),
+            on: None,
+            why: "Twelve lamps listed.".into(),
+        }),
+        source: Some(settings_source(
+            Some(api::SettingScope::Project),
+            "catalogue.toml, line 1",
+            Some(("catalogue.toml", 1)),
+        )),
+        ..settings_entry(
+            "plugin-shop-catalogue",
+            "Catalogue",
+            "Described by the plugin shop.",
+        )
+    }
 }
 
 /// The device's entry: a value no file writes.
@@ -2508,9 +2558,49 @@ fn settings_appearance() -> api::SettingsEntry {
     }
 }
 
+/// What the board's store holds for the sample's settings: an entry in force with its record and
+/// its commit waiting for delivery, none for another, and one the local file stands over.
+fn settings_stored() -> Vec<api::StoredSetting> {
+    let change = |before: Option<&str>, after: Option<&str>, at: &str| api::StoredChange {
+        before: before.map(str::to_string),
+        after: after.map(str::to_string),
+        at: at.into(),
+        by: "owner".into(),
+    };
+    vec![
+        api::StoredSetting {
+            setting: "[limits] low_volume".into(),
+            key: "limits.low_volume".into(),
+            value: Some("3".into()),
+            held: true,
+            refused: None,
+            changes: vec![
+                change(None, Some("2"), "2026-11-22 20:10"),
+                change(Some("2"), Some("3"), "2026-11-22 20:15"),
+            ],
+            waiting: Some("docs/owner-save-4: waiting for its pull request".into()),
+        },
+        api::StoredSetting {
+            setting: "[limits] machine_agents".into(),
+            key: "limits.machine_agents".into(),
+            ..api::StoredSetting::default()
+        },
+        api::StoredSetting {
+            setting: "[agents.models] executor".into(),
+            key: "agents.models.executor".into(),
+            value: Some("opus".into()),
+            held: false,
+            refused: None,
+            changes: vec![change(None, Some("opus"), "2026-11-22 20:12")],
+            waiting: None,
+        },
+    ]
+}
+
 /// A Settings page of every shape an entry takes: one with a state, a need met and one not, a
-/// setting a local file writes over the committed one, a reviewed sentence, an entry that is a
-/// sentence with no setting, the device's, and a problem said.
+/// plugin's that is a sentence with where it is said and no setting, a setting a local file writes
+/// over the committed one and over the store, one the store holds, reviewed sentences, the
+/// device's, and a problem said; with what the store holds for the settings the page writes.
 fn settings() -> api::SettingsPage {
     let file = |name: &str, scope, found| api::SettingsFile {
         name: name.into(),
@@ -2528,7 +2618,7 @@ fn settings() -> api::SettingsPage {
             settings_section(
                 "integrations",
                 "Integrations and tools",
-                vec![settings_herdr()],
+                vec![settings_herdr(), settings_described()],
             ),
             settings_section("models", "Models and limits", vec![settings_models()]),
             settings_section(
@@ -2538,6 +2628,7 @@ fn settings() -> api::SettingsPage {
             ),
             settings_section("device", "This device", vec![settings_appearance()]),
         ],
+        stored: settings_stored(),
     }
 }
 

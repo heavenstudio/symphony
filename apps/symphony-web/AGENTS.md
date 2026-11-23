@@ -26,11 +26,12 @@ A page kind is an entry under `kinds/` that exports `run` and `stop`, named in `
 - `board`, `/tasks`: `board.tsx`, `boardlive.tsx`, `boardwait.tsx`, `flow.tsx`
   ([the board's design](../../docs/product/analysis/board-design.md)).
 - `task`, `/task/SLUG`: `task-page.tsx`, `task-live.ts`, `parts.ts`, `gates.tsx`, `timeline.tsx`,
-  `timeline-cost.ts`, `task-diff.tsx`, `attempts.tsx`, and for a task a custom workflow holds
-  `nextactions.tsx`, `guards.tsx` ([TASKS](../../docs/workflow/TASKS.md#gates),
+  `timeline-cost.ts`, `task-diff.tsx`, `task-diff-files.tsx`, `attempts.tsx`, and for a custom
+  workflow's task `nextactions.tsx`, `guards.tsx` ([TASKS](../../docs/workflow/TASKS.md#gates),
   [the timeline](../../docs/workflow/TASKS.md#the-timeline),
   [WORKFLOW](../../docs/workflow/WORKFLOW.md#the-app)).
-- `agents`, `/agents`: `agents.tsx`, `agents-live.ts`, `session.tsx`
+- `agents`, `/agents`: `agents.tsx`, `agents-live.ts`, `session.tsx` (what a press does,
+  `session-press.ts`)
   ([TASKS](../../docs/workflow/TASKS.md#the-agents-api)).
 - `reports`, `/reports`: `reports.tsx`, `chart.tsx`.
 - `runs`, `/runs`: `runs.tsx` ([RUNS](../../docs/workflow/RUNS.md#the-runs-page)).
@@ -51,7 +52,8 @@ What the kinds share:
   every page kind draws. The frame, the shell and the panel speak through the window
   (`shared.ts`).
 - **The feed and the board, live** (`feed.ts`, `live.tsx`, `state.ts`, `journal.ts`): a WebSocket,
-  a lost stream read again from a fresh board, never resumed. The tests fake it with
+  a lost stream read again from a fresh board, never resumed. Home's and the queue's page, which
+  draws the whole board over it, is `board-page.tsx`. The tests fake it with
   `testing.ts`'s `feeds` and `say`.
 - **Reads** (`request.ts`), **routes** (`route.ts`), **the project's base and keys**
   (`project.ts`, `storage.ts`), **async work's signal** (`mount.ts`).
@@ -61,9 +63,11 @@ What the kinds share:
   [its analysis](../../docs/design/analysis/components-draw-when-their-data-arrives.md)).
 - **Loading and visibility** (`viewport.tsx`: `NearViewport`, `Settle`, the remembered heights).
 - **Content** (`blocks.tsx`, `blocks-read.ts`, `media.tsx`, `media-layer.ts`): blocks and spans,
-  pictures, mockups and a plugin's viewers.
+  pictures, mockups and a plugin's viewers; a board's picture and a mockup's frame, which home
+  draws as the blocks do, are `media-picture.tsx`.
 - **The shared controls** (`button.tsx`, `input.tsx`, `textarea.tsx`, `select.tsx`, `tabs.tsx`,
-  `tooltip.tsx`) and the task card (`taskcard.tsx`).
+  `tooltip.tsx`), the attach control (`attach.tsx`, its sending `attach-upload.ts`), the task card
+  (`taskcard.tsx`) and a task's work phases (`work-phases.tsx`).
 - **Styles** (`styles/`, [their README](src/styles/README.md)): the shared sheet
   `styles/shared.css`, which states the cascade's order, the media layer's `styles/media.css`,
   and a kind's own sheet, imported by its module.
@@ -119,7 +123,9 @@ Each is one a lint or a test does not hold by itself, or names the one that does
   one that did splits the kind's entry in two, a file more on every first visit. It brings its
   own sheet as `?inline` and puts it in the page, as the build links no chunk's sheet and a plain
   CSS import there builds and never loads; when its import fails it asks the shell's `gone()`
-  before offering Retry (`task-page.tsx`).
+  before offering Retry (`chunk.tsx`). What runs only once the owner presses or attaches, or once
+  a comparison has files to list, is such a chunk too (`session-press.ts`, `attach-upload.ts`,
+  `task-diff-files.tsx`).
 - **A change to `styles/board.css`'s tokens or `styles/frame.css` is copied to the server's
   copies** (`apps/symphony-server/src/`); `crates/symphony/tests/packages.rs` fails until it is.
 - **A dependency added is argued on its task's thread first.** The pins are the latest stable

@@ -1,13 +1,14 @@
 //! The seams a plugin's process answers besides its components and card kinds: its renderers,
-//! routes, home regions, board actions, approval authorities, watches and doc checks, each the object its declaration
-//! names, forwarding each call. What the declaration says of an object (a renderer's extensions and
-//! content type, a watch's paths, a check's inputs) is answered from it, with no call. A call that
-//! gets no answer is shown where its answer would go, as the seam has room for it: a renderer's
-//! drawing as its error in the file's place, a route's answer as not found and a home region as
-//! none (each failure in the plugin's log), a board action's offer or submission as its refusal, a
-//! watch's warming as the server's log line saying so, a doc check's as a problem naming it, and
-//! its components as none. Its commands are no call: each runs as the plugin's program, a process
-//! of its own ([`RemoteCommand`]).
+//! routes, home regions, board actions, approval authorities, Settings page describers, watches
+//! and doc checks, each the object its declaration names, forwarding each call. What the
+//! declaration says of an object (a renderer's extensions and content type, a watch's paths, a
+//! check's inputs) is answered from it, with no call. A call that gets no answer is shown where its
+//! answer would go, as the seam has room for it: a renderer's drawing as its error in the file's
+//! place, a route's answer as not found and a home region as none (each failure in the plugin's
+//! log), a board action's offer or submission as its refusal, a describer's entry as its error in
+//! the entry's place, a watch's warming as the server's log line saying so, a doc check's as a
+//! problem naming it, and its components as none. Its commands are no call: each runs as the
+//! plugin's program, a process of its own ([`RemoteCommand`]).
 
 use std::io::{self, Write};
 use std::path::Path;
@@ -15,13 +16,13 @@ use std::time::Duration;
 
 use symphony_plugin::authority::{Operation, Signed};
 use symphony_plugin::protocol::{
-    Ask, Attest, Changed, CheckDocs, DocComponents, Draw, FileData, Forget, Offer, PageData,
-    ProblemData, Serve, ShowRegion, Submit, TaskData,
+    Ask, Attest, Changed, CheckDocs, Describe, DocComponents, Draw, FileData, Forget, Offer,
+    PageData, ProblemData, Serve, ShowRegion, Submit, TaskData,
 };
-use symphony_plugin::vocabulary::{Region, TaskOffer};
+use symphony_plugin::vocabulary::{Region, SettingsEntry, TaskOffer};
 use symphony_plugin::{
-    Authority, BoardAction, Command, DocCheck, Docs, Drawing, File, HomeRegion, Page, Problem,
-    Renderer, Reply, Route, Submission, Submitted, TaskRef, Watch,
+    Authority, BoardAction, Command, Describer, DocCheck, Docs, Drawing, File, HomeRegion, Page,
+    Problem, Renderer, Reply, Route, Submission, Submitted, TaskRef, Watch,
 };
 
 use super::{Failure, Remote};
@@ -205,6 +206,30 @@ impl Authority for RemoteAuthority {
             Err(Failure::Newer(agreed)) => Err(self.remote.failed(&format!(
                 "it speaks protocol {agreed}, which has no {}",
                 Attest::TAG
+            ))),
+            Err(Failure::Down(why)) => Err(self.remote.failed(&why)),
+        }
+    }
+}
+
+/// A Settings page describer the remote declared, named by its id.
+pub(super) struct RemoteDescriber {
+    pub(super) remote: &'static Remote,
+    pub(super) id: String,
+}
+
+impl Describer for RemoteDescriber {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn describe(&self, root: &Path) -> Result<SettingsEntry, String> {
+        let asked = Describe::new(self.id.clone(), root.to_path_buf());
+        match self.remote.ask(&self.id, asked) {
+            Ok(answered) => answered,
+            // Declared, so its minor has the call.
+            Err(Failure::Newer(agreed)) => Err(self.remote.failed(&format!(
+                "it speaks protocol {agreed}, which has no {}",
+                Describe::TAG
             ))),
             Err(Failure::Down(why)) => Err(self.remote.failed(&why)),
         }

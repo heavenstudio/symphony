@@ -655,7 +655,7 @@ fn a_startup_the_server_never_answers_says_it_is_slow_and_that_no_request_was_se
 fn a_socket_no_server_listens_on_refuses_the_connection_which_is_not_slow() {
     let dir = Dir::new();
     // The socket's file stays when its listener goes: a connection to it is refused, as one past a
-    // full backlog is.
+    // full backlog is on macOS (Linux blocks that one instead, or says EAGAIN without blocking).
     drop(UnixListener::bind(dir.path().join(crate::server::postgres::SOCKET_FILE)).unwrap());
     let Err(DbError::Failed(said)) =
         Client::new(dir.path(), "board").request(&[Step::bare("SELECT 1")])

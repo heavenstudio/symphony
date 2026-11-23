@@ -19,6 +19,7 @@ pub mod cli;
 pub mod config;
 pub mod credential;
 pub mod deliver;
+pub mod describe;
 pub mod github;
 pub mod mint;
 pub mod plan;
