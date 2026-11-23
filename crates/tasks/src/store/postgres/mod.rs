@@ -540,6 +540,9 @@ pub(in crate::store) fn rows(alias: &str, from: &str, order: &str) -> String {
 }
 
 #[cfg(test)]
+mod planned_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
