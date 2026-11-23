@@ -540,6 +540,16 @@ fn read(
     theirs(kept, root, answerers, &asked)
 }
 
+/// A wait only a stall outlasts, for a call that is answered.
+const PATIENT: Duration = test_time::backstop(process::WAIT);
+
+/// What `ask` gives once it gives something, asked again while it gives nothing: a call in a test's
+/// short wait may have no answer in it on a loaded machine, and only a stall leaves it none past
+/// [`PATIENT`].
+fn answered<T>(what: &str, ask: impl FnMut() -> Option<T>) -> T {
+    test_time::until(what, PATIENT, ask).unwrap_or_else(|stall| panic!("{stall}"))
+}
+
 /// The seam tests' plugin's gates answerers linked, each with its plugin's name.
 fn linked_answerers() -> Vec<(&'static str, &'static dyn Gates)> {
     PIPED.gates().into_iter().map(|g| ("every", g)).collect()
@@ -605,7 +615,14 @@ fn a_plugins_process_gates_are_kept_as_a_linked_ones_are_each_asked_once_a_tip()
     let (_, _, project) = linked_and_piped(&tree, true);
     let root = tree.root.as_path();
     let ours = symphony::gates::answerers(&project, root);
-    let (kept, kept_linked) = (Kept::default(), Kept::default());
+    // An error kept as long as only a stall outlasts, so what is asked is a count alone.
+    let kept_until_asked_again = || {
+        Kept::new(symphony::gates::Limits {
+            retry: PATIENT,
+            ..symphony::gates::Limits::default()
+        })
+    };
+    let (kept, kept_linked) = (kept_until_asked_again(), kept_until_asked_again());
     for tip in [Some("c0ffee"), Some("c0ffee"), Some("decade"), None, None] {
         assert_eq!(
             read(&kept, root, &ours, tip),
@@ -677,6 +694,142 @@ fn a_plugins_process_that_fails_mid_answer_reads_unknown_and_never_as_a_pass() {
         failed[0].detail,
         format!("plugin every: its process {pid} was killed by signal 9")
     );
+}
+
+#[test]
+fn a_slow_gates_answer_of_a_plugins_process_is_kept_as_a_linked_ones_and_leaves_its_calls_a_worker()
+{
+    use symphony_plugin::authority::{Operation, Snapshot};
+    use symphony_plugin::execution::{Principal, PrincipalKind};
+    let tree = Tree::new();
+    let root = tree.root.as_path();
+    let process = PluginProcess {
+        command: vec![PLUGIN.into()],
+        root: tree.root.clone(),
+        log: tree.path("artifacts/plugins/every.log"),
+    };
+    // A call's wait far shorter than its answers are held, and a cancel's only a stall outlasts, so
+    // a call a loaded machine leaves unanswered in that wait ends nothing.
+    let wait = Duration::from_millis(50);
+    let limits = process::Limits {
+        wait,
+        cancel: PATIENT,
+        declare: PATIENT,
+        ..process::Limits::default()
+    };
+    let remote = process::Remote::leaked(
+        "every",
+        process.clone(),
+        process::spawning(&process),
+        limits,
+    );
+    let fifo = tree.path(super::every::HELD);
+    let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+    assert!(made.unwrap().success());
+    let slow: Vec<(&str, &'static dyn Gates)> = vec![("every", remote.gates()[1])];
+    let linked_slow = vec![linked_answerers()[1]];
+    let pid = remote.pid().unwrap();
+    let kept = Kept::new(symphony::gates::Limits {
+        wait,
+        retry: PATIENT,
+        ceiling: PATIENT,
+        ..symphony::gates::Limits::default()
+    });
+    let asked = |n: usize| Asked {
+        slug: format!("tools/held-{n}"),
+        status: "review".into(),
+        branch: format!("tools/held-{n}"),
+        tip: Some(format!("held-{n}")),
+    };
+    let held_since = Instant::now();
+    // Four tasks read, each answer held: unknown while it goes on, as a linked one's slow answer.
+    for n in 1..=4 {
+        let read = answered("its answer is asked", || {
+            let gates = theirs(&kept, root, &slow, &asked(n));
+            (gates[0].detail == "slow gave no answer within 0.05 s").then_some(gates)
+        });
+        assert_eq!(
+            (read[0].name.as_str(), read[0].state),
+            ("slow", GateState::Unknown)
+        );
+    }
+    // Three are in the plugin, holding three of its four workers; the fourth waits in the host.
+    let marks = || {
+        let held = |n: &usize| tree.path(&format!("{}-{n}", super::every::HELD)).exists();
+        (1..=4).filter(held).count()
+    };
+    until("three answers are in the plugin", || marks() == 3);
+    // Its other calls answer on the worker left: its authority, what an answer is kept while, a
+    // component.
+    let operation = Operation::new(
+        "sim".into(),
+        "sim/a".into(),
+        "accept".into(),
+        "approved".into(),
+        Snapshot::new("d1".into(), 2, 3, "verify".into(), "awaiting".into()),
+        BTreeMap::new(),
+        Principal::new(PrincipalKind::Human, "local".into(), "owner".into()),
+    );
+    let within = Duration::from_millis(2500);
+    let attested = answered("its authority attests", || {
+        remote.authorities()[0]
+            .attest(root, &operation, within)
+            .ok()
+    });
+    assert_eq!(
+        Ok(attested),
+        PIPED.authorities()[0].attest(root, &operation, within)
+    );
+    let told = answered("what an answer is kept while is told", || {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            slow[0].1.kept_while(root, &TASK)
+        }))
+        .ok()
+    });
+    assert_eq!(told, linked_slow[0].1.kept_while(root, &TASK));
+    let page = Page::new(root, "docs/A.md");
+    let drawn = answered("a component draws", || {
+        remote.components()[0].render(&page, "lantern", None).ok()
+    });
+    assert_eq!(
+        Ok(drawn),
+        PIPED.components()[0].render(&page, "lantern", None)
+    );
+    // The held answers outlast a call's wait, none given up, and the fourth still waits its turn.
+    until("the held answers outlast a call's wait", || {
+        held_since.elapsed() > wait * 4
+    });
+    assert_eq!(marks(), 3);
+    // Let go, a byte for each held: the three answer, then the fourth in its turn, at once with the
+    // FIFO gone.
+    let before = kept.answered();
+    let mut letting_go = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&fifo)
+        .unwrap();
+    std::fs::remove_file(&fifo).unwrap();
+    std::io::Write::write_all(&mut letting_go, &[0; 3]).unwrap();
+    until("the four answers came", || kept.answered() == before + 4);
+    // Each is kept, and read as a linked answer for its task, with no answer asked again.
+    let kept_linked = Kept::default();
+    for n in 1..=4 {
+        let ours = answered("its kept answer is read", || {
+            let gates = theirs(&kept, root, &slow, &asked(n));
+            (gates[0].state != GateState::Unknown).then_some(gates)
+        });
+        assert_eq!(
+            ours,
+            theirs(&kept_linked, root, &linked_slow, &asked(n)),
+            "{n}"
+        );
+    }
+    assert_eq!(kept.answered(), before + 4);
+    // The process was never ended: the one started first answered throughout.
+    assert_eq!(remote.pid(), Some(pid));
+    let log = std::fs::read_to_string(&process.log).unwrap();
+    assert!(!log.contains("was ended"), "{log}");
+    assert!(!log.contains("gates.answer"), "{log}");
 }
 
 #[test]

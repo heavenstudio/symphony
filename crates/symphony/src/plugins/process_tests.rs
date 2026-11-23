@@ -3024,3 +3024,48 @@ fn gates_of_an_older_minor_are_asked_and_a_minor_before_the_calls_never_sent_the
     assert_eq!(heard.len(), 1, "{heard:?}");
     assert!(heard[0].contains("\"plugin.declare\""), "{heard:?}");
 }
+
+#[test]
+fn a_gates_answer_waits_its_turn_among_those_asked_at_once_and_says_so_past_its_bound() {
+    let tree = Tree::new();
+    let remote = Remote::leaked(
+        "landings",
+        process_in(&tree, "landings"),
+        peer(&LANDINGS, Arc::default()),
+        patient(),
+    );
+    let gates = remote.gates()[0];
+    let linked = LANDINGS.gates()[0].answer(&tree.root, &TASK, Some("c0ffee"));
+    // Asked while every turn is taken, an answer is asked and answered once one is given back.
+    let mut turns: Vec<GatesTurn<'_>> = (0..GATES_AT_ONCE)
+        .map(|_| remote.gates_turn().unwrap())
+        .collect();
+    let answered = std::thread::scope(|scope| {
+        let asking = scope.spawn(|| gates.answer(&tree.root, &TASK, Some("c0ffee")));
+        turns.pop();
+        asking.join().unwrap()
+    });
+    assert_eq!(answered, linked);
+    assert_eq!(*remote.gates_asked.lock().unwrap(), GATES_AT_ONCE - 1);
+    // With every turn taken, an answer waits in the host for one, and past its bound is not asked
+    // and says why.
+    let tree = Tree::new();
+    let mut limits = patient();
+    limits.gates = Duration::from_millis(50);
+    let remote = Remote::leaked(
+        "landings",
+        process_in(&tree, "landings"),
+        peer(&LANDINGS, Arc::default()),
+        limits,
+    );
+    let _turns: Vec<GatesTurn<'_>> = (0..GATES_AT_ONCE)
+        .map(|_| remote.gates_turn().unwrap())
+        .collect();
+    assert_eq!(
+        remote.gates()[0].answer(&tree.root, &TASK, Some("c0ffee")),
+        Err(format!(
+            "plugin landings: the {GATES_AT_ONCE} gates answers it is asked at once ran for 50ms, \
+             so this one was not asked"
+        ))
+    );
+}

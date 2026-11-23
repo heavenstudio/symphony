@@ -170,7 +170,8 @@ impl Plugin for Piped {
 /// A component that spends its argument's microseconds before it answers, so a measurement shows
 /// its meters move by a known time; `hang` it never answers in a test's time, the file
 /// [`HANGING`] written in the page's root first, so a test sees the call is in it. As a gates
-/// answerer it meets its gate at the tip it is asked, and at the tip `hang` hangs the same way.
+/// answerer it meets its gate at the tip it is asked: at the tip `hang` it hangs the same way, and
+/// at a tip `held-N` it is held until its test lets it go ([`HELD`]).
 struct Slow;
 
 static SLOW: Slow = Slow;
@@ -207,6 +208,12 @@ impl Component for Slow {
     }
 }
 
+/// The FIFO in a root that a gates answer of [`SLOW`] at a tip `held-N` reads a byte of before it
+/// answers, so it is held until its test writes one: `slow-held-N` written beside it first, so the
+/// test sees the call is in the plugin. It is opened to read and write, an open that never waits
+/// on a writer, so no byte the test writes is missed. With no FIFO there it answers at once.
+pub const HELD: &str = "slow-held";
+
 /// `hang` in `root`: [`HANGING`] written there, so a test sees the call is in it, then never an
 /// answer in a test's time.
 fn hang(root: &Path) {
@@ -231,6 +238,16 @@ impl Gates for Slow {
     ) -> Result<Vec<Gate>, String> {
         if tip == Some("hang") {
             hang(root);
+        }
+        if let Some(n) = tip.and_then(|tip| tip.strip_prefix("held-")) {
+            let _ = std::fs::write(root.join(format!("{HELD}-{n}")), "");
+            let held = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(root.join(HELD));
+            if let Ok(mut held) = held {
+                let _ = std::io::Read::read_exact(&mut held, &mut [0; 1]);
+            }
         }
         Ok(vec![Gate {
             name: "slow".into(),
