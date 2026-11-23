@@ -1,6 +1,7 @@
 //! A plugin answering from a process of its own (`[plugins.process]`): the seam tests' plugin
 //! served by the `symphony-test-plugin` binary, asked as a project's plugins are and answering as
-//! it does linked; its process killed, a call after the pause starts it again (the lib's
+//! it does linked, its gates kept as a linked plugin's are; its process killed, a call after the
+//! pause starts it again (the lib's
 //! `plugins::process` tests show the calls meanwhile, with a pause longer than the test); its
 //! process ending with its input whatever its calls do; and what its calls cost linked and from its
 //! process, and what a register read costs linked, card by card from its process and in one
@@ -11,13 +12,16 @@ use std::io::{Read as _, Write as _};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use symphony::gates::{Asked, Kept, theirs};
 use symphony::plugins::Plugins;
 use symphony::plugins::process::{self, PAUSE};
 use symphony::project::{PluginCalls, PluginProcess, Project};
 use symphony::render::Render;
 use symphony_plugin::protocol::{Envelope, PageData, Request};
-use symphony_plugin::vocabulary::{Block, Span};
-use symphony_plugin::{CardKind, Command, Docs, File, Page, Renderer, Submission, TaskRef};
+use symphony_plugin::vocabulary::{Block, Gate, GateState, Span};
+use symphony_plugin::{
+    CardKind, Command, Docs, File, Gates, Page, Plugin as _, Renderer, Submission, TaskRef,
+};
 
 use super::Tree;
 use super::calls::{lines, median, with_card};
@@ -510,6 +514,212 @@ fn a_plugins_process_warms_and_forgets_its_watch_as_it_does_linked() {
         ]
     );
     assert!(record.iter().all(|line| line.get("failed").is_none()));
+}
+
+/// The task each gates test asks of: a branch's, in review.
+const TASK: TaskRef<'static> = TaskRef {
+    slug: "tools/a",
+    status: "review",
+    branch: "tools/a-2",
+};
+
+/// The gates `answerers` give [`TASK`] at `tip` in the project at `root`, read through `kept` as
+/// the task's page reads them.
+fn read(
+    kept: &Kept,
+    root: &Path,
+    answerers: &[(&str, &'static dyn Gates)],
+    tip: Option<&str>,
+) -> Vec<Gate> {
+    let asked = Asked {
+        slug: TASK.slug.into(),
+        status: TASK.status.into(),
+        branch: TASK.branch.into(),
+        tip: tip.map(str::to_string),
+    };
+    theirs(kept, root, answerers, &asked)
+}
+
+/// The seam tests' plugin's gates answerers linked, each with its plugin's name.
+fn linked_answerers() -> Vec<(&'static str, &'static dyn Gates)> {
+    PIPED.gates().into_iter().map(|g| ("every", g)).collect()
+}
+
+/// A worktree of the checkout at `tree`, as git links one, with the same `symphony.toml`.
+fn worktree(tree: &Tree) -> std::path::PathBuf {
+    tree.write(".git/worktrees/wt/commondir", "../..\n");
+    tree.write(
+        "wt/.git",
+        &format!("gitdir: {}\n", tree.path(".git/worktrees/wt").display()),
+    );
+    let file = std::fs::read_to_string(tree.path(symphony::project::FILE)).unwrap();
+    tree.write("wt/symphony.toml", &file);
+    tree.path("wt")
+}
+
+#[test]
+fn a_plugins_process_answers_its_gates_as_it_does_linked_for_a_checkout_and_its_branches() {
+    let tree = Tree::checkout();
+    let (_, _, project) = linked_and_piped(&tree, false);
+    let root = tree.root.as_path();
+    let ours = symphony::gates::answerers(&project, root);
+    let names: Vec<(&str, &str)> = ours.iter().map(|(p, g)| (*p, g.name())).collect();
+    assert_eq!(names, [("every", "every"), ("every", "slow")]);
+    // A task on a branch at its tip, and one whose branch the repository does not hold.
+    for ((_, far), (_, near)) in ours.iter().zip(linked_answerers()) {
+        for tip in [Some("c0ffee"), None] {
+            assert_eq!(
+                far.answer(root, &TASK, tip),
+                near.answer(root, &TASK, tip),
+                "{} {tip:?}",
+                near.name()
+            );
+        }
+        assert_eq!(far.kept_while(root, &TASK), near.kept_while(root, &TASK));
+    }
+    // With no branch, `every`'s own error, as it said it.
+    assert_eq!(
+        ours[0].1.answer(root, &TASK, None),
+        Err("tools/a-2 has no branch".into())
+    );
+    // A branch's checkout is answered by its main checkout's process, each call naming the
+    // branch's checkout, which `every` reads.
+    let branch = worktree(&tree);
+    let in_branch = symphony::gates::answerers(&Project::of(&branch), &branch);
+    let answering = process::remote(Plugins::of(&branch).list()[0]).unwrap();
+    assert_ne!(answering.process().root, branch);
+    let tip = Some("c0ffee");
+    assert_eq!(
+        in_branch[0].1.answer(&branch, &TASK, tip),
+        linked_answerers()[0].1.answer(&branch, &TASK, tip)
+    );
+    assert_eq!(
+        in_branch[0].1.kept_while(&branch, &TASK),
+        linked_answerers()[0].1.kept_while(&branch, &TASK)
+    );
+}
+
+#[test]
+fn a_plugins_process_gates_are_kept_as_a_linked_ones_are_each_asked_once_a_tip() {
+    let tree = Tree::new();
+    let (_, _, project) = linked_and_piped(&tree, true);
+    let root = tree.root.as_path();
+    let ours = symphony::gates::answerers(&project, root);
+    let (kept, kept_linked) = (Kept::default(), Kept::default());
+    for tip in [Some("c0ffee"), Some("c0ffee"), Some("decade"), None, None] {
+        assert_eq!(
+            read(&kept, root, &ours, tip),
+            read(&kept_linked, root, &linked_answerers(), tip),
+            "{tip:?}"
+        );
+    }
+    // With no branch, `every`'s error stands in for the gate it answered before, as it said it.
+    let none = read(&kept, root, &ours, None);
+    assert_eq!(
+        (
+            none[0].name.as_str(),
+            none[0].state,
+            none[0].detail.as_str()
+        ),
+        ("certificate", GateState::Unknown, "tools/a-2 has no branch")
+    );
+    // Each answerer was asked once a tip, its error kept, and what it is kept while at each read.
+    let record = lines(&symphony::plugins::record(&project, root));
+    let asked = |call: &str, name: &str| {
+        let what = |line: &&serde_json::Value| {
+            line["seam"] == "gates" && line["call"] == call && line["name"] == name
+        };
+        record.iter().filter(what).count()
+    };
+    for name in ["every", "slow"] {
+        assert_eq!(asked("answer", name), 3, "{name}");
+        assert_eq!(asked("kept_while", name), 6, "{name}");
+    }
+    assert!(record.iter().all(|line| line.get("failed").is_none()));
+}
+
+#[test]
+fn a_plugins_process_that_fails_mid_answer_reads_unknown_and_never_as_a_pass() {
+    let tree = Tree::new();
+    let (_, piped, project) = linked_and_piped(&tree, false);
+    let root = tree.root.as_path();
+    let remote = process::remote(piped.list()[0]).unwrap();
+    let slow = vec![symphony::gates::answerers(&project, root)[1]];
+    let kept = Kept::default();
+    let met = read(&kept, root, &slow, Some("c0ffee"));
+    assert_eq!(
+        (met[0].name.as_str(), met[0].state),
+        ("slow", GateState::Met)
+    );
+    let pid = remote.pid().unwrap();
+    // At the next tip its answer hangs, and its process is killed while the call is in it.
+    let failed = std::thread::scope(|scope| {
+        let reading = scope.spawn(|| read(&kept, root, &slow, Some("hang")));
+        until("the call is in the plugin", || {
+            tree.path(super::every::HANGING).exists()
+        });
+        let killed = std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .status()
+            .unwrap();
+        assert!(killed.success());
+        reading.join().unwrap()
+    });
+    assert_eq!(
+        (
+            failed[0].name.as_str(),
+            failed[0].state,
+            failed[0].by.as_deref()
+        ),
+        ("slow", GateState::Unknown, Some("slow"))
+    );
+    assert_eq!(
+        failed[0].detail,
+        format!("plugin every: its process {pid} was killed by signal 9")
+    );
+}
+
+#[test]
+fn a_plugins_process_declaring_gates_commands_and_an_authority_is_accepted_and_each_answers() {
+    use symphony_plugin::authority::{Operation, Snapshot};
+    use symphony_plugin::execution::{Principal, PrincipalKind};
+    let tree = Tree::new();
+    let (linked, piped, project) = linked_and_piped(&tree, false);
+    let declared = process::remote(piped.list()[0])
+        .unwrap()
+        .declaration()
+        .unwrap();
+    assert_eq!(declared.gates, ["every", "slow"]);
+    assert_eq!(declared.authorities, ["every"]);
+    let commands: Vec<&str> = declared.commands.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(commands, ["every"]);
+    assert_eq!(symphony::plugins::problems(&project), Vec::<String>::new());
+    // Its command is the project's, as `symphony NAME` finds it.
+    let found = symphony::plugins::command("every", Some(&tree.root)).unwrap();
+    assert!(std::ptr::addr_eq(found, piped.list()[0].commands()[0]));
+    // Its authority attests as linked, found by its adapter as the owner's take finds it.
+    let operation = Operation::new(
+        "sim".into(),
+        "sim/a".into(),
+        "accept".into(),
+        "approved".into(),
+        Snapshot::new("d1".into(), 2, 3, "verify".into(), "awaiting".into()),
+        BTreeMap::new(),
+        Principal::new(PrincipalKind::Human, "local".into(), "owner".into()),
+    );
+    for within in [Duration::from_millis(2500), Duration::ZERO] {
+        let attested = |plugins: &Plugins| {
+            let authority = plugins.authority("every").unwrap();
+            authority.attest(&tree.root, &operation, within)
+        };
+        assert_eq!(attested(&piped), attested(&linked), "{within:?}");
+    }
+    let signed = piped.authority("every").unwrap().attest(
+        &tree.root,
+        &operation,
+        Duration::from_millis(2500),
+    );
+    assert!(signed.is_ok(), "{signed:?}");
 }
 
 #[test]

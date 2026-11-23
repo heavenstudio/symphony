@@ -112,9 +112,9 @@ impl Plugin for Every {
 }
 
 /// [`EVERY`] as a plugin's process serves it: its name and each seam a process answers (its
-/// components, card kind, renderer, route, navigation, home region, board action, Settings page
-/// describers, watch, doc check, command and theme), and a component that takes as long as it is
-/// told.
+/// components, card kind, renderer, route, navigation, home region, board action, gates answerer,
+/// approval authority, Settings page describers, watch, doc check, command and theme), and a
+/// component and a gates answerer that take as long as they are told.
 pub(super) struct Piped;
 
 pub(super) static PIPED: Piped = Piped;
@@ -144,6 +144,12 @@ impl Plugin for Piped {
     fn board_actions(&self) -> Vec<&dyn BoardAction> {
         EVERY.board_actions()
     }
+    fn gates(&self) -> Vec<&dyn Gates> {
+        vec![&EVERY, &SLOW]
+    }
+    fn authorities(&self) -> Vec<&dyn Authority> {
+        EVERY.authorities()
+    }
     fn describers(&self) -> Vec<&dyn Describer> {
         EVERY.describers()
     }
@@ -163,7 +169,8 @@ impl Plugin for Piped {
 
 /// A component that spends its argument's microseconds before it answers, so a measurement shows
 /// its meters move by a known time; `hang` it never answers in a test's time, the file
-/// [`HANGING`] written in the page's root first, so a test sees the call is in it.
+/// [`HANGING`] written in the page's root first, so a test sees the call is in it. As a gates
+/// answerer it meets its gate at the tip it is asked, and at the tip `hang` hangs the same way.
 struct Slow;
 
 static SLOW: Slow = Slow;
@@ -182,13 +189,7 @@ impl Component for Slow {
         _: Option<&str>,
     ) -> Result<Vec<Block>, String> {
         if argument == "hang" {
-            // A root that is no folder (a test's `/r`) takes no mark, and the call hangs all the same.
-            let _ = std::fs::write(page.root.join(HANGING), "");
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "no-timed-waits baseline: a test plugin hangs by a length of time, not until its test releases it"
-            )]
-            std::thread::sleep(std::time::Duration::from_secs(600));
+            hang(page.root);
         }
         let micros: u64 = argument
             .parse()
@@ -202,6 +203,41 @@ impl Component for Slow {
             spans: vec![Span::Text {
                 text: format!("slow {micros}"),
             }],
+        }])
+    }
+}
+
+/// `hang` in `root`: [`HANGING`] written there, so a test sees the call is in it, then never an
+/// answer in a test's time.
+fn hang(root: &Path) {
+    // A root that is no folder (a test's `/r`) takes no mark, and the call hangs all the same.
+    let _ = std::fs::write(root.join(HANGING), "");
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test plugin hangs by a length of time, not until its test releases it"
+    )]
+    std::thread::sleep(std::time::Duration::from_secs(600));
+}
+
+impl Gates for Slow {
+    fn name(&self) -> &str {
+        "slow"
+    }
+    fn answer(
+        &self,
+        root: &Path,
+        task: &TaskRef<'_>,
+        tip: Option<&str>,
+    ) -> Result<Vec<Gate>, String> {
+        if tip == Some("hang") {
+            hang(root);
+        }
+        Ok(vec![Gate {
+            name: "slow".into(),
+            state: GateState::Met,
+            by: Some(task.slug.into()),
+            commit: tip.map(str::to_string),
+            ..Gate::default()
         }])
     }
 }

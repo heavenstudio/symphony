@@ -25,10 +25,11 @@
 //! this process, which ends it (the SDK's `serve` at most its `ENDING` after).
 //!
 //! **Its seams.** What the plugin declared stands for it here: its components, card kinds,
-//! renderers, routes, home regions, board actions, watches and doc checks ([`seams`]), each
-//! forwarding its calls; its navigation and theme, which are declaration alone; and its commands,
-//! each run as its program ([`seams::RemoteCommand`]). A plugin declaring any other seam is refused,
-//! naming it ([`unanswered`]). A call newer than the agreed minor is not sent: the seam's own
+//! renderers, routes, home regions, board actions, gates answerers, approval authorities, Settings
+//! page describers, watches and doc checks ([`seams`]), each forwarding its calls; its navigation
+//! and theme, which are declaration alone; and its commands, each run as its program
+//! ([`seams::RemoteCommand`]). A plugin declaring any other seam is refused, naming it
+//! ([`unanswered`]). A call newer than the agreed minor is not sent: the seam's own
 //! default answers it. A call that gets no answer (the process down, no answer in time, a refusal,
 //! an answer that does not read) is shown where its answer would go: a component's in its place on
 //! the page ([`super::error`]), a card kind's as the kind's default, as if the plugin said nothing
@@ -59,15 +60,15 @@ use symphony_plugin::protocol::{
 };
 use symphony_plugin::vocabulary::{Block, NavItem, Picture};
 use symphony_plugin::{
-    Authority, BoardAction, Card, CardKind, Command, Component, Describer, DocCheck, HomeRegion,
-    Page, Plugin, Renderer, Route, Theme, Watch,
+    Authority, BoardAction, Card, CardKind, Command, Component, Describer, DocCheck, Gates,
+    HomeRegion, Page, Plugin, Renderer, Route, Theme, Watch,
 };
 
 use super::measure::{self, Line, Record};
 use crate::project::{PluginProcess, Project, Stamp};
 use seams::{
-    RemoteAction, RemoteAuthority, RemoteCheck, RemoteCommand, RemoteDescriber, RemoteRegion,
-    RemoteRenderer, RemoteRoute, RemoteWatch,
+    RemoteAction, RemoteAuthority, RemoteCheck, RemoteCommand, RemoteDescriber, RemoteGates,
+    RemoteRegion, RemoteRenderer, RemoteRoute, RemoteWatch,
 };
 
 /// How long a call waits for its answer, as the gates seam waits for its answerers.
@@ -343,7 +344,6 @@ fn unanswered(declaration: &Declaration) -> Vec<&'static str> {
     let d = declaration;
     [
         ("board fields", d.board_fields.is_empty()),
-        ("gates", d.gates.is_empty()),
         ("prose rules", d.prose_rules.is_empty()),
         ("generators", d.generators.is_empty()),
         ("transports", d.transports.is_empty()),
@@ -1244,6 +1244,9 @@ impl Plugin for Remote {
                 .collect()
         })
     }
+    fn gates(&self) -> Vec<&dyn Gates> {
+        self.each(|d| d.gates.iter().map(|g| -> &dyn Gates { g }).collect())
+    }
     fn authorities(&self) -> Vec<&dyn Authority> {
         self.each(|d| {
             d.authorities
@@ -1288,6 +1291,7 @@ struct Declared {
     routes: Vec<RemoteRoute>,
     home_regions: Vec<RemoteRegion>,
     board_actions: Vec<RemoteAction>,
+    gates: Vec<RemoteGates>,
     authorities: Vec<RemoteAuthority>,
     describers: Vec<RemoteDescriber>,
     watches: Vec<RemoteWatch>,
@@ -1351,6 +1355,14 @@ impl Declared {
                 .board_actions
                 .iter()
                 .map(|name| RemoteAction {
+                    remote,
+                    name: name.clone(),
+                })
+                .collect(),
+            gates: declaration
+                .gates
+                .iter()
+                .map(|name| RemoteGates {
                     remote,
                     name: name.clone(),
                 })

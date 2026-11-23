@@ -1,14 +1,15 @@
 //! The seams a plugin's process answers besides its components and card kinds: its renderers,
-//! routes, home regions, board actions, approval authorities, Settings page describers, watches
-//! and doc checks, each the object its declaration names, forwarding each call. What the
-//! declaration says of an object (a renderer's extensions and content type, a watch's paths, a
-//! check's inputs) is answered from it, with no call. A call that gets no answer is shown where its
-//! answer would go, as the seam has room for it: a renderer's drawing as its error in the file's
-//! place, a route's answer as not found and a home region as none (each failure in the plugin's
-//! log), a board action's offer or submission as its refusal, a describer's entry as its error in
-//! the entry's place, a watch's warming as the server's log line saying so, a doc check's as a
-//! problem naming it, and its components as none. Its commands are no call: each runs as the
-//! plugin's program, a process of its own ([`RemoteCommand`]).
+//! routes, home regions, board actions, gates answerers, approval authorities, Settings page
+//! describers, watches and doc checks, each the object its declaration names, forwarding each
+//! call. What the declaration says of an object (a renderer's extensions and content type, a
+//! watch's paths, a check's inputs) is answered from it, with no call. A call that gets no answer
+//! is shown where its answer would go, as the seam has room for it: a renderer's drawing as its
+//! error in the file's place, a route's answer as not found and a home region as none (each
+//! failure in the plugin's log), a board action's offer or submission as its refusal, a gates
+//! answer and what it is kept while as the answerer's error ([`RemoteGates`]), a describer's entry
+//! as its error in the entry's place, a watch's warming as the server's log line saying so, a doc
+//! check's as a problem naming it, and its components as none. Its commands are no call: each runs
+//! as the plugin's program, a process of its own ([`RemoteCommand`]).
 
 use std::io::{self, Write};
 use std::path::Path;
@@ -16,13 +17,13 @@ use std::time::Duration;
 
 use symphony_plugin::authority::{Operation, Signed};
 use symphony_plugin::protocol::{
-    Ask, Attest, Changed, CheckDocs, Describe, DocComponents, Draw, FileData, Forget, Offer,
-    PageData, ProblemData, Serve, ShowRegion, Submit, TaskData,
+    AnswerGates, Ask, Attest, Changed, CheckDocs, Describe, DocComponents, Draw, FileData, Forget,
+    KeptWhile, Offer, PageData, ProblemData, Serve, ShowRegion, Submit, TaskData,
 };
-use symphony_plugin::vocabulary::{Region, SettingsEntry, TaskOffer};
+use symphony_plugin::vocabulary::{Gate, Region, SettingsEntry, TaskOffer};
 use symphony_plugin::{
-    Authority, BoardAction, Command, Describer, DocCheck, Docs, Drawing, File, HomeRegion, Page,
-    Problem, Renderer, Reply, Route, Submission, Submitted, TaskRef, Watch,
+    Authority, BoardAction, Command, Describer, DocCheck, Docs, Drawing, File, Gates, HomeRegion,
+    Page, Problem, Renderer, Reply, Route, Submission, Submitted, TaskRef, Watch,
 };
 
 use super::{Failure, Remote};
@@ -174,6 +175,58 @@ impl BoardAction for RemoteAction {
             TaskData::of(task),
             submission.clone(),
         ))
+    }
+}
+
+/// A gates answerer the remote declared, named by its name. The Symphony asks it as it asks a
+/// linked one ([`crate::gates`]): each answer kept by the task, its branch's tip and what
+/// [`Gates::kept_while`] tells, on its own thread, for whatever checkout the call names.
+pub(super) struct RemoteGates {
+    pub(super) remote: &'static Remote,
+    pub(super) name: String,
+}
+
+impl Gates for RemoteGates {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn answer(
+        &self,
+        root: &Path,
+        task: &TaskRef<'_>,
+        tip: Option<&str>,
+    ) -> Result<Vec<Gate>, String> {
+        let asked = AnswerGates::new(
+            self.name.clone(),
+            root.to_path_buf(),
+            TaskData::of(task),
+            tip.map(str::to_string),
+        );
+        match self.remote.ask(&self.name, asked) {
+            // Its gates, or its own error as it said it.
+            Ok(answered) => answered,
+            // Required of every answerer, so in every minor.
+            Err(Failure::Newer(agreed)) => Err(self.remote.failed(&format!(
+                "it speaks protocol {agreed}, which has no {}",
+                AnswerGates::TAG
+            ))),
+            Err(Failure::Down(why)) => Err(self.remote.failed(&why)),
+        }
+    }
+    /// What the plugin says its answer reads besides the task's status and tip. One with no answer
+    /// has no error to return but a panic, which the gates read as the answerer's error, as a linked
+    /// one's: unwound with its why ([`crate::gates::Untold`]) and without the panic hook, so a kept
+    /// answer is not used past it and nothing is printed.
+    fn kept_while(&self, root: &Path, task: &TaskRef<'_>) -> String {
+        let asked = KeptWhile::new(self.name.clone(), root.to_path_buf(), TaskData::of(task));
+        match self.remote.ask(&self.name, asked) {
+            Ok(said) => said,
+            // The trait's default: kept for the status and tip alone.
+            Err(Failure::Newer(_)) => String::new(),
+            Err(Failure::Down(why)) => {
+                std::panic::resume_unwind(Box::new(crate::gates::Untold(self.remote.failed(&why))))
+            }
+        }
     }
 }
 
