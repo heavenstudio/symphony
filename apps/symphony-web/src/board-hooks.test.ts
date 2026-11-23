@@ -158,7 +158,7 @@ function flowComes(come: boolean) {
  * `hook` drawn with `args`: what it gave at its last draw, a draw again (with other args, or the
  * same), the draws once what it waits on has answered, and its cleanups.
  */
-function mount<Args extends unknown[], T>(hook: (...args: Args) => T, ...args: Args) {
+function mount<Args extends unknown[], T>(hook: (...args: Args) => T, ...args: NoInfer<Args>) {
   const { state } = runtime;
   state.slots = [];
   let given = args;
