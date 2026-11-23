@@ -1999,8 +1999,10 @@ mod tests {
         assert_eq!(run(&["say", "s", "-.5x"]).get("text"), Some("-.5x"));
         // What does not start like one is an option, and `say` has none by that name.
         assert!(
-            refused(&["say", "s", "-.x"])
-                .contains("just tasks say: error: unrecognized arguments: -.x"),
+            refused(&["say", "s", "-.x"]).ends_with(
+                "just tasks say: error: unrecognized arguments: -.x (`just tasks help say` lists \
+                 what it takes)\n"
+            ),
             "{}",
             refused(&["say", "s", "-.x"])
         );

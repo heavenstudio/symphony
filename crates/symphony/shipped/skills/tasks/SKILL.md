@@ -25,7 +25,10 @@ project's board, permission, staffing, testing and landing instructions first.
 3. **Post milestones only**: a tip ready for review, a move to review or blocked, a collision, a
    finding, a verdict or a question, addressed to who must act (`--to @orchestrator`,
    `--to @reviewer`, `--to HANDLE`). Never acknowledge a message, and never repeat a post on a
-   subtask and its parent.
+   subtask and its parent. A long post, such as a request for review with its evidence, is
+   written as a file and posted with `just tasks say SLUG --file PATH --as HANDLE`, so no quote,
+   backtick or `$(…)` in it meets a shell; `--file -` reads stdin, which a Codex rule never
+   passes from a heredoc.
 
 ## Events
 

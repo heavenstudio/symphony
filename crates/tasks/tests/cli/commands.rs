@@ -1098,9 +1098,39 @@ fn a_line_is_said_from_a_file_or_stdin_and_never_from_both_or_neither() {
         (ran.code, ran.err),
         (
             1,
-            format!("✖ no file {missing}: --file names it by its path from here, or - for stdin\n")
+            format!(
+                "✖ no line file {missing}: --file names it by its path from here, or - for stdin\n"
+            )
         )
     );
+    // A folder is no file: what the system says of it is the reason.
+    let folder = scratch("say-folder");
+    let folder = folder.to_str().unwrap();
+    let ran = c.run_as(&orch, &["say", "a/long", "--file", folder], "");
+    assert_eq!(ran.code, 1);
+    assert!(
+        ran.err
+            .starts_with(&format!("✖ cannot read the line file {folder}: ")),
+        "{}",
+        ran.err
+    );
+    // A file of line ends alone is an empty line, which the board refuses as it refuses `say S ""`.
+    let ran = c.run_as(&orch, &["say", "a/long", "--file", "-"], "\r\n\n");
+    assert_eq!(
+        (ran.code, ran.err.as_str()),
+        (1, "✖ an empty message says nothing\n")
+    );
+    let before = c.store().thread("a/long").unwrap().len();
+    // Windows line ends go as Unix ones do, and the lines inside the post stay as written.
+    let ran = c.run_as(
+        &orch,
+        &["say", "a/long", "--file", "-"],
+        "one\r\n\r\ntwo\r\n",
+    );
+    assert_eq!(ran.code, 0, "{}", ran.err);
+    let thread = c.store().thread("a/long").unwrap();
+    assert_eq!(thread.len(), before + 1);
+    assert_eq!(thread.last().unwrap().text, "one\r\n\r\ntwo");
 }
 
 #[test]

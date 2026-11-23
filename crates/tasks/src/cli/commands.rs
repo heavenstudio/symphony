@@ -680,23 +680,29 @@ fn said(c: &mut Context) -> Result<String, Stop> {
             ));
         }
         (None, Some(text)) => return Ok(text.to_string()),
-        (Some("-"), None) => {
-            let mut text = String::new();
-            c.input
-                .read_to_string(&mut text)
-                .map_err(|e| Stop::Refused(format!("cannot read the line from stdin: {e}")))?;
-            text
-        }
-        (Some(file), None) => std::fs::read_to_string(c.env.cwd.join(file)).map_err(|e| {
-            Stop::Refused(match e.kind() {
-                std::io::ErrorKind::NotFound => {
-                    format!("no file {file}: --file names it by its path from here, or - for stdin")
-                }
-                _ => format!("cannot read the file {file}: {e}"),
-            })
-        })?,
+        (Some(file), None) => file_or_stdin(c, file, "line", "--file")?,
     };
     Ok(read.trim_end_matches(['\n', '\r']).to_string())
+}
+
+/// What `file` holds, by its path from the command's folder, or stdin for `-`: the text an option
+/// `flag` names, `what` in its refusals (`no body file X: --body-file names it …`).
+fn file_or_stdin(c: &mut Context, file: &str, what: &str, flag: &str) -> Result<String, Stop> {
+    if file == "-" {
+        let mut text = String::new();
+        c.input
+            .read_to_string(&mut text)
+            .map_err(|e| Stop::Refused(format!("cannot read the {what} from stdin: {e}")))?;
+        return Ok(text);
+    }
+    std::fs::read_to_string(c.env.cwd.join(file)).map_err(|e| {
+        Stop::Refused(match e.kind() {
+            std::io::ErrorKind::NotFound => format!(
+                "no {what} file {file}: {flag} names it by its path from here, or - for stdin"
+            ),
+            _ => format!("cannot read the {what} file {file}: {e}"),
+        })
+    })
 }
 
 /// `create SLUG TITLE`: a new task from its arguments and its body (the `body` argument, a file, or
@@ -713,22 +719,7 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
         )));
     }
     let body = match p.get("body_file") {
-        Some("-") => {
-            let mut body = String::new();
-            c.input
-                .read_to_string(&mut body)
-                .map_err(|e| Stop::Refused(format!("cannot read the body from stdin: {e}")))?;
-            body
-        }
-        Some(file) => std::fs::read_to_string(c.env.cwd.join(file)).map_err(|e| {
-            Stop::Refused(match e.kind() {
-                std::io::ErrorKind::NotFound => format!(
-                    "no body file {file}: --body-file names it by its path from here, or - \
-                     for stdin"
-                ),
-                _ => format!("cannot read the body file {file}: {e}"),
-            })
-        })?,
+        Some(file) => file_or_stdin(c, file, "body", "--body-file")?,
         None => c.arg("body"),
     };
     // Asked once, and only for a dependency not done; outside a repository git lists none.
