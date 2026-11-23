@@ -100,6 +100,8 @@ An analysis holds a proposal and its evidence: an approved design can still awai
 
 - [The agents page, orchestrator-first](analysis/agents-page.md) — three layouts of an Agents page
   that opens on the orchestrators.
+- [Blueprints](analysis/blueprints.md) — a concept: a ready-made setup a project starts from and
+  keeps following until it changes what the blueprint put there.
 - [The board at a glance](analysis/board-design.md) — what a board says before anything is opened:
   what is stuck, on whom it waits and for how long.
 - [Boards and projects](analysis/boards-and-projects.md) — a concept: whether a project may hold

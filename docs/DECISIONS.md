@@ -18,6 +18,7 @@ A document's first card adds its line here.
 - [Workflow definitions](workflow/WORKFLOW.md)
 - [The agents page, orchestrator-first](product/analysis/agents-page.md)
 - [Artifacts attached, not committed](workflow/analysis/attached-artifacts.md)
+- [Blueprints](product/analysis/blueprints.md)
 - [The board at a glance](product/analysis/board-design.md)
 - [The board's cutover to PostgreSQL, and the way back](operations/analysis/board-pg-cutover.md)
 - [The board's store, measured before it moves](operations/analysis/board-store-baseline.md)
