@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="420" viewBox="0 0 760 420" role="img" aria-labelledby="title desc">
+<title id="title">The note beside a verdict, from someone who may not direct agents</title>
+<desc id="desc">A person who may decide and may not direct agents answers a card with a note. Under A the verdict is written on the card and the note is held by the board like their other words, until someone who may direct agents passes it on. Under B the note is written with the verdict, where agents read it: deciding carries the right to say why, on that card only. Under both the verdict itself is written on the card in the file. Recommended: B.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--question:#946a00;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--question:#e0b84c;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.inner{fill:var(--muted);stroke:var(--border)}
+.hot{fill:none;stroke:var(--dislike);stroke-width:1.5}
+.new{fill:none;stroke:var(--primary);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.b{font-weight:600}
+.h{font-size:15px;font-weight:600}
+.t{font-size:17px;font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+.red{fill:var(--dislike)}
+.blue{fill:var(--primary)}
+.arrow{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip)}
+.both{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip);marker-start:url(#tail)}
+.no{stroke:var(--dislike);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+.tipfill{fill:var(--muted-foreground)}
+</style>
+<defs><marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M0,0 L10,5 L0,10 z"/></marker><marker id="tail" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M10,0 L0,5 L10,10 z"/></marker></defs>
+<rect class="page" width="760" height="420"/>
+<text class="t" x="24" y="34">The note beside a verdict, from someone who may not direct agents</text>
+<rect class="card" x="24" y="60" width="232" height="266" rx="8"/>
+<text class="h" x="38" y="86">A: the note is held</text>
+<text class="m" x="38" y="106">like their other words</text>
+<rect class="inner" x="38" y="122" width="204" height="50" rx="5"/>
+<text class="mono" x="48" y="142">ana · rejected</text>
+<text class="m" x="48" y="161">written on the card</text>
+<rect class="hot" x="38" y="182" width="204" height="50" rx="5"/>
+<text class="m" x="48" y="202">held by the board</text>
+<text x="48" y="221">“too small, try 21”</text>
+<text class="red" x="48" y="262">An agent sees a rejection</text>
+<text class="red" x="48" y="281">and not the reason.</text>
+<rect class="card" x="264" y="60" width="232" height="266" rx="8"/>
+<text class="h" x="278" y="86">B: written with the verdict</text>
+<text class="m" x="278" y="106">recommended</text>
+<rect class="new" x="278" y="122" width="204" height="69" rx="5"/>
+<text class="mono" x="288" y="142">ana · rejected —</text>
+<text x="288" y="161">too small, try 21</text>
+<text class="m" x="288" y="180">written on the card</text>
+<text class="m" x="288" y="221">Deciding carries the</text>
+<text class="m" x="288" y="240">right to say why,</text>
+<text class="m" x="288" y="259">on that card only.</text>
+<rect class="card" x="504" y="60" width="232" height="266" rx="8"/>
+<text class="h" x="518" y="86">Under both</text>
+<text class="m" x="518" y="106">what does not change</text>
+<rect class="inner" x="518" y="122" width="204" height="50" rx="5"/>
+<text x="528" y="142">The verdict is on the</text>
+<text x="528" y="161">card, in the file.</text>
+<rect class="inner" x="518" y="182" width="204" height="69" rx="5"/>
+<text x="528" y="202">Their comments and</text>
+<text x="528" y="221">messages elsewhere are</text>
+<text x="528" y="240">held until passed on.</text>
+<rect class="card" x="24" y="348" width="712" height="48" rx="8"/>
+<text x="40" y="374">A person who may direct agents writes as the owner does today, under both.</text>
+</svg>

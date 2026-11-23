@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="474" viewBox="0 0 760 474" role="img" aria-labelledby="title desc">
+<title id="title">What a project's plugin is told of the person who asked</title>
+<desc id="desc">A person at the page asks for something a project's plugin answers. The core admits the call or refuses it before the plugin is asked. Under A the plugin is told nothing: the board's line on the task names the person, and the plugin's own commit is authored as the machine. Under B every call made for a person carries their public part (short name, git handle) and their groups and powers, so each plugin decides who may do what too and every read is one per person. Under C a write alone, a board action's submission, carries the public part; reads carry nobody and no call carries powers, so the core alone says who may do what and the plugin's commit is authored as the person. Under every option no email or chat username reaches a plugin. Recommended: C.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--question:#946a00;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--question:#e0b84c;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.inner{fill:var(--muted);stroke:var(--border)}
+.new{fill:none;stroke:var(--primary);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.b{font-weight:600}
+.h{font-size:15px;font-weight:600}
+.t{font-size:17px;font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+.red{fill:var(--dislike)}
+.arrow{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip)}
+.tipfill{fill:var(--muted-foreground)}
+</style>
+<defs><marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="page" width="760" height="474"/>
+<text class="t" x="24" y="34">What a project's plugin is told of the person who asked</text>
+<rect class="inner" x="24" y="56" width="180" height="52" rx="5"/>
+<text class="mono" x="38" y="78">ana</text>
+<text class="m" x="38" y="97">at the page</text>
+<path class="arrow" d="M206,82 L286,82"/>
+<rect class="inner" x="290" y="56" width="200" height="52" rx="5"/>
+<text class="b" x="304" y="78">the core</text>
+<text class="m" x="304" y="97">admits the call or refuses it</text>
+<path class="arrow" d="M492,82 L572,82"/>
+<rect class="inner" x="576" y="56" width="160" height="52" rx="5"/>
+<text class="b" x="590" y="78">the plugin</text>
+<text class="m" x="590" y="97">the project's code</text>
+<rect class="card" x="24" y="128" width="232" height="244" rx="8"/>
+<text class="h" x="38" y="154">A: nothing</text>
+<text class="m" x="38" y="174">the plugin never knows who</text>
+<rect class="inner" x="38" y="190" width="204" height="50" rx="5"/>
+<text class="mono" x="48" y="210">submit(payload, note)</text>
+<text class="m" x="48" y="229">the call as today</text>
+<rect class="inner" x="38" y="250" width="204" height="50" rx="5"/>
+<text x="48" y="270">The board's line on the</text>
+<text x="48" y="289">task names ana.</text>
+<text class="red" x="48" y="330">Its own commit is</text>
+<text class="red" x="48" y="349">authored as the machine.</text>
+<rect class="card" x="264" y="128" width="232" height="244" rx="8"/>
+<text class="h" x="278" y="154">B: name and powers</text>
+<text class="m" x="278" y="174">on every call for a person</text>
+<rect class="inner" x="278" y="190" width="204" height="69" rx="5"/>
+<text class="mono" x="288" y="210">ana · @ana</text>
+<text class="mono" x="288" y="229">design · decide</text>
+<text class="m" x="288" y="248">reads and writes alike</text>
+<text class="red" x="288" y="330">Each plugin decides too;</text>
+<text class="red" x="288" y="349">every read is per person.</text>
+<rect class="card" x="504" y="128" width="232" height="244" rx="8"/>
+<text class="h" x="518" y="154">C: name, on a write</text>
+<text class="m" x="518" y="174">recommended</text>
+<rect class="new" x="518" y="190" width="204" height="50" rx="5"/>
+<text class="mono" x="528" y="210">submit(…, by: ana)</text>
+<text class="m" x="528" y="229">authored as ana</text>
+<rect class="inner" x="518" y="250" width="204" height="50" rx="5"/>
+<text x="528" y="270">Reads carry nobody;</text>
+<text x="528" y="289">no call carries powers.</text>
+<text class="m" x="528" y="330">The core alone says</text>
+<text class="m" x="528" y="349">who may do what.</text>
+<rect class="card" x="24" y="390" width="712" height="64" rx="8"/>
+<text x="40" y="416">Under every option no email or chat username reaches a plugin,</text>
+<text x="40" y="436">and the core says whether a call is allowed before it is made.</text>
+</svg>

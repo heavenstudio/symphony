@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="440" viewBox="0 0 760 440" role="img" aria-labelledby="title desc">
+<title id="title">A person's own agent stands where its person stands</title>
+<desc id="desc">A task owned by the design group. Ana is in design and may direct agents; cy may only speak. Ana's personal agent, a fresh session on ana's word, may review the task, and its messages reach the task's agents, as ana's would; it decides nothing, so it gives no card verdict and no owner stamp. Cy's personal agent writes as cy does: its review and its messages are held by the board, as cy's words are, until someone who may direct agents passes them on. The board's staffed reviewer, a shared agent acting by its role, reviews any task as today, on the word of whoever may direct agents. Under every case a session that executed, orchestrates or filed a task never reviews it, and on a board with nobody named every agent is the one person's, as today.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--question:#946a00;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--question:#e0b84c;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.inner{fill:var(--muted);stroke:var(--border)}
+.new{fill:none;stroke:var(--primary);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.b{font-weight:600}
+.h{font-size:15px;font-weight:600}
+.t{font-size:17px;font-weight:600}
+.blue{fill:var(--primary)}
+</style>
+<rect class="page" width="760" height="440"/>
+<text class="t" x="24" y="34">A person's own agent stands where its person stands</text>
+<rect class="inner" x="24" y="52" width="712" height="40" rx="5"/>
+<text x="38" y="77"><tspan class="b">The task:</tspan> owned by design. Ana is in design and may direct agents; cy may only speak.</text>
+<rect class="card" x="24" y="108" width="232" height="232" rx="8"/>
+<text class="h" x="38" y="134">ana's agent</text>
+<text class="m" x="38" y="154">a fresh session, on ana's word</text>
+<rect class="new" x="38" y="170" width="204" height="44" rx="5"/>
+<text class="blue" x="48" y="188">may review the task,</text>
+<text class="blue" x="48" y="206">as any fresh session</text>
+<rect class="inner" x="38" y="222" width="204" height="44" rx="5"/>
+<text x="48" y="240">its messages reach</text>
+<text x="48" y="258">the task's agents</text>
+<rect class="inner" x="38" y="274" width="204" height="44" rx="5"/>
+<text x="48" y="292">decides nothing: no card</text>
+<text class="m" x="48" y="310">verdict, no owner stamp</text>
+<rect class="card" x="264" y="108" width="232" height="232" rx="8"/>
+<text class="h" x="278" y="134">cy's agent</text>
+<text class="m" x="278" y="154">on cy's word</text>
+<rect class="inner" x="278" y="170" width="204" height="44" rx="5"/>
+<text x="288" y="188">its review is held,</text>
+<text x="288" y="206">as cy's words are</text>
+<rect class="inner" x="278" y="222" width="204" height="44" rx="5"/>
+<text x="288" y="240">its messages are held</text>
+<text x="288" y="258">the same way</text>
+<rect class="inner" x="278" y="274" width="204" height="44" rx="5"/>
+<text x="288" y="292">passed on by someone</text>
+<text class="m" x="288" y="310">who may direct agents</text>
+<rect class="card" x="504" y="108" width="232" height="232" rx="8"/>
+<text class="h" x="518" y="134">the board's reviewer</text>
+<text class="m" x="518" y="154">shared, acts by its role</text>
+<rect class="inner" x="518" y="170" width="204" height="44" rx="5"/>
+<text x="528" y="188">reviews any task,</text>
+<text x="528" y="206">as today</text>
+<rect class="inner" x="518" y="222" width="204" height="44" rx="5"/>
+<text x="528" y="240">on the word of whoever</text>
+<text x="528" y="258">may direct agents</text>
+<rect class="inner" x="518" y="274" width="204" height="44" rx="5"/>
+<text x="528" y="292">decides nothing: a</text>
+<text class="m" x="528" y="310">review is its verdict</text>
+<rect class="card" x="24" y="356" width="712" height="64" rx="8"/>
+<text x="40" y="382">Under every case a session that executed, orchestrates or filed a task never reviews it,</text>
+<text x="40" y="402">and on a board with nobody named every agent is the one person's, as today.</text>
+</svg>

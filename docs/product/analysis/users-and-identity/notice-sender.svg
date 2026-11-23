@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="474" viewBox="0 0 760 474" role="img" aria-labelledby="title desc">
+<title id="title">What sends a notice outside the page</title>
+<desc id="desc">A card for the design group is posted, and the board decides who is told: the group's members. The server reads each member's profile for the way they want it. Under A nothing is sent outside the page: the queue, the Activity panel and the Mac app show the notice, and the profile's emails and Slack usernames wait unused. Under B a notice program, the server's plugin like the sign-in service, outside the core, is handed one person's notice and address and sends it by mail or Slack, keeping the Slack token and the mail password. Under C the core sends mail and Slack itself, with each service's interface and secret in it. Under every option the page and the Mac app show every notice. Recommended: B.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--question:#946a00;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--question:#e0b84c;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.inner{fill:var(--muted);stroke:var(--border)}
+.new{fill:none;stroke:var(--primary);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.b{font-weight:600}
+.h{font-size:15px;font-weight:600}
+.t{font-size:17px;font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+.red{fill:var(--dislike)}
+.arrow{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip)}
+.tipfill{fill:var(--muted-foreground)}
+</style>
+<defs><marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="page" width="760" height="474"/>
+<text class="t" x="24" y="34">What sends a notice outside the page</text>
+<rect class="inner" x="24" y="56" width="200" height="52" rx="5"/>
+<text class="b" x="38" y="78">a card for design</text>
+<text class="m" x="38" y="97">the board: its members told</text>
+<path class="arrow" d="M226,82 L286,82"/>
+<rect class="inner" x="290" y="56" width="220" height="52" rx="5"/>
+<text class="b" x="304" y="78">the server</text>
+<text class="m" x="304" y="97">reads each member's profile</text>
+<path class="arrow" d="M512,82 L572,82"/>
+<rect class="inner" x="576" y="56" width="160" height="52" rx="5"/>
+<text class="b" x="590" y="78">mail, Slack?</text>
+<text class="m" x="590" y="97">the way they chose</text>
+<rect class="card" x="24" y="128" width="232" height="244" rx="8"/>
+<text class="h" x="38" y="154">A: the page alone</text>
+<text class="m" x="38" y="174">nothing sent outside</text>
+<rect class="inner" x="38" y="190" width="204" height="50" rx="5"/>
+<text x="48" y="210">The queue, Activity</text>
+<text x="48" y="229">and the Mac app.</text>
+<text class="red" x="48" y="330">Emails and Slack names</text>
+<text class="red" x="48" y="349">wait unused.</text>
+<rect class="card" x="264" y="128" width="232" height="244" rx="8"/>
+<text class="h" x="278" y="154">B: a notice program</text>
+<text class="m" x="278" y="174">recommended</text>
+<rect class="new" x="278" y="190" width="204" height="50" rx="5"/>
+<text x="288" y="210">The server's plugin,</text>
+<text x="288" y="229">outside the core.</text>
+<rect class="inner" x="278" y="250" width="204" height="50" rx="5"/>
+<text class="mono" x="288" y="270">mail · Slack</text>
+<text class="m" x="288" y="289">one notice, one address</text>
+<text class="m" x="288" y="330">It keeps the Slack token</text>
+<text class="m" x="288" y="349">and the mail password.</text>
+<rect class="card" x="504" y="128" width="232" height="244" rx="8"/>
+<text class="h" x="518" y="154">C: the core sends</text>
+<text class="m" x="518" y="174">itself</text>
+<rect class="inner" x="518" y="190" width="204" height="50" rx="5"/>
+<text class="mono" x="528" y="210">core → mail · Slack</text>
+<text class="m" x="528" y="229">its secrets in the settings</text>
+<text class="red" x="528" y="330">Each service's interface</text>
+<text class="red" x="528" y="349">and secret in the core.</text>
+<rect class="card" x="24" y="390" width="712" height="64" rx="8"/>
+<text x="40" y="416">Under every option the board decides who is told, a person's preferences say which notices</text>
+<text x="40" y="436">and by which way, and the page and the Mac app show every notice.</text>
+</svg>

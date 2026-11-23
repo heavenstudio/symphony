@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="512" viewBox="0 0 760 512" role="img" aria-labelledby="title desc">
+<title id="title">Where a person&#x27;s public name is declared</title>
+<desc id="desc">Three places a person&#x27;s short public name could be declared. Under A a file of the project lists the names and nothing else, committed, so every clone and every board reads the same list, and each board keeps privately which sign-in a name belongs to. Under B each board keeps its own names and nothing is committed, so two boards of one project can give one name to two people. Under C the name is taken from the sign-in itself, such as the part of an email before the at sign. Recommended: A.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--question:#946a00;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--question:#e0b84c;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.inner{fill:var(--muted);stroke:var(--border)}
+.hot{fill:none;stroke:var(--dislike);stroke-width:1.5}
+.new{fill:none;stroke:var(--primary);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.b{font-weight:600}
+.h{font-size:15px;font-weight:600}
+.t{font-size:17px;font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+.red{fill:var(--dislike)}
+.blue{fill:var(--primary)}
+.arrow{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip)}
+.both{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip);marker-start:url(#tail)}
+.no{stroke:var(--dislike);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+.tipfill{fill:var(--muted-foreground)}
+</style>
+<defs><marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M0,0 L10,5 L0,10 z"/></marker><marker id="tail" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M10,0 L0,5 L10,10 z"/></marker></defs>
+<rect class="page" width="760" height="512"/>
+<text class="t" x="24" y="34">Where a person&#x27;s public name is declared</text>
+<rect class="card" x="24" y="60" width="232" height="336" rx="8"/>
+<text class="h" x="38" y="86">A: a file of the project</text>
+<text class="m" x="38" y="106">recommended</text>
+<rect class="new" x="38" y="122" width="204" height="69" rx="5"/>
+<text class="m" x="48" y="142">committed, names only</text>
+<text class="mono" x="48" y="161">ana</text>
+<text class="mono" x="48" y="180">bruno</text>
+<rect class="inner" x="38" y="201" width="204" height="69" rx="5"/>
+<text class="m" x="48" y="221">each board, privately</text>
+<text x="48" y="240">ana = a sign-in</text>
+<text x="48" y="259">and what ana may do</text>
+<text class="m" x="48" y="300">Every board and clone</text>
+<text class="m" x="48" y="319">reads one list.</text>
+<text class="red" x="48" y="360">A new name is a landing.</text>
+<rect class="card" x="264" y="60" width="232" height="336" rx="8"/>
+<text class="h" x="278" y="86">B: each board&#x27;s own</text>
+<text class="m" x="278" y="106">nothing committed</text>
+<rect class="inner" x="278" y="122" width="204" height="50" rx="5"/>
+<text class="m" x="288" y="142">board one</text>
+<text x="288" y="161">ana = one person</text>
+<rect class="inner" x="278" y="182" width="204" height="50" rx="5"/>
+<text class="m" x="288" y="202">board two</text>
+<text x="288" y="221">ana = someone else</text>
+<text class="m" x="288" y="262">Enough while a project</text>
+<text class="m" x="288" y="281">has one board.</text>
+<text class="red" x="288" y="322">With two, a line signed</text>
+<text class="red" x="288" y="341">ana may be either.</text>
+<rect class="card" x="504" y="60" width="232" height="336" rx="8"/>
+<text class="h" x="518" y="86">C: taken from the sign-in</text>
+<text class="m" x="518" y="106">nothing declared</text>
+<rect class="inner" x="518" y="122" width="204" height="50" rx="5"/>
+<text class="mono" x="528" y="142">ana@example.com</text>
+<text class="blue" x="528" y="161">is ana everywhere</text>
+<text class="m" x="528" y="202">No list to keep.</text>
+<text class="red" x="528" y="243">Part of a sign-in is</text>
+<text class="red" x="528" y="262">committed. Two people</text>
+<text class="red" x="528" y="281">can come out as one</text>
+<text class="red" x="528" y="300">name, and a reused</text>
+<text class="red" x="528" y="319">address as an old one.</text>
+<rect class="card" x="24" y="418" width="712" height="70" rx="8"/>
+<text x="40" y="444">Under every option the name is what a line carries (ana · approved), a name once used is</text>
+<text x="40" y="466">never given to another, and a machine with nobody named keeps writing as owner.</text>
+</svg>

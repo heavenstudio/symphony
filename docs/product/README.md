@@ -109,6 +109,8 @@ An analysis holds a proposal and its evidence: an approved design can still awai
 - [A Settings page](analysis/settings-page.md) — a concept: where a project's settings live now,
   what on and off mean for its integrations and tools, and a page that shows what is in force and
   writes the preferences alone.
+- [Users and identity](analysis/users-and-identity.md) — a concept: several people on a board,
+  signed in by a service outside the core, with what each may do kept by the board.
 - [Desktop client analysis](analysis/desktop-client.md) — the design and evidence behind the Mac
   app.
 - [Product documentation review, November 2026](analysis/product-docs-review-2026-11.md) — what a

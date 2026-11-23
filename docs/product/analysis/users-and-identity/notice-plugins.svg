@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="462" viewBox="0 0 760 462" role="img" aria-labelledby="title desc">
+<title id="title">Notices: the format in the core, a plugin for each service</title>
+<desc id="desc">A card for the design group is posted, and the board decides who is told: its members. The server reads each member's profile for the way they chose, and the core makes one notice message, a format kept stable across releases. It hands the message to the plugin for that way. Three plugins, each a task of its own and none of them in the core: the Slack plugin keeps the Slack app's bot token and sends to the person's Slack user, following Slack's interface as it changes; the WhatsApp plugin keeps the business account's token and sends to the person's WhatsApp number, with templates Meta approved first; the email plugin keeps the mail server's password and sends to the person's email, a standard that changes little. Each is a package the core does not link, set up by whoever runs the server, in no project's file, and the page and the Mac app show every notice, sent or not.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--question:#946a00;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--question:#e0b84c;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.inner{fill:var(--muted);stroke:var(--border)}
+.new{fill:none;stroke:var(--primary);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.b{font-weight:600}
+.h{font-size:15px;font-weight:600}
+.t{font-size:17px;font-weight:600}
+.line{stroke:var(--muted-foreground);stroke-width:1.5;fill:none}
+.arrow{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip)}
+.tipfill{fill:var(--muted-foreground)}
+</style>
+<defs><marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="page" width="760" height="462"/>
+<text class="t" x="24" y="34">Notices: the format in the core, a plugin for each service</text>
+<rect class="inner" x="24" y="56" width="200" height="52" rx="5"/>
+<text class="b" x="38" y="78">a card for design</text>
+<text class="m" x="38" y="97">the board: its members told</text>
+<path class="arrow" d="M226,82 L286,82"/>
+<rect class="inner" x="290" y="56" width="220" height="52" rx="5"/>
+<text class="b" x="304" y="78">the server</text>
+<text class="m" x="304" y="97">the way each one chose</text>
+<path class="arrow" d="M512,82 L572,82"/>
+<rect class="new" x="576" y="56" width="160" height="52" rx="5"/>
+<text class="b" x="590" y="78">notice message</text>
+<text class="m" x="590" y="97">the core's format</text>
+<path class="line" d="M656,108 L656,124 M140,124 L656,124"/>
+<path class="arrow" d="M140,124 L140,146"/>
+<path class="arrow" d="M380,124 L380,146"/>
+<path class="arrow" d="M620,124 L620,146"/>
+<rect class="card" x="24" y="150" width="232" height="210" rx="8"/>
+<text class="h" x="38" y="176">Slack plugin</text>
+<text class="m" x="38" y="196">a task of its own</text>
+<rect class="inner" x="38" y="210" width="204" height="50" rx="5"/>
+<text x="48" y="230">keeps: the Slack app's</text>
+<text x="48" y="249">bot token</text>
+<rect class="inner" x="38" y="270" width="204" height="50" rx="5"/>
+<text x="48" y="290">sends to: the person's</text>
+<text x="48" y="309">Slack user</text>
+<text class="m" x="48" y="342">follows Slack's interface</text>
+<rect class="card" x="264" y="150" width="232" height="210" rx="8"/>
+<text class="h" x="278" y="176">WhatsApp plugin</text>
+<text class="m" x="278" y="196">a task of its own</text>
+<rect class="inner" x="278" y="210" width="204" height="50" rx="5"/>
+<text x="288" y="230">keeps: the business</text>
+<text x="288" y="249">account's token</text>
+<rect class="inner" x="278" y="270" width="204" height="50" rx="5"/>
+<text x="288" y="290">sends to: the person's</text>
+<text x="288" y="309">WhatsApp number</text>
+<text class="m" x="288" y="342">templates Meta approved</text>
+<rect class="card" x="504" y="150" width="232" height="210" rx="8"/>
+<text class="h" x="518" y="176">Email plugin</text>
+<text class="m" x="518" y="196">a task of its own</text>
+<rect class="inner" x="518" y="210" width="204" height="50" rx="5"/>
+<text x="528" y="230">keeps: the mail</text>
+<text x="528" y="249">server's password</text>
+<rect class="inner" x="518" y="270" width="204" height="50" rx="5"/>
+<text x="528" y="290">sends to: the person's</text>
+<text x="528" y="309">email</text>
+<text class="m" x="528" y="342">a standard, changes little</text>
+<rect class="card" x="24" y="378" width="712" height="64" rx="8"/>
+<text x="40" y="404">Each is a package the core does not link, set up by whoever runs the server, in no project's file.</text>
+<text x="40" y="424">The page and the Mac app show every notice, sent or not.</text>
+</svg>
