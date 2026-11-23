@@ -132,12 +132,22 @@ struct Ended {
 }
 
 impl Ended {
-    /// A request whose connection ended, or whose wait ran out, before the server answered it.
+    /// A request the server did not answer: no connection for it, or one that ended, or whose
+    /// wait ran out, before the server answered it.
     fn broken(refusal: Refusal) -> Ended {
         Ended {
             said: refusal.into(),
             clean: false,
             answered: false,
+        }
+    }
+
+    /// A request whose connection was not made: answered unless nothing answered there
+    /// ([`session::silent`]), as the socket client counts a startup the server refused.
+    fn unconnected(refusal: Refusal) -> Ended {
+        Ended {
+            answered: !session::silent(&refusal),
+            ..Ended::broken(refusal)
         }
     }
 
@@ -238,18 +248,19 @@ impl Hosting {
 
 impl pool::Connector for Hosting {
     type Connection = Arc<session::Session>;
-    type Error = Refusal;
+    type Error = Ended;
 
-    fn connect(&self, within: Duration) -> Result<Arc<session::Session>, Refusal> {
-        let target = self.read()?;
+    fn connect(&self, within: Duration) -> Result<Arc<session::Session>, Ended> {
+        let target = self.read().map_err(Ended::broken)?;
         let share = self.share.clone();
         let connecting = async move {
             match tokio::time::timeout(within, session::Session::connect(target, share)).await {
                 Ok(connected) => connected,
-                Err(_) => Err(Refusal::Unavailable("the server did not answer in time")),
+                Err(_) => Err(Refusal::Unavailable(session::UNANSWERED)),
             }
         };
-        self.driver.run(connecting)?.map(Arc::new)
+        let connected = self.driver.run(connecting).map_err(Ended::broken)?;
+        connected.map(Arc::new).map_err(Ended::unconnected)
     }
 
     fn usable(&self, connection: &Arc<session::Session>) -> bool {
@@ -422,40 +433,40 @@ impl Client {
 
     /// The server's major version, read from a connection of the pool.
     pub fn server_major(&self) -> Result<u32, DbError> {
-        let mut lease = self.lease()?;
+        let mut lease = self.lease().map_err(|ended| ended.said)?;
         let major = lease.connection().major;
         lease.keep();
         Ok(major)
     }
 
-    fn lease(&self) -> Result<pool::Lease<'_, Hosting>, DbError> {
+    /// A connection of the pool for one request, or how the request ended without one: a
+    /// connection the server refused is answered, one nothing answered and the pool's own
+    /// refusals are not ([`Ended::unconnected`]).
+    fn lease(&self) -> Result<pool::Lease<'_, Hosting>, Ended> {
         // A rotation is seen before the pool looks at its idle connections; a reading that
         // fails leaves them as they are, and the next connection made says why. But a secret
         // that names another board is refused at once: an idle connection to the board it no
         // longer names is not the one this process is now told to use.
         if let Err(moved @ Refusal::Configuration(_, MOVED)) = self.shared.pool.connector().read() {
-            return Err(moved.into());
+            return Err(Ended::broken(moved));
         }
+        let capacity = |why| Ended::broken(Refusal::Capacity(why));
         self.shared
             .pool
             .acquire(self.acquire, self.connect)
-            .map_err(|refused| {
-                DbError::from(match refused {
-                    pool::Refused::LineFull => {
-                        Refusal::Capacity("as many requests wait as the pool's line holds")
-                    }
-                    pool::Refused::Deadline => {
-                        Refusal::Capacity("none came free within the wait for one")
-                    }
-                    pool::Refused::Closed => Refusal::Capacity("the pool is shut down"),
-                    pool::Refused::Forked => Refusal::Capacity(
-                        "this process is a fork of the one that connected, and makes its own",
-                    ),
-                    pool::Refused::Nested => Refusal::Capacity(
-                        "this thread holds one already, and would wait behind itself",
-                    ),
-                    pool::Refused::Connect(refusal) => refusal,
-                })
+            .map_err(|refused| match refused {
+                pool::Refused::LineFull => {
+                    capacity("as many requests wait as the pool's line holds")
+                }
+                pool::Refused::Deadline => capacity("none came free within the wait for one"),
+                pool::Refused::Closed => capacity("the pool is shut down"),
+                pool::Refused::Forked => {
+                    capacity("this process is a fork of the one that connected, and makes its own")
+                }
+                pool::Refused::Nested => {
+                    capacity("this thread holds one already, and would wait behind itself")
+                }
+                pool::Refused::Connect(ended) => ended,
             })
     }
 
@@ -484,8 +495,9 @@ impl Client {
     }
 
     /// `work` on a connection of the pool, counted once in the board's telemetry, failed only when
-    /// it got no answer (no connection, one lost, a wait run out), never for an error the server
-    /// answered: the connection returned to the pool only when the work left it clean.
+    /// it got no answer (no connection made or lent, one lost, a wait run out), never for an error
+    /// the server answered, a connection it refused included: the connection returned to the pool
+    /// only when the work left it clean.
     #[track_caller]
     fn measured<F, W>(&self, write: bool, work: F) -> Result<Vec<Answer>, DbError>
     where
@@ -495,27 +507,22 @@ impl Client {
         let source = std::panic::Location::caller();
         self.requests.fetch_add(1, Ordering::SeqCst);
         let began = Instant::now();
-        // The outer error is a request with no answer, the inner the server's answer.
-        let sent = (|| -> Result<Result<Vec<Answer>, DbError>, DbError> {
+        let sent = (|| -> Result<Vec<Answer>, Ended> {
             let mut lease = self.lease()?;
             let session = Arc::clone(lease.connection());
             let driver = &self.shared.pool.connector().driver;
             match driver.run(work(session)) {
                 Ok(Ok(answers)) => {
                     lease.keep();
-                    Ok(Ok(answers))
+                    Ok(answers)
                 }
                 Ok(Err(ended)) => {
                     if ended.clean {
                         lease.keep();
                     }
-                    if ended.answered {
-                        Ok(Err(ended.said))
-                    } else {
-                        Err(ended.said)
-                    }
+                    Err(ended)
                 }
-                Err(refusal) => Err(refusal.into()),
+                Err(refusal) => Err(Ended::broken(refusal)),
             }
         })();
         self.shared.log.record(crate::board_health::Query {
@@ -523,9 +530,9 @@ impl Client {
             ms: began.elapsed().as_secs_f64() * 1000.0,
             source,
             write,
-            failed: sent.is_err(),
+            failed: sent.as_ref().is_err_and(|ended| !ended.answered),
         });
-        sent.flatten()
+        sent.map_err(|ended| ended.said)
     }
 }
 
@@ -667,6 +674,15 @@ mod tests {
             "the hosted board's PostgreSQL: the server cannot be reached"
         );
         assert_eq!(client.requests(), 1);
+        let unanswered = |client: &Client| {
+            let (queries, _) = client.queries().report(crate::sweep::trigger::now());
+            (queries.count, queries.failed)
+        };
+        assert_eq!(
+            unanswered(&client),
+            (1, 1),
+            "nothing answered the connection"
+        );
         assert_eq!(
             client.counts(),
             Counts::default(),
@@ -677,5 +693,41 @@ mod tests {
             panic!("the pool is shut down");
         };
         assert!(closed.contains("the pool is shut down"), "{closed}");
+        assert_eq!(unanswered(&client), (2, 2), "nor the pool, shut down");
+    }
+
+    /// A connection that was not made is a request the server answered unless nothing answered
+    /// there: the line the refusal of a host's addresses draws ([`session::silent`]).
+    #[test]
+    fn a_connection_not_made_is_answered_unless_nothing_answered_there() {
+        let server = Refusal::Server {
+            state: "57P03".into(),
+            at: "backend 0 at 1700000000".into(),
+        };
+        for (refusal, answered) in [
+            (Refusal::Unavailable(session::UNREACHED), false),
+            (Refusal::Unavailable(session::UNANSWERED), false),
+            (Refusal::Unavailable("the server refused the login"), true),
+            (
+                Refusal::Unavailable("the server's certificate has expired"),
+                true,
+            ),
+            (
+                Refusal::Capacity("the server has no connection left for the login"),
+                true,
+            ),
+            (
+                Refusal::Unsupported("the database is not UTF-8".into()),
+                true,
+            ),
+            (server, true),
+        ] {
+            let said = DbError::from(refusal.clone());
+            let ended = Ended::unconnected(refusal.clone());
+            assert_eq!(ended.answered, answered, "{refusal}");
+            assert_eq!(ended.said, said, "{refusal}");
+            assert!(!ended.clean, "{refusal}: no connection to lend again");
+            assert!(!Ended::broken(refusal.clone()).answered, "{refusal}");
+        }
     }
 }

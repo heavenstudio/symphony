@@ -785,7 +785,6 @@ fn results(reply: Value) -> Result<Vec<Value>, DbError> {
 
 #[cfg(test)]
 mod tests {
-    use crate::children::Child as _;
     mod failures;
     mod resend;
 
@@ -1297,38 +1296,22 @@ mod tests {
     #[cfg(target_vendor = "apple")]
     #[test]
     fn a_child_forked_beside_a_kept_connection_holds_no_copy_of_it() {
-        use std::os::fd::{AsRawFd, RawFd};
-        use std::os::unix::process::CommandExt;
-        let found = |fd: RawFd| {
-            let mut command = std::process::Command::of("/usr/bin/true");
-            // SAFETY: fcntl is async-signal-safe and reads only the forked child's own table.
-            unsafe {
-                command.pre_exec(move || {
-                    if libc::fcntl(fd, libc::F_GETFD) == -1 {
-                        Ok(())
-                    } else {
-                        Err(std::io::Error::from_raw_os_error(libc::EEXIST))
-                    }
-                });
-            }
-            let _spawning = crate::sys::spawning();
-            match command.status() {
-                Ok(status) => {
-                    assert!(status.success(), "{status}");
-                    false
-                }
-                Err(e) if e.raw_os_error() == Some(libc::EEXIST) => true,
-                Err(e) => panic!("{e}"),
-            }
-        };
+        use crate::sys::a_forked_child_holds;
+        use std::os::fd::AsRawFd;
         let (addr, served) = serving(vec![(vec![SEVEN], false)]);
         let client = Client::new(&addr, "sf", "t").waiting(PATIENT);
         sevens(&client, 1);
         let kept = client.kept.lock().unwrap()[0].stream.as_raw_fd();
-        assert!(!found(kept), "a forked child holds the kept connection");
+        assert!(
+            !a_forked_child_holds(kept),
+            "a forked child holds the kept connection"
+        );
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let (plain, _peer) = kept_connection(&listener, 0);
-        assert!(found(plain.stream.as_raw_fd()), "std's socket reaches it");
+        assert!(
+            a_forked_child_holds(plain.stream.as_raw_fd()),
+            "std's socket reaches it"
+        );
         drop(client);
         assert_eq!(served.join().unwrap(), vec![1]);
     }

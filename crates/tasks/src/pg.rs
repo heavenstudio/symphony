@@ -6,7 +6,9 @@
 //! ([`Connection::exchange`]).
 //!
 //! A client makes its connection at its first request and keeps it for its life, so a command,
-//! one process, is one connection, whose socket no child of the process copies ([`unshared`]).
+//! one process, is one connection. On macOS no child of the process copies its socket; elsewhere
+//! it is std's, close-on-exec, which a child spawned or forked beside it holds until its exec
+//! ([`unshared`]).
 //! Its startup names the user [`USER`], its database, UTF-8, and REPEATABLE READ for every
 //! transaction: a snapshot from a transaction's first statement, and a write that meets a row
 //! another committed since then fails at once, which is the board's rule of a write that met
