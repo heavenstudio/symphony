@@ -1156,3 +1156,92 @@ pub(super) fn a_tidys_saves_reach_main_in_one_commit_or_not_at_all(f: &Fixture) 
     assert_eq!(git(&root, &["status", "--porcelain"]), "");
     f.clean_workers();
 }
+
+pub(super) fn a_tidy_that_cannot_be_committed_holds_back_no_later_save(f: &Fixture) {
+    let root = delivering(f);
+    write(
+        &root.join("docs/c.md"),
+        "# C\n\nan answered comment\n\nrest\n",
+    );
+    git(&root, &["add", "docs/c.md"]);
+    git(&root, &["commit", "-qm", "page c"]);
+    git(&root, &["push", "-q", "origin", "main"]);
+    git(&root, &["fetch", "-q", "origin"]);
+    // A tidy whose page save was written against a text main no longer has: docs/a.md stands
+    // for its ledger, at the top, and docs/b.md for its page.
+    let ledger = shown_edit(&root, "docs/a.md", |text| {
+        text.replace("first paragraph", "first paragraph, entry one")
+    });
+    let stale = TWO.replace("second proposal", "an older proposal");
+    let page = symphony::commit::Edit {
+        rel: "docs/b.md".into(),
+        new: stale.replace("[ ]", "[x]"),
+        base: stale,
+    };
+    let first = pending::keep_together(&root, vec![ledger, page], "fox-1").unwrap();
+    pass(&root);
+    // It goes nowhere, and each of its saves says why.
+    assert!(branches(&root).is_empty());
+    let kept = pending::saves(&root);
+    let State::Held(why) = &kept[0].state else {
+        panic!("{kept:?}");
+    };
+    assert!(why.contains("conflicts with main"), "{why}");
+    let State::Held(with) = &kept[1].state else {
+        panic!("{kept:?}");
+    };
+    assert!(
+        with.starts_with("kept with the save of docs/a.md its tidy kept first, which is held:"),
+        "{with}"
+    );
+    let note = pending::note(&root, "docs/b.md").unwrap();
+    assert!(note.contains("kept with the save of docs/a.md"), "{note}");
+
+    // The owner's save of its page goes, and so does a later tidy, its ledger at the foot.
+    let saves = ClosingSaves::start(&root);
+    let message = json!({"path":"docs/b.md","slug":"two","text":"and the third?"});
+    assert_eq!(
+        saves.post("", "/api/message", message),
+        json!({"ok":true,"delivery":"pending"})
+    );
+    drop(saves);
+    let later = {
+        let ledger = shown_edit(&root, "docs/a.md", |text| {
+            text.replace("last paragraph", "last paragraph, entry two")
+        });
+        let page = shown_edit(&root, "docs/c.md", |text| {
+            text.replace("an answered comment", "tidied")
+        });
+        pending::keep_together(&root, vec![ledger, page], "fox-1").unwrap()
+    };
+    pass(&root);
+    let kept = pending::saves(&root);
+    let owner = kept.iter().find(|save| save.by.is_empty()).unwrap();
+    assert_eq!(owner.state, State::Waiting, "{kept:?}");
+    assert_eq!(
+        git(&root, &["diff", "--name-only", "main", &owner.branch]),
+        "docs/b.md"
+    );
+    let two = format!("docs/owner-save-{}", later[0]);
+    let tidied: Vec<&State> = (kept.iter())
+        .filter(|save| later.contains(&save.sequence))
+        .map(|save| &save.state)
+        .collect();
+    assert_eq!(tidied, [&State::Waiting, &State::Waiting], "{kept:?}");
+    assert_eq!(
+        git(&root, &["diff", "--name-only", "main", &two]),
+        "docs/a.md\ndocs/c.md"
+    );
+    let held = git(&root, &["show", &format!("{two}:docs/a.md")]);
+    assert!(
+        held.contains("entry two") && !held.contains("entry one"),
+        "{held}"
+    );
+    assert!(
+        first
+            .iter()
+            .all(|number| !branches(&root).contains(&format!("docs/owner-save-{number}")))
+    );
+    assert_eq!(git(&root, &["status", "--porcelain"]), "");
+    f.clean_workers();
+}

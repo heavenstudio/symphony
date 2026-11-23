@@ -3,7 +3,7 @@
 
 use super::{
     BRANCHES, Batched, Delivery, QueuedPublication, Save, State, Together, applying, behind, flat,
-    joining, kept, led, note, saves, sequence_of, shown, whose,
+    going, inert, joining, kept, led, note, saves, sequence_of, shown, stopped, whose,
 };
 use crate::test_tree::Tree;
 use std::path::Path;
@@ -368,15 +368,147 @@ fn a_tidys_page_saves_wait_with_its_ledger_save_behind_an_earlier_one() {
 #[test]
 fn saves_kept_together_go_only_once_each_of_them_is_kept() {
     let tree = repository();
-    // The second of the two not kept yet, or never.
-    entry(&tree, 1, LEDGER, "fox-1", together(1, 2));
+    // The first is written last: until it is, the others are inert, and nothing waits for them.
+    entry(&tree, 2, LEDGER, "fox-1", together(1, 2));
     let tidy = Some(Together { first: 1, count: 2 });
-    assert!(behind(&tree.root, 1, LEDGER, tidy));
-    entry(&tree, 2, "docs/r.md", "fox-1", Delivery::default());
-    entry(&tree, 3, "docs/s.md", "fox-1", together(3, 2));
-    assert!(numbers(joining(&tree.root, 2)).is_empty());
-    entry(&tree, 4, "docs/t.md", "fox-1", together(3, 2));
-    assert_eq!(numbers(joining(&tree.root, 2)), [3, 4]);
+    let entries = super::entries(&tree.root);
+    let ledger = entries[0].1.delivery.clone().unwrap();
+    assert!(inert(&entries, &ledger));
+    assert!(!going(&entries, &ledger));
+    assert!(
+        behind(&tree.root, 2, LEDGER, tidy),
+        "never led by any but its first"
+    );
+    entry(&tree, 3, LEDGER, "fox-1", Delivery::default());
+    assert!(!behind(&tree.root, 3, LEDGER, None));
+    // Once the first is written they go together, and are waited for.
+    entry(&tree, 1, "docs/s.md", "fox-1", together(1, 2));
+    assert!(!behind(&tree.root, 1, "docs/s.md", tidy));
+    assert!(behind(&tree.root, 3, LEDGER, None));
+    assert_eq!(numbers(joining(&tree.root, 1)), [2, 3]);
+}
+
+#[test]
+fn a_tidy_that_cannot_be_committed_holds_back_no_later_save_of_its_files() {
+    let tree = repository();
+    // Its first conflicts with main: the tidy goes nowhere, as a save alone that could not be
+    // committed does.
+    let held = Delivery {
+        problem: "the verdict on docs/DECISIONS.md conflicts with main".into(),
+        ..together(1, 3)
+    };
+    entry(&tree, 1, "docs/DECISIONS.md", "fox-1", held);
+    entry(&tree, 2, LEDGER, "fox-1", together(1, 3));
+    entry(&tree, 3, "docs/p.md", "fox-1", together(1, 3));
+    // The owner's save of its page, then a later tidy, its ledger first.
+    entry(&tree, 4, "docs/p.md", "", Delivery::default());
+    entry(&tree, 5, LEDGER, "fox-1", together(5, 2));
+    entry(&tree, 6, "docs/q.md", "fox-1", together(5, 2));
+    assert!(!behind(&tree.root, 4, "docs/p.md", None));
+    let later = Some(Together { first: 5, count: 2 });
+    assert!(!behind(&tree.root, 5, LEDGER, later));
+    assert_eq!(numbers(joining(&tree.root, 5)), [6]);
+    // Each of its saves says why.
+    let first = Together { first: 1, count: 3 };
+    assert_eq!(
+        stopped(&super::entries(&tree.root), first).as_deref(),
+        Some(
+            "kept with the save of docs/DECISIONS.md its tidy kept first, which is held: the \
+             verdict on docs/DECISIONS.md conflicts with main"
+        )
+    );
+    // Closed with no delivery, it holds back nothing either.
+    let closed = Delivery {
+        closed: true,
+        ..together(1, 3)
+    };
+    entry(&tree, 1, "docs/DECISIONS.md", "fox-1", closed);
+    assert!(!behind(&tree.root, 4, "docs/p.md", None));
+    assert!(
+        stopped(&super::entries(&tree.root), first)
+            .is_some_and(|why| why.ends_with("whose task closed with no delivery"))
+    );
+}
+
+#[test]
+fn a_tidy_no_longer_whole_once_kept_goes_nowhere_and_holds_back_nothing() {
+    let tree = repository();
+    // Its ledger's save was dropped, covered by another delivery: its first goes without it
+    // never, and is waited for no longer.
+    entry(&tree, 1, "docs/p.md", "fox-1", together(1, 2));
+    entry(&tree, 3, "docs/p.md", "", Delivery::default());
+    let tidy = Together { first: 1, count: 2 };
+    assert_eq!(
+        stopped(&super::entries(&tree.root), tidy).as_deref(),
+        Some("1 of the 2 saves its tidy kept are left, and none goes without the others")
+    );
+    assert!(!behind(&tree.root, 3, "docs/p.md", None));
+    // Committed, each save of it stands for itself.
+    entry(
+        &tree,
+        1,
+        "docs/p.md",
+        "fox-1",
+        Delivery {
+            together: Some(tidy),
+            ..committed(1, "c1")
+        },
+    );
+    assert_eq!(stopped(&super::entries(&tree.root), tidy), None);
+    assert!(behind(&tree.root, 3, "docs/p.md", None));
+}
+
+#[test]
+fn a_tidy_that_could_not_keep_its_first_save_shows_nothing() {
+    let tree = repository();
+    let ledger = crate::commit::Edit {
+        rel: LEDGER.into(),
+        base: "text".into(),
+        new: "text, archived".into(),
+    };
+    let saved = QueuedPublication {
+        edit: ledger,
+        publication: None,
+        dirty_retry: false,
+        dirty_reported: false,
+        delivery: Some(Delivery {
+            by: "fox-1".into(),
+            ..together(1, 2)
+        }),
+    };
+    let folder = tree
+        .root
+        .join(".git")
+        .join(symphony_board::folders::SERVER)
+        .join(super::JOURNAL);
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join(format!("{:020}.json", 2)),
+        serde_json::to_string(&saved).unwrap(),
+    )
+    .unwrap();
+    // A save of the same page kept alone is shown; the inert one never is.
+    let alone = QueuedPublication {
+        edit: crate::commit::Edit {
+            rel: LEDGER.into(),
+            base: "text".into(),
+            new: "a text".into(),
+        },
+        publication: None,
+        dirty_retry: false,
+        dirty_reported: false,
+        delivery: Some(Delivery::default()),
+    };
+    std::fs::write(
+        folder.join(format!("{:020}.json", 3)),
+        serde_json::to_string(&alone).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(shown(&tree.root, LEDGER, "text".into()), "a text");
+    assert!(
+        stopped(&super::entries(&tree.root), Together { first: 1, count: 2 })
+            .is_some_and(|why| why.contains("could not keep the first of its saves"))
+    );
 }
 
 #[test]

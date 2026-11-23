@@ -726,17 +726,20 @@ fn keep_for_delivery(
             }
             0
         }
-        Err((numbers, problem)) => {
-            let file = &files[numbers.len()];
-            let _ = writeln!(err, "✖ {file} not kept for delivery: {problem}");
-            if !numbers.is_empty() {
-                let kept: Vec<String> = files[..numbers.len()].to_vec();
+        Err(unkept) => {
+            let file = &files[unkept.at];
+            let _ = writeln!(
+                err,
+                "✖ {file} not kept for delivery: {}\n  nothing of this tidy is kept: the pages and \
+                 {} stay as they were",
+                unkept.problem, project.default_branch
+            );
+            if unkept.left > 0 {
                 let _ = writeln!(
                     err,
-                    "  kept before it: {}. They wait for it, so none of them is delivered, and \
-                     each later save of their files waits behind them until a person removes \
-                     their entries from the journal ({}).",
-                    kept.join(", "),
+                    "  ({} of its saves written before it stay in the journal ({}), never shown or \
+                     delivered, and hold back no other save)",
+                    unkept.left,
                     crate::commit::pending::journal_below()
                 );
             }

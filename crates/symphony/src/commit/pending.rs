@@ -22,7 +22,8 @@
 //!   save takes with it the later agent's saves whose turn has come in the same pass
 //!   ([`joining`]), one commit on its branch, so a sitting of replies and tidies is one task; an
 //!   owner's save is always one of its own. The saves one tidy keeps go in one commit or not at
-//!   all ([`keep_together`]), so no page goes without the ledger that holds its comments.
+//!   all ([`keep_together`]), so no page goes without the ledger that holds its comments, and a
+//!   tidy that cannot go is on no way as a whole ([`stopped`]), as a save alone is.
 //! - **A task delivers it.** The branch is filed on the board as the owner's task of that slug,
 //!   under a receipt of the branch and its commit, so a pass run again files nothing twice, and
 //!   moved to review. What it needs is its assessor's to say from its diff, as for any task; the
@@ -399,6 +400,7 @@ pub fn saves(root: &Path) -> Vec<Save> {
 
 /// [`saves`], of the document `only` alone when one is named: a page asks for its own.
 fn listed(root: &Path, only: Option<&str>) -> Vec<Save> {
+    let all = entries(root);
     let mut entries = entries(root);
     entries.retain(|(_, saved)| only.is_none_or(|file| saved.edit.rel == file));
     if entries.is_empty() || !on_main(root) {
@@ -414,8 +416,9 @@ fn listed(root: &Path, only: Option<&str>) -> Vec<Save> {
             let text = texts
                 .entry(edit.rel.clone())
                 .or_insert_with(|| std::fs::read_to_string(root.join(&edit.rel)).ok());
-            let merged =
-                (text.as_deref()).and_then(|text| merge(root, text, &edit.base, &edit.new).ok());
+            let merged = (text.as_deref())
+                .filter(|_| !inert(&all, &delivery))
+                .and_then(|text| merge(root, text, &edit.base, &edit.new).ok());
             let shown = merged.is_some();
             if let Some(merged) = merged {
                 *text = Some(merged);
@@ -426,7 +429,12 @@ fn listed(root: &Path, only: Option<&str>) -> Vec<Save> {
                 Standing::Proved { .. } => State::Following,
                 Standing::Unproved => State::Held(unproved(root)),
                 Standing::Open if !delivery.problem.is_empty() => State::Held(delivery.problem),
-                Standing::Open if delivery.tip.is_empty() => State::Queued,
+                Standing::Open if delivery.tip.is_empty() => {
+                    match (delivery.together).and_then(|together| stopped(&all, together)) {
+                        Some(why) => State::Held(why),
+                        None => State::Queued,
+                    }
+                }
                 Standing::Open => landing(root, &branch).unwrap_or(if shown {
                     State::Waiting
                 } else {
@@ -474,23 +482,23 @@ pub fn kept(root: &Path) -> bool {
 ///
 /// The journal could not be written.
 pub fn keep(root: &Path, edit: Edit, by: &str) -> Result<u64, String> {
-    kept_as(root, edit, by, None)
+    let backlog = super::Backlog::new(root)?;
+    written(root, backlog.sequence, edit, by, None)?;
+    Ok(backlog.sequence)
 }
 
-/// [`keep`], with the saves it goes with: `together`'s `first` zero for the first of them, which
-/// is then its own number.
-fn kept_as(root: &Path, edit: Edit, by: &str, together: Option<Together>) -> Result<u64, String> {
+/// The journal entry `sequence` of an agent's save of `edit` by `by` (`agent` when blank),
+/// written whole and renamed into place, its lease let go at once: the server takes it up.
+fn written(
+    root: &Path,
+    sequence: u64,
+    edit: Edit,
+    by: &str,
+    together: Option<Together>,
+) -> Result<(), String> {
     let by = by.trim();
     let by = if by.is_empty() { "agent" } else { by };
-    let backlog = super::Backlog::new(root)?;
-    let together = together.map(|together| Together {
-        first: match together.first {
-            0 => backlog.sequence,
-            first => first,
-        },
-        ..together
-    });
-    let path = OutputJob::folder(root)?.join(format!("{:020}.json", backlog.sequence));
+    let path = OutputJob::folder(root)?.join(format!("{sequence:020}.json"));
     let saved = QueuedPublication {
         edit,
         publication: None,
@@ -502,45 +510,58 @@ fn kept_as(root: &Path, edit: Edit, by: &str, together: Option<Together>) -> Res
             ..Delivery::saved(root)
         }),
     };
-    // Written whole and renamed into place, its lease let go at once: the server takes it up.
     drop(OutputJob::write_journal(&path, &saved)?);
-    Ok(backlog.sequence)
+    Ok(())
+}
+
+/// What a tidy could not keep ([`keep_together`]).
+#[derive(Debug)]
+pub struct Unkept {
+    /// Which of its edits failed.
+    pub at: usize,
+    /// How many of its later edits were written before it, which nothing shows or delivers.
+    pub left: usize,
+    /// Why.
+    pub problem: String,
 }
 
 /// The edits of one tidy kept as saves of `by` that go together ([`Together`]): delivered in one
-/// commit, led by the first, or none of them. Kept one after another, as [`keep`] keeps each:
-/// a pass that finds only some of them, the rest not kept yet or never, delivers none. One edit
-/// is kept alone. Their entries' numbers.
+/// commit, led by the first, or none of them. One edit is kept alone. Their entries' numbers, in
+/// the order of the edits.
+///
+/// Their numbers are drawn first, and the first's entry is written last: a group whose first
+/// entry is in the journal was kept whole, and one without it is no save at all. Until it is
+/// written a pass finds the others inert ([`stopped`]): none shown, delivered or waited for.
 ///
 /// # Errors
 ///
-/// An entry could not be written: those kept before it, and why. They wait for the rest, which
-/// will never come, so none of them is delivered.
-pub fn keep_together(
-    root: &Path,
-    edits: Vec<Edit>,
-    by: &str,
-) -> Result<Vec<u64>, (Vec<u64>, String)> {
-    if edits.len() < 2 {
-        let mut kept = Vec::new();
-        for edit in edits {
-            kept.push(keep(root, edit, by).map_err(|problem| (Vec::new(), problem))?);
-        }
-        return Ok(kept);
+/// A number could not be drawn or an entry written: which edit, how many after it were written,
+/// and why. Without the first's entry nothing of the tidy is shown or delivered, and nothing waits
+/// for it.
+pub fn keep_together(root: &Path, edits: Vec<Edit>, by: &str) -> Result<Vec<u64>, Unkept> {
+    let mut backlogs = Vec::new();
+    for at in 0..edits.len() {
+        let backlog = super::Backlog::new(root).map_err(|problem| Unkept {
+            at,
+            left: 0,
+            problem,
+        })?;
+        backlogs.push(backlog);
     }
-    let count = edits.len() as u64;
-    let mut kept: Vec<u64> = Vec::new();
-    for edit in edits {
-        let together = Together {
-            first: kept.first().copied().unwrap_or(0),
-            count,
-        };
-        match kept_as(root, edit, by, Some(together)) {
-            Ok(number) => kept.push(number),
-            Err(problem) => return Err((kept, problem)),
-        }
+    let numbers: Vec<u64> = backlogs.iter().map(|backlog| backlog.sequence).collect();
+    let together = (numbers.len() > 1).then(|| Together {
+        first: numbers[0],
+        count: numbers.len() as u64,
+    });
+    let last = edits.len().saturating_sub(1);
+    for (at, edit) in edits.into_iter().enumerate().rev() {
+        written(root, numbers[at], edit, by, together).map_err(|problem| Unkept {
+            at,
+            left: last - at,
+            problem,
+        })?;
     }
-    Ok(kept)
+    Ok(numbers)
 }
 
 /// Whether the default branch of the checkout at `root` holds the file `file`: a save of a file
@@ -563,8 +584,9 @@ pub fn shown(root: &Path, file: &str, text: String) -> String {
         return text;
     }
     let mut shown = text;
-    for (_, saved) in entries {
+    for (_, saved) in &entries {
         if saved.edit.rel == file
+            && !(saved.delivery.as_ref()).is_some_and(|delivery| inert(&entries, delivery))
             && let Ok(merged) = merge(root, &shown, &saved.edit.base, &saved.edit.new)
         {
             shown = merged;
@@ -641,7 +663,8 @@ fn flat(text: &str) -> String {
 /// delivery (cancelled, or closed unproved), or that could not be committed (it conflicts with
 /// the default branch), is on no way, and is waited for no longer: the later save carries its
 /// own change alone. A save one tidy kept with others (`together`) waits while any of them
-/// would: it goes only with the first of them, and only once each is kept.
+/// would: it goes only with the first of them, and only once each is kept. Those that go
+/// nowhere ([`stopped`]) are on no way as a whole, and waited for no longer.
 fn behind(root: &Path, sequence: u64, file: &str, together: Option<Together>) -> bool {
     let entries = entries(root);
     let Some(together) = together else {
@@ -666,8 +689,70 @@ fn before(entries: &[(u64, QueuedPublication)], sequence: u64, file: &str, excep
         *earlier < sequence
             && !except.contains(earlier)
             && saved.edit.rel == file
-            && saved.delivery.as_ref().is_some_and(Delivery::on_its_way)
+            && saved
+                .delivery
+                .as_ref()
+                .is_some_and(|delivery| going(entries, delivery))
     })
+}
+
+/// Why the saves one tidy kept as `together` go nowhere, when they do not: on no way to the
+/// default branch as a whole, as a save alone that could not be committed is, so none of them is
+/// waited for. Their first not in the journal (the tidy could not keep it, as it is written
+/// last), held short of its branch or closed, or one of them gone once all were kept. None while
+/// they may go, and once their first is committed, where each entry stands for itself.
+fn stopped(entries: &[(u64, QueuedPublication)], together: Together) -> Option<String> {
+    let Some((_, first)) = entries.iter().find(|(number, _)| *number == together.first) else {
+        return Some(
+            "the tidy that kept it could not keep the first of its saves, so none of them is \
+             shown or delivered"
+                .into(),
+        );
+    };
+    let delivery = first.delivery.as_ref()?;
+    if !delivery.tip.is_empty() {
+        return None;
+    }
+    let file = &first.edit.rel;
+    if delivery.closed {
+        return Some(format!(
+            "kept with the save of {file} its tidy kept first, whose task closed with no \
+             delivery"
+        ));
+    }
+    if !delivery.problem.is_empty() {
+        return Some(format!(
+            "kept with the save of {file} its tidy kept first, which is held: {}",
+            flat(&delivery.problem)
+        ));
+    }
+    let left = group(entries, together).len() as u64;
+    (left != together.count).then(|| short(left, together.count))
+}
+
+/// Why the saves of a tidy no longer whole go nowhere: `left` of its `count`.
+fn short(left: u64, count: u64) -> String {
+    format!("{left} of the {count} saves its tidy kept are left, and none goes without the others")
+}
+
+/// Whether the save `delivery` of `entries` is still on its way to the default branch
+/// ([`Delivery::on_its_way`]), and the saves its tidy kept with it are too ([`stopped`]): what a
+/// later save of its document waits for.
+fn going(entries: &[(u64, QueuedPublication)], delivery: &Delivery) -> bool {
+    delivery.on_its_way()
+        && (!delivery.tip.is_empty()
+            || delivery
+                .together
+                .is_none_or(|together| stopped(entries, together).is_none()))
+}
+
+/// Whether the agent's save `delivery` is inert: one of a tidy that could not keep the first of
+/// its saves, which nothing shows or delivers ([`keep_together`]).
+fn inert(entries: &[(u64, QueuedPublication)], delivery: &Delivery) -> bool {
+    delivery.tip.is_empty()
+        && delivery
+            .together
+            .is_some_and(|together| !entries.iter().any(|(number, _)| *number == together.first))
 }
 
 /// The saves of `entries` kept together as `together` ([`keep_together`]), in the order kept.
@@ -707,7 +792,7 @@ fn joining(root: &Path, leader: u64) -> Vec<(u64, QueuedPublication)> {
         .find(|(sequence, _)| *sequence == leader)
         .and_then(|(_, saved)| saved.delivery.as_ref()?.together);
     let mut held_back = std::collections::BTreeSet::new();
-    let mut going = std::collections::BTreeMap::new();
+    let mut decided = std::collections::BTreeMap::new();
     let mut joining = std::collections::BTreeSet::new();
     for (sequence, saved) in &entries {
         let Some(delivery) = &saved.delivery else {
@@ -720,7 +805,7 @@ fn joining(root: &Path, leader: u64) -> Vec<(u64, QueuedPublication)> {
             Some(together) if Some(together) == own => *sequence > leader,
             // Decided once for all of them, where the first stands: they are kept one after
             // another, under the lock every save takes.
-            Some(together) => *going.entry(together.first).or_insert_with(|| {
+            Some(together) => *decided.entry(together.first).or_insert_with(|| {
                 let mates = group(&entries, together);
                 mates.len() as u64 == together.count
                     && (mates.iter()).all(|(number, saved)| {
@@ -732,7 +817,7 @@ fn joining(root: &Path, leader: u64) -> Vec<(u64, QueuedPublication)> {
         };
         if goes {
             joining.insert(*sequence);
-        } else if delivery.on_its_way() {
+        } else if going(&entries, delivery) {
             held_back.insert(saved.edit.rel.clone());
         }
     }
@@ -1186,6 +1271,15 @@ impl OutputJob {
                 self.saved.delivery = Some(delivery.clone());
                 self.save()?;
             } else {
+                // A tidy's first save whose group lost one of them once kept goes nowhere, and
+                // says so: none of them is waited for ([`stopped`]).
+                if let Some(together) = delivery.together.filter(|t| t.first == sequence) {
+                    let left = group(&entries(root), together).len() as u64;
+                    if left != together.count {
+                        delivery.problem = short(left, together.count);
+                        return Ok(());
+                    }
+                }
                 if behind(root, sequence, &edit.rel, delivery.together) {
                     delivery.problem.clear();
                     return Ok(());

@@ -1298,16 +1298,27 @@ task; each entry names that branch and its commit (`members` in the first's), so
 held and closed by that branch's receipt, land and task. An owner's save never goes with one, so
 a pass splits only where one document's saves meet an owner's save still on its way, or a batch
 already on its way: the later saves of that document wait for it, and go with the next pass's
-batch. A save that no longer applies after those before it is left out, with every later save of
-its document, and waits as well.
+batch. A save left out of a batch, because it no longer applies after those before it, waits for
+the next pass with every later save of its document. The next pass tries it alone: one that
+cannot be committed then is on no way to the default branch, says why on its page, and holds
+back no later save.
 
 The saves one tidy keeps go to the default branch in one commit or not at all: its ledger never
 reaches it without the pages whose comments it holds, nor a page without the ledger
 (`together` in each entry: the first's number and how many). They are led by the first of them,
 which waits while any of them would: a page's save waits behind its ledger's, and the ledger's
 behind a save of that page still on its way. A batch takes them all or none, and leaves them all
-out where one no longer applies. A tidy that could keep only some of them says so: those it kept
-are never delivered, and wait until a person removes their entries from the journal.
+out where one no longer applies.
+
+A tidy whose saves cannot go is on no way as a whole, as a save alone that cannot be committed
+is. That is the case when its first is held (one of them conflicts with the default branch, and
+so its commit fails), when its task closed with no delivery, or when it is no longer whole once
+kept, one of them dropped as another delivery brought it. Each of its saves then says why on its
+page, and none holds back a later save of its files: an owner's save of one of its pages goes,
+and so does a later tidy's ledger. The tidy writes its first entry last, so a tidy that could
+not keep all of its saves has no first in the journal. Those it did keep are never shown or
+delivered and hold back nothing, and the tidy says on its error output that nothing of it was
+kept.
 
 ### What the generators make, delivered by a pull request
 

@@ -543,11 +543,18 @@ fn a_tidy_that_cannot_keep_a_change_says_which_and_writes_no_file_either() {
     let (code, out, err) =
         unwritable_journal(&tree.root, || tidy(&tree.root, "2026-11-22 21:00", ""));
     assert_eq!(code, 1, "{out}");
+    // Its first entry is written last, so the first write tried is the last file's, and with
+    // it refused nothing of the tidy is kept.
     assert!(
-        err.starts_with("✖ docs/DECISIONS.md not kept for delivery: "),
+        err.starts_with("✖ docs/NOTES.md not kept for delivery: "),
+        "{err}"
+    );
+    assert!(
+        err.contains("nothing of this tidy is kept: the pages and main stay as they were"),
         "{err}"
     );
     assert!(!out.contains("kept for delivery"), "{out}");
+    assert!(journal(&tree.root).is_empty());
     assert_eq!(tree.read("docs/DECISIONS.md"), REGISTER);
     assert_eq!(tree.read("docs/NOTES.md"), NOTES);
     assert_eq!(dirt(&tree.root), "");

@@ -311,6 +311,14 @@ fn a_tidys_saves_reach_main_in_one_commit_or_not_at_all() {
 }
 
 #[test]
+fn a_tidy_that_cannot_be_committed_holds_back_no_later_save() {
+    isolated(
+        "a_tidy_that_cannot_be_committed_holds_back_no_later_save",
+        delivery::a_tidy_that_cannot_be_committed_holds_back_no_later_save,
+    );
+}
+
+#[test]
 fn the_land_of_a_pending_saves_task_is_said_from_its_journal() {
     isolated(
         "the_land_of_a_pending_saves_task_is_said_from_its_journal",
