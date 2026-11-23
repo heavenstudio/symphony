@@ -253,7 +253,9 @@ workers, so slow answers never hold the worker its other calls are answered on (
 render, an authority's attestation, what an answer is kept while); another answer waits in the host
 for one of the three to end, a minute at most, and then has its own minute. An answer with none in
 its minute is given up and sent a `cancel` like any call, and a process that has not answered it
-10 s later is ended.
+10 s later is ended. The SDK takes no `cancel` and runs the answer on, so the answer keeps its turn
+among the three until its late answer comes or its process ends: no fourth takes the last worker
+meanwhile.
 
 `gates.kept_while` is a call's round trip on every read, the sign-off lane's on the server's live
 loop among them, where a linked answerer's is cheap and never blocks: a process that stops
@@ -303,8 +305,10 @@ it. Its class is not the describer's to lower: a setting whose key the local set
 decide what runs and what lands) is shown reviewed, written in the project's scope alone, whatever
 its describer calls it, and a describer may mark a setting of its own reviewed. Nor is the board's
 scope its describer's to take: the board's store keeps the Symphony's own preferences alone, so a
-description's setting is shown without it and the page draws no control for one. A plugin built
-before the seam declares none and is asked nothing.
+description's setting is shown without it, among the scopes it may be written in and as its
+value's source alike, and the page draws no control for one, not even for a key of the
+Symphony's own that the store keeps: that control is drawn on the Symphony's own row alone. A
+plugin built before the seam declares none and is asked nothing.
 
 ## The line
 

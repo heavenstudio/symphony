@@ -256,13 +256,21 @@ pub(in crate::store) const FENCES: &str = "IF EXISTS (SELECT 1 FROM jsonb_array_
     RAISE EXCEPTION 'stale'; \
 END IF;";
 
+/// Whether a receiver `v -> 'receivers'` names has no session that has not left: the receivers'
+/// sessions read by `session_handle`, all of them by one condition (`= ANY`), whatever number the
+/// server guesses a list holds.
+pub(in crate::store) const RECEIVER_GONE: &str = "EXISTS (SELECT 1 \
+        FROM jsonb_array_elements_text(v -> 'receivers') AS h \
+        LEFT JOIN (SELECT handle FROM session WHERE handle = ANY \
+            (ARRAY(SELECT jsonb_array_elements_text(v -> 'receivers'))) AND left_at IS NULL) AS s \
+        ON s.handle = h WHERE s.handle IS NULL)";
+
 /// A pass's writes, after its fences: each receiver still there and fenced, its slot counter where
 /// it was read; each give's role, version, slot counter and line, sent by `sender`; each mark set
 /// or lifted.
 pub(in crate::store) fn gives() -> String {
     format!(
-        "IF EXISTS (SELECT 1 FROM jsonb_array_elements_text(v -> 'receivers') AS h \
-        WHERE NOT EXISTS (SELECT 1 FROM session WHERE handle = h AND left_at IS NULL)) THEN \
+        "IF {RECEIVER_GONE} THEN \
     RAISE EXCEPTION 'stale'; \
 END IF; \
 {} \
@@ -314,11 +322,12 @@ pub(in crate::store) const GAINING: Pg<'static> = Pg::Read(Cow::Borrowed(
         WHERE r.handle = v ->> 'handle' AND r.role = 'orchestrator'), '[]'))",
 ));
 
-/// Of `candidates`, the sessions that listen: a channel registered, or a reader of `tasks wait`.
+/// Of `candidates`, the sessions that listen: a channel registered, or a reader of `tasks wait`;
+/// the channels by their ids, all of them by one condition (`= ANY`).
 pub(in crate::store) const LISTENING: Pg<'static> = Pg::Read(Cow::Borrowed(
     "coalesce((SELECT jsonb_agg(DISTINCT l.handle) FROM ( \
     SELECT c.doc ->> 'handle' AS handle FROM callback_state c \
-        WHERE c.id IN (SELECT to_jsonb(h) FROM jsonb_array_elements_text(v -> 'candidates') AS h) \
+        WHERE c.id = ANY (ARRAY(SELECT to_jsonb(h) FROM jsonb_array_elements_text(v -> 'candidates') AS h)) \
             AND c.doc ->> 'address' IS NOT NULL \
     UNION SELECT w FROM jsonb_array_elements_text(coalesce( \
             (SELECT doc -> 'waiting' FROM callback_state WHERE id = '\"chat\"'), '[]')) AS w \

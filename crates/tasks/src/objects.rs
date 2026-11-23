@@ -3,7 +3,9 @@
 //! row, facts and artifacts, the fields the board keeps on a task, the dump's tables and the
 //! project file's workflow tables; and as text it drops when it does not read ([`parse`]), the
 //! files and lines the board keeps beside its database. The board and its database write each
-//! struct of them as an object, so a struct is read from an object alone.
+//! struct of them as an object, so a struct is read from an object alone. A read that needs no
+//! reader of a list or a struct of its own takes the value apart by field ([`items`], [`fields`]),
+//! each field read through [`read`], as the dispatch reads the rows of many recipients.
 //!
 //! `serde_json` reads a struct from an object or from an array of its fields in order, from a
 //! value and from text alike, so each derived `Deserialize` it reads links two readers of the
@@ -22,7 +24,9 @@
 //!   the later one, where `serde_json` refuses a struct's duplicate field from text;
 //! - a row of an open table is handed only the fields its struct names, so it reads past a field
 //!   an additive step added ([`Rows::Open`]), but where a copy reads it exactly
-//!   ([`read_exact`]), as `serde_json` does.
+//!   ([`read_exact`]), as `serde_json` does;
+//! - a struct read by field ([`fields`]) with more than one field wrong is refused for the first
+//!   its read asks for, where a derived reader names the first in the object's order.
 //!
 //! Everything else reads, and is refused, as `serde_json` reads and refuses it from a value.
 
@@ -53,6 +57,60 @@ pub(crate) fn parse<T: DeserializeOwned>(text: impl AsRef<[u8]>) -> Option<T> {
 /// `text` as the JSON value it is.
 fn value(text: &[u8]) -> Option<Value> {
     serde_json::from_slice(text).ok()
+}
+
+/// The items of `value`, an array, refused where it is anything else as [`read`] refuses a list
+/// there: for a list read item by item ([`fields`]), which links no reader of a list of its own.
+pub(crate) fn items(value: &Value) -> Result<&[Value], Error> {
+    match value {
+        Value::Array(items) => Ok(items),
+        other => refused(other, &"a sequence"),
+    }
+}
+
+/// The fields of `value`, an object, each read through [`read`] as a derived reader of `what` (its
+/// `struct Name`) reads it ([`Fields`]), and refused where it is anything else as that reader
+/// refuses it: a struct read by field, which links no reader of its own.
+pub(crate) fn fields<'a>(value: &'a Value, what: &'static str) -> Result<Fields<'a>, Error> {
+    match value {
+        Value::Object(fields) => Ok(Fields(fields)),
+        other => refused(other, &what),
+    }
+}
+
+/// An object's fields, each read by name as a derived reader reads that field ([`fields`]).
+pub(crate) struct Fields<'a>(&'a serde_json::Map<String, Value>);
+
+impl Fields<'_> {
+    /// The field `name` read as `T`, refused as missing where the object has none, whatever `T`
+    /// is: an `Option` too, which a derived reader reads as none there, so an `Option` field is
+    /// read by [`Fields::optional`].
+    pub(crate) fn field<T: DeserializeOwned>(&self, name: &'static str) -> Result<T, Error> {
+        match self.0.get(name) {
+            Some(value) => read(value),
+            None => Err(de::Error::missing_field(name)),
+        }
+    }
+
+    /// The field `name` read as `T`, none where it is missing or null, as an `Option` field reads.
+    pub(crate) fn optional<T: DeserializeOwned>(
+        &self,
+        name: &'static str,
+    ) -> Result<Option<T>, Error> {
+        match self.0.get(name) {
+            None | Some(Value::Null) => Ok(None),
+            Some(value) => read(value).map(Some),
+        }
+    }
+
+    /// The field `name` read as `T`, its default where the object has none, as a field with
+    /// `#[serde(default)]` reads.
+    pub(crate) fn defaulted<T: DeserializeOwned + Default>(
+        &self,
+        name: &'static str,
+    ) -> Result<T, Error> {
+        self.0.get(name).map_or_else(|| Ok(T::default()), read)
+    }
 }
 
 /// A JSON value read with each struct from an object alone, its open tables' rows as [`Rows`] says.

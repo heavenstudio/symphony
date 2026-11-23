@@ -16,10 +16,21 @@
 //! [`CLAUDE_SMALLEST`]; for Codex the board names none, so `[agents] launch`'s model, else the
 //! board's own). Only those two tables are read; the rest of the file is the Symphony's, which
 //! refuses a role it does not know.
+//!
+//! An agent can be turned off: `[agents.launch.on]` holds a switch for each agent ([`ON`]), `false`
+//! off, and none written is none off. A launch, the staffing pass and a restore start no agent
+//! that is off ([`Defaults::off`], `super::off`); its files stay installed, so on again is the
+//! switch alone. The launch default cannot be off: a file that turns off the default it names (or,
+//! naming none, the board's own) does not load ([`Defaults::parse`], [`crate::local`]), the board's
+//! store refuses the same write, and where the layers disagree (a default written over an older
+//! switch) the default wins and its switch does not hold ([`Defaults::overruled`]). Each switch
+//! keeps where it was written ([`Switch`]), which a refusal names.
 
+use crate::limits::{self, Written};
 use crate::on_review::MANIFEST;
 use serde::Deserialize;
 use std::path::Path;
+use toml::Value;
 
 /// The roles a model is written for, in the order `tasks limits` prints them.
 pub const ROLES: [&str; 4] = ["orchestrator", "executor", "reviewer", ASSESSOR];
@@ -37,6 +48,44 @@ pub const CLAUDE_MODEL: &str = "sonnet";
 /// The board's effort for Codex; Claude keeps its own unless the project names one.
 pub const CODEX_EFFORT: &str = "xhigh";
 
+/// The key of `[agents] launch` holding each agent's switch: `[agents.launch.on]`.
+pub const ON: &str = "on";
+/// The tables that lead to the switches, as the project file names them.
+pub const ON_TABLES: [&str; 3] = ["agents", "launch", ON];
+
+/// The switch of `agent` as a problem, `tasks limits` and the Settings page name it:
+/// `[agents.launch.on] codex`.
+pub fn switch_named(agent: &str) -> String {
+    format!("[{}] {agent}", ON_TABLES.join("."))
+}
+
+/// The switch of `agent` as the board's store keys it: `agents.launch.on.codex`.
+pub fn switch_key(agent: &str) -> String {
+    format!("{}.{agent}", ON_TABLES.join("."))
+}
+
+/// One agent's switch as the settings in force write it: whether it is on, and where it was
+/// written (`[agents.launch.on] codex, line 9` for the project file, the store's or the local
+/// file's name before that for theirs).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Switch {
+    pub on: bool,
+    pub at: Written,
+}
+
+impl Switch {
+    /// Where it was written, as a refusal names it: the project file's name before a setting it
+    /// writes, the store's and the local file's as they are said.
+    pub fn said(&self) -> String {
+        let said = self.at.said();
+        if said.starts_with('[') {
+            format!("{MANIFEST} {said}")
+        } else {
+            said
+        }
+    }
+}
+
 /// The project's `[agents] launch` and `[agents.models]`: each `None` leaves the board's own.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Defaults {
@@ -46,6 +95,9 @@ pub struct Defaults {
     pub effort: Option<String>,
     /// `[agents.models]`: the model each role runs on.
     pub models: Models,
+    /// `[agents.launch.on]`: each agent's switch, in [`AGENTS`]' order; none where nothing writes
+    /// one, which is on.
+    pub on: [Option<Switch>; 2],
 }
 
 /// `[agents.models]`: the model of the project's agent each role runs on; `None` is no model
@@ -181,6 +233,99 @@ pub fn agent(key: &str, written: Option<&str>) -> Result<Option<&'static str>, S
     }
 }
 
+/// `value`, written for the key `key` of `[agents.launch.on]` and named `name` in a problem, as
+/// every reader of it takes it: the place in [`AGENTS`] of the agent it switches, and whether it is
+/// on. The project file's readers, the local file's and the board store's ([`crate::local`]) all
+/// judge it here.
+///
+/// # Errors
+///
+/// A key that is no agent a launch starts, and a value that is no switch, naming `name`.
+pub fn switch(name: &str, key: &str, value: &Value) -> Result<(usize, bool), String> {
+    let Some(at) = AGENTS.iter().position(|known| *known == key) else {
+        return Err(format!(
+            "{name} is not an agent a launch starts: it is one of {}",
+            AGENTS.join(", ")
+        ));
+    };
+    match value {
+        Value::Boolean(on) => Ok((at, *on)),
+        other => Err(format!(
+            "{name} is {}; a switch is true (on) or false (off)",
+            limits::shown(other)
+        )),
+    }
+}
+
+/// Why the switch `named` cannot turn off `agent`, the launch default as `chosen` says where it
+/// comes from: every place that refuses it says this.
+pub fn default_off(named: &str, agent: &str, chosen: &str) -> String {
+    format!(
+        "{named} turns off {agent}, the launch default ({chosen}), which cannot be off: pick \
+         another default first"
+    )
+}
+
+/// The agent `text`, a project file, names as the launch default, read alone and loosely: none
+/// where it names none, one no launch starts, or the text is no TOML (its own reader says why).
+pub fn written_agent(text: &str) -> Option<&'static str> {
+    let file: toml::Table = toml::from_str(text).ok()?;
+    let named = file
+        .get("agents")?
+        .get("launch")?
+        .get("default")?
+        .as_str()?;
+    agent(AGENT_KEY, Some(named)).ok().flatten()
+}
+
+/// The place of `agent`, one of [`AGENTS`], among them.
+fn index(agent: &str) -> usize {
+    AGENTS
+        .iter()
+        .position(|known| *known == agent)
+        .expect("one of the agents")
+}
+
+/// `[agents.launch.on]` of `text`, the project file at `path`: each switch it writes, with its
+/// line. Text that is no TOML writes none (its own reader says why).
+///
+/// # Errors
+///
+/// A switch [`switch`] refuses, or an `on` that is no table, naming the file and the line.
+fn switches(path: &str, text: &str) -> Result<[Option<Switch>; 2], String> {
+    let mut on: [Option<Switch>; 2] = Default::default();
+    let Ok(file) = toml::from_str::<toml::Table>(text) else {
+        return Ok(on);
+    };
+    let Some(written) = (file.get("agents"))
+        .and_then(|agents| agents.get("launch"))
+        .and_then(|launch| launch.get(ON))
+    else {
+        return Ok(on);
+    };
+    let Value::Table(written) = written else {
+        let at = Written {
+            at: format!("[agents.launch] {ON}"),
+            line: limits::line(text, &["agents", "launch"], ON),
+        };
+        return Err(format!(
+            "{path}: {} is {}; it is a table of each agent's switch",
+            at.named(),
+            limits::shown(written)
+        ));
+    };
+    for (key, value) in written {
+        let at = Written {
+            at: switch_named(key),
+            line: limits::line(text, &ON_TABLES, key),
+        };
+        let (agent, is_on) =
+            switch(&at.named(), key, value).map_err(|why| format!("{path}: {why}"))?;
+        on[agent] = Some(Switch { on: is_on, at });
+    }
+    Ok(on)
+}
+
 /// The board's own model for `agent`.
 fn board_model(agent: &str) -> &'static str {
     if agent == "codex" {
@@ -214,19 +359,43 @@ impl Defaults {
         }?;
         // A local file that is refused is read by nobody, and said where the limits are read
         // ([`crate::limits::read_at`]), on every command.
-        let committed = committed.over(&stored.held);
+        let committed = committed.over_stored(stored);
         Ok(match crate::local::beside(&path) {
             Ok(Some(local)) => committed.over(&local),
             _ => committed,
         })
     }
 
+    /// These, the committed settings, with what the board's store holds in force in their place,
+    /// each switch named as the store's.
+    pub fn over_stored(self, stored: &crate::settings::Stored) -> Defaults {
+        self.over_held(&stored.held, &|agent| {
+            crate::settings::Stored::written(&switch_key(agent))
+        })
+    }
+
     /// These, the committed settings, with what the local file `local` writes in their place
-    /// ([`crate::local::Local::over`]); a value it writes empty is none, as in the project file.
-    pub fn over(mut self, local: &crate::local::Local) -> Defaults {
+    /// ([`crate::local::Local::over`]); a value it writes empty is none, as in the project file. A
+    /// switch it writes is named with that file and its line.
+    pub fn over(self, local: &crate::local::Local) -> Defaults {
+        self.over_held(local, &|agent| {
+            local.written(&switch_named(agent), &ON_TABLES, agent)
+        })
+    }
+
+    /// These with what `held` writes in their place, a switch it writes said to be written `at`.
+    fn over_held(mut self, held: &crate::local::Local, at: &dyn Fn(&str) -> Written) -> Defaults {
+        for ((into, written), agent) in self.on.iter_mut().zip(&held.on).zip(AGENTS) {
+            if let Some(on) = written {
+                *into = Some(Switch {
+                    on: *on,
+                    at: at(agent),
+                });
+            }
+        }
         let mut named = self.agent.map(String::from);
         let models = &mut self.models;
-        local.over(
+        held.over(
             [&mut named, &mut self.model, &mut self.effort],
             [
                 &mut models.orchestrator,
@@ -235,7 +404,7 @@ impl Defaults {
                 &mut models.assessor,
             ],
         );
-        // The local file's agent is one [`agent`] takes, as its reader checked.
+        // The agent written there is one [`agent`] takes, as its reader checked.
         self.agent = agent(AGENT_KEY, named.as_deref()).ok().flatten();
         for value in [
             &mut self.model,
@@ -250,8 +419,15 @@ impl Defaults {
         self
     }
 
-    /// `text`, the manifest at `path`, as [`Defaults::configured`] reads it.
-    pub(crate) fn parse(path: &str, text: &str) -> Result<Defaults, String> {
+    /// `text`, the manifest at `path`, as [`Defaults::configured`] reads it: what the Symphony's
+    /// load and lint of the project file refuse it for too.
+    ///
+    /// # Errors
+    ///
+    /// Text that is no TOML, a launch default no launch starts, a switch that is no agent's or no
+    /// switch, and one turning off the default the file names (or, naming none, the board's own),
+    /// each naming `path`.
+    pub fn parse(path: &str, text: &str) -> Result<Defaults, String> {
         let manifest: Manifest =
             toml::from_str(text).map_err(|error| format!("{path}: [agents] launch: {error}"))?;
         let launch = manifest.agents.launch;
@@ -260,6 +436,22 @@ impl Defaults {
         let written: ModelsManifest =
             toml::from_str(text).map_err(|error| format!("{path}: [agents.models]: {error}"))?;
         let models = written.agents.models;
+        let on = switches(path, text)?;
+        let own = agent.unwrap_or(AGENTS[0]);
+        if let Some(switch) = on[index(own)].as_ref().filter(|switch| !switch.on) {
+            let chosen = match agent {
+                Some(_) => limits::Written {
+                    at: AGENT_KEY.into(),
+                    line: limits::line(text, &["agents", "launch"], "default"),
+                }
+                .said(),
+                None => "the board's own".into(),
+            };
+            return Err(format!(
+                "{path}: {}",
+                default_off(&switch.at.named(), own, &chosen)
+            ));
+        }
         Ok(Defaults {
             agent,
             model: given(launch.model),
@@ -270,7 +462,37 @@ impl Defaults {
                 reviewer: given(models.reviewer),
                 assessor: given(models.assessor),
             },
+            on,
         })
+    }
+
+    /// The launch default: the agent written, else the board's own ([`AGENTS`]' first).
+    pub fn default_agent(&self) -> &'static str {
+        self.agent.unwrap_or(AGENTS[0])
+    }
+
+    /// The switch that turns `agent` off, where one does: none for an agent on, one no switch is
+    /// written for, and the launch default, which wins over its switch ([`Defaults::overruled`]).
+    pub fn off(&self, agent: &str) -> Option<&Switch> {
+        if agent == self.default_agent() {
+            return None;
+        }
+        let at = AGENTS.iter().position(|known| *known == agent)?;
+        self.on[at].as_ref().filter(|switch| !switch.on)
+    }
+
+    /// The switch in force that would turn off the launch default, where the layers disagree (a
+    /// default written over an older switch, in another place): it does not hold, the default
+    /// winning, and `tasks limits` and the Settings page say so in these words.
+    pub fn overruled(&self) -> Option<String> {
+        let own = self.default_agent();
+        let switch = self.on[index(own)].as_ref().filter(|switch| !switch.on)?;
+        Some(format!(
+            "{} turns off {own} ({}), which does not hold: {own} is the launch default, which \
+             wins; pick another default to turn it off",
+            switch_named(own),
+            switch.said()
+        ))
     }
 
     /// `[agents] launch`'s `default`, `model` and `effort` as these hold them, in
@@ -356,22 +578,35 @@ impl Defaults {
     }
 
     /// What `launch --help` says a bare launch in the project at `root` starts, and where that
-    /// comes from.
+    /// comes from, then each agent turned off, which no launch starts.
     pub fn said_at(root: &Path) -> String {
         let path = root.join(MANIFEST);
-        match Self::configured(root) {
-            Ok(defaults) if defaults.named() => format!(
+        let defaults = match Self::configured(root) {
+            Ok(defaults) => defaults,
+            Err(problem) => return format!("here a launch is refused: {problem}\n"),
+        };
+        let mut said = if defaults.named() {
+            format!(
                 "here a bare launch starts {}, from [agents] launch in {}\n",
                 defaults.resolve(None, None).said(),
                 path.display()
-            ),
-            Ok(defaults) => format!(
+            )
+        } else {
+            format!(
                 "here a bare launch starts {}, the board's own: no [agents] launch in {}\n",
                 defaults.resolve(None, None).said(),
                 path.display()
-            ),
-            Err(problem) => format!("here a launch is refused: {problem}\n"),
+            )
+        };
+        for agent in AGENTS {
+            if let Some(switch) = defaults.off(agent) {
+                said.push_str(&format!(
+                    "{agent} is turned off ({}): a launch of it is refused\n",
+                    switch.said()
+                ));
+            }
         }
+        said
     }
 }
 
@@ -408,6 +643,7 @@ mod tests {
                     model: Some("opus".into()),
                     effort: None,
                     models: Models::default(),
+                    on: Default::default(),
                 },
             ),
             (
@@ -417,6 +653,7 @@ mod tests {
                     model: None,
                     effort: Some("high".into()),
                     models: Models::default(),
+                    on: Default::default(),
                 },
             ),
         ] {
@@ -508,7 +745,7 @@ mod tests {
             agent: Some("claude"),
             model: Some("opus".into()),
             effort: Some("high".into()),
-            models: Models::default(),
+            ..Defaults::default()
         };
         for (kind, model, expected) in [
             (None, None, resolved("claude", "opus", Some("high"))),
@@ -782,5 +1019,207 @@ mod tests {
             codex.resolve_as(Some("assessor"), Some("claude"), None),
             resolved("claude", CLAUDE_SMALLEST, None)
         );
+    }
+
+    fn switched(on: bool, at: &str, line: Option<usize>) -> Option<Switch> {
+        Some(Switch {
+            on,
+            at: limits::Written {
+                at: at.into(),
+                line,
+            },
+        })
+    }
+
+    #[test]
+    fn no_switch_written_is_every_agent_on() {
+        for text in [
+            "",
+            "[agents.launch]
+default = \"claude\"\n",
+            "[agents.launch.on]\n",
+        ] {
+            let defaults = parsed(text);
+            assert_eq!(defaults.on, [None, None], "{text}");
+            for agent in AGENTS {
+                assert_eq!(defaults.off(agent), None, "{text} {agent}");
+            }
+            assert_eq!(defaults.overruled(), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn each_switch_is_read_with_its_line_and_an_agent_turned_off_is_off() {
+        let defaults = parsed(
+            "[agents.launch]\ndefault = \"claude\"\n\n[agents.launch.on]\ncodex = false\nclaude = true\n",
+        );
+        assert_eq!(
+            defaults.on,
+            [
+                switched(false, "[agents.launch.on] codex", Some(5)),
+                switched(true, "[agents.launch.on] claude", Some(6)),
+            ]
+        );
+        let off = defaults.off("codex").unwrap();
+        assert_eq!(off.said(), "symphony.toml [agents.launch.on] codex, line 5");
+        assert_eq!(defaults.off("claude"), None);
+        assert_eq!(defaults.off("gemini"), None, "no such agent");
+        // Written inline, the same.
+        let inline =
+            parsed("[agents]\nlaunch = { default = \"claude\", on = { codex = false } }\n");
+        assert_eq!(
+            inline.on[0],
+            switched(false, "[agents.launch.on] codex", Some(2))
+        );
+    }
+
+    #[test]
+    fn a_file_that_turns_off_its_own_default_does_not_load_saying_to_pick_another_first() {
+        for (text, problem) in [
+            (
+                "[agents.launch.on]\ncodex = false\n",
+                "/r/symphony.toml: [agents.launch.on] codex (line 2) turns off codex, the launch \
+                 default (the board's own), which cannot be off: pick another default first",
+            ),
+            (
+                "[agents.launch]\ndefault = \"claude\"\n[agents.launch.on]\nclaude = false\n",
+                "/r/symphony.toml: [agents.launch.on] claude (line 4) turns off claude, the launch \
+                 default ([agents] launch default, line 2), which cannot be off: pick another \
+                 default first",
+            ),
+        ] {
+            assert_eq!(
+                Defaults::parse("/r/symphony.toml", text),
+                Err(problem.to_string()),
+                "{text}"
+            );
+        }
+        // The other agent, turned off, and the default turned on: it loads.
+        assert!(
+            Defaults::parse(
+                "/r/symphony.toml",
+                "[agents.launch.on]\ncodex = true\nclaude = false\n"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_switch_that_is_no_agent_or_no_switch_is_refused_with_its_line() {
+        for (text, problem) in [
+            (
+                "[agents.launch.on]\ngemini = false\n",
+                "/r/symphony.toml: [agents.launch.on] gemini (line 2) is not an agent a launch \
+                 starts: it is one of codex, claude",
+            ),
+            (
+                "[agents.launch.on]\ncodex = \"off\"\n",
+                "/r/symphony.toml: [agents.launch.on] codex (line 2) is \"off\"; a switch is true \
+                 (on) or false (off)",
+            ),
+            (
+                "[agents.launch]\non = \"codex\"\n",
+                "/r/symphony.toml: [agents.launch] on (line 2) is \"codex\"; it is a table of each \
+                 agent's switch",
+            ),
+        ] {
+            assert_eq!(
+                Defaults::parse("/r/symphony.toml", text),
+                Err(problem.to_string()),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn where_the_layers_disagree_the_default_wins_and_its_switch_does_not_hold() {
+        // A default written over a switch an older place turned off.
+        let mut defaults = parsed("[agents.launch]\ndefault = \"codex\"\n");
+        defaults.on[0] = switched(false, "the board's store [agents.launch.on] codex", None);
+        assert_eq!(defaults.off("codex"), None, "the default starts");
+        assert_eq!(
+            defaults.overruled().as_deref(),
+            Some(
+                "[agents.launch.on] codex turns off codex (the board's store [agents.launch.on] \
+                 codex), which does not hold: codex is the launch default, which wins; pick \
+                 another default to turn it off"
+            )
+        );
+        // The other agent turned off holds.
+        defaults.agent = Some("claude");
+        assert_eq!(defaults.overruled(), None);
+        assert_eq!(
+            defaults.off("codex").map(Switch::said).as_deref(),
+            Some("the board's store [agents.launch.on] codex")
+        );
+    }
+
+    #[test]
+    fn the_store_and_the_local_file_write_switches_over_the_committed_ones_named_by_their_place() {
+        let committed =
+            parsed("[agents.launch]\ndefault = \"claude\"\n[agents.launch.on]\ncodex = false\n");
+        let mut held = crate::local::Local::default();
+        held.on = [Some(true), None];
+        let stored = crate::settings::Stored {
+            held,
+            keys: vec!["agents.launch.on.codex".into()],
+            problems: Vec::new(),
+        };
+        let over = committed.clone().over_stored(&stored);
+        assert_eq!(
+            over.on[0],
+            switched(true, "the board's store [agents.launch.on] codex", None),
+            "on again is the switch alone"
+        );
+        assert_eq!(over.off("codex"), None);
+        let local = crate::local::parse(
+            Path::new("/r/symphony.local.toml"),
+            "[agents.launch.on]\ncodex = false\n",
+        )
+        .unwrap();
+        let over = over.over(&local);
+        assert_eq!(
+            over.off("codex").map(Switch::said).as_deref(),
+            Some("symphony.local.toml [agents.launch.on] codex, line 2")
+        );
+        assert_eq!(over.on[1], None, "a switch left out keeps what it was");
+    }
+
+    #[test]
+    fn the_help_names_each_agent_turned_off() {
+        let dir = std::env::temp_dir().join(format!("launch-defaults-off-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(MANIFEST),
+            "[agents.launch]\ndefault = \"claude\"\n[agents.launch.on]\ncodex = false\n",
+        )
+        .unwrap();
+        let path = dir.join(MANIFEST).display().to_string();
+        assert_eq!(
+            Defaults::said_at(&dir),
+            format!(
+                "here a bare launch starts claude on sonnet, from [agents] launch in {path}\ncodex \
+                 is turned off (symphony.toml [agents.launch.on] codex, line 4): a launch of it is \
+                 refused\n"
+            )
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_launch_default_is_read_alone_and_loosely() {
+        assert_eq!(written_agent(""), None);
+        assert_eq!(
+            written_agent("[agents.launch]\ndefault = \"claude\"\n"),
+            Some("claude")
+        );
+        assert_eq!(
+            written_agent("[agents.launch]\ndefault = \"gemini\"\n"),
+            None
+        );
+        assert_eq!(written_agent("[agents\n"), None);
+        assert_eq!(switch_named("codex"), "[agents.launch.on] codex");
+        assert_eq!(switch_key("codex"), "agents.launch.on.codex");
     }
 }

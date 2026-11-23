@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="452" viewBox="0 0 760 452" role="img" aria-labelledby="title desc">
+<title id="title">Who may file, move, rank and cancel a task</title>
+<desc id="desc">Two ways to say who may act on a task, beside what holds under both. Under A acting on a task is part of deciding: the members of the group that owns a task move, rank and cancel it, and anyone who may speak files one. Under B it is a power of its own, manage tasks, given apart from deciding, so a person can run a board&#x27;s tasks without deciding its cards. Under both, starting an agent on a task needs the power to direct agents, and a person does none of this on a board that has not added them. Recommended: A.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--question:#946a00;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--question:#e0b84c;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.inner{fill:var(--muted);stroke:var(--border)}
+.hot{fill:none;stroke:var(--dislike);stroke-width:1.5}
+.new{fill:none;stroke:var(--primary);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.b{font-weight:600}
+.h{font-size:15px;font-weight:600}
+.t{font-size:17px;font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+.red{fill:var(--dislike)}
+.blue{fill:var(--primary)}
+.arrow{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip)}
+.both{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip);marker-start:url(#tail)}
+.no{stroke:var(--dislike);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+.tipfill{fill:var(--muted-foreground)}
+</style>
+<defs><marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M0,0 L10,5 L0,10 z"/></marker><marker id="tail" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M10,0 L0,5 L10,10 z"/></marker></defs>
+<rect class="page" width="760" height="452"/>
+<text class="t" x="24" y="34">Who may file, move, rank and cancel a task</text>
+<rect class="card" x="24" y="60" width="232" height="298" rx="8"/>
+<text class="h" x="38" y="86">A: part of deciding</text>
+<text class="m" x="38" y="106">recommended</text>
+<rect class="new" x="38" y="122" width="204" height="69" rx="5"/>
+<text class="m" x="48" y="142">the owning group&#x27;s members</text>
+<text x="48" y="161">move, rank and cancel</text>
+<text x="48" y="180">its tasks</text>
+<rect class="inner" x="38" y="201" width="204" height="50" rx="5"/>
+<text class="m" x="48" y="221">anyone who may speak</text>
+<text x="48" y="240">files a task</text>
+<text class="m" x="48" y="281">Five powers, as now.</text>
+<rect class="card" x="264" y="60" width="232" height="298" rx="8"/>
+<text class="h" x="278" y="86">B: a power of its own</text>
+<text class="m" x="278" y="106">manage tasks</text>
+<rect class="inner" x="278" y="122" width="204" height="69" rx="5"/>
+<text class="m" x="288" y="142">whoever holds it</text>
+<text x="288" y="161">files, moves, ranks and</text>
+<text x="288" y="180">cancels any task</text>
+<rect class="inner" x="278" y="201" width="204" height="69" rx="5"/>
+<text class="m" x="288" y="221">the owning group</text>
+<text x="288" y="240">decides its cards and</text>
+<text x="288" y="259">approves its tasks</text>
+<text class="red" x="288" y="300">A sixth power to give,</text>
+<text class="red" x="288" y="319">and two people who can</text>
+<text class="red" x="288" y="338">both say what is next.</text>
+<rect class="card" x="504" y="60" width="232" height="298" rx="8"/>
+<text class="h" x="518" y="86">Under both</text>
+<text class="m" x="518" y="106">what does not change</text>
+<rect class="inner" x="518" y="122" width="204" height="69" rx="5"/>
+<text x="528" y="142">Starting an agent on a</text>
+<text x="528" y="161">task needs the power</text>
+<text x="528" y="180">to direct agents.</text>
+<rect class="inner" x="518" y="201" width="204" height="50" rx="5"/>
+<text x="528" y="221">Approving a task is</text>
+<text x="528" y="240">deciding, by its group.</text>
+<text class="m" x="528" y="281">Agents keep their own</text>
+<text class="m" x="528" y="300">roles on a task.</text>
+<rect class="card" x="24" y="380" width="712" height="48" rx="8"/>
+<text x="40" y="406">On a board with one group of one person, the two are the same.</text>
+</svg>

@@ -143,6 +143,13 @@ fn a_codex_conversation_resumes_with_its_thread_without_the_daemon() {
         .unwrap();
     close_terminal(&w, &s);
     let [again] = <[_; 1]>::try_from(restored(&w, "sim/jump", None).unwrap()).unwrap();
+    // Through the wrapper that hands Codex's shell the new terminal's address.
+    let run = w.calls_of(&["run"]).pop().unwrap();
+    let wrapper = symphony_board::launch::hc::IN_ITS_TERMINAL;
+    assert!(
+        run.windows(4).any(|w| w[..3] == wrapper && w[3] == "codex"),
+        "{run:?}"
+    );
     assert_eq!(
         last_program(&w),
         [

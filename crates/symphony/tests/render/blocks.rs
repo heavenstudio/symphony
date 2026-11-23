@@ -104,6 +104,55 @@ fn a_card_right_under_its_registers_marker_is_drawn_as_the_queue_counts_it() {
     assert_eq!((counted[0].line, counted[0].slug.as_str()), (4, "a"));
 }
 
+/// A register whose cards stand straight under its start marker and under a heading, no blank line
+/// above either, as an agent writing its first cards into an empty register leaves it.
+const CROWDED: &str = concat!(
+    "# D\n",
+    "\n",
+    "<!-- register:start -->\n",
+    "- [ ] **first** — One.\n",
+    "- [ ] **second** — Two.\n",
+    "### Topic\n",
+    "- [ ] **third** — Three.\n",
+    "<!-- register:end -->\n",
+);
+
+#[test]
+fn every_card_of_a_crowded_register_is_drawn_as_a_card_and_its_heading_as_a_heading() {
+    assert_eq!(
+        spans(CROWDED),
+        [(1, 1), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8)]
+    );
+    let html = page_at(CROWDED, "docs/x.md");
+    assert_eq!(html.matches("class=\"decision\"").count(), 3, "{html}");
+    for (slug, line) in [("first", 4), ("second", 5), ("third", 7)] {
+        assert!(
+            html.contains(&format!("data-slug=\"{slug}\"")),
+            "{slug}: {html}"
+        );
+        assert!(
+            html.contains(&format!("data-line=\"{line}\"")),
+            "{slug}: {html}"
+        );
+    }
+    assert!(html.contains("<h3"), "{html}");
+    assert!(!html.contains("<li>"), "{html}");
+    // Each card the page draws is one the queue counts, at the same line.
+    let lines: Vec<&str> = CROWDED.lines().collect();
+    let counted = symphony::register::parse_decisions(&lines);
+    let counted: Vec<(usize, &str, &str)> = (counted.iter())
+        .map(|card| (card.line, card.slug.as_str(), card.topic.as_str()))
+        .collect();
+    assert_eq!(
+        counted,
+        [
+            (4, "first", "General"),
+            (5, "second", "General"),
+            (7, "third", "Topic")
+        ]
+    );
+}
+
 #[test]
 fn posts_render_inside_the_card_with_tables_as_tables() {
     let html = page_at(&text(), "docs/x.md");

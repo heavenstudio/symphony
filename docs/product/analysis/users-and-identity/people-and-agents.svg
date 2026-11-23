@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="502" viewBox="0 0 760 502" role="img" aria-labelledby="title desc">
+<title id="title">Speaking, deciding and directing agents are three separate things</title>
+<desc id="desc">Three people on a board: ana in the engineering group, who may speak, decide and direct agents; bo in the design group, who may speak and decide; and cy, a guest, who may only speak. Anyone speaks to anyone, anywhere. A card owned by engineering is told to its members, who resolve it. The board&#x27;s shared agents work for whoever may direct agents, on a host&#x27;s machine and credits. Ana&#x27;s personal agents run on ana&#x27;s own machine and answer only ana. Cy&#x27;s words reach people and start no agent.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--question:#946a00;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--question:#e0b84c;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.inner{fill:var(--muted);stroke:var(--border)}
+.hot{fill:none;stroke:var(--dislike);stroke-width:1.5}
+.new{fill:none;stroke:var(--primary);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.b{font-weight:600}
+.h{font-size:15px;font-weight:600}
+.t{font-size:17px;font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+.red{fill:var(--dislike)}
+.blue{fill:var(--primary)}
+.arrow{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip)}
+.both{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip);marker-start:url(#tail)}
+.no{stroke:var(--dislike);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+.tipfill{fill:var(--muted-foreground)}
+</style>
+<defs><marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M0,0 L10,5 L0,10 z"/></marker><marker id="tail" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M10,0 L0,5 L10,10 z"/></marker></defs>
+<rect class="page" width="760" height="502"/>
+<text class="t" x="24" y="34">Speaking, deciding and directing agents are three separate things</text>
+<rect class="card" x="24" y="60" width="250" height="250" rx="8"/>
+<text class="h" x="38" y="86">People on this board</text>
+<text class="m" x="38" y="106">anyone speaks to anyone, anywhere</text>
+<rect class="inner" x="38" y="120" width="222" height="52" rx="5"/>
+<text class="mono" x="48" y="141">ana</text>
+<text class="b" x="90" y="141">engineering</text>
+<text class="m" x="48" y="161">speak, decide, direct agents</text>
+<rect class="inner" x="38" y="182" width="222" height="52" rx="5"/>
+<text class="mono" x="48" y="203">bo</text>
+<text class="b" x="90" y="203">design</text>
+<text class="m" x="48" y="223">speak, decide</text>
+<rect class="inner" x="38" y="244" width="222" height="52" rx="5"/>
+<text class="mono" x="48" y="265">cy</text>
+<text class="b" x="90" y="265">a guest</text>
+<text class="m" x="48" y="285">speak</text>
+<rect class="card" x="546" y="60" width="190" height="110" rx="8"/>
+<rect class="new" x="546" y="60" width="190" height="110" rx="8"/>
+<text class="h" x="560" y="86">Shared agents</text>
+<text class="m" x="560" y="110">the board&#x27;s: a host&#x27;s</text>
+<text class="m" x="560" y="129">machine and credits</text>
+<text x="560" y="154">for who may direct agents</text>
+<rect class="card" x="546" y="200" width="190" height="110" rx="8"/>
+<text class="h" x="560" y="226">Personal agents</text>
+<text class="m" x="560" y="250">ana&#x27;s machine,</text>
+<text class="m" x="560" y="269">ana&#x27;s credits</text>
+<text x="560" y="294">answer only ana</text>
+<path class="arrow" d="M260,138 L542,112"/>
+<text class="blue" x="330" y="112">ana directs them</text>
+<path class="arrow" d="M260,154 L542,250"/>
+<text class="blue" x="330" y="222">and ana&#x27;s own</text>
+<path class="no" d="M260,270 L400,270"/>
+<text class="red" x="408" y="275">✕</text>
+<text class="red" x="300" y="296">cy&#x27;s words reach people,</text>
+<text class="red" x="300" y="315">and start no agent</text>
+<rect class="card" x="24" y="330" width="712" height="56" rx="8"/>
+<text class="b" x="40" y="355">A card or a task is owned by a group or a person</text>
+<text x="40" y="375">Owned by engineering: its members are told, and they are the ones who resolve it.</text>
+<rect class="card" x="24" y="402" width="712" height="76" rx="8"/>
+<text class="h" x="40" y="428">Today</text>
+<text x="40" y="450">One person holds all three, every agent on the machine is theirs, and a board</text>
+<text x="40" y="469">with nobody named stays exactly so.</text>
+</svg>

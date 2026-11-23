@@ -1,7 +1,8 @@
 //! The idle sweep and a board that does not answer what holds a terminal's agent (its unanswered
 //! lookup): the terminal stays, never closed on no information, whether the sweep judges it or
 //! takes its last look before the close, and the sweep goes on to the next. A lookup past its wait
-//! is one such board.
+//! is one such board. The presence of Codex threads reads no field of a launch record it does not
+//! judge, so a record unreadable elsewhere still says its thread was launched.
 
 use crate::World;
 use crate::last_look::changes_at_get;
@@ -21,6 +22,17 @@ fn unreadable(slug: &str) -> String {
         "INSERT INTO task_session (id, slug, handle, role, claude_session, worktree, branch, \
          pane, model, started, closed, closed_why, restore) VALUES ('[\"{slug}\", \"nobody\"]', \
          '{slug}', 'nobody', 'executor', '', '', '', '', '', 'NaN', 1.0, '', '')"
+    )
+}
+
+/// A closed launch record of `handle` on `slug` naming the Codex `thread`, which no reader of a
+/// whole record decodes: its `started` is not a number.
+fn unreadable_codex(slug: &str, handle: &str, thread: &str) -> String {
+    format!(
+        "DEFINE FIELD OVERWRITE started ON task_session TYPE any;
+UPSERT task_session:['{slug}', '{handle}'] CONTENT {{ slug: '{slug}', handle: '{handle}',
+    role: 'executor', claude_session: 'codex:{thread}', worktree: '', branch: '', pane: 't-gone',
+    model: '', started: 'unreadable', closed: 1.0, closed_why: '', restore: '' }} RETURN NONE;"
     )
 }
 
@@ -74,6 +86,23 @@ fn a_terminal_whose_holds_the_board_cannot_say_stays_and_the_sweep_judges_the_re
     let closed: Vec<&str> = swept.closed.iter().map(|c| c.pane.as_str()).collect();
     assert_eq!(closed, [other_pane.as_str()], "{swept:?}");
     assert!(w.has_terminal(&stuck_pane));
+}
+
+/// The presence of Codex threads reads a launch record for its thread, its terminal and whether it
+/// is open alone: one the board cannot read elsewhere still says its thread was launched, so a
+/// thread in no terminal now is retired, and the sweep judges the terminals.
+#[test]
+fn a_codex_record_unreadable_where_presence_never_reads_still_retires_its_gone_thread() {
+    let w = World::new();
+    let (idle, _) = w.worker("sim/jump", Some("done"));
+    let gone = w.f.session("worker");
+    (w.store())
+        .callback_in(&gone, Some("codex:0abc"), false, false, None)
+        .unwrap();
+    write(&w, &unreadable_codex("sim/old", &gone, "0abc"));
+    let swept = w.sweep_through(&w.hc());
+    assert_eq!(swept.idle, from_ref(&idle), "{swept:?}");
+    assert!(!w.store().callbacks().unwrap().contains_key(&gone));
 }
 
 #[test]

@@ -176,3 +176,55 @@ fn a_refused_write_names_the_key_and_why_exits_one_and_stores_nothing() {
     assert_eq!(ran.code, 2, "{}", ran.err);
     assert_eq!(c.ok(&orch, &["settings", "list"]), EMPTY);
 }
+
+#[test]
+fn an_agents_switch_set_off_from_the_command_line_holds_and_the_defaults_is_refused() {
+    let (c, _) = in_project("settings-switch", COMMITTED);
+    let orch = c.register("orchestrator");
+    // Codex is the committed default: its switch cannot be turned off.
+    let ran = c.run_as(
+        &orch,
+        &["settings", "set", "agents.launch.on.codex", "off"],
+        "",
+    );
+    assert_eq!(ran.code, 1, "{}{}", ran.out, ran.err);
+    assert!(
+        ran.err.starts_with(
+            "✖ the board's store: [agents.launch.on] codex turns off codex, the launch default \
+             (symphony.toml [agents] launch default, line 3), which cannot be off: pick another \
+             default first"
+        ),
+        "{}",
+        ran.err
+    );
+    assert_eq!(c.ok(&orch, &["settings", "list"]), EMPTY);
+    // Claude may be off; `limits` names the switch and the store.
+    assert_eq!(
+        c.ok(
+            &orch,
+            &["settings", "set", "agents.launch.on.claude", "off"]
+        ),
+        "[agents.launch.on] claude is false in the board's store, in force from the next read of \
+         the settings unless symphony.local.toml writes it\n"
+    );
+    let limits = c.ok(&orch, &["limits"]);
+    for line in [
+        "AGENTS a launch may start, each by its switch ([agents.launch.on])",
+        "codex                    on      the launch default",
+        "claude                   off     the board's store [agents.launch.on] claude",
+    ] {
+        assert!(limits.lines().any(|l| l == line), "{line}\n{limits}");
+    }
+    // A word that is no switch is refused by the switch's rule.
+    let ran = c.run_as(
+        &orch,
+        &["settings", "set", "agents.launch.on.claude", "maybe"],
+        "",
+    );
+    assert_eq!(ran.code, 1, "{}", ran.err);
+    assert!(
+        ran.err.contains("a switch is true (on) or false (off)"),
+        "{}",
+        ran.err
+    );
+}

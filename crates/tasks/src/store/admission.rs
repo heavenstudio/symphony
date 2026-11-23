@@ -170,18 +170,9 @@ impl Store {
         })
     }
 
-    /// `slug`'s accepted outputs ([`Outputs`]), read as admission reads them; refused as
-    /// [`Store::workflow_actions`] is.
-    pub fn accepted_outputs(&self, slug: &str) -> Result<Outputs, Error> {
-        self.retrying(|| {
-            let decided = self.decided(slug, &crate::workflow::board_service("reader"), None)?;
-            Ok(outputs(&decided))
-        })
-    }
-
-    /// [`Store::workflow_actions`] and [`Store::accepted_outputs`] from one read, so the outputs
-    /// a page sends with an edge are those of the snapshot it previews; refused as
-    /// [`Store::workflow_actions`] is.
+    /// [`Store::workflow_actions`] and `slug`'s accepted outputs ([`Outputs`]), read as admission
+    /// reads them, from one read, so the outputs a page sends with an edge are those of the
+    /// snapshot it previews; refused as [`Store::workflow_actions`] is.
     pub fn workflow_actions_with_outputs(
         &self,
         slug: &str,

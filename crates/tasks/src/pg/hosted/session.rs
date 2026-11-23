@@ -29,9 +29,19 @@ pub const SUPPORTED: [u32; 2] = [16, 18];
 /// How long a cancel request or a closing connection is waited for.
 const ENDING: Duration = Duration::from_secs(2);
 
-/// What is said of a connection nothing answered: no server there, or none in time.
-const UNREACHED: &str = "the server cannot be reached";
-const UNANSWERED: &str = "the server did not answer in time";
+/// What is said of a connection nothing answered: no server there, none in time, or one cut in
+/// the middle of its TLS handshake, before the server said anything of itself ([`silent`]).
+pub(super) const UNREACHED: &str = "the server cannot be reached";
+pub(super) const UNANSWERED: &str = "the server did not answer in time";
+pub(super) const CUT: &str = "the connection was cut in the middle of its TLS handshake";
+
+/// Some of what is said of a connection the server answered: by refusing it, or with what this
+/// side refuses.
+pub(super) const LOGIN_REFUSED: &str = "the server refused the login";
+pub(super) const NO_CONNECTION_LEFT: &str = "the server has no connection left for the login";
+pub(super) const NO_TLS: &str = "the server did not speak TLS, and nothing else is spoken";
+pub(super) const EXPIRED: &str = "the server's certificate has expired";
+pub(super) const NOT_UTF8: &str = "the database is not UTF-8";
 
 pub(super) struct Session {
     client: tokio_postgres::Client,
@@ -133,11 +143,11 @@ fn refused(error: &tokio_postgres::error::DbError, backend: i32) -> Refusal {
 fn unconnected(error: &tokio_postgres::Error) -> Refusal {
     if let Some(server) = error.as_db_error() {
         return match server.code().code() {
-            "28P01" | "28000" => Refusal::Unavailable("the server refused the login"),
+            "28P01" | "28000" => Refusal::Unavailable(LOGIN_REFUSED),
             "3D000" => Refusal::Unavailable(
                 "the database is not there: the platform makes it, and nothing here does",
             ),
-            "53300" => Refusal::Capacity("the server has no connection left for the login"),
+            "53300" => Refusal::Capacity(NO_CONNECTION_LEFT),
             "42501" => Refusal::Unavailable("the login may not connect to the database"),
             _ => refused(server, 0),
         };
@@ -158,7 +168,7 @@ fn unconnected(error: &tokio_postgres::Error) -> Refusal {
                 rustls::Error::InvalidCertificate(rustls::CertificateError::Expired)
                 | rustls::Error::InvalidCertificate(rustls::CertificateError::ExpiredContext {
                     ..
-                }) => "the server's certificate has expired",
+                }) => EXPIRED,
                 rustls::Error::InvalidCertificate(_) => {
                     "the server's certificate is not one the deployment's authority signed"
                 }
@@ -172,12 +182,28 @@ fn unconnected(error: &tokio_postgres::Error) -> Refusal {
     Refusal::Unavailable(if said.starts_with("authentication error") {
         "the server did not offer SCRAM with channel binding, and nothing weaker is spoken"
     } else if said.starts_with("error performing TLS handshake") {
-        "the server did not speak TLS, and nothing else is spoken"
+        if cut(error) { CUT } else { NO_TLS }
     } else if said.starts_with("timeout") || said.starts_with("connection timed out") {
         UNANSWERED
     } else {
         UNREACHED
     })
+}
+
+/// Whether a failed TLS handshake is the socket's own failure in its middle, a reset or a close
+/// with no alert, after the server agreed to TLS and before it said anything of itself: the driver
+/// words it as it words a server that turns TLS down, and what TLS itself refuses (an alert, a
+/// certificate) is read before this, as the [`rustls::Error`] it carries.
+fn cut(error: &tokio_postgres::Error) -> bool {
+    use std::io::ErrorKind::{BrokenPipe, ConnectionAborted, ConnectionReset, UnexpectedEof};
+    std::error::Error::source(error)
+        .and_then(|cause| cause.downcast_ref::<std::io::Error>())
+        .is_some_and(|io| {
+            matches!(
+                io.kind(),
+                ConnectionReset | ConnectionAborted | UnexpectedEof | BrokenPipe
+            )
+        })
 }
 
 /// A connection to the first of the host's addresses that takes one, and the task that drives
@@ -219,11 +245,17 @@ async fn reached(
     Err(telling(refusals).unwrap_or(unreached))
 }
 
+/// Whether a connection's refusal says only that nothing answered there: no server, none in time,
+/// or a connection cut in its TLS handshake ([`cut`]). Any other the server answered: by refusing
+/// it, or with what this side refuses (TLS turned down, a certificate, a weaker login than SCRAM
+/// bound to the channel, a server or login a board is not kept in).
+pub(super) fn silent(refusal: &Refusal) -> bool {
+    matches!(refusal, Refusal::Unavailable(why) if [UNREACHED, UNANSWERED, CUT].contains(why))
+}
+
 /// Of the refusals a host's addresses gave, in turn, the first that says more than that nothing
-/// answered there (the server's own refusal, or a connection this side refused); the last when
-/// none does, as the driver says it; none of none.
+/// answered there ([`silent`]); the last when none does, as the driver says it; none of none.
 fn telling(refusals: Vec<Refusal>) -> Option<Refusal> {
-    let silent = |refusal: &Refusal| matches!(refusal, Refusal::Unavailable(why) if [UNREACHED, UNANSWERED].contains(why));
     let said = refusals.iter().position(|refusal| !silent(refusal));
     let at = said.or(refusals.len().checked_sub(1))?;
     refusals.into_iter().nth(at)
@@ -270,7 +302,7 @@ fn held(said: &[&str], database: &str, user: &str) -> Result<u32, Refusal> {
         )));
     }
     if at(1) != "UTF8" {
-        return Err(Refusal::Unsupported("the database is not UTF-8".into()));
+        return Err(Refusal::Unsupported(NOT_UTF8.into()));
     }
     if at(2) != database || at(3) != user {
         return Err(Refusal::Unsupported(
@@ -486,12 +518,16 @@ impl Session {
     async fn ended(&self, error: &tokio_postgres::Error, sent: &AtomicBool, open: bool) -> Ended {
         let Some(server) = error.as_db_error() else {
             // A row the client could not read is the client's own failure on a connection
-            // whose transaction is still open: it ends with the connection, uncommitted.
+            // whose transaction is still open: it ends with the connection, uncommitted. The
+            // server answered it.
             if error.to_string().starts_with("error deserializing") {
-                return Ended::broken(Refusal::Unsupported(
-                    "a statement answered a column of a type the hosted client does not read"
-                        .into(),
-                ));
+                return Ended {
+                    answered: true,
+                    ..Ended::broken(Refusal::Unsupported(
+                        "a statement answered a column of a type the hosted client does not read"
+                            .into(),
+                    ))
+                };
             }
             return Ended::broken(if sent.load(Ordering::SeqCst) {
                 Refusal::Unknown("the connection was lost after the commit was sent")
@@ -504,7 +540,7 @@ impl Session {
         }
         let said = failed(server, self.backend);
         let clean = !open || self.client.batch_execute("ROLLBACK").await.is_ok();
-        Ended { said, clean }
+        Ended::refused(said, clean)
     }
 
     /// A session the server ended, an operator's act or a failover: nothing of its request was
@@ -530,7 +566,7 @@ impl Session {
                         let said = failed(server, self.backend);
                         // The script's own transaction, if it left one failed, is rolled back.
                         let clean = self.client.batch_execute("ROLLBACK").await.is_ok();
-                        Err(Ended { said, clean })
+                        Err(Ended::refused(said, clean))
                     }
                     None => Err(Ended::broken(Refusal::Unknown(
                         "the connection was lost while a script that commits ran",
@@ -604,8 +640,8 @@ mod tests {
             Refusal::Unavailable(UNREACHED),
             Refusal::Unavailable(UNANSWERED),
         );
-        let login = Refusal::Unavailable("the server refused the login");
-        let full = Refusal::Capacity("the server has no connection left for the login");
+        let login = Refusal::Unavailable(LOGIN_REFUSED);
+        let full = Refusal::Capacity(NO_CONNECTION_LEFT);
         assert_eq!(telling(vec![]), None);
         assert_eq!(telling(vec![unreached.clone()]), Some(unreached.clone()));
         // Whichever address the server holds, its refusal is the one said.
@@ -613,6 +649,7 @@ mod tests {
             vec![login.clone(), unreached.clone()],
             vec![unreached.clone(), login.clone()],
             vec![late.clone(), login.clone(), unreached.clone()],
+            vec![Refusal::Unavailable(CUT), login.clone()],
         ] {
             assert_eq!(telling(order.clone()), Some(login.clone()), "{order:?}");
         }

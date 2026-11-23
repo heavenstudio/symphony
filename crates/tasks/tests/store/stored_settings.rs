@@ -5,7 +5,7 @@
 
 use crate::common::{Fixture, HOST, NOW, Seed, database, refused};
 use serde_json::json;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use symphony_board::launch::Defaults;
 use symphony_board::limits::Watched;
 use symphony_board::settings::{Entry, Stored, value_of};
@@ -15,16 +15,21 @@ fn board() -> Fixture {
     Fixture::new(Seed::default().session("amber-heron"))
 }
 
+/// No project file: the launch default a switch is judged against is the board's own, codex.
+fn no_file() -> &'static Path {
+    Path::new("")
+}
+
 /// `value` stored for `key` by amber-heron: the entry, and whether it changed.
 fn set(store: &Store, key: &str, value: &str) -> (Entry, bool) {
     store
-        .store_setting(key, &value_of(key, value), "amber-heron")
+        .store_setting(key, &value_of(key, value), "amber-heron", no_file())
         .unwrap()
 }
 
 /// Why storing `value` for `key` is refused.
 fn refusal(store: &Store, key: &str, value: &str) -> String {
-    refused(store.store_setting(key, &value_of(key, value), "amber-heron"))
+    refused(store.store_setting(key, &value_of(key, value), "amber-heron", no_file()))
 }
 
 /// A scratch main checkout: its folder, holding `committed` and, when given, `local`.
@@ -77,6 +82,7 @@ fn a_stored_value_is_kept_with_every_change_of_it_and_a_removed_entry_keeps_its_
             "limits.low_volume",
             &value_of("limits.low_volume", "0"),
             "teal-ibis",
+            no_file(),
         )
         .unwrap();
     assert_eq!(second.revision, 2);
@@ -310,6 +316,7 @@ fn a_refused_write_names_the_key_and_why_and_stores_nothing() {
         "limits.low_volume",
         &value_of("limits.low_volume", "1"),
         " ",
+        no_file(),
     ));
     assert!(why.contains("a change says who made it"), "{why}");
     assert_eq!(f.store.stored_entries().unwrap(), []);
@@ -434,7 +441,7 @@ fn a_limit_is_read_from_the_default_the_file_the_store_then_the_local_file() {
 fn a_launch_takes_the_stored_agent_and_models_over_the_file_and_under_the_local_file() {
     let f = board();
     let committed = "[agents]\nlaunch = { default = \"codex\", model = \"gpt\" }\n\n\
-                         [agents.models]\nreviewer = \"committed\"\nexecutor = \"committed\"\n";
+                     [agents.models]\nreviewer = \"committed\"\nexecutor = \"committed\"\n";
     let local = "[agents.models]\nexecutor = \"mine\"\n";
     let checkout = Checkout::new(&database(), committed, Some(local));
     let models = |store: &Store| {
@@ -476,6 +483,102 @@ fn a_launch_takes_the_stored_agent_and_models_over_the_file_and_under_the_local_
 }
 
 #[test]
+fn a_switch_turning_off_the_launch_default_is_refused_and_any_other_kept() {
+    let f = board();
+    let off = |file: &Path, agent: &str| {
+        let key = format!("agents.launch.on.{agent}");
+        f.store
+            .store_setting(&key, &value_of(&key, "off"), "amber-heron", file)
+    };
+    // No project file: codex, the board's own default, cannot be turned off.
+    assert_eq!(
+        refused(off(no_file(), "codex")),
+        "the board's store: [agents.launch.on] codex turns off codex, the launch default (the \
+         board's own), which cannot be off: pick another default first: nothing was written"
+    );
+    assert_eq!(f.store.stored_entries().unwrap(), []);
+    // Under a project file naming claude, claude cannot be off and codex can.
+    let checkout = Checkout::new(&database(), "[agents.launch]\ndefault = \"claude\"\n", None);
+    let why = refused(off(&checkout.file(), "claude"));
+    assert!(
+        why.contains("the launch default (symphony.toml [agents] launch default, line 2)"),
+        "{why}"
+    );
+    let (entry, changed) = off(&checkout.file(), "codex").unwrap();
+    assert!(changed);
+    assert_eq!(entry.value, Some(json!(false)));
+    let defaults = Defaults::configured_with(&checkout.0, &f.store.stored()).unwrap();
+    assert_eq!(
+        defaults.off("codex").map(|switch| switch.said()).as_deref(),
+        Some("the board's store [agents.launch.on] codex")
+    );
+    // On again is the switch alone.
+    set(&f.store, "agents.launch.on.codex", "on");
+    assert_eq!(
+        Defaults::configured_with(&checkout.0, &f.store.stored())
+            .unwrap()
+            .off("codex"),
+        None
+    );
+    // The store's default stands over the project file's: with codex stored as the default,
+    // codex cannot be off, and claude can.
+    set(&f.store, "agents.launch.default", "codex");
+    let why = refused(off(&checkout.file(), "codex"));
+    assert!(
+        why.contains("the launch default (the board's store [agents] launch default)"),
+        "{why}"
+    );
+    off(&checkout.file(), "claude").unwrap();
+    // A default naming an agent turned off is taken: the default wins, its switch does not hold.
+    set(&f.store, "agents.launch.default", "claude");
+    let defaults = Defaults::configured_with(&checkout.0, &f.store.stored()).unwrap();
+    assert_eq!(defaults.off("claude"), None);
+    assert!(
+        defaults
+            .overruled()
+            .unwrap()
+            .contains("which does not hold: claude is the launch default")
+    );
+    // A value that is no switch is refused by the switch's own rule.
+    let why = refusal(&f.store, "agents.launch.on.codex", "maybe");
+    assert!(
+        why.starts_with(
+            "the board's store: [agents.launch.on] codex is \"maybe\"; a switch is true"
+        ),
+        "{why}"
+    );
+}
+
+#[test]
+fn a_default_committed_after_an_older_stored_switch_wins_and_the_switch_does_not_hold() {
+    let f = board();
+    let checkout = Checkout::new(&database(), "[agents.launch]\ndefault = \"claude\"\n", None);
+    f.store
+        .store_setting(
+            "agents.launch.on.codex",
+            &toml::Value::Boolean(false),
+            "amber-heron",
+            &checkout.file(),
+        )
+        .unwrap();
+    // Later, the project commits codex as its default.
+    std::fs::write(checkout.file(), "[agents.launch]\ndefault = \"codex\"\n").unwrap();
+    let defaults = Defaults::configured_with(&checkout.0, &f.store.stored()).unwrap();
+    assert_eq!(defaults.default_agent(), "codex");
+    assert_eq!(defaults.off("codex"), None, "the default starts");
+    assert_eq!(
+        defaults.overruled().as_deref(),
+        Some(
+            "[agents.launch.on] codex turns off codex (the board's store [agents.launch.on] \
+             codex), which does not hold: codex is the launch default, which wins; pick \
+             another default to turn it off"
+        )
+    );
+    // The entry itself is read and listed as it was: only the merge overrules it.
+    assert!(f.store.stored().holds("agents.launch.on.codex"));
+}
+
+#[test]
 fn a_board_without_the_step_reads_no_entry_and_refuses_a_write_before_anything_is_sent() {
     let db = database();
     let open = |how: &Opening| {
@@ -504,9 +607,12 @@ fn a_board_without_the_step_reads_no_entry_and_refuses_a_write_before_anything_i
         why.starts_with("the board's store is not on this board yet"),
         "{why}"
     );
-    // The build that may move it adds the step, and the store is there.
+    // The build that may move it adds its steps, the store's among them, and the store is there.
     let writer = open(&Opening::write());
-    assert_eq!(writer.additions().unwrap(), 1);
+    assert_eq!(
+        writer.additions().unwrap(),
+        symphony_board::schema::ADDITIONS
+    );
     assert!(set(&writer, "limits.low_volume", "1").1);
     assert_eq!(reader.stored().keys, ["limits.low_volume"]);
 }

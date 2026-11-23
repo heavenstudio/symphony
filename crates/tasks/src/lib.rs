@@ -30,6 +30,11 @@ extern crate self as symphony_board;
 #[path = "../tests/support/children.rs"]
 mod children;
 
+// The agents' programs a launch finds, stand-ins in a folder of the test's own.
+#[cfg(test)]
+#[path = "../tests/support/stand_ins.rs"]
+mod stand_ins;
+
 pub mod alarm;
 pub mod arm;
 

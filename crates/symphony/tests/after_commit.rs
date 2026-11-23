@@ -335,6 +335,14 @@ fn a_stored_preference_holds_at_once_with_the_store_as_its_source() {
 }
 
 #[test]
+fn an_agents_switch_is_kept_and_made_the_projects_but_never_the_defaults() {
+    isolated(
+        "an_agents_switch_is_kept_and_made_the_projects_but_never_the_defaults",
+        settings::an_agents_switch_is_kept_and_made_the_projects_but_never_the_defaults,
+    );
+}
+
+#[test]
 fn a_stored_value_made_the_projects_is_one_commit_and_its_entry_goes() {
     isolated(
         "a_stored_value_made_the_projects_is_one_commit_and_its_entry_goes",

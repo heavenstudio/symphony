@@ -1048,22 +1048,24 @@ options:
     ),
     (
         "say",
-        r#"usage: just tasks say [-h] [--as ACTOR] [--to TO] slug text
+        r#"usage: just tasks say [-h] [--as ACTOR] [--to TO] [--file FILE] slug [text]
 "#,
-        r#"usage: just tasks say [-h] [--as ACTOR] [--to TO] slug text
+        r#"usage: just tasks say [-h] [--as ACTOR] [--to TO] [--file FILE] slug [text]
 
 Post a line on a task's thread. Only an addressed line is pushed to anyone; an
 unaddressed one stays on the thread, for `just tasks show SLUG` and the app.
 
 positional arguments:
   slug
-  text
+  text         the line, unless --file gives it
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help   show this help message and exit
   --as ACTOR
-  --to TO     owner, a role on the task (@orchestrator, @executor, @reviewer,
-              @reserved), or a session's HANDLE
+  --to TO      owner, a role on the task (@orchestrator, @executor, @reviewer,
+               @reserved), or a session's HANDLE
+  --file FILE  read the line from this file, or stdin for -: a long post needs
+               no shell quoting
 "#,
     ),
     ("launch", launch::USAGE, launch::HELP),

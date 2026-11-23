@@ -20,6 +20,7 @@ use std::sync::Arc;
 use symphony_api::{AgentFocus, AgentScreen, SessionGo};
 use symphony_board::launch::go as herdr;
 use symphony_board::lock::Recovered as _;
+use symphony_board::settings::Stored;
 
 /// The largest focus request read: a handle in a JSON object.
 const FOCUS_BYTES: usize = 4096;
@@ -64,11 +65,13 @@ pub(crate) fn local<B>(
 /// of the session, or when it is reached by its web address alone.
 fn paned(hub: &Hub, handle: &str) -> Result<(SessionGo, String), (StatusCode, String)> {
     let project = symphony::project::Project::of(&hub.root);
-    // The board's store's setting over the project file's; a board that does not answer holds
-    // none, and the file's is in force.
-    let stored = symphony::taskview::connect(&hub.root)
-        .map(|store| store.stored())
-        .unwrap_or_default();
+    // The board's store's setting over the project file's, read on the board the page reads share
+    // ([`Hub::on_reader`]), never one opened anew; a board that does not answer holds none, and the
+    // file's is in force.
+    let stored = match hub.on_reader(symphony_board::Store::stored_entries) {
+        Ok(entries) => Stored::of(&entries),
+        Err(why) => Stored::unread(&why),
+    };
     let panes = stored.panes(&project.agents.panes);
     if panes != "hc" {
         return Err((

@@ -12,14 +12,17 @@
 //! / `space.rename` and `do agent.focus` / `pane.focus` (the terminal shown kept as `focused`). A
 //! terminal `run` labels into a space and tab the layout lacks joins it, as the window adopts it.
 //!
-//! An agent `run` starts (its program, past `env` and its settings, is `claude` or `codex`) waits
-//! at its prompt, `idle`, as hc runs one with no template: no `first_message`. `send` gives it its
-//! next message as hc does: refused while it is `blocked` (unless `--force`), else it goes
-//! `working` and the answer says `started` (null for a program that reports no status), `status`
-//! (its word when the text went in) and `turn`. `FAKE_HC_SILENT=N` leaves the first N agents saying
-//! nothing, `FAKE_HC_BUSY=N` `working` before any message, `FAKE_HC_BLOCKED=N` `blocked` on Claude's
-//! folder-trust dialog (its status `msg` the question), and `FAKE_HC_DEAF=N` never starting a turn
-//! on what is sent (`started` false); `FAKE_HC_EXIT=N` ends the first N at once.
+//! An agent `run` starts (its program, past `env` and its settings and the board's Codex wrapper,
+//! is `claude` or `codex`) waits at its prompt, `idle`, as hc runs one with no template: no
+//! `first_message`; its foreground is the program as it runs, the wrapper's `-c` given the
+//! terminal's address. `send` gives it its next message as hc does: refused while it is `blocked`
+//! (unless `--force`), else it goes `working` and the answer says `started` (null for a program
+//! that reports no status), `status` (its word when the text went in) and `turn`.
+//! `FAKE_HC_SILENT=N` leaves the first N agents saying nothing, `FAKE_HC_BUSY=N` `working` before
+//! any message, `FAKE_HC_BLOCKED=N` `blocked` on Claude's folder-trust dialog (its status `msg` the
+//! question; with `FAKE_HC_BLOCKED_SCREEN=FILE`, on a dialog showing FILE that hc names only
+//! `dialog open`), and `FAKE_HC_DEAF=N` never starting a turn on what is sent (`started` false);
+//! `FAKE_HC_EXIT=N` ends the first N at once.
 //! `FAKE_HC_START_SCREEN=FILE` makes a codex start show FILE as its hooks chooser, silent until a
 //! `keys` press confirms a choice (`FAKE_HC_START_SELECTED` picks the highlighted one,
 //! `FAKE_HC_DROP_DOWN=1` loses the first down).
@@ -30,6 +33,7 @@
 
 use serde_json::{Map, Value, json};
 use std::io::{BufRead, Write};
+use symphony_board::launch::hc::IN_ITS_TERMINAL;
 
 /// What Claude's folder-trust dialog asks.
 const TRUST_QUESTION: &str = "Quick safety check: Is this a project you created or one you trust?";
@@ -199,8 +203,9 @@ fn flags<'a>(args: &'a [String], name: &str) -> Vec<&'a str> {
         .collect()
 }
 
-/// The program an argv runs, past `env` and its `KEY=VALUE` settings.
-fn program(argv: &[String]) -> &[String] {
+/// What an argv runs past `env` and its `KEY=VALUE` settings: the program, and whether it starts
+/// through the board's wrapper (`IN_ITS_TERMINAL`), which the shell `exec`s away.
+fn started(argv: &[String]) -> (&[String], bool) {
     let mut at = 0;
     if argv.first().is_some_and(|a| a == "env") {
         at = 1;
@@ -208,7 +213,30 @@ fn program(argv: &[String]) -> &[String] {
             at += 1;
         }
     }
-    &argv[at.min(argv.len())..]
+    let rest = &argv[at.min(argv.len())..];
+    match rest.split_at_checked(IN_ITS_TERMINAL.len()) {
+        Some((wrapper, run)) if wrapper == IN_ITS_TERMINAL => (run, true),
+        _ => (rest, false),
+    }
+}
+
+/// The program an argv runs ([`started`]).
+fn program(argv: &[String]) -> &[String] {
+    started(argv).0
+}
+
+/// The program's own argv, as hc lists its foreground once it runs: through the wrapper, its shell
+/// handed it the terminal's address and became it.
+fn foreground(argv: &[String], address: &str) -> Vec<String> {
+    match started(argv) {
+        (run, true) if !run.is_empty() => {
+            let set = format!("shell_environment_policy.set.HC_TERMINAL_ID=\"{address}\"");
+            let mut own = vec![run[0].clone(), "-c".into(), set];
+            own.extend(run[1..].iter().cloned());
+            own
+        }
+        (run, _) => run.to_vec(),
+    }
 }
 
 fn base(word: &str) -> &str {
@@ -237,7 +265,7 @@ fn shown(t: &Map<String, Value>) -> Value {
             .flatten()
             .filter_map(|a| a.as_str().map(str::to_string))
             .collect();
-        let run = program(&argv);
+        let run = foreground(&argv, t["address"].as_str().unwrap_or_default());
         view.insert(
             "foreground".into(),
             json!({"argv": run, "pid": t["pid"], "cwd": t["cwd"],
@@ -429,6 +457,7 @@ fn start(argv: &[String], state: &mut Map<String, Value>) -> Answer {
         "notify": !options.iter().any(|a| a == "--no-notify"),
     });
     let screen = var("FAKE_HC_START_SCREEN");
+    let dialog = var("FAKE_HC_BLOCKED_SCREEN");
     if is_agent {
         if knob(state, "FAKE_HC_EXIT") {
             t["state"] = json!("finished");
@@ -441,6 +470,10 @@ fn start(argv: &[String], state: &mut Map<String, Value>) -> Answer {
         } else if knob(state, "FAKE_HC_SILENT") {
         } else if knob(state, "FAKE_HC_BUSY") {
             t["status"] = json!("working");
+        } else if !dialog.is_empty() && knob(state, "FAKE_HC_BLOCKED") {
+            t["status"] = json!("blocked");
+            t["status_msg"] = json!("dialog open");
+            t["screen"] = json!(std::fs::read_to_string(&dialog).unwrap_or_default());
         } else if knob(state, "FAKE_HC_BLOCKED") {
             t["status"] = json!("blocked");
             t["status_msg"] = json!(TRUST_QUESTION);

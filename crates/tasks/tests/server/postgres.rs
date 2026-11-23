@@ -494,8 +494,13 @@ const HELPER_BOARD: &str = "SYMPHONY_PG_FIXTURE_BOARD";
 /// The helper test `name` run as a process of its own on `board`, which starts the board's server
 /// on its own lifeline and ends: the pid of the server it started, once it has ended.
 fn started_by_a_helper(board: &Board, name: &str) -> i64 {
+    started_by(board, name, &mut command(std::env::current_exe().unwrap()))
+}
+
+/// [`started_by_a_helper`], the helper run by `helper`, a command of this test binary.
+fn started_by(board: &Board, name: &str, helper: &mut sys::Command) -> i64 {
     let said = sys::output(
-        command(std::env::current_exe().unwrap())
+        helper
             .args([
                 "--ignored",
                 "--exact",
@@ -528,6 +533,27 @@ fn a_server_ends_with_the_process_that_started_it() {
     assert!(!pid_alive(pid), "the server {pid} ended with its starter");
     let log = std::fs::read_to_string(board.pg.log()).unwrap();
     assert!(log.contains("database system is shut down"), "{log}");
+}
+
+/// A server starts for a caller with no locale, as launchd and a cleared environment start a
+/// process: the helper that starts it has its board and `PATH` alone, and macOS's postmaster,
+/// given no locale, stops at its start ("postmaster became multithreaded during startup").
+#[test]
+fn a_server_starts_for_a_caller_with_no_locale() {
+    use crate::children::Child as _;
+    let board = Board::new("no-locale");
+    let mut helper = command(std::env::current_exe().unwrap());
+    helper
+        .cleared()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default());
+    let pid = started_by(&board, "helper_starts_and_ends", &mut helper);
+    board.none_left();
+    assert!(!pid_alive(pid), "the server {pid} ended with its starter");
+    let log = std::fs::read_to_string(board.pg.log()).unwrap();
+    assert!(
+        log.contains("database system is ready to accept connections"),
+        "{log}"
+    );
 }
 
 #[test]

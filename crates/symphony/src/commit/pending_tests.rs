@@ -114,6 +114,7 @@ fn a_note_names_its_saves_by_whose_they_are() {
         file: "docs/a.md".into(),
         branch: "docs/owner-save-1".into(),
         shown: true,
+        inert: false,
         state: State::Queued,
         by: by.into(),
         keys: Vec::new(),
@@ -507,9 +508,53 @@ fn a_tidy_that_could_not_keep_its_first_save_shows_nothing() {
     )
     .unwrap();
     assert_eq!(shown(&tree.root, LEDGER, "text".into()), "a text");
-    assert!(
-        stopped(&super::entries(&tree.root), Together { first: 1, count: 2 })
-            .is_some_and(|why| why.contains("could not keep the first of its saves"))
+    // Its first not in the journal, never kept or dropped as another delivery brought it, which
+    // the journal cannot tell apart: the words are true of both.
+    let no_first = "the first of the saves its tidy kept is not in the journal: the tidy could \
+                    not keep it, or another delivery brought it, so none of them is shown or \
+                    delivered";
+    assert_eq!(
+        stopped(&super::entries(&tree.root), Together { first: 1, count: 2 }).as_deref(),
+        Some(no_first)
+    );
+    // Its page's note lists it as held for that reason alone, as the tidy's error output says,
+    // while a save whose words no longer apply to the page says so.
+    tree.write(LEDGER, "text");
+    let stale = QueuedPublication {
+        edit: crate::commit::Edit {
+            rel: LEDGER.into(),
+            base: "other".into(),
+            new: "changed".into(),
+        },
+        ..alone
+    };
+    std::fs::write(
+        folder.join(format!("{:020}.json", 4)),
+        serde_json::to_string(&stale).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        note(&tree.root, LEDGER).as_deref(),
+        Some(
+            "> **Pending delivery.** This page keeps 3 saves that `main` does not hold yet: this \
+             project delivers by pull request, so each waits for the task that delivers it: \
+             `docs/owner-save-1` (kept, not delivered: the first of the saves its tidy kept is \
+             not in the journal: the tidy could not keep it, or another delivery brought it, so \
+             none of them is shown or delivered), `docs/owner-save-3` (kept, its branch not made \
+             yet), `docs/owner-save-4` (kept, its branch not made yet; its words no longer apply \
+             to this page as it is here, so they are not shown: they are kept). Nothing is lost \
+             meanwhile, and nothing here is committed to `main`."
+        )
+    );
+    // Each save says whether it is inert, which the note reads rather than the journal again:
+    // the tidy's alone, not the one kept alone nor the one whose words no longer apply.
+    let listed: Vec<(u64, bool, bool)> = saves(&tree.root)
+        .iter()
+        .map(|save| (save.sequence, save.shown, save.inert))
+        .collect();
+    assert_eq!(
+        listed,
+        [(2, false, true), (3, true, false), (4, false, false)]
     );
 }
 

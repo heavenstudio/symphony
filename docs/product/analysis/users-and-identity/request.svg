@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="430" viewBox="0 0 760 430" role="img" aria-labelledby="title desc">
+<title id="title">Proposed: first who is asking, then what they hold on this board</title>
+<desc id="desc">A request passes two separate questions. The provider, which belongs to the server, says who sent it: a person, named by the provider and its own name for them, or nobody it can tell, which is refused. Then the board&#x27;s own list says what that person holds on this board: a public name, the groups they are in and what they may do. The write is recorded under the public name. The provider gives no rights and the list proves no identity. With no list, the person at the machine holds everything, as today.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--question:#946a00;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--question:#e0b84c;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.inner{fill:var(--muted);stroke:var(--border)}
+.hot{fill:none;stroke:var(--dislike);stroke-width:1.5}
+.new{fill:none;stroke:var(--primary);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.b{font-weight:600}
+.h{font-size:15px;font-weight:600}
+.t{font-size:17px;font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+.red{fill:var(--dislike)}
+.blue{fill:var(--primary)}
+.arrow{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip)}
+.both{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip);marker-start:url(#tail)}
+.no{stroke:var(--dislike);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+.tipfill{fill:var(--muted-foreground)}
+</style>
+<defs><marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M0,0 L10,5 L0,10 z"/></marker><marker id="tail" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M10,0 L0,5 L10,10 z"/></marker></defs>
+<rect class="page" width="760" height="430"/>
+<text class="t" x="24" y="34">Proposed: first who is asking, then what they hold on this board</text>
+<rect class="card" x="24" y="60" width="150" height="96" rx="8"/>
+<text class="h" x="38" y="86">A request</text>
+<text class="m" x="38" y="110">from a browser</text>
+<text class="m" x="38" y="129">or a program</text>
+<path class="arrow" d="M174,108 L206,108"/>
+<rect class="card" x="210" y="60" width="250" height="190" rx="8"/>
+<rect class="new" x="210" y="60" width="250" height="190" rx="8"/>
+<text class="h" x="224" y="86">1. The provider</text>
+<text class="m" x="224" y="106">the server&#x27;s</text>
+<text class="b" x="224" y="132">Who sent this?</text>
+<rect class="inner" x="224" y="144" width="222" height="50" rx="5"/>
+<text class="mono" x="234" y="164">tailscale</text>
+<text class="mono" x="234" y="184">ana@example.com</text>
+<text class="m" x="224" y="216">or: cannot tell,</text>
+<text class="m" x="224" y="235">and it is refused</text>
+<path class="arrow" d="M460,108 L492,108"/>
+<rect class="card" x="496" y="60" width="240" height="190" rx="8"/>
+<rect class="new" x="496" y="60" width="240" height="190" rx="8"/>
+<text class="h" x="510" y="86">2. The board&#x27;s people</text>
+<text class="m" x="510" y="106">this board&#x27;s own list</text>
+<text class="b" x="510" y="132">What do they hold here?</text>
+<rect class="inner" x="510" y="144" width="212" height="92" rx="5"/>
+<text class="mono" x="520" y="164">name: ana</text>
+<text class="mono" x="520" y="184">group: engineering</text>
+<text class="mono" x="520" y="204">may: speak, decide,</text>
+<text class="mono" x="520" y="224">and direct agents</text>
+<path class="arrow" d="M616,250 L616,282"/>
+<rect class="card" x="496" y="286" width="240" height="60" rx="8"/>
+<text class="b" x="510" y="311">3. The write, under their name</text>
+<text class="mono" x="510" y="332">ana · approved</text>
+<rect class="card" x="24" y="180" width="150" height="166" rx="8"/>
+<text class="h" x="38" y="206">Kept apart</text>
+<text x="38" y="230">The provider</text>
+<text x="38" y="249">gives no rights.</text>
+<text x="38" y="268"></text>
+<text x="38" y="287">The list proves</text>
+<text x="38" y="306">nobody&#x27;s identity.</text>
+<rect class="card" x="24" y="366" width="712" height="44" rx="8"/>
+<text x="40" y="393">With no list on a board, the person at the machine holds everything there, as today.</text>
+</svg>

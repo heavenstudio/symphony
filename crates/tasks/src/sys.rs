@@ -286,6 +286,35 @@ pub fn terminate(pid: i64, hard: bool) -> bool {
     unsafe { kill(pid, signal) == 0 }
 }
 
+/// Whether a child std forks beside this process's connections holds `fd` before its exec, as
+/// the child's own table says: the probe of a connection no spawn copies (the board's PostgreSQL
+/// socket, the `rpc` client's kept connection), against std's socket as the control.
+#[cfg(all(test, target_vendor = "apple"))]
+pub(crate) fn a_forked_child_holds(fd: std::os::fd::RawFd) -> bool {
+    use crate::children::Child as _;
+    use std::os::unix::process::CommandExt as _;
+    let mut command = std::process::Command::of("/usr/bin/true");
+    // SAFETY: fcntl is async-signal-safe and reads only the forked child's own table.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::fcntl(fd, libc::F_GETFD) == -1 {
+                Ok(())
+            } else {
+                Err(std::io::Error::from_raw_os_error(libc::EEXIST))
+            }
+        });
+    }
+    let _spawning = spawning();
+    match command.status() {
+        Ok(status) => {
+            assert!(status.success(), "{status}");
+            false
+        }
+        Err(e) if e.raw_os_error() == Some(libc::EEXIST) => true,
+        Err(e) => panic!("{e}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

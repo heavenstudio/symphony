@@ -18,6 +18,7 @@ A document's first card adds its line here.
 - [Workflow definitions](workflow/WORKFLOW.md)
 - [The agents page, orchestrator-first](product/analysis/agents-page.md)
 - [Artifacts attached, not committed](workflow/analysis/attached-artifacts.md)
+- [Blueprints](product/analysis/blueprints.md)
 - [The board at a glance](product/analysis/board-design.md)
 - [The board's cutover to PostgreSQL, and the way back](operations/analysis/board-pg-cutover.md)
 - [The board's store, measured before it moves](operations/analysis/board-store-baseline.md)
@@ -61,6 +62,7 @@ A document's first card adds its line here.
 - [Navigating a task's timeline](design/analysis/timeline-navigation.md)
 - [Orchestrators and messages on a task's timeline](design/analysis/timeline-orchestrator.md)
 - [A task's cost on its card, its page and its timeline](design/analysis/token-cost.md)
+- [Users and identity](product/analysis/users-and-identity.md)
 - [The guard panel on a task's page](design/analysis/workflow-guard-panel.md)
 - [Worktree build folders](engineering/analysis/worktree-build-folders.md)
 

@@ -8,6 +8,15 @@ This repository's own standing instructions for an orchestrator, beside the ship
   `workflow/no-slowing-for-usage-limits`). Each holds a
   [slot](../../../docs/workflow/TASKS.md#slots); PULL's `low_volume` line says when you hold
   fewer than `[limits] low_volume`.
+- Work a task needs before it can finish is a task of its own: file it and staff it at once,
+  without asking, and name it on the blocked task's thread, and as that task's `task:SLUG`
+  block where it is on this board
+  ([what a task waits on](../../../docs/workflow/TASKS.md#what-a-task-waits-on)). Where the work
+  is another project's (a consuming project's pin, code or board), it is filed on that project's
+  own board and staffed there on the models that project's settings name (`just tasks limits`
+  in its checkout), and the acts on that live board that follow stay yours. What still goes to
+  the owner is a decision only the owner can make, as a card
+  ([where a card is written](../../../docs/workflow/REVIEW.md#where-a-card-is-written)).
 - Register your own callback early in a full session, and check that full-session executors and
   reviewers do the same before working ([the connected stage](../work/connected.md)).
 - A `BLOCKED` notice is an observation of a session you oversee, not leave to approve: inspect

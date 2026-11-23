@@ -1,6 +1,8 @@
 //! `just tasks cleanup`: close the terminals nobody needs (the module above says which), each
-//! closure recorded on its task with the line that restores it; and [`finish`], the same for the
-//! sessions of one task that just became done or cancelled.
+//! closure recorded on its task with the line that restores it; [`finish`], the same for the
+//! sessions of one task that just became done or cancelled; [`approved`], for one an approve left
+//! done and not landed, whose executors' terminals stay; and [`landed`], which closes those once a
+//! landing closed the task.
 
 use super::hc::{self, Hc, Object, text, text_of};
 use super::procs::{self, busy_reason, named};
@@ -201,6 +203,21 @@ pub fn cleanup_as(
     only: &[String],
     caller: Option<&str>,
 ) -> Result<Vec<Closure>, Error> {
+    cleanup_but(store, hc, processes, dry_run, only, caller, &HashSet::new())
+}
+
+/// [`cleanup_as`], leaving the terminals `spared` (their addresses) as they are: of `only`'s
+/// sessions, those an approve does not end ([`approved`]). A spared one that is gone is still
+/// recorded closed.
+fn cleanup_but(
+    store: &Store,
+    hc: &dyn Hc,
+    processes: &Processes,
+    dry_run: bool,
+    only: &[String],
+    caller: Option<&str>,
+    spared: &HashSet<String>,
+) -> Result<Vec<Closure>, Error> {
     let current = hc.caller();
     let handles: HashSet<String> = store
         .sessions()?
@@ -245,7 +262,7 @@ pub fn cleanup_as(
         .collect();
     let wanted: Option<HashSet<&str>> = (!only.is_empty()).then(|| {
         open.iter()
-            .filter(|s| only.contains(&s.slug))
+            .filter(|s| only.contains(&s.slug) && !spared.contains(&s.pane))
             .map(|s| s.pane.as_str())
             .collect()
     });
@@ -510,7 +527,47 @@ fn record_closure(store: &Store, handle: &str, terminal: &Object, why: &str) -> 
 /// agent works a subtask, and closes it from its terminal). Never fails: it runs after a status
 /// change that must stand. The lines to print; what went wrong is one of them.
 pub fn finish(store: &Store, hc: &dyn Hc, processes: &Processes, slug: &str) -> Vec<String> {
-    let closures = || -> Result<Vec<Closure>, Error> {
+    finished(store, hc, processes, slug, false)
+}
+
+/// Why an executor's terminal stays at its task's approve ([`approved`]).
+pub const NOT_LANDED: &str = "its task is approved, not landed: its landing may still ask its \
+                              executor for something; it closes at the land, or once idle";
+
+/// `slug`, a task whose branch lands, was approved: done on the board, not landed. [`finish`], but
+/// for its executors' terminals, on it or below it: a land may still ask an executor for a stamp of
+/// its at the approved tip, for a conflict settled or a red check mended, and one closed at the
+/// approve has to be restored first. Each one that stays is a line saying so ([`NOT_LANDED`]). It
+/// closes when the land closes the task ([`landed`]), else at the sweep that finds it idle with
+/// nothing asked of it ([`super::reap`]), as finished work does.
+pub fn approved(store: &Store, hc: &dyn Hc, processes: &Processes, slug: &str) -> Vec<String> {
+    finished(store, hc, processes, slug, true)
+}
+
+/// A land of `slug` ended without a refusal. Where a landing closed the task (it is done, and no
+/// approve of it waits for its land, [`crate::orchestration::unlanded`]), [`finish`]: the terminals
+/// its approve left to the land close. Where its approve still waits (a land that goes on
+/// elsewhere, as a hosted pull request not merged yet), nothing. Never fails, as [`finish`].
+pub fn landed(store: &Store, hc: &dyn Hc, processes: &Processes, slug: &str) -> Vec<String> {
+    match store.get(slug) {
+        Ok(task) if crate::orchestration::unlanded(&task).is_some() => Vec::new(),
+        Ok(_) => finish(store, hc, processes, slug),
+        Err(problem) => vec![format!(
+            "could not clean up the sessions of {slug}: {problem}"
+        )],
+    }
+}
+
+/// [`finish`]; with `executors_stay`, [`approved`].
+fn finished(
+    store: &Store,
+    hc: &dyn Hc,
+    processes: &Processes,
+    slug: &str,
+    executors_stay: bool,
+) -> Vec<String> {
+    let mut staying: Vec<TaskSessionRow> = Vec::new();
+    let mut closures = || -> Result<Vec<Closure>, Error> {
         if !store.finished(&store.get(slug)?)? {
             return Ok(Vec::new());
         }
@@ -523,15 +580,24 @@ pub fn finish(store: &Store, hc: &dyn Hc, processes: &Processes, slug: &str) -> 
         if !sessions.iter().any(|s| s.closed.is_none()) {
             return Ok(Vec::new());
         }
-        cleanup(store, hc, processes, false, &slugs)
+        if executors_stay {
+            staying = (sessions.into_iter())
+                .filter(|s| s.closed.is_none() && s.role == "executor" && !s.pane.is_empty())
+                .collect();
+        }
+        let spared = staying.iter().map(|s| s.pane.clone()).collect();
+        cleanup_but(store, hc, processes, false, &slugs, None, &spared)
     };
     match closures() {
         Err(problem) => vec![format!(
             "could not clean up the sessions of {slug}: {problem}"
         )],
-        Ok(closures) => closures
-            .iter()
-            .filter_map(|c| {
+        Ok(closures) => {
+            // A spared terminal that was gone is among the closures, recorded closed: not kept.
+            let kept = (staying.iter())
+                .filter(|s| !closures.iter().any(|c| c.pane == s.pane))
+                .map(|s| format!("kept pane {} of {} ({NOT_LANDED})", s.pane, s.handle));
+            let said = closures.iter().filter_map(|c| {
                 if c.kept {
                     let of = c
                         .handle
@@ -549,7 +615,8 @@ pub fn finish(store: &Store, hc: &dyn Hc, processes: &Processes, slug: &str) -> 
                 } else {
                     None
                 }
-            })
-            .collect(),
+            });
+            said.chain(kept).collect()
+        }
     }
 }
