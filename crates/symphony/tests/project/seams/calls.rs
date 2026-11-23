@@ -31,7 +31,7 @@ pub(super) fn lines(path: &Path) -> Vec<serde_json::Value> {
 const TIMING: PluginCalls = PluginCalls { timing: true };
 
 /// Every call of every seam, as the record names it (`seam.call`).
-const EVERY_CALL: [&str; 29] = [
+const EVERY_CALL: [&str; 30] = [
     "components.render",
     "components.resolve",
     "components.cache_version",
@@ -52,6 +52,7 @@ const EVERY_CALL: [&str; 29] = [
     "gates.answer",
     "gates.kept_while",
     "authorities.attest",
+    "describers.describe",
     "watches.changed",
     "watches.forget",
     "doc_checks.check",
@@ -311,6 +312,10 @@ fn every_seam_answers_the_same(both: &Both, tree: &Tree) {
                     .attest(root, &operation, within)
             });
         }
+    }
+    // Each describer, the one that cannot say among them.
+    for at in 0..2 {
+        both.same("describe", |p| p.describers()[at].1.describe(root));
     }
     for value in [
         FieldValue::Text(" 3.5 ".into()),
@@ -759,13 +764,14 @@ fn a_seam_trait_the_source_reading_misses_is_named_with_the_file_to_add() {
 
 /// The method a seam's declared entry is the answer of, where the entry is that answer alone: a
 /// component declared by its name, a route by its path…
-const DECLARED_BY: [(&str, &str); 9] = [
+const DECLARED_BY: [(&str, &str); 10] = [
     ("components", "name"),
     ("routes", "path"),
     ("home_regions", "id"),
     ("board_actions", "name"),
     ("gates", "name"),
     ("authorities", "adapter"),
+    ("describers", "id"),
     ("watches", "paths"),
     ("prose_rules", "name"),
     ("transports", "name"),
@@ -951,6 +957,7 @@ fn every_call(plugins: &Plugins, root: &Path, docs: &Docs) {
             .authority("every")
             .map(|a| a.attest(root, operation, Duration::from_secs(10))),
     );
+    let _ = black_box(plugins.describers()[0].1.describe(root));
     let _ = black_box(plugins.watches()[0].changed(root));
     plugins.watches()[0].forget(root);
     let _ = black_box(plugins.doc_checks()[0].check(docs));

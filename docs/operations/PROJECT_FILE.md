@@ -72,15 +72,20 @@ table, the key and the line, as `just tasks limits` names one, and for a local v
 one it holds over), the scopes it may be written in and its class. A setting is *reviewed* when
 the local settings file refuses its table or key by name (`PROTECTED` and `PROTECTED_KEYS` in
 `crates/tasks/src/local.rs`, the one list) and a *preference* otherwise; a reviewed table is said
-as a sentence with its file and line. Its parts are the integrations and tools (the launch
-agents, Herdr's panes, GitHub, and the plugins), the models and limits, the project's name,
-documents and theme, the reviewed settings (the landing, the board's commands, the stamps, the
-releases and the workflow, whose sentence names its mappings and approval authorities) and the
-device's appearance. GitHub is said by what the `symphony-github.toml` the default branch commits
-writes, the branch being the one the main checkout's HEAD names, as that program reads it. The
-page runs no program and holds no copy of its rules, so a file that writes `enabled = true` is
-said as enabled in its file and never as on: a file the program refuses runs as off, which its
-own status tells. A project file that does not load is said at the top of the page with what
+as a sentence with its file and line. Its parts are the integrations and tools (the launch agents,
+Herdr's panes, GitHub, the plugins and what each plugin describes), the models and limits, the
+project's name, documents and theme, the reviewed settings (the landing, the board's commands, the
+stamps, the releases and the workflow, whose sentence names its mappings and approval authorities)
+and the device's appearance. GitHub is said by its own program: the page runs
+`symphony-github describe` ([GITHUB](GITHUB.md#the-commands)) as this machine finds it, the main
+checkout's build first, in the main checkout, and draws the entry it prints, its state and why,
+what it needs and each setting at the line that writes it, every one reviewed. The page holds no
+copy of its rules, and a machine without the program, or one that fails or gives no answer in 10
+seconds, is said in its place as unknown, with the page drawn all the same. Each plugin the
+project selects adds the entries of its describers after the Symphony's own
+([PLUGIN_PROTOCOL](../engineering/PLUGIN_PROTOCOL.md#settings-describers)), drawn alike; a
+description declares and runs nothing, and a key the local file refuses is shown reviewed whatever
+its describer calls it. A project file that does not load is said at the top of the page with what
 holds in its place, as is a local file that is refused. The page shows a preference as its value
 alone: no control on it changes one.
 

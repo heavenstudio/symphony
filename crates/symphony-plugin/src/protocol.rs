@@ -103,7 +103,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
 use crate::authority::{Operation, Signed};
-use crate::vocabulary::{Block, FieldValue, Gate, NavItem, Picture, Region, TaskOffer};
+use crate::vocabulary::{
+    Block, FieldValue, Gate, NavItem, Picture, Region, SettingsEntry, TaskOffer,
+};
 use crate::{
     ARTIFACTS, Card, CardKind, Drawing, FieldKind, File, Page, Plugin, Problem, Reply, Submission,
     Submitted, TaskRef, Theme, ThreadLine,
@@ -120,8 +122,9 @@ pub struct Version {
 /// The protocol this build speaks: major 0 while no process speaks it. Minor 2 hands a page its
 /// project's artifacts folder ([`PageData::artifacts`]); minor 3 asks a register read's card kinds
 /// in one request ([`ReadCards`]); minor 4 asks an approval authority for an attestation
-/// ([`Attest`], [`Declaration::authorities`]); every other call is 1's.
-pub const PROTOCOL: Version = Version { major: 0, minor: 4 };
+/// ([`Attest`], [`Declaration::authorities`]); minor 5 asks a describer for its Settings page entry
+/// ([`Describe`], [`Declaration::describers`]); every other call is 1's.
+pub const PROTOCOL: Version = Version { major: 0, minor: 5 };
 
 /// This build's protocol.
 impl Default for Version {
@@ -585,6 +588,13 @@ calls! {
         within_ms: u64,
     }
 
+    /// [`Describer::describe`](crate::Describer::describe) of the describer of that id, for the
+    /// project at `root`.
+    Describe = "describers.describe" since 5 => Result<SettingsEntry, String> {
+        describer: String,
+        root: PathBuf,
+    }
+
     /// [`Watch::changed`](crate::Watch::changed).
     Changed = "watches.changed" since 1 => Option<String> {
         /// The watch's place among the plugin's watches.
@@ -879,6 +889,10 @@ pub struct Declaration {
     /// of 0.3 writes none.
     #[serde(default)]
     pub authorities: Vec<String>,
+    /// Each Settings page describer's id: since 0.5, and none when none is written, as a plugin
+    /// of 0.4 writes none.
+    #[serde(default)]
+    pub describers: Vec<String>,
 }
 
 /// A card kind: its name and the markers it reads.
@@ -1003,6 +1017,7 @@ impl Declaration {
             transports: names(plugin.transports().iter().map(|t| t.name()).collect()),
             theme: plugin.theme(),
             authorities: names(plugin.authorities().iter().map(|a| a.adapter()).collect()),
+            describers: names(plugin.describers().iter().map(|d| d.id()).collect()),
         }
     }
 }

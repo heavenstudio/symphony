@@ -317,6 +317,7 @@ whose documentation says what it is asked:
 | `doc_checks` | a check over the project's documents, run by `just symphony-status --lint` |
 | `commands` | a command of the project's `symphony`, run as `just symphony-cli NAME` ([its commands](PLUGIN_PROTOCOL.md#its-commands)) |
 | `authorities` | an approval authority of the project's workflow ([approval authorities](PLUGIN_PROTOCOL.md#approval-authorities)) |
+| `describers` | an entry of its own on the Settings page, each setting with its source; it declares and runs nothing ([settings describers](PLUGIN_PROTOCOL.md#settings-describers)) |
 | `theme` | a theme package, below |
 
 Five seams are a linked plugin's alone: board fields, gates, prose rules, generators and
