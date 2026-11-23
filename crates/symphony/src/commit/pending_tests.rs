@@ -552,7 +552,10 @@ fn a_tidy_that_could_not_keep_its_first_save_shows_nothing() {
         .iter()
         .map(|save| (save.sequence, save.shown, save.inert))
         .collect();
-    assert_eq!(listed, [(2, false, true), (3, true, false), (4, false, false)]);
+    assert_eq!(
+        listed,
+        [(2, false, true), (3, true, false), (4, false, false)]
+    );
 }
 
 #[test]
