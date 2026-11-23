@@ -427,6 +427,22 @@ fn a_tidys_saves_are_left_out_together_when_one_no_longer_applies() {
     assert_eq!(edits[0].rel, "docs/b.md");
     // Led by such a tidy, the batch fails whole.
     assert!(applying(&tree.root, &parent, &batch[1..]).is_err());
+    // Its saves are one wherever they stand: another save between them changes nothing.
+    let apart = [
+        (1, &first, None),
+        (2, &ledger, tidy),
+        (4, &after, None),
+        (3, &stale, tidy),
+    ]
+    .map(|(sequence, edit, together)| Batched {
+        sequence,
+        edit,
+        by: "fox-1",
+        together,
+    });
+    let (edits, members) = applying(&tree.root, &parent, &apart).unwrap();
+    assert!(members.is_empty(), "{members:?}");
+    assert_eq!(edits.len(), 1);
 }
 
 #[test]

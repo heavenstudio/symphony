@@ -753,6 +753,7 @@ fn led(root: &Path, sequence: u64) -> Option<(String, String)> {
 
 /// A save going on a branch: its entry's number, its edit, and who saved it, empty for the owner
 /// ([`Delivery::by`]).
+#[derive(Clone, Copy)]
 struct Batched<'a> {
     sequence: u64,
     edit: &'a Edit,
@@ -760,16 +761,17 @@ struct Batched<'a> {
     together: Option<Together>,
 }
 
-/// `batch` cut into what goes or stays as one: the saves one tidy kept together, else each save
-/// alone. Those kept together stand one after another, as [`joining`] gives them.
-fn units<'b, 'a>(batch: &'b [Batched<'a>]) -> Vec<&'b [Batched<'a>]> {
-    let mut units = Vec::new();
-    let mut start = 0;
-    for end in 1..=batch.len() {
-        let together = batch[end - 1].together;
-        if end == batch.len() || together.is_none() || batch[end].together != together {
-            units.push(&batch[start..end]);
-            start = end;
+/// `batch` cut into what goes or stays as one, in the order of each one's first save: the saves
+/// one tidy kept together, wherever they stand, else each save alone.
+fn units<'b, 'a>(batch: &'b [Batched<'a>]) -> Vec<Vec<&'b Batched<'a>>> {
+    let mut units: Vec<Vec<&Batched>> = Vec::new();
+    for save in batch {
+        let unit = save.together.and_then(|together| {
+            (units.iter()).position(|unit| unit[0].together == Some(together))
+        });
+        match unit {
+            Some(at) => units[at].push(save),
+            None => units.push(vec![save]),
         }
     }
     units
@@ -834,8 +836,8 @@ fn committed(root: &Path, batch: &[Batched]) -> Result<(String, String, Vec<u64>
         let tree = git(root, &["rev-parse", &format!("{name}^{{tree}}")])?;
         let units = units(batch);
         for count in (1..=units.len()).rev() {
-            let end: usize = units[..count].iter().map(|unit| unit.len()).sum();
-            let (edits, members) = applying(root, &parent, &batch[..end])?;
+            let prefix: Vec<Batched> = units[..count].iter().flatten().map(|save| **save).collect();
+            let (edits, members) = applying(root, &parent, &prefix)?;
             let (saved, _) = saved_uploads(root, &edits);
             let made = made(root, &parent, &edits, &saved).map_err(String::from)?;
             if made.tree == tree {
