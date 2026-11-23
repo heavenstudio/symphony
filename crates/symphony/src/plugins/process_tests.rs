@@ -1771,7 +1771,7 @@ fn every_call_that_finds_its_process_ending_is_told_how_the_first_ended_it() {
         "a".into(),
         None,
     );
-    let sent = remote.sent_within(&connection, request.into(), WAIT, &mut |_| Ok(()));
+    let sent = remote.sent_within(&connection, request.into(), WAIT, None, &mut |_| Ok(()));
     assert_eq!(sent.err().as_deref(), Some(first));
     assert_eq!(
         remote
@@ -3037,7 +3037,7 @@ fn a_gates_answer_waits_its_turn_among_those_asked_at_once_and_says_so_past_its_
     let gates = remote.gates()[0];
     let linked = LANDINGS.gates()[0].answer(&tree.root, &TASK, Some("c0ffee"));
     // Asked while every turn is taken, an answer is asked and answered once one is given back.
-    let mut turns: Vec<GatesTurn<'_>> = (0..GATES_AT_ONCE)
+    let mut turns: Vec<GatesTurn> = (0..GATES_AT_ONCE)
         .map(|_| remote.gates_turn().unwrap())
         .collect();
     let answered = std::thread::scope(|scope| {
@@ -3058,7 +3058,7 @@ fn a_gates_answer_waits_its_turn_among_those_asked_at_once_and_says_so_past_its_
         peer(&LANDINGS, Arc::default()),
         limits,
     );
-    let _turns: Vec<GatesTurn<'_>> = (0..GATES_AT_ONCE)
+    let _turns: Vec<GatesTurn> = (0..GATES_AT_ONCE)
         .map(|_| remote.gates_turn().unwrap())
         .collect();
     assert_eq!(
@@ -3068,4 +3068,108 @@ fn a_gates_answer_waits_its_turn_among_those_asked_at_once_and_says_so_past_its_
              so this one was not asked"
         ))
     );
+}
+
+/// A remote of [`LANDINGS`] served by a hand-made peer that answers each gates answer as `respond`
+/// says and keeps what `seen` sees: a gates answer given up after 50 ms, and a call given up
+/// waited for as long as only a stall outlasts, so only a late answer or the test resolves its
+/// cancel.
+fn holding_gates(tree: &Tree, respond: Respond, seen: Seen) -> &'static Remote {
+    let declared = Declaration::of(&LANDINGS);
+    Remote::leaked(
+        "landings",
+        process_in(tree, "landings"),
+        hand_made(declared, respond, seen, "exited with code 0"),
+        Limits {
+            gates: Duration::from_millis(50),
+            ..patient()
+        },
+    )
+}
+
+/// How many gates answers `remote` asks now, in their turns.
+fn gates_asked(remote: &Remote) -> usize {
+    *remote.gates_asked.lock().unwrap()
+}
+
+#[test]
+fn a_gates_answer_given_up_holds_its_turn_until_its_late_answer_comes() {
+    let tree = Tree::new();
+    let seen = Seen::default();
+    // Its gates answer runs on until the test lets it go, past its cancel, as the SDK's worker
+    // runs one on.
+    let (let_go, held) = mpsc::channel::<()>();
+    let held = Mutex::new(held);
+    let respond: Respond = Arc::new(move |id, _| {
+        let _ = held.lock().recover().recv();
+        let late: Answered<Result<Vec<symphony_plugin::vocabulary::Gate>, String>> =
+            Answered::Answer(Ok(Vec::new()));
+        Said::Lines(vec![answering(id, &serde_json::to_string(&late).unwrap())])
+    });
+    let remote = holding_gates(&tree, respond, seen.clone());
+    // The other turns taken, the answer asked in the last is given up at its bound and holds it.
+    let _others: Vec<GatesTurn> = (1..GATES_AT_ONCE)
+        .map(|_| remote.gates_turn().unwrap())
+        .collect();
+    assert_eq!(
+        remote.gates()[0].answer(&tree.root, &TASK, Some("c0ffee")),
+        Err("plugin landings: no answer in 50ms".into())
+    );
+    assert_eq!(gates_asked(remote), GATES_AT_ONCE);
+    // So another answer waits in the host while the plugin still runs it, and past its bound is
+    // not asked.
+    assert!(remote.gates_turn().is_err());
+    assert_eq!(gates_asked(remote), GATES_AT_ONCE);
+    // Answered late, its cancel resolved: its turn is given back, and the process kept.
+    let_go.send(()).unwrap();
+    until("the late answer was read", || {
+        tree.read("artifacts/plugins/landings.log")
+            .contains("was answered after it was given up: dropped")
+    });
+    assert_eq!(gates_asked(remote), GATES_AT_ONCE - 1);
+    drop(remote.gates_turn().unwrap());
+    assert_eq!(remote.down(), None);
+    assert_eq!(seen.kills(), 0);
+    // The call it gave up was the one cancelled.
+    let heard = seen.heard();
+    let asked: Raw = serde_json::from_str(&heard[1]).unwrap();
+    assert!(
+        (asked.request).is_some_and(|r| r.get().contains("gates.answer")),
+        "{heard:?}"
+    );
+    assert_eq!(heard[2], format!("{{\"id\":{},\"cancel\":{{}}}}", asked.id));
+}
+
+#[test]
+fn a_gates_answer_given_up_holds_its_turn_until_its_silent_process_is_ended() {
+    let tree = Tree::new();
+    let seen = Seen::default();
+    // Its gates answers never come, and its cancel is not answered.
+    let remote = holding_gates(
+        &tree,
+        Arc::new(|_, _| Said::Lines(Vec::new())),
+        seen.clone(),
+    );
+    let gates = remote.gates()[0];
+    let connection = remote.connection().unwrap();
+    assert_eq!(
+        gates.answer(&tree.root, &TASK, Some("c0ffee")),
+        Err("plugin landings: no answer in 50ms".into())
+    );
+    assert_eq!(gates_asked(remote), 1);
+    until("the cancel was sent", || seen.heard().len() == 3);
+    assert_eq!(gates_asked(remote), 1);
+    let asked: Raw = serde_json::from_str(&seen.heard()[1]).unwrap();
+    // Still unanswered once the wait after its cancel has run out, its process is ended, which
+    // gives the turn back.
+    remote.after_cancel(&connection, asked.id);
+    assert_eq!(gates_asked(remote), 0);
+    assert_eq!(
+        remote.down(),
+        Some(format!(
+            "its process was ended: call {} had no answer {PATIENT:?} after it was cancelled",
+            asked.id
+        ))
+    );
+    assert_eq!(seen.kills(), 1);
 }

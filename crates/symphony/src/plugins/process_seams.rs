@@ -182,8 +182,8 @@ impl BoardAction for RemoteAction {
 /// linked one ([`crate::gates`]): each answer kept by the task, its branch's tip and what
 /// [`Gates::kept_while`] tells, on its own thread, for whatever checkout the call names. Its answer
 /// is waited for as long as a linked one may run ([`super::Limits::gates`]), and asked only in its
-/// turn among the remote's [`super::GATES_AT_ONCE`], so slow answers leave a worker of the plugin's
-/// to its other calls.
+/// turn among the remote's [`super::GATES_AT_ONCE`], held until its call resolves
+/// ([`super::GatesTurn`]), so slow answers leave a worker of the plugin's to its other calls.
 pub(super) struct RemoteGates {
     pub(super) remote: &'static Remote,
     pub(super) name: String,
@@ -199,7 +199,7 @@ impl Gates for RemoteGates {
         task: &TaskRef<'_>,
         tip: Option<&str>,
     ) -> Result<Vec<Gate>, String> {
-        let _turn = self
+        let turn = self
             .remote
             .gates_turn()
             .map_err(|why| self.remote.failed(&why))?;
@@ -211,7 +211,7 @@ impl Gates for RemoteGates {
         );
         match self
             .remote
-            .ask_within(&self.name, asked, self.remote.limits.gates)
+            .ask_within(&self.name, asked, self.remote.limits.gates, Some(turn))
         {
             // Its gates, or its own error as it said it.
             Ok(answered) => answered,
