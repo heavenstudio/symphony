@@ -1,7 +1,8 @@
 //! `symphony-github COMMAND`: the adapter's whole surface, each command an operator's own act.
 //!
-//! `status` reads what is kept and the committed settings and writes nothing anywhere, and
-//! `tokens` says of each token file whether its token is current, never the token.
+//! `status` reads what is kept and the committed settings and writes nothing anywhere, and so
+//! does `describe`, which says it as the exchange's entry on the Settings page
+//! ([`crate::describe`]); `tokens` says of each token file whether its token is current, never the token.
 //! `publish`, `resolve` and `drop` write only the adapter's own folder, and `resolve` and `drop`
 //! make none where nothing is kept. `preview` reads GitHub when the adapter is turned on and
 //! writes nothing there or on the board; turned off, it reads nothing there, and neither it nor
@@ -29,6 +30,9 @@ project's default branch commits symphony-github.toml with enabled = true.
 
   status                              what is kept and what the committed settings allow;
                                       reads no remote and writes nothing
+  describe                            what status says, as the exchange's entry on the
+                                      Settings page: one line of JSON, which the server runs
+                                      this to read; reads no remote and writes nothing
   publish SLUG --title TITLE --body-file FILE
                                       opt a task in: keep TITLE and FILE's text as its curated
                                       public text, shown as it will be published
@@ -496,6 +500,13 @@ fn command(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
         "status" => {
             none_left(&rest)?;
             status(ctx, out)
+        }
+        "describe" => {
+            none_left(&rest)?;
+            let entry = crate::describe::entry(ctx);
+            let text = serde_json::to_string(&entry).map_err(|e| e.to_string())?;
+            let _ = writeln!(out, "{text}");
+            Ok(0)
         }
         "publish" => publish(ctx, rest, out),
         "preview" => {

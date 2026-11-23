@@ -3,11 +3,13 @@ use std::path::{Path, PathBuf};
 
 use super::*;
 use crate::vocabulary::{
-    GalleryItem, GatePast, GateState, Image, Media, Presentation, ProgressBar, Span, View, Viewer,
+    EntryNeed, EntryState, GalleryItem, GatePast, GateState, Image, Media, Presentation,
+    ProgressBar, Setting, SettingClass, SettingKind, SettingScope, SettingSource, Span, View,
+    Viewer,
 };
 use crate::{
-    BoardAction, BoardField, CardKind, Command, Component, DocCheck, Docs, Gates, Generator,
-    HomeRegion, ProseRule, Renderer, Route, Transport, Watch,
+    BoardAction, BoardField, CardKind, Command, Component, Describer, DocCheck, Docs, Gates,
+    Generator, HomeRegion, ProseRule, Renderer, Route, Transport, Watch,
 };
 
 /// `request` written as the wire carries it and read back, with the call it went as: the one
@@ -348,6 +350,14 @@ pub(crate) fn every_request() -> Vec<(Request, &'static str)> {
             "authorities.attest",
         ),
         (
+            Describe {
+                describer: "lamp".into(),
+                root: root.clone(),
+            }
+            .into(),
+            "describers.describe",
+        ),
+        (
             Changed {
                 watch: 1,
                 root: root.clone(),
@@ -492,7 +502,7 @@ fn every_struct_of_the_protocol_is_non_exhaustive_so_a_field_a_minor_adds_breaks
             root: "/r".into()
         }
     );
-    assert_eq!(Version::new(0, 4), PROTOCOL);
+    assert_eq!(Version::new(0, 5), PROTOCOL);
 }
 
 #[test]
@@ -710,7 +720,7 @@ fn a_host_and_a_plugin_speak_the_lower_minor_of_one_major_and_refuse_another_by_
     );
     assert_eq!(Declaration::of(&Declaring).protocol, PROTOCOL);
     assert_eq!(Version::default(), PROTOCOL);
-    assert_eq!(PROTOCOL.to_string(), "0.4");
+    assert_eq!(PROTOCOL.to_string(), "0.5");
 }
 
 #[test]
@@ -1001,6 +1011,9 @@ impl Plugin for Declaring {
     fn authorities(&self) -> Vec<&dyn crate::Authority> {
         vec![self]
     }
+    fn describers(&self) -> Vec<&dyn Describer> {
+        vec![self]
+    }
     fn watches(&self) -> Vec<&dyn Watch> {
         vec![self, self]
     }
@@ -1135,6 +1148,51 @@ impl crate::Authority for Declaring {
         _: std::time::Duration,
     ) -> Result<Signed, String> {
         Ok(Signed::new(operation.guard.clone(), "ab".repeat(64)))
+    }
+}
+
+/// An entry of every part: a state, a need and a setting of each source's parts.
+pub(crate) fn entry() -> SettingsEntry {
+    SettingsEntry {
+        id: "lamp".into(),
+        name: "Lamp".into(),
+        about: "Lights the widgets' pictures.".into(),
+        state: Some(EntryState {
+            word: "On".into(),
+            on: Some(true),
+            why: "Its file turns it on.".into(),
+        }),
+        needs: vec![EntryNeed {
+            what: "the lamp program".into(),
+            met: false,
+            said: "Not found on this machine.".into(),
+        }],
+        settings: vec![Setting {
+            key: "[lamp] bright".into(),
+            name: "How bright it is".into(),
+            kind: SettingKind::Choice,
+            value: "dim".into(),
+            choices: vec!["dim".into(), "bright".into()],
+            source: SettingSource {
+                scope: Some(SettingScope::Project),
+                said: "lamp.toml [lamp] bright, line 2".into(),
+                file: Some("lamp.toml".into()),
+                line: Some(2),
+                over: None,
+            },
+            scopes: vec![SettingScope::Project, SettingScope::Machine],
+            class: SettingClass::Preference,
+        }],
+        source: None,
+    }
+}
+
+impl Describer for Declaring {
+    fn id(&self) -> &str {
+        "lamp"
+    }
+    fn describe(&self, _: &Path) -> Result<SettingsEntry, String> {
+        Ok(entry())
     }
 }
 
@@ -1274,6 +1332,7 @@ fn a_declaration_names_every_seams_objects_in_the_plugins_order_and_reads_back_t
     assert_eq!(declared.transports, ["uds"]);
     assert_eq!(declared.theme, Declaring.theme());
     assert_eq!(declared.authorities, ["approvals"]);
+    assert_eq!(declared.describers, ["lamp"]);
     let text = serde_json::to_string(&declared).unwrap();
     assert_eq!(
         serde_json::from_str::<Declaration>(&text).unwrap(),
@@ -1429,6 +1488,8 @@ fn every_calls_answer_reads_back_whatever_order_its_members_come_in() {
     answers::<KeptWhile>(a, "c0ffee".into());
     answers::<Attest>(a, Ok(Signed::new("{}".into(), "ab".repeat(64))));
     answers::<Attest>(a, Err("the ledger is closed".into()));
+    answers::<Describe>(a, Ok(entry()));
+    answers::<Describe>(a, Err("its file does not read".into()));
     answers::<Changed>(a, Some("models".into()));
     answers::<Forget>(a, ());
     answers::<CheckDocs>(a, vec![ProblemData::of(&Problem::new("a", 0, "b".into()))]);
@@ -1674,6 +1735,7 @@ fn each_call_names_the_minor_it_came_in_and_commands_run_is_the_loopbacks_alone(
     assert_eq!(Slot::SINCE, 1);
     assert_eq!(Declare::SINCE, 1);
     assert_eq!(ReadCards::SINCE, 3);
+    assert_eq!(Describe::SINCE, 5);
     assert_eq!(LOOPBACK_ONLY, ["commands.run"]);
     // Each call's own constant says the same: the loopback's alone is not piped.
     const {

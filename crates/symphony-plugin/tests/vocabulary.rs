@@ -1,13 +1,14 @@
 //! The kit's lists that grow in a minor (`docs/engineering/PLUGIN_PROTOCOL.md`, *Versions*), from a crate that
 //! links the kit alone, as a plugin's does: a new kind of block, text span or media, a new word
-//! one carries, a new state of a gate, a new kind of board field or way of drawing a file is a
-//! minor of the kit, never a new major. So each of those enums is `#[non_exhaustive]`: this crate
+//! one carries, a new state of a gate, a new kind of board field or way of drawing a file, or a
+//! new word a Settings page's entry carries is a minor of the kit, never a new major. So each of those enums is `#[non_exhaustive]`: this crate
 //! builds because every match on one below ends with `_`, which is all a plugin that lists them
 //! needs to keep building on a later minor, and a plugin makes them as before.
 
 use symphony_plugin::vocabulary::{
     Block, CalloutKind, CardGroup, CardState, ContainerKind, FieldValue, FigureSize, GateState,
-    InlineKind, Media, Presentation, Span, ThreadAuthor, ThreadEntry, VectorKind, Verdict, Viewer,
+    InlineKind, Media, Presentation, SettingClass, SettingKind, SettingScope, Span, ThreadAuthor,
+    ThreadEntry, VectorKind, Verdict, Viewer,
 };
 use symphony_plugin::{Drawing, FieldKind, Reply};
 
@@ -199,6 +200,33 @@ fn a_plugin_that_matches_the_vocabulary_with_a_wildcard_arm_builds_and_makes_eve
     assert_eq!(
         [gate(GateState::Met), gate(GateState::Held)],
         ["met", "not met"]
+    );
+    let scope = |scope: SettingScope| match scope {
+        SettingScope::Project => "project",
+        _ => "not committed",
+    };
+    assert_eq!(
+        [scope(SettingScope::Project), scope(SettingScope::Device)],
+        ["project", "not committed"]
+    );
+    let class = |class: SettingClass| match class {
+        SettingClass::Reviewed => "reviewed",
+        _ => "set by hand",
+    };
+    assert_eq!(
+        [
+            class(SettingClass::Reviewed),
+            class(SettingClass::Preference)
+        ],
+        ["reviewed", "set by hand"]
+    );
+    let kind = |kind: SettingKind| match kind {
+        SettingKind::Switch => "switch",
+        _ => "value",
+    };
+    assert_eq!(
+        [kind(SettingKind::Switch), kind(SettingKind::Sentence)],
+        ["switch", "value"]
     );
     let field = |kind: &FieldKind| match kind {
         FieldKind::Choice(words) if words.is_empty() => "no choice",

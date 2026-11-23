@@ -455,8 +455,9 @@ async fn off_board(
             let read = crate::spawn::blocking(move || runs::answer(&hub, &filters).map(Json));
             answered(read.await, "the runs could not be read: ")
         }
-        // The settings are the project's files and this machine's programs alone, the board
-        // never read; a read, which writes nothing.
+        // The settings are the project's files, this machine's programs, what the GitHub
+        // exchange's program says of itself and the project's plugins' descriptions: a read,
+        // which writes nothing (`symphony::settings`).
         symphony_api::SETTINGS_PATH => {
             let hub = shared.hub()?;
             let read = crate::spawn::blocking(move || {

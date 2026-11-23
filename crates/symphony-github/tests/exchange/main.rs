@@ -16,6 +16,7 @@
 
 mod armed;
 mod deliver;
+mod describe;
 mod flows;
 mod github;
 mod http;

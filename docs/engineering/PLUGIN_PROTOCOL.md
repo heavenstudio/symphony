@@ -28,7 +28,7 @@ types cross.
 
 The kit's crates depend on no other workspace crate but each other, and build wherever Rust's
 standard library does: only a file's stamp, which tells `read_text` a file changed, reads more of it
-on Unix (its device, inode and change time). They carry one version, 1.1.0 now, and are made to be
+on Unix (its device, inode and change time). They carry one version, 1.2.0 now, and are made to be
 published on crates.io ([RELEASES](../workflow/RELEASES.md#packages-on-cratesio)), so they export what a plugin
 uses, and beside it the file's stamp (`text::FileStamp`, its fields private), which `read_text` and
 the library's board cache share, and no more: the text rules only the library uses (a one-sided
@@ -171,7 +171,8 @@ renderer's drawing the same way in the file's place, and a card kind's as the ki
 the plugin said nothing of the card. A route answers not found and a home region shows nothing, why
 in the plugin's log. A board action's offer or submission is its error, naming why, as a linked
 action's error is shown, and a submission refused moves nothing. A watch that did not warm says so
-in the server's log, and one told to forget says nothing: a process that ends keeps nothing. A doc
+in the server's log, and one told to forget says nothing: a process that ends keeps nothing. A
+describer's entry on the Settings page says why in its place, as unknown. A doc
 check that did not run is a problem of the project file naming the plugin and the check, so
 `symphony status --lint` fails rather than passes, and names no component. A call that had no
 answer fails alone: the calls after it start the process again once its pause is over.
@@ -245,6 +246,26 @@ it answered to the board unchanged, which verifies it as one pushed to it
 as `guard_unavailable`, naming the guard and why. Nothing is kept: the next operation asks again.
 A plugin linked or answering from its process answers alike.
 
+## Settings describers
+
+A plugin may describe its own entries on the project's Settings page
+([PROJECT_FILE](../operations/PROJECT_FILE.md#the-settings-page)), each by a describer
+(`Describer`, declared in `describers` by its id). The page's read asks each describer of each
+plugin the project selects, `describers.describe` (0.5), with the project's checkout, and its
+answer is one entry in the page's own shape (`SettingsEntry`, `symphony_plugin::vocabulary`): its
+name, what it is for, its state and why, what it needs and whether this machine has it, and its
+settings, each with its key, value, source, scopes and class. It is drawn after the Symphony's own
+entries in the integrations, by the component that draws theirs, its id the host's
+(`plugin-NAME-ID`), and a plugin the project does not select adds none. An error, a panic or no
+answer in a call's wait is said in the entry's place, the page drawn all the same.
+
+A description declares and runs nothing: it is what the page shows, and the host acts on none of
+it. Its class is not the describer's to lower: a setting whose key the local settings file refuses
+(the tables and keys of `PROTECTED` and `PROTECTED_KEYS` in `crates/tasks/src/local.rs`, which
+decide what runs and what lands) is shown reviewed, written in the project's scope alone, whatever
+its describer calls it, and a describer may mark a setting of its own reviewed. A plugin built
+before the seam declares none and is asked nothing.
+
 ## The line
 
 Each line is one JSON object, the envelope: an `id`, and exactly one of
@@ -287,11 +308,11 @@ is a page of its own.
 ## Versions
 
 The host names its protocol in the first request, `plugin.declare`
-(`{"protocol":{"major":0,"minor":4}}`), and the plugin its own in its declaration: its name, each
+(`{"protocol":{"major":0,"minor":5}}`), and the plugin its own in its declaration: its name, each
 seam object's name and what it says of itself, its navigation and theme. They speak the lower minor
 of their major. A plugin of another major is refused by name, saying to install a Symphony that
 speaks the plugin's major or to rebuild the plugin with a `symphony-plugin` of the host's, and its
-process is killed and not started again until its program changes. The protocol is 0.4.
+process is killed and not started again until its program changes. The protocol is 0.5.
 
 Each call names the minor it came in (`since` in `symphony_plugin::protocol`, listed in `MINORS`).
 The host never sends a call newer than the minor the two agreed: the seam's own default answers it,
@@ -302,7 +323,9 @@ unless `[project] artifacts` names another), which a plugin of 0.1 reads past an
 as `artifacts` from a host of 0.1. 0.3 adds `card_kinds.read`, a register read's card kinds in one
 request: a plugin of 0.2 is asked them card by card, and answers the same. 0.4 adds
 `authorities.attest` ([below](#approval-authorities)) and the declaration's `authorities`, which a
-plugin of 0.3 does not write and a host reads as none: no authority is asked of it.
+plugin of 0.3 does not write and a host reads as none: no authority is asked of it. 0.5 adds
+`describers.describe` ([above](#settings-describers)) and the declaration's `describers`, which a
+plugin of 0.4 does not write and a host reads as none: no entry is asked of it.
 
 - A field the reader does not know is ignored, wherever it stands: in a request's fields, in a card,
   in an answer, in the declaration. A newer peer's additions reach an older one unread.
@@ -321,7 +344,8 @@ plugin of 0.3 does not write and a host reads as none: no authority is asked of 
   variant of it, and a match on it outside the kit ends with `_`. The protocol's other enums stay
   exhaustive: a variant of `Answered` or `Member` is a line an older peer cannot read, a new major
   of the protocol, and `Lined` never goes on the wire. The seam types' and the vocabulary's structs
-  (`Card`, `Picture`, `TaskOffer`, `Submission`, `Theme`, `Image`, `Viewer`…) and a variant's own
+  (`Card`, `Picture`, `TaskOffer`, `Submission`, `Theme`, `Image`, `Viewer`, `SettingsEntry`,
+  `Setting`…) and a variant's own
   fields are not marked, as a plugin and its tests build them by their fields: a field added to one
   is a new major of the kit, whichever minor of the protocol carries it.
 - **The vocabulary grows in a minor** ([its card](../workflow/RELEASES.md#kit-new-block-version)). A new
@@ -329,8 +353,8 @@ plugin of 0.3 does not write and a host reads as none: no authority is asked of 
   makes blocks and never has to list them, so one written for 1.0.0 keeps building. `Block`, `Span` and `Media` are `#[non_exhaustive]`,
   and so is every other list of the kit a minor may add to: the words a block carries
   (`CalloutKind`, `FigureSize`, `ContainerKind`, `InlineKind`, `VectorKind`, `CardState`,
-  `CardGroup`, `ThreadAuthor`), a gate's `GateState`, a board field's `FieldKind` and a renderer's
-  `Drawing`. A match on one outside the kit ends with `_`, a plugin's too, and a variant is made
+  `CardGroup`, `ThreadAuthor`), a gate's `GateState`, a board field's `FieldKind`, a renderer's
+  `Drawing` and a Settings entry's `SettingScope`, `SettingClass` and `SettingKind`. A match on one outside the kit ends with `_`, a plugin's too, and a variant is made
   as before. Two stay exhaustive: `FieldValue`, a number or text as JSON has them, which a field's
   `validate` tells apart, and `Reply`, which a consuming project's route test matches whole, so
   that a new kind of reply waits for a consumer release plan. The kit's own test holds the marks

@@ -2476,19 +2476,45 @@ fn settings_reviewed() -> Vec<api::SettingsEntry> {
             ..settings_entry("landing", "Landing", "What a land runs.")
         },
         api::SettingsEntry {
-            state: Some(api::EntryState {
-                word: "Built in".into(),
-                on: None,
-                why: "The board's own workflow: no [workflow] written.".into(),
-            }),
-            source: Some(settings_source(
-                None,
-                "default: no [workflow] written",
-                None,
-            )),
-            ..settings_entry("workflow", "Workflow", "The stages a task moves through.")
+            settings: vec![api::Setting {
+                class: api::SettingClass::Reviewed,
+                ..sample_setting(
+                    "[workflow]",
+                    "The workflow tasks move by",
+                    api::SettingKind::Sentence,
+                    "The board's own, built-in v1.",
+                    settings_source(None, "default: no [workflow] written", None),
+                )
+            }],
+            ..settings_entry(
+                "workflow",
+                "Workflow",
+                "The stages a task moves through and what each move requires.",
+            )
         },
     ]
+}
+
+/// An entry a plugin describes (the describers seam) as a sentence alone, with where it is said
+/// and no setting: the one shape that carries a source of its own.
+fn settings_described() -> api::SettingsEntry {
+    api::SettingsEntry {
+        state: Some(api::EntryState {
+            word: "Read".into(),
+            on: None,
+            why: "Twelve lamps listed.".into(),
+        }),
+        source: Some(settings_source(
+            Some(api::SettingScope::Project),
+            "catalogue.toml, line 1",
+            Some(("catalogue.toml", 1)),
+        )),
+        ..settings_entry(
+            "plugin-shop-catalogue",
+            "Catalogue",
+            "Described by the plugin shop.",
+        )
+    }
 }
 
 /// The device's entry: a value no file writes.
@@ -2509,8 +2535,8 @@ fn settings_appearance() -> api::SettingsEntry {
 }
 
 /// A Settings page of every shape an entry takes: one with a state, a need met and one not, a
-/// setting a local file writes over the committed one, a reviewed sentence, an entry that is a
-/// sentence with no setting, the device's, and a problem said.
+/// plugin's that is a sentence with where it is said and no setting, a setting a local file writes
+/// over the committed one, reviewed sentences, the device's, and a problem said.
 fn settings() -> api::SettingsPage {
     let file = |name: &str, scope, found| api::SettingsFile {
         name: name.into(),
@@ -2528,7 +2554,7 @@ fn settings() -> api::SettingsPage {
             settings_section(
                 "integrations",
                 "Integrations and tools",
-                vec![settings_herdr()],
+                vec![settings_herdr(), settings_described()],
             ),
             settings_section("models", "Models and limits", vec![settings_models()]),
             settings_section(
