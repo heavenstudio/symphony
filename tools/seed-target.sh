@@ -113,10 +113,14 @@ pending=""
 # again answered at once): so each read is given a second and asked again once it times out, a
 # check for an event its watcher can drop (RULES.md code/no-timed-waits). A read that times out
 # leaves REPLY as it was in macOS's bash (3.2) and answers above 128 from bash 4 on; an end of
-# file sets it empty. Nothing writes to the FIFO, so a line read ends the wait too.
+# file sets it empty. Nothing writes to the FIFO, so a line read ends the wait too. A read end not
+# open (a second signal's `finish` run inside the first's once it closed it, or an open of it that
+# failed) leaves nothing to wait on: a read of it would fail as a timeout does, so it is looked
+# for first, and its absence ends the wait.
 until_ended() {
     local status
     while :; do
+        { : <&6; } 2>/dev/null || return 0
         REPLY=unended
         read -r -t 1 <&6
         status=$?
