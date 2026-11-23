@@ -1,5 +1,7 @@
 //! Repository discovery and lifecycle commands choose a scratch board's durable PostgreSQL
-//! identity. No address override is involved, so these are the machine reader's selection path.
+//! identity, make a board not made yet on PostgreSQL, and keep a SurrealDB board that names no
+//! engine on SurrealDB. No address override is involved, so these are the machine reader's
+//! selection path.
 
 use crate::children::Child as _;
 use crate::{repository, run, scratch};
@@ -17,6 +19,13 @@ struct Board {
 }
 impl Board {
     fn new(name: &str) -> Self {
+        let board = Board::unmade(name);
+        board.home.initialize_backend(Engine::PostgreSql).unwrap();
+        board
+    }
+    /// A repository whose board is not made yet, its project file naming the machine's
+    /// PostgreSQL.
+    fn unmade(name: &str) -> Self {
         let root = repository(&scratch(name));
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let programs = symphony_board::server::postgres::discover_programs(&workspace).unwrap();
@@ -29,7 +38,6 @@ impl Board {
         )
         .unwrap();
         let home = Home::in_common(&root.join(".git"), None);
-        home.initialize_backend(Engine::PostgreSql).unwrap();
         let pg = home.postgresql(&programs);
         let env = Env {
             cwd: root.clone(),
@@ -58,6 +66,137 @@ impl Drop for Board {
         let _ = self.pg.stop();
         let _ = std::fs::remove_dir_all(&self.root);
     }
+}
+
+#[test]
+fn a_board_not_made_yet_is_made_on_postgresql_by_its_first_command_and_serves() {
+    let board = Board::unmade("pg-made-by-a-command");
+    let dir = board.home.dir().to_path_buf();
+    assert!(board.home.unmade().unwrap());
+    assert_eq!(board.home.backend().unwrap(), Engine::PostgreSql);
+    // The Symphony's read starts nothing and makes nothing: the project has no board.
+    let read = symphony_board::cli::board(&board.env).err().unwrap();
+    assert!(symphony_board::board_health::absent(&read), "{read}");
+    assert!(read.contains("on PostgreSQL"), "{read}");
+    // Nor does a reach that starts no server.
+    assert!(symphony_board::cli::running_board(&board.env).is_err());
+    assert!(board.home.unmade().unwrap());
+    // Its first command makes it: the identity first, then the cluster, and no SurrealDB store.
+    let listed = run(&board.env, &["list"], "");
+    assert_eq!(listed.code, 0, "{}", listed.err);
+    let identity: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("backend.json")).unwrap()).unwrap();
+    assert_eq!(
+        identity,
+        serde_json::json!({"format": 1, "engine": "postgresql"})
+    );
+    assert!(dir.join("postgresql/PG_VERSION").is_file());
+    assert!(!dir.join("data").exists());
+    assert!(!board.home.unmade().unwrap());
+    assert_eq!(board.home.backend().unwrap(), Engine::PostgreSql);
+    // It serves: what one command writes, the next reads, and so does the Symphony.
+    board
+        .store()
+        .create(&NewTask::new("pg/first", "Made on PostgreSQL", "owner"))
+        .unwrap();
+    assert!(run(&board.env, &["list"], "").out.contains("pg/first"));
+    let read = symphony_board::cli::board(&board.env).unwrap();
+    assert!(
+        read.client.addr().starts_with("postgresql:"),
+        "{}",
+        read.client.addr()
+    );
+    assert!(board.pg.current().unwrap().is_some());
+    board.home.stop_board().unwrap();
+    assert!(board.pg.current().unwrap().is_none());
+}
+
+#[test]
+fn a_board_not_made_yet_on_a_machine_without_postgresql_is_refused_with_its_setup() {
+    let board = Board::unmade("pg-not-installed");
+    let empty = scratch("pg-not-installed-programs");
+    std::fs::write(
+        board.root.join("symphony.toml"),
+        format!(
+            "[project]\nid = \"pg\"\n[board]\npostgresql = {:?}\n",
+            empty.display().to_string()
+        ),
+    )
+    .unwrap();
+    let ran = run(&board.env, &["list"], "");
+    assert_ne!(ran.code, 0);
+    let said = ran.err.trim();
+    assert!(
+        said.contains("is not made yet and is made on PostgreSQL"),
+        "{said}"
+    );
+    assert!(said.contains("install PostgreSQL 18 or later"), "{said}");
+    assert!(said.contains("brew install postgresql@18"), "{said}");
+    assert_eq!(said.lines().count(), 1, "{said}");
+    // Never a SurrealDB board in its place: nothing was made.
+    assert!(board.home.unmade().unwrap());
+    for made in ["backend.json", "postgresql", "data", "server.json"] {
+        assert!(!board.home.dir().join(made).exists(), "{made}: {said}");
+    }
+}
+
+/// A board of a build from before the identity: its SurrealDB store in its home, which names no
+/// engine. Its server is stopped when the case ends, however it ends.
+struct Unnamed {
+    root: PathBuf,
+    home: Home,
+    env: Env,
+}
+impl Drop for Unnamed {
+    fn drop(&mut self) {
+        let _ = self.home.stop_board();
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+#[test]
+fn a_home_with_a_surrealdb_store_and_no_identity_still_opens_as_surrealdb_and_reads_its_board() {
+    let surreal = crate::common::surreal();
+    let root = repository(&scratch("surreal-unnamed"));
+    std::fs::write(root.join("symphony.toml"), "[project]\nid = \"old\"\n").unwrap();
+    let board = Unnamed {
+        home: Home::in_common(&root.join(".git"), Some(&surreal)),
+        env: Env {
+            cwd: root.clone(),
+            vars: [
+                ("SYMPHONY_SURREAL".into(), surreal.display().to_string()),
+                ("TASKS_SWEEP".into(), "off".into()),
+                ("TASKS_DISPATCH".into(), "inline".into()),
+            ]
+            .into(),
+        },
+        root,
+    };
+    // Its store, made by SurrealDB's own start, as every board was before PostgreSQL was a new
+    // board's.
+    let started = board.home.ensure().unwrap();
+    let dir = board.home.dir().to_path_buf();
+    assert!(dir.join("data").is_dir());
+    assert_eq!(board.home.backend().unwrap(), Engine::SurrealDb);
+    symphony_board::cli::connect(&board.env)
+        .unwrap()
+        .create(&NewTask::new("old/kept", "Kept on SurrealDB", "owner"))
+        .unwrap();
+    // Its commands and the Symphony's read reach that server, and name no engine for it.
+    let listed = run(&board.env, &["list"], "");
+    assert_eq!(listed.code, 0, "{}", listed.err);
+    assert!(listed.out.contains("old/kept"), "{}", listed.out);
+    let read = symphony_board::cli::board(&board.env).unwrap();
+    assert_eq!(read.client.addr(), started.addr);
+    assert!(!dir.join("backend.json").exists());
+    assert!(!dir.join("postgresql").exists());
+    // Stopped, it is still a board, on SurrealDB: never a board not made yet.
+    board.home.stop_board().unwrap();
+    assert!(!board.home.unmade().unwrap());
+    assert_eq!(board.home.backend().unwrap(), Engine::SurrealDb);
+    let listed = run(&board.env, &["list"], "");
+    assert!(listed.out.contains("old/kept"), "{}", listed.err);
+    assert!(!dir.join("backend.json").exists());
 }
 
 #[test]

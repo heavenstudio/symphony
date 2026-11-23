@@ -93,7 +93,7 @@ impl Board {
 
 impl Drop for Board {
     fn drop(&mut self) {
-        let _ = self.home.stop();
+        let _ = self.home.stop_board();
     }
 }
 
