@@ -707,19 +707,12 @@ mod tests {
         for (refusal, answered) in [
             (Refusal::Unavailable(session::UNREACHED), false),
             (Refusal::Unavailable(session::UNANSWERED), false),
-            (Refusal::Unavailable("the server refused the login"), true),
-            (
-                Refusal::Unavailable("the server's certificate has expired"),
-                true,
-            ),
-            (
-                Refusal::Capacity("the server has no connection left for the login"),
-                true,
-            ),
-            (
-                Refusal::Unsupported("the database is not UTF-8".into()),
-                true,
-            ),
+            (Refusal::Unavailable(session::CUT), false),
+            (Refusal::Unavailable(session::LOGIN_REFUSED), true),
+            (Refusal::Unavailable(session::NO_TLS), true),
+            (Refusal::Unavailable(session::EXPIRED), true),
+            (Refusal::Capacity(session::NO_CONNECTION_LEFT), true),
+            (Refusal::Unsupported(session::NOT_UTF8.into()), true),
             (server, true),
         ] {
             let said = DbError::from(refusal.clone());
@@ -728,6 +721,89 @@ mod tests {
             assert_eq!(ended.said, said, "{refusal}");
             assert!(!ended.clean, "{refusal}: no connection to lend again");
             assert!(!Ended::broken(refusal.clone()).answered, "{refusal}");
+        }
+    }
+
+    /// What answers the one connection a board's address takes, after PostgreSQL's request for
+    /// TLS: the server's `N`, or its `S` and then the client's hello read and the connection ended
+    /// with no word of TLS, by a close or by a reset.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Handshake {
+        TurnedDown,
+        Closed,
+        Reset,
+    }
+
+    /// The port of an address where one connection is taken and answered as `handshake` says, on
+    /// a thread of its own.
+    fn answering(handshake: Handshake) -> (u16, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let answering = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 8];
+            stream.read_exact(&mut request).unwrap();
+            assert_eq!(request, [0, 0, 0, 8, 4, 210, 22, 47], "the request for TLS");
+            if handshake == Handshake::TurnedDown {
+                stream.write_all(b"N").unwrap();
+                return;
+            }
+            stream.write_all(b"S").unwrap();
+            // The hello is one TLS record: its header, then the length the header gives.
+            let mut header = [0; 5];
+            stream.read_exact(&mut header).unwrap();
+            let mut hello = vec![0; usize::from(u16::from_be_bytes([header[3], header[4]]))];
+            stream.read_exact(&mut hello).unwrap();
+            if handshake == Handshake::Reset {
+                // Closed with no time to linger, the connection is reset rather than closed.
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_io()
+                    .build()
+                    .unwrap();
+                let _entered = runtime.enter();
+                stream.set_nonblocking(true).unwrap();
+                let stream = tokio::net::TcpStream::from_std(stream).unwrap();
+                stream.set_zero_linger().unwrap();
+            }
+        });
+        (port, answering)
+    }
+
+    /// A server that turns TLS down answered the connection. One cut in the middle of the
+    /// handshake it agreed to, closed or reset with no alert, said nothing of the server: nothing
+    /// answered there ([`session::silent`]), as nothing answers a port nothing listens on.
+    #[test]
+    fn a_connection_cut_in_its_tls_handshake_is_unanswered_and_tls_turned_down_is_answered() {
+        let dir = secret::tests::temp("handshake");
+        for (handshake, said, failed) in [
+            (Handshake::TurnedDown, session::NO_TLS, 0),
+            (Handshake::Closed, session::CUT, 1),
+            (Handshake::Reset, session::CUT, 1),
+        ] {
+            let (port, answering) = answering(handshake);
+            let url = format!("postgresql://board:hunter2@127.0.0.1:{port}/board_h");
+            let client = Client::connect(
+                &secret::tests::settings("connect_timeout_seconds = 5"),
+                secret::tests::env(&dir, &[("URL", &url)]),
+            )
+            .unwrap();
+            let Err(DbError::Failed(refused)) = client.request(&[Step::bare("SELECT 1")]) else {
+                panic!("{handshake:?}: no connection is made");
+            };
+            assert_eq!(
+                refused,
+                format!("the hosted board's PostgreSQL: {said}"),
+                "{handshake:?}"
+            );
+            answering.join().unwrap();
+            let (queries, _) = client.queries().report(crate::sweep::trigger::now());
+            assert_eq!(
+                (queries.count, queries.failed),
+                (1, failed),
+                "{handshake:?}"
+            );
+            assert!(client.shut_down(Duration::from_secs(5)), "{handshake:?}");
         }
     }
 }

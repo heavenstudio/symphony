@@ -78,6 +78,9 @@ pub const PROTECTED_KEYS: [(&str, &[&str]); 2] = [
 /// What `[agents] panes` may be, as the Symphony's load of the project file reads it.
 pub const PANES: [&str; 2] = ["hc", "none"];
 
+/// The key of `[agents]` itself that the board's store keeps ([`Place::keeps`]): `panes`.
+const PANES_KEY: &str = "panes";
+
 /// Where preferences over the committed settings are kept, which [`judge`] words its refusals for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Place {
@@ -97,10 +100,12 @@ impl Place {
     }
 
     /// What it holds, as a refusal of anything else lists it.
-    fn holds(self) -> &'static str {
+    fn holds(self) -> String {
         match self {
-            Place::File => "[agents] launch, [agents.models] and [limits]",
-            Place::Store => "[agents] launch, [agents.models], [agents] panes and [limits]",
+            Place::File => "[agents] launch, [agents.models] and [limits]".into(),
+            Place::Store => {
+                format!("[agents] launch, [agents.models], [agents] {PANES_KEY} and [limits]")
+            }
         }
     }
 
@@ -115,7 +120,7 @@ impl Place {
             ["agents", "launch"] => LAUNCH.contains(&key),
             ["agents", "launch", ON] => AGENTS.contains(&key),
             ["agents", "models"] => ROLES.contains(&key),
-            ["agents"] => self == Place::Store && key == "panes",
+            ["agents"] => self == Place::Store && key == PANES_KEY,
             _ => false,
         }
     }
@@ -317,7 +322,7 @@ pub fn judge(
                             problems.push(not_local(place, said, &named(&["agents"], Some(own))));
                             continue;
                         }
-                        "panes" => {
+                        PANES_KEY => {
                             let name = named(&["agents"], Some(key));
                             match value {
                                 Value::String(text) if PANES.contains(&text.as_str()) => {

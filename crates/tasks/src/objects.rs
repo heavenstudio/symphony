@@ -82,7 +82,9 @@ pub(crate) fn fields<'a>(value: &'a Value, what: &'static str) -> Result<Fields<
 pub(crate) struct Fields<'a>(&'a serde_json::Map<String, Value>);
 
 impl Fields<'_> {
-    /// The field `name` read as `T`, refused as missing where the object has none.
+    /// The field `name` read as `T`, refused as missing where the object has none, whatever `T`
+    /// is: an `Option` too, which a derived reader reads as none there, so an `Option` field is
+    /// read by [`Fields::optional`].
     pub(crate) fn field<T: DeserializeOwned>(&self, name: &'static str) -> Result<T, Error> {
         match self.0.get(name) {
             Some(value) => read(value),

@@ -1705,9 +1705,9 @@ landing](#the-default-landing)).
   stand (the newest assessment, its tip, who and why, or the catalogue's defaults with none);
   `TIP`, its branch and that branch's tip in the main checkout (none before the branch is made,
   when an assessment reads the brief alone); `GATES`, the task's gate decisions that stand
-  ([below](#gate-decisions)); and `CHECK PATHS`, the paths the branch changes
-  since it left the default branch that `[land] check_paths` names, which the `review` guideline asks
-  for, so an assessor need not find the tests in a diff.
+  ([below](#gate-decisions)); and `CHECK PATHS`, the paths the branch changes since it left the
+  default branch that `[land] check_paths` names, which the `review` guideline asks for, so an
+  assessor need not find the tests in a diff.
 - **`just tasks runs SLUG [--tip SHA]`** prints what the recorder kept of the task at its
   branch's tip in the main checkout, or at the commit `--tip` names there, read as the `tests`
   stamp reads it (`crates/tasks/src/cli/commands/runs.rs`): `TIP`; `RUNS`, a row for each build
@@ -1717,14 +1717,15 @@ landing](#the-default-landing)).
   [RUNS](RUNS.md)), the newest of its command or one before it, a `LOG` line with when it ran and
   the log's path, where the command's own output says what failed, at its end, whatever its
   runner, and under it the first five tests it failed with their binaries, then how many more,
-  where its end line in the day files names them ([RUNS](RUNS.md)); `REFUSED`, when there are any, a row for each run there its runner refused, with
-  the refusal's line ([what clears what](#what-clears-a-red-run)); `TESTS`, the `tests` stamp met or not with its reader's line; `CHECK`, the
-  project's `[verdicts] check` as the task page's check gate reads it, its newest run there by
-  anyone or `no run`; and `ELSEWHERE`, how many of the task's runs are at other commits, none of
-  them the tip's. It is what a reviewer reads in place of building again (RULES.md
-  `workflow/no-second-build-in-review`, [CHECKS](CHECKS.md#no-second-build-in-review)), and what
-  an executor reads before it asks for review. It is refused for a task the board does not hold,
-  outside a checkout of its repository, and with no tip to read.
+  where its end line in the day files names them ([RUNS](RUNS.md)); `REFUSED`, when there are
+  any, a row for each run there its runner refused, with the refusal's line ([what clears
+  what](#what-clears-a-red-run)); `TESTS`, the `tests` stamp met or not with its reader's line;
+  `CHECK`, the project's `[verdicts] check` as the task page's check gate reads it, its newest
+  run there by anyone or `no run`; and `ELSEWHERE`, how many of the task's runs are at other
+  commits, none of them the tip's. It is what a reviewer reads in place of building again
+  (RULES.md `workflow/no-second-build-in-review`, [CHECKS](CHECKS.md#no-second-build-in-review)),
+  and what an executor reads before it asks for review. It is refused for a task the board does
+  not hold, outside a checkout of its repository, and with no tip to read.
 - **The `owner` stamp** stands on a tip T by one reader, which the land, the task page's gate
   and its Approve offer, and the end of a `check:owner` hold all go by (`read::owner_at`, the
   cards' part `crates/tasks/src/stamps/posted.rs`): the owner's `approve SHA` naming T on the
