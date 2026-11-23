@@ -948,13 +948,16 @@ async fn next_actions_are_the_local_owners_never_a_hosted_visitors() {
         ),
     );
     let fake = Fake::new();
-    let mut req = axum::http::Request::builder()
-        .uri("/api/workflow-actions?slug=tools/x")
-        .body(())
-        .unwrap();
-    req.extensions_mut().insert(lease(&fake).await);
-    let response = crate::api::answer(&shared, req).await.unwrap();
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    // A task's guards are read with its actions, and are the local owner's as they are.
+    for uri in [
+        "/api/workflow-actions?slug=tools/x",
+        "/api/workflow-guards?slug=tools/x",
+    ] {
+        let mut req = axum::http::Request::builder().uri(uri).body(()).unwrap();
+        req.extensions_mut().insert(lease(&fake).await);
+        let response = crate::api::answer(&shared, req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{uri}");
+    }
     assert!(shared.api.get().is_none(), "no hub was started");
     shared.stop();
 }

@@ -532,8 +532,7 @@ fn committed(main: &Path, branch: &str, file: &str) -> Result<Option<String>, St
 /// none. An edit of the working file names no branch until it is committed.
 fn committed_branch(main: &Path) -> Result<String, String> {
     let text = committed(main, "HEAD", "symphony.toml")?.unwrap_or_default();
-    let table = toml::from_str::<toml::Table>(&text)
-        .map_err(|e| format!("symphony.toml at HEAD: {}", e.message()))?;
+    let table = toml::from_str::<toml::Table>(&text).map_err(|e| e.message().to_string())?;
     Ok(table
         .get("project")
         .and_then(|project| project.get("default_branch"))
@@ -544,10 +543,10 @@ fn committed_branch(main: &Path) -> Result<String, String> {
 
 /// What the page can say of the GitHub exchange without running its program.
 enum Exchange {
-    /// Nothing turns it on: no committed file, or one that leaves `enabled` out or false.
+    /// Nothing turns it on: no committed file, one that leaves `enabled` out or false, or one that
+    /// does not read, or a project file at HEAD that does not read and so names no branch. The
+    /// program runs each as off.
     Off(String),
-    /// The committed file, or the branch's name, does not read: the program runs as off.
-    Unread(String),
     /// The committed file writes `enabled = true`, with what else it writes. Whether the program
     /// accepts the file is its own to say: one it refuses runs as off.
     Written(String),
@@ -579,10 +578,14 @@ fn github(machine: &Machine, main: &Path) -> SettingsEntry {
         Ok(Some(table)) => table.get("enabled").and_then(Value::as_bool) == Some(true),
         _ => false,
     };
-    let exchange = match &table {
-        Err(problem) => Exchange::Unread(format!("Off: {on_branch} does not read ({problem}).")),
-        Ok(None) => Exchange::Off(format!("Off: no {on_branch}.")),
-        Ok(Some(table)) => {
+    let exchange = match (&branch, &table) {
+        (Err(problem), _) => Exchange::Off(format!(
+            "Off: {FILE} at HEAD does not read ({problem}), so it names no branch to read \
+             {GITHUB_FILE} on."
+        )),
+        (_, Err(problem)) => Exchange::Off(format!("Off: {on_branch} does not read ({problem}).")),
+        (_, Ok(None)) => Exchange::Off(format!("Off: no {on_branch}.")),
+        (_, Ok(Some(table))) => {
             let word = |key: &str| table.get(key).map_or_else(|| "off".to_string(), shown);
             let writes = format!(
                 "repository {}, issues {}, pull requests {}, releases {}",
@@ -612,7 +615,7 @@ fn github(machine: &Machine, main: &Path) -> SettingsEntry {
     let found = builds::of_main(main, GITHUB_PROGRAM, &machine.beyond);
     SettingsEntry {
         state: match exchange {
-            Exchange::Off(why) | Exchange::Unread(why) => state("Off", Some(false), why),
+            Exchange::Off(why) => state("Off", Some(false), why),
             Exchange::Written(why) => state("Enabled in its file", None, why),
         },
         needs: vec![EntryNeed {
@@ -1374,37 +1377,30 @@ fn releases(file: &FileRead) -> SettingsEntry {
     }
 }
 
-/// The delivery workflow, said as a sentence with where it is written: an entry with no setting,
-/// so the page claims no class for it and offers no control.
+/// The delivery workflow: `[workflow]`, said as a sentence with where it is written, naming its
+/// `[[workflow_mappings]]` and `[[workflow_authorities]]`. All three decide what lands, so the
+/// local file's lists hold them reviewed ([`class`]).
 fn workflow(file: &FileRead) -> SettingsEntry {
-    let written = file.written("[workflow]", &[], "workflow");
-    let mappings = file.get(&[], "workflow_mappings").is_some();
-    let authorities = file.get(&[], "workflow_authorities").is_some();
-    let also = match (mappings, authorities) {
+    let written = |table: &str| file.get(&[], table).is_some();
+    let also = match (
+        written("workflow_mappings"),
+        written("workflow_authorities"),
+    ) {
         (true, true) => ", with mappings and approval authorities",
         (true, false) => ", with mappings",
         (false, true) => ", with approval authorities",
         (false, false) => "",
     };
+    let said = if written("workflow") {
+        format!(
+            "The project's own{also}, which the board activates once the default branch commits \
+             it."
+        )
+    } else {
+        format!("The board's own, built-in v1{also}.")
+    };
     SettingsEntry {
-        state: state(
-            if written.is_some() {
-                "Custom"
-            } else {
-                "Built in"
-            },
-            None,
-            match written {
-                Some(_) => format!(
-                    "The project's own workflow{also}, which the board activates once the default branch commits it."
-                ),
-                None => "The board's own workflow: no [workflow] written.".to_string(),
-            },
-        ),
-        source: Some(written.map_or_else(
-            || default("no [workflow] written"),
-            |written| source(&written),
-        )),
+        settings: vec![file.sentence("workflow", "The workflow tasks move by", said)],
         ..entry(
             "workflow",
             "Workflow",

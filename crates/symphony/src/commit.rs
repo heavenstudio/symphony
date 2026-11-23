@@ -300,7 +300,7 @@ fn home(root: &Path) -> Result<PathBuf, String> {
 /// thread makes copies it into its child until the child's exec (on macOS, for milliseconds after
 /// a spawn that failed too): that child would hold the lock past this drop. An unlock releases it
 /// for every copy.
-struct Held(File);
+pub(crate) struct Held(pub(crate) File);
 
 impl Drop for Held {
     fn drop(&mut self) {

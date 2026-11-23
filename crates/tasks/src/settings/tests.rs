@@ -144,7 +144,7 @@ fn every_setting_the_local_file_protects_is_refused_by_the_store_from_the_same_l
         );
         refused += 1;
     }
-    assert_eq!(refused, 5 + 2 + 6);
+    assert_eq!(refused, 8 + 2 + 6);
 }
 
 #[test]

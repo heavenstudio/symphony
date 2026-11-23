@@ -78,6 +78,9 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
         Ok(payload) => payload,
         Err((status, why)) => return error(status, why),
     };
+    if route == symphony_api::workflow::WORKFLOW_APPLY_ROUTE {
+        return workflow_apply(shared, payload).await;
+    }
     let shared = shared.clone();
     match crate::spawn::blocking(move || {
         let saves = shared
@@ -134,6 +137,37 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
             StatusCode::from_u16(e.status).unwrap_or(StatusCode::BAD_REQUEST),
             e.error,
         ),
+        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+/// The owner's workflow operation (`symphony::save::WORKFLOW_APPLY`): its result, or its refusal
+/// as every save's is answered, with the guard that refused it beside the words as `guard` where
+/// one did ([`symphony_api::workflow::GuardRefusal`]), which a task's page draws by its word.
+async fn workflow_apply(shared: &Arc<Shared>, payload: serde_json::Value) -> Response {
+    let shared = shared.clone();
+    let applied = crate::spawn::blocking(move || {
+        let saves = shared
+            .saves
+            .get_or_init(|| symphony::save::Saves::start(&shared.root));
+        saves.apply_workflow(&payload)
+    })
+    .await;
+    match applied {
+        Ok(Ok(value)) => ([(header::CACHE_CONTROL, "no-store")], Json(value)).into_response(),
+        Ok(Err(refused)) => {
+            let status = StatusCode::from_u16(refused.failure.status);
+            let status = status.unwrap_or(StatusCode::BAD_REQUEST);
+            let Some(guard) = refused.guard else {
+                return error(status, refused.failure.error);
+            };
+            (
+                status,
+                [(header::CACHE_CONTROL, "no-store")],
+                Json(json!({"error": refused.failure.error, "guard": guard})),
+            )
+                .into_response()
+        }
         Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }

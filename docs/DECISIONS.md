@@ -15,6 +15,7 @@ A document's first card adds its line here.
 - [Releases](workflow/RELEASES.md)
 - [Concept review](workflow/REVIEW.md)
 - [Task board](workflow/TASKS.md)
+- [Workflow definitions](workflow/WORKFLOW.md)
 - [The agents page, orchestrator-first](product/analysis/agents-page.md)
 - [Artifacts attached, not committed](workflow/analysis/attached-artifacts.md)
 - [The board at a glance](product/analysis/board-design.md)
@@ -60,6 +61,7 @@ A document's first card adds its line here.
 - [Navigating a task's timeline](design/analysis/timeline-navigation.md)
 - [Orchestrators and messages on a task's timeline](design/analysis/timeline-orchestrator.md)
 - [A task's cost on its card, its page and its timeline](design/analysis/token-cost.md)
+- [The guard panel on a task's page](design/analysis/workflow-guard-panel.md)
 - [Worktree build folders](engineering/analysis/worktree-build-folders.md)
 
 ## Cards with no document of their own

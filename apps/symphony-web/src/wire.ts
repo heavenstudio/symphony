@@ -50,6 +50,7 @@ export const AGENT_SCREEN_PATH = "/api/agent-screen";
 export const WORKFLOW_PATH = "/api/workflow";
 export const WORKFLOW_ACTIONS_PATH = "/api/workflow-actions";
 export const WORKFLOW_APPLY_ROUTE = "/api/workflow-apply";
+export const WORKFLOW_GUARDS_PATH = "/api/workflow-guards";
 export const SYMPHONY_ROUTES = [
   "tasks",
   "task",
@@ -1969,6 +1970,14 @@ export type WorkflowNextActions = {
   actions: Array<WorkflowNextAction>;
 };
 
+export type WorkflowActionsRead = {
+  snapshot: WorkflowPositionSnapshot;
+  actions: Array<WorkflowNextAction>;
+  takes: Array<WorkflowTakenOutput>;
+};
+
+export type WorkflowTakenOutput = { task: string; output: string | null };
+
 export type WorkflowOperationResult = {
   transition: string;
   next: WorkflowNextActions;
@@ -2033,6 +2042,103 @@ export type WorkflowLegacyStatus =
   | "done"
   | "blocked"
   | "cancelled";
+
+export type WorkflowTaskGuards = {
+  authorities: Array<WorkflowGuardAuthority>;
+  guards: Array<WorkflowGuardNeed>;
+  edges: Array<WorkflowGuardedEdge>;
+  entry?: WorkflowGuardEntry | null;
+};
+
+export type WorkflowGuardAuthority = {
+  adapter: string;
+  issuer: string;
+  epoch?: string | null;
+  generation?: number | null;
+  conflicted: boolean;
+  admitted: number;
+  asked_here: boolean;
+};
+
+export type WorkflowGuardNeed = { guard: string; adapter: string; page?: string | null };
+
+export type WorkflowGuardedEdge = { edge: string; guards: Array<string> };
+
+export type WorkflowGuardEntry = {
+  edge: string;
+  label: string;
+  revision: number;
+  principal: WorkflowAttestee;
+  /**
+   * Seconds since the Unix epoch.
+   */
+  at: number;
+  guards: Array<WorkflowGuardMet>;
+};
+
+export type WorkflowGuardMet = {
+  guard: string;
+  adapter: string;
+  issuer: string;
+  epoch: string;
+  generation: number;
+  standing: WorkflowGuardStanding;
+  record?: WorkflowGuardRecord | null;
+};
+
+export type WorkflowGuardRecord = {
+  result: WorkflowAttested;
+  facts: Array<string>;
+  reasons: Array<string>;
+  epoch: string;
+  generation: number;
+  /**
+   * Seconds since the Unix epoch.
+   */
+  issued_at: number;
+  expires_at: number;
+  task_revision: number;
+  at: WorkflowPair;
+  input_revisions: { [key in string]: string };
+  principal: WorkflowAttestee;
+};
+
+export type WorkflowGuardRefusal = {
+  guard: string;
+  adapter: string;
+  why: WorkflowGuardWhy;
+  record?: WorkflowGuardRecord | null;
+};
+
+export type WorkflowGuardWhy =
+  | "uncommitted"
+  | "unreported"
+  | "conflict"
+  | "missing"
+  | "unanswered"
+  | "unverified"
+  | "stale"
+  | "not_yours"
+  | "refused"
+  | "unknown"
+  | "unfounded"
+  | "expired"
+  | "early"
+  | "overlong"
+  | "decided_again"
+  | "not_reported";
+
+export type WorkflowGuardStanding =
+  | "met"
+  | "uncommitted"
+  | "unverified"
+  | "unreported"
+  | "conflict"
+  | "decided_again";
+
+export type WorkflowAttested = "pass" | "refuse" | "unknown";
+
+export type WorkflowAttestee = { kind: string; issuer: string; subject: string };
 
 export type TaskPage = {
   machine_work: MachineWork;

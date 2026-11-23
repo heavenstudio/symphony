@@ -38,14 +38,20 @@ export class Failure extends Error {
      * error a fetch or a body's read failed with. `text` where neither said anything.
      */
     readonly own: string = text,
+    /**
+     * The body a refusal was answered with, as the browser parsed it, for a page that reads more
+     * of it than its `error` (the guard that refused a workflow's edge); none where the server
+     * answered none it could parse.
+     */
+    readonly answer?: unknown,
   ) {
     super(text);
   }
 
   /** A refusal by the server's status: a 404 is missing, a server error leaves it unknown. */
-  static refused(status: number, text: string, own = text): Failure {
-    if (status === 404) return new Failure("missing", text, own);
-    return new Failure(status >= 500 ? "uncertain" : "known", text, own);
+  static refused(status: number, text: string, own = text, answer?: unknown): Failure {
+    if (status === 404) return new Failure("missing", text, own, answer);
+    return new Failure(status >= 500 ? "uncertain" : "known", text, own, answer);
   }
 }
 
@@ -186,7 +192,12 @@ async function answer(
       ? refusedRead(response.status, error)
       : (error ?? `The server answered ${response.status}`);
     mark("refused");
-    throw Failure.refused(response.status, text, error ?? `the server answered ${response.status}`);
+    throw Failure.refused(
+      response.status,
+      text,
+      error ?? `the server answered ${response.status}`,
+      body?.value,
+    );
   }
   if (unreadable !== undefined) {
     mark("failed");

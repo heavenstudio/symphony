@@ -128,6 +128,7 @@ fn one_oversees_the_roles_below_what_it_orchestrates_and_its_children() {
             .chain([session("kid", Some("orch")), gone])
             .collect(),
         latest_message: 0,
+        workflow_generation: None,
     };
     assert_eq!(
         overseen(&board, "orch").sessions,
@@ -159,6 +160,7 @@ fn a_subtree_another_orchestrator_holds_is_that_ones_to_see() {
             .map(|h| session(h, None))
             .collect(),
         latest_message: 0,
+        workflow_generation: None,
     };
     assert_eq!(overseen(&board, "orch").sessions, BTreeSet::from(["mine"]));
     assert_eq!(
@@ -215,6 +217,7 @@ fn a_parent_task_owner_hears_only_its_direct_coordinator_on_the_delegated_task()
             session("foreign", None),
         ],
         latest_message: 0,
+        workflow_generation: None,
     };
     let hears = |board: &Board, who: &str, slug: &str| {
         overseen(board, "root").hears_of(
@@ -282,6 +285,7 @@ fn watermarks_reject_older_unknown_and_resolved_equal_turn_observations() {
         )],
         sessions: vec![session("orch", None), session("w", None)],
         latest_message: 0,
+        workflow_generation: None,
     };
     let open = [launched("w", "t/a", "t1", "")];
     let legacy: PaneWatch = serde_json::from_value(json!({
@@ -343,6 +347,7 @@ fn a_launched_terminal_is_found_by_its_conversation_once_its_recorded_address_is
         )],
         sessions: vec![session("orch", None), session("w", None)],
         latest_message: 0,
+        workflow_generation: None,
     };
     let open = [launched("w", "t/a", "t1", "codex:thread-1")];
     let (after, said) = look(
@@ -379,6 +384,7 @@ fn a_session_no_longer_launched_is_forgotten_while_hc_cannot_be_asked() {
             session("v", None),
         ],
         latest_message: 0,
+        workflow_generation: None,
     };
     let blocked = |pane: &str| Blocked {
         task: "t/a".into(),
@@ -437,6 +443,7 @@ fn watched_at(samples: &[(f64, bool)], before: PaneWatch) -> (Vec<f64>, PaneWatc
         )],
         sessions: vec![session("orch", None), session("w", None)],
         latest_message: 0,
+        workflow_generation: None,
     };
     let open = [launched("w", "t/a", "t1", "")];
     let mut watch = before;
@@ -611,6 +618,7 @@ fn with_nothing_launched_hc_is_not_asked_and_the_watch_forgets() {
         )],
         sessions: vec![session("orch", None), session("w", None)],
         latest_message: 0,
+        workflow_generation: None,
     };
     let before = PaneWatch {
         blocked: BTreeMap::new(),
@@ -654,6 +662,7 @@ fn a_blocked_terminal_is_said_only_to_the_orchestrator_of_the_task_it_was_launch
         ],
         sessions: vec![orchestrator("a"), orchestrator("b"), session("w", None)],
         latest_message: 0,
+        workflow_generation: None,
     };
     let open = [launched("w", "scratch/b", "t1", "")];
     let heard = |who: &str| {
@@ -698,6 +707,7 @@ fn two_orchestrators_and_a_lost_child_on_each_side() -> Board {
             lost("hand", "other"),
         ],
         latest_message: 7,
+        workflow_generation: None,
     }
 }
 
