@@ -160,7 +160,10 @@ symphony = 12_760_000
 # write for every attempt decision) took back 413,184 bytes, while tools/workflow-return-to-default
 # added 99,200: 8,580,160 on main at 8804e5c5f, 8,332,128 at 01987f0d9. That plus 4% rounds above
 # this line, which stays; it comes down once tasks is under 8,259,615.
-tasks = 8_590_000
+# SurrealDB's code out of the board (tools/surrealdb-code-removed: its server, its client's statements
+# and the engine move) took tasks under that. Measured 8,200,192 at 3b9b7225d; the line is that plus
+# 4%, rounded down to 10,000.
+tasks = 8_520_000
 # The board's operations on tasks a workflow holds (tools/workflow-operations) add 264,656 bytes to
 # agent-send: 3,087,168 at the runtime's d7e3b719d, 3,351,824 with them. agent-send delivers what
 # it sends itself (send_agent, then the recipient's dispatch), and that dispatch composes an
@@ -183,5 +186,7 @@ tasks = 8_590_000
 # line was that plus 4%, rounded down to 10,000. Every other read of JSON the board holds as a
 # value, and of text it drops when it cannot read it, through that reader
 # (perf/board-derived-readers-step-two) took back more. Measured 3,170,256 at 01987f0d9; the line
-# is that plus 4%, rounded down to 10,000.
-agent-send = 3_290_000
+# was that plus 4%, rounded down to 10,000. SurrealDB's code out of the board
+# (tools/surrealdb-code-removed) took back more. Measured 2,987,952 at 3b9b7225d; the line is that
+# plus 4%, rounded down to 10,000.
+agent-send = 3_100_000
