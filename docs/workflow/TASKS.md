@@ -2387,13 +2387,13 @@ its role (`executor`, or `reviewer` under `--role reviewer`) when there is one
 ([Limits and models](#limits-and-models)), else a Codex agent (`--no-daemon`; model
 `gpt-6.1-sol`, effort `xhigh`, workspace-write with network access), in an hc terminal of its
 own, `hc run --bg --no-parent --outlive-parent --keep`: no child of the caller's terminal,
-which the app would show under it rather than in a tab. Codex's commands are given its handle
-and its terminal (`TASKS_SESSION`, `HC_TERMINAL_ID`) through `shell_environment_policy.set`,
-which holds under a policy that keeps only the core variables; hc names the terminal only once
-it runs, so a `sh` that becomes Codex hands it the terminal's own
-(`crates/tasks/src/launch/hc.rs`, `IN_ITS_TERMINAL`). Its callback then names its terminal, in
-which a restored Codex is present before its record names it; a thread resumed by hand registers
-from no terminal and retires once every terminal the board ran it in is closed or gone. `--kind` and `--model` win over the
+which the app would show under it rather than in a tab. Codex's commands are given its handle and
+its terminal (`TASKS_SESSION`, `HC_TERMINAL_ID`) through `shell_environment_policy.set`, which holds
+under a policy that keeps only the core variables; hc names the terminal only once it runs, so a
+`sh` that becomes Codex hands it the terminal's own (`crates/tasks/src/launch/hc.rs`,
+`IN_ITS_TERMINAL`). Its callback then names its terminal, in which a restored Codex is present
+before its record names it; a thread resumed by hand registers from no terminal and retires once
+every terminal the board ran it in is closed or gone. `--kind` and `--model` win over the
 project's; its models and effort go with its agent, so `--kind` naming the other agent takes the
 board's model for that one (Codex `gpt-6.1-sol` at `xhigh`, Claude `sonnet` at its own effort).
 A table that does not parse, or names another agent, refuses the launch, and so does a machine
@@ -2775,11 +2775,10 @@ session turns off stays off, and a restored conversation, a new process on a new
 connected again. A socket is remembered only once a launch records the session, so a board command
 run before its launch or restore writes the record is tried again at the next. A session no launch
 records, a subagent, a registration holding the chat seat and a Codex thread are left as they are
-(`crates/tasks/src/cli/beat.rs`, `connect`). A handle
-with a monitor of its own (an orchestrator) is never bound: its monitor beats for it,
-and a session that names such a handle is barred from binding at all, so the calls of
-an orchestrator never keep a child it registered alive. The hook looks at the board
-only for a board command or a key already bound. A foreground Bash call
+(`crates/tasks/src/cli/beat.rs`, `connect`). A handle with a monitor of its own (an orchestrator) is
+never bound: its monitor beats for it, and a session that names such a handle is barred from binding
+at all, so the calls of an orchestrator never keep a child it registered alive. The hook looks at
+the board only for a board command or a key already bound. A foreground Bash call
 reads live for as long as its timeout allows (at most 10 minutes), so a long
 `verify-full` does not look like silence; of calls running side by side, the
 one that may run longest keeps the mark, and only its own end clears it. A

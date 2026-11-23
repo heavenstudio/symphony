@@ -739,6 +739,58 @@ mod tests {
         assert_eq!(program(&words("env A=1 sh -c")), ["sh", "-c"]);
     }
 
+    /// The wrapper run as hc runs it, `sh` with the terminal's environment: the program it becomes
+    /// is given the terminal's own address as Codex's `-c` value, then every argument as it was.
+    /// With no address it is given `""`, which a callback drops as no terminal.
+    #[test]
+    fn the_wrapper_hands_its_program_the_terminals_address_and_every_argument_as_given() {
+        use std::os::unix::fs::PermissionsExt;
+        let folder =
+            std::env::temp_dir().join(format!("hc-in-its-terminal-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        // A stand-in for Codex that prints the arguments it was given, each ended by a NUL.
+        let program = folder.join("codex");
+        std::fs::write(&program, "#!/bin/sh\nprintf '%s\\0' \"$@\"\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let given = [
+            "--no-daemon",
+            "resume",
+            "th1",
+            "a \"quoted\" word",
+            "$HOME",
+            "",
+        ];
+        let run = |terminal: Option<&str>| -> Vec<String> {
+            let mut command = crate::sys::command("/bin/sh");
+            command
+                .args(&IN_ITS_TERMINAL[1..])
+                .arg(&program)
+                .args(given);
+            if let Some(terminal) = terminal {
+                command.env("HC_TERMINAL_ID", terminal);
+            }
+            let done = crate::sys::output(&mut command).unwrap();
+            assert!(done.status.success(), "{done:?}");
+            let printed = String::from_utf8(done.stdout).unwrap();
+            let mut said: Vec<String> = printed.split('\0').map(str::to_string).collect();
+            assert_eq!(said.pop().as_deref(), Some(""), "{printed:?}");
+            said
+        };
+        let expected = |value: &str| -> Vec<String> {
+            let set = format!("shell_environment_policy.set.HC_TERMINAL_ID=\"{value}\"");
+            ["-c", &set]
+                .into_iter()
+                .chain(given)
+                .map(String::from)
+                .collect()
+        };
+        assert_eq!(IN_ITS_TERMINAL[0], "sh");
+        assert_eq!(run(Some("t9")), expected("t9"));
+        assert_eq!(run(Some("box/t1b")), expected("box/t1b"));
+        assert_eq!(run(None), expected(""));
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
     #[test]
     fn a_failure_names_the_call_and_hcs_error_kind() {
         use std::os::unix::process::ExitStatusExt;
