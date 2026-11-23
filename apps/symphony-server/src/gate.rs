@@ -16,8 +16,9 @@
 //! status that listed its names gave it (`Self.UserID`); that login's person for a node under
 //! another (a whois answer's `UserProfile`); nobody's for a tagged node, or one whose answer names
 //! no user. A status call that gives no answer keeps the login it last gave, as it keeps the
-//! names. Until one has answered, and on a machine that is itself tagged, which is under no login,
-//! no node but this machine's own is its person.
+//! names. Until one has answered only loopback is the person at the machine, as this machine's
+//! own tailnet addresses are known from that answer too. On a machine that is itself tagged, which
+//! is under no login, no node but this machine's own is its person.
 //!
 //! What a visitor reaches is each board's word ([`Gate::member`], the roster): the actor their
 //! writes there take, or none for a board that has not added them, which is then to them a project

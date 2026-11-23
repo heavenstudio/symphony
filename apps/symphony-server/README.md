@@ -26,8 +26,9 @@ node it is, and the gate keeps who the request is from:
 - **Nobody**: a tagged node, or one whose answer names no user.
 
 A status call that gives no answer keeps the login it last gave, as it keeps the names. Until one
-has answered, a node that is not this machine's own counts as another login's. A Mac that is
-itself tagged is under no login, so only the Mac reaches its boards.
+has answered, only loopback is the person at the machine: this machine's own tailnet addresses are
+known from that answer too, so every node, the Mac's own included, counts as another login's or as
+nobody's. A Mac that is itself tagged is under no login, so only the Mac reaches its boards.
 
 What a visitor reaches is each board's word (`Gate::member`): the person at the machine is on
 every board, and until a board holds people

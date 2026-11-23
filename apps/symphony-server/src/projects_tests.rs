@@ -25,13 +25,7 @@ impl Machine {
     }
 
     /// [`Machine::new`], its starter judging who may reach it by `gate`.
-    fn with_gate(gate: Gate) -> Machine {
-        Machine::holding(gate, &["alpha", "beta"])
-    }
-
-    /// [`Machine::with_gate`] whose registry holds `ids` of `alpha` (the starter) and `beta`, both
-    /// written in its tree all the same.
-    pub(super) fn holding(gate: Gate, ids: &[&str]) -> Machine {
+    pub(super) fn with_gate(gate: Gate) -> Machine {
         let tree = Tree::new();
         for (id, color) in [("alpha", "#a00"), ("beta", "#0b0")] {
             tree.write(&format!("{id}/docs/README.md"), "# Docs\n");
@@ -44,7 +38,21 @@ impl Machine {
             );
         }
         tree.write("install/client/public/index.html", SHELL);
-        let machine = tree.path("machine");
+        let projects = Machine::serving(&tree, "machine", gate, &["alpha", "beta"]);
+        Machine { tree, projects }
+    }
+
+    /// Another server over this machine's checkouts and install folder, its own machine folder
+    /// `folder` registering `ids` of `alpha` (its starter) and `beta`, judging who may reach it by
+    /// `gate`: what this machine's answers are compared with, the same checkouts on both.
+    pub(super) fn beside(&self, folder: &str, gate: Gate, ids: &[&str]) -> Arc<Projects> {
+        Machine::serving(&self.tree, folder, gate, ids)
+    }
+
+    /// A server over `tree`'s checkouts whose machine folder `folder` registers `ids`, its starter
+    /// `alpha` judging who may reach it by `gate`.
+    fn serving(tree: &Tree, folder: &str, gate: Gate, ids: &[&str]) -> Arc<Projects> {
+        let machine = tree.path(folder);
         let mut registry = Registry::default();
         for id in ids {
             registry.add(Entry::of(&tree.path(id)).unwrap()).unwrap();
@@ -52,8 +60,7 @@ impl Machine {
         registry.write(&machine).unwrap();
         let root = tree.path("alpha").canonicalize().unwrap();
         let starter = Shared::project(1, 1, &root, Some(&tree.path("install")), gate, "/alpha");
-        let projects = Projects::made(&machine, &starter, Warming::OnRequest);
-        Machine { tree, projects }
+        Projects::made(&machine, &starter, Warming::OnRequest)
     }
 
     async fn get(&self, path: &str, headers: &[(&str, &str)]) -> Response {

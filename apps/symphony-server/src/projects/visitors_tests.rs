@@ -69,25 +69,26 @@ fn ana_on(id: &'static str) -> Roster {
     })
 }
 
-/// What `machine` answers `method` of `path` from `client`, naming this machine's tailnet Host,
-/// with `body` and the headers a page's save sends: status, headers and body, whole.
+/// What `projects`' server answers `method` of `path` from `client`, naming [`HOST`], with `headers`,
+/// `body` and the headers a page's save sends: status, headers and body, whole.
 async fn exchange(
-    machine: &Machine,
+    projects: &Arc<Projects>,
     client: &str,
-    method: &str,
-    path: &str,
-    body: &str,
+    (method, path, headers, body): Asked,
 ) -> (StatusCode, HeaderMap, Vec<u8>) {
     let mut request = Request::builder()
         .method(method)
         .uri(path)
         .header(header::HOST, HOST);
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
     if method == "POST" {
         request = request
             .header(header::ORIGIN, format!("http://{HOST}"))
             .header(header::CONTENT_TYPE, "application/json");
     }
-    let response = router(machine.projects.clone())
+    let response = router(projects.clone())
         .layer(MockConnectInfo(client.parse::<SocketAddr>().unwrap()))
         .oneshot(request.body(Body::from(body.to_string())).unwrap())
         .await
@@ -97,45 +98,64 @@ async fn exchange(
     (parts.status, parts.headers, bytes.to_vec())
 }
 
+/// One request: its method, path, headers beside Host and body.
+type Asked = (
+    &'static str,
+    &'static str,
+    &'static [(&'static str, &'static str)],
+    &'static str,
+);
+
+/// A page of `beta`'s, as a request its page sends names it in its Referer.
+const FROM_BETA: (&str, &str) = ("referer", "http://127.0.0.1:1/beta/tasks");
+/// A browser loading a page.
+const PAGE: (&str, &str) = ("sec-fetch-mode", "navigate");
+
 /// Every way a visitor asks for `beta`: its address with and without the slash, its pages, a
-/// document, the board and the pending cards as data, the feed, the theme, a respelled id, a path
-/// of today whose Referer names it, and a save.
-const ASKED: &[(&str, &str, &str)] = &[
-    ("GET", "/beta", ""),
-    ("GET", "/beta/", ""),
-    ("GET", "/beta/tasks", ""),
-    ("GET", "/beta/docs/README.md", ""),
-    ("GET", "/beta/api/task-board?counts=1&work=0", ""),
-    ("GET", "/beta/api/pending", ""),
-    ("GET", "/beta/api/feed?since=0", ""),
-    ("GET", "/beta/theme.css", ""),
-    ("HEAD", "/beta/docs/README.md", ""),
-    ("GET", "/%62eta/tasks", ""),
-    ("POST", "/beta/api/decision", DECISION),
-    ("GET", "/", ""),
-    ("GET", "/api/projects", ""),
+/// document, the board and the pending cards as data, the feed, the theme, a respelled id, paths
+/// of today and the address's icon whose Referer names it (a read, a page, a document), and a
+/// save.
+const ASKED: &[Asked] = &[
+    ("GET", "/beta", &[], ""),
+    ("GET", "/beta/", &[], ""),
+    ("GET", "/beta/tasks", &[], ""),
+    ("GET", "/beta/docs/README.md", &[], ""),
+    ("GET", "/beta/api/task-board?counts=1&work=0", &[], ""),
+    ("GET", "/beta/api/pending", &[], ""),
+    ("GET", "/beta/api/feed?since=0", &[], ""),
+    ("GET", "/beta/theme.css", &[], ""),
+    ("HEAD", "/beta/docs/README.md", &[], ""),
+    ("GET", "/%62eta/tasks", &[], ""),
+    ("GET", "/api/task-board?counts=1&work=0", &[FROM_BETA], ""),
+    ("GET", "/tasks", &[FROM_BETA, PAGE], ""),
+    ("GET", "/docs/README.md", &[FROM_BETA], ""),
+    ("GET", "/favicon.ico", &[FROM_BETA], ""),
+    ("POST", "/beta/api/decision", &[], DECISION),
+    ("GET", "/", &[], ""),
+    ("GET", "/api/projects", &[], ""),
 ];
 
 const DECISION: &str =
     r#"{"path":"docs/README.md","slug":"one","state":"question","note":"Which one?"}"#;
 
-/// `visitor` asks every route of [`ASKED`] of a machine holding `alpha` and `beta`, and of one
-/// holding `alpha` alone, the roster `roster` in both: each answer is the same, byte for byte.
+/// `visitor` asks every route of [`ASKED`] of a machine holding `alpha` and `beta`, and of a
+/// server beside it over the same checkouts holding `alpha` alone, the roster `roster` in both:
+/// each answer is the same, byte for byte.
 async fn answered_as_not_held(visitor: &str, roster: fn() -> Roster) {
-    let holding = Machine::holding(gate(roster()), &["alpha", "beta"]);
-    let lacking = Machine::holding(gate(roster()), &["alpha"]);
-    for (method, path, body) in ASKED {
-        let held = exchange(&holding, visitor, method, path, body).await;
-        let not_held = exchange(&lacking, visitor, method, path, body).await;
+    let holding = Machine::with_gate(gate(roster()));
+    let lacking = holding.beside("lacking", gate(roster()), &["alpha"]);
+    for &asked @ (method, path, headers, _) in ASKED {
+        let held = exchange(&holding.projects, visitor, asked).await;
+        let not_held = exchange(&lacking, visitor, asked).await;
         assert_eq!(
             (held.0, &held.1),
             (not_held.0, &not_held.1),
-            "{visitor} {method} {path}"
+            "{visitor} {method} {path} {headers:?}"
         );
         assert_eq!(
             String::from_utf8_lossy(&held.2),
             String::from_utf8_lossy(&not_held.2),
-            "{visitor} {method} {path}"
+            "{visitor} {method} {path} {headers:?}"
         );
     }
     let readme = std::fs::read_to_string(holding.tree.path("beta/docs/README.md")).unwrap();
@@ -159,14 +179,19 @@ async fn a_board_that_has_not_added_a_visitor_answers_as_not_held_beside_one_tha
 
 #[tokio::test]
 async fn a_visitor_no_board_added_is_shown_no_project_and_none_of_the_machines_own() {
-    let machine = Machine::holding(gate(nobody()), &["alpha", "beta"]);
+    let machine = Machine::with_gate(gate(nobody()));
     for visitor in [LAPTOP, SERVER] {
-        let (status, _, body) = exchange(&machine, visitor, "GET", "/api/projects", "").await;
+        let (status, _, body) = exchange(
+            &machine.projects,
+            visitor,
+            ("GET", "/api/projects", &[], ""),
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         let list: symphony_api::ProjectList = serde_json::from_slice(&body).unwrap();
         assert!(list.projects.is_empty(), "{visitor}: {list:?}");
         assert_eq!(list.installation, None, "{visitor}");
-        let (status, _, body) = exchange(&machine, visitor, "GET", "/", "").await;
+        let (status, _, body) = exchange(&machine.projects, visitor, ("GET", "/", &[], "")).await;
         assert_eq!(status, StatusCode::OK);
         let page = String::from_utf8(body).unwrap();
         for id in ["/alpha/", "/beta/", "alpha works", "beta works"] {
@@ -182,8 +207,8 @@ async fn a_visitor_no_board_added_is_shown_no_project_and_none_of_the_machines_o
 
 #[tokio::test]
 async fn the_owners_phone_reaches_every_board_and_the_machines_own_as_the_machine_does() {
-    let machine = Machine::holding(gate(nobody()), &["alpha", "beta"]);
-    let (_, _, body) = exchange(&machine, PHONE, "GET", "/api/projects", "").await;
+    let machine = Machine::with_gate(gate(nobody()));
+    let (_, _, body) = exchange(&machine.projects, PHONE, ("GET", "/api/projects", &[], "")).await;
     let list: symphony_api::ProjectList = serde_json::from_slice(&body).unwrap();
     let ids: Vec<_> = list
         .projects
@@ -193,7 +218,7 @@ async fn the_owners_phone_reaches_every_board_and_the_machines_own_as_the_machin
     assert_eq!(ids, ["alpha", "beta"]);
     assert!(list.installation.is_some());
     for path in ["/beta/docs/README.md", "/alpha/theme.css"] {
-        let (status, _, _) = exchange(&machine, PHONE, "GET", path, "").await;
+        let (status, _, _) = exchange(&machine.projects, PHONE, ("GET", path, &[], "")).await;
         assert_eq!(status, StatusCode::OK, "{path}");
     }
     let front = machine
@@ -206,10 +231,15 @@ async fn the_owners_phone_reaches_every_board_and_the_machines_own_as_the_machin
 async fn a_board_that_added_a_visitor_lets_them_reach_it_and_no_other() {
     // Beta's own router judges with a gate of its own, which knows no fake peer: Ana reaches beta
     // only as the dispatch admitted her there.
-    let machine = Machine::holding(gate(ana_on("beta")), &["alpha", "beta"]);
-    let (status, _, body) = exchange(&machine, LAPTOP, "GET", "/beta/docs/README.md", "").await;
+    let machine = Machine::with_gate(gate(ana_on("beta")));
+    let (status, _, body) = exchange(
+        &machine.projects,
+        LAPTOP,
+        ("GET", "/beta/docs/README.md", &[], ""),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
-    let (_, _, body) = exchange(&machine, LAPTOP, "GET", "/api/projects", "").await;
+    let (_, _, body) = exchange(&machine.projects, LAPTOP, ("GET", "/api/projects", &[], "")).await;
     let list: symphony_api::ProjectList = serde_json::from_slice(&body).unwrap();
     let ids: Vec<_> = list
         .projects
@@ -217,13 +247,18 @@ async fn a_board_that_added_a_visitor_lets_them_reach_it_and_no_other() {
         .map(|listed| listed.id.as_str())
         .collect();
     assert_eq!(ids, ["beta"]);
-    let (_, _, page) = exchange(&machine, LAPTOP, "GET", "/", "").await;
+    let (_, _, page) = exchange(&machine.projects, LAPTOP, ("GET", "/", &[], "")).await;
     let page = String::from_utf8(page).unwrap();
     assert!(
         page.contains("/beta/") && !page.contains("/alpha/"),
         "{page}"
     );
-    let (status, _, page) = exchange(&machine, LAPTOP, "GET", "/alpha/docs/README.md", "").await;
+    let (status, _, page) = exchange(
+        &machine.projects,
+        LAPTOP,
+        ("GET", "/alpha/docs/README.md", &[], ""),
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(
         String::from_utf8(page)
@@ -232,13 +267,18 @@ async fn a_board_that_added_a_visitor_lets_them_reach_it_and_no_other() {
         "alpha is not there for her"
     );
     for (visitor, why) in [(SERVER, "a tagged node"), (PHONE, "the owner's phone")] {
-        let (status, _, _) = exchange(&machine, visitor, "GET", "/alpha/docs/README.md", "").await;
+        let (status, _, _) = exchange(
+            &machine.projects,
+            visitor,
+            ("GET", "/alpha/docs/README.md", &[], ""),
+        )
+        .await;
         let reached = status == StatusCode::OK;
         assert_eq!(reached, visitor == PHONE, "{why}");
     }
     // The server's own state stays the machine's, even through a board that added her.
     for path in ["/beta/api/front", symphony_api::FRONT_PATH] {
-        let (status, _, body) = exchange(&machine, LAPTOP, "GET", path, "").await;
+        let (status, _, body) = exchange(&machine.projects, LAPTOP, ("GET", path, &[], "")).await;
         assert_eq!(
             (status, String::from_utf8(body).unwrap().as_str()),
             (
@@ -247,7 +287,7 @@ async fn a_board_that_added_a_visitor_lets_them_reach_it_and_no_other() {
             ),
             "{path}"
         );
-        let (status, _, _) = exchange(&machine, PHONE, "GET", path, "").await;
+        let (status, _, _) = exchange(&machine.projects, PHONE, ("GET", path, &[], "")).await;
         assert_eq!(status, StatusCode::OK, "{path}");
     }
 }
