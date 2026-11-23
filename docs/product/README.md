@@ -102,6 +102,8 @@ An analysis holds a proposal and its evidence: an approved design can still awai
   that opens on the orchestrators.
 - [The board at a glance](analysis/board-design.md) — what a board says before anything is opened:
   what is stuck, on whom it waits and for how long.
+- [Boards and projects](analysis/boards-and-projects.md) — a concept: whether a project may hold
+  several boards, or a second board is a project of its own.
 - [Owner asks](analysis/owner-asks.md) — what becomes of what the owner says that waits on an
   agent's answer.
 - [Reports and monitoring](analysis/reports-and-monitoring.md) — what a project's runs, task pages
