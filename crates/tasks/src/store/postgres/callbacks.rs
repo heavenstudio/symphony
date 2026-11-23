@@ -3,7 +3,9 @@
 use super::Pg;
 
 /// Every channel of a session that has not left, with its session and whether its agent's
-/// binding is an in-process one (`super::super::surreal::callbacks::REGISTRATIONS`).
+/// binding is an in-process one (`super::super::surreal::callbacks::REGISTRATIONS`): the channels
+/// by `callback_state_address`, which serves `doc ->> 'address' IS NOT NULL` where `doc ? 'address'`
+/// is served by no index (a channel's address is never a JSON null: its write strips nulls).
 pub(in crate::store) fn registrations() -> Pg<'static> {
     Pg::read(format!(
         "coalesce((SELECT jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
@@ -22,7 +24,7 @@ pub(in crate::store) fn registrations() -> Pg<'static> {
         (SELECT b.doc -> 'in_process' FROM callback_state b WHERE b.id = jsonb_build_array('binding', s.agent)),
         'true'::jsonb) END)))
     FROM callback_state c LEFT JOIN session s ON s.handle = c.doc ->> 'handle'
-    WHERE c.doc ? 'address' AND s.left_at IS NULL), '[]'::jsonb)",
+    WHERE c.doc ->> 'address' IS NOT NULL AND s.left_at IS NULL), '[]'::jsonb)",
         super::row("s")
     ))
 }
