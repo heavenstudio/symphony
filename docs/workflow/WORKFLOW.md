@@ -631,8 +631,23 @@ its phase and state IDs, the pair a blocked task resumes to, its workflow revisi
 recovery by hand it waits on (`manual`: whose `release` or `lost_holder` left it, in which role).
 A task the board's own writers keep carries none, and its wire is the text it was.
 `GET /api/workflow-actions?slug=SLUG` (`WORKFLOW_ACTIONS_PATH`) answers that task's
-`NextActions` for the local owner, a preview and never a permit; a hosted visitor is refused it,
-as the apply route refuses one.
+`ActionsRead` for the local owner: its `NextActions`, a preview and never a permit, and `takes`,
+the accepted output standing for each task it depends on where an edge leaving its pair depends on
+`accepted_output` (`Store::accepted_outputs`, none standing as null), empty otherwise. A hosted
+visitor is refused it, as the apply route refuses one.
+`GET /api/workflow-guards?slug=SLUG` (`WORKFLOW_GUARDS_PATH`) answers that task's `TaskGuards`,
+the local owner's too: each authority the active activation commits, with the epoch and
+generation the board accepted from it, whether it is in conflict, the admissions counted on it
+and whether this host asks it (`asked_here`: a plugin of the project answers for its adapter);
+each guard the definition declares with its adapter and, where the project commits one, its
+authority's `page` filled in for this task; the edges leaving the task's pair that carry guards;
+and `entry`, the transition that brought the task into its pair by a guarded edge, with each
+guard its admission met, its standing as a word (`GuardStanding`) and what its attestation
+said (`GuardRecord`), shown only while it still verifies by the committed key. It reads the
+board's records and decides nothing; a board with no workflow answers none of each. A take of
+`/api/workflow-apply` that a guard refuses answers `guard` beside its `error`, a `GuardRefusal`:
+the guard, its adapter, why as a word (`GuardWhy`) and, from an attestation that verified, what
+it said. The error's text is what it was, and every other refusal answers as it did.
 
 **The board.** The [waiting listing](TASKS.md#what-a-task-waits-on) puts a task the workflow holds
 in its phase's column, keyed `phase:ID` so a phase never takes a status's key or an overlay's,
@@ -642,26 +657,87 @@ status, as before. The waiting listing's `waiting` adds `workflow`, the active g
 absent on a board with none, and `states`, `[state, count]` for the open tasks the workflow
 holds, by state ID in its order, counted after search and window and before `wait`;
 `wait=state:ID` lists one state's open tasks across their phases, as a wait kind's are. The
-board loads the workflow's
+server learns the generation from the board's own read, which carries it in its round trip, and
+an activation or a return moves the board's marker, so a relabel, which moves no task, and a
+return on a board with no task to move still reach the page. The board loads the workflow's
 chunk (`apps/symphony-web/src/flow.tsx`) only once a listing names a generation, reads the
-definition, and reads it again when the generation moves. It draws the phases that are columns
+definition, and reads it again when the generation moves; a chunk that does not load is said
+with its retry, and the board draws its own lanes meanwhile. It draws the phases that are columns
 by their `order`, then Build and Test, then any status the board's own writers still hold a task
 in; on a phone, a tab for every phase by its `phone_order`; on a desk, a button for each phase
 that is no column, which opens it as a list as Backlog opens; and a chip for each state with
-open tasks, which chooses its facet. A card names its place by its phase's and state's labels.
-The phone tab the board keeps for a project is the phase's stable key, never its label, so a
-relabel keeps it, and a phase no longer drawn falls back to the first tab. The state facet
-chosen is the page's own and is not kept. A definition the board cannot draw leaves it as its
-own writers draw it.
+open tasks, which chooses its facet, that strip led by the word Workflow; Build and Test read
+Machine build and Machine test there, as a phase may be named Build and a state Working. A card
+names its place by its phase's and state's labels. The phone tab the board keeps for a project
+is the phase's stable key, never its label, so a relabel keeps it, and a phase no longer drawn
+falls back to the first tab; the ghost drawn before the board's first read draws that tab, with
+the count the phase last had. The state facet chosen is the page's own and is not kept. A
+definition the board cannot draw leaves it as its own writers draw it.
+
+- [x] **workflow-board-labels** — On a board a custom workflow holds, the project's own words can match the board's: a phase named Build beside the machine's Build column, a state chip Working beside the Working wait chip. As built, the machine's columns read Machine build and Machine test, and the workflow's chips follow a small Workflow label. A board with no workflow is unchanged.
+  [2026-11-20 00:04] agent — Posted for the board task `app/workflow-pages-follow-ups`, at its tip 57ac59eb3; the change is its commit f80b7c2bc. Both pictures are the browser test's board, drawn from main's build at e00700b13 and from that tip.
+
+    **Before**, wide and on a phone: ![The board before, wide](../design/analysis/workflow-board-labels/before-wide.png) ![The board before, on a phone](../design/analysis/workflow-board-labels/before-phone.png)
+
+    **As built**, wide and on a phone: ![The board as built, wide](../design/analysis/workflow-board-labels/after-wide.png) ![The board as built, on a phone](../design/analysis/workflow-board-labels/after-phone.png)
+
+    **What changes:**
+    - The machine's two columns, their links in the row above the columns and their phone tabs read Machine build and Machine test.
+    - The row of the workflow's own chips opens with a small WORKFLOW label, so its Working and Parked read apart from the wait chips of the same words above.
+    - Both only on a board a workflow holds.
+    - **Cost:** on a phone the label takes room, so the row's last chip starts at the edge and scrolls.
+
+    **Rejecting it** drops both with one revert, and the board looks as in the before pictures. Other words are a one-line change.
+
+    **Earlier verdicts checked.** **project-workflow-shape** (C) and **configurable-workflow-activation** (B) decide what a workflow may name and when it takes effect, not how the board tells its own columns from the project's words. No card decides these labels.
+
+    Approve to keep it, reject to drop it, or comment with other words.
+  [2026-11-20 04:14] owner · approved
 
 **The task page.** A task with a place loads the next-actions chunk
 (`apps/symphony-web/src/nextactions.tsx`). It says the place, the pair a blocked task resumes to
 and the recovery by hand it waits on, then each action by its label and destination, with the
 inputs it needs and, where it is unavailable now, why and whose it is (the authorities the edge
-names). Taking one posts its edge, the snapshot the actions named and a fresh idempotency key to
+names); an edge a land takes says `just land SLUG` takes it, and one an adapter takes says so, in
+place of asking for an explicit action. Where an edge depends on accepted outputs, it names the
+output standing for each task the task depends on. Taking one posts its edge, the snapshot the
+actions named, those outputs where its edge depends on them (`input_revisions`, from the read the
+page drew, never one taken when it is sent) and a fresh idempotency key to
 `/api/workflow-apply`, the same key again only for the same request after an answer that never
 came. A refusal says its words; a `stale_*` one says the task moved since and offers to read its
 actions again, and they are read again whenever the task's revision moves.
+
+Where the definition declares a guard, the page reads the task's guards beside its actions and
+draws them (`apps/symphony-web/src/guards.tsx`). Over the actions, *Let in by EDGE · revision N ·
+time*, a link to the task's timeline, heads the guards that admission met: `met` while the board
+still accepts the state it was decided at, else why it no longer stands (`decided again`,
+`conflict`, `unreported`, `uncommitted`, `unverified`), which is why no effect is dispatched on
+it. Under each action a guard holds, *ACTION needs* heads a row for each guard its edge carries.
+A row is the guard's name, its state in a word, a line saying why, and its authority (the issuer
+it signs as, and its adapter) with what the board accepted from it: its generation and epoch,
+`none yet`, or `in conflict`. Before any take the row is the board's records: `no word yet`
+where taking the action asks the authority, `not from here` where this host cannot ask it, saying
+what would (a plugin of the project answering for the guard's adapter) and no command, as the
+command line takes an edge as an agent's session and never as the owner, `unreported` with the command that
+reports the authority's state, `conflict`, or `uncommitted`. After the owner's take is refused,
+the row of the guard the refusal names says it by its word: `missing`, `unanswered`, `refused`
+and `unknown` with the authority's reasons, `expired`, `early`, `held too long`, `stale`,
+`decided again`, `not reported`, `not yours` or `unverified`. The page keeps that refusal beside
+the action only until the task's revision moves or the page loads again: the board records no
+refusal, so it shows on no other page, device or session.
+
+The guard's name is the row's link: it opens, under the row, what the board holds for it (the
+state it accepted and the admissions counted on it; for a refusal, what the attestation said, its
+time and what it covers; for an admission, the transition and who took it). What the authority
+itself points at, the facts a pass rests on and its reasons, is drawn as the gates draw a link: a
+path of the app in it is a link named for the task, decision, run or document it names, a web
+address at its end puts the link on the words before it, marked as leaving the app with its host
+beside it, and anything else is its text; nothing an unverified attestation says is shown. The
+authority's name links to its ledger's page for the guard where the project commits `page`
+([PROJECT_FILE](../operations/PROJECT_FILE.md#workflow_authorities)). An action its guards alone
+hold is the owner's to take when this host asks every one's authority, the take bringing its
+word; otherwise it waits. The panel shows and links: it has no approval, grant, paste or upload, and the
+authority decides in the project's own ledger.
 
 **The timeline and the Agents page.** A task's timeline (`/api/task-timeline`) carries `places`,
 one for each transition recorded for it (`Store::workflow_transitions`, a read of its own events'

@@ -223,6 +223,8 @@ fn only_a_commit_that_changes_the_workflow_activates_it() {
                 digest: remapped.revision.digest.clone()
             }))
         );
+        // The server's read, kept until the board's marker moves, carries the generation.
+        assert_eq!(f.store.clock_board().unwrap().workflow_generation, Some(2));
         let relabelled = TWO.replace(r#"label = "Build""#, r#"label = "Make""#);
         assert_ne!(relabelled, TWO);
         let relabelled = at_commit(&custom(&format!("{relabelled}{MAPPED}{HELD}")), 'd');
@@ -235,6 +237,11 @@ fn only_a_commit_that_changes_the_workflow_activates_it() {
         );
         assert_eq!(f.store.workflow_position("sim/ready").unwrap(), position);
         assert_eq!(events(), recorded);
+        assert_eq!(
+            f.store.clock_board().unwrap().workflow_generation,
+            Some(3),
+            "a relabel moves no task, and its read is read again: {backend:?}"
+        );
         let activation = f
             .store
             .raw()
@@ -291,6 +298,60 @@ fn a_reactivation_maps_a_removed_pair_and_its_resume_pairs() {
         // A task whose pair and resume stay keeps its revision and the generation that moved it.
         let ready = f.store.workflow_position("sim/ready").unwrap().unwrap();
         assert_eq!((ready.revision, ready.generation), (1, 1));
+    }
+}
+
+/// A board read carries the active generation in its own round trip, and an activation moves the
+/// board's marker however few tasks it writes, so the server's kept read is read again.
+#[test]
+fn an_activation_moves_the_boards_marker_and_a_board_read_carries_its_generation() {
+    for backend in BACKENDS {
+        let f = Fixture::on(backend, Seed::default());
+        assert_eq!(f.store.board().unwrap().workflow_generation, None);
+        assert_eq!(f.store.clock_board().unwrap().workflow_generation, None);
+        let marker = f.store.marker().unwrap();
+        let two = mapped();
+        f.store.activate_workflow(&two, &Host::local()).unwrap();
+        assert_ne!(
+            f.store.marker().unwrap(),
+            marker,
+            "an activation that keeps and moves no task: {backend:?}"
+        );
+        assert_eq!(
+            f.store.clock_board().unwrap().workflow_generation,
+            Some(1),
+            "{backend:?}"
+        );
+        assert_eq!(f.store.board().unwrap().workflow_generation, Some(1));
+    }
+}
+
+#[test]
+fn a_return_moves_the_boards_marker_and_a_board_read_carries_no_generation() {
+    for backend in BACKENDS {
+        let f = Fixture::on(backend, Seed::default());
+        f.store
+            .activate_workflow(&mapped(), &Host::local())
+            .unwrap();
+        assert_eq!(f.store.clock_board().unwrap().workflow_generation, Some(1));
+        let marker = f.store.marker().unwrap();
+        assert_eq!(
+            f.store.follow_committed(&dropped(BACK), &Host::local()),
+            Ok(Followed::Returned { generation: 2 }),
+            "{backend:?}"
+        );
+        assert_ne!(
+            f.store.marker().unwrap(),
+            marker,
+            "a return that keeps and moves no task: {backend:?}"
+        );
+        // The kept read is read again, so the page hears that no workflow is active.
+        assert_eq!(
+            f.store.clock_board().unwrap().workflow_generation,
+            None,
+            "{backend:?}"
+        );
+        assert_eq!(f.store.board().unwrap().workflow_generation, None);
     }
 }
 

@@ -99,7 +99,8 @@ A tool that is absent or incompatible fails with setup guidance; no hosted GitHu
 - Acceptance: a working Chrome (installed, or `SYMPHONY_CHROME`) and the client's pinned Node (on
   PATH, or fnm to fetch it once: `tools/node.sh`).
 - The client build: Git, Bash and jq.
-- Board fixtures: lsof and the pinned SurrealDB (`tools/surreal.sh`, or `SYMPHONY_SURREAL`).
+- Board fixtures: lsof, the pinned SurrealDB (`tools/surreal.sh`, or `SYMPHONY_SURREAL`), and
+  PostgreSQL 18 or later, on which a fixture's first board command makes its board.
 - The board's server tests (`just test-rs -p symphony-board --test server`): PostgreSQL 18 or
   later with its programs beside it ([the setup](docs/operations/PROJECT_FILE.md#board)).
 - The hosted board's check (`just hosted-check`): PostgreSQL 16's programs as well, and
@@ -127,7 +128,8 @@ consuming project's.
   own preferences (`just tasks settings`), which hold at once and need no landing
   ([PROJECT_FILE](docs/operations/PROJECT_FILE.md#the-boards-store)). An Agent launch passes the model
   `just tasks limits` names for the role, as a subagent otherwise inherits its orchestrator's.
-  `just symphony-cli model ROLE MODEL` changes one.
+  `just symphony-cli model ROLE MODEL` changes one. No usage limit slows the pace they set
+  (RULES.md `workflow/no-slowing-for-usage-limits`).
 - **A change of settings needs no reviewer**: a change of the values `symphony.toml` gives
   settings the Symphony already reads, with the words here that repeat them and nothing else,
   lands on `just settings-check` green at its tip, which is its `tests` stamp. A value that is a

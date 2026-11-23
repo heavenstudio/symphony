@@ -60,6 +60,30 @@ and `theme.rs`, a generator's in `crates/tasks/src/land.rs` and a stamp's in
 `crates/symphony/tests/project/reference.rs`, fails on a key this page lacks or one the code does
 not have.
 
+## The Settings page
+
+`/settings`, under each project and in the header after Reports, shows what is in force for the
+project and where each value comes from: one read, `/api/settings`
+(`crates/symphony/src/settings.rs`, the wire types `crates/symphony-api/src/settings.rs`), which
+the client draws and which writes nothing. Every thing it shows is an entry in one shape: its
+name, what it is for, its state and why, what it needs and whether this machine has it, and its
+settings, each with its key, its value in force, its source (the default, or the file with the
+table, the key and the line, as `just tasks limits` names one, and for a local value the committed
+one it holds over), the scopes it may be written in and its class. A setting is *reviewed* when
+the local settings file refuses its table or key by name (`PROTECTED` and `PROTECTED_KEYS` in
+`crates/tasks/src/local.rs`, the one list) and a *preference* otherwise; a reviewed table is said
+as a sentence with its file and line. Its parts are the integrations and tools (the launch
+agents, Herdr's panes, GitHub, and the plugins), the models and limits, the project's name,
+documents and theme, the reviewed settings (the landing, the board's commands, the stamps, the
+releases and the workflow, whose sentence names its mappings and approval authorities) and the
+device's appearance. GitHub is said by what the `symphony-github.toml` the default branch commits
+writes, the branch being the one the main checkout's HEAD names, as that program reads it. The
+page runs no program and holds no copy of its rules, so a file that writes `enabled = true` is
+said as enabled in its file and never as on: a file the program refuses runs as off, which its
+own status tells. A project file that does not load is said at the top of the page with what
+holds in its place, as is a local file that is refused. The page shows a preference as its value
+alone: no control on it changes one.
+
 ## The settings check
 
 `symphony settings-check [DIR]` (`just symphony-cli settings-check`) reads the project file of DIR,
@@ -106,13 +130,15 @@ It holds preferences alone, in the same tables, keys and types as the project fi
 - `[limits]`: every key of it.
 
 A setting that holds a command or a program the Symphony runs, or that decides what lands, is never
-read from it and is refused there by name: `[project]`'s `cargo` and `default_branch`, and all of
-`[plugins]`, `[verdicts]`, `[land]`, `[releases]` and `[stamps]`, and `[board]`'s `on_review`,
-`on_land`, `machine_work_reader`, `postgresql`, `external_postgresql` and `assessments`. A file no commit records must
-not change the landing gate or run a command: that would be a way around review that leaves no
-trace. Every other table or key (the rest of `[project]`, `[board]` and `[agents]`, `[theme]`,
-`[[entrypoints]]`, `[workflow]`, or a name misspelt) is refused by name too, as no setting a local
-file overrides.
+read from it and is refused there by name: `[project]`'s `cargo` and `default_branch`, all of
+`[plugins]`, `[verdicts]`, `[land]`, `[releases]` and `[stamps]`, the workflow's three tables
+(`[workflow]`, `[[workflow_mappings]]` and `[[workflow_authorities]]`, the two lists refused as
+arrays all the same), and `[board]`'s `on_review`, `on_land`, `machine_work_reader`,
+`postgresql`, `external_postgresql` and `assessments`. A file no commit records must not change
+the landing gate or run a command: that would be a way around review that leaves no trace. Every
+other table or key (the rest of `[project]`, `[board]` and `[agents]`, `[theme]`,
+`[[entrypoints]]`, or a name misspelt) is refused by name too, as no setting a local file
+overrides.
 
 Whatever is wrong with it is said with the file and the line: a refused setting, a key of one of
 its three tables the Symphony does not know, a value of the wrong type or outside its range, an
@@ -204,7 +230,9 @@ engine carries the entries.
 
 Each table serves one folder at one URL. With none written, one keeps the convention: `docs/` at
 `/docs/`, Markdown and HTML, `docs/history` listed but never read as documents. A key not listed here
-refuses the file, as a misspelt one would change what is served.
+refuses the file, as a misspelt one would change what is served. A route the Symphony answers
+itself (`symphony_api::SYMPHONY_ROUTES`: `tasks`, `queue`, `reports`, `runs`, `settings` and the
+rest) wins over every entrypoint, so one whose `url` lies on such a route refuses the file by name.
 
 | Key | Default | What it sets |
 | --- | --- | --- |
@@ -385,11 +413,13 @@ A generator, in `[land] generators` or `[verdicts] generators`, usually written 
 | `slot_locks` | none | the folder of the project's test-slot locks, which the agents view probes; under `.git/`, the git common dir |
 | `assessments` | none: an assessment is refused | the folder of the project's landing assessments; under `.git/`, the git common dir |
 
-A project's board needs no PostgreSQL: it runs on the SurrealDB `symphony init` fetches
-([getting started](GETTING_STARTED.md#2-set-the-project-up)). Only a board whose home names
-PostgreSQL uses what follows. Its setup requires version 18 or later, installed by the machine's
-package manager. Without an explicit `postgresql`, discovery takes the first executable `postgres` on `PATH`;
-`initdb`, `pg_ctl` and `psql` must be executable in the same folder. On a Mac with Homebrew:
+A project's board runs on the machine's PostgreSQL: a board not made yet is made on it by its
+first command ([getting started](GETTING_STARTED.md#2-set-the-project-up)), and only a board made
+on SurrealDB before that, which holds its store and names no other engine, still runs there
+until it is moved ([POSTGRESQL](POSTGRESQL.md)). Its setup requires version 18 or later,
+installed by the machine's package manager. Without an explicit `postgresql`, discovery takes the
+first executable `postgres` on `PATH`; `initdb`, `pg_ctl` and `psql` must be executable in the
+same folder. On a Mac with Homebrew:
 
 ```sh
 brew install postgresql@18
@@ -399,8 +429,9 @@ export PATH="$(brew --prefix postgresql@18)/bin:$PATH"
 For another installation, put its `bin` folder on `PATH` or set `[board] postgresql` to its
 absolute path. An explicit value always wins, including when it is invalid. A missing tool,
 failed version probe or server older than 18 fails with setup guidance; discovery never skips
-an incompatible installation to select another. It inspects programs only, starting no database:
-a board uses PostgreSQL once its home names it ([POSTGRESQL](POSTGRESQL.md)).
+an incompatible installation to select another. It inspects programs only, starting no database.
+A board not made yet on a machine without it is refused with that guidance, and nothing is made;
+`symphony init` asks for it until discovery finds it.
 
 ## `[board.external_postgresql]`
 
@@ -586,6 +617,11 @@ committed for its adapter leaves the workflow unsupported.
 | `issuer` | required | the name the authority signs as, which its observations and attestations repeat |
 | `contract` | required | the attestation contract it speaks, `1` in this release |
 | `key` | required | the public half of its signing key, `ed25519:` and 64 lowercase hex digits |
+| `page` | none | where its ledger shows a guard of a task: a path of the app or a web address, `{task}` and `{guard}` filled in with the task's slug and the guard's ID, which [a task's page](../workflow/WORKFLOW.md#the-app) puts on the authority's name |
+
+`page` is a link and nothing more: the board records none of it, it names no key or issuer, and
+it decides nothing the board admits. One that, filled in, is neither a path of the app nor a web
+address is refused by name.
 
 ## `[releases]`
 

@@ -164,12 +164,13 @@
   color: var(--foreground);
   cursor: pointer;
 }
-/* A phone's count of the work under way: four equal cells in one fixed row, so a count that
-   changes, or a machine's first report, moves nothing. The sum is plain text; each part is a
-   button to its lane. */
+/* A phone's count of the work under way: four cells of fixed shares in one fixed row, so a count
+   that changes, or a machine's first report, moves nothing; the second, "in progress", the
+   longest word, has a quarter more room, which keeps it whole at 320 px. The sum is plain text;
+   each part is a button to its lane. */
 .under-way {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, 1fr);
   gap: 6px;
   height: 40px;
   margin: 0 0 8px;

@@ -74,8 +74,10 @@ pub(crate) const READS: &[&str] = &[
     symphony_api::RUNS_PATH,
     symphony_api::RUN_PATH,
     symphony_api::SCHEMA_UPDATES_PATH,
+    symphony_api::SETTINGS_PATH,
     symphony_api::workflow::WORKFLOW_PATH,
     symphony_api::workflow::WORKFLOW_ACTIONS_PATH,
+    symphony_api::workflow::WORKFLOW_GUARDS_PATH,
     symphony_api::TASK_ATTEMPTS_PATH,
 ];
 
@@ -338,6 +340,7 @@ fn arguments(asked: &Asked, request: &Request) -> Result<(), Box<Response>> {
             | symphony_api::TASK_DIFF_PATH
             | symphony_api::TASK_DIFF_FILE_PATH
             | symphony_api::workflow::WORKFLOW_ACTIONS_PATH
+            | symphony_api::workflow::WORKFLOW_GUARDS_PATH
             | symphony_api::TASK_ATTEMPTS_PATH
     ) {
         argument(request, "slug").map_err(bad)?;
@@ -348,6 +351,13 @@ fn arguments(asked: &Asked, request: &Request) -> Result<(), Box<Response>> {
         return Err(refused(
             StatusCode::FORBIDDEN,
             "Forbidden: next actions are the local owner's, never a hosted visitor's",
+        ));
+    }
+    // A task's guards are read with its actions, and are the local owner's as they are.
+    if asked.hosted && path == symphony_api::workflow::WORKFLOW_GUARDS_PATH {
+        return Err(refused(
+            StatusCode::FORBIDDEN,
+            "Forbidden: a task's guards are the local owner's, never a hosted visitor's",
         ));
     }
     if path == symphony_api::AGENT_SCREEN_PATH {
@@ -444,6 +454,16 @@ async fn off_board(
             let hub = shared.hub()?;
             let read = crate::spawn::blocking(move || runs::answer(&hub, &filters).map(Json));
             answered(read.await, "the runs could not be read: ")
+        }
+        // The settings are the project's files and this machine's programs alone, the board
+        // never read; a read, which writes nothing.
+        symphony_api::SETTINGS_PATH => {
+            let hub = shared.hub()?;
+            let read = crate::spawn::blocking(move || {
+                let machine = symphony::settings::Machine::of_process();
+                Ok(Json(symphony::settings::page(&hub.root, &machine)))
+            });
+            answered(read.await, "the settings could not be read: ")
         }
         symphony_api::RUN_PATH => {
             let run = query(request, "run")
@@ -551,6 +571,7 @@ async fn over_hub(shared: &Arc<Shared>, hub: Arc<Hub>, asked: Asked, request: Re
         }
         "/api/feed" => feed(hub, scope, request).await,
         symphony_api::TASK_ATTEMPTS_PATH => attempts(hub, &request).await,
+        symphony_api::workflow::WORKFLOW_GUARDS_PATH => guards(hub, &request).await,
         symphony_api::workflow::WORKFLOW_PATH | symphony_api::workflow::WORKFLOW_ACTIONS_PATH => {
             workflow(hub, path, &request).await
         }
@@ -586,6 +607,21 @@ async fn attempts(hub: Arc<Hub>, request: &Request) -> Response {
     answered(read.await, "")
 }
 
+/// The guards of one task a custom workflow holds, as the board's records have them, with each
+/// authority's page and whether this host asks it (`symphony::guards`): the same for every branch,
+/// the project file's pages the main checkout's.
+async fn guards(hub: Arc<Hub>, request: &Request) -> Response {
+    let slug = query(request, "slug").unwrap_or_default();
+    let read = crate::spawn::blocking(move || {
+        let store = hub.reader().map_err(|e| unavailable(&e, ""))?;
+        let read = symphony::guards::of(&hub.root, &store, &slug)
+            .map(Json)
+            .map_err(task_failure);
+        hub.read_on(&store, read)
+    });
+    answered(read.await, "")
+}
+
 /// The board's active custom workflow, and the local owner's next actions on one task it holds
 /// (docs/workflow/WORKFLOW.md, "The app"): the board's own reads, the same for every branch.
 async fn workflow(hub: Arc<Hub>, path: &str, request: &Request) -> Response {
@@ -594,13 +630,8 @@ async fn workflow(hub: Arc<Hub>, path: &str, request: &Request) -> Response {
     let read = crate::spawn::blocking(move || {
         let store = hub.reader().map_err(|e| unavailable(&e, ""))?;
         let read = if actions {
-            store
-                .workflow_actions(
-                    &slug,
-                    &symphony_board::workflow::local_owner(),
-                    &symphony_board::workflow::Host::local(),
-                )
-                .map(|next| no_store(Json(next)))
+            owner_actions(&store, &slug)
+                .map(|read| no_store(Json(read)))
                 .map_err(task_failure)
         } else {
             store
@@ -1248,6 +1279,28 @@ async fn plugin_response(shared: &Shared, root: &Path, path: &str, request: &Req
     }
 }
 
+/// The local owner's next actions on `slug`, with the accepted output standing for each task it
+/// depends on where an edge leaving its pair takes them, which the page sends with that edge
+/// (docs/workflow/WORKFLOW.md, "Accepted outputs").
+fn owner_actions(
+    store: &symphony_board::Store,
+    slug: &str,
+) -> Result<symphony_api::workflow::ActionsRead, symphony_board::Error> {
+    let next = store.workflow_actions(
+        slug,
+        &symphony_board::workflow::local_owner(),
+        &symphony_board::workflow::Host::local(),
+    )?;
+    let takes = (store.accepted_outputs(slug)?.takes.into_iter())
+        .map(|(task, output)| symphony_api::workflow::TakenOutput { task, output })
+        .collect();
+    Ok(symphony_api::workflow::ActionsRead {
+        snapshot: next.snapshot,
+        actions: next.actions,
+        takes,
+    })
+}
+
 fn no_store(value: impl IntoResponse) -> Response {
     let mut response = value.into_response();
     response.headers_mut().insert(
@@ -1654,6 +1707,7 @@ fn client_kind(project: &symphony_api::ProjectView, path: &str) -> Option<&'stat
         "/queue" => Some("queue"),
         "/reports" => Some("reports"),
         "/runs" => Some("runs"),
+        "/settings" => Some("settings"),
         _ if path.starts_with("/task/") => Some("task"),
         _ if project
             .nav
@@ -1702,6 +1756,8 @@ mod agent_page;
 
 #[cfg(test)]
 mod route_groups_tests;
+#[cfg(test)]
+mod settings_tests;
 #[cfg(test)]
 mod tests;
 

@@ -1,7 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readGuards, readRefusal } from "./guards";
 import {
   type Action,
+  type Board,
+  guardsAlone,
   isStale,
   keyFor,
   missing,
@@ -17,6 +20,8 @@ import {
   recoveryWords,
   requestOf,
   take,
+  takenWords,
+  takerWords,
   unavailableWords,
   unknownOutcome,
   whose,
@@ -24,16 +29,24 @@ import {
 import { Failure } from "./request";
 import { field } from "./shared";
 import { type Asked, asking, CASES, elementOf, type Found, fire, reply, server } from "./testing";
-import type { WorkflowPlace } from "./wire";
+import type { WorkflowGuardRefusal, WorkflowPlace, WorkflowTaskGuards } from "./wire";
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
 const OFFER = readOffer(CASES.samples.nextActions) as Offer;
-const BOARD = readBoard(CASES.samples.workflow);
+const BOARD = readBoard(CASES.samples.workflow) as Board;
 const [PASS, REWORK] = OFFER.actions as [Action, Action];
+/** The actions at Verify, where Accept takes the accepted output of what the task depends on. */
+const TAKING = readOffer(CASES.samples.takingActions) as Offer;
+const [ACCEPT] = TAKING.actions as [Action];
 const AT: WorkflowPlace = { phase: "review", state: "awaiting", revision: 7 };
+const GUARDS = readGuards(CASES.samples.taskGuards) as WorkflowTaskGuards;
+const REFUSAL = readRefusal(CASES.samples.guardRefusal) as WorkflowGuardRefusal;
+/** Pass review as a preview lists it for the owner once its guard is all that holds it. */
+const HELD: Action = { ...PASS, unavailable: ["guard_unavailable"] };
+const GUARDED: Offer = { ...OFFER, actions: [HELD, REWORK] };
 
 describe("the next actions a read offers", () => {
   it("are each edge's label, destination, inputs and why it is unavailable", () => {
@@ -41,6 +54,7 @@ describe("the next actions a read offers", () => {
     expect(OFFER.actions).toEqual([
       {
         edge: "pass",
+        operation: "approve",
         label: "Pass review",
         destination: { phase: "verify", state: "awaiting" },
         responsible: [{ kind: "task_role", role: "reviewer" }],
@@ -49,6 +63,7 @@ describe("the next actions a read offers", () => {
       },
       {
         edge: "rework",
+        operation: "changes",
         label: "Send back",
         destination: { phase: "build", state: "working" },
         responsible: [{ kind: "project_capability", capability: "owner" }],
@@ -56,12 +71,29 @@ describe("the next actions a read offers", () => {
         unavailable: [],
       },
     ]);
+    expect(OFFER.takes).toEqual([]);
   });
 
-  it("include an apply's answer, which may offer none", () => {
+  it("include an apply's answer, which may offer none and takes no output", () => {
     const next = readOffer((CASES.samples.applied as { next: unknown }).next);
     expect(next?.actions).toEqual([]);
+    expect(next?.takes).toEqual([]);
     expect(next?.snapshot.task_revision).toBe(8);
+  });
+
+  it("name the accepted output standing for each task an edge takes, or none", () => {
+    expect(TAKING.takes).toEqual([{ task: "w/a", output: "w/a@3" }]);
+    const sample = CASES.samples.takingActions as object;
+    const none = readOffer({ ...sample, takes: [{ task: "w/c", output: null }] });
+    expect(none?.takes).toEqual([{ task: "w/c", output: null }]);
+    expect(readOffer({ ...sample, takes: [{ task: "w/a" }] })).toBeNull();
+    expect(readOffer({ ...sample, takes: [{ task: 1, output: null }] })).toBeNull();
+    expect(readOffer({ ...sample, takes: [{ task: "w/a", output: 3 }] })).toBeNull();
+    expect(readOffer({ ...sample, takes: "w/a" })).toBeNull();
+    expect(takenWords({ task: "w/a", output: "w/a@3" })).toBe("Takes w/a's accepted output w/a@3");
+    expect(takenWords({ task: "w/c", output: null })).toBe(
+      "Takes w/c's accepted output: none stands",
+    );
   });
 
   it("are none for a read the page cannot draw, and pass what it does not read", () => {
@@ -69,6 +101,7 @@ describe("the next actions a read offers", () => {
     const [first] = sample.actions;
     const changed = (action: object) => ({ ...sample, actions: [{ ...first, ...action }] });
     expect(readOffer(changed({ label: 3 }))).toBeNull();
+    expect(readOffer(changed({ operation: null }))).toBeNull();
     expect(readOffer(changed({ destination: { phase: "verify" } }))).toBeNull();
     expect(readOffer(changed({ responsible: [{ kind: "task_role" }] }))).toBeNull();
     expect(readOffer(changed({ required_inputs: [1] }))).toBeNull();
@@ -85,6 +118,7 @@ describe("the next actions a read offers", () => {
 describe("the board's workflow on a task's page", () => {
   it("names the project and labels the phases, states and places", () => {
     expect(BOARD?.project).toBe("symphony");
+    expect(BOARD?.taking).toEqual(new Set(["accept"]));
     expect(BOARD?.names.get("phase:review")).toBe("Review");
     expect(placeWords(BOARD?.names as Map<string, string>, AT)).toBe("Review · Awaiting review");
   });
@@ -108,8 +142,8 @@ describe("the board's workflow on a task's page", () => {
 
 describe("an unavailable action", () => {
   it("says why and whom it needs: a role on the task or a capability", () => {
-    expect(unavailableWords(PASS)).toBe("not the owner's to take: needs the reviewer");
-    expect(unavailableWords(REWORK)).toBe("");
+    expect(unavailableWords(PASS, "w/b")).toBe("not the owner's to take: needs the reviewer");
+    expect(unavailableWords(REWORK, "w/b")).toBe("");
     expect(
       whose([
         { kind: "task_role", role: "executor" },
@@ -118,12 +152,47 @@ describe("an unavailable action", () => {
     ).toBe("the executor or the land tasks capability");
   });
 
+  it("leaves its guards to their rows, and is its guards' alone when nothing else holds it", () => {
+    expect(unavailableWords(HELD, "w/b")).toBe("waits on its guard: needs the reviewer");
+    expect(unavailableWords(HELD, "w/b", true)).toBe("");
+    const both = { ...PASS, unavailable: ["guard_unavailable", "unauthorized"] };
+    expect(unavailableWords(both, "w/b", true)).toBe("not the owner's to take: needs the reviewer");
+    expect([HELD, both, REWORK].map(guardsAlone)).toEqual([true, false, false]);
+  });
+
   it("says a code it does not know once, and no one where none is named", () => {
     const action = { ...PASS, responsible: [], unavailable: ["unsupported_writer", "newer"] };
-    expect(unavailableWords(action)).toBe("not supported here");
-    expect(unavailableWords({ ...PASS, unavailable: ["dependency", "capacity"] })).toBe(
+    expect(unavailableWords(action, "w/b")).toBe("not supported here");
+    expect(unavailableWords({ ...PASS, unavailable: ["dependency", "capacity"] }, "w/b")).toBe(
       "waits on what it depends on; no slot is free: needs the reviewer",
     );
+  });
+
+  it("says the land or an adapter takes an edge of theirs, in place of an explicit action", () => {
+    const explicit = { ...PASS, unavailable: ["explicit_action_required"] };
+    for (const operation of ["prepare_land", "confirm_land"]) {
+      const land = { ...explicit, operation };
+      expect(takerWords(land, "w/b")).toBe("the land takes it: just land w/b");
+      expect(unavailableWords(land, "w/b")).toBe("the land takes it: just land w/b");
+      expect(
+        unavailableWords({ ...land, unavailable: ["capacity", ...land.unavailable] }, "w/b"),
+      ).toBe("the land takes it: just land w/b; no slot is free: needs the reviewer");
+      // Unavailable for another reason alone, it says that reason, as any edge's.
+      expect(unavailableWords({ ...land, unavailable: ["capacity"] }, "w/b")).toBe(
+        "no slot is free: needs the reviewer",
+      );
+      // Held by a guard as well, whose row says it: the line says who takes it, and only that.
+      const guarded = { ...land, unavailable: ["guard_unavailable", ...land.unavailable] };
+      expect(unavailableWords(guarded, "w/b", true)).toBe("the land takes it: just land w/b");
+      expect(unavailableWords(guarded, "w/b")).toBe(
+        "the land takes it: just land w/b; waits on its guard: needs the reviewer",
+      );
+    }
+    for (const operation of ["prepare_external", "confirm_external"]) {
+      expect(unavailableWords({ ...explicit, operation }, "w/b")).toBe("its adapter takes it");
+    }
+    expect(takerWords(PASS, "w/b")).toBeNull();
+    expect(unavailableWords(explicit, "w/b")).toBe("needs an explicit action: needs the reviewer");
   });
 });
 
@@ -141,7 +210,7 @@ describe("a task waiting on a recovery by hand", () => {
 describe("the request an action posts", () => {
   it("names its edge, the snapshot it was offered under and each input as text, trimmed", () => {
     const values = { rework: { reason: "  the test is red  " } };
-    expect(requestOf("symphony", "w/b", OFFER, REWORK, values)).toEqual({
+    expect(requestOf(BOARD, "w/b", OFFER, REWORK, values)).toEqual({
       project: "symphony",
       task: "w/b",
       edge: "rework",
@@ -149,6 +218,20 @@ describe("the request an action posts", () => {
       input_revisions: {},
       inputs: { reason: { kind: "text", value: "the test is red" } },
     });
+  });
+
+  it("names the accepted output standing for each task an edge depending on them takes", () => {
+    expect(requestOf(BOARD, "w/d", TAKING, ACCEPT, {}).input_revisions).toEqual({
+      "w/a": "w/a@3",
+    });
+    // One none stands for is not named: the server says the edge waits on it.
+    const some = { ...TAKING, takes: [...TAKING.takes, { task: "w/c", output: null }] };
+    expect(requestOf(BOARD, "w/d", some, ACCEPT, {}).input_revisions).toEqual({
+      "w/a": "w/a@3",
+    });
+    // Another edge leaving the same place names none, which the server refuses as stale.
+    const other = { ...ACCEPT, edge: "block" };
+    expect(requestOf(BOARD, "w/d", TAKING, other, {}).input_revisions).toEqual({});
   });
 
   it("waits for each input it needs", () => {
@@ -217,8 +300,52 @@ describe("reading the actions", () => {
       board: null,
       offer: null,
       refused: "Forbidden: next actions are the local owner's (the server answered 403)",
+      guards: null,
     });
     expect(asked).toHaveLength(3);
+  });
+
+  it("reads the task's guards where the workflow declares one or an action says one holds it", async () => {
+    const guarded = structuredClone(CASES.samples.workflow) as {
+      workflow: { definition: { guards: unknown[] } };
+    };
+    guarded.workflow.definition.guards = [{ id: "release_signoff", adapter: "release" }];
+    expect(readBoard(guarded)?.guarded).toBe(true);
+    expect(BOARD?.guarded).toBe(false);
+    const asked = server();
+    const read = readActions("design~policy", "w/b", new AbortController().signal, now);
+    await asking(asked, 1);
+    asked[0]?.answer(reply(200, guarded));
+    await asking(asked, 2);
+    asked[1]?.answer(reply(200, CASES.samples.nextActions));
+    await asking(asked, 3);
+    expect(asked[2]?.url).toBe("/@design~policy/api/workflow-guards?slug=w%2Fb");
+    // A read with no answer is asked again, and it alone.
+    asked[2]?.answer(reply(503, { error: "the board is slow" }));
+    await asking(asked, 4);
+    expect(asked[3]?.url).toBe(asked[2]?.url);
+    asked[3]?.answer(reply(200, CASES.samples.taskGuards));
+    expect((await read)?.guards).toEqual(GUARDS);
+
+    // The board's read failed for good: an action a guard holds still asks for the guards, whose
+    // refusal leaves the actions drawn without them.
+    const held = { ...(CASES.samples.nextActions as object), actions: [] as unknown[] };
+    held.actions = [
+      {
+        ...(field(CASES.samples.nextActions, "actions") as object[])[0],
+        unavailable: ["guard_unavailable"],
+      },
+    ];
+    const other = readActions("", "w/b", new AbortController().signal, now);
+    await asking(asked, 5);
+    asked[4]?.answer(reply(400, { error: "no" }));
+    await asking(asked, 6);
+    asked[5]?.answer(reply(200, held));
+    await asking(asked, 7);
+    expect(asked[6]?.url).toBe("/api/workflow-guards?slug=w%2Fb");
+    asked[6]?.answer(reply(403, { error: "Forbidden" }));
+    expect(await other).toMatchObject({ board: null, guards: null, refused: "" });
+    expect(asked).toHaveLength(7);
   });
 
   it("says an answer it cannot read, and is none once the page has gone", async () => {
@@ -249,7 +376,7 @@ describe("taking an action", () => {
 
   it("posts its edge with the snapshot and a key, and draws the actions it offers after", async () => {
     const asked = server();
-    const taken = take("", "w/b", "symphony", OFFER, REWORK, values, null);
+    const taken = take("", "w/b", BOARD, OFFER, REWORK, values, null);
     await asking(asked, 1);
     expect(asked[0]?.url).toBe("/api/workflow-apply");
     const posted = asked[0]?.body as { slug: string; request: Record<string, unknown> };
@@ -263,7 +390,7 @@ describe("taking an action", () => {
 
   it("prompts a refresh when the task moved, and forgets a request the server refused", async () => {
     const asked = server();
-    const taken = take("", "w/b", "symphony", OFFER, REWORK, values, null);
+    const taken = take("", "w/b", BOARD, OFFER, REWORK, values, null);
     await asking(asked, 1);
     asked[0]?.answer(reply(400, { error: "stale_task: the task is at revision 8, not 7" }));
     expect(await taken).toEqual({
@@ -272,13 +399,38 @@ describe("taking an action", () => {
       said: "Send back was not taken: stale_task: the task is at revision 8, not 7",
       moved: true,
       sent: null,
+      guard: null,
+    });
+  });
+
+  it("keeps the guard a refusal names beside its words, and says it short", async () => {
+    const asked = server();
+    const taken = take("", "w/b", BOARD, GUARDED, HELD, {}, null);
+    await asking(asked, 1);
+    const error = "guard_unavailable: release_signoff refused it";
+    asked[0]?.answer(reply(400, { error, guard: CASES.samples.guardRefusal }));
+    expect(await taken).toEqual({
+      done: false,
+      next: null,
+      said: "Pass review was not taken: release signoff holds it",
+      moved: false,
+      sent: null,
+      guard: { refusal: REFUSAL, said: error },
+    });
+    // A guard the page cannot read is no guard: the refusal's own words are said.
+    const unread = take("", "w/b", BOARD, GUARDED, HELD, {}, null);
+    await asking(asked, 2);
+    asked[1]?.answer(reply(400, { error, guard: { guard: 7 } }));
+    expect(await unread).toMatchObject({
+      said: `Pass review was not taken: ${error}`,
+      guard: null,
     });
   });
 
   it("sends a request whose answer is not known again with its key", async () => {
     const asked = server();
     const first = await (async () => {
-      const taken = take("", "w/b", "symphony", OFFER, REWORK, values, null);
+      const taken = take("", "w/b", BOARD, OFFER, REWORK, values, null);
       await asking(asked, 1);
       asked[0]?.answer(reply(502, { error: "the server restarted" }));
       return taken;
@@ -286,20 +438,12 @@ describe("taking an action", () => {
     expect(first).toMatchObject({ done: false, moved: false });
     const key = keyOf(asked, 0);
     expect(first.sent?.key).toBe(key);
-    const again = take("", "w/b", "symphony", OFFER, REWORK, values, first.sent);
+    const again = take("", "w/b", BOARD, OFFER, REWORK, values, first.sent);
     await asking(asked, 2);
     expect(asked[1]?.body).toEqual(asked[0]?.body);
     asked[1]?.answer(reply(200, { ok: true, result: CASES.samples.applied }));
     expect((await again).done).toBe(true);
-    const other = take(
-      "",
-      "w/b",
-      "symphony",
-      OFFER,
-      REWORK,
-      { rework: { reason: "x" } },
-      first.sent,
-    );
+    const other = take("", "w/b", BOARD, OFFER, REWORK, { rework: { reason: "x" } }, first.sent);
     await asking(asked, 3);
     expect(keyOf(asked, 2)).not.toBe(key);
     asked[2]?.answer(reply(200, { ok: true, result: {} }));
@@ -310,8 +454,9 @@ describe("taking an action", () => {
 describe("the part drawn", () => {
   const view = (props: Partial<NextActionsViewProps> = {}) =>
     NextActionsView({
+      slug: "w/b",
       place: AT,
-      read: { board: BOARD, offer: OFFER, refused: "" },
+      read: { board: BOARD, offer: OFFER, refused: "", guards: null },
       values: {},
       busy: "",
       checking: false,
@@ -367,6 +512,70 @@ describe("the part drawn", () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 
+  it("names the accepted outputs an edge takes, and posts them with it", () => {
+    const at: WorkflowPlace = { phase: "verify", state: "awaiting", revision: 12 };
+    const read = { board: BOARD, offer: TAKING, refused: "", guards: null };
+    expect(markup({ place: at, read })).toContain(
+      '<ul class="flow-takes" aria-label="Accepted outputs taken"><li>Takes w/a&#x27;s accepted output w/a@3</li></ul>',
+    );
+    expect(markup()).not.toContain("flow-takes");
+    const onTake = vi.fn();
+    fire(view({ place: at, read, onTake }), button("Accept"), "onClick");
+    expect(onTake).toHaveBeenCalledWith(ACCEPT);
+  });
+
+  describe("of a task with guards", () => {
+    const read: Read = { board: BOARD, offer: GUARDED, refused: "", guards: GUARDS };
+    const refused = { edge: "pass", revision: 7, tried: { refusal: REFUSAL, said: "", at: 0 } };
+
+    it("draws the guards that let it in over the actions, and an action's under it", () => {
+      const drawn = markup({ read });
+      expect(drawn.indexOf('data-guards="entry"')).toBeLessThan(drawn.indexOf("flow-actions"));
+      expect(drawn).toContain('Let in by <a href="#timeline">Submit · revision 7 · ');
+      expect(drawn).toContain('aria-label="Pass review needs"');
+      expect(drawn).toContain('data-guard="release_signoff" data-state="no word yet"');
+      // Its guard is all that holds it and this host asks its authority: the owner's to take.
+      expect(elementOf(view({ read }), button("Pass review"))?.props.disabled).toBe(false);
+      expect(drawn).not.toContain("waits on its guard");
+      // Send back carries no guard, and draws no box.
+      expect(drawn.match(/class="guard-box"/g)).toHaveLength(2);
+      expect(drawn).toContain("nothing on this page approves");
+    });
+
+    it("holds an action whose authority this app cannot ask, and gives no command", () => {
+      const authorities = GUARDS.authorities.map((one) => ({ ...one, asked_here: false }));
+      const apart: Read = { ...read, guards: { ...GUARDS, authorities } };
+      expect(elementOf(view({ read: apart }), button("Pass review"))?.props.disabled).toBe(true);
+      const drawn = markup({ read: apart });
+      expect(drawn).toContain('data-state="not from here"');
+      expect(drawn).toContain("no plugin of this project answers for its adapter, release");
+      expect(drawn).not.toContain("<code>");
+      // Something else holds it too: its line says that, the guard's row the guard.
+      const both = { ...HELD, unavailable: ["guard_unavailable", "unauthorized"] };
+      const held = markup({ read: { ...read, offer: { ...GUARDED, actions: [both] } } });
+      expect(held).toContain("not the owner&#x27;s to take: needs the reviewer");
+      expect(held).toContain('data-state="no word yet"');
+    });
+
+    it("says the last refusal in its guard's row until the task moves", () => {
+      const drawn = markup({ read, refused });
+      expect(drawn).toContain('data-guard="release_signoff" data-state="refused"');
+      expect(drawn).toContain('<a href="/task/w/a">task w/a</a>');
+      const moved = markup({ read, refused: { ...refused, revision: 6 } });
+      expect(moved).toContain('data-state="no word yet"');
+      const other = markup({ read, refused: { ...refused, edge: "rework" } });
+      expect(other).toContain('data-state="no word yet"');
+    });
+
+    it("draws the actions as they were where the guards could not be read", () => {
+      const drawn = markup({ read: { ...read, guards: null } });
+      expect(drawn).not.toContain("guard-box");
+      expect(drawn).toContain("waits on its guard: needs the reviewer");
+      const held = view({ read: { ...read, guards: null } });
+      expect(elementOf(held, button("Pass review"))?.props.disabled).toBe(true);
+    });
+  });
+
   it("says a resume, a recovery by hand, a refusal and an offer of none", () => {
     const place: WorkflowPlace = {
       phase: "build",
@@ -376,11 +585,13 @@ describe("the part drawn", () => {
       manual: { trigger: "release", holder: "amber", role: "executor" },
     };
     const none = { ...OFFER, snapshot: { ...OFFER.snapshot, task_revision: 2 }, actions: [] };
-    const drawn = markup({ place, read: { board: BOARD, offer: none, refused: "" } });
+    const drawn = markup({ place, read: { board: BOARD, offer: none, refused: "", guards: null } });
     expect(drawn).toContain("At <b>Build · Blocked</b> · resumes at Build · Available");
     expect(drawn).toContain("amber left its executor");
     expect(drawn).toContain("No action is open now");
-    const refused = markup({ read: { board: null, offer: null, refused: "Forbidden" } });
+    const refused = markup({
+      read: { board: null, offer: null, refused: "Forbidden", guards: null },
+    });
     expect(refused).toContain("At <b>review · awaiting</b>");
     expect(refused).toContain("No actions: Forbidden");
     expect(markup({ read: null })).toContain('aria-busy="true"');

@@ -393,17 +393,23 @@ fn the_board_guide_is_the_files_else_the_default() {
     assert_eq!(found.guide(), project::GUIDE);
 }
 
-/// A board whose server cannot start says where its SurrealDB comes from in the board guide the
-/// project's file names: with no store yet, the SurrealDB it needs is missing; with the board's
-/// store there, it is a board that cannot be served.
+/// A board whose server cannot start says where its server comes from in the board guide the
+/// project's file names: with no store yet, the board is made on PostgreSQL, which is missing;
+/// with the board's SurrealDB store there, it is a board that cannot be served, and SurrealDB is
+/// what is missing, never PostgreSQL.
 #[test]
 fn a_board_that_cannot_be_served_names_the_guide_the_project_file_names() {
     let main = repository(&scratch("project-guide-refusal").join("main"))
         .canonicalize()
         .unwrap();
+    let programs = main.join("no-postgresql");
     write(
         &main.join(FILE),
-        "[project]\nid = \"lamp-works\"\n[board]\nguide = \"handbook/BOARD.md\"\n",
+        &format!(
+            "[project]\nid = \"lamp-works\"\n[board]\nguide = \"handbook/BOARD.md\"\n\
+             postgresql = {:?}\n",
+            programs.display().to_string()
+        ),
     );
     let missing = main.join("no-surreal");
     let vars = [(
@@ -415,18 +421,25 @@ fn a_board_that_cannot_be_served_names_the_guide_the_project_file_names() {
         cwd: main.clone(),
     };
     let ran = crate::run(&env, &["list"], "");
-    assert_eq!(
-        (ran.code, ran.err),
-        (
-            2,
-            format!(
-                "✖ SurrealDB {} is not at {}, where `SYMPHONY_SURREAL` names it \
-                 (handbook/BOARD.md#where-it-lives)\n",
-                symphony_board::server::SURREAL_VERSION,
-                missing.display()
-            )
-        )
+    let home = main.join(".git").join(symphony_board::folders::TASKS);
+    assert_eq!(ran.code, 2, "{}", ran.err);
+    assert!(
+        ran.err.starts_with(&format!(
+            "✖ nothing was made for the board in {}, which is not made yet and is made on \
+             PostgreSQL: PostgreSQL is not at {} (postgres is missing or not executable); \
+             install PostgreSQL 18 or later",
+            home.display(),
+            programs.display()
+        )),
+        "{}",
+        ran.err
     );
+    assert!(
+        ran.err.ends_with(" (handbook/BOARD.md#where-it-lives)\n"),
+        "{}",
+        ran.err
+    );
+    assert!(!ran.err.contains("SurrealDB"), "{}", ran.err);
     let data = main
         .join(".git")
         .join(symphony_board::folders::TASKS)

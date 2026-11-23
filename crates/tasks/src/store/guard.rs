@@ -16,7 +16,10 @@ use crate::workflow::Active;
 use crate::workflow::guard::{self, Accepted, Attester, Binding, Checked, Guarding, Observed};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use symphony_api::workflow::Signed;
+use symphony_api::workflow::{
+    Attestation, GuardAuthority, GuardEntry, GuardMet, GuardNeed, GuardStanding, GuardedEdge,
+    Signed, TaskGuards,
+};
 
 /// What an observation did to the state the board accepted from its authority.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -155,6 +158,93 @@ impl Store {
         crate::objects::read(&body)
             .map(Some)
             .map_err(|e| Error::Db(format!("an admission not in the board's shape: {e}")))
+    }
+
+    /// The guards of `slug` as a task's page shows them ([`TaskGuards`]): the authorities the
+    /// active activation commits with the state accepted from each, the guards the workflow
+    /// declares, the guarded edges leaving the task's pair, and the admission that last brought
+    /// it into that pair by a guarded edge ([`guard::entry`]), each guard it met with whether it
+    /// still stands ([`guard::standing`]) and what its attestation says while that verifies. All
+    /// empty on a board with no workflow active or a workflow that declares no guard. No page
+    /// and no host is known here: `page` is none and `asked_here` false, which the Symphony
+    /// fills. It reads the board's records and decides nothing.
+    pub fn workflow_guards(&self, slug: &str) -> Result<TaskGuards, Error> {
+        let Some(active) = self.workflow_active()? else {
+            return Ok(TaskGuards::default());
+        };
+        let recorded = self.workflow_definition(&active.digest)?.ok_or_else(|| {
+            Error::Db(format!(
+                "the active workflow's definition {} is not recorded",
+                active.digest
+            ))
+        })?;
+        let definition = &recorded.definition;
+        if definition.guards.is_empty() {
+            return Ok(TaskGuards::default());
+        }
+        let now = self.workflow_authorities()?;
+        let authorities = (now.attesters.iter())
+            .map(|attester| {
+                let accepted = (now.accepted.iter()).find(|a| a.adapter == attester.adapter);
+                GuardAuthority {
+                    adapter: attester.adapter.clone(),
+                    issuer: attester.issuer.clone(),
+                    epoch: accepted.map(|a| a.epoch.clone()),
+                    generation: accepted.map(|a| a.generation),
+                    conflicted: accepted.is_some_and(|a| a.conflicted),
+                    admitted: accepted.map_or(0, |a| a.admitted),
+                    asked_here: false,
+                }
+            })
+            .collect();
+        let guards = (definition.guards.iter())
+            .map(|guard| GuardNeed {
+                guard: guard.id.clone(),
+                adapter: guard.adapter.clone(),
+                page: None,
+            })
+            .collect();
+        let transitions = self.workflow_transitions(slug)?;
+        let mut read = TaskGuards {
+            authorities,
+            guards,
+            edges: Vec::new(),
+            entry: None,
+        };
+        let Some(last) = transitions.last() else {
+            return Ok(read);
+        };
+        let pair = &last.to;
+        read.edges = (definition.edges.iter())
+            .filter(|edge| edge.from == *pair && !edge.guards.is_empty())
+            .map(|edge| GuardedEdge {
+                edge: edge.id.clone(),
+                guards: edge.guards.clone(),
+            })
+            .collect();
+        if guard::guarded_into(definition, pair).is_none() {
+            return Ok(read);
+        }
+        let Some(entered) = guard::entry(&transitions, last.revision + 1, pair) else {
+            return Ok(read);
+        };
+        let Some(admission) = self.workflow_admission(slug, entered)? else {
+            return Ok(read);
+        };
+        let label = (definition.edges.iter())
+            .find(|edge| edge.id == admission.edge)
+            .map_or_else(|| admission.edge.clone(), |edge| edge.label.clone());
+        read.entry = Some(GuardEntry {
+            label,
+            edge: admission.edge.clone(),
+            revision: entered,
+            principal: guard::attestee(&admission.principal),
+            at: admission.at,
+            guards: (admission.guards.iter())
+                .map(|checked| met(checked, &now))
+                .collect(),
+        });
+        Ok(read)
     }
 
     /// Why the guards that brought `slug` into the pair its transition `revision` (an external
@@ -323,6 +413,28 @@ impl Store {
         };
         guard::check(definition, edge, &binding, &guarding)
             .map_err(|refusal| Error::Refused(refusal.to_string()))
+    }
+}
+
+/// One guard an admission met, as a page shows it: its standing against the authorities as they
+/// are `now`, and what its attestation says while it still verifies by the committed key.
+fn met(checked: &Checked, now: &Authorities) -> GuardMet {
+    let (standing, _) = guard::standing(checked, &now.attesters, &now.accepted);
+    let verified = !matches!(
+        standing,
+        GuardStanding::Uncommitted | GuardStanding::Unverified
+    );
+    let record = (verified.then(|| crate::objects::parse::<Attestation>(&checked.signed.payload)))
+        .flatten()
+        .map(|attestation| attestation.record());
+    GuardMet {
+        guard: checked.guard.clone(),
+        adapter: checked.adapter.clone(),
+        issuer: checked.issuer.clone(),
+        epoch: checked.epoch.clone(),
+        generation: checked.generation,
+        standing,
+        record,
     }
 }
 

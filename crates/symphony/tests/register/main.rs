@@ -8,6 +8,7 @@ mod blank;
 mod board;
 mod comments;
 mod decisions;
+mod delivery;
 mod gap;
 mod group;
 mod history;

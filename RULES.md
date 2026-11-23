@@ -109,6 +109,15 @@ action at every slice completion, handoff and PULL. It adds no holds to work the
 authorized. A refused permission, a board's refusal of a command included, is reported, never
 routed around: never build or run another binary to get past it.
 
+### `workflow/no-slowing-for-usage-limits`
+
+No agent slows down for a usage, credit or rate limit of the account it runs on, seen or forecast:
+it never holds back, defers or narrows filing, staffing, reviews, follow-ups or the number of
+tasks in progress for one. Work goes on at the pace the board and `[limits]` set until a limit
+actually stops a session, which is resumed or its task handed on as any stopped session is
+(`STALE` and `LOST` in [the tasks skill](.agents/skills/tasks/SKILL.md#events)). Switching to usage
+credits to go on is the owner's choice, never an agent's.
+
 ### `workflow/claude-first-agents`
 
 Executors and reviewers are Claude on the model `just tasks limits` names for their role

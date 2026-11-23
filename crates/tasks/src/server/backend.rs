@@ -1,9 +1,12 @@
 //! The durable engine identity of a board home, beside its server record: `backend.json`,
-//! `{"format":1,"engine":"postgresql"}` or `surrealdb`. Absence preserves a SurrealDB board;
-//! malformed metadata, orphan PostgreSQL data, or data of the wrong engine refuse rather than
-//! falling back. Making a home a PostgreSQL board in place is explicit, atomic under the starters' lock, and a
-//! scratch home's alone;
-//! an identity changes only by a move of the board's store ([`super::moving`]), and while that
+//! `{"format":1,"engine":"postgresql"}` or `surrealdb`. A home with none is read by what it holds:
+//! a SurrealDB store ([`Home::surreal_store`]) keeps it a SurrealDB board, as every board was
+//! before the identity; a home that holds neither engine's data is a board not made yet, which
+//! is made on PostgreSQL, its identity written by the start that makes it
+//! ([`Home::identified`]). Malformed metadata, an incomplete PostgreSQL data folder, or data of
+//! the wrong engine refuse rather than falling back. Naming a scratch home's engine before it is
+//! made is explicit and atomic under the starters' lock ([`Home::initialize_backend`]); an
+//! identity changes only by a move of the board's store ([`super::moving`]), and while that
 //! move's journal stands the home names no engine at all.
 
 use super::{Doing, Home, Postgres, Running, ServerError, io, postgres, scratch};
@@ -168,12 +171,45 @@ impl Home {
         Ok(())
     }
 
-    /// The engine this board owns. No identity means SurrealDB, with no PostgreSQL data present.
+    /// Whether the home holds a SurrealDB store: its `data/`, or the store a reclaim cut short
+    /// between its moves left in `reclaim/old` ([`Home::reclaim`]).
+    pub(super) fn surreal_store(&self) -> Result<bool, ServerError> {
+        Ok(present(&self.dir.join(super::DATA))?
+            || present(&self.dir.join(super::RECLAIM).join(super::OLD))?)
+    }
+
+    /// The engine this board owns: the one its identity names. With none, SurrealDB for a home
+    /// that holds a SurrealDB store, the board of a build from before the identity; PostgreSQL for
+    /// any other, a board not made yet ([`Home::unmade`]) included, which a start makes there.
     pub fn backend(&self) -> Result<Engine, ServerError> {
         self.settled()?;
-        let engine = self.identity()?.unwrap_or(Engine::SurrealDb);
+        let engine = match self.identity()? {
+            Some(engine) => engine,
+            None if self.surreal_store()? => Engine::SurrealDb,
+            None => Engine::PostgreSql,
+        };
         self.data_matches(engine)?;
         Ok(engine)
+    }
+
+    /// Whether the board is not made yet: its home names no engine and holds neither engine's
+    /// data. Its first start makes it on PostgreSQL ([`Home::board_server`]).
+    pub fn unmade(&self) -> Result<bool, ServerError> {
+        self.settled()?;
+        Ok(self.identity()?.is_none()
+            && !self.surreal_store()?
+            && !present(&self.dir.join(postgres::DATA))?)
+    }
+
+    /// The home named PostgreSQL's when it names no engine yet: what a start that makes its
+    /// cluster writes first, so a cluster is never there without the identity that selects it.
+    /// The caller holds the starters' lock and has allowed PostgreSQL here
+    /// ([`Home::allow_postgresql`]).
+    pub(super) fn identified(&self) -> Result<(), ServerError> {
+        if self.identity()?.is_none() {
+            self.identify(Engine::PostgreSql)?;
+        }
+        Ok(())
     }
 
     /// Initialize a scratch board's engine explicitly. Existing identities never change; an
@@ -236,15 +272,31 @@ impl Home {
     }
 
     /// The selected board server, for commands and the machine server's board reader alike.
-    /// `start` false never starts one. PostgreSQL serves the home whose identity names it.
+    /// `start` false never starts one. PostgreSQL serves the home whose identity names it, and a
+    /// board not made yet: a start makes it there, its identity first ([`Postgres::ensure`]), and
+    /// is refused with the setup guidance when the machine has no PostgreSQL to make it on, with
+    /// nothing made.
     pub fn board_server(&self, root: &Path, start: bool) -> Result<Running, ServerError> {
+        let not_up =
+            || ServerError::NotUp(format!("no server of the board in {}", self.dir.display()));
         match self.backend()? {
             Engine::SurrealDb if start => self.ensure(),
-            Engine::SurrealDb => self.recorded().ok_or_else(|| {
-                ServerError::NotUp(format!("no server of the board in {}", self.dir.display()))
-            }),
+            Engine::SurrealDb => self.recorded().ok_or_else(not_up),
             Engine::PostgreSql => {
-                let pg = self.project_postgresql(root)?;
+                let unmade = self.unmade()?;
+                if unmade && !start {
+                    return Err(not_up());
+                }
+                let pg = self.project_postgresql(root).map_err(|why| {
+                    if !unmade {
+                        return why;
+                    }
+                    ServerError::Io(format!(
+                        "nothing was made for the board in {}, which is not made yet and is \
+                         made on PostgreSQL: {why}",
+                        self.dir.display()
+                    ))
+                })?;
                 let serving = if start {
                     pg.ensure()?
                 } else {
@@ -264,33 +316,59 @@ impl Home {
         }
     }
 
-    pub(super) fn require_surreal(&self) -> Result<(), ServerError> {
-        if self.backend()? == Engine::SurrealDb {
-            return Ok(());
-        }
-        Err(ServerError::Io(
-            "this board owns PostgreSQL data: use its PostgreSQL lifecycle operation".into(),
-        ))
+    /// The main checkout of the repository whose git folder holds this home: where its project's
+    /// PostgreSQL programs are read from (`[board] postgresql`) by a caller that has no project.
+    pub(super) fn project_root(&self) -> Result<&Path, ServerError> {
+        crate::sweep::trigger::main_checkout(&self.within).ok_or_else(|| {
+            ServerError::Io(format!(
+                "the board in {} is on PostgreSQL, and {} is no main checkout's git folder to \
+                 read its project's PostgreSQL programs from",
+                self.dir.display(),
+                self.within.display()
+            ))
+        })
     }
 
-    pub(super) fn allow_postgresql(&self) -> Result<(), ServerError> {
+    /// The board's server stopped, on the engine its home selects, a PostgreSQL board's programs
+    /// its project's ([`Home::project_root`]): what a caller that started the board by a command,
+    /// whichever engine that made it on, stops it by. A board not made yet has none to stop, and
+    /// nothing is made.
+    pub fn stop_board(&self) -> Result<(), ServerError> {
+        if self.unmade()? {
+            return Ok(());
+        }
+        match self.backend()? {
+            Engine::SurrealDb => self.stop().map(|_| ()),
+            Engine::PostgreSql => self
+                .project_postgresql(self.project_root()?)?
+                .stop()
+                .map(|_| ()),
+        }
+    }
+
+    /// SurrealDB's own lifecycle is allowed on a home whose identity names it, or that names none
+    /// and holds no PostgreSQL data: a board of a build from before the identity, or one its caller
+    /// makes on SurrealDB by asking for it (the move, a fixture). A board command never does: it
+    /// reaches the server [`Home::backend`] selects, PostgreSQL for a board not made yet.
+    pub(super) fn require_surreal(&self) -> Result<(), ServerError> {
         self.settled()?;
-        if self.identity()? == Some(Engine::SurrealDb) {
+        if self.identity()? == Some(Engine::PostgreSql) {
+            return Err(ServerError::Io(
+                "this board owns PostgreSQL data: use its PostgreSQL lifecycle operation".into(),
+            ));
+        }
+        self.data_matches(Engine::SurrealDb)
+    }
+
+    /// PostgreSQL's lifecycle is allowed on the home [`Home::backend`] reads as PostgreSQL's: one
+    /// whose identity names it, or a board not made yet, wherever it is kept.
+    pub(super) fn allow_postgresql(&self) -> Result<(), ServerError> {
+        if self.backend()? == Engine::SurrealDb {
             return Err(ServerError::Io(
                 "this board owns SurrealDB data: PostgreSQL was not started".into(),
             ));
         }
-        // Outside a scratch place a board is on PostgreSQL only by its identity, which a move
-        // of its store writes: with none, no cluster is made beside whatever the board holds.
-        if self.identity()?.is_none() && !super::scratch(&self.dir) {
-            return Err(ServerError::Io(format!(
-                "the board in {} names no engine and is not in a scratch place: PostgreSQL \
-                 serves it once its store is moved there (`tasks-move postgresql`); \
-                 nothing was made or started",
-                self.dir.display()
-            )));
-        }
-        self.data_matches(Engine::PostgreSql)
+        Ok(())
     }
 }
 
@@ -317,10 +395,12 @@ mod tests {
     }
 
     #[test]
-    fn absence_preserves_surreal_and_an_identity_is_explicit_atomic_and_immutable() {
+    fn an_empty_home_is_postgresql_and_an_identity_is_explicit_atomic_and_immutable() {
         let board = Board::new("initialize");
-        assert_eq!(board.home.backend().unwrap(), Engine::SurrealDb);
+        assert_eq!(board.home.backend().unwrap(), Engine::PostgreSql);
+        assert!(board.home.unmade().unwrap());
         board.home.initialize_backend(Engine::PostgreSql).unwrap();
+        assert!(!board.home.unmade().unwrap(), "an identity is a board's");
         assert_eq!(board.home.backend().unwrap(), Engine::PostgreSql);
         board.home.initialize_backend(Engine::PostgreSql).unwrap();
         assert!(board.home.initialize_backend(Engine::SurrealDb).is_err());
@@ -371,6 +451,198 @@ mod tests {
         board.home.initialize_backend(Engine::PostgreSql).unwrap();
         fs::create_dir(board.home.dir.join(super::super::DATA)).unwrap();
         assert!(board.home.backend().is_err(), "both data folders conflict");
+    }
+
+    #[test]
+    fn a_home_with_no_identity_is_surrealdbs_while_it_holds_a_surrealdb_store() {
+        let board = Board::new("by-store");
+        let dir = board.home.dir().to_path_buf();
+        let data = dir.join(super::super::DATA);
+        fs::create_dir(&data).unwrap();
+        assert_eq!(board.home.backend().unwrap(), Engine::SurrealDb);
+        assert!(!board.home.unmade().unwrap());
+        board.home.require_surreal().unwrap();
+        assert!(board.home.allow_postgresql().is_err());
+        // A store a reclaim moved aside and did not put back is the board's still, never room
+        // for a new one.
+        let old = dir.join(super::super::RECLAIM).join(super::super::OLD);
+        fs::create_dir_all(old.parent().unwrap()).unwrap();
+        fs::rename(&data, &old).unwrap();
+        assert_eq!(board.home.backend().unwrap(), Engine::SurrealDb);
+        assert!(!board.home.unmade().unwrap());
+        assert!(board.home.allow_postgresql().is_err());
+        // Gone, the home holds no board: a new one is PostgreSQL's.
+        fs::remove_dir_all(dir.join(super::super::RECLAIM)).unwrap();
+        assert_eq!(board.home.backend().unwrap(), Engine::PostgreSql);
+        assert!(board.home.unmade().unwrap());
+        // What else a home keeps (its sweep's, its health's, its keys) is no engine's data.
+        for kept in ["health.json", "sweep.log", "lock"] {
+            fs::write(dir.join(kept), "").unwrap();
+        }
+        fs::create_dir(dir.join("keys")).unwrap();
+        assert!(board.home.unmade().unwrap());
+        assert!(!dir.join(FILE).exists(), "reading names no engine");
+    }
+
+    #[test]
+    fn a_board_not_made_yet_is_postgresqls_anywhere_and_its_start_names_it_so() {
+        // Outside a scratch place too: a new live board is made on PostgreSQL.
+        let live = Home::new(Path::new("/not-a-scratch-board"), Path::new("/no/surreal"));
+        assert!(!scratch(live.dir()));
+        assert_eq!(live.backend().unwrap(), Engine::PostgreSql);
+        live.allow_postgresql().unwrap();
+        let board = Board::new("identified");
+        board.home.identified().unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(
+                &fs::read_to_string(board.home.dir.join(FILE)).unwrap()
+            )
+            .unwrap(),
+            serde_json::json!({"format": 1, "engine": "postgresql"})
+        );
+        assert!(!board.home.unmade().unwrap());
+        // A home that names an engine keeps it.
+        let named = Board::new("named");
+        named.home.initialize_backend(Engine::SurrealDb).unwrap();
+        named.home.identified().unwrap();
+        assert_eq!(named.home.backend().unwrap(), Engine::SurrealDb);
+        // SurrealDB's own start may make a store on an empty home, for a caller that asks for it
+        // by name; never on one whose identity names PostgreSQL.
+        let empty = Board::new("surreal-asked");
+        empty.home.require_surreal().unwrap();
+        empty.home.initialize_backend(Engine::PostgreSql).unwrap();
+        assert!(empty.home.require_surreal().is_err());
+    }
+
+    #[test]
+    fn a_board_not_made_yet_is_never_made_by_a_reach_that_starts_nothing_or_without_postgresql() {
+        let board = Board::new("unmade-reach");
+        // A board not made yet has no server to stop, and stopping it makes nothing.
+        board.home.stop_board().unwrap();
+        assert!(board.home.unmade().unwrap());
+        let refused = board
+            .home
+            .board_server(board.home.dir(), false)
+            .unwrap_err();
+        assert!(
+            matches!(&refused, ServerError::NotUp(why) if why.starts_with("no server of the board in")),
+            "{refused:?}"
+        );
+        // No PostgreSQL where the project file names it: refused with the setup, nothing made.
+        let root = board.home.dir().join("project");
+        fs::create_dir(&root).unwrap();
+        fs::write(
+            root.join(crate::project::FILE),
+            "[board]\npostgresql = \"/no/postgresql/bin\"\n",
+        )
+        .unwrap();
+        let refused = board
+            .home
+            .board_server(&root, true)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refused.starts_with(&format!(
+                "nothing was made for the board in {}, which is not made yet and is made on \
+                 PostgreSQL: PostgreSQL is not at /no/postgresql/bin",
+                board.home.dir().display()
+            )),
+            "{refused}"
+        );
+        assert!(refused.contains("brew install postgresql@18"), "{refused}");
+        assert!(!refused.contains('\n'), "one line: {refused}");
+        assert!(board.home.unmade().unwrap(), "nothing was made: {refused}");
+        assert!(!board.home.dir().join(postgres::DATA).exists());
+        assert!(!board.home.dir().join(FILE).exists());
+    }
+
+    /// A made board reached by a reach that starts nothing is its recorded server or none, and
+    /// nothing is started; a made PostgreSQL board whose programs are not found is refused in
+    /// discovery's own words, never as a board not made yet.
+    #[test]
+    fn a_made_boards_reach_says_what_it_found_as_it_is() {
+        let board = Board::new("made-reach");
+        fs::create_dir_all(board.home.dir().join(super::super::DATA)).unwrap();
+        let refused = board
+            .home
+            .board_server(board.home.dir(), false)
+            .unwrap_err();
+        assert!(
+            matches!(&refused, ServerError::NotUp(why) if why.starts_with("no server of the board in")),
+            "{refused:?}"
+        );
+        let recorded = Running {
+            addr: "127.0.0.1:9".into(),
+            pid: 1,
+            version: "2.3.7".into(),
+        };
+        fs::write(
+            board.home.dir().join(super::super::ADDRESS),
+            serde_json::to_string(&recorded).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            board.home.board_server(board.home.dir(), false).unwrap(),
+            recorded
+        );
+
+        let made = Board::new("made-no-postgresql");
+        made.home.initialize_backend(Engine::PostgreSql).unwrap();
+        fs::create_dir_all(made.home.dir().join(postgres::DATA)).unwrap();
+        fs::write(
+            made.home.dir().join(postgres::DATA).join("PG_VERSION"),
+            "18\n",
+        )
+        .unwrap();
+        let root = made.home.dir().join("project");
+        fs::create_dir(&root).unwrap();
+        fs::write(
+            root.join(crate::project::FILE),
+            "[board]\npostgresql = \"/no/postgresql/bin\"\n",
+        )
+        .unwrap();
+        for start in [true, false] {
+            let refused = made
+                .home
+                .board_server(&root, start)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                refused.starts_with("PostgreSQL is not at /no/postgresql/bin"),
+                "{refused}"
+            );
+        }
+    }
+
+    /// A PostgreSQL board's programs are its project's, read from the main checkout whose `.git`
+    /// holds its home: a home kept anywhere else is refused its stop, naming where it is, and
+    /// nothing is started or signalled.
+    #[test]
+    fn a_postgresql_boards_stop_reads_its_programs_from_the_main_checkout_whose_git_holds_it() {
+        let board = Board::new("project-root");
+        let root = board.home.dir().join("lamp");
+        let common = root.join(".git");
+        let home = Home::in_common(&common, None);
+        assert_eq!(home.project_root().unwrap(), root.as_path());
+        // Not a main checkout's git folder: a bare repository, or a common dir kept elsewhere.
+        board.home.initialize_backend(Engine::PostgreSql).unwrap();
+        fs::create_dir_all(board.home.dir().join(postgres::DATA)).unwrap();
+        fs::write(
+            board.home.dir().join(postgres::DATA).join("PG_VERSION"),
+            "18\n",
+        )
+        .unwrap();
+        let refused = board.home.stop_board().unwrap_err().to_string();
+        assert_eq!(
+            refused,
+            format!(
+                "the board in {} is on PostgreSQL, and {} is no main checkout's git folder to \
+                 read its project's PostgreSQL programs from",
+                board.home.dir().display(),
+                board.home.dir().parent().unwrap().display()
+            )
+        );
+        assert!(!board.home.unmade().unwrap());
     }
 
     #[test]
