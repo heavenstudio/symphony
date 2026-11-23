@@ -928,3 +928,298 @@ mod tests {
     }
 }
 ";
+
+#[test]
+fn a_diff_is_split_by_the_file_each_part_is_of() {
+    let diff = "\
+diff --git a/src/a.rs b/src/a.rs
+index 1111111..2222222 100644
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -1 +1 @@
+-a
++b
+diff --git a/src/spaced b/x.rs b/src/spaced b/x.rs
+@@ -2,0 +3 @@
++c
+diff --git \"a/src/qu\\\"ote.rs\" \"b/src/qu\\\"ote.rs\"
+@@ -1 +1 @@
+-d
++e
+diff --git a/src/link.rs b/src/link.rs
+deleted file mode 100644
+@@ -1 +0,0 @@
+-f
+diff --git a/src/one.rs b/src/other.rs
+@@ -1 +1 @@
+-g
++h
+diff --git a/src/link.rs b/src/link.rs
+new file mode 120000
+@@ -0,0 +1 @@
++target.rs
+";
+    let parts = split(diff);
+    let mut paths: Vec<&str> = parts.keys().map(String::as_str).collect();
+    paths.sort();
+    assert_eq!(
+        paths,
+        ["src/a.rs", "src/link.rs", "src/spaced b/x.rs"],
+        "a quoted header, or one naming two paths, gives no part"
+    );
+    assert_eq!(
+        parts["src/a.rs"],
+        "diff --git a/src/a.rs b/src/a.rs\nindex 1111111..2222222 100644\n--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1 +1 @@\n-a\n+b\n"
+    );
+    assert_eq!(
+        parts["src/spaced b/x.rs"],
+        "diff --git a/src/spaced b/x.rs b/src/spaced b/x.rs\n@@ -2,0 +3 @@\n+c\n"
+    );
+    // A file made a link: its removal and its addition, one text.
+    assert_eq!(
+        hunks(&parts["src/link.rs"]),
+        [
+            Hunk {
+                old: (1, 1),
+                new: (0, 0),
+                added: Vec::new(),
+                removed: vec!["f".into()],
+            },
+            Hunk {
+                old: (0, 0),
+                new: (1, 1),
+                added: vec![(1, "target.rs".into())],
+                removed: Vec::new(),
+            },
+        ]
+    );
+    assert!(split("").is_empty());
+    assert!(
+        split("diff --git a/x\n").is_empty(),
+        "a header too short to name one"
+    );
+}
+
+/// A package of `count` modules, `src/mI.rs` each with one of its own (`src/mI/inner.rs`), every
+/// odd one declared under `#[cfg(test)]`, and a manifest with features.
+fn modules(count: usize) -> Vec<(String, String)> {
+    let lib: String = (0..count)
+        .map(|i| match i % 2 {
+            0 => format!("pub mod m{i};\n"),
+            _ => format!("#[cfg(test)]\nmod m{i};\n"),
+        })
+        .collect();
+    let mut files = vec![
+        ("src/lib.rs".into(), lib),
+        (
+            "Cargo.toml".into(),
+            "[package]\nname = \"lamp\"\n\n[features]\nslow = []\n".into(),
+        ),
+    ];
+    for i in 0..count {
+        files.push((
+            format!("src/m{i}.rs"),
+            "pub mod inner;\npub fn f() {}\n".into(),
+        ));
+        files.push((format!("src/m{i}/inner.rs"), "pub fn g() {}\n".into()));
+    }
+    files
+}
+
+/// What a branch changes of [`modules`]: a feature added, and the first `n` modules' files, a test
+/// added to each `src/mI.rs`.
+fn changes(n: usize) -> Vec<(String, String)> {
+    let mut files = vec![(
+        "Cargo.toml".into(),
+        "[package]\nname = \"lamp\"\n\n[features]\nslow = []\nfast = []\n".into(),
+    )];
+    for i in 0..n {
+        files.push((
+            format!("src/m{i}.rs"),
+            "pub mod inner;\npub fn f() { }\n#[test]\nfn t() {}\n".into(),
+        ));
+        files.push((format!("src/m{i}/inner.rs"), "pub fn g() { }\n".into()));
+    }
+    files
+}
+
+fn pairs(files: &[(String, String)]) -> Vec<(&str, &str)> {
+    files
+        .iter()
+        .map(|(p, t)| (p.as_str(), t.as_str()))
+        .collect()
+}
+
+#[test]
+fn the_runs_of_git_a_judgement_makes_do_not_grow_with_the_diff() {
+    let repo = Repo::new("runs");
+    repo.commit(&pairs(&modules(60)));
+    let judged = |name: &str, n: usize| -> (usize, Vec<String>) {
+        RUNS.set(0);
+        let found = repo.touched(name, &pairs(&changes(n)));
+        (RUNS.get(), found)
+    };
+    let (few, small) = judged("small", 2);
+    assert_eq!(
+        small,
+        [
+            "Cargo.toml [features]",
+            "src/m0.rs (test code at line 3)",
+            "src/m1.rs (a test module)",
+            "src/m1/inner.rs (a test module)",
+        ]
+    );
+    let (many, large) = judged("large", 60);
+    // The manifest, each even module's test and each odd module's two files.
+    assert_eq!(large.len(), 1 + 30 + 2 * 30, "{large:#?}");
+    for line in [
+        "src/m58.rs (test code at line 3)",
+        "src/m59.rs (a test module)",
+        "src/m59/inner.rs (a test module)",
+    ] {
+        assert!(large.contains(&line.to_string()), "{line}: {large:#?}");
+    }
+    assert!(
+        many <= few,
+        "a diff of 121 files runs git {many} times, one of 5 {few}"
+    );
+}
+
+#[test]
+fn a_file_whose_name_git_quotes_is_read_by_its_own_diff() {
+    let repo = Repo::new("quoted");
+    repo.commit(&[
+        ("src/lib.rs", "pub mod plain;\n"),
+        ("src/plain.rs", TOP),
+        ("src/q\"uoted.rs", TOP),
+    ]);
+    assert_eq!(
+        repo.touched(
+            "quoted",
+            &[
+                ("src/plain.rs", &TOP.replace("1, 1", "1, 2")),
+                ("src/q\"uoted.rs", &TOP.replace("1, 1", "1, 2")),
+            ]
+        ),
+        [
+            "src/plain.rs (test code at line 4)",
+            "src/q\"uoted.rs (test code at line 4)",
+        ]
+    );
+}
+
+#[test]
+fn a_declaration_no_search_for_its_name_finds_is_followed_as_before() {
+    let repo = Repo::new("spaced");
+    repo.commit(&[
+        (
+            "src/lib.rs",
+            "#[cfg(test)]\nmod  spaced;\n#[cfg(test)]\nmod r#raw;\n#[cfg(test)]\nmod named;\n",
+        ),
+        ("src/spaced.rs", "pub fn s() {}\n"),
+        ("src/raw.rs", "pub fn r() {}\n"),
+        ("src/named.rs", "pub fn n() {}\n"),
+    ]);
+    // Rust reads all three as test-only; a search by `mod NAME` or `NAME.rs` found only the last,
+    // and the judgement keeps what it found.
+    assert_eq!(
+        repo.touched(
+            "spaced",
+            &[
+                ("src/spaced.rs", "pub fn s() { }\n"),
+                ("src/raw.rs", "pub fn r() { }\n"),
+                ("src/named.rs", "pub fn n() { }\n"),
+            ]
+        ),
+        ["src/named.rs (a test module)"]
+    );
+}
+
+#[test]
+fn a_listed_file_git_cannot_give_is_refused_never_read_as_none() {
+    let repo = Repo::new("ungiven");
+    repo.commit(&[("README.md", "Lamps\n")]);
+    // A submodule's commit, and a file whose object the repository lacks.
+    let index = |info: &str| repo.git(&["update-index", "--add", "--cacheinfo", info]);
+    index("160000,1111111111111111111111111111111111111111,src/sub.rs");
+    index("100644,2222222222222222222222222222222222222222,src/gone.rs");
+    let tree = repo.git(&["write-tree", "--missing-ok"]);
+    let commit = repo.git(&["commit-tree", &tree, "-m", "broken"]);
+    let broken = Tree::new(&repo.0, &commit);
+    assert!(
+        (broken.read("src/sub.rs").unwrap_err()).starts_with("git cat-file could not read in "),
+    );
+    assert_eq!(
+        broken.read("src/gone.rs"),
+        Err(format!(
+            "git cat-file --batch: {commit}:src/gone.rs gives no file"
+        ))
+    );
+    assert_eq!(broken.read("README.md"), Ok(Some("Lamps\n".into())));
+}
+
+#[test]
+fn the_walk_up_a_module_stops_where_it_did() {
+    let repo = Repo::new("walk");
+    // A chain of modules ten deep under one `#[cfg(test)]`: followed eight files up, no further.
+    let chain: Vec<String> = (0..10)
+        .map(|depth| {
+            let folders: String = (0..depth).map(|d| format!("d{d}/")).collect();
+            format!("src/{folders}d{depth}.rs")
+        })
+        .collect();
+    let mut files: Vec<(String, String)> = (chain.iter().enumerate())
+        .map(|(depth, path)| (path.clone(), format!("pub mod d{};\n", depth + 1)))
+        .collect();
+    files.extend(
+        [
+            (
+                "src/lib.rs",
+                "#[cfg(test)]\nmod d0;\n#[cfg(test)]\nmod gated;\npub mod only;\npub mod selfish;\n\
+                 pub mod support_tests;\n#[cfg(not(test))]\nmod twice;\n#[cfg(test)]\nmod twice;\n",
+            ),
+            ("src/gated/mod.rs", "pub fn g() {}\n"),
+            ("src/only.rs", "#![cfg(test)]\npub fn o() {}\n"),
+            (
+                "src/selfish.rs",
+                "#[path = \"selfish.rs\"]\nmod selfish;\npub fn s() {}\n",
+            ),
+            ("src/support_tests.rs", "pub mod helper;\n"),
+            ("src/support_tests/helper.rs", "pub fn h() {}\n"),
+            ("src/twice.rs", "pub fn t() {}\n"),
+            ("mod.rs", "pub fn m() {}\n"),
+        ]
+        .map(|(path, text)| (path.to_string(), text.to_string())),
+    );
+    repo.commit(&pairs(&files));
+    let changed: Vec<(String, String)> = [
+        (chain[8].as_str(), "pub mod d9;\npub fn f() {}\n"),
+        (chain[9].as_str(), "pub mod d10;\npub fn f() {}\n"),
+        ("src/gated/mod.rs", "pub fn g() { }\n"),
+        ("src/only.rs", "#![cfg(test)]\npub fn o() { }\n"),
+        (
+            "src/selfish.rs",
+            "#[path = \"selfish.rs\"]\nmod selfish;\npub fn s() { }\n",
+        ),
+        ("src/support_tests/helper.rs", "pub fn h() { }\n"),
+        ("src/twice.rs", "pub fn t() { }\n"),
+        ("mod.rs", "pub fn m() { }\n"),
+    ]
+    .map(|(path, text)| (path.to_string(), text.to_string()))
+    .to_vec();
+    assert_eq!(
+        repo.touched("walk", &pairs(&changed)),
+        [
+            // Its gate eight files up; the next one's is nine, past the walk.
+            format!("{} (a test module)", chain[8]),
+            // A folder's module, by the folder's name.
+            "src/gated/mod.rs (a test module)".into(),
+            // Its own file says so.
+            "src/only.rs (a test module)".into(),
+            // Declared by a file an entry names, though not under a test's attribute.
+            "src/support_tests/helper.rs (a test module)".into(),
+            // Declared twice by one file, once for tests.
+            "src/twice.rs (a test module)".into(),
+        ]
+    );
+}
