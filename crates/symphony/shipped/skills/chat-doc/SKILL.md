@@ -57,6 +57,15 @@ may use markdown, links, `[[FILE#Heading]]` and pictures; a card's picture is a 
 beside its document under `docs/`, never a path into the ignored `artifacts/` folder or an
 owner's upload (`just symphony-cli docs-audit --check` refuses one git does not track).
 
+Where the project delivers by pull request (`[land] delivery`), the checkout on its default
+branch is the host's to write, and a file edited there stops every land. There
+`just symphony-reply` and `just symphony-status --tidy` write no file: each keeps what it changes
+as a save, the way the app keeps the owner's. The app shows it within seconds, and a pull request
+delivers it, with your other saves, after any earlier save of that document. Run them there as
+anywhere.
+Anything else a document needs (a rewrite, a new card, a picture) is made in a task's worktree,
+and that task's pull request delivers it.
+
 - **Chat message**: reply in conversation. If it asks for something (a picture, a rewrite, a new
   option), do it, then reply with the result. Do not change the card's verdict.
 - **Verdict with a note**: the note is an instruction. Follow the apply-review skill for what it
