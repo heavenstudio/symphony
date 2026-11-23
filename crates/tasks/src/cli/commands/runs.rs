@@ -3,6 +3,9 @@
 //! command the task ran there with its newest result and the runs before it there, the `tests`
 //! stamp as its reader reads it, the project's `[verdicts] check` (the task page's check gate) with
 //! its newest run at the tip or none, and the task's runs at other commits, which are not the tip's.
+//! Each red run there that kept a log, the newest of its command or one before it, is named after
+//! the rows with the log's path, where the command's own output says what failed, whatever its
+//! runner.
 //! A command its runner refused there before building or running anything is named apart, with the
 //! refusal's line: no run of the command, so no red and no green (`stamps::read::refused`).
 //! The tip is the task's branch's in the main checkout, else the commit `--tip` names there.
@@ -109,7 +112,8 @@ pub(super) struct Shown<'a> {
 
 /// The lines `runs` prints: `TIP`, then `RUNS`, each command the task ran at the tip a row (its
 /// newest run's state, phase, command, when, how long, who, and why it is red, whose it is when work
-/// under the task ran it, how many runs of it came before there), `TESTS`, the `tests` stamp as its
+/// under the task ran it, how many runs of it came before there), then a `LOG` line for each red
+/// run there that kept a log, oldest first within its command, `TESTS`, the `tests` stamp as its
 /// reader reads it (after `REFUSED`, the commands a runner refused at the tip, each with the
 /// refusal's line, when there are any), `CHECK`, the `[verdicts] check` at the tip as its gate reads it (none when the
 /// project names none), and `ELSEWHERE`, the task's runs at other commits (none when there are
@@ -132,6 +136,17 @@ pub(super) fn lines(shown: &Shown<'_>) -> Vec<String> {
             .map(|command| row(shown.slug, command))
             .collect();
         lines.extend(columns(&rows).into_iter().map(|row| format!("  {row}")));
+        let each = (found.commands.iter())
+            .flat_map(|command| command.before.iter().copied().chain([command.newest]));
+        lines.extend(each.filter_map(|run| {
+            let red = run.state == Step::Finished && read::red(run).is_some();
+            let log = log_of(run).filter(|_| red)?;
+            Some(format!(
+                "  LOG of the red `{}` at {}, what failed is at its end: {log}",
+                run.label,
+                local_minute(when(run))
+            ))
+        }));
     }
     if !found.refused.is_empty() {
         lines.push(format!(
@@ -169,6 +184,14 @@ pub(super) fn lines(shown: &Shown<'_>) -> Vec<String> {
         ));
     }
     lines
+}
+
+/// Where `run`'s log is: the file its recorder kept its command's output in, by its whole path;
+/// none for a run recorded without one.
+fn log_of(run: &Record) -> Option<String> {
+    let kept = run.run.as_ref()?;
+    let (runs, log) = (kept.runs.as_deref()?, kept.log.as_deref()?);
+    Some(std::path::Path::new(runs).join(log).display().to_string())
 }
 
 /// When `run` last moved: ended, else began.

@@ -1,8 +1,8 @@
 //! The Settings page's read (`symphony::settings::page`): each value in force with where it was
 //! written, for a project with no file, with a project file, the board's store over it and a
-//! local file over both, and a project file or a store that does not load said as such; and the
+//! local file over both, and a project file or a store that does not load said as such; the
 //! class of every key of the reference, which the read takes from the local settings file's
-//! lists.
+//! lists; and every key of the reference on the page, and no other.
 
 use std::collections::BTreeSet;
 use std::os::unix::fs::PermissionsExt;
@@ -498,6 +498,7 @@ fn a_commit_waiting_for_its_delivery_is_said_beside_its_setting() {
             branch: "docs/owner-save-2".into(),
             shown: true,
             state: State::Held("its task was cancelled".into()),
+            by: String::new(),
             keys: vec!["limits.low_volume".into()],
         }],
         ..holding(&[("limits.low_volume", json!(3))])
@@ -924,6 +925,28 @@ fn every_key_of_the_reference_has_the_class_the_local_file_s_lists_give_it() {
     }
 }
 
+/// The table a setting of the page is written in, as the path to it, and its key there, empty for
+/// a table said whole (`[stamps]`, `[[entrypoints]]`); none for the device's, the one setting no
+/// file writes. `[agents] launch model` is `[agents.launch]`'s `model`, as `just tasks limits`
+/// spells it.
+fn written_as(setting: &Setting) -> Option<(Vec<&str>, &str)> {
+    let Some((table, key)) = setting
+        .key
+        .strip_prefix('[')
+        .and_then(|k| k.trim_start_matches('[').split_once(']'))
+    else {
+        assert_eq!(setting.key, "appearance", "no key of the project file");
+        return None;
+    };
+    let mut path: Vec<&str> = table.split('.').collect();
+    let mut key = key.trim_start_matches(']').trim();
+    if let Some(of) = key.strip_prefix("launch ") {
+        path.push("launch");
+        key = of;
+    }
+    Some((path, key))
+}
+
 #[test]
 fn every_setting_the_page_shows_has_the_class_and_the_scopes_of_its_key() {
     let tree = Tree::new();
@@ -931,26 +954,9 @@ fn every_setting_the_page_shows_has_the_class_and_the_scopes_of_its_key() {
     let page = page(&tree.root, &bare());
     let mut shown = BTreeSet::new();
     for setting in settings(&page) {
-        let Some((table, key)) = setting
-            .key
-            .strip_prefix('[')
-            .and_then(|k| k.trim_start_matches('[').split_once(']'))
-        else {
-            // The device's is no key of the project file.
-            assert!(
-                ["appearance"].contains(&setting.key.as_str()),
-                "{}",
-                setting.key
-            );
+        let Some((path, key)) = written_as(setting) else {
             continue;
         };
-        let mut path: Vec<&str> = table.split('.').collect();
-        let mut key = key.trim_start_matches(']').trim();
-        // `[agents] launch model`, as `just tasks limits` spells it.
-        if let Some(of) = key.strip_prefix("launch ") {
-            path.push("launch");
-            key = of;
-        }
         assert_eq!(setting.class, class(path[0], key), "{}", setting.key);
         assert_eq!(setting.scopes, scopes(&path, key), "{}", setting.key);
         shown.insert((path[0].to_string(), key.to_string()));
@@ -981,6 +987,42 @@ fn every_setting_the_page_shows_has_the_class_and_the_scopes_of_its_key() {
             .any(|(t, k)| *t == table && (*k == "*" || *k == key));
         assert!(whole || named || left, "{heading} {key} is not on the page");
     }
+}
+
+#[test]
+fn every_setting_the_page_shows_is_one_the_project_file_reads() {
+    // The reference lists every key the project file reads and no other (`reference.rs`), so a
+    // key it does not list, a removed one among them, is one the file refuses: a row of it would
+    // show a setting no file can write. The Symphony's own entries alone: a describer's are its
+    // program's to name.
+    let tree = Tree::new();
+    tree.write("symphony.toml", PROJECT);
+    let page = page(&tree.root, &bare());
+    let reference = listed(&read(REFERENCE));
+    let table = |heading: &str| heading.trim_matches(|c| c == '[' || c == ']').to_string();
+    let keys: BTreeSet<(String, &str)> = reference
+        .iter()
+        .map(|(heading, key)| (table(heading), key.as_str()))
+        .collect();
+    let mut seen = 0;
+    for setting in settings(&page) {
+        let Some((path, key)) = written_as(setting) else {
+            continue;
+        };
+        let path = path.join(".");
+        let known = if key.is_empty() {
+            keys.iter().any(|(listed, _)| *listed == path)
+        } else {
+            keys.contains(&(path, key))
+        };
+        assert!(
+            known,
+            "{} is no setting the project file reads",
+            setting.key
+        );
+        seen += 1;
+    }
+    assert!(seen > 50, "the page shows its settings: {seen}");
 }
 
 #[test]

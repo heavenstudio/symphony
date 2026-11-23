@@ -187,7 +187,9 @@ impl Capture<'_> {
             name.into()
         };
         if !name.is_empty()
-            && (git::regenerable(&named) || directory && self.ignored.contains(path))
+            && (git::regenerable(&named)
+                || git::os_metadata(&named)
+                || directory && self.ignored.contains(path))
         {
             return Ok(());
         }

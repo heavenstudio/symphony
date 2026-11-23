@@ -397,8 +397,9 @@ impl Store {
     /// The session is done: its roles are released on the record, and it can no longer act. A task
     /// left in progress with no executor is ready again. The open work its orchestrator role kept
     /// somebody's goes, in the same write, to an orchestrator that stays by rule 4, the topmost task
-    /// of each tree it would leave with none ([`orchestration::orphaned`]), one line on each thread;
-    /// with none, each such task is marked waiting (`Store::give_unowned`). Only a leaver holding
+    /// of each tree it would leave with none ([`orchestration::orphaned`]), those that wait on
+    /// nothing first ([`orchestration::first_free`]), one line on each thread; with none, each
+    /// such task is marked waiting (`Store::give_unowned`). Only a leaver holding
     /// the orchestrator role reads the whole board for it. On a task a custom workflow holds, its
     /// other roles go first, each by its position's lost-holder recovery, which may keep one for a
     /// person to recover and never moves the task to a pair it does not name.
@@ -421,7 +422,8 @@ impl Store {
                 let (board, versions) = self.board_versions()?;
                 let mut pool = self.pool(&board, &[handle])?;
                 let gone = |_: &crate::Task, r: &crate::Role| r.handle == handle;
-                for top in orchestration::orphaned(&board.tasks, gone) {
+                let tops = orchestration::orphaned(&board.tasks, gone);
+                for top in orchestration::first_free(&board.tasks, tops) {
                     pass.give(&board, &versions, top, pool.pick_for(top), &why, &[handle]);
                 }
                 pass.guard(&counted);

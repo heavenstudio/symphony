@@ -1,7 +1,8 @@
 //! The project file's `[board]` table: the guide task messages render as part of, what the board
 //! starts when a task moves to review and once one lands, the cap on an orchestrator's open tasks,
 //! when the pipeline alarm raises, the size past which the sweep asks for a check of the evidence
-//! it set aside, how long a build the project no longer runs holds its board's move to a release
+//! it set aside, the ignored paths that go with a merged worktree beside the board's own, how long
+//! a build the project no longer runs holds its board's move to a release
 //! (`crate::machine::writers`), the folder of the machine's PostgreSQL programs, where a hosted
 //! board's PostgreSQL is (`[board.external_postgresql]`, `symphony_board::pg::external`), and the
 //! project's own tools the board reads beside its own: a machine-work reader, a folder of
@@ -107,6 +108,18 @@ impl Board {
                 crate::machine::writers::UNUSED_KEY
             ));
         }
+        // The ignored paths the project names as going with a merged worktree, which the board
+        // reads itself (`symphony_board::project::disposable`) and takes all or none of; checked
+        // here by the board's own rule, so a project's lint refuses a pattern the sweep would not
+        // take.
+        for pattern in &file.sweep_disposable {
+            symphony_board::project::disposable_pattern(pattern)
+                .map_err(|why| format!("[board] sweep_disposable: {why}"))?;
+        }
+        // Whether a server of the project's own sweeps idle sessions, which that server reads
+        // itself (`symphony_board::project::own_sweep`): a boolean by its field's type, with
+        // nothing more to check.
+        let _: Option<bool> = file.own_sweep;
         // The folder of the machine's PostgreSQL programs, which the board reads itself
         // (`symphony_board::server::postgres::programs`): the machine's own, so an absolute path,
         // never one inside the project; checked here so a project's lint refuses what the board
@@ -163,6 +176,10 @@ pub(super) struct FileBoard {
     assessments: Option<String>,
     swept_cap_gb: Option<f64>,
     stale_writer_hours: Option<u32>,
+    sweep_disposable: Vec<String>,
+    /// Read by the board's server itself (`symphony_board::project::own_sweep`); named here so
+    /// the file's lint knows the key and holds it to a boolean.
+    own_sweep: Option<bool>,
     postgresql: Option<String>,
     external_postgresql: Option<toml::Value>,
     #[serde(flatten)]

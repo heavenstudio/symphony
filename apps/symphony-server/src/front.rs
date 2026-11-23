@@ -1145,9 +1145,13 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     // the projects' watch ([`crate::projects::Projects::watch`]), which then reads the registry
     // again on its own so a project registered or removed starts or stops its maintenance with
     // no request.
-    background
-        .workers
-        .extend(maintenance(&shared, serve.home.as_deref()));
+    let maintained = maintenance(&shared, serve.home.as_deref());
+    if serve.home.is_none()
+        && let Some(line) = own_sweep_line(&shared.root, !maintained.is_empty())
+    {
+        tell(format_args!("{line}"));
+    }
+    background.workers.extend(maintained);
     if let Some(projects) = &projects {
         background.workers.push(projects.watch());
     }
@@ -1263,7 +1267,8 @@ impl Started {
 
 /// What the machine's one server (`home`, its machine folder) runs for each project it serves, on
 /// the wall clock: the idle sweep ([`session_maintenance`]), a worker of its own, so one project's
-/// hung or failing round never holds up another's. A private preview (no `home`) runs none.
+/// hung or failing round never holds up another's. A server of its own (no `home`) runs none,
+/// unless its project asks it to ([`sweeps_of_its_own`]).
 pub(crate) fn maintenance(
     shared: &Arc<Shared>,
     home: Option<&Path>,
@@ -1291,21 +1296,81 @@ fn of_project(shared: &Shared) -> String {
 }
 
 /// A private preview may use a copied board, whose old pane identities must never be used to
-/// clean up real agent terminals. Only the machine's shared installation starts this worker,
-/// which reads the time from `clock` ([`MachineClock`] outside tests).
+/// clean up real agent terminals. Only the machine's shared installation starts this worker, and a
+/// server of its own whose project asks it to ([`sweeps_of_its_own`]); it reads the time from
+/// `clock` ([`MachineClock`] outside tests).
 fn session_maintenance(
     shared: &Arc<Shared>,
     home: Option<&Path>,
     clock: impl Clock,
 ) -> Option<std::thread::JoinHandle<()>> {
-    let home = home?;
+    session_maintenance_where(shared, home, clock, |name| std::env::var_os(name).is_some())
+}
+
+/// [`session_maintenance`] in an environment that names the variables `named` says.
+fn session_maintenance_where(
+    shared: &Arc<Shared>,
+    home: Option<&Path>,
+    clock: impl Clock,
+    named: impl Fn(&str) -> bool,
+) -> Option<std::thread::JoinHandle<()>> {
+    if home.is_none() && !sweeps_of_its_own(&shared.root, named) {
+        return None;
+    }
     Some(maintenance_worker(
         Arc::clone(shared),
         Duration::from_secs_f64(REAP_SECONDS),
         SWEEP_TIMEOUT,
         clock,
-        crate::held::Retrying::of_this_server(home),
+        home.and_then(crate::held::Retrying::of_this_server),
     ))
+}
+
+/// The variables by which a process names a board other than the one its folder finds: how a
+/// preview reaches a copy.
+const OTHER_BOARD: [&str; 2] = ["TASKS_SERVER", "TASKS_DATABASE"];
+
+/// Whether a server of its own serving `root` runs the idle-session sweep for it, as the one server
+/// would: its project file asks (`[board] own_sweep`, [`symphony_board::project::own_sweep`]), for
+/// a project no other server serves; `root` is its repository's main checkout, never a linked
+/// worktree, where a preview of branch code runs; and its environment names no other board
+/// (`named`, of [`OTHER_BOARD`]), so the board swept is the one whose terminals these are. The
+/// board's own lock still admits one sweeper at a time, whichever server it is.
+fn sweeps_of_its_own(root: &Path, named: impl Fn(&str) -> bool) -> bool {
+    symphony_board::project::own_sweep(root)
+        && main_checkout(root)
+        && !OTHER_BOARD.iter().any(|name| named(name))
+}
+
+/// Whether `root` is its repository's main checkout, or no checkout at all: never a linked
+/// worktree.
+fn main_checkout(root: &Path) -> bool {
+    let real = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    real(&symphony_board::builds::main_of(root)) == real(root)
+}
+
+/// What a server of its own says of the idle-session sweep as it starts serving `root`: that it
+/// runs it; that it runs none though its project file asks, and why; or, in a main checkout whose
+/// file does not ask, that nothing closes its idle agents' terminals and what does. Nothing for a
+/// folder with no project file (a test's), nor for a linked worktree whose file does not ask (a
+/// preview's), where the key would change nothing.
+fn own_sweep_line(root: &Path, sweeps: bool) -> Option<&'static str> {
+    if sweeps {
+        return Some("· this server of its own runs the idle-session sweep ([board] own_sweep)");
+    }
+    if !root.join(symphony_board::project::FILE).is_file() {
+        return None;
+    }
+    if symphony_board::project::own_sweep(root) {
+        return Some(
+            "· this server of its own runs no idle-session sweep, though [board] own_sweep asks: \
+             it serves a linked worktree, or its environment names another board",
+        );
+    }
+    main_checkout(root).then_some(
+        "· a server of its own runs no idle-session sweep: idle agents' terminals stay until \
+         `just tasks clean`, or set [board] own_sweep = true in symphony.toml",
+    )
 }
 
 /// A moment on both clocks. `Instant` stops while the machine sleeps, but the board's presence

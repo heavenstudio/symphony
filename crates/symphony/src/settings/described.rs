@@ -7,9 +7,10 @@
 //! ([`judged`]): a setting the Symphony would run or that decides what lands (a key the local
 //! settings file refuses, the class [`super::class`] gives its key) is shown reviewed whatever its
 //! describer says, and so is every setting of a program whose settings decide what lands. A
-//! describer may mark a setting of its own reviewed, and none is written in the board's store,
-//! which keeps the Symphony's own preferences alone. A program absent, or one that fails, and a
-//! describer that cannot say, are said in the entry's place, and the page is drawn all the same.
+//! describer may mark a setting of its own reviewed, and none is written in the board's store or
+//! said to come from it, as the store keeps the Symphony's own preferences alone. A program
+//! absent, or one that fails, and a describer that cannot say, are said in the entry's place, and
+//! the page is drawn all the same.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -186,9 +187,10 @@ fn anchor(taken: &mut HashSet<String>, id: String) -> String {
     id
 }
 
-/// `described` as the page shows it: its id `id`, and each setting reviewed that its describer may
-/// not call a preference, every one where `all` says so, each then written in the project's scope
-/// alone ([`reviewed`]); and none written in the board's store ([`unstored`]).
+/// `described` as the page shows it: its id `id`, none of its settings written in the board's
+/// store or come from it ([`unstored`]), and each setting reviewed that its describer may not call
+/// a preference, every one where `all` says so, each then written in the project's scope alone
+/// ([`reviewed`]).
 pub fn judged(described: SettingsEntry, id: String, all: bool) -> SettingsEntry {
     SettingsEntry {
         id,
@@ -196,10 +198,11 @@ pub fn judged(described: SettingsEntry, id: String, all: bool) -> SettingsEntry 
             .settings
             .into_iter()
             .map(|setting| {
+                let setting = unstored(setting);
                 if all || protected(&setting.key) {
                     reviewed(setting)
                 } else {
-                    unstored(setting)
+                    setting
                 }
             })
             .collect(),
@@ -207,11 +210,19 @@ pub fn judged(described: SettingsEntry, id: String, all: bool) -> SettingsEntry 
     }
 }
 
-/// `setting` without the board's scope, whatever its describer says: the store keeps the
+/// `setting` with nothing of the board's store, whatever its describer says: the store keeps the
 /// Symphony's own preferences, each drawn in the Symphony's own entry, and no description's. So
-/// the page draws no control for a description's setting and names no store it is written in.
+/// it loses the board's scope, and the page draws no control for it ([`super::stored::list`]
+/// lists only a setting whose scopes hold the board's) and names no store it is written in; and a
+/// source its describer put in the board's store is no file's, which the page tags as the default,
+/// its describer's own words beside the tag. A describer that gave the board's scope alone leaves
+/// its setting with none: the page draws its value and its source, as any setting it writes in no
+/// scope, and no control.
 fn unstored(mut setting: Setting) -> Setting {
     setting.scopes.retain(|scope| *scope != SettingScope::Board);
+    if setting.source.scope == Some(SettingScope::Board) {
+        setting.source.scope = None;
+    }
     setting
 }
 
@@ -226,12 +237,17 @@ fn reviewed(setting: Setting) -> Setting {
 }
 
 /// Whether `key`, as the page spells a setting (`[land] delivery`, `[agents.launch] model`,
-/// `[land]` for a table said as a sentence, or the store's `land.delivery`), is reviewed: the class
-/// [`super::class`] gives the key of its top-level table that holds it, its own key or, below a
-/// table of that table, the lower table's name, and the table said whole by its name alone.
+/// `[land]` for a table said as a sentence, `[[workflow_mappings]] guard` in a list of tables, or
+/// the store's `land.delivery`), is reviewed: the class [`super::class`] gives the key of its
+/// top-level table that holds it, its own key or, below a table of that table, the lower table's
+/// name, and the table said whole by its name alone.
 pub fn protected(key: &str) -> bool {
     let key = key.trim();
-    let (tables, last) = match key.strip_prefix('[').and_then(|rest| rest.split_once(']')) {
+    let bracketed = (key
+        .strip_prefix("[[")
+        .and_then(|rest| rest.split_once("]]")))
+    .or_else(|| key.strip_prefix('[').and_then(|rest| rest.split_once(']')));
+    let (tables, last) = match bracketed {
         Some((tables, last)) => (tables, last.trim()),
         None => key.rsplit_once('.').unwrap_or(("", key)),
     };

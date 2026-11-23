@@ -5,7 +5,7 @@
 #![forbid(unsafe_code)]
 
 /// The src a document picture holds until it comes into view (`WAITING`, the client's
-/// `src/media.tsx`): an empty picture of no size, drawn with no request.
+/// `src/media-picture.tsx`): an empty picture of no size, drawn with no request.
 pub const WAITING: &str =
     "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='0' height='0'/%3E";
 
@@ -37,10 +37,10 @@ mod tests {
 
     #[test]
     fn the_waiting_picture_is_the_clients() {
-        let media = include_str!("../../symphony-web/src/media.tsx");
+        let media = include_str!("../../symphony-web/src/media-picture.tsx");
         assert!(
             media.contains(&format!("export const WAITING =\n  \"{WAITING}\";")),
-            "src/media.tsx no longer holds WAITING as {WAITING}"
+            "src/media-picture.tsx no longer holds WAITING as {WAITING}"
         );
     }
 

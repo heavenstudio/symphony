@@ -5,6 +5,13 @@
 //! [`Store::dispatch_detached`]), so the command answers without waiting on any recipient. The
 //! Symphony server's clock drains retries and observes actionable PULL/STALE/LOST changes. No agent
 //! keeps a monitor alive.
+//!
+//! A pass sends the board as many requests for many recipients as for one, but for those it visits
+//! under their lease: it reads every recipient's stored state with whether a line of its outbox is
+//! due, and the pane lines queued for each, in one read apiece ([`Store::stored_states`],
+//! [`Store::pending`]), and only a visit under its lease reads its recipient's again. A board
+//! keeps every registered channel's recipient whatever its session's health, dozens of them, and
+//! a pass a second.
 
 use super::callback_peer::{self as peer, Owner};
 use super::callback_state::{State, stored_seen};
@@ -113,13 +120,19 @@ impl Event {
     }
 }
 
-/// A recipient's callback state as a dispatch reads it, with when its PULL was last checked and
-/// the lines still queued for it, which a hand-over can take back ([`Hearing::rescope`]).
+/// A recipient's callback state as a dispatch reads it, with when its PULL was last checked, the
+/// lines still queued for it, which a hand-over can take back ([`Hearing::rescope`]), and whether a
+/// line of its outbox was due when it was read. A pass's plans read every recipient's at once
+/// ([`Store::stored_states`]); a visit under its lease reads its own without the due line, false
+/// there, as it asks its outbox afresh ([`Store::stored_one`]).
 #[derive(Deserialize)]
 struct Stored {
+    handle: String,
     state: Option<State>,
     checked_pull: f64,
     queued: Vec<Queued>,
+    #[serde(default)]
+    pending: bool,
 }
 
 /// A recipient's observation as written: whether the dispatcher still held the recipient's lease,
@@ -840,7 +853,7 @@ impl Store {
         let sample = std::cell::OnceCell::new();
         let panes = || (sample.get_or_init(|| crate::cli::probes::hc_terminals(env))).clone();
         self.watch_pane(&board, &callback, &open, &panes, &visit)?;
-        self.dispatch_one(handle, &callback, &mut board, &mut sequence, &visit)?;
+        self.dispatch_one(handle, &callback, &mut board, &mut sequence, &visit, None)?;
         Ok((visit.printed(), sequence))
     }
 
@@ -947,7 +960,7 @@ impl Store {
         if callbacks.is_empty() {
             return Ok(true);
         }
-        self.dispatch_board(&callbacks, pass)
+        self.dispatch_board(&callbacks, pass, None)
             .map(|(_, reached)| reached)
     }
 
@@ -962,9 +975,10 @@ impl Store {
         if callbacks.is_empty() {
             return Ok(None);
         }
-        let (board, _) = self.callback_board()?;
-        self.watch_panes(&board, &callbacks)?;
-        self.dispatch_board(&callbacks, Pass::Deliver)
+        let read = self.callback_board()?;
+        // The board the watch looked at serves the dispatch too, once the watch wrote nothing.
+        let watched = self.watch_panes(&read.0, &callbacks)?;
+        self.dispatch_board(&callbacks, Pass::Deliver, (!watched).then_some(read))
             .map(|(board, _)| Some(board))
     }
 
@@ -974,14 +988,23 @@ impl Store {
     }
 
     /// The board as the pass read it, and whether the pass reached every recipient on this host: one
-    /// whose lease another dispatcher held is left to that one, and to the next pass.
+    /// whose lease another dispatcher held is left to that one, and to the next pass. The pass reads
+    /// the board, or takes `read`, a board and its marker the caller read just before and wrote
+    /// nothing since.
     fn dispatch_board(
         &self,
         callbacks: &BTreeMap<String, Callback>,
         pass: Pass,
+        read: Option<(super::Board, u64)>,
     ) -> Result<(super::Board, bool), Error> {
         // Each pass reads the messages afresh, once for every recipient ([`Store::fresh_board`]).
-        let (mut board, mut sequence) = self.fresh_board()?;
+        let (mut board, mut sequence) = match read {
+            Some(read) => {
+                *self.inbox_pool.lock().recover() = None;
+                read
+            }
+            None => self.fresh_board()?,
+        };
         // A giving store's delivering pass (a write's detached dispatcher) gives what no
         // orchestrator holds first, so its recipients hear the give; an observing one keeps the
         // board as its write left it.
@@ -1025,11 +1048,14 @@ impl Store {
                         matches!(session.health, crate::Health::Live | crate::Health::Left)
                     })
             });
+        let here: Vec<&Callback> = (callbacks.values())
+            .filter(|c| c.host == self.host)
+            .collect();
         if idle {
             let mut reached = true;
-            for (handle, callback) in callbacks.iter().filter(|(_, c)| c.host == self.host) {
-                if pass == Pass::Deliver && self.callback_pending(handle, callback.chat)? {
-                    reached &= self.dispatch_agent(handle)?;
+            if pass == Pass::Deliver {
+                for handle in self.pending(&here)? {
+                    reached &= self.dispatch_agent(&handle)?;
                 }
             }
             return Ok((board, reached));
@@ -1037,11 +1063,16 @@ impl Store {
         let initial_sequence = sequence;
         let mut observed = true;
         let mut pull_at = f64::INFINITY;
-        for (handle, callback) in callbacks.iter().filter(|(_, c)| c.host == self.host) {
+        // Every recipient's stored state in one read: each one's plan reads it from there, with its
+        // due line where the pass delivers (an observing one settles whatever waits).
+        let mut stored = self.stored_states(&here, pass != Pass::Observe)?;
+        for callback in here {
             let env = crate::cli::Env::of_process();
             let visit = Visit::new(pass, &env, self, holdings.as_ref());
+            let handle = callback.handle.as_str();
+            let ahead = stored.remove(handle);
             let (handled, due) =
-                self.dispatch_one(handle, callback, &mut board, &mut sequence, &visit)?;
+                self.dispatch_one(handle, callback, &mut board, &mut sequence, &visit, ahead)?;
             observed &= handled;
             pull_at = pull_at.min(due);
         }
@@ -1113,9 +1144,11 @@ impl Store {
         Ok(held)
     }
 
-    /// One recipient's visit, planned without its lease: whether it was reached, and when its PULL
-    /// is next due. One whose PULL is due is made again under the lease at once ([`Store::leased`]),
-    /// and one the plan finds anything to record, queue or deliver for, once it has planned.
+    /// One recipient's visit, planned without its lease from its stored state, `ahead` when the pass
+    /// read it with every other recipient's ([`Store::stored_states`]): whether it was reached, and
+    /// when its PULL is next due. One whose PULL is due is made again under the lease at once
+    /// ([`Store::leased`]), and one the plan finds anything to record, queue or deliver for, once it
+    /// has planned.
     fn dispatch_one(
         &self,
         handle: &str,
@@ -1123,8 +1156,14 @@ impl Store {
         board: &mut super::Board,
         sequence: &mut u64,
         visit: &Visit<'_>,
+        ahead: Option<Stored>,
     ) -> Result<(bool, f64), Error> {
-        let Some(look) = self.look(handle, callback, board, sequence, visit)? else {
+        let stored = match ahead {
+            Some(stored) => stored,
+            None => self.stored_one(callback, visit.pass != Pass::Observe)?,
+        };
+        let pending = stored.pending;
+        let Some(look) = self.look(handle, callback, board, sequence, visit, stored)? else {
             return Ok((true, f64::INFINITY));
         };
         if look.due {
@@ -1155,10 +1194,7 @@ impl Store {
                 recorded == look.legacy
             })
             && !self.could_hear(handle, look.message_floor, board.latest_message)?;
-        if settled
-            && (current || unreached)
-            && (visit.pass == Pass::Observe || !self.callback_pending(handle, callback.chat)?)
-        {
+        if settled && (current || unreached) && (visit.pass == Pass::Observe || !pending) {
             return Ok((true, look.pull_at));
         }
         self.leased(handle, callback, board, sequence, visit, look.pull_at)
@@ -1183,7 +1219,10 @@ impl Store {
         if delivering {
             (*board, *sequence) = self.callback_board()?;
         }
-        let Some(mut look) = self.look(handle, callback, board, sequence, visit)? else {
+        // Under the lease the recipient's stored state is read again, alone, and its outbox asked
+        // afresh below: the read takes no due line, nor the clock one needs.
+        let stored = self.stored_one(callback, false)?;
+        let Some(mut look) = self.look(handle, callback, board, sequence, visit, stored)? else {
             return Ok((true, f64::INFINITY));
         };
         let lines = self.changed_lines(handle, board, &look)?;
@@ -1214,7 +1253,7 @@ impl Store {
                     )
                 })?;
             }
-            if !delivering || !self.callback_pending(handle, callback.chat)? {
+            if !delivering || !self.callback_pending(callback)? {
                 return Ok((true, look.pull_at));
             }
             return self
@@ -1271,8 +1310,8 @@ impl Store {
         Ok((true, look.pull_at))
     }
 
-    /// `handle` as a visit reads it against `board` ([`Look`]): none when there is nothing to
-    /// observe of it ([`Store::stored_state`]), or it is no session here.
+    /// `handle` as a visit reads it against `board` from its `stored` state ([`Look`]): none when
+    /// there is nothing to observe of it ([`Store::stored_state`]), or it is no session here.
     fn look(
         &self,
         handle: &str,
@@ -1280,9 +1319,10 @@ impl Store {
         board: &mut super::Board,
         sequence: &mut u64,
         visit: &Visit<'_>,
+        stored: Stored,
     ) -> Result<Option<Look>, Error> {
         let Some((mut state, checked_pull, queued)) =
-            self.stored_state(handle, callback, board, sequence, visit)?
+            self.stored_state(handle, callback, board, sequence, visit, stored)?
         else {
             return Ok(None);
         };
@@ -1417,7 +1457,7 @@ impl Store {
         }))
     }
 
-    /// `handle`'s stored state, as a visit reads it against `board`: its callback state, when its
+    /// `handle`'s `stored` state, as a visit reads it against `board`: its callback state, when its
     /// PULL was last checked, and the lines still queued for it. None when there is nothing to
     /// observe: no state, or, for a write's observation, one recorded at or past this board. A
     /// state recorded past the board, or before observations were sequenced, reads the board again.
@@ -1428,13 +1468,14 @@ impl Store {
         board: &mut super::Board,
         sequence: &mut u64,
         visit: &Visit<'_>,
+        stored: Stored,
     ) -> Result<Option<(State, f64, Vec<Queued>)>, Error> {
         let Stored {
             state,
             checked_pull,
             queued,
-        } =
-            self.retrying(|| self.read(both(sql::STORED, pg::stored()), json!({"handle":handle})))?;
+            ..
+        } = stored;
         let Some(mut state) = state else {
             return Ok(None);
         };
@@ -1518,9 +1559,13 @@ impl Store {
     ) -> Result<Vec<Event>, Error> {
         let mut events = Vec::new();
         if let Some(Inbox { floor, first }) = inbox {
+            let latest = board.latest_message;
             let messages = match first {
                 true => self.inbox(handle)?,
-                false => self.inbox_pooled(handle, floor, board.latest_message)?,
+                // The pass's pool says no message since the cursor could reach it: its inbox holds
+                // nothing after the cursor, and is not read ([`Store::could_hear`]).
+                false if !self.could_hear(handle, floor, latest)? => Vec::new(),
+                false => self.inbox_pooled(handle, floor, latest)?,
             };
             for message in messages.into_iter().filter(|message| {
                 message.id > floor
@@ -1667,13 +1712,66 @@ impl Store {
         }
     }
 
-    fn callback_pending(&self, handle: &str, chat: bool) -> Result<bool, Error> {
-        self.retrying(|| {
-            self.read(
-                both(sql::PENDING, pg::pending()),
-                json!({"handle":handle, "chat":chat, "now":self.now()}),
-            )
-        })
+    /// Each of `recipients`' stored state ([`Stored`]) by handle, all of them in one read, with
+    /// whether a line of its outbox is due now when `due` ([`Stored::pending`]), and no read of the
+    /// clock when not: the stored state of a pass's every recipient, which their plans read, as
+    /// only a visit under its lease reads its recipient's again ([`Store::stored_one`]).
+    fn stored_states(
+        &self,
+        recipients: &[&Callback],
+        due: bool,
+    ) -> Result<BTreeMap<String, Stored>, Error> {
+        if recipients.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let mut vars = json!({"recipients": addressed(recipients)});
+        if due {
+            vars["now"] = json!(self.now());
+        }
+        let stored: Vec<Stored> = self.retrying(|| {
+            let statement = match due {
+                true => both(sql::STORED_DUE.as_str(), pg::stored_due()),
+                false => both(sql::STORED.as_str(), pg::stored()),
+            };
+            self.read(statement, vars.clone())
+        })?;
+        Ok(stored
+            .into_iter()
+            .map(|stored| (stored.handle.clone(), stored))
+            .collect_map())
+    }
+
+    /// `callback`'s recipient's stored state, read alone ([`Store::stored_states`]), with its due
+    /// line when `due`.
+    fn stored_one(&self, callback: &Callback, due: bool) -> Result<Stored, Error> {
+        let handle = callback.handle.as_str();
+        (self.stored_states(&[callback], due)?.remove(handle))
+            .ok_or_else(|| Error::Db(format!("the board read no callback state for {handle}")))
+    }
+
+    /// The handles of `recipients` with a line of their outbox due now, all of them in one read: the
+    /// owner's chat events only for the one holding the seat ([`Callback::chat`]).
+    fn pending(&self, recipients: &[&Callback]) -> Result<BTreeSet<String>, Error> {
+        #[derive(Deserialize)]
+        struct Due {
+            handle: String,
+            pending: bool,
+        }
+        if recipients.is_empty() {
+            return Ok(BTreeSet::new());
+        }
+        let vars = json!({"recipients": addressed(recipients), "now": self.now()});
+        let due: Vec<Due> =
+            self.retrying(|| self.read(both(sql::PENDING.as_str(), pg::pending()), vars.clone()))?;
+        Ok((due.into_iter())
+            .filter(|due| due.pending)
+            .map(|due| due.handle)
+            .collect())
+    }
+
+    /// Whether a line of `callback`'s outbox is due now ([`Store::pending`]).
+    fn callback_pending(&self, callback: &Callback) -> Result<bool, Error> {
+        Ok(self.pending(&[callback])?.contains(&callback.handle))
     }
 
     /// Send what waits for `handle` by `send`, in batches, and record each batch's outcome, under
@@ -1830,6 +1928,14 @@ fn deliver_batches<T>(
         end = pending.len();
     }
     Ok(())
+}
+
+/// `recipients` as a read of their outboxes names them: each one's handle, and whether it holds the
+/// owner's chat seat.
+fn addressed(recipients: &[&Callback]) -> Value {
+    (recipients.iter())
+        .map(|callback| json!({"handle": callback.handle, "chat": callback.chat}))
+        .collect()
 }
 
 /// The slot holdings `visit` observed, which an orchestrator's look and its PULL are read with.
