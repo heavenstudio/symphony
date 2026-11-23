@@ -68,7 +68,7 @@ mod startup;
 mod uuid;
 
 pub use bounds::{Bounds, may_bind, own_thread};
-pub use cleanup::{Closure, cleanup, cleanup_as, finish};
+pub use cleanup::{Closure, NOT_LANDED, approved, cleanup, cleanup_as, finish, landed};
 pub use close::close;
 pub use defaults::{Defaults, Resolved};
 use place::{name_place, place, stream};

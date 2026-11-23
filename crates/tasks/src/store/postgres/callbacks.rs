@@ -27,9 +27,34 @@ pub(in crate::store) fn registrations() -> Pg<'static> {
     ))
 }
 
-/// Whether a queued line is due, with the owner's chat routed only to the current seat.
-const CHAT: &str = "(NOT starts_with(e.doc ->> 'key', 'chat-') OR ((v ->> 'chat')::boolean AND NOT EXISTS (SELECT 1 FROM chat_event c WHERE c.id = to_jsonb(substr(e.doc ->> 'key', 6)) AND c.doc -> 'delivered' = 'true')))";
-const DUE: &str = "e.doc ->> 'handle' = v ->> 'handle' AND e.doc -> 'delivered' IS DISTINCT FROM 'true'::jsonb AND (e.doc ->> 'attempts')::bigint < 3 AND (NOT e.doc ? 'retry_at' OR (e.doc ->> 'retry_at')::double precision <= (v ->> 'now')::double precision)";
+/// Whether the queued line `e` is routed to the recipient `of` names (its `chat`): the owner's chat
+/// only to the current seat.
+fn chat(of: &str) -> String {
+    format!(
+        "(NOT starts_with(e.doc ->> 'key', 'chat-') OR (({of} ->> 'chat')::boolean AND NOT EXISTS (SELECT 1 FROM chat_event c WHERE c.id = to_jsonb(substr(e.doc ->> 'key', 6)) AND c.doc -> 'delivered' = 'true')))"
+    )
+}
+/// Whether the queued line `e` is the recipient's `of` names (its `handle`) and due at `v`'s `now`.
+fn due_line(of: &str) -> String {
+    format!(
+        "e.doc ->> 'handle' = {of} ->> 'handle' AND e.doc -> 'delivered' IS DISTINCT FROM 'true'::jsonb AND (e.doc ->> 'attempts')::bigint < 3 AND (NOT e.doc ? 'retry_at' OR (e.doc ->> 'retry_at')::double precision <= (v ->> 'now')::double precision)"
+    )
+}
+/// Whether a line of the outbox of the recipient `of` names is due ([`due_line`], [`chat`]).
+fn pending_of(of: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM callback_event e WHERE {} AND {})",
+        due_line(of),
+        chat(of)
+    )
+}
+/// `fields` of each of `v`'s `recipients`, `r` in them, each object with its `handle`, in their order
+/// (`super::super::surreal::callbacks::STORED`'s `SELECT … FROM $recipients`).
+pub(in crate::store) fn each_recipient(fields: &str) -> String {
+    format!(
+        "coalesce((SELECT jsonb_agg(jsonb_build_object('handle', r -> 'handle', {fields}) ORDER BY n) FROM jsonb_array_elements(v -> 'recipients') WITH ORDINALITY AS recipient(r, n)), '[]')"
+    )
+}
 /// Compare each digit run numerically, retaining the text runs between them. Padding the run's
 /// length avoids a bounded integer cast: even caller-chosen keys longer than a bigint sort.
 fn natural(key: &str) -> String {
@@ -142,9 +167,9 @@ pub(in crate::store) fn blocked() -> Pg<'static> {
     )
 }
 pub(in crate::store) fn inbox() -> Pg<'static> {
-    let order = order();
+    let (order, chat) = (order(), chat("v"));
     Pg::read(format!(
-        "coalesce((SELECT jsonb_agg(e.doc ORDER BY {order}) FROM callback_event e WHERE e.doc -> 'handle' = v -> 'handle' AND e.doc -> 'delivered' IS DISTINCT FROM 'true'::jsonb AND NOT e.doc ? 'message' AND {CHAT}), '[]')"
+        "coalesce((SELECT jsonb_agg(e.doc ORDER BY {order}) FROM callback_event e WHERE e.doc -> 'handle' = v -> 'handle' AND e.doc -> 'delivered' IS DISTINCT FROM 'true'::jsonb AND NOT e.doc ? 'message' AND {chat}), '[]')"
     ))
 }
 pub(in crate::store) fn reader() -> Pg<'static> {
@@ -183,10 +208,17 @@ pub(in crate::store) fn pull_checked() -> Pg<'static> {
         "UPDATE callback_lease SET doc = doc || jsonb_build_object('pull', v -> 'now') WHERE id = v -> 'handle' AND doc -> 'revision' = v -> 'revision';",
     )
 }
+/// Each recipient's stored state, with `more` fields (`super::super::surreal::callbacks::stored`).
+fn stored_with(more: &str) -> Pg<'static> {
+    Pg::read(each_recipient(&format!(
+        "'state', (SELECT doc FROM callback_state WHERE id = r -> 'handle'), 'checked_pull', coalesce((SELECT doc -> 'pull' FROM callback_lease WHERE id = r -> 'handle'), '0'), 'queued', coalesce((SELECT jsonb_agg(jsonb_strip_nulls(jsonb_build_object('key', doc -> 'key', 'text', doc -> 'text', 'sequence', doc -> 'sequence', 'pull_entries', doc -> 'pull_entries', 'pull_withheld', doc -> 'pull_withheld', 'pull_said', doc -> 'pull_said'))) FROM callback_event WHERE doc ->> 'handle' = r ->> 'handle' AND doc -> 'delivered' IS DISTINCT FROM 'true'::jsonb AND (starts_with(doc ->> 'key', 'pull-') OR starts_with(doc ->> 'key', 'event-') OR (starts_with(doc ->> 'key', 'pane-') AND starts_with(doc ->> 'text', 'BLOCKED ')))), '[]'){more}"
+    )))
+}
 pub(in crate::store) fn stored() -> Pg<'static> {
-    Pg::read(
-        "jsonb_build_object('state', (SELECT doc FROM callback_state WHERE id = v -> 'handle'), 'checked_pull', coalesce((SELECT doc -> 'pull' FROM callback_lease WHERE id = v -> 'handle'), '0'), 'queued', coalesce((SELECT jsonb_agg(jsonb_strip_nulls(jsonb_build_object('key', doc -> 'key', 'text', doc -> 'text', 'sequence', doc -> 'sequence', 'pull_entries', doc -> 'pull_entries', 'pull_withheld', doc -> 'pull_withheld', 'pull_said', doc -> 'pull_said'))) FROM callback_event WHERE doc -> 'handle' = v -> 'handle' AND doc -> 'delivered' IS DISTINCT FROM 'true'::jsonb AND (starts_with(doc ->> 'key', 'pull-') OR starts_with(doc ->> 'key', 'event-') OR (starts_with(doc ->> 'key', 'pane-') AND starts_with(doc ->> 'text', 'BLOCKED ')))), '[]'))",
-    )
+    stored_with("")
+}
+pub(in crate::store) fn stored_due() -> Pg<'static> {
+    stored_with(&format!(", 'pending', {}", pending_of("r")))
 }
 pub(in crate::store) fn unqueued_chat() -> Pg<'static> {
     Pg::read(format!(
@@ -195,17 +227,15 @@ pub(in crate::store) fn unqueued_chat() -> Pg<'static> {
     ))
 }
 pub(in crate::store) fn pending() -> Pg<'static> {
-    Pg::read(format!(
-        "EXISTS (SELECT 1 FROM callback_event e WHERE {DUE} AND {CHAT})"
-    ))
+    Pg::read(each_recipient(&format!("'pending', {}", pending_of("r"))))
 }
 pub(in crate::store) fn due() -> Pg<'static> {
-    let order = order();
+    let (order, due, chat) = (order(), due_line("v"), chat("v"));
     Pg::script(format!("IF (SELECT doc -> 'revision' FROM callback_lease WHERE id = v -> 'handle') = v -> 'revision' THEN
 UPDATE callback_lease SET doc = doc || jsonb_build_object('until', (v ->> 'now')::double precision + (v ->> 'lease_seconds')::double precision) WHERE id = v -> 'handle';
 UPDATE callback_event e SET doc = doc || '{{\"delivered\":true}}' WHERE doc -> 'handle' = v -> 'handle' AND doc -> 'delivered' IS DISTINCT FROM 'true'::jsonb AND doc ? 'message' AND EXISTS (SELECT 1 FROM delivery d WHERE d.id = jsonb_build_array(e.doc -> 'message', v -> 'handle'));
 DELETE FROM callback_event WHERE doc -> 'handle' = v -> 'handle' AND doc -> 'delivered' = 'true';
-SELECT coalesce(jsonb_agg(e.doc ORDER BY {order}), '[]') INTO board_answer FROM callback_event e WHERE {DUE} AND {CHAT};
+SELECT coalesce(jsonb_agg(e.doc ORDER BY {order}), '[]') INTO board_answer FROM callback_event e WHERE {due} AND {chat};
 END IF;"))
 }
 pub(in crate::store) fn yield_chat_seat() -> Pg<'static> {

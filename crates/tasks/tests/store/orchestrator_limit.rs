@@ -332,6 +332,33 @@ fn a_leavers_work_goes_only_as_far_as_the_others_limits_and_the_rest_waits(backe
 }
 
 on_both! {
+fn a_leavers_task_that_waits_on_nothing_takes_the_place_before_one_that_still_waits(backend: Backend) {
+    // In the board's order, the one that waits on open work comes first, by its slug and its filing.
+    let seed = Seed::default()
+        .task("tools/open", "ready")
+        .task("tools/a-waits", "ready")
+        .link("tools/a-waits", "dep", "tools/open")
+        .task("tools/b-free", "ready");
+    let f = Fixture::on(backend, seed);
+    let store = limited(&f, 2);
+    let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
+    store
+        .take_role("tools/open", &cobalt, "orchestrator")
+        .unwrap();
+    for slug in ["tools/a-waits", "tools/b-free"] {
+        store.take_role(slug, &amber, "orchestrator").unwrap();
+    }
+    settle(&f, &[&amber, &cobalt]);
+    // Cobalt has one place: the task that can be worked on now takes it, and the other waits.
+    store.leave(&amber).unwrap();
+    assert_eq!(orchestrators_of(&f, "tools/b-free"), [cobalt.as_str()]);
+    assert!(orchestrators_of(&f, "tools/a-waits").is_empty());
+    let task = f.store.get("tools/a-waits").unwrap();
+    assert!(symphony_board::orchestration::waiting(&task.fields).is_some());
+}
+}
+
+on_both! {
 fn a_reopened_task_is_given_only_to_one_under_the_limit(backend: Backend) {
     let f = Fixture::on(backend, Seed::default());
     let store = limited(&f, 1);

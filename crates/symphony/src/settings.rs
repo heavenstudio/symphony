@@ -663,13 +663,6 @@ fn plugins(file: &FileRead, project: &Project) -> SettingsEntry {
                 SettingKind::Switch,
                 "off",
             ),
-            file.setting(
-                &["plugins"],
-                "loopback",
-                "Send each call through a JSON round trip",
-                SettingKind::Switch,
-                "off",
-            ),
         ],
         ..entry(
             "plugins",
@@ -1061,6 +1054,20 @@ fn identity(file: &FileRead, project: &Project) -> SettingsEntry {
                 "Gigabytes of swept evidence kept before a check is asked",
                 SettingKind::Number,
                 "5",
+            ),
+            file.setting(
+                &["board"],
+                "sweep_disposable",
+                "Ignored paths that go with a merged worktree",
+                SettingKind::List,
+                "the board's own",
+            ),
+            file.setting(
+                &["board"],
+                "own_sweep",
+                "Whether a server of its own sweeps idle sessions",
+                SettingKind::Switch,
+                "off",
             ),
             file.setting(
                 &["board"],

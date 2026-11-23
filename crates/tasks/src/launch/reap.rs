@@ -5,7 +5,9 @@
 //! reminder. A session that is done and not needed soon is closed, then resumed when it is: only
 //! sessions doing active work, or that will have active work soon (within the hour), are kept
 //! open. A task that becomes done or cancelled closes its own sessions at once
-//! ([`super::finish`], from `just tasks move/verdict/done`); this sweep catches the rest. `just
+//! ([`super::finish`], from `just tasks move/verdict/done`), but for the executors of one an approve
+//! left done and not landed, which its land closes ([`super::approved`], [`super::landed`]); this
+//! sweep catches the rest, one of those left idle with nothing asked of it among them. `just
 //! tasks reap` is one sweep; Symphony (`just symphony`) runs it every [`REAP_SECONDS`]; `just tasks clean`
 //! runs cleanup and one sweep at once.
 //!

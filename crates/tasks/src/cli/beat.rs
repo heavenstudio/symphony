@@ -367,11 +367,91 @@ fn mark(folder: &Path, key: &str, bound: bool) {
         }
     } else {
         let _ = std::fs::remove_file(&file);
+        if let Some(seen) = considered(folder, key) {
+            let _ = std::fs::remove_file(seen);
+        }
     }
 }
 
-/// `just tasks beat < EVENT.json`: always 0.
-pub fn run(input: &mut dyn std::io::Read, env: &Env) -> i32 {
+/// The variable Claude Code gives a session's own processes, its hooks among them: the socket its
+/// inbox listens on, which `callback` registers with no address.
+const SOCKET: &str = "CLAUDE_CODE_MESSAGING_SOCKET";
+
+/// The file beside a full session's key that names the socket last considered for it
+/// ([`connect`]): `KEY.channel`, which no key can be named (a key holds no dot).
+fn considered(folder: &Path, key: &str) -> Option<PathBuf> {
+    safe(key).then(|| folder.join(format!("{key}.channel")))
+}
+
+/// Register the channel of a launched session that has not registered it: `launch` and `restore`
+/// leave that to the agent (`just tasks callback --as HANDLE`), and one that skips it sits idle on
+/// messages nobody delivers. On the hook's own event before a board command that names the handle
+/// bound to the session, where the session's conversation is the one an open launch of that
+/// handle records and its environment names its inbox socket, the socket is registered as
+/// `callback` with no address would have: once for each socket, so a channel the session turns
+/// off stays off, and a restored conversation, a new process on a new socket, is connected again.
+/// A registration another session holds the chat seat by is left alone. Whatever happens the beat
+/// goes on: a socket that cannot be registered now is tried at the session's next board command.
+fn connect(
+    store: &Store,
+    env: &Env,
+    event: &Map<String, Value>,
+    beaten: &Beaten,
+    folder: Option<&Path>,
+) -> Option<()> {
+    let handle = beaten.handle.as_deref().filter(|_| beaten.full)?;
+    let socket = env.var(SOCKET).filter(|socket| !socket.is_empty())?;
+    let text = |name: &str| event.get(name).and_then(Value::as_str);
+    if text("hook_event_name") != Some("PreToolUse") || text("tool_name") != Some("Bash") {
+        return None;
+    }
+    let command = event.get("tool_input")?.get("command")?.as_str()?;
+    if named_handle(command).as_deref() != Some(handle) {
+        return None;
+    }
+    let seen = folder.and_then(|folder| considered(folder, &beaten.key));
+    if let Some(seen) = &seen
+        && std::fs::read_to_string(seen).is_ok_and(|last| last == socket)
+    {
+        return None;
+    }
+    let launched = store
+        .sessions_of(handle)
+        .ok()?
+        .iter()
+        .any(|launch| launch.closed.is_none() && launch.claude_session == beaten.key);
+    if launched {
+        let address = format!("uds:{socket}");
+        let held = store.callbacks().ok()?.remove(handle);
+        if held
+            .as_ref()
+            .is_none_or(|held| held.address != address && !held.chat)
+        {
+            store
+                .callback_in(
+                    handle,
+                    Some(&address),
+                    false,
+                    false,
+                    env.var("HC_TERMINAL_ID"),
+                )
+                .ok()?;
+        }
+    }
+    if let Some(seen) = seen
+        && seen
+            .parent()
+            .is_some_and(|folder| std::fs::create_dir_all(folder).is_ok())
+    {
+        let _ = std::fs::write(seen, socket);
+    }
+    Some(())
+}
+
+/// `just tasks beat < EVENT.json`: always 0. A channel it registers ([`connect`]) leaves its
+/// delivery to a detached `program dispatch`, as every command line's write does, so the tool call
+/// waits on no delivery.
+pub fn run(input: &mut dyn std::io::Read, env: &Env, program: Option<&Path>) -> i32 {
     let _ = (|| -> Option<()> {
         let mut raw = String::new();
         input.read_to_string(&mut raw).ok()?;
@@ -412,12 +492,18 @@ pub fn run(input: &mut dyn std::io::Read, env: &Env) -> i32 {
             ledger.close(recorded);
         }
         let beaten = beaten.ok()??;
+        let folder = keys_folder(env, &cwd);
+        if bind {
+            // The dispatcher reaches the board from where the beat did: the event's folder.
+            let here = Env {
+                vars: env.vars.clone(),
+                cwd: cwd.clone(),
+            };
+            let store = super::detaching(store, &here, program);
+            connect(&store, env, event, &beaten, folder.as_deref());
+        }
         if beaten.full {
-            mark(
-                &keys_folder(env, &cwd)?,
-                &beaten.key,
-                beaten.handle.is_some(),
-            );
+            mark(&folder?, &beaten.key, beaten.handle.is_some());
         }
         Some(())
     })();
