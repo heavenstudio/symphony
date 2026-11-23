@@ -1,4 +1,4 @@
-use super::{parse, read, read_exact};
+use super::{fields, items, parse, read, read_exact};
 use crate::execution::{
     Artifact, Asked, Binding, Cancellation, Cleanup, Collection, Dispatch, Ending, Identity, Lease,
     Pending, Pin, Relation, Row, State,
@@ -630,4 +630,94 @@ fn text_reads_differently_only_for_an_array_as_a_struct_and_a_field_said_twice()
         "duplicate field `id` at line 1 column 40"
     );
     assert_eq!(parse::<Binding>(twice).unwrap().id, "second");
+}
+
+/// A recipient's row as a derived reader reads it: a field it needs, an option of a struct, a
+/// number and a field with a default, beside the same row read by field ([`by_field`]).
+#[derive(Debug, PartialEq, Derived)]
+struct Recipient {
+    handle: String,
+    state: Option<Binding>,
+    checked: f64,
+    #[serde(default)]
+    pending: bool,
+}
+
+/// `value` read as a list of [`Recipient`], item by item and field by field, as the dispatch's
+/// reads of many recipients read their answers.
+fn by_field(value: &Value) -> Result<Vec<Recipient>, String> {
+    let row = |item: &Value| {
+        let row = fields(item, "struct Recipient")?;
+        Ok(Recipient {
+            handle: row.field("handle")?,
+            state: row.optional("state")?,
+            checked: row.field("checked")?,
+            pending: row.defaulted("pending")?,
+        })
+    };
+    let rows: Result<Vec<Recipient>, serde_json::Error> =
+        items(value).and_then(|items| items.iter().map(row).collect());
+    rows.map_err(|e| e.to_string())
+}
+
+#[test]
+fn a_list_read_by_field_reads_and_refuses_as_its_derived_reader() {
+    let binding = json!({"id": "res", "generation": "g1"});
+    for value in [
+        json!([]),
+        json!([{"handle": "a", "state": binding, "checked": 5, "pending": true}]),
+        json!([{"handle": "a", "checked": 0.5}, {"handle": "b", "checked": 1.0e3}]),
+        json!([{"handle": "a", "state": null, "checked": 1, "pending": false, "more": [1]}]),
+        json!({"handle": "a", "checked": 1}),
+        json!(null),
+        json!("a"),
+        json!(["a"]),
+        json!([["a", null, 1, true]]),
+        json!([{"handle": "a", "checked": 1}, 7]),
+        json!([{"checked": 1}]),
+        json!([{"handle": "a"}]),
+        json!([{"handle": 1, "checked": 1}]),
+        json!([{"handle": "a", "checked": "soon"}]),
+        json!([{"handle": "a", "checked": null}]),
+        json!([{"handle": "a", "checked": 1, "pending": null}]),
+        json!([{"handle": "a", "checked": 1, "pending": "yes"}]),
+        json!([{"handle": "a", "checked": 1, "state": {"id": "res"}}]),
+        json!([{"handle": "a", "checked": 1, "state": ["res", "g1"]}]),
+        json!([{"handle": "a", "checked": 1, "state": 3}]),
+    ] {
+        let derived = read::<Vec<Recipient>>(&value).map_err(|e| e.to_string());
+        assert_eq!(by_field(&value), derived, "{value}");
+    }
+    assert_eq!(
+        by_field(&json!([{"handle": "a", "checked": 2}])).unwrap(),
+        [Recipient {
+            handle: "a".into(),
+            state: None,
+            checked: 2.0,
+            pending: false,
+        }]
+    );
+    assert_eq!(
+        by_field(&json!({"handle": "a"})).unwrap_err(),
+        "invalid type: map, expected a sequence"
+    );
+    assert_eq!(
+        by_field(&json!(["a"])).unwrap_err(),
+        "invalid type: string \"a\", expected struct Recipient"
+    );
+}
+
+#[test]
+fn a_struct_read_by_field_refuses_the_first_wrong_field_it_asks_for() {
+    // Two fields wrong: by field, the first one asked for; a derived reader, the first in the
+    // object's order, which the board's build keeps as written (`preserve_order`).
+    let two_wrong = json!([{"checked": "soon", "handle": 1}]);
+    assert_eq!(
+        by_field(&two_wrong).unwrap_err(),
+        "invalid type: number, expected a string"
+    );
+    assert_eq!(
+        read::<Vec<Recipient>>(&two_wrong).unwrap_err().to_string(),
+        "invalid type: string \"soon\", expected f64"
+    );
 }

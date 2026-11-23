@@ -21,11 +21,13 @@ use super::pull_account::{Account, PullPlan};
 use super::queued_lines::{Hearing, Queued, Rescoped};
 use super::statement::both;
 use super::surreal::callbacks as sql;
+use super::transaction::unshaped;
 use super::{Error, Store, refused};
 use crate::cli::agents::{Answer, Pane};
 use crate::cli::{attach, probes, pull};
 use crate::lock::Recovered as _;
 use crate::maps::Collect as _;
+use crate::objects::Fields;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -125,14 +127,24 @@ impl Event {
 /// line of its outbox was due when it was read. A pass's plans read every recipient's at once
 /// ([`Store::stored_states`]); a visit under its lease reads its own without the due line, false
 /// there, as it asks its outbox afresh ([`Store::stored_one`]).
-#[derive(Deserialize)]
 struct Stored {
-    handle: String,
     state: Option<State>,
     checked_pull: f64,
     queued: Vec<Queued>,
-    #[serde(default)]
     pending: bool,
+}
+
+impl Stored {
+    /// The stored state a recipient's `row` holds, read by field ([`recipient_rows`]): the due
+    /// line false where the read took none.
+    fn of(row: &Fields) -> Result<Stored, serde_json::Error> {
+        Ok(Stored {
+            state: row.optional("state")?,
+            checked_pull: row.field("checked_pull")?,
+            queued: row.field("queued")?,
+            pending: row.defaulted("pending")?,
+        })
+    }
 }
 
 /// A recipient's observation as written: whether the dispatcher still held the recipient's lease,
@@ -1070,7 +1082,7 @@ impl Store {
             let env = crate::cli::Env::of_process();
             let visit = Visit::new(pass, &env, self, holdings.as_ref());
             let handle = callback.handle.as_str();
-            let ahead = stored.remove(handle);
+            let ahead = taken(&mut stored, handle);
             let (handled, due) =
                 self.dispatch_one(handle, callback, &mut board, &mut sequence, &visit, ahead)?;
             observed &= handled;
@@ -1712,60 +1724,54 @@ impl Store {
         }
     }
 
-    /// Each of `recipients`' stored state ([`Stored`]) by handle, all of them in one read, with
-    /// whether a line of its outbox is due now when `due` ([`Stored::pending`]), and no read of the
-    /// clock when not: the stored state of a pass's every recipient, which their plans read, as
-    /// only a visit under its lease reads its recipient's again ([`Store::stored_one`]).
+    /// Each of `recipients`' stored state ([`Stored`]) with its handle, in their order, all of them
+    /// in one read, with whether a line of its outbox is due now when `due` ([`Stored::pending`]),
+    /// and no read of the clock when not: the stored state of a pass's every recipient, which their
+    /// plans read ([`taken`]), as only a visit under its lease reads its recipient's again
+    /// ([`Store::stored_one`]).
     fn stored_states(
         &self,
         recipients: &[&Callback],
         due: bool,
-    ) -> Result<BTreeMap<String, Stored>, Error> {
+    ) -> Result<Vec<(String, Stored)>, Error> {
         if recipients.is_empty() {
-            return Ok(BTreeMap::new());
+            return Ok(Vec::new());
         }
         let mut vars = json!({"recipients": addressed(recipients)});
         if due {
             vars["now"] = json!(self.now());
         }
-        let stored: Vec<Stored> = self.retrying(|| {
+        let answer: Value = self.retrying(|| {
             let statement = match due {
                 true => both(sql::STORED_DUE.as_str(), pg::stored_due()),
                 false => both(sql::STORED.as_str(), pg::stored()),
             };
             self.read(statement, vars.clone())
         })?;
-        Ok(stored
-            .into_iter()
-            .map(|stored| (stored.handle.clone(), stored))
-            .collect_map())
+        recipient_rows(&answer, "struct Stored", Stored::of)
     }
 
     /// `callback`'s recipient's stored state, read alone ([`Store::stored_states`]), with its due
     /// line when `due`.
     fn stored_one(&self, callback: &Callback, due: bool) -> Result<Stored, Error> {
         let handle = callback.handle.as_str();
-        (self.stored_states(&[callback], due)?.remove(handle))
+        taken(&mut self.stored_states(&[callback], due)?, handle)
             .ok_or_else(|| Error::Db(format!("the board read no callback state for {handle}")))
     }
 
     /// The handles of `recipients` with a line of their outbox due now, all of them in one read: the
     /// owner's chat events only for the one holding the seat ([`Callback::chat`]).
     fn pending(&self, recipients: &[&Callback]) -> Result<BTreeSet<String>, Error> {
-        #[derive(Deserialize)]
-        struct Due {
-            handle: String,
-            pending: bool,
-        }
         if recipients.is_empty() {
             return Ok(BTreeSet::new());
         }
         let vars = json!({"recipients": addressed(recipients), "now": self.now()});
-        let due: Vec<Due> =
+        let answer: Value =
             self.retrying(|| self.read(both(sql::PENDING.as_str(), pg::pending()), vars.clone()))?;
+        let due = recipient_rows(&answer, "struct Due", |row| row.field::<bool>("pending"))?;
         Ok((due.into_iter())
-            .filter(|due| due.pending)
-            .map(|due| due.handle)
+            .filter(|(_, pending)| *pending)
+            .map(|(handle, _)| handle)
             .collect())
     }
 
@@ -1936,6 +1942,31 @@ fn addressed(recipients: &[&Callback]) -> Value {
     (recipients.iter())
         .map(|callback| json!({"handle": callback.handle, "chat": callback.chat}))
         .collect()
+}
+
+/// Each row of `answer`, a read of many recipients (a list of objects of `what`, each naming its
+/// recipient's `handle`), in its order, with that handle and the rest of it as `row` reads it.
+/// Read by field through the board's one value reader ([`crate::objects::fields`]), so no reader
+/// of a list of rows, nor of a row, is linked for each such read (tools/size-budget.toml); an
+/// answer not in that shape is refused in the words the store's decoder refuses one with.
+fn recipient_rows<T>(
+    answer: &Value,
+    what: &'static str,
+    row: fn(&Fields) -> Result<T, serde_json::Error>,
+) -> Result<Vec<(String, T)>, Error> {
+    let read = |item: &Value| {
+        let fields = crate::objects::fields(item, what)?;
+        Ok((fields.field("handle")?, row(&fields)?))
+    };
+    (crate::objects::items(answer).and_then(|items| items.iter().map(read).collect()))
+        .map_err(unshaped)
+}
+
+/// The row `handle` names among `rows` ([`recipient_rows`]), taken out of them: none where the read
+/// gave none for it.
+fn taken<T>(rows: &mut Vec<(String, T)>, handle: &str) -> Option<T> {
+    let at = rows.iter().position(|(named, _)| named == handle)?;
+    Some(rows.swap_remove(at).1)
 }
 
 /// The slot holdings `visit` observed, which an orchestrator's look and its PULL are read with.

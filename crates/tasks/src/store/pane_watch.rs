@@ -2,13 +2,13 @@
 //! recognizable generated pane rows are withdrawn; messages and other events are untouched.
 
 use super::{
-    Callback, DeliveryError, Error, Event, Queued, Store, Visit, deliver, event_line, session_task,
+    Callback, DeliveryError, Error, Event, Queued, Store, Visit, deliver, event_line,
+    recipient_rows, session_task, taken,
 };
 use crate::Board;
 use crate::cli::agents::{Answer, Pane};
 use crate::cli::attach::{self, PaneWatch};
 use crate::lock::Recovered as _;
-use crate::maps::Collect as _;
 use crate::rows::TaskSessionRow;
 use crate::store::postgres::pane_watch as pg;
 use crate::store::statement::both;
@@ -95,7 +95,7 @@ impl Store {
         let mut queued = self.queued_panes(&recipients)?;
         let mut watched = false;
         for callback in recipients {
-            let queued = queued.remove(&callback.handle).unwrap_or_default();
+            let queued = taken(&mut queued, &callback.handle).unwrap_or_default();
             watched |= self.watch_one(board, callback, &open, &panes, false, queued, &|text| {
                 deliver(callback, text)
             })?;
@@ -103,28 +103,22 @@ impl Store {
         Ok(watched)
     }
 
-    /// The pane lines still queued for each of `recipients`, by handle, all of them in one read.
+    /// The pane lines still queued for each of `recipients`, with its handle, in their order, all
+    /// of them in one read ([`recipient_rows`]).
     pub(super) fn queued_panes(
         &self,
         recipients: &[&Callback],
-    ) -> Result<BTreeMap<String, Vec<Queued>>, Error> {
-        #[derive(Deserialize)]
-        struct Lines {
-            handle: String,
-            queued: Vec<Queued>,
-        }
+    ) -> Result<Vec<(String, Vec<Queued>)>, Error> {
         if recipients.is_empty() {
-            return Ok(BTreeMap::new());
+            return Ok(Vec::new());
         }
         let handles: Vec<Value> = (recipients.iter())
             .map(|callback| json!({"handle": callback.handle}))
             .collect();
         let vars = json!({"recipients": handles});
-        let lines: Vec<Lines> =
+        let answer: Value =
             self.retrying(|| self.read(both(sql::QUEUED.as_str(), pg::queued()), vars.clone()))?;
-        Ok((lines.into_iter())
-            .map(|lines| (lines.handle, lines.queued))
-            .collect_map())
+        recipient_rows(&answer, "struct Lines", |row| row.field("queued"))
     }
 
     /// The watch for a session with no channel, at its waiting look (`tasks wait`): the panes it
@@ -137,7 +131,8 @@ impl Store {
         panes: &dyn Fn() -> Answer<Vec<Pane>>,
         visit: &Visit,
     ) -> Result<(), Error> {
-        let queued = (self.queued_panes(&[callback])?.remove(&callback.handle)).unwrap_or_default();
+        let queued =
+            taken(&mut self.queued_panes(&[callback])?, &callback.handle).unwrap_or_default();
         self.watch_one(board, callback, open, panes, true, queued, &|text| {
             visit.send(callback, text)
         })
