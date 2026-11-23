@@ -3332,10 +3332,12 @@ fn a_real_page_blocked_in_its_renderer_spends_nothing_and_a_stopped_browser_ends
 
 /// A page behind another tab draws no frame while its main thread answers every task, as a page
 /// whose compositor waits on starved raster work does on a loaded machine. A wait on a promise its
-/// frames keep counts none of its turns meanwhile: the backstop ends it, as the page's stall, never
-/// its allowance's ten turns. Back in front, the page draws, and the same wait is met.
+/// frames keep counts none of its turns meanwhile: each such wait ends at its backstop, as the
+/// page's stall, with none counted, until more observer turns have passed without the page than
+/// the allowance's ten, however few of them a loaded machine gives one wait. Back in front, the
+/// page draws, and the same wait is met.
 ///
-/// The turns are what this wait proves, so it keeps the ten turns 250 ms gives and takes the
+/// The turns are what these waits prove, so each keeps the ten turns 250 ms gives and takes the
 /// protocol's CPU allowance, as the test of a page blocked in its renderer does: Chrome's own work
 /// in its first seconds would spend 250 ms of its CPU on a loaded machine, which bounds that work,
 /// not the page's turns (RULES.md `tests/no-test-fails-on-load`).
@@ -3366,43 +3368,48 @@ fn a_real_page_that_draws_no_frame_spends_nothing_of_a_wait_on_its_frames() {
     chrome
         .call_on(&other, "Page.bringToFront", json!({}))
         .unwrap();
-    // Its main thread answers.
-    assert_eq!(
-        chrome.eval("document.visibilityState").unwrap(),
-        json!("hidden")
-    );
-    chrome.backstop = Duration::from_millis(1500);
-    let mut budget = chrome.page_budget(Duration::from_millis(250)).unwrap();
-    chrome.backstop = BACKSTOP_FLOOR;
-    assert_eq!(budget.max_polls, 10);
-    budget.cpu = process::Budget::new(PROTOCOL_CPU, &chrome.owner.members().unwrap());
-    let started = Instant::now();
-    let behind = chrome.eval_bounded(frame, &mut budget).unwrap();
-    let took = started.elapsed();
-    let passed = budget.page.as_ref().unwrap().passed;
-    assert_eq!(
-        behind, None,
-        "a page that draws no frame never meets a wait on its frames"
-    );
+    // Its main thread answers each look, a turn of a condition that needs no frame.
     assert!(
-        budget.stalled() && budget.polls == 0 && passed > 0,
-        "the backstop ended the wait, none of its turns counted and {passed} passed without the \
-         page: {:?} after {} counted",
-        budget.end,
-        budget.polls
+        chrome
+            .wait_for("document.visibilityState === 'hidden'", PROTOCOL_CPU)
+            .unwrap(),
+        "the page goes behind the other tab"
     );
-    assert!(
-        budget
-            .stall()
-            .starts_with("the page under test stalled: its renderer took part in 0 of "),
-        "{}",
-        budget.stall()
-    );
-    // How much later than the backstop a loaded machine let it end is no part of the promise.
-    assert!(
-        took >= Duration::from_millis(1500),
-        "the wait ended {took:?} after its start, its backstop 1.5 s"
-    );
+    let (mut passed, mut waits) = (0, 0);
+    test_time::until(
+        "more observer turns without the page than a wait's allowance",
+        test_time::backstop(Duration::from_secs(3)),
+        || {
+            chrome.backstop = Duration::from_millis(1500);
+            let mut budget = chrome.page_budget(Duration::from_millis(250)).unwrap();
+            chrome.backstop = BACKSTOP_FLOOR;
+            assert_eq!(budget.max_polls, 10);
+            budget.cpu = process::Budget::new(PROTOCOL_CPU, &chrome.owner.members().unwrap());
+            let behind = chrome.eval_bounded(frame, &mut budget).unwrap();
+            waits += 1;
+            assert_eq!(
+                behind, None,
+                "a page that draws no frame never meets a wait on its frames"
+            );
+            assert!(
+                budget.stalled() && budget.polls == 0,
+                "the backstop ends each wait with none of its turns counted: {:?} after {} \
+                 counted",
+                budget.end,
+                budget.polls
+            );
+            assert!(
+                budget
+                    .stall()
+                    .starts_with("the page under test stalled: its renderer took part in 0 of "),
+                "{}",
+                budget.stall()
+            );
+            passed += budget.page.as_ref().unwrap().passed;
+            (passed > budget.max_polls).then_some(())
+        },
+    )
+    .unwrap_or_else(|stall| panic!("{stall}: {passed} observer turns passed in {waits} waits"));
 
     chrome.call("Page.bringToFront", json!({})).unwrap();
     assert!(
