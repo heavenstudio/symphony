@@ -40,6 +40,7 @@ import { said } from "./request";
 import { useAnchor } from "./route";
 import { useScrollRow } from "./scrollrow";
 import { SelectField } from "./select";
+import { snapshot } from "./shared";
 import { load, save } from "./storage";
 import { isTask } from "./task";
 import { statusWords } from "./taskcard";
@@ -88,9 +89,26 @@ export function firstPageHeight(count: number): number {
   return Math.min(count, PAGE) * ROW + (count > PAGE ? MORE : 0);
 }
 
-/** The lifecycle columns and their complete totals, saved for the next visit's ghost. */
+/** A column's key for a workflow's phase begins with this (flow.tsx's `PHASE`, whose chunk the
+ * board's first visit does not load). */
+const PHASE_KEY = "phase:";
+
+/** The lifecycle columns and their complete totals, and a workflow's phases with theirs, saved
+ * for the next visit's ghost. */
 export function boardShape(counts: [string, number][]): [string, number][] {
-  return STAGES.map((status) => [status, counts.find(([one]) => one === status)?.[1] ?? 0]);
+  return [
+    ...STAGES.map((status): [string, number] => [
+      status,
+      counts.find(([one]) => one === status)?.[1] ?? 0,
+    ]),
+    ...counts.filter(([status]) => status.startsWith(PHASE_KEY)),
+  ];
+}
+
+/** The phone's stage the ghost draws: the one `saved`, a workflow's phase among them, else the
+ * first of the board's own tabs. */
+export function ghostStage(saved: string | null): string {
+  return saved?.startsWith(PHASE_KEY) ? saved : savedStage(saved);
 }
 function defaultShape(): [string, number][] {
   return STAGES.map((status) => [status, status === "build" || status === "test" ? 0 : 1]);
@@ -168,7 +186,7 @@ export function GhostBoard({
   workflow?: boolean;
 }) {
   const phone = windowWidth() <= 760;
-  const stages = phone ? [savedStage(load(STAGE_KEY))] : STAGES;
+  const stages = phone ? [ghostStage(load(STAGE_KEY))] : STAGES;
   return (
     <div className="waiting-board waiting-ghost">
       <div className="board-toolbar">
@@ -537,18 +555,30 @@ export function TaskBoard({
   const { search, days } = filters;
   const [wait, setWait] = useState("");
   // A custom workflow's lanes, tabs and strip, from a chunk of its own read once the listing says
-  // one is active, and again when its generation moves (`flow.tsx`).
+  // one is active, and again when its generation moves (`flow.tsx`). A chunk that does not come is
+  // said with its retry, as a task's page says its own, once the shell has said the page's build
+  // is not gone (the page then loads again); the board draws its own lanes meanwhile.
   const [flow, setFlow] = useState<Flow | null>(null);
+  const [flowFailed, setFlowFailed] = useState(false);
   const generation = waiting?.workflow;
   useEffect(() => {
     const reading = new AbortController();
-    if (generation)
-      void import("./flow")
-        .then((chunk) => chunk.readFlow(scope, reading.signal, NAMES, [STAGES, PHONE_STAGES]))
-        .then((read) => reading.signal.aborted || setFlow(read));
-    else setFlow(null);
+    if (!generation) {
+      setFlow(null);
+      NAMES.clear();
+    } else if (!flowFailed)
+      import("./flow").then(
+        (chunk) =>
+          void chunk
+            .readFlow(scope, reading.signal, NAMES, [STAGES, PHONE_STAGES])
+            .then((read) => reading.signal.aborted || setFlow(read)),
+        async () => {
+          const shell = snapshot("reviewShell") as { gone(): Promise<boolean> } | undefined;
+          if (!reading.signal.aborted && !(await shell?.gone())) setFlowFailed(true);
+        },
+      );
     return () => reading.abort();
-  }, [scope, generation]);
+  }, [scope, generation, flowFailed]);
   const [stages, tabs] = flow?.lanes(waiting) ?? [STAGES, PHONE_STAGES];
   const name = (stage: string) => NAMES.get(stage) ?? statusLabel(stage);
   // The phone's stage this device chose, kept as chosen, and the one shown: the first of the
@@ -894,6 +924,12 @@ export function TaskBoard({
         </FirstSteps>
       )}
       {flow?.strip({ waiting, wait, choose: chooseWait, open: setOpened, opened, phone })}
+      {flowFailed && generation && (
+        <p className="flow-failed" role="alert">
+          {"The workflow's phases could not be loaded. "}
+          <Button onClick={() => setFlowFailed(false)}>Retry</Button>
+        </p>
+      )}
       {wait === "" && (
         <nav ref={tabRow} className="stage-tabs scroll-row" aria-label="Task stages">
           {tabs.map((stage) => (
@@ -919,7 +955,7 @@ export function TaskBoard({
                 aria-current={opened === stage ? "page" : undefined}
                 onClick={() => show(stage)}
               >
-                {statusLabel(stage)} {count(stage)}
+                {name(stage)} {count(stage)}
               </button>
             ))}
         </nav>

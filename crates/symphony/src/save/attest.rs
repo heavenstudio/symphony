@@ -41,9 +41,14 @@ pub(super) fn fetched(
     fetched_within(store, plugins, root, request, principal, WITHIN)
 }
 
-/// Whether `refusal`, a refused operation's words, is one a guard gives ([`symphony_board`]'s
-/// `guard::check`): its code is the first word.
-pub(super) fn guards(refusal: &str) -> bool {
+/// Whether `refused`, the board's answer to an operation, is a refusal a guard gives
+/// ([`symphony_board`]'s `guard::check`): its code, the first word of its words as the board
+/// writes a [`Refusal`], is a guard's. The words after the code are never read, and a board that
+/// could not be reached refused nothing.
+pub(super) fn guards(refused: &symphony_board::Error) -> bool {
+    let symphony_board::Error::Refused(refusal) = refused else {
+        return false;
+    };
     [
         RefusalCode::GuardUnavailable,
         RefusalCode::StaleInput,

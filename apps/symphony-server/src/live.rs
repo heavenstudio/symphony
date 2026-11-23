@@ -1649,10 +1649,8 @@ impl Hub {
         if held.error.is_some() {
             changed.push(region_event("tasks-status", json!({"available":true})));
         }
-        // A failed read keeps the generation known before; it is no change.
-        if let Ok(active) = store.workflow_active()
-            && let Some(change) = self.workflow_read(active.map(|a| a.generation))
-        {
+        // The generation the board read carries in its own round trip: a relabel moves no task.
+        if let Some(change) = self.workflow_read(snapshot.workflow_generation) {
             changed.push(change);
         }
         // A document rendered while the board was not read yet, or could not be read, lists none of
@@ -2786,11 +2784,11 @@ mod tests {
             f.store.client().requests() - before,
             regions.join(", ")
         );
-        // Two small reads, and the active workflow's one, which a relabel's new generation needs
-        // as it moves no task (`Hub::workflow_read`): no sign-off thread read, no column counts.
+        // Two small reads: no sign-off thread read, no column counts, and no read of the active
+        // workflow, whose generation the board read carries (`Hub::workflow_read`).
         assert_eq!(
             f.store.client().requests() - before,
-            3,
+            2,
             "no sign-off thread read"
         );
         assert_eq!(regions, ["task-fields", "session", "counts"]);
@@ -3176,6 +3174,7 @@ mod tests {
             tasks: tasks.iter().map(task).collect(),
             sessions: Vec::new(),
             latest_message: 0,
+            workflow_generation: None,
         }
     }
 
