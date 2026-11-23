@@ -46,7 +46,8 @@ fn unindexed(node: &Value) -> Vec<String> {
 /// condition, on an index scan of it or, of a bitmap's, as the condition its heap scan rechecks.
 fn by_any(node: &Value, table: &str) -> bool {
     let any = |field: &str| node[field].as_str().is_some_and(|c| c.contains("= ANY "));
-    let here = node["Relation Name"].as_str() == Some(table) && (any("Index Cond") || any("Recheck Cond"));
+    let here =
+        node["Relation Name"].as_str() == Some(table) && (any("Index Cond") || any("Recheck Cond"));
     let under = node["Plans"].as_array().into_iter().flatten();
     here || under.into_iter().any(|child| by_any(child, table))
 }
@@ -89,7 +90,12 @@ fn board() -> Fixture {
         .set_session_url("swift-hare", "https://claude.ai/code/session_01abc")
         .unwrap();
     f.store
-        .say("sim/jump", "amber-heron", "landed sim/jump on main at 4300a80", None)
+        .say(
+            "sim/jump",
+            "amber-heron",
+            "landed sim/jump on main at 4300a80",
+            None,
+        )
         .unwrap();
     f
 }
@@ -97,7 +103,8 @@ fn board() -> Fixture {
 #[test]
 fn a_session_the_landings_the_channels_and_the_session_addresses_are_each_read_by_an_index() {
     let f = board();
-    let mut inbox = json!({"handle": "swift-hare", "delivered": DELIVERED, "since": null, "pool": null});
+    let mut inbox =
+        json!({"handle": "swift-hare", "delivered": DELIVERED, "since": null, "pool": null});
     native_bounds(&mut inbox);
     let reads = [
         ("the inbox, its reader's session", messages::inbox(), inbox),
