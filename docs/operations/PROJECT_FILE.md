@@ -191,9 +191,8 @@ overrides.
 
 Whatever is wrong with it is said with the file and the line: a refused setting, a key of one of
 its three tables the Symphony does not know, a value of the wrong type or outside its range, an
-agent a launch does not start, a switch turning off the launch default in force beneath it (the
-store's, else the project file's, else the board's own), or text that is no TOML. None of the file
-is then read and the committed
+agent a launch does not start, a switch turning off the launch default the file itself names, or
+text that is no TOML. None of the file is then read and the committed
 settings hold, so a broken local file stops neither the board nor a launch: every board command
 says it on stderr, as it says a limit it cannot read, and the settings check exits 1 on it.
 
@@ -374,11 +373,13 @@ idle one no new work. An agent already running is not stopped, its files stay in
 turning it on again is the switch alone. A launch of an agent whose program this machine lacks on
 its search path is refused with that reason, whatever its switch says.
 
-The launch default cannot be off. A file that turns off the default it names, or, naming none, the
-board's own, does not load, saying to pick another default first; the board's store refuses the
-same write, judged against the default beneath it, and so does the local file. Where the places
-disagree (a default committed after an older stored switch turned that agent off) the default wins:
-the switch does not hold, and both `just tasks limits` and the Settings page say so. A switch that
+The launch default cannot be off. A project file that turns off the default it names, or, naming
+none, the board's own, does not load, saying to pick another default first, and so does a local
+file that turns off the default it names itself; the board's store refuses the same write, judged
+against the default in force (the store's, else the main checkout's project file's, else the
+board's own). Where the places disagree (a default committed after an older stored switch turned
+that agent off, or a local file turning off a default it does not name) the default wins: the
+switch does not hold, and both `just tasks limits` and the Settings page say so. A switch that
 names no agent a launch starts, or is no `true` or `false`, is refused with its line.
 
 ```toml

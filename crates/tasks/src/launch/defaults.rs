@@ -360,7 +360,7 @@ impl Defaults {
         // A local file that is refused is read by nobody, and said where the limits are read
         // ([`crate::limits::read_at`]), on every command.
         let committed = committed.over_stored(stored);
-        Ok(match crate::local::beside_with(&path, stored) {
+        Ok(match crate::local::beside(&path) {
             Ok(Some(local)) => committed.over(&local),
             _ => committed,
         })

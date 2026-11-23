@@ -34,22 +34,7 @@ mod tests {
     use super::*;
     use crate::launch::defaults::Switch;
     use crate::limits::Written;
-    use std::ffi::OsString;
-
-    /// A folder of the test `name`'s holding a runnable program for each of `agents`: its search
-    /// path, and the folder.
-    fn path_with(name: &str, agents: &[&str]) -> (OsString, std::path::PathBuf) {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("launch-off-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        for agent in agents {
-            let program = dir.join(agent);
-            std::fs::write(&program, "#!/bin/sh\n").unwrap();
-            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        (dir.clone().into_os_string(), dir)
-    }
+    use crate::stand_ins::StandIns;
 
     fn off(agent: usize, at: &str, line: Option<usize>) -> Defaults {
         let mut defaults = Defaults {
@@ -68,17 +53,18 @@ mod tests {
 
     #[test]
     fn an_agent_on_with_its_program_starts() {
-        let (path, dir) = path_with("on", &["claude", "codex"]);
+        let programs = StandIns::new("launch-off-on", &["claude", "codex"]);
+        let path = programs.path();
         let defaults = Defaults::default();
         for agent in ["claude", "codex"] {
             assert_eq!(refusing(&defaults, Some(&path), agent), None, "{agent}");
         }
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn an_agent_turned_off_is_refused_naming_where_from_each_place() {
-        let (path, dir) = path_with("each", &["claude", "codex"]);
+        let programs = StandIns::new("launch-off-each", &["claude", "codex"]);
+        let path = programs.path();
         for (at, line, said) in [
             (
                 "[agents.launch.on] codex",
@@ -107,21 +93,21 @@ mod tests {
             // The other agent is not touched.
             assert_eq!(refusing(&off(0, at, line), Some(&path), "claude"), None);
         }
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn the_launch_default_starts_whatever_its_switch_says() {
-        let (path, dir) = path_with("default", &["claude", "codex"]);
+        let programs = StandIns::new("launch-off-default", &["claude", "codex"]);
+        let path = programs.path();
         // A switch turning off claude while claude is the default does not hold.
         let defaults = off(1, "the board's store [agents.launch.on] claude", None);
         assert_eq!(refusing(&defaults, Some(&path), "claude"), None);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn an_agent_whose_program_is_missing_is_refused_whatever_its_switch_says() {
-        let (path, dir) = path_with("missing", &["claude"]);
+        let programs = StandIns::new("launch-off-missing", &["claude"]);
+        let path = programs.path();
         let missing =
             "this machine has no codex program on its search path, so it cannot start here";
         assert_eq!(
@@ -149,6 +135,5 @@ mod tests {
                  starts none while it is, and turning it on again is that switch alone; {missing}"
             ))
         );
-        std::fs::remove_dir_all(dir).unwrap();
     }
 }

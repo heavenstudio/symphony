@@ -388,8 +388,9 @@ fn pass_inner(
             role,
             held: &held,
             operating: operating.as_ref(),
+            defaults: &defaults,
         };
-        let job = job_for(store, &hc, &view.agents, &used, &wanted, &defaults);
+        let job = job_for(store, &hc, &view.agents, &used, &wanted);
         let (resuming, idle) = job
             .as_ref()
             .map_or((None, None), |(resuming, idle)| (resuming.clone(), *idle));
@@ -487,21 +488,20 @@ fn pass_inner(
 /// for a review one detached, holding no role on the task and a fresh reviewer of it ([`fresh`],
 /// `held` its [`Store::ever_held`]), as the board takes the role and the verdict from no other; for
 /// work one detached for an instruction, else on the task's branch. Never one whose agent is
-/// turned off (`defaults`, [`Defaults::off`]).
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one pick of the pass, named by what it reads"
-)]
+/// turned off (the job's `defaults`, [`Defaults::off`]).
 fn idle_for<'a>(
     agents: &'a [agents::Agent],
-    board: &Board,
-    task: &Task,
-    role: &str,
     used: &HashSet<String>,
-    held: &Held,
-    operating: Option<&Operating>,
-    defaults: &Defaults,
+    job: &Job<'_>,
 ) -> Option<&'a agents::Agent> {
+    let Job {
+        board,
+        task,
+        role,
+        held,
+        operating,
+        defaults,
+    } = *job;
     // Open work by its recorded facts: a task a custom workflow holds until its position is
     // terminal, one the board does not show by its status.
     let open = |t: &agents::Held| match board.tasks.iter().find(|task| task.slug == t.slug) {
@@ -544,13 +544,15 @@ fn idle_for<'a>(
 }
 
 /// One job of a pass, as the pass read it: the task on its board, the role it is staffed as, who
-/// held it ([`Store::ever_held`], for a review) and the custom workflow that holds it, if any.
+/// held it ([`Store::ever_held`], for a review), the custom workflow that holds it, if any, and
+/// the launch settings in force, whose agents turned off it goes to none of.
 struct Job<'a> {
     board: &'a Board,
     task: &'a Task,
     role: &'a str,
     held: &'a Held,
     operating: Option<&'a Operating>,
+    defaults: &'a Defaults,
 }
 
 /// A recorded reviewer a launch resumes: its handle and its agent.
@@ -566,25 +568,14 @@ fn job_for<'a>(
     agents: &'a [agents::Agent],
     used: &HashSet<String>,
     job: &Job<'_>,
-    defaults: &Defaults,
 ) -> Result<(Option<Resumed>, Option<&'a agents::Agent>), Error> {
-    let Job {
-        board,
-        task,
-        role,
-        held,
-        operating,
-    } = *job;
-    if role == "reviewer"
-        && let Some(record) = super::restore::reviewer_to_resume(store, hc, &task.slug)?
+    if job.role == "reviewer"
+        && let Some(record) = super::restore::reviewer_to_resume(store, hc, &job.task.slug)?
     {
         let agent = super::agent_of(&record.claude_session);
         return Ok((Some((record.handle, agent)), None));
     }
-    Ok((
-        None,
-        idle_for(agents, board, task, role, used, held, operating, defaults),
-    ))
+    Ok((None, idle_for(agents, used, job)))
 }
 
 /// Why a job going to `to` (the recorded reviewer it resumes, with its agent, or the idle agent it

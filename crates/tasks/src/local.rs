@@ -24,14 +24,15 @@
 //! more, `[agents] panes` ([`PANES`]), which the local file has no place for.
 //!
 //! The launch default cannot be turned off ([`crate::launch::defaults`]): a local file that turns
-//! off the default it names, or, naming none, the default the files and the store under it give
-//! ([`beside_with`]), is refused whole with the line that says to pick another default first.
+//! off the default it names itself is refused whole with the line that says to pick another
+//! default first ([`judge`]). One that turns off a default it does not name, the store's or the
+//! project file's, is the places disagreeing, which every reader settles alike: the default wins
+//! and the switch does not hold (`Defaults::overruled`).
 
 use crate::launch::defaults::{
-    AGENT_KEY, AGENTS, ON, ON_TABLES, ROLES, agent, default_off, switch, written_agent,
+    AGENT_KEY, AGENTS, ON, ON_TABLES, ROLES, agent, default_off, switch,
 };
 use crate::limits;
-use crate::settings::Stored;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use toml::Value;
@@ -197,76 +198,19 @@ pub fn path_beside(project_file: &Path) -> PathBuf {
     project_file.with_file_name(FILE)
 }
 
-/// The local file beside the project file at `project_file`, as [`beside_with`] reads it over a
-/// board's store that holds nothing.
+/// The local file beside the project file at `project_file`, as [`parse`] reads it: none when
+/// there is no file. Every reader takes it from here, so each reads the same file or none.
 ///
 /// # Errors
 ///
 /// Everything wrong with it, each said whole: the file is then read by nobody ([`left_out`]).
 pub fn beside(project_file: &Path) -> Result<Option<Local>, Vec<String>> {
-    beside_with(project_file, &Stored::default())
-}
-
-/// The local file beside the project file at `project_file`, as [`parse`] reads it, over what the
-/// board's store holds in force (`stored`): none when there is no file.
-///
-/// # Errors
-///
-/// Everything wrong with it, each said whole: the file is then read by nobody ([`left_out`]).
-/// Besides what [`parse`] refuses, a switch that turns off the launch default under it, where it
-/// names none: the store's in force, else the project file's, else the board's own.
-pub fn beside_with(project_file: &Path, stored: &Stored) -> Result<Option<Local>, Vec<String>> {
     let path = path_beside(project_file);
-    let local = match std::fs::read_to_string(&path) {
-        Ok(text) => parse(&path, &text)?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(vec![format!("cannot read {}: {error}", path.display())]),
-    };
-    if agent(AGENT_KEY, local.launch[0].as_deref())
-        .ok()
-        .flatten()
-        .is_some()
-    {
-        // The default it names, judged with its switches by [`judge`].
-        return Ok(Some(local));
+    match std::fs::read_to_string(&path) {
+        Ok(text) => parse(&path, &text).map(Some),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(vec![format!("cannot read {}: {error}", path.display())]),
     }
-    let in_store = stored.holds("agents.launch.default").then(|| {
-        agent(AGENT_KEY, stored.held.launch[0].as_deref())
-            .ok()
-            .flatten()
-    });
-    let committed = || {
-        let text = std::fs::read_to_string(project_file).ok()?;
-        let named = written_agent(&text)?;
-        let line = limits::line(&text, &["agents", "launch"], "default");
-        Some((named, line))
-    };
-    let (under, chosen) = match (in_store.flatten(), committed()) {
-        (Some(named), _) => (named, format!("{} {AGENT_KEY}", crate::settings::SAID)),
-        (None, Some((named, line))) => {
-            let at = limits::Written {
-                at: format!("{} {AGENT_KEY}", crate::project::FILE),
-                line,
-            };
-            (named, at.said())
-        }
-        (None, None) => (AGENTS[0], "the board's own".to_string()),
-    };
-    let at = AGENTS.iter().position(|known| *known == under).unwrap_or(0);
-    if local.on[at] == Some(false) {
-        let name = format!("[{}] {under}", ON_TABLES.join("."));
-        let name = limits::Written {
-            at: name,
-            line: local.line(&ON_TABLES, under),
-        }
-        .named();
-        return Err(vec![format!(
-            "{}: {}",
-            path.display(),
-            default_off(&name, under, &chosen)
-        )]);
-    }
-    Ok(Some(local))
 }
 
 /// `problem` with a local file as a reader that runs on says it: none of the file is read.

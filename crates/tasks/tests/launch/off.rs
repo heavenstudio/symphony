@@ -4,7 +4,8 @@
 //! keeps running, and a project that writes no switch launches as before.
 
 use crate::common::refused;
-use crate::{PROGRAMS, World, programs};
+use crate::stand_ins::stand_ins;
+use crate::{PROGRAMS, World};
 use std::fs;
 use std::path::PathBuf;
 use symphony_board::NewLaunch;
@@ -220,7 +221,7 @@ fn an_agent_already_running_keeps_running_when_it_is_turned_off() {
 /// `w`'s machine, its search path a folder holding `names` alone.
 fn finding(w: &World, names: &[&str]) -> Machine {
     let folder: PathBuf = w.dir().join(format!("only-{}", names.join("-")));
-    programs(&folder, names);
+    stand_ins(&folder, names);
     Machine {
         path: Some(folder.into_os_string()),
         ..w.machine()

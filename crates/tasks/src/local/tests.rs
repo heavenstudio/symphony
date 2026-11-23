@@ -3,6 +3,7 @@
 use super::*;
 use crate::launch::Defaults;
 use crate::limits::{LOW, MACHINE_AGENTS, SLOTS, TASKS};
+use crate::settings::Stored;
 
 const PATH: &str = "/r/symphony.local.toml";
 
@@ -503,65 +504,83 @@ fn a_local_file_that_turns_off_the_default_it_names_does_not_load() {
     assert_eq!(local.on, [Some(false), None]);
 }
 
-#[test]
-fn a_local_file_naming_no_default_is_judged_against_the_one_under_it() {
-    let off = "[agents.launch.on]\ncodex = false\n";
-    // Under no project file the default is the board's own, codex: refused, and none of it read.
-    let root = folder("off-own", None, Some(off));
+/// A board's store holding `default` as the launch default.
+fn storing_default(default: &str) -> Stored {
+    let mut held = Local::default();
+    held.launch[0] = Some(default.into());
+    Stored {
+        held,
+        keys: vec!["agents.launch.default".into()],
+        problems: Vec::new(),
+    }
+}
+
+/// One setup read by every reader of the local file: whether each reads it, and the switch's
+/// standing as the launch reads it.
+fn read_by_each(root: &Path, stored: &Stored) -> (bool, bool, Defaults) {
     let file = root.join(crate::project::FILE);
-    let said = beside(&file).unwrap_err();
+    let beside_read = beside(&file).unwrap().is_some();
+    let limits = crate::limits::read_with(&file, stored);
+    assert_eq!(limits.problems, Vec::<String>::new());
+    let limits_read = limits.limits.low_volume == 1;
+    (
+        beside_read,
+        limits_read,
+        Defaults::configured_with(root, stored).unwrap(),
+    )
+}
+
+#[test]
+fn a_local_switch_turning_off_a_default_it_does_not_name_is_the_places_disagreeing() {
+    let off =
+        |agent: &str| format!("[agents.launch.on]\n{agent} = false\n\n[limits]\nlow_volume = 1\n");
+    // Codex the board's own default, under no project file: every reader reads the file, its
+    // limit holds, and codex starts, its switch said not to hold.
+    let root = folder("off-own", None, Some(&off("codex")));
+    let (beside_read, limits_read, defaults) = read_by_each(&root, &Stored::default());
+    assert!(beside_read && limits_read);
+    assert_eq!(defaults.off("codex"), None);
     assert_eq!(
-        said,
-        [format!(
-            "{}: [agents.launch.on] codex (line 2) turns off codex, the launch default (the \
-             board's own), which cannot be off: pick another default first",
-            root.join(FILE).display()
-        )]
+        defaults.overruled().as_deref(),
+        Some(
+            "[agents.launch.on] codex turns off codex (symphony.local.toml [agents.launch.on] \
+             codex, line 2), which does not hold: codex is the launch default, which wins; pick \
+             another default to turn it off"
+        )
     );
-    assert_eq!(Defaults::configured(&root).unwrap().off("codex"), None);
-    // Under a project file naming codex, the same, naming its line.
+    // Codex the project file's: the same.
+    let file = root.join(crate::project::FILE);
     std::fs::write(&file, "[agents.launch]\ndefault = \"codex\"\n").unwrap();
-    assert!(beside(&file).unwrap_err()[0].contains(
-        "the launch default (symphony.toml [agents] launch default, line 2), which cannot be off"
-    ));
-    // Under one naming claude it holds, and codex is off.
-    std::fs::write(&file, "[agents.launch]\ndefault = \"claude\"\n").unwrap();
-    let defaults = Defaults::configured(&root).unwrap();
+    let (beside_read, limits_read, defaults) = read_by_each(&root, &Stored::default());
+    assert!(beside_read && limits_read);
+    assert_eq!(defaults.off("codex"), None);
+    assert!(defaults.overruled().is_some());
+    // Claude the store's default over a project file naming none: codex is off, by the local file.
+    std::fs::write(&file, "").unwrap();
+    let claude = storing_default("claude");
+    let (beside_read, limits_read, defaults) = read_by_each(&root, &claude);
+    assert!(beside_read && limits_read);
     assert_eq!(
         defaults.off("codex").map(|switch| switch.said()).as_deref(),
         Some("symphony.local.toml [agents.launch.on] codex, line 2")
     );
-    // A default the board's store holds is the one under it, over the project file's.
-    std::fs::write(&file, "").unwrap();
-    let mut held = Local::default();
-    held.launch[0] = Some("claude".into());
-    let stored = Stored {
-        held,
-        keys: vec!["agents.launch.default".into()],
-        problems: Vec::new(),
-    };
-    assert!(beside_with(&file, &stored).unwrap().is_some());
+    assert_eq!(defaults.overruled(), None);
+    // The reverse: claude the store's default, the local file turning claude off. Every reader
+    // still reads it, its models among them, and claude starts.
+    std::fs::write(
+        root.join(FILE),
+        format!("{}\n[agents.models]\nexecutor = \"mine\"\n", off("claude")),
+    )
+    .unwrap();
+    let (beside_read, limits_read, defaults) = read_by_each(&root, &claude);
+    assert!(beside_read && limits_read);
+    assert_eq!(defaults.off("claude"), None);
+    assert_eq!(defaults.model_of("executor").1.as_deref(), Some("mine"));
     assert!(
-        Defaults::configured_with(&root, &stored)
+        defaults
+            .overruled()
             .unwrap()
-            .off("codex")
-            .is_some()
-    );
-    let mut codex = stored.clone();
-    codex.held.launch[0] = Some("codex".into());
-    std::fs::write(&file, "[agents.launch]\ndefault = \"claude\"\n").unwrap();
-    assert!(
-        beside_with(&file, &codex).unwrap_err()[0]
-            .contains("the launch default (the board's store [agents] launch default)")
-    );
-    // And the limits it writes are read by nobody once it is refused.
-    std::fs::write(root.join(FILE), format!("{off}[limits]\nlow_volume = 1\n")).unwrap();
-    std::fs::write(&file, "").unwrap();
-    let read = crate::limits::read_at(&file);
-    assert_eq!(read.limits.low_volume, crate::limits::LOW_VOLUME);
-    assert!(
-        read.problems[0]
-            .ends_with("none of symphony.local.toml is read, the committed settings hold")
+            .contains("claude is the launch default, which wins")
     );
     std::fs::remove_dir_all(&root).unwrap();
 }

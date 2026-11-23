@@ -1938,8 +1938,10 @@ assessor = "haiku"
   restore of a closed pane of it (a reviewer's resume among them) are refused before anything is
   made, naming it and where it was turned off, and the staffing pass gives an idle one no new
   work. One already running is not stopped, and turning it on again is the switch alone. The
-  launch default cannot be off: a file or the store refuses such a switch, saying to pick another
-  default first, and one written before the default moved to its agent does not hold. A launch of
+  launch default cannot be off: a file turning off the default it names, and the store, refuse
+  such a switch, saying to pick another default first, and one written in a place under or beside
+  the default's (before the default moved to its agent, or in a local file naming no default) does
+  not hold. A launch of
   an agent whose program this machine lacks on its search path is refused with that reason,
   whatever its switch says
   ([PROJECT_FILE](../operations/PROJECT_FILE.md#agentslaunch), `crates/tasks/src/launch/off.rs`).

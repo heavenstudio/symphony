@@ -9,6 +9,7 @@ use super::store_fixture::{Fixture, Seed};
 use super::*;
 use crate::NewTask;
 use crate::rows::TaskSessionRow;
+use crate::stand_ins::StandIns;
 use std::cell::Cell;
 
 use crate::launch::LaunchError;
@@ -173,6 +174,24 @@ fn idle(handle: &str, kind: &str, worktree: &str) -> agents::Agent {
 }
 
 /// An idle reviewer of `handle` in a checkout that is a folder.
+/// The review of `task` on `board` as a pass reads it, under `defaults`.
+fn reviewer_job<'a>(
+    board: &'a Board,
+    task: &'a Task,
+    held: &'a Held,
+    operating: Option<&'a Operating>,
+    defaults: &'a Defaults,
+) -> Job<'a> {
+    Job {
+        board,
+        task,
+        role: "reviewer",
+        held,
+        operating,
+        defaults,
+    }
+}
+
 fn idle_reviewer(handle: &str) -> agents::Agent {
     idle(handle, "reviewer", env!("CARGO_MANIFEST_DIR"))
 }
@@ -226,17 +245,9 @@ fn an_idle_reviewer_is_picked_only_when_the_board_takes_its_verdict() {
         let task = board.tasks.iter().find(|t| t.slug == slug).unwrap();
         let agents: Vec<_> = from.iter().map(|handle| idle_reviewer(handle)).collect();
         let held = f.store.ever_held(slug).unwrap();
-        idle_for(
-            &agents,
-            &board,
-            task,
-            "reviewer",
-            &HashSet::new(),
-            &held,
-            None,
-            &Defaults::default(),
-        )
-        .map(|a| a.handle.clone())
+        let defaults = Defaults::default();
+        let job = reviewer_job(&board, task, &held, None, &defaults);
+        idle_for(&agents, &HashSet::new(), &job).map(|a| a.handle.clone())
     };
     // Its executor, its filer and its orchestrator before are passed over for a fresh one.
     let unfresh = [EXECUTED, FILER, ORCHESTRATED];
@@ -267,15 +278,9 @@ fn a_review_goes_back_to_the_tasks_recorded_reviewer_never_to_another_idle_one()
         let board = f.store.board().unwrap();
         let task = board.tasks.iter().find(|t| t.slug == "sim/jump").unwrap();
         let held = f.store.ever_held("sim/jump").unwrap();
-        let wanted = Job {
-            board: &board,
-            task,
-            role: "reviewer",
-            held: &held,
-            operating: None,
-        };
         let defaults = Defaults::default();
-        let (resumed, picked) = job_for(&f.store, hc, &idle, &HashSet::new(), &wanted, &defaults)?;
+        let wanted = reviewer_job(&board, task, &held, None, &defaults);
+        let (resumed, picked) = job_for(&f.store, hc, &idle, &HashSet::new(), &wanted)?;
         Ok::<_, Error>((
             resumed.map(|(handle, _)| handle),
             picked.map(|a| a.handle.clone()),
@@ -322,20 +327,6 @@ fn a_review_goes_back_to_the_tasks_recorded_reviewer_never_to_another_idle_one()
     // Once it left, another takes the review.
     f.store.leave(FRESH).unwrap();
     assert_eq!(job(), another);
-}
-
-/// A folder of this process's named `name`, holding a runnable stand-in for each of `agents`:
-/// the search path a launch finds their programs on.
-fn programs(name: &str, agents: &[&str]) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = std::env::temp_dir().join(format!("staff-programs-{}-{name}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    for agent in agents {
-        let program = dir.join(agent);
-        std::fs::write(&program, "#!/bin/sh\n").unwrap();
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    dir
 }
 
 /// A machine a reuse whose turn hc saw start runs on: it launches, looks and inspects nothing.
@@ -572,6 +563,7 @@ fn a_failed_staff_review_launch_files_no_subtask_and_leaves_the_task_waiting_on_
     );
     // A path below a regular file cannot be a checkout or create a worktree. No repository,
     // agent process or staffing configuration is touched by this failed dispatch.
+    let codex = StandIns::new("failed-review", &["codex"]);
     let machine = Machine {
         root: std::env::temp_dir(),
         wt_base: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml/not-a-folder"),
@@ -582,7 +574,7 @@ fn a_failed_staff_review_launch_files_no_subtask_and_leaves_the_task_waiting_on_
         board_env: Vec::new(),
         bounds: None,
         // The agent's program found, so the launch goes as far as its checkout.
-        path: Some(programs("failed-review", &["codex"]).into_os_string()),
+        path: Some(codex.path()),
     };
     let task = f.store.get("sim/jump").unwrap();
     let error = dispatch(
@@ -758,16 +750,9 @@ fn an_idle_fresh_reviewer_takes_a_held_tasks_review_edge_and_its_executor_is_pas
         idle_reviewer(FILER),
         idle_reviewer(FRESH),
     ];
-    let picked = idle_for(
-        &agents,
-        &board,
-        task,
-        "reviewer",
-        &HashSet::new(),
-        &held,
-        operating.as_ref(),
-        &Defaults::default(),
-    );
+    let defaults = Defaults::default();
+    let job = reviewer_job(&board, task, &held, operating.as_ref(), &defaults);
+    let picked = idle_for(&agents, &HashSet::new(), &job);
     assert_eq!(picked.map(|a| a.handle.as_str()), Some(FRESH));
     let hc = ReusedTerminal::answering("started");
     let line = dispatch(
@@ -830,39 +815,27 @@ fn an_idle_agent_turned_off_is_given_no_new_work() {
     claude.agent = Some("claude".into());
     let agents = [idle_reviewer(FRESH), claude];
     let pick = |defaults: &Defaults| {
-        idle_for(
-            &agents,
-            &board,
-            task,
-            "reviewer",
-            &HashSet::new(),
-            &held,
-            None,
-            defaults,
-        )
-        .map(|a| a.handle.clone())
+        let job = reviewer_job(&board, task, &held, None, defaults);
+        idle_for(&agents, &HashSet::new(), &job).map(|a| a.handle.clone())
     };
     // Codex on: the first idle fresh one, a Codex agent.
     assert_eq!(pick(&Defaults::default()).as_deref(), Some(FRESH));
     // Codex off: passed over for the Claude one, and none when it is alone.
     assert_eq!(pick(&codex_off()).as_deref(), Some(SECOND));
     let alone = [idle_reviewer(FRESH)];
+    let off = codex_off();
     let none = idle_for(
         &alone,
-        &board,
-        task,
-        "reviewer",
         &HashSet::new(),
-        &held,
-        None,
-        &codex_off(),
+        &reviewer_job(&board, task, &held, None, &off),
     );
     assert!(none.is_none());
 }
 
 #[test]
 fn a_job_that_would_start_an_agent_turned_off_or_missing_is_refused_and_a_ping_never() {
-    let path = programs("starting", &["claude", "codex"]).into_os_string();
+    let both = StandIns::new("starting", &["claude", "codex"]);
+    let path = both.path();
     let launching = Defaults {
         agent: Some("claude"),
         ..Defaults::default()
@@ -893,7 +866,8 @@ fn a_job_that_would_start_an_agent_turned_off_or_missing_is_refused_and_a_ping_n
         None
     );
     // The default's program missing: the launch is refused with that reason.
-    let only_codex = programs("starting-codex", &["codex"]).into_os_string();
+    let codex = StandIns::new("starting-codex", &["codex"]);
+    let only_codex = codex.path();
     assert_eq!(
         starting_refused(
             (None, None),
