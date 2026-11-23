@@ -435,6 +435,16 @@ task, whatever worktree or machine it runs in:
 just tasks say sim/jump-departure "the dock ring is at 900" --to @reviewer
 ```
 
+A long line, such as a request for review with its evidence, is written as a file
+in the project's artifacts folder under the task's slug (`artifacts/SLUG/` where the
+project names no other), which git ignores and the sweep sets aside with the
+worktree, never a file the worktree would hold untracked or commit. It is posted
+with `--file PATH` in place of the text (`--file -` reads stdin), so no quote,
+backtick or `$(…)` in it meets a shell; the board trims its ends as it trims any
+line, and a line given both ways, or neither, is refused. `--file PATH` is plain words,
+which the allow rules pass in a Claude or a Codex session alike; stdin fed by a
+heredoc is a redirection, which no Codex rule matches.
+
 `--to` takes a handle, a role (`@executor`, `@reviewer`, `@orchestrator`,
 `@reserved`), or `owner`. Addressed messages reach the matching native callback
 as plain `MSG` event lines. Without an address, an agent's post stays on the
@@ -1703,7 +1713,10 @@ landing](#the-default-landing)).
   stamp reads it (`crates/tasks/src/cli/commands/runs.rs`): `TIP`; `RUNS`, a row for each build
   and test command the task and the work under it ran there, its newest run's result (`green`,
   `red`, `running`, `queued`), when, how long, who, why it is red, and how many runs of it came
-  before there; `REFUSED`, when there are any, a row for each run there its runner refused, with
+  before there, then, for each red run there that kept a log (a run of a pipeline,
+  [RUNS](RUNS.md)), the newest of its command or one before it, a `LOG` line with when it ran and
+  the log's path, where the command's own output says what failed, at its end, whatever its
+  runner; `REFUSED`, when there are any, a row for each run there its runner refused, with
   the refusal's line ([what clears what](#what-clears-a-red-run)); `TESTS`, the `tests` stamp met or not with its reader's line; `CHECK`, the
   project's `[verdicts] check` as the task page's check gate reads it, its newest run there by
   anyone or `no run`; and `ELSEWHERE`, how many of the task's runs are at other commits, none of
@@ -2375,7 +2388,10 @@ projects' terminals are never a destination. Once hc calls the agent ready (`idl
 `done`), its first message goes in by `hc send`, never forced, and the launch is confirmed
 only by that send's receipt (`started`): an agent waiting on a person (a folder-trust
 dialog), never ready, or not starting on the message fails the launch naming the terminal,
-which is killed and removed. It writes its handle, role, agent session
+which is killed and removed. The refusal of an agent waiting on a person carries hc's word
+for what it waits on and, where that word is not on the screen (hc names some dialogs only
+as open), the screen's last lines, since the terminal is gone by the time anyone reads it
+(`crates/tasks/src/launch/startup.rs`, `shows`). It writes its handle, role, agent session
 id, worktree, branch, terminal and start time; `just tasks show` lists them under
 `Sessions:`. No terminal the owner may be looking at is closed: one in the tab the Herdr
 app shows, the agent it shows, or held over them (`herdr-app status`, read last, right
@@ -2478,13 +2494,26 @@ the task; deferrals and dry runs post nothing. A dry run previews even while
 disabled and creates no task, session or terminal.
 
 **Idle agents are closed by the board, not by a reminder.** A task
-that becomes done or cancelled closes its sessions at once; the rest is a sweep the
+that becomes done or cancelled closes its sessions at once, but for the executors of a task an
+approve left done and not landed: its land may still ask its executor for a stamp of its at
+the approved tip, a conflict settled or a red check mended, so their terminals stay, each a line
+of the verdict's output, and close when a land run here closes the task, or at the sweep once
+idle with nothing asked of them, as after a merge the host made
+(`crates/tasks/src/launch/cleanup.rs`, `approved`). The rest is a sweep the
 Symphony's process (`just symphony`) runs every five minutes for each project it serves that
 has a board, each on a schedule of its own in its own checkout, started as the project is
 registered and stopped as it is removed, so one project's failing or hung sweep holds up no
 other's; each writes its own `reap.json` and its own board's health, which `just tasks status`
 reads. A lock in `symphony/tasks/`, beside the board's server, keeps two sweeps (a second
 app's, or `just tasks reap` by hand) from running at once, and nothing goes into any monitor.
+A server of its own (`just symphony --port N`) runs no sweep, since a preview's board may be a
+copy that names another board's terminals, and says so as it starts (a preview in a linked
+worktree whose file does not ask says nothing): a project no other server serves, as one on a
+source build with no release on the machine, sets `[board] own_sweep = true` in its project
+file, and a server of its own in its main checkout then sweeps for it as the one server would,
+unless its environment names another board (`TASKS_SERVER`, `TASKS_DATABASE`;
+`sweeps_of_its_own` in `apps/symphony-server/src/front.rs`). Without either, idle terminals stay
+until `just tasks clean`.
 It closes (`hc kill`,
 then `hc rm`) one of this board's terminals (label `symphony.board`) whose named agent was
 idle (or stuck on the folder-trust prompt) at two sweeps at least five minutes apart,
@@ -2550,8 +2579,13 @@ hold or the main checkout has not followed. Such a worktree and branch are said 
 into main as COMMIT by pull request #N` where a merged one says `merged into main`, and every
 rule below holds for them as for any other. The sweep deletes no retained head, no receipt and
 no branch of the remote.
-Nothing did not land when it has no tracked edit, no untracked file and no ignored file but
-build output and caches, and holds no owner verdict no commit has (an owner's dated line under a
+Nothing did not land when it has no tracked edit, no untracked file but what a file manager
+writes into a folder a person opens (`.DS_Store`, `Thumbs.db`, `desktop.ini`, which go with the
+worktree whether or not its ignore file names them) and no ignored file but
+build output and caches (the board's own list, and the ignored paths the project names in
+`[board] sweep_disposable` of the main checkout's `symphony.toml`, where its stack keeps its
+dependencies and builds elsewhere, such as `node_modules/`), and holds no owner verdict no commit
+has (an owner's dated line under a
 card, in a document of the project's entrypoint folders, that its HEAD does not hold; a worktree
 whose documents git cannot read for one is kept, saying so). No live work holds it when no
 live or stale session is bound to it (a subagent's session is bound to its own `agent-ID`
@@ -2712,7 +2746,15 @@ such as `just land` run under someone's `TASKS_SESSION`) binds nothing. From
 then on each of its tool calls beats for that handle, until a later board
 command names another. A full session with no agent id (one started in an hc terminal, or a
 `claude -p` run) is bound and beats the same way, keyed by its session id, but keeps the first handle
-it names: naming another (registering or relaying for a child) moves nothing. A handle
+it names: naming another (registering or relaying for a child) moves nothing. A launched
+Claude session's beat also registers the channel its agent did not: before a board command of
+the handle bound to it, where an open launch of that handle records the session's conversation,
+the hook registers the session's own inbox socket (`CLAUDE_CODE_MESSAGING_SOCKET`, which Claude
+Code gives a session's hooks) as `just tasks callback --as HANDLE` would have, so an agent that
+skips that command still hears its messages. It does so once for each socket: a channel the
+session turns off stays off, and a restored conversation, a new process on a new socket, is
+connected again. A session no launch records, a subagent, a registration holding the chat seat and
+a Codex thread are left as they are (`crates/tasks/src/cli/beat.rs`, `connect`). A handle
 with a monitor of its own (an orchestrator) is never bound: its monitor beats for it,
 and a session that names such a handle is barred from binding at all, so the calls of
 an orchestrator never keep a child it registered alive. The hook looks at the board

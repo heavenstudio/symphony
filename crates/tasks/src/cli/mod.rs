@@ -252,7 +252,7 @@ fn run(
         }
     };
     if parsed.command == "beat" {
-        return beat::run(input, env);
+        return beat::run(input, env, program);
     }
     if parsed.command == "field" {
         return field::run(&parsed, env, out, err);
