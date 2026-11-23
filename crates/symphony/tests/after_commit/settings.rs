@@ -357,9 +357,25 @@ pub(super) fn a_stored_value_made_the_projects_is_one_commit_and_its_entry_goes(
     assert_eq!(entry(f, "agents.panes"), Some(json!("hc")));
     let (value, scope, ..) = shown(&root, "[agents] panes");
     assert_eq!((value.as_str(), scope), ("hc", Some(SettingScope::Board)));
+    // Made the project's again before the checkout takes the commit, it is refused: main writes
+    // the value already, and the entry stays in force over the checkout's own edit.
+    let main = git(&root, &["rev-parse", "main"]);
+    let (status, why) = refused(&saves, json!({"key":"agents.panes","action":"commit"}));
+    assert_eq!(status, 409);
+    assert_eq!(
+        why,
+        "not removed: symphony.toml on main writes [agents] panes = \"hc\" already, but this \
+         checkout's own symphony.toml does not take it yet: the board's entry stays, in force \
+         over the checkout's own edit of the line, until the checkout takes the commit"
+    );
+    assert_eq!(git(&root, &["rev-parse", "main"]), main);
+    assert_eq!(entry(f, "agents.panes"), Some(json!("hc")));
+    assert_eq!(
+        std::fs::read_to_string(root.join("symphony.toml")).unwrap(),
+        mine
+    );
     // Once the checkout takes the commit, making it the project's again removes the entry alone.
     git(&root, &["checkout", "--", "symphony.toml"]);
-    let main = git(&root, &["rev-parse", "main"]);
     let taken = written(&saves, "agents.panes", "commit", None);
     assert_eq!(
         taken["said"],

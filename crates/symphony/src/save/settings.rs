@@ -17,7 +17,8 @@
 //!   the new ([`crate::commit::commit_setting`]), and the entry is removed once it stands; but
 //!   where a checkout on the default branch kept its own edit of the line, which the commit does
 //!   not merge into, the entry stays in force over that edit until the checkout takes the commit,
-//!   and making the value the project's again then removes it, the branch writing it already. Where
+//!   and making the value the project's again then removes it, the branch and the checkout writing
+//!   it already; before the checkout takes it, that is refused and the entry stays. Where
 //!   the project delivers by pull request it is kept and delivered as a document save is
 //!   (`crate::commit::pending`), answered as waiting, and its entry stays until the delivery is
 //!   proved. Such an edit is made against the project file as the saves still waiting for their
@@ -55,6 +56,37 @@ fn closing() -> Failure {
         status: 503,
         error: "setting writes are closing".into(),
     }
+}
+
+/// Whether the checkout at `root` takes `value` for the key the tables `at` lead to: its own
+/// project file, which its settings are read from, writes it; not where that file is none or no
+/// TOML.
+fn takes(root: &std::path::Path, at: &[&str], value: &toml::Value) -> bool {
+    let Some((last, tables)) = at.split_last() else {
+        return false;
+    };
+    let text = std::fs::read_to_string(root.join(FILE)).unwrap_or_default();
+    let Ok(mut here) = toml::from_str::<toml::Table>(&text) else {
+        return false;
+    };
+    for name in tables {
+        match here.remove(*name) {
+            Some(toml::Value::Table(inner)) => here = inner,
+            _ => return false,
+        }
+    }
+    here.get(*last) == Some(value)
+}
+
+/// The refusal of making `said` the project's where the default branch `default` writes it
+/// already and the checkout served does not take it yet: its own edit of the line, which the
+/// commit did not merge into, is still its value, and the board's entry stays in force over it.
+fn untaken(said: &str, default: &str) -> Failure {
+    conflict(format!(
+        "not removed: {FILE} on {default} writes {said} already, but this checkout's own {FILE} \
+         does not take it yet: the board's entry stays, in force over the checkout's own edit of \
+         the line, until the checkout takes the commit"
+    ))
 }
 
 /// The value a write gives, as the project file writes it.
@@ -228,6 +260,9 @@ impl Saves {
             error: format!("not committed: {why}; nothing was written, and the stored value holds"),
         })?;
         if new == base {
+            if !takes(root, &at, &value) {
+                return Err(untaken(&said, &default));
+            }
             store.remove_setting_holding(key, &kept(&value), BY)?;
             return Ok(SettingWritten {
                 said: format!(
@@ -281,6 +316,9 @@ impl Saves {
         let outcome = commit::commit_setting(root, &edit, &message, &self.writes, &self.closed)?
             .ok_or_else(closing)?;
         if !outcome.committed {
+            if !takes(root, &at, &value) {
+                return Err(untaken(&said, &default));
+            }
             store.remove_setting_holding(key, &held, BY)?;
             return Ok(SettingWritten {
                 said: format!(
@@ -321,3 +359,7 @@ impl Saves {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "settings_tests.rs"]
+mod tests;

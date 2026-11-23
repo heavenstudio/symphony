@@ -7,7 +7,7 @@ use crate::front::{Shared, router};
 use crate::gate::Gate;
 use crate::testing::{
     Tree,
-    board::{Fixture, NOW, Seed},
+    board::{Fixture, HOST, NOW, Seed},
     repository, store_on,
 };
 use axum::body::{Body, to_bytes};
@@ -21,6 +21,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use symphony_board::launch::LaunchError;
 use symphony_board::launch::hc::Hc;
+use symphony_board::rpc::Client;
 use tower::ServiceExt;
 
 /// This machine's tailnet names, as `tailscale status` gives them.
@@ -173,6 +174,9 @@ struct Served {
     held: (Tree, Fixture),
     /// How many times the hub opened the board for the page reads ([`Hub::reader`]).
     opened: Arc<AtomicUsize>,
+    /// How many of the next openings hand back a store whose server went: nothing listens where
+    /// it was.
+    gone: Arc<AtomicUsize>,
 }
 
 impl Served {
@@ -241,10 +245,22 @@ impl Served {
         let f = Fixture::new(seed);
         let mut hub = Hub::new(&root, &root.join("build/client"));
         let board = f.other_client();
-        let opened = Arc::new(AtomicUsize::new(0));
-        let opening = opened.clone();
+        let (opened, gone) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let (opening, going) = (opened.clone(), gone.clone());
         hub.connect_reader = Box::new(move |_| {
             opening.fetch_add(1, Ordering::SeqCst);
+            let took = going.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
+            if took.is_ok() {
+                let left = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                let addr = left.local_addr().unwrap().to_string();
+                drop(left);
+                return Ok(symphony_board::Store::unchecked(
+                    Client::new(&addr, "sf", "gone").waiting(Duration::from_secs(1)),
+                    Box::new(|| NOW),
+                    Box::new(|_| false),
+                    HOST,
+                ));
+            }
             Ok(store_on(&board))
         });
         if let Some(kept) = kept {
@@ -272,6 +288,7 @@ impl Served {
             app,
             held: (tree, f),
             opened,
+            gone,
         }
     }
 
@@ -571,6 +588,41 @@ fn the_stores_panes_hold_over_the_files_read_on_the_board_the_hub_holds() {
             assert!(kept.calls().is_empty(), "{:?}", kept.calls());
         }
     }
+}
+
+/// A store the board failed the panes read on is forgotten, as every reader of the store the page
+/// reads share forgets it ([`Hub::reader_failed`]): that read holds the project file's panes, and
+/// the next opens the board anew, where its server is now, and reads the store's.
+#[test]
+fn a_store_the_board_failed_the_panes_read_on_is_dropped_and_the_next_read_opens_the_board_anew() {
+    let kept = Kept::default();
+    let s = Served::new("none", &kept);
+    let value = symphony_board::settings::value_of("agents.panes", "hc");
+    s.board()
+        .store_setting("agents.panes", &value, "owner")
+        .unwrap();
+    assert_eq!(
+        s.opened.load(Ordering::SeqCst),
+        0,
+        "no read opened the board yet"
+    );
+    s.gone.store(1, Ordering::SeqCst);
+    let (status, body) = s.screen(PHONE, "amber");
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(
+        body["error"],
+        "this project does not address its agents' panes ([agents] panes = \"none\")"
+    );
+    for _ in 0..2 {
+        let (status, body) = s.screen(PHONE, "amber");
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["text"], SCREEN);
+    }
+    assert_eq!(
+        s.opened.load(Ordering::SeqCst),
+        2,
+        "the failed store is opened anew once, then kept"
+    );
 }
 
 #[test]
