@@ -1015,7 +1015,11 @@ fn every_setting_the_page_shows_is_one_the_project_file_reads() {
         } else {
             keys.contains(&(path, key))
         };
-        assert!(known, "{} is no setting the project file reads", setting.key);
+        assert!(
+            known,
+            "{} is no setting the project file reads",
+            setting.key
+        );
         seen += 1;
     }
     assert!(seen > 50, "the page shows its settings: {seen}");
