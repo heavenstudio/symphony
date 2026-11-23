@@ -108,17 +108,19 @@ store's record of its changes and two controls:
   removed, while it still holds the value committed, and the file's value is in force. Where the
   project delivers by pull request (`[land] delivery`), the edit is kept and delivered as a
   document save is ([a land dispatched at
-  review](../workflow/TASKS.md#a-land-dispatched-at-review)): committed on a branch of its own and
-  filed as the owner's task, the row saying it waits and offering no second commit, the entry in
-  force until the delivery is proved, then removed.
+  review](../workflow/TASKS.md#a-land-dispatched-at-review)): made against the project file as
+  the saves still waiting leave it, so one made after another waits for it and then goes onto the
+  default branch it moved, committed on a branch of its own and filed as the owner's task, the
+  row saying it waits and offering no second commit, the entry in force until the delivery is
+  proved, then removed.
 - **Remove** removes the entry, its record kept: the files' value is in force again.
 
 The commit's own guard is the store's: the committer takes no edit of the project file that
 changes anything but preferences the store would keep with that value
 (`crates/symphony/src/commit/settings.rs`). The page never writes the local settings file, and a
 local value over the store's is shown with its line, over the store's. Its write is a write like
-every owner's save, held to the server's Host and Origin checks, and a hosted visitor is refused
-it.
+every owner's save, held to the server's Host and Origin checks, refused once the server's saves
+close, and refused to a hosted visitor.
 
 ## The settings check
 

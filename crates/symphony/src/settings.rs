@@ -726,15 +726,21 @@ fn stored_value(stored: &Stored, path: &[&str], key: &str) -> Option<String> {
     value.filter(|value| stored.holds(&at) && !value.trim().is_empty())
 }
 
+/// What stands over the committed settings: the local file where one is read, and the board's
+/// store.
+#[derive(Clone, Copy)]
+struct Over<'a> {
+    local: Option<&'a Local>,
+    stored: &'a Stored,
+}
+
 /// A setting the board reads with the board's store and then the local file over the committed
 /// one: the local file's value and line where it writes one that is not empty, over the store's
 /// where it holds one, else over the committed one's when that is written; else the store's, over
 /// the committed value; else the committed one's; else `unset`, said by `chosen`.
-#[allow(clippy::too_many_arguments)]
 fn overridden(
     board: &FileRead,
-    held: Option<&Local>,
-    stored: &Stored,
+    Over { local, stored }: Over<'_>,
     (at, path, key): (&str, &[&str], &str),
     name: &str,
     kind: SettingKind,
@@ -744,7 +750,7 @@ fn overridden(
     let committed = board.written(at, path, key).map(|written| source(&written));
     let store_key = format!("{}.{key}", path.join("."));
     let in_store = stored_value(stored, path, key);
-    let local = held.filter(|local| stored::local_writes(local, &store_key));
+    let local = local.filter(|local| stored::local_writes(local, &store_key));
     let source = match (local, &in_store, committed) {
         (Some(local), in_store, committed) => SettingSource {
             over: match in_store {
@@ -791,10 +797,13 @@ fn launch(
     stored: &Stored,
 ) -> SettingsEntry {
     let resolved = defaults.resolve(None, None);
+    let over = Over {
+        local: held,
+        stored,
+    };
     let mut agent = overridden(
         board,
-        held,
-        stored,
+        over,
         ("[agents] launch default", &LAUNCH, "default"),
         "The agent a launch starts",
         SettingKind::Choice,
@@ -807,8 +816,7 @@ fn launch(
             agent,
             overridden(
                 board,
-                held,
-                stored,
+                over,
                 ("[agents] launch model", &LAUNCH, "model"),
                 "Its model",
                 SettingKind::Text,
@@ -820,8 +828,7 @@ fn launch(
             ),
             overridden(
                 board,
-                held,
-                stored,
+                over,
                 ("[agents] launch effort", &LAUNCH, "effort"),
                 "Its effort",
                 SettingKind::Text,
@@ -850,6 +857,10 @@ fn models(
     held: Option<&Local>,
     stored: &Stored,
 ) -> SettingsEntry {
+    let over = Over {
+        local: held,
+        stored,
+    };
     let settings = ROLES
         .iter()
         .map(|role| {
@@ -859,8 +870,7 @@ fn models(
             let written = |value: Option<String>, unset: (&str, &str)| {
                 overridden(
                     board,
-                    held,
-                    stored,
+                    over,
                     (&at, &MODELS, role),
                     &name,
                     SettingKind::Text,

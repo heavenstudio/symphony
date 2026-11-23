@@ -17,15 +17,24 @@
 //!   the new ([`crate::commit::commit_setting`]), and the entry is removed once it stands. Where
 //!   the project delivers by pull request it is kept and delivered as a document save is
 //!   (`crate::commit::pending`), answered as waiting, and its entry stays until the delivery is
-//!   proved.
+//!   proved. Such an edit is made against the project file as the saves still waiting for their
+//!   delivery leave it ([`crate::commit::pending::shown`]), as a document save's is: a later one
+//!   waits for the earlier one's delivery and is then committed onto the default branch that
+//!   holds it, which it would conflict with were it made against the branch alone.
 //!
-//! A write comes from the project's own page: one named for a worktree's scope is refused.
+//! A write comes from the project's own page: one named for a worktree's scope is refused. Each
+//! is made under the saves' lock and refused once they are closed ([`Saves::close`]), as a
+//! document save is: a retired project's state still held by a request writes nothing.
+
+use std::sync::MutexGuard;
+use std::sync::atomic::Ordering;
 
 use serde_json::Value;
 use symphony_api::{SettingAction, SettingValue, SettingWrite, SettingWritten};
+use symphony_board::lock::Recovered as _;
 use symphony_board::settings::{Stored, kept, named, path, shown, written};
 
-use super::{Failure, Saves};
+use super::{Failure, Saves, held_write_lock};
 use crate::commit;
 use crate::project::{FILE, Project};
 
@@ -35,6 +44,14 @@ const BY: &str = crate::postpone::OWNER;
 /// A refusal of a write that conflicts with what the store or the project holds now.
 fn conflict(error: String) -> Failure {
     Failure { status: 409, error }
+}
+
+/// The refusal of a write once the saves are closed.
+fn closing() -> Failure {
+    Failure {
+        status: 503,
+        error: "setting writes are closing".into(),
+    }
 }
 
 /// The value a write gives, as the project file writes it.
@@ -106,7 +123,18 @@ impl Saves {
         Ok(serde_json::to_value(done).expect("a setting's answer is JSON"))
     }
 
+    /// The saves' lock, held by the write in flight, which a close waits for; refused once they
+    /// are closed, the flag being set under the lock.
+    fn open(&self) -> Result<MutexGuard<'_, ()>, Failure> {
+        let held = self.writes.lock().recover();
+        if self.closed.load(Ordering::Acquire) {
+            return Err(closing());
+        }
+        Ok(held)
+    }
+
     fn keep(&self, key: &str, value: &toml::Value) -> Result<SettingWritten, Failure> {
+        let _held = self.open()?;
         let (entry, changed) = self.store()?.store_setting(key, value, BY)?;
         let held = entry.value.as_ref().map(shown).unwrap_or_default();
         Ok(SettingWritten {
@@ -127,6 +155,7 @@ impl Saves {
     }
 
     fn remove(&self, key: &str) -> Result<SettingWritten, Failure> {
+        let _held = self.open()?;
         self.store()?.remove_setting(key, BY)?;
         Ok(SettingWritten {
             said: format!(
@@ -139,6 +168,12 @@ impl Saves {
 
     /// The stored value of `key` made the project's, as [the module](self) says.
     fn make_the_projects(&self, key: &str) -> Result<SettingWritten, Failure> {
+        let root = &self.root;
+        // Held through a delivery's submit, as a document save holds them; a commit straight to
+        // the default branch takes them again under the commits' lock, which comes first
+        // (`commit_setting`), and sees the close there too.
+        let saving = self.open()?;
+        let file = held_write_lock(root)?;
         let store = self.store()?;
         let entry = (store.stored_entries()?.into_iter())
             .find(|entry| entry.key == key && entry.value.is_some())
@@ -156,7 +191,6 @@ impl Saves {
         }
         let value = written(&held).expect("an entry the store reads is of a setting's kind");
         let said = format!("{} = {}", named(key), shown(&held));
-        let root = &self.root;
         let project = Project::of(root);
         let default = project.default_branch.clone();
         if !commit::on_main(root) {
@@ -176,7 +210,13 @@ impl Saves {
                 save.state.said(&default)
             )));
         }
+        let delivers = commit::delivers(root);
         let base = committed(root, &default)?;
+        let base = if delivers {
+            commit::pending::shown(root, FILE, base)
+        } else {
+            base
+        };
         let (tables, last) = path(key)?;
         let mut new = base.clone();
         let at: Vec<&str> = tables.iter().copied().chain([last]).collect();
@@ -217,10 +257,12 @@ impl Saves {
                 error: format!("not committed: {why}"),
             })?;
         let message = commit::settings::message(&changes);
-        if commit::delivers(root) {
+        if delivers {
             self.committer
                 .get_or_init(|| commit::Committer::start(root, self.writes.clone()))
                 .submit(edit)?;
+            drop(file);
+            drop(saving);
             return Ok(SettingWritten {
                 said: format!(
                     "{said} is kept for delivery by pull request: this project delivers by pull \
@@ -231,7 +273,10 @@ impl Saves {
                 ..SettingWritten::default()
             });
         }
-        let outcome = commit::commit_setting(root, &edit, &message, &self.writes)?;
+        drop(file);
+        drop(saving);
+        let outcome = commit::commit_setting(root, &edit, &message, &self.writes, &self.closed)?
+            .ok_or_else(closing)?;
         if !outcome.committed {
             store.remove_setting_holding(key, &held, BY)?;
             return Ok(SettingWritten {

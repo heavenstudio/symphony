@@ -333,7 +333,7 @@ pub(super) fn a_stored_value_made_the_projects_is_one_commit_and_its_entry_goes(
         met["said"]
             .as_str()
             .unwrap()
-            .contains("has uncommitted edits the verdict does not merge into"),
+            .contains("has uncommitted edits the commit does not merge into"),
         "{met}"
     );
     let on_main = f.main("symphony.toml");
@@ -466,5 +466,115 @@ pub(super) fn under_delivery_a_commit_waits_on_its_branch_until_its_delivery_is_
     assert_eq!(entry(f, "limits.low_volume"), None);
     let (value, scope, ..) = shown(&root, "[limits] low_volume");
     assert_eq!((value.as_str(), scope), ("4", Some(SettingScope::Project)));
+    f.clean_workers();
+}
+
+/// Each of `kept` (its key, the value stored and its commit's message) stored, then made the
+/// project's in turn under delivery, then delivered in its order. Each save after the first waits
+/// for the one before; once that one is delivered, its own commit goes onto the main that holds
+/// it, changes its own key alone, and its entry goes with its own delivery.
+fn delivered_in_turn(f: &Fixture, root: &Path, kept: &[(&str, Value, &str)]) {
+    let saves = ClosingSaves::start(root);
+    for (key, value, _) in kept {
+        written(&saves, key, "store", Some(value.clone()));
+    }
+    for (key, ..) in kept {
+        let said = written(&saves, key, "commit", None);
+        assert_eq!(said["waiting"], true, "{key}: {said}");
+    }
+    drop(saves);
+    for (at, (key, value, message)) in kept.iter().enumerate() {
+        let waiting = pending::saves(root);
+        assert_eq!(waiting.len(), kept.len() - at, "{waiting:?}");
+        let save = &waiting[0];
+        assert_eq!(save.keys, [*key]);
+        assert_eq!(save.state, State::Waiting, "{key}: {waiting:?}");
+        // The ones after it wait for it, kept with no branch yet.
+        for later in &waiting[1..] {
+            assert_eq!(later.state, State::Queued, "{waiting:?}");
+        }
+        let branch = save.branch.clone();
+        assert_eq!(
+            git(root, &["rev-parse", &format!("{branch}^")]),
+            git(root, &["rev-parse", "main"])
+        );
+        assert_eq!(git(root, &["log", "-1", "--format=%s", &branch]), *message);
+        assert_eq!(
+            git(root, &["diff", "--name-only", "main", &branch]),
+            "symphony.toml"
+        );
+        assert_eq!(entry(f, key), Some(value.clone()));
+        super::delivery::landed(root, &branch, &branch);
+        git(root, &["merge", "-q", "--ff-only", "origin/main"]);
+        super::delivery::pass(root);
+        assert_eq!(entry(f, key), None, "{key}");
+    }
+    assert!(pending::saves(root).is_empty());
+}
+
+/// Under delivery, settings made the project's one after another each deliver: a later one is made
+/// against the project file as the earlier one's waiting save leaves it, as a document save is,
+/// so its change merges onto the default branch the earlier delivery moved. Made against that
+/// branch alone, two values on adjacent lines, or two keys added under one table, conflict there.
+pub(super) fn under_delivery_settings_made_the_projects_in_turn_each_deliver(f: &Fixture) {
+    let root = super::delivery::delivering(f);
+    let text = std::fs::read_to_string(root.join("symphony.toml")).unwrap()
+        + "\n[agents]\npanes = \"none\"\n\n[limits]\n# held to\nlow_volume = 2\nmachine_agents = 4\n";
+    write(&root.join("symphony.toml"), &text);
+    git(&root, &["commit", "-qam", "the project's preferences"]);
+    git(&root, &["push", "-q", "origin", "main"]);
+    git(&root, &["fetch", "-q", "origin"]);
+    // Two values on adjacent lines.
+    delivered_in_turn(
+        f,
+        &root,
+        &[
+            (
+                "limits.low_volume",
+                json!(3),
+                "settings: [limits] low_volume from 2 to 3",
+            ),
+            (
+                "limits.machine_agents",
+                json!(5),
+                "settings: [limits] machine_agents from 4 to 5",
+            ),
+        ],
+    );
+    // Two keys the file does not write, added under one table.
+    delivered_in_turn(
+        f,
+        &root,
+        &[
+            (
+                "agents.models.reviewer",
+                json!("opus"),
+                "settings: [agents.models] reviewer from none written to \"opus\"",
+            ),
+            (
+                "agents.models.executor",
+                json!("sonnet"),
+                "settings: [agents.models] executor from none written to \"sonnet\"",
+            ),
+        ],
+    );
+    let file = git(&root, &["show", "main:symphony.toml"]);
+    assert!(
+        file.contains("\n[limits]\n# held to\nlow_volume = 3\nmachine_agents = 5"),
+        "{file}"
+    );
+    for (key, value) in [
+        ("[limits] low_volume", "3"),
+        ("[limits] machine_agents", "5"),
+        ("[agents.models] reviewer", "opus"),
+        ("[agents.models] executor", "sonnet"),
+    ] {
+        let (shown_value, scope, ..) = shown(&root, key);
+        assert_eq!(
+            (shown_value.as_str(), scope),
+            (value, Some(SettingScope::Project)),
+            "{key}: {file}"
+        );
+    }
     f.clean_workers();
 }

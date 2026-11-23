@@ -8,6 +8,7 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Output;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, mpsc};
 
 use serde::{Deserialize, Serialize};
@@ -1275,7 +1276,7 @@ fn sync(root: &Path, rel: &str, old: &str, new: &str) -> Result<(), String> {
             Ok(merged) => std::fs::write(file, merged).map_err(|e| e.to_string())?,
             Err(e) => {
                 problem = Some(format!(
-                    "{rel} in {} has uncommitted edits the verdict does not merge into; its file is left as it is: {e}",
+                    "{rel} in {} has uncommitted edits the commit does not merge into; its file is left as it is: {e}",
                     root.display()
                 ))
             }
@@ -1625,7 +1626,9 @@ pub fn commit_verdicts(root: &Path, edits: &[Edit], message: &str) -> Outcome {
 /// nothing the checkout holds besides is staged or committed. Under the locks a publication
 /// takes, `writes` the server's saves; the file in the checkout is not written first, and each
 /// main checkout takes the commit with its own uncommitted edits of the file merged on. The
-/// commit, and what a checkout could not take. Refused, with nothing committed, where the project
+/// commit, and what a checkout could not take; none where the saves closed first: `closed` is
+/// their close ([`crate::save::Saves::close`]), set under `writes`, so read under it here no
+/// commit begins once they are closed. Refused, with nothing committed, where the project
 /// delivers by pull request ([`delivered_by_the_host`]): such an edit goes to the committer's
 /// journal instead ([`Committer::submit`]).
 ///
@@ -1638,7 +1641,8 @@ pub fn commit_setting(
     edit: &Edit,
     message: &str,
     writes: &Mutex<()>,
-) -> Result<Outcome, String> {
+    closed: &AtomicBool,
+) -> Result<Option<Outcome>, String> {
     let _stage = PublicationStage::start(format_args!("commit setting {message:?}"));
     if settings::changes(edit).is_none() {
         return Err(format!("{} is not the project file", edit.rel));
@@ -1646,7 +1650,10 @@ pub fn commit_setting(
     let backlog = Backlog::new(root)?;
     retry_conflicts(root, backlog.sequence, || {
         let _locks = PublicationLocks::take(root, writes)?;
-        commit_inner(root, std::slice::from_ref(edit), message, false)
+        if closed.load(std::sync::atomic::Ordering::Acquire) {
+            return Ok(None);
+        }
+        commit_inner(root, std::slice::from_ref(edit), message, false).map(Some)
     })
 }
 

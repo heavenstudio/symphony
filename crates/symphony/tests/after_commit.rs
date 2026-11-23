@@ -319,6 +319,14 @@ fn under_delivery_a_settings_commit_waits_until_its_delivery_is_proved() {
 }
 
 #[test]
+fn under_delivery_settings_made_the_projects_in_turn_each_deliver() {
+    isolated(
+        "under_delivery_settings_made_the_projects_in_turn_each_deliver",
+        settings::under_delivery_settings_made_the_projects_in_turn_each_deliver,
+    );
+}
+
+#[test]
 fn two_verdicts_race_without_lost_files_or_merge_commits() {
     isolated(
         "two_verdicts_race_without_lost_files_or_merge_commits",
