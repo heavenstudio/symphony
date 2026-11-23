@@ -435,6 +435,16 @@ task, whatever worktree or machine it runs in:
 just tasks say sim/jump-departure "the dock ring is at 900" --to @reviewer
 ```
 
+A long line, such as a request for review with its evidence, is written as a file
+in the project's artifacts folder under the task's slug (`artifacts/SLUG/` where the
+project names no other), which git ignores and the sweep sets aside with the
+worktree, never a file the worktree would hold untracked or commit. It is posted
+with `--file PATH` in place of the text (`--file -` reads stdin), so no quote,
+backtick or `$(…)` in it meets a shell; the board trims its ends as it trims any
+line, and a line given both ways, or neither, is refused. `--file PATH` is plain words,
+which the allow rules pass in a Claude or a Codex session alike; stdin fed by a
+heredoc is a redirection, which no Codex rule matches.
+
 `--to` takes a handle, a role (`@executor`, `@reviewer`, `@orchestrator`,
 `@reserved`), or `owner`. Addressed messages reach the matching native callback
 as plain `MSG` event lines. Without an address, an agent's post stays on the
@@ -1700,7 +1710,10 @@ landing](#the-default-landing)).
   stamp reads it (`crates/tasks/src/cli/commands/runs.rs`): `TIP`; `RUNS`, a row for each build
   and test command the task and the work under it ran there, its newest run's result (`green`,
   `red`, `running`, `queued`), when, how long, who, why it is red, and how many runs of it came
-  before there; `REFUSED`, when there are any, a row for each run there its runner refused, with
+  before there, then, for each red run there that kept a log (a run of a pipeline,
+  [RUNS](RUNS.md)), the newest of its command or one before it, a `LOG` line with when it ran and
+  the log's path, where the command's own output says what failed, at its end, whatever its
+  runner; `REFUSED`, when there are any, a row for each run there its runner refused, with
   the refusal's line ([what clears what](#what-clears-a-red-run)); `TESTS`, the `tests` stamp met or not with its reader's line; `CHECK`, the
   project's `[verdicts] check` as the task page's check gate reads it, its newest run there by
   anyone or `no run`; and `ELSEWHERE`, how many of the task's runs are at other commits, none of
