@@ -122,14 +122,16 @@ impl Event {
 
 /// A recipient's callback state as a dispatch reads it, with when its PULL was last checked, the
 /// lines still queued for it, which a hand-over can take back ([`Hearing::rescope`]), and whether a
-/// line of its outbox was due when it was read. A pass reads every recipient's at once
-/// ([`Store::stored_states`]).
+/// line of its outbox was due when it was read. A pass's plans read every recipient's at once
+/// ([`Store::stored_states`]); a visit under its lease reads its own without the due line, false
+/// there, as it asks its outbox afresh ([`Store::stored_one`]).
 #[derive(Deserialize)]
 struct Stored {
     handle: String,
     state: Option<State>,
     checked_pull: f64,
     queued: Vec<Queued>,
+    #[serde(default)]
     pending: bool,
 }
 
@@ -1146,7 +1148,7 @@ impl Store {
     ) -> Result<(bool, f64), Error> {
         let stored = match ahead {
             Some(stored) => stored,
-            None => self.stored_one(callback)?,
+            None => self.stored_one(callback, true)?,
         };
         let pending = stored.pending;
         let Some(look) = self.look(handle, callback, board, sequence, visit, stored)? else {
@@ -1205,8 +1207,9 @@ impl Store {
         if delivering {
             (*board, *sequence) = self.callback_board()?;
         }
-        // Under the lease the recipient's stored state is read again, alone.
-        let stored = self.stored_one(callback)?;
+        // Under the lease the recipient's stored state is read again, alone, and its outbox asked
+        // afresh below: the read takes no due line, nor the clock one needs.
+        let stored = self.stored_one(callback, false)?;
         let Some(mut look) = self.look(handle, callback, board, sequence, visit, stored)? else {
             return Ok((true, f64::INFINITY));
         };
@@ -1697,27 +1700,46 @@ impl Store {
         }
     }
 
-    /// Each of `recipients`' stored state ([`Stored`]), by handle, all of them in one read: the
-    /// stored state of a pass's every recipient, which their plans read, as only a visit under its
-    /// lease reads its recipient's again ([`Store::stored_one`]).
+    /// Each of `recipients`' stored state ([`Stored`]) with its due line, by handle, all of them in
+    /// one read: the stored state of a pass's every recipient, which their plans read, as only a
+    /// visit under its lease reads its recipient's again ([`Store::stored_one`]).
     fn stored_states(&self, recipients: &[&Callback]) -> Result<BTreeMap<String, Stored>, Error> {
+        self.read_stored(recipients, true)
+    }
+
+    /// `callback`'s recipient's stored state, read alone ([`Store::stored_states`]), with its due
+    /// line when `due`, and with no read of the clock when not.
+    fn stored_one(&self, callback: &Callback, due: bool) -> Result<Stored, Error> {
+        let handle = callback.handle.as_str();
+        (self.read_stored(&[callback], due)?.remove(handle))
+            .ok_or_else(|| Error::Db(format!("the board read no callback state for {handle}")))
+    }
+
+    /// Each of `recipients`' stored state by handle, in one read, with whether a line of its outbox
+    /// is due now when `due` ([`Stored::pending`]).
+    fn read_stored(
+        &self,
+        recipients: &[&Callback],
+        due: bool,
+    ) -> Result<BTreeMap<String, Stored>, Error> {
         if recipients.is_empty() {
             return Ok(BTreeMap::new());
         }
-        let vars = json!({"recipients": addressed(recipients), "now": self.now()});
-        let stored: Vec<Stored> =
-            self.retrying(|| self.read(both(sql::STORED.as_str(), pg::stored()), vars.clone()))?;
+        let mut vars = json!({"recipients": addressed(recipients)});
+        if due {
+            vars["now"] = json!(self.now());
+        }
+        let stored: Vec<Stored> = self.retrying(|| {
+            let statement = match due {
+                true => both(sql::STORED_DUE.as_str(), pg::stored_due()),
+                false => both(sql::STORED.as_str(), pg::stored()),
+            };
+            self.read(statement, vars.clone())
+        })?;
         Ok(stored
             .into_iter()
             .map(|stored| (stored.handle.clone(), stored))
             .collect_map())
-    }
-
-    /// `callback`'s recipient's stored state, read alone ([`Store::stored_states`]).
-    fn stored_one(&self, callback: &Callback) -> Result<Stored, Error> {
-        let handle = callback.handle.as_str();
-        (self.stored_states(&[callback])?.remove(handle))
-            .ok_or_else(|| Error::Db(format!("the board read no callback state for {handle}")))
     }
 
     /// The handles of `recipients` with a line of their outbox due now, all of them in one read: the

@@ -208,11 +208,17 @@ pub(in crate::store) fn pull_checked() -> Pg<'static> {
         "UPDATE callback_lease SET doc = doc || jsonb_build_object('pull', v -> 'now') WHERE id = v -> 'handle' AND doc -> 'revision' = v -> 'revision';",
     )
 }
-pub(in crate::store) fn stored() -> Pg<'static> {
+/// Each recipient's stored state, with `more` fields (`super::super::surreal::callbacks::stored`).
+fn stored_with(more: &str) -> Pg<'static> {
     Pg::read(each_recipient(&format!(
-        "'state', (SELECT doc FROM callback_state WHERE id = r -> 'handle'), 'checked_pull', coalesce((SELECT doc -> 'pull' FROM callback_lease WHERE id = r -> 'handle'), '0'), 'queued', coalesce((SELECT jsonb_agg(jsonb_strip_nulls(jsonb_build_object('key', doc -> 'key', 'text', doc -> 'text', 'sequence', doc -> 'sequence', 'pull_entries', doc -> 'pull_entries', 'pull_withheld', doc -> 'pull_withheld', 'pull_said', doc -> 'pull_said'))) FROM callback_event WHERE doc ->> 'handle' = r ->> 'handle' AND doc -> 'delivered' IS DISTINCT FROM 'true'::jsonb AND (starts_with(doc ->> 'key', 'pull-') OR starts_with(doc ->> 'key', 'event-') OR (starts_with(doc ->> 'key', 'pane-') AND starts_with(doc ->> 'text', 'BLOCKED ')))), '[]'), 'pending', {}",
-        pending_of("r")
+        "'state', (SELECT doc FROM callback_state WHERE id = r -> 'handle'), 'checked_pull', coalesce((SELECT doc -> 'pull' FROM callback_lease WHERE id = r -> 'handle'), '0'), 'queued', coalesce((SELECT jsonb_agg(jsonb_strip_nulls(jsonb_build_object('key', doc -> 'key', 'text', doc -> 'text', 'sequence', doc -> 'sequence', 'pull_entries', doc -> 'pull_entries', 'pull_withheld', doc -> 'pull_withheld', 'pull_said', doc -> 'pull_said'))) FROM callback_event WHERE doc ->> 'handle' = r ->> 'handle' AND doc -> 'delivered' IS DISTINCT FROM 'true'::jsonb AND (starts_with(doc ->> 'key', 'pull-') OR starts_with(doc ->> 'key', 'event-') OR (starts_with(doc ->> 'key', 'pane-') AND starts_with(doc ->> 'text', 'BLOCKED ')))), '[]'){more}"
     )))
+}
+pub(in crate::store) fn stored() -> Pg<'static> {
+    stored_with("")
+}
+pub(in crate::store) fn stored_due() -> Pg<'static> {
+    stored_with(&format!(", 'pending', {}", pending_of("r")))
 }
 pub(in crate::store) fn unqueued_chat() -> Pg<'static> {
     Pg::read(format!(

@@ -701,7 +701,7 @@ fn a_stored_state_is_observed_against_a_board_at_least_as_new_as_it() {
     let mut read = |pass, sequence: u64| {
         let visit = Visit::new(pass, &env, store, None);
         let mut sequence = sequence;
-        let stored = store.stored_one(&callback).unwrap();
+        let stored = store.stored_one(&callback, false).unwrap();
         let state = store.stored_state(
             &handle,
             &callback,
@@ -921,22 +921,42 @@ fn stored_states_of_every_recipient_in_one_read(backend: crate::store_fixture::B
         cedar_stored.pending,
         "a retry whose time has come is due, with no state of its own"
     );
+    // A clock that counts its reads, on another store over the same board.
+    let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = std::sync::Arc::clone(&reads);
+    let clocked = fixture.busy(move || {
+        counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    });
+    let clock_reads = |work: &dyn Fn()| {
+        let before = reads.load(std::sync::atomic::Ordering::SeqCst);
+        work();
+        reads.load(std::sync::atomic::Ordering::SeqCst) - before
+    };
+    let sum = |s: &Stored| {
+        (
+            s.handle.clone(),
+            s.checked_pull,
+            s.queued.len(),
+            s.state.is_some(),
+        )
+    };
     for recipient in &recipients {
-        let alone = store.stored_one(recipient).unwrap();
         let together = &stored[&recipient.handle];
+        let planned = clock_reads(&|| {
+            let alone = clocked.stored_one(recipient, true).unwrap();
+            assert_eq!(
+                (sum(&alone), alone.pending),
+                (sum(together), together.pending)
+            );
+        });
+        assert_eq!(planned, 1, "a plan's read asks the clock what is due");
+        let leased = clock_reads(&|| {
+            let alone = clocked.stored_one(recipient, false).unwrap();
+            assert_eq!((sum(&alone), alone.pending), (sum(together), false));
+        });
         assert_eq!(
-            (
-                alone.handle.as_str(),
-                alone.checked_pull,
-                alone.pending,
-                alone.queued.len()
-            ),
-            (
-                together.handle.as_str(),
-                together.checked_pull,
-                together.pending,
-                together.queued.len()
-            ),
+            leased, 0,
+            "a visit under its lease reads no clock for its stored state"
         );
     }
     let (pending, sent) = requests(store, || store.pending(&all).unwrap());

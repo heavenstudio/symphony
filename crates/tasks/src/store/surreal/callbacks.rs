@@ -157,16 +157,21 @@ pub(in crate::store) const TAKE_LEASE: &str = "LET $s = (SELECT address, lease, 
 pub(in crate::store) const RELEASE_LEASE: &str = "UPDATE type::record('callback_lease', $handle) SET until = 0 WHERE revision = $revision RETURN NONE; RETURN NONE;";
 
 /// Each of `$recipients`' callback state (each recipient `{handle, chat}`), when its PULL was last
-/// checked, the lines still queued for it that a hand-over can take back, and whether a line of its
-/// outbox is due ([`PENDING`]): a `Stored` each, in their order, all of them in one read.
-pub(in crate::store) static STORED: LazyLock<String> = LazyLock::new(|| {
+/// checked and the lines still queued for it that a hand-over can take back, with `more`: a
+/// `Stored` each, in their order, all of them in one read.
+fn stored(more: &str) -> String {
     format!("RETURN SELECT handle, (SELECT * OMIT id FROM ONLY type::record('callback_state', $parent.handle)) AS state,
                     type::record('callback_lease', handle).pull ?? 0 AS checked_pull,
                     (SELECT key, text, sequence, pull_entries, pull_withheld, pull_said FROM callback_event WHERE handle = $parent.handle AND delivered != true
-                        AND (string::starts_with(key, 'pull-') OR string::starts_with(key, 'event-') OR (string::starts_with(key, 'pane-') AND string::starts_with(text, 'BLOCKED ')))) AS queued,
-                    {DUE_LINE} AS pending
+                        AND (string::starts_with(key, 'pull-') OR string::starts_with(key, 'event-') OR (string::starts_with(key, 'pane-') AND string::starts_with(text, 'BLOCKED ')))) AS queued{more}
                 FROM $recipients;")
-});
+}
+/// Each of `$recipients`' stored state ([`stored`]), as a visit under its lease reads its own.
+pub(in crate::store) static STORED: LazyLock<String> = LazyLock::new(|| stored(""));
+/// Each of `$recipients`' stored state ([`stored`]) with whether a line of its outbox is due at
+/// `$now` ([`PENDING`]), as a pass's plans read every recipient's.
+pub(in crate::store) static STORED_DUE: LazyLock<String> =
+    LazyLock::new(|| stored(&format!(",\n                    {DUE_LINE} AS pending")));
 
 /// The owner's undelivered chat events `$handle`'s outbox holds no line of yet, in their order.
 pub(in crate::store) const UNQUEUED_CHAT: &str = "RETURN SELECT key, text FROM chat_event WHERE delivered = false
