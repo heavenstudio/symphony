@@ -301,7 +301,7 @@ fn failed_or_unanswered_presence_rounds_hold_work_until_the_cap_and_confirmation
     .unwrap();
     // The server says nothing until the round is over, or until the backstop of the 5 s the round
     // once had has passed, when it closes the connection: a round that waited for it says the
-    // server closed, not that it does not answer.
+    // server closed, not that it is slow.
     let (release, held) = std::sync::mpsc::channel::<()>();
     let server = std::thread::spawn(move || {
         let (_stream, _) = listener.accept().unwrap();
@@ -322,14 +322,7 @@ fn failed_or_unanswered_presence_rounds_hold_work_until_the_cap_and_confirmation
     let error = presence_round(&failed, &w.hc(), &how, &mut Vec::new()).unwrap_err();
     let _ = release.send(());
     server.join().unwrap();
-    let unanswered = format!(
-        "is not answering on {}",
-        silent
-            .0
-            .join(symphony_board::server::postgres::SOCKET_FILE)
-            .display()
-    );
-    assert!(error.to_string().contains(&unanswered), "{error}");
+    assert!(symphony_board::rpc::slow(&error.to_string()), "{error}");
 
     w.f.advance(601.0);
     for (slug, handle) in &workers {

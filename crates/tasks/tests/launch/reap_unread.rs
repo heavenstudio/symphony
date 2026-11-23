@@ -26,13 +26,12 @@ fn unreadable(slug: &str) -> String {
 }
 
 /// A closed launch record of `handle` on `slug` naming the Codex `thread`, which no reader of a
-/// whole record decodes: its `started` is not a number.
+/// whole record decodes: its start a NaN, as [`unreadable`]'s.
 fn unreadable_codex(slug: &str, handle: &str, thread: &str) -> String {
     format!(
-        "DEFINE FIELD OVERWRITE started ON task_session TYPE any;
-UPSERT task_session:['{slug}', '{handle}'] CONTENT {{ slug: '{slug}', handle: '{handle}',
-    role: 'executor', claude_session: 'codex:{thread}', worktree: '', branch: '', pane: 't-gone',
-    model: '', started: 'unreadable', closed: 1.0, closed_why: '', restore: '' }} RETURN NONE;"
+        "INSERT INTO task_session (id, slug, handle, role, claude_session, worktree, branch, \
+         pane, model, started, closed, closed_why, restore) VALUES ('[\"{slug}\", \"{handle}\"]', \
+         '{slug}', '{handle}', 'executor', 'codex:{thread}', '', '', 't-gone', '', 'NaN', 1.0, '', '')"
     )
 }
 

@@ -166,11 +166,17 @@ fn walk(node: &Value, hashed: &BTreeSet<String>, per_row: Option<&str>, found: &
         }
     }
     for child in children(node) {
-        let runs_per_row = (text(child, "Parent Relationship") == Some("SubPlan"))
+        let subplan = (text(child, "Parent Relationship") == Some("SubPlan"))
             .then(|| text(child, "Subplan Name"))
-            .flatten()
-            .filter(|name| !hashed.contains(*name));
-        walk(child, hashed, runs_per_row.or(per_row), found);
+            .flatten();
+        // A hashed subplan takes nothing from the rows above it, so the server builds its table
+        // once, however often the subplan holding it runs.
+        let per_row = match subplan {
+            Some(name) if hashed.contains(name) => None,
+            Some(name) => Some(name),
+            None => per_row,
+        };
+        walk(child, hashed, per_row, found);
     }
 }
 
@@ -299,10 +305,10 @@ mod read {
         assert_eq!(findings(&ranged), []);
     }
 
-    /// A subquery the server hashes is read once, and passes, whatever it reads; one it runs
-    /// again for each row and that reads a table by no index each time is found (a watched one's
-    /// scan under its condition with it); one that probes an index for each row passes; and one
-    /// run once, before the rest, passes too.
+    /// A subquery the server hashes is read once, and passes, whatever it reads, under a subquery
+    /// run for each row too; one it runs again for each row and that reads a table by no index
+    /// each time is found (a watched one's scan under its condition with it); one that probes an
+    /// index for each row passes; and one run once, before the rest, passes too.
     #[test]
     fn a_hashed_subplan_passes_and_one_scanning_for_each_row_is_found() {
         let session = |filter: &str, under: Value| {
@@ -326,6 +332,35 @@ mod read {
         );
         let hashed = session("(ANY (handle = (hashed SubPlan 1).col1))", tasks.clone());
         assert_eq!(findings(&hashed), []);
+        // The dispatch's due lines: an outbox read for each recipient, and under it the chats
+        // delivered, hashed.
+        let mut delivered = subplan(
+            "Seq Scan",
+            "chat_event",
+            json!({"Filter": "((doc -> 'delivered'::text) = 'true'::jsonb)"}),
+        );
+        delivered["Subplan Name"] = json!("SubPlan 2");
+        let mut outbox = subplan(
+            "Bitmap Heap Scan",
+            "callback_event",
+            json!({"Recheck Cond": "((doc ->> 'handle'::text) = (r.r ->> 'handle'::text))",
+                "Filter": "(NOT (ANY (k = (hashed SubPlan 2).col1)))",
+                "Plans": [delivered.clone(), node("Bitmap Index Scan", "callback_event",
+                    json!({"Index Name": "callback_event_handle"}))]}),
+        );
+        assert_eq!(
+            findings(&session("((SubPlan 1) IS NOT NULL)", outbox.clone())),
+            []
+        );
+        // The same chats read for each line instead, not hashed: found, under the outbox's read.
+        outbox["Filter"] = json!("(NOT (SubPlan 2))");
+        assert_eq!(
+            findings(&session("((SubPlan 1) IS NOT NULL)", outbox)),
+            [Finding::SubPlanPerRow {
+                subplan: "SubPlan 2".into(),
+                table: "chat_event".into()
+            }]
+        );
         let per_row = session("((SubPlan 1) > 0)", tasks);
         assert_eq!(
             findings(&per_row),
