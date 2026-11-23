@@ -261,9 +261,10 @@ output standing then. What a supersession does to a dependant already admitted o
 not this check's (`tools/workflow-revision-guards`). `just tasks workflow actions SLUG` prints the
 task's own output standing and, where an edge leaving its pair depends on accepted outputs, the
 one standing for each task it depends on, which `workflow apply … --accept SLUG=OUTPUT` names;
-`Store::accepted_outputs` reads the same, and the board's claim names the ones it reads there
-(`just tasks claim`, a launch, the staffing pass). PULL and the staffing pass find such an edge
-open by the outputs standing too ([Operations](#operations)).
+`Store::accepted_outputs` reads the same. The board's claim names the ones it reads
+(`just tasks claim`, a launch, the staffing pass), and it and `workflow actions` take them from
+the read that gave the revision they name (`Store::workflow_actions_with_outputs`). PULL and the
+staffing pass find such an edge open by the outputs standing too ([Operations](#operations)).
 
 ## External effects
 
