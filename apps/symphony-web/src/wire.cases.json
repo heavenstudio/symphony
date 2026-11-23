@@ -4084,6 +4084,14 @@
               { "id": "working", "label": "Working", "hours": 30.5 },
               { "id": "awaiting", "label": "Awaiting", "hours": 6.0 }
             ]
+          },
+          "landed": {
+            "tasks": 3,
+            "median": 1.5,
+            "p90": 2.8,
+            "lined_cost": 2.0,
+            "lines": 400,
+            "unread": 1
           }
         }
       ],
@@ -4097,89 +4105,6 @@
         }
       ],
       "unread": ["/repo/.git/symphony/reports/2026-11-08.json: not read"],
-      "landed": {
-        "tasks": 2,
-        "without": 1,
-        "median": 1.5,
-        "dearest": [
-          {
-            "slug": "sim/jump",
-            "at": 1794189600.0,
-            "tokens": {
-              "input": 10,
-              "cache_write_5m": 2000,
-              "cache_write_1h": 300,
-              "cache_read": 90000,
-              "output": 1500,
-              "calls": 4
-            },
-            "cost": {
-              "dollars": 2.0,
-              "input": 0.01,
-              "cache_write_5m": 0.25,
-              "cache_write_1h": 0.05,
-              "cache_read": 0.45,
-              "output": 1.24,
-              "unpriced": [],
-              "prices": "2026-11-16"
-            }
-          }
-        ],
-        "first_round": {
-          "tokens": {
-            "input": 10,
-            "cache_write_5m": 2000,
-            "cache_write_1h": 300,
-            "cache_read": 90000,
-            "output": 1500,
-            "calls": 4
-          },
-          "cost": {
-            "dollars": 2.0,
-            "input": 0.01,
-            "cache_write_5m": 0.25,
-            "cache_write_1h": 0.05,
-            "cache_read": 0.45,
-            "output": 1.24,
-            "unpriced": [],
-            "prices": "2026-11-16"
-          }
-        },
-        "later_rounds": {
-          "tokens": {
-            "input": 10,
-            "cache_write_5m": 2000,
-            "cache_write_1h": 300,
-            "cache_read": 90000,
-            "output": 1500,
-            "calls": 4
-          },
-          "cost": {
-            "dollars": 1.0,
-            "input": 0.01,
-            "cache_write_5m": 0.25,
-            "cache_write_1h": 0.05,
-            "cache_read": 0.45,
-            "output": 0.24,
-            "unpriced": [
-              {
-                "model": "gpt-x",
-                "speed": "standard",
-                "tokens": {
-                  "input": 10,
-                  "cache_write_5m": 2000,
-                  "cache_write_1h": 300,
-                  "cache_read": 90000,
-                  "output": 1500,
-                  "calls": 4
-                }
-              }
-            ],
-            "prices": "2026-11-16"
-          }
-        },
-        "again": 1
-      },
       "prices": "2026-11-16"
     },
     "emptyReports": {
@@ -4191,8 +4116,109 @@
       "first": null,
       "marks": [],
       "unread": [],
-      "landed": null,
       "prices": ""
+    },
+    "landed": {
+      "grain": "day",
+      "days": 1,
+      "from": 1794182400.0,
+      "to": 1794268800.0,
+      "tasks": [
+        {
+          "slug": "app/charts",
+          "at": 1794189600.0,
+          "kind": "feature",
+          "first": 2.0,
+          "later": 1.5,
+          "tokens": 120000,
+          "unpriced": true,
+          "reviews": 2,
+          "lines": 400
+        },
+        {
+          "slug": "docs/guide",
+          "at": 1794189600.0,
+          "kind": "docs",
+          "first": 1.0,
+          "later": 0.0,
+          "tokens": 120000,
+          "unpriced": false,
+          "reviews": 0,
+          "lines": null
+        },
+        {
+          "slug": "generated/outputs",
+          "at": 1794189600.0,
+          "kind": null,
+          "first": 0.5,
+          "later": 0.0,
+          "tokens": 120000,
+          "unpriced": false,
+          "reviews": 0,
+          "lines": 0
+        }
+      ],
+      "without": 1,
+      "figures": {
+        "tasks": 3,
+        "median": 1.0,
+        "mean": 1.6666666666666667,
+        "p90": 3.0,
+        "cost": 5.0,
+        "later": 1.5,
+        "back": 1,
+        "lined": 1,
+        "lined_cost": 3.5,
+        "lines": 400,
+        "unlined": 1,
+        "unread": 1
+      },
+      "kinds": [
+        {
+          "kind": "feature",
+          "tasks": 1,
+          "median": 3.5,
+          "cost": 3.5,
+          "lined_cost": 3.5,
+          "lines": 400
+        },
+        { "kind": "docs", "tasks": 1, "median": 1.0, "cost": 1.0, "lined_cost": 0.0, "lines": 0 },
+        { "kind": null, "tasks": 1, "median": 0.5, "cost": 0.5, "lined_cost": 0.0, "lines": 0 }
+      ],
+      "reviews": [
+        { "reviews": 0, "tasks": 2, "first": 0.75, "later": 0.0, "median": 0.75 },
+        { "reviews": 2, "tasks": 1, "first": 2.0, "later": 1.5, "median": 3.5 }
+      ],
+      "kinds_from": 1794186000.0,
+      "prices": "2026-11-16",
+      "unread": ["/repo/.git/symphony/reports/2026-11-08.json: not read"]
+    },
+    "emptyLanded": {
+      "grain": "day",
+      "days": 0,
+      "from": 0.0,
+      "to": 0.0,
+      "tasks": [],
+      "without": 0,
+      "figures": {
+        "tasks": 0,
+        "median": null,
+        "mean": null,
+        "p90": null,
+        "cost": 0.0,
+        "later": 0.0,
+        "back": 0,
+        "lined": 0,
+        "lined_cost": 0.0,
+        "lines": 0,
+        "unlined": 0,
+        "unread": 0
+      },
+      "kinds": [],
+      "reviews": [],
+      "kinds_from": null,
+      "prices": "",
+      "unread": []
     },
     "settings": {
       "files": [

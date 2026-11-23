@@ -325,6 +325,7 @@ fn red_read(slug: &str, between: &str) -> ReportRead {
             instruction: false,
             marked_red: true,
             between: Some(between.into()),
+            kind: None,
             lines: Vec::new(),
         }],
         ..ReportRead::default()

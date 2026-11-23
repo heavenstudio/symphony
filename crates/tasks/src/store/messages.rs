@@ -185,7 +185,22 @@ impl Store {
     /// ([`crate::Ask`]). The next line by a session holding a role on the task, or by the session
     /// it is sent to, answers it. The owner's other lines there (a board action's record) open none.
     pub fn say_asking(&self, slug: &str, text: &str, to: Option<&str>) -> Result<Message, Error> {
-        self.post(slug, OWNER, OWNER, text, to, None, true)
+        self.say_asking_as(slug, OWNER, text, to)
+    }
+
+    /// [`Store::say_asking`] by the person `sender`, the actor of the write
+    /// (`symphony_plugin::Actor`): the owner's line, which opens or joins the task's ask, when it
+    /// is `owner`, the one person a board knows. Any other is posted as a session's line is, so
+    /// one the board does not know is refused as every unknown actor is, until a board holds
+    /// people (docs/product/analysis/users-and-identity.md, "The way from one owner").
+    pub fn say_asking_as(
+        &self,
+        slug: &str,
+        sender: &str,
+        text: &str,
+        to: Option<&str>,
+    ) -> Result<Message, Error> {
+        self.post(slug, sender, sender, text, to, None, true)
     }
 
     /// A post authorized as `actor` and authored by `sender` (the board's own, [`BOARD`], for a

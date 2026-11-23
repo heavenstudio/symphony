@@ -109,11 +109,17 @@ jq -n -r --argjson now "$NOW" '
                 rounds: [{number: 1, changes: (($day / 86400 | floor) % 2), approved: ($closed | length)},
                          {number: 2, changes: 0, approved: (($day / 86400 | floor) % 2)}],
                 reds: [], decisions: null, git: null, usage: null,
-                landed: ($closed | map(. as $hour
+                landed: ($closed | map(. as $hour | ($hour | number) as $n
                   | {slug: ($hour | landed_slug), at: ($hour + 1500),
-                     spent: [tokens("executor"; "claude-opus-5-5"; 180 + ($hour | number) % 140),
-                             (tokens("executor"; "claude-opus-5-5"; ($hour | number) % 3 * 45) | .round = 1),
-                             tokens("reviewer"; "claude-sonnet-5-5"; 40 + ($hour | number) % 30)]}))}};
+                     spent: [tokens("executor"; "claude-opus-5-5"; 180 + $n % 140),
+                             (tokens("executor"; "claude-opus-5-5"; $n % 3 * 45) | .round = 1 + $n % 3),
+                             tokens("reviewer"; "claude-sonnet-5-5"; 40 + $n % 30)]}
+                  # Each kind in turn and one in seven with none; one landing in eleven before
+                  # lines were kept, and its lines otherwise: more the dearer.
+                  + ((["feature", "fix", "feature", "docs", "tests", "red", null])[$done | index($hour) % 7]
+                     | if . == null then {} else {kind: .} end)
+                  + (if $n % 11 == 4 then {}
+                     else {lines: {added: (60 + $n % 140 * 4 + $n % 3 * 90), removed: (10 + $n % 37 * 3)}} end)))}};
     # An hour the server watched whole: its line is written as the hour ends, so the hour NOW is
     # in has none yet.
     def agents: . as $start | number as $n | busy as $busy

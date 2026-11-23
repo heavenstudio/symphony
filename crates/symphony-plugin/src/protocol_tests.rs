@@ -300,6 +300,21 @@ pub(crate) fn every_request() -> Vec<(Request, &'static str)> {
                     payload: "{\"patch\":\"diff --git\\n\"}".into(),
                     note: "send it".into(),
                 },
+                sender: None,
+            }
+            .into(),
+            "board_actions.submit",
+        ),
+        (
+            Submit {
+                action: "land".into(),
+                root: root.clone(),
+                task: task(),
+                submission: Submission {
+                    payload: "{}".into(),
+                    note: String::new(),
+                },
+                sender: Some(crate::Sender::new("ana", "Ana Lima", vec!["ana-l".into()])),
             }
             .into(),
             "board_actions.submit",
@@ -502,7 +517,7 @@ fn every_struct_of_the_protocol_is_non_exhaustive_so_a_field_a_minor_adds_breaks
             root: "/r".into()
         }
     );
-    assert_eq!(Version::new(0, 5), PROTOCOL);
+    assert_eq!(Version::new(0, 6), PROTOCOL);
 }
 
 #[test]
@@ -720,7 +735,7 @@ fn a_host_and_a_plugin_speak_the_lower_minor_of_one_major_and_refuse_another_by_
     );
     assert_eq!(Declaration::of(&Declaring).protocol, PROTOCOL);
     assert_eq!(Version::default(), PROTOCOL);
-    assert_eq!(PROTOCOL.to_string(), "0.5");
+    assert_eq!(PROTOCOL.to_string(), "0.6");
 }
 
 #[test]
@@ -1742,4 +1757,28 @@ fn each_call_names_the_minor_it_came_in_and_commands_run_is_the_loopbacks_alone(
         assert!(!RunCommand::PIPED);
         assert!(Slot::PIPED && Render::PIPED && Declare::PIPED && Alive::PIPED);
     }
+}
+
+#[test]
+fn only_a_submission_says_who_sent_it_and_no_read_carries_anyone() {
+    for (request, tag) in every_request() {
+        let written = serde_json::to_value(&request).unwrap();
+        let fields = written[tag].as_object().unwrap();
+        assert_eq!(
+            fields.contains_key("sender"),
+            tag == "board_actions.submit",
+            "{tag}: {written}"
+        );
+    }
+    // A submission made by its `new` says no one until the host sets who sent it, and one read
+    // without the member (from a host of an older minor) is no one's.
+    let made = Submit::new("land".into(), "/r".into(), task(), Submission::default());
+    assert_eq!(made.sender, None);
+    let mut written = serde_json::to_value(Request::from(made.clone())).unwrap();
+    written["board_actions.submit"]
+        .as_object_mut()
+        .unwrap()
+        .remove("sender");
+    let read: Request = serde_json::from_value(written).unwrap();
+    assert_eq!(Submit::from_request(read), Some(made));
 }

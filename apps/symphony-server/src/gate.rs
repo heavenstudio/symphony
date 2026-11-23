@@ -9,6 +9,11 @@
 //! as the last `tailscale status` that listed any gave them. A status call that fails, hangs or
 //! lists no names is not an answer: the names it last gave stay, and it is asked again after
 //! [`FAILED_TTL`]. Only an answer that lists names, none of them this one, refuses a tailnet Host.
+//!
+//! The gate is the local host's admission, so it also says who a write it admits is from
+//! ([`Gate::person`], the actor every save takes): the person at the machine
+//! ([`symphony_board::workflow::local_actor`]), whatever peer sent it, until the gate reads who a
+//! peer is (docs/product/analysis/users-and-identity.md, "The way from one owner").
 
 use std::collections::{BTreeSet, HashMap};
 use std::net::IpAddr;
@@ -37,6 +42,7 @@ pub struct Gate {
     whois: Whois,
     status: Status,
     clock: Clock,
+    person: symphony_plugin::Actor,
     seen: Mutex<HashMap<IpAddr, Kept<bool>>>,
     names: Mutex<Kept<BTreeSet<String>>>,
 }
@@ -92,6 +98,7 @@ impl Gate {
             whois,
             status: Arc::new(tailscale_status),
             clock,
+            person: symphony_board::workflow::local_actor(),
             seen: Mutex::new(HashMap::new()),
             names: Mutex::new(Kept::default()),
         }
@@ -101,6 +108,18 @@ impl Gate {
     #[must_use]
     pub fn with_status(self, status: Status) -> Gate {
         Gate { status, ..self }
+    }
+
+    /// The same gate, admitting every write as `person`'s: a test host's actor in place of the
+    /// person at the machine.
+    #[must_use]
+    pub fn admitting(self, person: symphony_plugin::Actor) -> Gate {
+        Gate { person, ..self }
+    }
+
+    /// Who a write this gate admits is from: the actor its save takes.
+    pub fn person(&self) -> &symphony_plugin::Actor {
+        &self.person
     }
 
     /// The gate on this machine's own Tailscale.

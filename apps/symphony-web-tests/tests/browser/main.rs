@@ -65,6 +65,7 @@ mod polish;
 mod preload;
 mod projects;
 mod reports;
+mod reports_landed;
 mod restored;
 mod run_records;
 mod runs;

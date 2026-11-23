@@ -18,6 +18,8 @@ pub(in crate::store) struct Creating {
     pub(in crate::store) red: bool,
     /// It is filed on an arm.
     pub(in crate::store) arm: bool,
+    /// It is filed as a kind (`crate::kind`).
+    pub(in crate::store) kind: bool,
     /// A custom workflow is active, and it starts at the initial pair (`super::workflow::PLACED`).
     pub(in crate::store) placed: bool,
 }
@@ -112,6 +114,10 @@ pub(in crate::store) fn create(new: &Creating) -> String {
         block.push_str(&field_set("_board,arm", "v -> 'arm'"));
         block.push('\n');
     }
+    if new.kind {
+        block.push_str(&field_set("_board,kind", "v -> 'kind'"));
+        block.push('\n');
+    }
     block.push_str(&said("v ->> 'said'"));
     block.push('\n');
     block.push_str(&block_cancelled_dependencies(false));
@@ -173,6 +179,37 @@ BEGIN \
     {} \
 END;",
         said("(v ->> 'actor') || ' changed priority p' || was_ || ' → p' || (v ->> 'priority')")
+    )
+}
+
+/// `v ->> 'slug'` given the kind `kind` by `actor`, a session's write when `acts`, with the line
+/// that names it and the one it replaced, unless it is of that kind already (`missing` refuses a
+/// task not there, `closed` one done or cancelled).
+pub(in crate::store) fn set_kind(acts: bool) -> String {
+    let act = if acts { act() } else { String::new() };
+    format!(
+        "{act} \
+DECLARE \
+    task_ record; \
+BEGIN \
+    SELECT status, fields #>> '{{_board,kind}}' AS kind INTO task_ FROM task \
+        WHERE slug = v ->> 'slug'; \
+    IF NOT FOUND THEN \
+        RAISE EXCEPTION '%', v ->> 'missing'; \
+    END IF; \
+    IF task_.status IN ('done', 'cancelled') THEN \
+        RAISE EXCEPTION '%', (v ->> 'closed') || task_.status || ': only an open task is given a kind'; \
+    END IF; \
+    IF task_.kind IS DISTINCT FROM v ->> 'kind' THEN \
+        UPDATE task SET fields = board_fields(id, fields, '{{_board,kind}}', v -> 'kind'), \
+            version = version + 1 WHERE slug = v ->> 'slug'; \
+        {} \
+    END IF; \
+END;",
+        said(
+            "CASE WHEN task_.kind IS NULL THEN (v ->> 'actor') || ' gave it the kind ' || (v ->> 'kind') \
+             ELSE (v ->> 'actor') || ' changed its kind ' || task_.kind || ' → ' || (v ->> 'kind') END"
+        )
     )
 }
 
@@ -542,6 +579,7 @@ mod tests {
             receipt,
             red,
             arm,
+            kind: false,
             placed: false,
         };
         let placed = |acts| Creating {
@@ -552,6 +590,7 @@ mod tests {
             field_set("_symphony,owner_save", "v -> 'owner_save'"),
             field_set("_board,red", "v -> 'red'"),
             field_set("_board,arm", "v -> 'arm'"),
+            field_set("_board,kind", "v -> 'kind'"),
         ];
         // Filed as the board's own, refused in the write while a custom workflow is active.
         let bare = create(&new(false, false, false, false));
@@ -570,19 +609,28 @@ mod tests {
         );
         assert!(marks.iter().all(|mark| !bare.contains(mark.as_str())));
         assert!(!bare.contains(FILED));
-        let all = create(&new(true, true, true, true));
+        let all = create(&Creating {
+            kind: true,
+            ..new(true, true, true, true)
+        });
         let act = act();
         let said = said("v ->> 'said'");
         let blocks = block_cancelled_dependencies(false);
         in_order(
             &all,
             &[
-                &act, UNPLACED, CREATE, &marks[0], FILED, &marks[1], &marks[2], &said, &blocks,
+                &act, UNPLACED, CREATE, &marks[0], FILED, &marks[1], &marks[2], &marks[3], &said,
+                &blocks,
             ],
         );
         let red = create(&new(true, false, true, false));
         assert!(red.contains(FILED) && red.contains(marks[1].as_str()));
-        assert!(!red.contains(marks[2].as_str()));
+        assert!(!red.contains(marks[2].as_str()) && !red.contains(marks[3].as_str()));
+        let kind = create(&Creating {
+            kind: true,
+            ..new(false, false, false, false)
+        });
+        assert!(kind.contains(marks[3].as_str()) && !kind.contains(FILED));
     }
 
     #[test]

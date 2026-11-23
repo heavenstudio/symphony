@@ -25,9 +25,9 @@ use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 use symphony_api::agent_activity::{AgentHour, Gauge, KindLevel, Level, RoleLevel};
 use symphony_api::report_page::{
-    BucketAgents, BucketFlow, BucketHealth, BucketVerdicts, BucketWaits, Grain, LandedSpend,
-    LandedTask, REPORTS_FILE_BYTES, REPORTS_READ_BYTES, ReportBucket, ReportMark, ReportsPage,
-    RoleSpend, Spend,
+    BucketAgents, BucketFlow, BucketHealth, BucketLanded, BucketVerdicts, BucketWaits, Grain,
+    KindRow, LandedFigures, LandedPage, LandedRow, REPORTS_FILE_BYTES, REPORTS_READ_BYTES,
+    ReportBucket, ReportMark, ReportsPage, ReviewRow, RoleSpend, Spend,
 };
 use symphony_api::reports::{
     ByStatus, DecisionCounts, GitCounts, Landed, PlacedHours, ReportDay, Spent, Spread, TokenSum,
@@ -81,6 +81,14 @@ pub(crate) fn answer(hub: &crate::live::Hub, grain: Grain, days: u32) -> Answer 
     let folders = hub.report_folders.get_or_init(|| Folders::of(&hub.root));
     hub.reports_kept
         .answer(folders, &hub.root, grain, days, hub.recorded_now())
+}
+
+/// The Landed tasks tab's answer of a window of `days` by `grain` ([`landed_page`]), read from the
+/// roll-up's day files on each ask: the route's validator spares the page the bytes of one that has
+/// not moved.
+pub(crate) fn landed_answer(hub: &crate::live::Hub, grain: Grain, days: u32) -> LandedPage {
+    let folders = hub.report_folders.get_or_init(|| Folders::of(&hub.root));
+    landed_page(&folders.reports, grain, days, hub.recorded_now())
 }
 
 /// The marks of `branch`, the default branch of the project at `root`, since `since`, oldest
@@ -204,8 +212,7 @@ pub(crate) fn page(
     let mut unread = Vec::new();
     let mut budget = REPORTS_READ_BYTES;
     let mut reds: Vec<(String, f64, f64)> = Vec::new();
-    // The tasks landed in the window, the newest day's first, so a task landed again is its last
-    // landing's.
+    // The tasks landed in the window, as [`report_day`] gathers them.
     let mut landings: Vec<Landed> = Vec::new();
     let place = |at: f64| {
         let after = spans.partition_point(|span| span.0 <= at);
@@ -223,37 +230,25 @@ pub(crate) fn page(
     // Newest day first, so the bytes left go to the days nearest now.
     for day in days_read(from, to) {
         let [report, agents, health] = day_files(folders, &run_day(day));
-        if let Some(path) = report {
-            match read(&path, &mut budget) {
-                Ok(None) => {}
-                Ok(Some(text)) => match serde_json::from_str::<ReportDay>(&text) {
-                    Ok(report) => {
-                        for hour in &report.hours {
-                            if let Some(at) = place(hour.start) {
-                                sums[at].hour(hour);
-                            }
-                        }
-                        if grain != Grain::Hour
-                            && let Some(at) = place(report.start)
-                        {
-                            sums[at].day(&report);
-                        }
-                        landings.extend(
-                            (report.landed.iter().rev())
-                                .filter(|task| from <= task.at && task.at < to)
-                                .cloned(),
-                        );
-                        for red in &report.reds {
-                            if let (Some(closed), "done") = (red.closed, red.status.as_str())
-                                && !reds.iter().any(|(slug, _, _)| *slug == red.slug)
-                            {
-                                reds.push((red.slug.clone(), red.filed, closed));
-                            }
-                        }
-                    }
-                    Err(e) => unread.push(format!("{}: {e}", path.display())),
-                },
-                Err(why) => unread.push(why),
+        if let Some(report) = report
+            .and_then(|path| report_day(&path, (from, to), &mut budget, &mut unread, &mut landings))
+        {
+            for hour in &report.hours {
+                if let Some(at) = place(hour.start) {
+                    sums[at].hour(hour);
+                }
+            }
+            if grain != Grain::Hour
+                && let Some(at) = place(report.start)
+            {
+                sums[at].day(&report);
+            }
+            for red in &report.reds {
+                if let (Some(closed), "done") = (red.closed, red.status.as_str())
+                    && !reds.iter().any(|(slug, _, _)| *slug == red.slug)
+                {
+                    reds.push((red.slug.clone(), red.filed, closed));
+                }
             }
         }
         if let Some(path) = agents {
@@ -306,12 +301,26 @@ pub(crate) fn page(
         }
     };
     let prices = Prices::embedded();
+    // Each task landed in the window once, at its last landing there, in the period of it.
+    let mut seen: Vec<&str> = Vec::new();
+    for task in &landings {
+        if !seen.contains(&task.slug.as_str()) {
+            seen.push(&task.slug);
+            if let Some(at) = place(task.at) {
+                sums[at].landings += 1;
+            }
+        }
+    }
+    for task in spend::landed_costs(&landings, prices).tasks {
+        if let Some(at) = place(task.at) {
+            sums[at].landed.push(task);
+        }
+    }
     ReportsPage {
         grain,
         days,
         from,
         to,
-        landed: landed(&landings, prices),
         prices: prices.read.clone(),
         buckets: spans
             .iter()
@@ -337,37 +346,132 @@ fn wire(spend: &symphony_board::usage::Spend, prices: &Prices) -> Spend {
     }
 }
 
-/// What the tasks of `landings` took at `prices` ([`spend::landed_costs`]); none when none landed.
-fn landed(landings: &[Landed], prices: &Prices) -> Option<LandedSpend> {
-    if landings.is_empty() {
-        return None;
+/// The Landed tasks tab's answer of a window of `days` by `grain` at `now`, from the roll-up's day
+/// files in `folder` alone ([`LandedPage`]): every top-level task landed in the window, each once at
+/// its last landing in it, priced at the table this build embeds, with the window's figures, by
+/// kind and by reviews ([`spend`]). Its day files are read by [`page`]'s reader, newest day first,
+/// within the same bounds; one it cannot read is named in [`LandedPage::unread`].
+pub(crate) fn landed_page(
+    folder: &Result<PathBuf, String>,
+    grain: Grain,
+    days: u32,
+    now: f64,
+) -> LandedPage {
+    let spans = periods(grain, days, now);
+    let from = spans.first().map_or(now, |span| span.0);
+    let to = spans.last().map_or(now, |span| span.1);
+    let mut unread = Vec::new();
+    let mut landings: Vec<Landed> = Vec::new();
+    match folder {
+        Err(why) => unread.push(format!("reports: {why}")),
+        Ok(folder) => {
+            let mut budget = REPORTS_READ_BYTES;
+            for day in days_read(from, to) {
+                let path = folder.join(report_file(&run_day(day)));
+                report_day(&path, (from, to), &mut budget, &mut unread, &mut landings);
+            }
+        }
     }
-    let costs = spend::landed_costs(landings, prices);
-    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "a dollar figure in JSON: an f64 keeps fifteen significant digits of it"
-    )]
-    let median = costs.median.map(|pico| pico as f64 / 1e12);
-    Some(LandedSpend {
-        tasks: count(costs.tasks.len()),
-        without: count(costs.without),
-        median,
-        dearest: (costs.tasks.iter().take(spend::DEAREST))
-            .map(|(slug, at, spent)| {
-                let Spend { tokens, cost } = wire(spent, prices);
-                LandedTask {
-                    slug: slug.clone(),
-                    at: *at,
-                    tokens,
-                    cost,
+    let prices = Prices::embedded();
+    let costs = spend::landed_costs(&landings, prices);
+    let all = spend::summary(&costs.tasks);
+    let dollars = |pico: u128| rounded(spend::in_dollars(pico));
+    LandedPage {
+        grain,
+        days,
+        from,
+        to,
+        tasks: (costs.tasks.iter())
+            .map(|task| {
+                let spent = task.spend();
+                LandedRow {
+                    slug: task.slug.clone(),
+                    at: task.at,
+                    kind: task.kind.clone(),
+                    first: dollars(task.first.cost.total()),
+                    later: dollars(task.later.cost.total()),
+                    tokens: spent.tokens.total(),
+                    unpriced: !spent.cost.unpriced.is_empty(),
+                    reviews: task.reviews,
+                    lines: task.lines,
                 }
             })
             .collect(),
-        first_round: wire(&costs.first, prices),
-        later_rounds: wire(&costs.later, prices),
-        again: count(costs.again),
-    })
+        without: count(costs.without),
+        figures: LandedFigures {
+            tasks: count(all.tasks),
+            median: all.median.map(rounded),
+            mean: all.mean.map(rounded),
+            p90: all.p90.map(rounded),
+            cost: rounded(all.cost),
+            later: rounded(all.later),
+            back: count(costs.back),
+            lined: count(all.lined),
+            lined_cost: rounded(all.lined_cost),
+            lines: all.lines,
+            unlined: count(all.unlined),
+            unread: count(all.unread),
+        },
+        kinds: (spend::by_kind(&costs.tasks).into_iter())
+            .map(|group| KindRow {
+                kind: group.kind,
+                tasks: count(group.summary.tasks),
+                median: group.summary.median.map(rounded),
+                cost: rounded(group.summary.cost),
+                lined_cost: rounded(group.summary.lined_cost),
+                lines: group.summary.lines,
+            })
+            .collect(),
+        reviews: (spend::by_reviews(&costs.tasks).into_iter())
+            .map(|group| ReviewRow {
+                reviews: group.reviews,
+                tasks: count(group.tasks),
+                first: rounded(group.first),
+                later: rounded(group.later),
+                median: group.median.map(rounded),
+            })
+            .collect(),
+        kinds_from: (landings.iter())
+            .filter(|task| task.kind.is_some())
+            .map(|task| task.at)
+            .reduce(f64::min),
+        prices: prices.read.clone(),
+        unread,
+    }
+}
+
+/// The roll-up's day file at `path`, read within `budget` ([`read`]), with the tasks it landed in
+/// the window from `from` to `to` added to `landings`, its latest landing first; none for a day with
+/// no file, or one that does not read, which `unread` then names. The one reader of the landed
+/// tasks of [`page`] and [`landed_page`]: each reads its days newest first, so a task landed again
+/// is met first at its last landing in the window, and the two count the same landings.
+fn report_day(
+    path: &Path,
+    (from, to): (f64, f64),
+    budget: &mut u64,
+    unread: &mut Vec<String>,
+    landings: &mut Vec<Landed>,
+) -> Option<ReportDay> {
+    let text = match read(path, budget) {
+        Ok(text) => text?,
+        Err(why) => {
+            unread.push(why);
+            return None;
+        }
+    };
+    let report = match serde_json::from_str::<ReportDay>(&text) {
+        Ok(report) => report,
+        Err(e) => {
+            unread.push(format!("{}: {e}", path.display()));
+            return None;
+        }
+    };
+    landings.extend(
+        (report.landed.iter().rev())
+            .filter(|task| from <= task.at && task.at < to)
+            .cloned(),
+    );
+    Some(report)
 }
 
 /// The text of the day file at `path`, its bytes taken from `budget`; none when there is none. A
@@ -481,6 +585,10 @@ struct Sums {
     tokens: Option<Vec<TokenSum>>,
     /// Where a custom workflow's top-level tasks spent its hours that record it.
     workflow: Option<PlacedHours>,
+    /// The top-level tasks landed in it, each once at its last landing in the window, with tokens
+    /// recorded or not, and of them those the board recorded tokens for, priced.
+    landings: u32,
+    landed: Vec<spend::LandedTask>,
 }
 
 /// `from`'s task-hours added to `into`'s, each under its ID and label, a new one after those kept:
@@ -639,8 +747,24 @@ impl Sums {
                     .collect()
             }),
             workflow: self.workflow,
+            landed: (self.landings > 0).then(|| {
+                let summary = spend::summary(&self.landed);
+                BucketLanded {
+                    tasks: self.landings,
+                    median: summary.median.map(rounded),
+                    p90: summary.p90.map(rounded),
+                    lined_cost: rounded(summary.lined_cost),
+                    lines: summary.lines,
+                    unread: count(summary.unread),
+                }
+            }),
         }
     }
+}
+
+/// A count on the wire.
+fn count(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
 }
 
 /// The spread of `values`, as the roll-up spreads its own; none of none.

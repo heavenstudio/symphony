@@ -762,6 +762,12 @@ async fn redirects_are_relative_or_exactly_on_the_configured_origin() {
     }
 }
 
+/// An admission the fixture host verified, for a test that hands it to a native route as hosted
+/// admission would have let the request in.
+pub(crate) async fn admitted() -> Admission {
+    lease(&Fake::new()).await
+}
+
 async fn lease(fake: &Arc<Fake>) -> Admission {
     Admission::new(
         boundary(fake),

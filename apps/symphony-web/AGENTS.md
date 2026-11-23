@@ -25,15 +25,16 @@ A page kind is an entry under `kinds/` that exports `run` and `stop`, named in `
   `document.ts`, `editor.tsx`, `asks.tsx` ([REVIEW](../../docs/workflow/REVIEW.md#commenting-in-place)).
 - `board`, `/tasks`: `board.tsx`, `boardlive.tsx`, `boardwait.tsx`, `flow.tsx`
   ([the board's design](../../docs/product/analysis/board-design.md)).
-- `task`, `/task/SLUG`: `task-page.tsx`, `task-live.ts`, `parts.ts`, `gates.tsx`, `timeline.tsx`,
-  `timeline-cost.ts`, `task-diff.tsx`, `task-diff-files.tsx`, `attempts.tsx`, and for a custom
-  workflow's task `nextactions.tsx`, `guards.tsx` ([TASKS](../../docs/workflow/TASKS.md#gates),
+- `task`, `/task/SLUG`: `task-page.tsx`, `task-live.ts`, `parts.ts`, `gates.tsx`, `kind.ts`,
+  `timeline.tsx`, `timeline-cost.ts`, `task-diff.tsx`, `task-diff-files.tsx`, `attempts.tsx`, and
+  for a custom workflow's task `nextactions.tsx`, `guards.tsx` ([TASKS](../../docs/workflow/TASKS.md#gates),
   [the timeline](../../docs/workflow/TASKS.md#the-timeline),
   [WORKFLOW](../../docs/workflow/WORKFLOW.md#the-app)).
 - `agents`, `/agents`: `agents.tsx`, `agents-live.ts`, `session.tsx` (what a press does,
   `session-press.ts`)
   ([TASKS](../../docs/workflow/TASKS.md#the-agents-api)).
-- `reports`, `/reports`: `reports.tsx`, `chart.tsx`.
+- `reports`, `/reports`: `reports.tsx`, its Landed tasks tab `reports-landed.tsx`, `chart.tsx`
+  ([REPORTS](../../docs/product/REPORTS.md)).
 - `runs`, `/runs`: `runs.tsx` ([RUNS](../../docs/workflow/RUNS.md#the-runs-page)).
 - `settings`, `/settings`: `settings.tsx`
   ([PROJECT_FILE](../../docs/operations/PROJECT_FILE.md#the-settings-page)).

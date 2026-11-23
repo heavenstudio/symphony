@@ -29,11 +29,11 @@ symphony-args = { path = "../symphony-args", version = "1.0.0" }
 symphony-api = { path = "../symphony-api", version = "=0.2.0" }
 # A card and the owner's lines under it, read as the Symphony reads them: the owner's answers a
 # worktree holds that no commit has, which the sweep keeps and a land refuses (src/sweep/git/owner.rs).
-symphony-docs = { path = "../symphony-docs", version = "1.2.0" }
+symphony-docs = { path = "../symphony-docs", version = "1.3.0" }
 # The execution adapter contract (`symphony_plugin::execution`) whose attempts the board keeps
 # (src/execution.rs): the kit's types and its bounded `invoke`, never a provider's client; and the
 # trusted principal a workflow operation is admitted for (`Principal`, src/workflow.rs).
-symphony-plugin = { path = "../symphony-plugin", version = "1.2.0" }
+symphony-plugin = { path = "../symphony-plugin", version = "1.3.0" }
 serde = { version = "1", features = ["derive"] }
 # float_roundtrip: a time in a dump reads as exactly the float Python wrote, not one ulp off. The other
 # three are the features the server's build unifies on serde_json (crates/symphony and

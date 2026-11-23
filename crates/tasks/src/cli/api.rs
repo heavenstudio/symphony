@@ -31,8 +31,9 @@ pub const MAJOR: i64 = 2;
 /// The api's minor within [`MAJOR`]: 1 added a task's `id`, `bound`, `edit_bound` and
 /// `integration_state`; 2 added `evidence`; 3 added `import` to its `assessment`, where the
 /// assessment names one; 4 added `workflow_read`, `workflow_actions` and `workflow_apply`; 5 added
-/// `attempts`; 6 added `workflow_apply`'s `attestations` and `workflow_observe`.
-pub const MINOR: i64 = 6;
+/// `attempts`; 6 added `workflow_apply`'s `attestations` and `workflow_observe`; 7 added
+/// `create`'s `kind` ([`crate::kind`]).
+pub const MINOR: i64 = 7;
 
 /// Why a call has no result.
 enum Fail {

@@ -324,6 +324,15 @@ describe("a task's page", () => {
     expect(drawn).toContain('<li>implements <a href="/docs/TASKS.md">docs/TASKS.md</a></li>');
     expect(drawn).toContain(">executor amber");
     expect(drawn).toContain("<h2>Thread</h2>");
+    // A task filed with no kind names none among its facts.
+    expect(drawn).not.toContain("kind:");
+  });
+
+  it("names the kind it was filed with first among its facts, and none it does not know", () => {
+    const kinded = (kind: string) =>
+      detail({ page: aPage(aTask("fixture/task", { fields: { _board: { kind } } })) });
+    expect(kinded("fix")).toContain('<ul class="facts"><li class="kind">kind: fix</li>');
+    expect(kinded("chore")).not.toContain("kind:");
   });
 
   it("offers its subtasks while it has some, to load or load more", () => {

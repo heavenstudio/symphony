@@ -899,3 +899,138 @@ fn instruction_changes_keep_rank_names_and_one_label_per_skill() {
         ]
     );
 }
+
+/// Keep the receipt of a land a pull request delivered for `slug` in `lands`, naming `squash` the
+/// commit the host made, as `tasks land` writes one.
+fn receipt(lands: &Path, slug: &str, squash: &str) {
+    let path = symphony_board::land::delivery::Receipt::path(lands, slug);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let receipt = serde_json::json!({
+        "slug": slug, "task": 1, "operation": "op", "repository": 1, "name": "o/r",
+        "pull": 1, "head": "h", "base_observed": "b", "parent": "p", "squash": squash,
+        "tree": "t", "revision": "1", "by": "board",
+    });
+    std::fs::write(path, receipt.to_string()).unwrap();
+}
+
+/// What `day`'s landed tasks were given: each one's slug and its lines added and removed.
+fn landed_lines(day: &ReportDay) -> Vec<(&str, Option<(u64, u64)>)> {
+    (day.landed.iter())
+        .map(|task| {
+            let lines = task.lines.map(|lines| (lines.added, lines.removed));
+            (task.slug.as_str(), lines)
+        })
+        .collect()
+}
+
+/// A day's landings: one the land merged, one a pull request squashed with its receipt kept, a
+/// commit whose subject is a slug and has no receipt, the regenerator's squash of its outputs
+/// alone, and a task whose commit is not on the line read.
+#[test]
+fn a_landed_task_takes_the_lines_of_the_merge_or_the_squash_that_landed_it() {
+    let tree = Tree::new();
+    tree.write(
+        "symphony.toml",
+        "[land]\ngenerators = [{ name = \"dist\", outputs = \"dist/\", command = [\"true\"] }]\n",
+    );
+    git(&tree.root, -2.0, &["init", "-q", "-b", "main"]);
+    commit(&tree, -2.0, "base", &[("a.txt", &lines(3, "a"))]);
+    land(&tree, 0.5, "sim/merged", None);
+    commit(
+        &tree,
+        1.0,
+        "sim/squashed",
+        &[
+            ("a.txt", &lines(5, "a")),
+            ("x.txt", &lines(3, "x")),
+            ("Cargo.lock", &lines(9, "lock")),
+        ],
+    );
+    let squashed = rev_parse(&tree.root, "HEAD");
+    commit(&tree, 1.5, "sim/unreceipted", &[("y.txt", "y\n")]);
+    commit(
+        &tree,
+        2.0,
+        "generated/outputs",
+        &[("dist/app.js", &lines(4, "js"))],
+    );
+    let generated = rev_parse(&tree.root, "HEAD");
+    let lands = tree.path("lands");
+    receipt(&lands, "sim/squashed", &squashed);
+    receipt(&lands, "generated/outputs", &generated);
+    // A receipt of a task the day did not land changes nothing.
+    receipt(&lands, "sim/elsewhere", &squashed);
+    let excluded = excluded(&Project::of(&tree.root));
+    let read = read(&tree.root, "main", midnight(), &excluded).unwrap();
+    let mut day = day(3.0);
+    day.landed = [
+        "sim/merged",
+        "sim/squashed",
+        "sim/unreceipted",
+        "generated/outputs",
+        "sim/before",
+    ]
+    .iter()
+    .map(|slug| symphony_api::reports::Landed {
+        slug: (*slug).to_string(),
+        ..symphony_api::reports::Landed::default()
+    })
+    .collect();
+    landings(&mut day, &read, "main", Some(&lands));
+    assert_eq!(
+        landed_lines(&day),
+        [
+            ("sim/merged", Some((1, 0))),
+            // Its lock file left out, as the hours leave it out.
+            ("sim/squashed", Some((5, 0))),
+            ("sim/unreceipted", None),
+            ("generated/outputs", Some((0, 0))),
+            ("sim/before", None),
+        ]
+    );
+    // With no lands folder a squash is no landing; the land's merge still is.
+    landings(&mut day, &read, "main", None);
+    assert_eq!(
+        landed_lines(&day)[..2],
+        [("sim/merged", Some((1, 0))), ("sim/squashed", None)]
+    );
+    // The lands folder is in the repository's git common dir; none outside a repository.
+    let common = symphony_board::git::common_dir(&tree.root).unwrap();
+    assert_eq!(
+        super::lands(&tree.root),
+        Some(common.join("symphony/tasks/land"))
+    );
+    assert_eq!(super::lands(Path::new("/")), None);
+}
+
+/// A task landed twice takes the lines of its newest landing on the line.
+#[test]
+fn a_task_landed_again_takes_its_newest_landings_lines() {
+    let tree = Tree::new();
+    git(&tree.root, -2.0, &["init", "-q", "-b", "main"]);
+    commit(&tree, -2.0, "base", &[("a.txt", "a\n")]);
+    land(&tree, 0.5, "sim/again", None);
+    git(&tree.root, 1.0, &["switch", "-q", "sim/again"]);
+    commit(&tree, 1.0, "more", &[("more.txt", &lines(4, "m"))]);
+    git(&tree.root, 1.5, &["switch", "-q", "main"]);
+    git(
+        &tree.root,
+        1.5,
+        &[
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "Merge branch 'sim/again'",
+            "sim/again",
+        ],
+    );
+    let read = read(&tree.root, "main", midnight(), &[]).unwrap();
+    let mut day = day(2.0);
+    day.landed = vec![symphony_api::reports::Landed {
+        slug: "sim/again".into(),
+        ..symphony_api::reports::Landed::default()
+    }];
+    landings(&mut day, &read, "main", None);
+    assert_eq!(landed_lines(&day), [("sim/again", Some((4, 0)))]);
+}

@@ -94,6 +94,12 @@ impl Store {
         }
         let red = (new.red.as_deref()).map(|what| named(&new.slug, what));
         let red = red.transpose()?;
+        // A red's filing names `red` unless it names a kind of its own, so a filer that names none,
+        // or runs a build that takes none, files its reds of that kind ([`crate::kind`]).
+        let kind = match new.kind.as_deref() {
+            Some(kind) => Some(crate::kind::named(kind).map_err(refused)?),
+            None => red.map(|_| crate::kind::RED),
+        };
         let parent = new.parent.as_deref().filter(|p| !p.is_empty());
         if new.instruction && parent.is_none() {
             return Err(refused(
@@ -124,6 +130,7 @@ impl Store {
                 receipt: receipt.is_some(),
                 red: red.is_some(),
                 arm: arm.is_some(),
+                kind: kind.is_some(),
                 placed: placing.is_some(),
             };
             let body = || Statement::from(Pg::script(pg::create(&creating))).posting();
@@ -134,7 +141,7 @@ impl Store {
                     "slug": new.slug, "title": title, "body": new.body, "status": new.status,
                     "priority": new.priority, "parent": parent, "instruction": new.instruction,
                     "needed": needed, "links": links, "assignee": new.assignee, "said": said,
-                    "owner_save": receipt, "red": red, "arm": arm,
+                    "owner_save": receipt, "red": red, "arm": arm, "kind": kind,
                     "taken": format!("{REFUSED}task {} already exists", new.slug),
                     "unassignable": new.assignee.as_ref()
                         .map(|a| format!("{REFUSED}no session {} to assign it to", repr(a))),

@@ -28,7 +28,7 @@ types cross.
 
 The kit's crates depend on no other workspace crate but each other, and build wherever Rust's
 standard library does: only a file's stamp, which tells `read_text` a file changed, reads more of it
-on Unix (its device, inode and change time). They carry one version, 1.2.0 now, and are made to be
+on Unix (its device, inode and change time). They carry one version, 1.3.0 now, and are made to be
 published on crates.io ([RELEASES](../workflow/RELEASES.md#packages-on-cratesio)), so they export what a plugin
 uses, and beside it the file's stamp (`text::FileStamp`, its fields private), which `read_text` and
 the library's board cache share, and no more: the text rules only the library uses (a one-sided
@@ -284,6 +284,24 @@ it answered to the board unchanged, which verifies it as one pushed to it
 as `guard_unavailable`, naming the guard and why. Nothing is kept: the next operation asks again.
 A plugin linked or answering from its process answers alike.
 
+## Who sent a submission
+
+A board action's submission tells the plugin who sent it, and no other call tells anyone
+([users and identity](../product/analysis/users-and-identity.md#what-a-plugin-is-told-of-who-asked)). The
+host calls `BoardAction::submit_from` with the submission and its sender (`Sender`): the short name
+the lines they write carry, their display name and their git handles, so that what the action
+writes for them (a commit, a file, a record of its own) can name them and be authored as them. On
+the wire it is `board_actions.submit` with its `sender` (0.6), which a host of 0.5 leaves out and a
+plugin of 0.5 reads past. `submit_from` answers by `submit` unless the action implements it, so an
+action that reads no sender implements `submit` alone, as before, and one built on an older kit
+keeps building. The person at the machine is sent as `owner`, displayed `owner`, with no git
+handles: what the action writes is authored by the machine's own git identity, as every save is.
+
+A read (an offer, a card's kinds, a component, a route, a home region, a watch, a doc check) carries
+no one: it is drawn alike for everyone and kept until the board's inputs change. No call carries
+what a person may do, and no email or chat address reaches a plugin. An approval authority is told
+the principal it always was (`Operation`, [above](#approval-authorities)).
+
 ## Settings describers
 
 A plugin may describe its own entries on the project's Settings page
@@ -352,11 +370,11 @@ is a page of its own.
 ## Versions
 
 The host names its protocol in the first request, `plugin.declare`
-(`{"protocol":{"major":0,"minor":5}}`), and the plugin its own in its declaration: its name, each
+(`{"protocol":{"major":0,"minor":6}}`), and the plugin its own in its declaration: its name, each
 seam object's name and what it says of itself, its navigation and theme. They speak the lower minor
 of their major. A plugin of another major is refused by name, saying to install a Symphony that
 speaks the plugin's major or to rebuild the plugin with a `symphony-plugin` of the host's, and its
-process is killed and not started again until its program changes. The protocol is 0.5.
+process is killed and not started again until its program changes. The protocol is 0.6.
 
 Each call names the minor it came in (`since` in `symphony_plugin::protocol`, listed in `MINORS`).
 The host never sends a call newer than the minor the two agreed: the seam's own default answers it,
@@ -369,7 +387,9 @@ request: a plugin of 0.2 is asked them card by card, and answers the same. 0.4 a
 `authorities.attest` ([below](#approval-authorities)) and the declaration's `authorities`, which a
 plugin of 0.3 does not write and a host reads as none: no authority is asked of it. 0.5 adds
 `describers.describe` ([above](#settings-describers)) and the declaration's `describers`, which a
-plugin of 0.4 does not write and a host reads as none: no entry is asked of it.
+plugin of 0.4 does not write and a host reads as none: no entry is asked of it. 0.6 adds a submission's
+`sender` ([above](#who-sent-a-submission)), which a host of 0.5 does not write and a plugin reads as
+none, answering by `submit`; a plugin of 0.5 reads past it.
 
 - A field the reader does not know is ignored, wherever it stands: in a request's fields, in a card,
   in an answer, in the declaration. A newer peer's additions reach an older one unread.
@@ -381,9 +401,10 @@ plugin of 0.4 does not write and a host reads as none: no entry is asked of it.
   answers of a card (`KindAnswers`) by its `of` from the kind; a declaration, and what it lists, by
   its `of` from a plugin (or from its `Default`, its fields set after); a version by its `new`; a
   line by `Envelope::asking`, `cancelling` or `answering`. A
-  request's `new` takes every field its call has, so a field added to a call's own changes it: no
-  call has a field a later minor added yet, and the first gives `calls!` a group of fields after
-  the call's own that `new` leaves out and fills with their defaults, set on the request after.
+  request's `new` takes every field its call has, so a field added to a call's own changes it: a
+  field a later minor adds goes in the call's group after its own (`+ later { … }` in `calls!`),
+  which `new` leaves out and fills with its default, set on the request after, as a submission's
+  `sender` is.
   `Request` is `#[non_exhaustive]` as well, as a new call is a minor of the protocol and a new
   variant of it, and a match on it outside the kit ends with `_`. The protocol's other enums stay
   exhaustive: a variant of `Answered` or `Member` is a line an older peer cannot read, a new major

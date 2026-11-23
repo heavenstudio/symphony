@@ -34,7 +34,7 @@ What is measured is every call into a seam's object made through a project's plu
 | `renderers` | `draw` |
 | `routes` | `serve` |
 | `home_regions` | `region` |
-| `board_actions` | `offer`, `submit` |
+| `board_actions` | `offer`, `submit` (`submit_from` with who sent it, recorded as `submit`) |
 | `board_fields` | `validate` |
 | `gates` | `answer`, `kept_while` |
 | `watches` | `changed`, `forget` |

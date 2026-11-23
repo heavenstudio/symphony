@@ -132,7 +132,7 @@ fn the_orchestrators_decisions_are_kept_each_a_line_and_the_newest_on_a_gate_sta
         &serde_json::json!("x"),
         &orch,
     );
-    assert!(refused(field).ends_with("its gate decisions by its orchestrator (tasks gate)"));
+    assert!(refused(field).ends_with("its gate decisions by its orchestrator (tasks gate), its kind where it is filed or by tasks kind"));
     assert_eq!(f.store.get("tools/size").unwrap().gates().len(), 2);
 }
 

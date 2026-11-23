@@ -121,6 +121,7 @@ async fn before_the_hub_the_reads_off_the_board_say_the_server_is_starting() {
         "/api/health".to_string(),
         symphony_api::SCHEMA_UPDATES_PATH.to_string(),
         symphony_api::REPORTS_PATH.to_string(),
+        symphony_api::REPORTS_LANDED_PATH.to_string(),
         format!("{}?run=r1", symphony_api::RUN_LOG_PATH),
         symphony_api::RUNS_PATH.to_string(),
         format!("{}?run=r1", symphony_api::RUN_PATH),
@@ -132,6 +133,10 @@ async fn before_the_hub_the_reads_off_the_board_say_the_server_is_starting() {
     for (route, said) in [
         (
             format!("{}?grain=century", symphony_api::REPORTS_PATH),
+            None,
+        ),
+        (
+            format!("{}?days=many", symphony_api::REPORTS_LANDED_PATH),
             None,
         ),
         (symphony_api::RUN_LOG_PATH.to_string(), None),

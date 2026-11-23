@@ -1,12 +1,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import fixture from "../../../crates/symphony-api/fixtures/reports-page.json";
-import { type ChartData, gap, seriesKey } from "./chart";
+import { type ChartData, gap, Readout, seriesKey } from "./chart";
 import {
   axis,
   Bucket,
   charts,
   chosen,
+  DollarNote,
   defaultDays,
   EVERY_MS,
   FIRST_WINDOW,
@@ -16,7 +17,9 @@ import {
   fromFirstRecord,
   HIDDEN,
   hiddenSeries,
+  landedWindow,
   linkedFigures,
+  openLanded,
   openReports,
   type Page,
   PLACES_NAMED,
@@ -32,14 +35,17 @@ import {
   reportsItem,
   reportsWindow,
   SECTIONS,
-  SpendSummary,
+  spendSaid,
   toggle,
+  viewHref,
+  viewOf,
   windowSpend,
   workflowSection,
 } from "./reports";
+import { readLanded } from "./reports-landed";
 import { Backoff } from "./state";
 import { asking, CASES, childrenOf, memoryStorage, reply, server } from "./testing";
-import { CACHE_FORMAT, type Grain } from "./wire";
+import { CACHE_FORMAT, type Grain, type LandedPage } from "./wire";
 
 const HOUR = 3_600;
 const DAY = 86_400;
@@ -285,7 +291,6 @@ describe("the answer", () => {
       first: null,
       marks: [],
       unread: [],
-      landed: null,
       prices: "",
     });
     const empty = read(CASES.samples.emptyReports);
@@ -409,7 +414,7 @@ describe("the charts", () => {
     for (const [chart, name, path] of paths()) {
       expect(one.written(path), `${chart}: ${name} reads ${path}`).toEqual(expect.any(Number));
     }
-    expect(paths()).toHaveLength(38);
+    expect(paths()).toHaveLength(40);
     const drawn = charts(read(CASES.samples.reports), []);
     expect(firsts(drawn, "agents")).toEqual([1.5, 1.5, 1.5, 0, 2.5]);
     expect(values(drawn, "health", 2)).toEqual([3]);
@@ -777,8 +782,8 @@ describe("a figure's link", () => {
     }
     const nothing = view(read(unrecorded(wire())));
     expect(nothing).toContain("<dt>Done</dt>");
-    expect(nothing).not.toContain("href=");
-    expect(view(read({ ...unrecorded(wire()), first: null }))).not.toContain("href=");
+    expect(nothing).not.toContain('href="#');
+    expect(view(read({ ...unrecorded(wire()), first: null }))).not.toContain('href="#');
   });
 
   it("is the address of a chart drawn at once, which the shell then lands, the rest to come", () => {
@@ -935,7 +940,7 @@ describe("the page's view", () => {
         "settings changed, settings: land without the check (4f1c0a9b2d3e)</li></ul></div>",
     );
     // Each chart mounts once it comes near the screen, its ghost in its place until then.
-    expect(html.match(/class="viewport-slot chart-slot"/g)).toHaveLength(16);
+    expect(html.match(/class="viewport-slot chart-slot"/g)).toHaveLength(18);
     expect(html).toContain('<section class="reports-section" aria-label="Board health"><h2>');
     expect(html).not.toContain("No roll-up yet");
     expect(html).not.toContain("not read");
@@ -1056,6 +1061,103 @@ describe("the window and the series hidden", () => {
     const html = renderToStaticMarkup(<ReportsPage />);
     expect(html).toMatch(/^<main class="reports-page"><div class="reports" data-ready="loading"/);
     expect(html).toContain("Weeks · the last 4 weeks · times in UTC");
+    expect(html).toContain('data-view="time"');
+  });
+
+  it("open on the tab the address names, its read awaited", () => {
+    vi.stubGlobal("localStorage", memoryStorage());
+    vi.stubGlobal("location", { search: "?view=landed", hash: "" });
+    const html = renderToStaticMarkup(<ReportsPage scope="tree" />);
+    expect(html).toContain('data-ready="loading" aria-busy="true" data-view="landed"');
+    expect(html).toContain("Loading the landed tasks…");
+    expect(html).toContain('<a class="tab" href="/@tree/reports?view=landed" aria-current="page">');
+  });
+});
+
+/** The wire's own sample of the Landed tasks tab, as the page reads it. */
+function landedSample(): LandedPage {
+  const page = readLanded(JSON.parse(JSON.stringify(CASES.samples.landed)));
+  if (page === null) throw new Error("The tab reads no landed tasks in the sample");
+  return page;
+}
+
+describe("the tabs", () => {
+  it("are named by the address's query, Over time for any other", () => {
+    expect(viewOf("")).toBe("time");
+    expect(viewOf("?view=landed")).toBe("landed");
+    expect(viewOf("?grain=day&view=landed")).toBe("landed");
+    expect(viewOf("?view=Landed")).toBe("time");
+    expect(viewOf("?view=other")).toBe("time");
+    expect(viewHref("", "time")).toBe("/reports");
+    expect(viewHref("", "landed")).toBe("/reports?view=landed");
+    expect(viewHref("proposal~x", "landed")).toBe("/@proposal~x/reports?view=landed");
+  });
+
+  /** The page on tab `view`, its landed tasks `landed`. */
+  const tabbed = (landed: LandedPage | null, error: string | null = null, shown = page()) =>
+    renderToStaticMarkup(
+      <ReportsView
+        grain="day"
+        days={1}
+        page={shown}
+        view="landed"
+        landed={landed}
+        error={error}
+        onAsk={() => {}}
+      />,
+    );
+
+  it("are links, the one shown marked current, under the window's controls", () => {
+    const html = view(page());
+    expect(html).toContain(
+      '</header><nav class="reports-tabs" aria-label="Reports views"><a class="tab" href="/reports" aria-current="page">Over time</a><a class="tab" href="/reports?view=landed">Landed tasks</a></nav>',
+    );
+    const landed = tabbed(landedSample());
+    expect(landed).toContain(
+      '<a class="tab" href="/reports">Over time</a><a class="tab" href="/reports?view=landed" aria-current="page">Landed tasks</a>',
+    );
+  });
+
+  it("draw the Landed tasks' ghost until their read answers, whatever the other tab holds", () => {
+    const html = tabbed(null);
+    expect(html).toContain('data-ready="loading" aria-busy="true" data-view="landed"');
+    expect(html).toContain('<p class="status-text" role="status">Loading the landed tasks…</p>');
+    expect(html.match(/class="ghost-figure"/g)).toHaveLength(4);
+    expect(html).not.toContain('aria-label="Flow"');
+  });
+
+  it("draw the Landed tasks once read, busy no longer for the window asked", () => {
+    const html = tabbed(landedSample());
+    expect(html).toContain('data-ready="reports" aria-busy="false" data-view="landed"');
+    expect(html).toContain(
+      '<section class="reports-section reports-landed" aria-label="Landed tasks">',
+    );
+    expect(html).toContain('<dt><a href="#chart-dearest">Landed</a></dt>');
+    expect(html).not.toContain('aria-label="Flow"');
+    // A read of another window is still drawn, busy until the window asked for answers.
+    const other = renderToStaticMarkup(
+      <ReportsView
+        grain="week"
+        days={84}
+        page={null}
+        view="landed"
+        landed={landedSample()}
+        onAsk={() => {}}
+      />,
+    );
+    expect(other).toContain('data-ready="reports" aria-busy="true" data-view="landed"');
+  });
+
+  it("say which tab's read failed, the Landed tasks' drawn as they were", () => {
+    const why = "The server could not be reached";
+    let html = tabbed(null, why, page());
+    expect(html).toContain('data-ready="failed" aria-busy="false" data-view="landed"');
+    expect(html).toContain(
+      'role="alert">The landed tasks could not be read. The server could not be reached',
+    );
+    html = tabbed(landedSample(), why, page());
+    expect(html).toContain("The landed tasks could not be read.");
+    expect(html).toContain('aria-label="Landed tasks"');
   });
 });
 
@@ -1283,6 +1385,67 @@ describe("a window opened", () => {
     expect(told).toEqual([["answered", 3]]);
   });
 
+  it("opens the Landed tasks of a window as its own part, kept as answered", async () => {
+    const store = stored(null);
+    const asked = server();
+    const told: unknown[] = [];
+    const page = new AbortController();
+    const done = openLanded(
+      reportsItem("tree"),
+      "day",
+      14,
+      page.signal,
+      {
+        kept: (shown) => told.push(["kept", shown.tasks.length]),
+        answered: (shown) => told.push(["answered", shown?.tasks.length ?? null]),
+        failed: (why) => told.push(["failed", why]),
+      },
+      async () => {
+        page.abort();
+      },
+    );
+    await asking(asked, 1);
+    expect(store.read).toHaveBeenCalledWith(CACHE_FORMAT, "", "reports:@tree/", "landed:day:14");
+    expect(asked[0]?.url).toBe("/api/reports/landed?grain=day&days=14");
+    asked[0]?.answer(reply(200, CASES.samples.landed, "l1"));
+    await done;
+    expect(told).toEqual([["answered", 3]]);
+    const [, , , , part, etag, value] = store.keep.mock.calls[0] as unknown as unknown[];
+    expect([part, etag]).toEqual(["landed:day:14", "l1"]);
+    expect(value).toEqual(CASES.samples.landed);
+    expect(landedWindow("hour", 1)).toBe("landed:hour:1");
+    expect(landedWindow("hour", 1)).not.toBe(reportsWindow("hour", 1));
+  });
+
+  it("says a Landed tasks' answer it cannot read is none, and draws the copy kept first", async () => {
+    stored({ value: CASES.samples.landed, etag: "l1", saved: 7 });
+    const asked = server();
+    const told: unknown[] = [];
+    const page = new AbortController();
+    const done = openLanded(
+      reportsItem(""),
+      "day",
+      1,
+      page.signal,
+      {
+        kept: (shown, saved) => told.push(["kept", shown.tasks.length, saved]),
+        answered: (shown) => told.push(["answered", shown?.tasks.length ?? null]),
+        failed: (why) => told.push(["failed", why]),
+      },
+      async () => {
+        page.abort();
+      },
+    );
+    await asking(asked, 1);
+    expect(asked[0]?.named).toBe("l1");
+    asked[0]?.answer(reply(200, { grain: "month" }, "l2"));
+    await done;
+    expect(told).toEqual([
+      ["kept", 3, 7],
+      ["failed", "The landed tasks' answer is not one"],
+    ]);
+  });
+
   it("draws and asks nothing once the page that opened it is gone", async () => {
     let give: (kept: unknown) => void = () => {};
     vi.stubGlobal("symphonyCache", {
@@ -1332,7 +1495,8 @@ const spending = (role: string, n: number, dollars: number, unpriced = 0) => ({
 /**
  * The fixture week with what the roll-up told of tokens: Monday's by four roles, a worker's on a
  * model with no price; Tuesday's none, as no source recorded it; Wednesday's none, its hours with
- * no pair of roll-ups. Two tasks landed, one with none recorded.
+ * no pair of roll-ups. Monday landed three top-level tasks, two priced, one of them with its 400
+ * lines read and the other landed before lines were kept; Wednesday, rolled up in part, landed none.
  */
 function spendWire(): Wire {
   const whole = wire();
@@ -1348,22 +1512,11 @@ function spendWire(): Wire {
           spending("orchestrator", 100_000, 0.4),
           spending("worker", 300_000, 0, 300_000),
         ],
+        landed: { tasks: 3, median: 5, p90: 5.8, lined_cost: 6, lines: 400, unread: 1 },
       },
       { ...tuesday, spend: null },
-      wednesday,
+      { ...wednesday, landed: null },
     ],
-    landed: {
-      tasks: 2,
-      without: 1,
-      median: 5,
-      dearest: [
-        { slug: "sim/jump", at: MONDAY + HOUR, tokens: tokens(1_500_000), cost: cost(6) },
-        { slug: "sim/fix", at: MONDAY + 2 * HOUR, tokens: tokens(1_000_000), cost: cost(4, 9) },
-      ],
-      first_round: { tokens: tokens(2_000_000), cost: cost(7, 9) },
-      later_rounds: { tokens: tokens(500_000), cost: cost(3) },
-      again: 1,
-    },
     prices: "2026-11-16",
   };
 }
@@ -1402,73 +1555,162 @@ describe("the tokens and their cost", () => {
     expect(windowSpend(page())).toBeNull();
   });
 
-  it("say what each landed task took, the dearest a link each, and that every dollar is an estimate", () => {
-    const html = renderToStaticMarkup(<SpendSummary page={read(spendWire())} />);
-    const said = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
-    expect(said).toContain(
+  it("open their section with the window's sum, and close it saying every dollar is an estimate", () => {
+    expect(spendSaid(read(spendWire()))).toBe(
       "In the 1 of 3 days that told them: $10.40 + unpriced estimated, 2.9M tokens.",
     );
-    expect(said).toContain(
-      "2 landed with tokens recorded (1 with none, in no figure), each with its subtasks: a " +
-        "median of $5.00 a task.",
+    expect(spendSaid(page())).toBe(
+      "No day of the window told its tokens: an hour's are told once two roll-ups span it.",
     );
-    expect(html).toContain('<a href="/task/sim/jump">sim/jump</a><span>$6.00 · 1.5M tokens</span>');
-    expect(html).toContain('<a href="/task/sim/fix">sim/fix</a><span>$4.00 + unpriced · 1M tokens');
-    expect(said).toContain(
-      "First rounds $7.00 + unpriced (2M tokens), the review rounds after them $3.00 (500k " +
-        "tokens): 1 of 2 went past their first round.",
-    );
-    expect(said).toContain(
+    const told = read(spendWire());
+    told.buckets = [told.buckets[0] as Bucket];
+    expect(spendSaid(told)).toBe("In the window: $10.40 + unpriced estimated, 2.9M tokens.");
+    const said = (shown: Page) =>
+      renderToStaticMarkup(<DollarNote page={shown} />).replace(/<[^>]+>/g, "");
+    expect(said(read(spendWire()))).toBe(
       "Every dollar here is estimated at API list prices read 2026-11-16, not money spent; a " +
         "figure marked + unpriced leaves out the tokens of a model the price table does not " +
-        "name: gpt-x 9 tokens.",
+        "name: gpt-x 300k tokens.",
+    );
+    expect(said(page())).toBe(
+      "Every dollar here is estimated at API list prices read on a day not named, not money " +
+        "spent; a figure marked + unpriced leaves out the tokens of a model the price table " +
+        "does not name.",
+    );
+    // Only tokens of a model with no price, named twice: summed once, and no dollar said.
+    const unpriced = spendWire();
+    const [monday] = unpriced.buckets as Wire[];
+    (monday as Wire).spend = [
+      spending("worker", 300_000, 0, 300_000),
+      spending("designer", 200_000, 0, 200_000),
+    ];
+    expect(spendSaid(read(unpriced))).toBe(
+      "In the 1 of 3 days that told them: unpriced estimated, 500k tokens.",
+    );
+    expect(said(read(unpriced))).toMatch(/name: gpt-x 500k tokens\.$/);
+  });
+
+  it("draw the cost of a landed task and of 100 lines, a period that landed none drawn empty", () => {
+    const drawn = charts(read(spendWire()), []);
+    const tasks = find(drawn, "landed-cost");
+    expect(tasks.title).toBe("Cost per landed task");
+    expect(tasks.note).toContain("the median and the p90 of what one cost");
+    expect(tasks.note).toContain("A day that landed none has no point.");
+    expect(tasks.series.map((series) => [series.name, series.mark, series.values])).toEqual([
+      ["Median", "line", [5, null, null]],
+      ["p90", "line", [5.8, null, null]],
+      // The day's whole cost, the orchestrator's and the worker's with it, over the three landed.
+      ["All in", "line", [10.4 / 3, null, null]],
+    ]);
+    expect(tasks.whens).toEqual(["3 landed", null, null]);
+    // Tuesday has no record; Wednesday, rolled up, landed none: drawn empty, not hatched.
+    expect([gap(tasks, 0), gap(tasks, 1), gap(tasks, 2)]).toEqual([false, true, false]);
+    const lines = find(drawn, "line-cost");
+    expect(lines.title).toBe("Cost per 100 lines changed");
+    expect(lines.series.map((series) => [series.name, series.values])).toEqual([
+      // $6 over 400 lines; the day's $10.40 over the 1,500 that reached the branch.
+      ["Landed tasks", [1.5, null, null]],
+      ["All in", [(10.4 / 1500) * 100, null, null]],
+    ]);
+    const readout = (chart: ChartData, at: number) =>
+      renderToStaticMarkup(<Readout chart={chart} axis={axis(read(spendWire()))} at={at} />)
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    expect(readout(tasks, 0)).toBe(
+      "Mon 9 Nov · 3 landed Median $5 p90 $5.80 All in $3.47 Settings changed, settings: land " +
+        "without the check (4f1c0a9b2d3e)",
+    );
+    expect(readout(tasks, 2)).toBe("Wed 11 Nov · no task landed · 5 of 11 h recorded");
+    expect(readout(lines, 2)).toBe("Wed 11 Nov · no line changed · 5 of 11 h recorded");
+    expect(readout(tasks, 1)).toBe("Tue 10 Nov · no data recorded");
+  });
+
+  it("are gaps in a period from a server that counted no landed task, and a ratio of nothing is none", () => {
+    const older = charts(page(), []);
+    const tasks = find(older, "landed-cost");
+    expect(tasks.cover).toEqual([0, 0, 0]);
+    expect([gap(tasks, 0), gap(tasks, 2)]).toEqual([true, true]);
+    expect(tasks.whens).toEqual([null, null, null]);
+    // Landed tasks none of whose lines were read, a day of no line, and a cost not told.
+    const none = spendWire();
+    const [monday] = none.buckets as Wire[];
+    (monday as Wire).landed = {
+      tasks: 0,
+      median: null,
+      p90: null,
+      lined_cost: 0,
+      lines: 0,
+      unread: 0,
+    };
+    (monday as Wire).git = { commits: 0, merges: 0, added: 0, removed: 0, reverts: 0 };
+    const drawn = charts(read(none), []);
+    expect(firsts(drawn, "landed-cost").map(Number.isNaN)).toEqual([true, true, true]);
+    expect(firsts(drawn, "line-cost").map(Number.isNaN)).toEqual([true, true]);
+    delete (monday as Wire).spend;
+    (monday as Wire).landed = {
+      tasks: 2,
+      median: 1,
+      p90: 1,
+      lined_cost: 2,
+      lines: 10,
+      unread: 1,
+    };
+    (monday as Wire).git = { commits: 1, merges: 0, added: 5, removed: 5, reverts: 0 };
+    const untold = charts(read(none), []);
+    expect(values(untold, "landed-cost", 2)).toEqual([null, null, null]);
+    expect(values(untold, "line-cost", 1)).toEqual([null, null, null]);
+    expect(values(untold, "line-cost", 0)).toEqual([20, null, null]);
+  });
+
+  it("say a period's lines were not read where neither its landings' nor git's were", () => {
+    const shown = (landed: Wire | null, git: Wire | null) => {
+      const one = spendWire();
+      const [monday] = one.buckets as Wire[];
+      (monday as Wire).landed = landed;
+      (monday as Wire).git = git;
+      const page = read(one);
+      const lines = find(charts(page, []), "line-cost");
+      return renderToStaticMarkup(<Readout chart={lines} axis={axis(page)} at={0} />)
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .replace(/ Settings changed.*$/, "")
+        .trim();
+    };
+    const landed = { tasks: 2, median: 3, p90: 3, lined_cost: 0, lines: 0, unread: 1 };
+    // A landing's lines not read and no git line counted: nothing says whether a line changed.
+    expect(shown(landed, null)).toBe("Mon 9 Nov · lines not read · 2 landed");
+    // Git counted none: no line reached the branch, whatever the landings' lines.
+    const still = { commits: 0, merges: 0, added: 0, removed: 0, reverts: 0 };
+    expect(shown(landed, still)).toBe("Mon 9 Nov · no line changed · 2 landed");
+    // Every landing's lines read, and none counted.
+    expect(shown({ ...landed, unread: 0 }, null)).toBe("Mon 9 Nov · no line changed · 2 landed");
+    // From a server that counted no unread lines, as before it did.
+    const { unread: _, ...older } = landed;
+    expect(shown(older, null)).toBe("Mon 9 Nov · no line changed · 2 landed");
+    // A period that landed none, its git not counted.
+    expect(shown(null, null)).toBe("Mon 9 Nov · no line changed");
+    // One landing's lines not read, another's read: its cost per 100 lines is drawn.
+    expect(shown({ ...landed, lined_cost: 2, lines: 400 }, null)).toBe(
+      "Mon 9 Nov · 2 landed Landed tasks $0.50 All in no data",
     );
   });
 
-  it("say so where no task landed, none had tokens or no period told any", () => {
-    const none = (landed: unknown) =>
-      renderToStaticMarkup(<SpendSummary page={read({ ...wire(), landed })} />);
-    expect(none(null)).toContain("No task landed in the window.");
-    expect(none(null)).toContain(
-      "No day of the window told its tokens: an hour&#x27;s are told once two roll-ups span it.",
-    );
-    const empty = { tokens: tokens(0), cost: cost(0) };
-    expect(
-      none({ tasks: 0, without: 3, dearest: [], first_round: empty, later_rounds: empty }),
-    ).toContain("3 landed, none with tokens recorded.");
-    // Every task landed on a model with no price: their median is unpriced.
-    const unpriced = { tokens: tokens(5), cost: cost(0, 5) };
-    expect(
-      none({
-        tasks: 1,
-        dearest: [{ slug: "a/b", at: 1, ...unpriced }],
-        first_round: unpriced,
-        later_rounds: empty,
-      }),
-    ).toContain("a median of unpriced a task");
-  });
-
-  it("are drawn under their charts, and read from the wire's own sample", () => {
+  it("are drawn in their section, and read from the wire's own sample", () => {
     const html = view(read(spendWire()));
     expect(html).toContain('<section class="reports-section" aria-label="Tokens and cost">');
-    expect(html).toContain('<div class="reports-spend">');
+    expect(html).toContain(
+      '<h2>Tokens and cost</h2><p class="reports-sub">In the 1 of 3 days that told them: ',
+    );
+    expect(html).toContain('<p class="reports-note">Every dollar here is estimated');
+    expect(html).not.toContain("Cost per landed task</h3><p>");
     const sample = read(CASES.samples.reports);
     expect(sample.prices).toBe("2026-11-16");
-    expect(sample.landed?.dearest.map((task) => task.slug)).toEqual(["sim/jump"]);
-    expect(firsts(charts(sample, []), "cost")).toEqual([0, 2, 1, 0]);
-  });
-
-  it.each([
-    ["tasks below none", { tasks: -1 }],
-    ["a median as text", { median: "5" }],
-    ["the dearest as no list", { dearest: {} }],
-    ["a dearest task with no slug", { dearest: [{ at: 1, tokens: tokens(1), cost: cost(1) }] }],
-    ["a dearest task with no cost", { dearest: [{ slug: "a/b", at: 1, tokens: tokens(1) }] }],
-    ["first rounds with no tokens", { first_round: { cost: cost(1) } }],
-    ["later rounds with no cost", { later_rounds: { tokens: tokens(1) } }],
-  ])("refuse an answer whose landed tasks have %s", (_, wrong) => {
-    const whole = spendWire();
-    expect(readReports({ ...whole, landed: { ...(whole.landed as Wire), ...wrong } })).toBeNull();
+    const drawn = charts(sample, []);
+    expect(firsts(drawn, "cost")).toEqual([0, 2, 1, 0]);
+    // The sample's $3 over its three landed tasks; its $2 over its 400 lines.
+    expect(firsts(drawn, "landed-cost")).toEqual([1.5, 2.8, 1]);
+    expect(firsts(drawn, "line-cost")).toEqual([0.5, 0.2]);
   });
 
   it("refuse prices that are no text", () => {

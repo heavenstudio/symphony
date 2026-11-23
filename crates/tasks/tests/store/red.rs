@@ -99,7 +99,7 @@ fn no_session_marks_a_task_red_through_the_boards_own_fields() {
                 f.store
                     .set_field("work/feature", FIELDS, MARK, &json!("main"), by)
             ),
-            "fields._board are the board's own: a red is marked by its filer (mark_red), a fast fix where an older board filed it, a landing's record by record_waits, a task's needs by its assessor (tasks needs), its gate decisions by its orchestrator (tasks gate)",
+            "fields._board are the board's own: a red is marked by its filer (mark_red), a fast fix where an older board filed it, a landing's record by record_waits, a task's needs by its assessor (tasks needs), its gate decisions by its orchestrator (tasks gate), its kind where it is filed or by tasks kind",
             "{by}"
         );
     }

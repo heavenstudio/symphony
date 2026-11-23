@@ -6,6 +6,12 @@
 // chart at once; the table under it says them all. Each entry of a legend is a button that hides its
 // series or shows it again: a hidden series leaves the plot, the readout and the table, and the axis
 // scales to the series shown.
+//
+// The Landed tasks tab draws three more shapes with the same card, legend, readout and table, and
+// no library: the same columns over categories in place of periods (`ChartData.categories`), each
+// column's total over it and its name under it; bars by row (`RowChart`), a row a name with its
+// parts stacked along one scale; and dots (`DotChart`), a point a thing on two log scales. A tap or
+// the arrow keys pick a row or a dot, as they pick a period.
 
 import { type CSSProperties, type KeyboardEvent, useState } from "react";
 import { fixed } from "./words";
@@ -118,6 +124,21 @@ export interface ChartData {
   cover: number[];
   /** What it says in place of the plot when the window cannot show it (lead time by the hour). */
   instead: string | null;
+  /**
+   * What the readout says of each period its source recorded with no value in any series (`no task
+   * landed`): such a period is drawn empty, not hatched. Without it a period with no value is a gap.
+   */
+  none?: string[];
+  /** What the readout says after each period's name (`8 landed`), none where it says nothing. */
+  whens?: (string | null)[];
+  /** What the readout says after the series' values in each period (`median $13.39 a task`). */
+  extras?: string[][];
+  /**
+   * Columns over categories rather than periods of time: each one's name and the line under it
+   * (`1 review`, `111 tasks`), written under the plot in place of the axis's labels, with each
+   * column's total over it. Its axis names each category in its readout (`categoryAxis`).
+   */
+  categories?: [string, string][];
 }
 
 /** The value of the `series`th series of `chart` in period `at`. */
@@ -125,12 +146,19 @@ export function valueAt(chart: ChartData, series: number, at: number): number | 
   return chart.series[series]?.values[at] ?? null;
 }
 
+/** Whether some series of `chart` has a value in period `at`, hidden or not. */
+export function valued(chart: ChartData, at: number): boolean {
+  return chart.series.some((_, series) => valueAt(chart, series, at) !== null);
+}
+
 /**
- * Whether no series of `chart` has a value in period `at`, hidden or not: a gap. Hiding a series
- * hides its values, never its record.
+ * Whether period `at` of `chart` is a gap, hatched: no series has a value in it, hidden or not, and,
+ * for a chart that says what a period with none is (`none`), its source recorded none of it. Hiding
+ * a series hides its values, never its record.
  */
 export function gap(chart: ChartData, at: number): boolean {
-  return chart.series.every((_, series) => valueAt(chart, series, at) === null);
+  if (valued(chart, at)) return false;
+  return chart.none === undefined || (chart.cover[at] ?? 0) <= 0;
 }
 
 /** The page's one time axis, which every chart shares. */
@@ -298,7 +326,25 @@ export function shown(chart: ChartData, selected: number | null, periods: number
   return (
     upTo(periods)
       .reverse()
-      .find((at) => !gap(chart, at)) ?? null
+      .find((at) => valued(chart, at)) ?? null
+  );
+}
+
+/**
+ * The axis of a chart of columns over categories, each named in the readout and its table by
+ * `names` (`Landed after 2 reviews · 29 tasks`): no hour to cover, no label under the plot (the
+ * chart writes its categories there) and no change marked.
+ */
+export function categoryAxis(names: string[]): Axis {
+  return { periods: names, hours: names.map(() => 0), ticks: [], marks: [] };
+}
+
+/** The total of the bars of period `at` of `chart` that it shows, stacked up from zero. */
+export function stacked(chart: ChartData, at: number): number {
+  return sum(
+    chart.series.flatMap((data, series) =>
+      data.hidden || data.mark !== "bar" ? [] : [Math.max(valueAt(chart, series, at) ?? 0, 0)],
+    ),
   );
 }
 
@@ -460,7 +506,7 @@ export function ChartCard({ chart, axis, selected, onSelect, onToggle }: ChartCa
                 {segments(chart, period, scale).map((part) => (
                   <span
                     key={part.series}
-                    className={`seg ${part.up ? "up" : "down"}${part.end ? " end" : ""}${part.after ? " after" : ""}`}
+                    className={`seg ${part.up ? "up" : "down"}${part.end ? " end" : ""}${part.after ? " after" : ""}${chart.categories ? " cat" : ""}`}
                     style={css({
                       bottom: `${short(part.bottom, 2)}%`,
                       height: `${short(part.height, 2)}%`,
@@ -468,6 +514,14 @@ export function ChartCard({ chart, axis, selected, onSelect, onToggle }: ChartCa
                     })}
                   />
                 ))}
+                {chart.categories && stacked(chart, period) > 0 && (
+                  <span
+                    className="cat-total"
+                    style={{ bottom: `${short(place(scale, stacked(chart, period)), 2)}%` }}
+                  >
+                    {format(chart.unit, stacked(chart, period))}
+                  </span>
+                )}
               </div>
             ))}
           </div>
@@ -493,16 +547,27 @@ export function ChartCard({ chart, axis, selected, onSelect, onToggle }: ChartCa
           </svg>
         </div>
       </div>
-      <div className="chart-x" aria-hidden="true">
-        {axis.ticks.map(([tick, label]) => (
-          <span
-            key={tick}
-            style={{ left: `${short(((tick + 0.5) / Math.max(periods, 1)) * 100, 2)}%` }}
-          >
-            {label}
-          </span>
-        ))}
-      </div>
+      {chart.categories ? (
+        <div className="cat-x" style={css({ "--n": String(periods) })} aria-hidden="true">
+          {chart.categories.map(([name, under]) => (
+            <span key={name}>
+              <b>{name}</b>
+              {under}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <div className="chart-x" aria-hidden="true">
+          {axis.ticks.map(([tick, label]) => (
+            <span
+              key={tick}
+              style={{ left: `${short(((tick + 0.5) / Math.max(periods, 1)) * 100, 2)}%` }}
+            >
+              {label}
+            </span>
+          ))}
+        </div>
+      )}
       <button
         className="chart-table-toggle"
         type="button"
@@ -560,14 +625,19 @@ export function Readout({ chart, axis, at }: { chart: ChartData; axis: Axis; at:
   const whole = axis.hours[at];
   const recorded = part === undefined || whole === undefined ? null : coverage(part, whole);
   const empty = gap(chart, at);
+  // A period its source recorded with nothing to draw, said in the chart's own words.
+  const none = !empty && !valued(chart, at) ? (chart.none?.[at] ?? null) : null;
+  const when = chart.whens?.[at] ?? null;
   return (
     <div className="chart-readout" aria-live="polite">
       <p className="chart-when">
         <strong>{axis.periods[at] ?? ""}</strong>
         {empty && " · no data recorded"}
+        {none !== null && ` · ${none}`}
+        {when !== null && ` · ${when}`}
         {recorded !== null && ` · ${recorded}`}
       </p>
-      {!empty && (
+      {!empty && none === null && (
         <ul>
           {chart.series.map((data, series) => {
             if (data.hidden) return null;
@@ -580,6 +650,9 @@ export function Readout({ chart, axis, at }: { chart: ChartData; axis: Axis; at:
               </li>
             );
           })}
+          {(chart.extras?.[at] ?? []).map((extra) => (
+            <li key={extra}>{extra}</li>
+          ))}
         </ul>
       )}
       {axis.marks
@@ -595,7 +668,7 @@ export function Readout({ chart, axis, at }: { chart: ChartData; axis: Axis; at:
 
 /**
  * Every period's values of the series shown, oldest first: what the chart draws, for a reader who
- * reads it as text.
+ * reads it as text. A chart of columns over categories lists each by its readout's name.
  */
 export function ChartTable({ chart, axis }: { chart: ChartData; axis: Axis }) {
   const columns = chart.series
@@ -604,10 +677,10 @@ export function ChartTable({ chart, axis }: { chart: ChartData; axis: Axis }) {
   return (
     <div className="chart-table">
       <table>
-        <caption>{`${chart.title}, by period`}</caption>
+        <caption>{chart.categories ? chart.title : `${chart.title}, by period`}</caption>
         <thead>
           <tr>
-            <th scope="col">Period</th>
+            <th scope="col">{chart.categories ? "Group" : "Period"}</th>
             {columns.map((column) => (
               <th key={column.name} scope="col">
                 {column.name}
@@ -630,6 +703,488 @@ export function ChartTable({ chart, axis }: { chart: ChartData; axis: Axis }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+/** A table a chart of rows or dots lists: its caption, its heads, and a row a thing, its first cell
+ * a link where the thing has a page. */
+export interface TableData {
+  caption: string;
+  head: string[];
+  rows: { key: string; cells: string[]; href: string | null }[];
+}
+
+/** `table` drawn as a chart's table: it scrolls within its chart, never widening the page. */
+export function DataTable({ table }: { table: TableData }) {
+  return (
+    <div className="chart-table">
+      <table>
+        <caption>{table.caption}</caption>
+        <thead>
+          <tr>
+            {table.head.map((head) => (
+              <th key={head} scope="col">
+                {head}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {table.rows.map((row) => (
+            <tr key={row.key}>
+              {row.cells.map((cell, at) =>
+                at === 0 ? (
+                  <th key="name" scope="row">
+                    {row.href === null ? cell : <a href={row.href}>{cell}</a>}
+                  </th>
+                ) : (
+                  // A cell's place, not its text, names it: two cells of a row may say the same.
+                  // biome-ignore lint/suspicious/noArrayIndexKey: a row's cells never move
+                  <td key={at}>{cell}</td>
+                ),
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** The scale of bars from zero to at most `most`, a round step apart: four ticks or so. */
+export function rowScale(unit: Unit, most: number): Scale {
+  const up = most > 0 ? most : leastStep(unit);
+  const by = step(unit, up / 3);
+  const high = Math.ceil(up / by) * by;
+  const ticks: number[] = [];
+  for (let tick = 0; tick <= high + by / 2; tick += by) ticks.push(tick);
+  return { low: 0, high, ticks };
+}
+
+/**
+ * One row of a chart of bars by row: its name, the page it opens (none for a thing with no page),
+ * its parts' values in its chart's series' order, its own colour where its chart colours rows (each
+ * kind its own) rather than parts, the line under its bar, and what the readout says after its
+ * parts' values.
+ */
+export interface Row {
+  key: string;
+  label: string;
+  href: string | null;
+  values: number[];
+  colour: string | null;
+  meta: string | null;
+  said: string[];
+}
+
+/** A chart of bars by row, ready to draw. */
+export interface RowsData {
+  id: string;
+  title: string;
+  note: string;
+  unit: Unit;
+  /**
+   * The parts each bar stacks, in their fixed order: the first takes `--chart-1`, the next
+   * `--chart-2`; a chart of one part draws no legend, its rows wearing their own colours.
+   */
+  series: { name: string; hidden: boolean }[];
+  rows: Row[];
+  /** What its table's button says, and the table it opens, made once it is opened. */
+  tableToggle: string;
+  table: () => TableData;
+  /** Whether a row's name stands beside its bar rather than over it: short names, a kind's. */
+  side: boolean;
+}
+
+/** The total of the parts of `row` that `chart` shows. */
+export function rowTotal(chart: RowsData, row: Row): number {
+  return sum(row.values.filter((_, part) => chart.series[part]?.hidden !== true)) + 0;
+}
+
+/** The colour of part `part` of `row`: the row's own where it has one, else its part's. */
+function rowColour(row: Row, part: number): string {
+  return row.colour ?? colour(part);
+}
+
+/** The arrow keys of a list of rows, read as the plot reads its left and right. */
+export function rowKey(key: string): string {
+  return key === "ArrowUp" ? "ArrowLeft" : key === "ArrowDown" ? "ArrowRight" : key;
+}
+
+export interface RowChartProps {
+  chart: RowsData;
+  /** The row the readout shows: the one picked, else the first. */
+  selected: number | null;
+  onSelect: (at: number) => void;
+  onToggle?: (key: string) => void;
+}
+
+/** A chart of bars by row: a row a thing, its parts stacked along the one scale. */
+export function RowChart({ chart, selected, onSelect, onToggle }: RowChartProps) {
+  const [table, setTable] = useState(false);
+  const count = chart.rows.length;
+  const titleId = `chart-${chart.id}-title`;
+  const scale = rowScale(chart.unit, Math.max(0, ...chart.rows.map((row) => rowTotal(chart, row))));
+  const at = selected !== null && selected < count ? selected : count > 0 ? 0 : null;
+  const row = at === null ? undefined : chart.rows[at];
+  const onKeyDown = (event: KeyboardEvent) => {
+    const next = keyed(rowKey(event.key), at, count);
+    if (next === null) return;
+    event.preventDefault();
+    onSelect(next);
+  };
+  return (
+    <figure
+      className={`chart hchart${chart.side ? " side" : ""}`}
+      id={`chart-${chart.id}`}
+      aria-labelledby={titleId}
+    >
+      <figcaption>
+        <h3 id={titleId}>{chart.title}</h3>
+        <p className="chart-note">{chart.note}</p>
+      </figcaption>
+      {chart.series.length > 1 && (
+        <ul className="chart-legend" aria-label={`${chart.title}: series shown`}>
+          {chart.series.map((data, series) => (
+            <li key={data.name}>
+              <button
+                className="chart-key"
+                type="button"
+                aria-pressed={!data.hidden}
+                onClick={() => onToggle?.(seriesKey(chart.id, data.name))}
+              >
+                <Swatch series={series} mark="bar" />
+                {data.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="chart-readout" aria-live="polite">
+        <p className="chart-when">
+          <strong>{row?.label ?? ""}</strong>
+        </p>
+        {row !== undefined && (
+          <ul>
+            {chart.series.map((data, part) =>
+              data.hidden ? null : (
+                <li key={data.name}>
+                  <span
+                    className="swatch"
+                    style={css({ "--c": rowColour(row, part) })}
+                    aria-hidden="true"
+                  />
+                  {`${data.name} `}
+                  <strong>{format(chart.unit, row.values[part] ?? 0)}</strong>
+                </li>
+              ),
+            )}
+            {row.said.map((said) => (
+              <li key={said}>{said}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="hplot">
+        <div className="hgrid" aria-hidden="true">
+          {scale.ticks.map((tick) => (
+            <span key={tick} style={{ left: `${short(place(scale, tick), 2)}%` }} />
+          ))}
+        </div>
+        {/* biome-ignore lint/a11y/useSemanticElements: a group of rows, as the plot is a group of periods */}
+        <div
+          className="hbars"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: the rows are a group the arrow keys move through
+          tabIndex={0}
+          role="group"
+          aria-label={`${chart.title}: the up and down arrow keys move between rows`}
+          onKeyDown={onKeyDown}
+        >
+          {chart.rows.map((each, index) => (
+            // biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: the group's keys move between the rows a tap picks
+            <div
+              key={each.key}
+              className={`hbar${index === at ? " on" : ""}`}
+              onClick={() => onSelect(index)}
+            >
+              {each.href === null ? (
+                <span className="hbar-label">{each.label}</span>
+              ) : (
+                <a className="hbar-label" href={each.href}>
+                  {each.label}
+                </a>
+              )}
+              <span className="hbar-track">
+                {each.values.map((value, part) =>
+                  chart.series[part]?.hidden || value <= 0 ? null : (
+                    <span
+                      // biome-ignore lint/suspicious/noArrayIndexKey: a row's parts are its chart's series, in their fixed order
+                      key={part}
+                      className="hseg"
+                      style={css({
+                        width: `${short(place(scale, value), 2)}%`,
+                        "--c": rowColour(each, part),
+                      })}
+                    />
+                  ),
+                )}
+              </span>
+              <span className="hbar-value">{format(chart.unit, rowTotal(chart, each))}</span>
+              {each.meta !== null && <span className="hbar-meta">{each.meta}</span>}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="chart-x hx" aria-hidden="true">
+        {scale.ticks.map((tick) => (
+          <span key={tick} style={{ left: `${short(place(scale, tick), 2)}%` }}>
+            {format(chart.unit, tick)}
+          </span>
+        ))}
+      </div>
+      <button
+        className="chart-table-toggle"
+        type="button"
+        aria-expanded={table}
+        onClick={() => setTable(!table)}
+      >
+        {table ? "Hide the table" : chart.tableToggle}
+      </button>
+      {table && <DataTable table={chart.table()} />}
+    </figure>
+  );
+}
+
+/**
+ * A log scale over `values`, each above zero: from the largest round value at or under the least
+ * to the smallest above it at or over the most, a round value being one of `marks` (1 and 5, or 1
+ * alone) times a power of ten; its ticks the round values between. With no value, 1 to 10.
+ */
+export function logScale(values: number[], marks: readonly number[]): Scale {
+  const positive = values.filter((value) => value > 0 && Number.isFinite(value));
+  if (positive.length === 0) return { low: 1, high: 10, ticks: [1, 10] };
+  const least = Math.min(...positive);
+  const most = Math.max(...positive);
+  const round: number[] = [];
+  for (
+    let power = Math.floor(Math.log10(least)) - 1;
+    power <= Math.ceil(Math.log10(most)) + 1;
+    power++
+  ) {
+    // A power of ten below one by division, so 0.1 and 0.5 are written as they read.
+    for (const mark of marks) round.push(power < 0 ? mark / 10 ** -power : mark * 10 ** power);
+  }
+  round.sort((a, b) => a - b);
+  const low = round.filter((value) => value <= least).at(-1) ?? least;
+  const high = round.find((value) => value >= most && value > low) ?? most;
+  return { low, high, ticks: round.filter((value) => value >= low && value <= high) };
+}
+
+/** Where `value` stands along the log scale `scale`, 0 to 100. */
+export function logPlace(scale: Scale, value: number): number {
+  const span = Math.log10(scale.high) - Math.log10(scale.low);
+  return span <= 0 ? 0 : ((Math.log10(value) - Math.log10(scale.low)) / span) * 100;
+}
+
+/** One dot: what it names, its page, where it stands (`x` across, `y` up), its series, and what
+ * the readout says of it. */
+export interface Dot {
+  key: string;
+  label: string;
+  href: string | null;
+  x: number;
+  y: number;
+  series: number;
+  said: string[];
+}
+
+/** A chart of dots on two log scales, ready to draw. */
+export interface DotsData {
+  id: string;
+  title: string;
+  note: string;
+  /** What the dots' places count across and up: `count` lines, `dollars`. */
+  xUnit: Unit;
+  yUnit: Unit;
+  /** What the axis across is, written under it: `lines changed`. */
+  xName: string;
+  /** The series, each its own colour (`--chart-1`… or grey), hidden by its legend's button. */
+  series: { name: string; colour: string; hidden: boolean }[];
+  /** The dots, in the order the arrow keys step through them: across, then up. */
+  dots: Dot[];
+  tableToggle: string;
+  table: () => TableData;
+}
+
+/**
+ * The dot `key` moves to from `selected`, by its place in `chart.dots`: the arrows step through the
+ * dots shown, across and then up as they are listed, Home and End to either end. With none picked,
+ * or one hidden since, the forward arrows and Home pick the first and the others the last. None
+ * for any other key or with no dot shown.
+ */
+export function dotStep(chart: DotsData, selected: number | null, key: string): number | null {
+  const order = chart.dots.flatMap((each, index) =>
+    chart.series[each.series]?.hidden === true ? [] : [index],
+  );
+  const step = rowKey(key);
+  const from = selected === null ? -1 : order.indexOf(selected);
+  const next =
+    from !== -1
+      ? keyed(step, from, order.length)
+      : step === "ArrowRight" || step === "Home"
+        ? 0
+        : step === "ArrowLeft" || step === "End"
+          ? order.length - 1
+          : null;
+  return next === null ? null : (order[next] ?? null);
+}
+
+/** The round values a log axis of dollars ticks at, and one of counts. */
+const DOLLAR_MARKS = [1, 5] as const;
+const COUNT_MARKS = [1] as const;
+
+export interface DotChartProps {
+  chart: DotsData;
+  /** The dot the readout shows, by its place in `chart.dots`: none until one is picked. */
+  selected: number | null;
+  onSelect: (at: number) => void;
+  onToggle?: (key: string) => void;
+}
+
+/** A chart of dots: a thing a point, its place on two log scales; a tap names it. */
+export function DotChart({ chart, selected, onSelect, onToggle }: DotChartProps) {
+  const [table, setTable] = useState(false);
+  const titleId = `chart-${chart.id}-title`;
+  const shownDots = chart.dots.filter((dot) => chart.series[dot.series]?.hidden !== true);
+  const across = logScale(
+    shownDots.map((dot) => dot.x),
+    chart.xUnit === "dollars" ? DOLLAR_MARKS : COUNT_MARKS,
+  );
+  const up = logScale(
+    shownDots.map((dot) => dot.y),
+    chart.yUnit === "dollars" ? DOLLAR_MARKS : COUNT_MARKS,
+  );
+  const picked = selected === null ? undefined : chart.dots[selected];
+  const dot = picked && chart.series[picked.series]?.hidden !== true ? picked : undefined;
+  const onKeyDown = (event: KeyboardEvent) => {
+    const next = dotStep(chart, selected, event.key);
+    if (next === null) return;
+    event.preventDefault();
+    onSelect(next);
+  };
+  return (
+    <figure className="chart dchart" id={`chart-${chart.id}`} aria-labelledby={titleId}>
+      <figcaption>
+        <h3 id={titleId}>{chart.title}</h3>
+        <p className="chart-note">{chart.note}</p>
+      </figcaption>
+      {chart.series.length > 1 && (
+        <ul className="chart-legend" aria-label={`${chart.title}: series shown`}>
+          {chart.series.map((data) => (
+            <li key={data.name}>
+              <button
+                className="chart-key"
+                type="button"
+                aria-pressed={!data.hidden}
+                onClick={() => onToggle?.(seriesKey(chart.id, data.name))}
+              >
+                <span
+                  className="swatch dot"
+                  style={css({ "--c": data.colour })}
+                  aria-hidden="true"
+                />
+                {data.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="chart-readout" aria-live="polite">
+        {dot === undefined ? (
+          <p className="chart-when">
+            {shownDots.length === 0 ? "No dot to show" : "Tap a dot to name it"}
+          </p>
+        ) : (
+          <>
+            <p className="chart-when">
+              <strong>{dot.href === null ? dot.label : <a href={dot.href}>{dot.label}</a>}</strong>
+            </p>
+            <ul>
+              {dot.said.map((said) => (
+                <li key={said}>{said}</li>
+              ))}
+            </ul>
+          </>
+        )}
+      </div>
+      {/* biome-ignore lint/a11y/useSemanticElements: a group of dots, as the plot is a group of periods */}
+      <div
+        className="chart-plot dplot"
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: the dots are a group the arrow keys move through
+        tabIndex={0}
+        role="group"
+        aria-label={`${chart.title}: the arrow keys move between dots`}
+        onKeyDown={onKeyDown}
+      >
+        <div className="chart-y" aria-hidden="true">
+          {up.ticks.map((tick) => (
+            <span key={tick} style={{ bottom: `${short(logPlace(up, tick), 2)}%` }}>
+              {format(chart.yUnit, tick)}
+            </span>
+          ))}
+        </div>
+        <div className="chart-area">
+          {up.ticks.map((tick) => (
+            <div
+              key={tick}
+              className="chart-grid"
+              style={{ bottom: `${short(logPlace(up, tick), 2)}%` }}
+            />
+          ))}
+          {across.ticks.map((tick) => (
+            <div
+              key={tick}
+              className="chart-grid across"
+              style={{ left: `${short(logPlace(across, tick), 2)}%` }}
+            />
+          ))}
+          <div className="dots">
+            {chart.dots.map((each, index) =>
+              chart.series[each.series]?.hidden === true ? null : (
+                // biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: the group's keys move between the dots a tap picks
+                <span
+                  key={each.key}
+                  className={`pt${index === selected ? " on" : ""}`}
+                  style={css({
+                    left: `${short(logPlace(across, each.x), 2)}%`,
+                    bottom: `${short(logPlace(up, each.y), 2)}%`,
+                    "--c": chart.series[each.series]?.colour ?? colour(0),
+                  })}
+                  onClick={() => onSelect(index)}
+                />
+              ),
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="chart-x" aria-hidden="true">
+        {across.ticks.map((tick) => (
+          <span key={tick} style={{ left: `${short(logPlace(across, tick), 2)}%` }}>
+            {format(chart.xUnit, tick)}
+          </span>
+        ))}
+      </div>
+      <p className="chart-x-name">{chart.xName}</p>
+      <button
+        className="chart-table-toggle"
+        type="button"
+        aria-expanded={table}
+        onClick={() => setTable(!table)}
+      >
+        {table ? "Hide the table" : chart.tableToggle}
+      </button>
+      {table && <DataTable table={chart.table()} />}
+    </figure>
   );
 }
 

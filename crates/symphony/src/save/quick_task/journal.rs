@@ -18,7 +18,15 @@ pub(in crate::save) struct Record {
     body: String,
     priority: i64,
     links: Vec<String>,
+    /// Who asked for it, by their short name: `owner`, as a record written before it was kept says.
+    #[serde(default = "the_machines_person")]
+    by: String,
     payload: Value,
+}
+
+/// Who a record written before records named who asked was asked by: the person at the machine.
+fn the_machines_person() -> String {
+    symphony_board::workflow::local_actor().sender.name
 }
 
 impl Record {
@@ -29,7 +37,7 @@ impl Record {
             body: self.body.clone(),
             priority: self.priority,
             links: self.links.clone(),
-            by: "owner".into(),
+            by: self.by.clone(),
             status: "concept".into(),
             ..symphony_board::NewTask::default()
         }
@@ -126,6 +134,11 @@ pub(in crate::save) fn reserve(
         body: new.body.clone(),
         priority: new.priority,
         links: new.links.clone(),
+        // A filing that names nobody is the machine's person's, as a record from before names were
+        // kept reads.
+        by: Some(new.by.clone())
+            .filter(|by| !by.is_empty())
+            .unwrap_or_else(the_machines_person),
         payload: json!([scope, payload]),
     };
     let result = (|| {
@@ -259,6 +272,39 @@ mod tests {
             .expect("identity reuse must refuse");
         assert_eq!(error.status, 400);
         assert!(error.error.contains("different text"), "{}", error.error);
+    }
+
+    /// A record written before records kept who asked carries no `by`: it reads as the machine's
+    /// person's, and the rest of it as written.
+    #[test]
+    fn a_record_from_before_records_named_who_asked_reads_as_the_machines_persons() {
+        let tree = test_tree::Tree::new();
+        let identity = "c".repeat(32);
+        let payload = json!({"title":"First owner task"});
+        let record = path(&tree.root, &identity);
+        std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+        let old = json!({
+            "slug": "inbox/old", "title": "First owner task", "body": "Original resolved details",
+            "priority": 1, "links": ["docs/PROBE.md#probe"], "payload": ["", payload],
+        });
+        std::fs::write(&record, old.to_string()).unwrap();
+        let read = ok(load(&tree.root, &identity, "", &payload)).expect("the old record");
+        let restored = read.task();
+        assert_eq!(
+            (restored.slug.as_str(), restored.by.as_str()),
+            ("inbox/old", "owner")
+        );
+        assert_eq!(restored.body, "Original resolved details");
+        // A reservation of the same identity, by someone else, keeps the old record and its person.
+        let other = symphony_board::NewTask {
+            by: "ana".into(),
+            ..task("inbox/new")
+        };
+        let kept = ok(reserve(&tree.root, &identity, "", &payload, &other));
+        assert_eq!(
+            (kept.slug.as_str(), kept.task().by.as_str()),
+            ("inbox/old", "owner")
+        );
     }
 
     #[test]

@@ -36,7 +36,7 @@ impl Store {
         }
         if plugin == crate::red::FIELDS {
             return Err(refused(format!(
-                "fields.{plugin} are the board's own: a red is marked by its filer (mark_red), a fast fix where an older board filed it, a landing's record by record_waits, a task's needs by its assessor (tasks needs), its gate decisions by its orchestrator (tasks gate)"
+                "fields.{plugin} are the board's own: a red is marked by its filer (mark_red), a fast fix where an older board filed it, a landing's record by record_waits, a task's needs by its assessor (tasks needs), its gate decisions by its orchestrator (tasks gate), its kind where it is filed or by tasks kind"
             )));
         }
         let shown = match value {

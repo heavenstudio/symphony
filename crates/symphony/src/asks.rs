@@ -66,6 +66,10 @@ CREATE TABLE IF NOT EXISTS replies (
 /// The name of the check a post to a missing thread fails, so its refusal reads as one.
 const NO_SUCH_ASK: &str = "no_such_ask";
 
+/// Who asks on this machine: the person at it, the author of every question a page asks with no
+/// other actor named ([`AskStore::ask_by`]).
+const OWNER: &str = "owner";
+
 /// Why an ask was not stored or read.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AskError {
@@ -422,17 +426,31 @@ impl AskStore {
         anchor: &str,
         quote: &str,
     ) -> Result<i64, AskError> {
+        self.ask_by(path, question, anchor, quote, OWNER)
+    }
+
+    /// [`Self::ask`] by `by`, the short name of the person who asked (`symphony_plugin::Actor`):
+    /// `owner` for the person at the machine.
+    pub fn ask_by(
+        &self,
+        path: &str,
+        question: &str,
+        anchor: &str,
+        quote: &str,
+        by: &str,
+    ) -> Result<i64, AskError> {
         let path = check_path(path)?;
         let question = said(question, "question")?;
         let quote = prefix_chars(strip(quote), MAX_TEXT);
         let now = real_sql((self.clock)());
         let body = format!(
             "INSERT INTO asks (path, anchor, quote, asked, updated) VALUES ({}, {}, {}, {now}, {now});\n\
-             INSERT INTO messages (ask, kind, by, text, at) VALUES (last_insert_rowid(), 'question', 'owner', {}, {now});\n\
+             INSERT INTO messages (ask, kind, by, text, at) VALUES (last_insert_rowid(), 'question', {}, {}, {now});\n\
              SELECT ask AS id FROM messages WHERE seq = last_insert_rowid();\n",
             text_sql(path),
             text_sql(strip(anchor)),
             text_sql(quote),
+            text_sql(by),
             text_sql(question),
         );
         let printed = self.write((self.clock)(), &body)?;
@@ -444,8 +462,13 @@ impl AskStore {
 
     /// The owner's follow-up: another question on the thread, which is open again.
     pub fn reply(&self, id: i64, text: &str) -> Result<(), AskError> {
+        self.reply_by(id, text, OWNER)
+    }
+
+    /// [`Self::reply`] by `by`, the short name of the person who asked ([`Self::ask_by`]).
+    pub fn reply_by(&self, id: i64, text: &str, by: &str) -> Result<(), AskError> {
         let text = said(text, "question")?;
-        self.post(id, "question", "owner", text)
+        self.post(id, "question", by, text)
     }
 
     /// An agent's markdown answer; the thread is answered until the owner follows up.

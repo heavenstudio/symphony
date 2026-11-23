@@ -46,6 +46,7 @@ mod hand_over_outage;
 mod health;
 mod held_settle;
 mod keyed;
+mod kind;
 mod launches;
 mod lost_observers;
 mod low_volume;
