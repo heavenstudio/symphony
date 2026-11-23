@@ -223,6 +223,7 @@ tasks = 8_560_000
 # value, and of text it drops when it cannot read it, through that reader
 # (perf/board-derived-readers-step-two) took back more. Measured 3,170,256 at 01987f0d9; the line
 # was that plus 4%, rounded down to 10,000. SurrealDB's code out of the board
-# (tools/surrealdb-code-removed) took back more. Measured 2,971,488 at 0665b8e52; the line is that
-# plus 4%, rounded down to 10,000.
-agent-send = 3_090_000
+# (tools/surrealdb-code-removed) took back more. Measured 2,971,488 at 0665b8e52; the line was that
+# plus 4%, rounded down to 10,000. With main merged at dc1760b7f (a task's kind on PostgreSQL alone),
+# measured 2,954,960 at 7f8ef3fe7; the line is that plus 4%, rounded down to 10,000.
+agent-send = 3_070_000
