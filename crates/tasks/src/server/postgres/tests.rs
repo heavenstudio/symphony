@@ -367,20 +367,39 @@ fn a_server_is_its_programs_postgres_on_its_data_and_a_ps_that_cannot_run_is_unk
     };
     let serves = |said| pg.serves_as_said(said);
     assert_eq!(
-        serves(ps(0, "/nowhere/bin/postgres -D /nowhere/board/postgresql\n")),
+        serves(ps(
+            0,
+            "/nowhere/bin/postgres -D /nowhere/board/postgresql\n"
+        )),
         Ok(true)
     );
     for (line, what) in [
         ("", "no process of that pid"),
-        ("/bin/sh /nowhere/bin/postgres -D /nowhere/board/postgresql", "a script by its name"),
-        ("/elsewhere/bin/postgres -D /nowhere/board/postgresql", "another PostgreSQL's"),
-        ("/nowhere/bin/postgres -D /nowhere/other/postgresql", "another board's"),
-        ("/nowhere/bin/postgres -D /nowhere/board/postgresql.making", "a data beside it"),
+        (
+            "/bin/sh /nowhere/bin/postgres -D /nowhere/board/postgresql",
+            "a script by its name",
+        ),
+        (
+            "/elsewhere/bin/postgres -D /nowhere/board/postgresql",
+            "another PostgreSQL's",
+        ),
+        (
+            "/nowhere/bin/postgres -D /nowhere/other/postgresql",
+            "another board's",
+        ),
+        (
+            "/nowhere/bin/postgres -D /nowhere/board/postgresql.making",
+            "a data beside it",
+        ),
         ("/bin/cat", "another program"),
     ] {
         assert_eq!(serves(ps(0, line)), Ok(false), "{what}");
     }
-    assert_eq!(serves(ps(1, "")), Ok(false), "ps exits 1 for a pid with no process");
+    assert_eq!(
+        serves(ps(1, "")),
+        Ok(false),
+        "ps exits 1 for a pid with no process"
+    );
     assert_eq!(
         serves(Err(std::io::Error::other("no process could be made"))),
         Err("ps could not be run: no process could be made".into())
