@@ -17,8 +17,9 @@ card at the section that argues it, a few at a time.
 - **The home.** Each blueprint is a Git repository of its own, named by its address and a tag.
 - **The order.** Rust web first, taken from this repository; then Godot; then the personal
   assistant.
-- **Still open.** [How a new version reaches a project that follows](#how-a-new-version-arrives),
-  and [what the project holds of its blueprint](#what-the-project-holds-of-its-blueprint).
+- **Updates.** A new version [reaches a project that follows by itself](#how-a-new-version-arrives):
+  a task the Symphony files, landed once the project's own checks pass, with no reviewer.
+- **Still open.** [What the project holds of its blueprint](#what-the-project-holds-of-its-blueprint).
 
 How facts are marked: a fact about the code names the file it was read in; "read 2026-11-20" is
 this machine that day, the other registered projects' checkouts read in place and changed in
@@ -154,23 +155,19 @@ commit had, whatever the machine has installed; and a project can leave and beco
 
 ### How a new version arrives
 
-For a project that follows, replacing the blueprint's files is mechanical. What is open is what
-starts it and what it must pass. Three ways:
+A new version reaches a project that follows by itself. When the blueprint has a newer tag, the
+Symphony files a task in the project that replaces what the blueprint put, runs the project's own
+checks at that tip, and lands it once they pass, with no reviewer. The change was reviewed where
+it was made, in the blueprint's repository, and the project trusts that address as it trusts a
+dependency. The version arrives as a commit in the project, so its history says which version it
+ran on at any commit.
 
-- **A. By itself.** When the blueprint has a newer tag, the Symphony files a task in the project
-  that replaces what the blueprint put, runs the project's own checks at that tip, and lands it on
-  those green, with no reviewer. The change was reviewed where it was made, in the blueprint's
-  repository; the project trusts that address as it trusts a dependency.
-- **B. By itself, read first.** As A, and a fresh reviewer reads the diff in the project before it
-  lands. It costs an agent's review for each version in each project, and catches a version that
-  does not suit this project, or one from a blueprint somebody else publishes that should not run
-  here.
-- **C. When asked.** The project's page says a newer version exists. Nothing is filed until the
-  person asks; then as A.
+A task whose checks fail does not land: it stays on the project's board as any red task does,
+and the project keeps the version it had.
 
-A is nearest to "keeps propagating", and an update that needs no agent's work is what the shape
-promises a project that follows. B is the careful one where a blueprint is not the project
-owner's own. Under each, the version arrives as a commit in the project.
+The two ways set aside: the same with a fresh reviewer reading the changes in each project before
+they land, which costs a review for each version in each project; and an update only when a
+person asks, under which projects fall behind until someone does.
 
 - [x] **blueprint-following** — A blueprint would work as you described: a starter whose later versions keep arriving while the project leaves alone what the blueprint put there. A project that changes one becomes its own version, and asks for later changes as an agent's task. That leaves one thing open: how a new version reaches a project that still follows. A: by itself. Symphony files the update when the blueprint has a newer tag, runs the project's own checks, and lands it once they pass, with no reviewer. B: by itself, read first. As A, and a reviewer agent reads the changes before it lands. C: when asked. The project's page says a newer version exists, and nothing happens until you ask. Recommended: A. Approve and say A, B or C in the note, or comment. *Replaces:* blueprint-shape. [[analysis/blueprints#How a new version arrives]]
   [2026-11-23 11:23] agent — Posted for the board task `app/blueprints`, from your note on **blueprint-shape**: "have it be and starter but that allows future changes to continue to propagate, as long as the project does not change settings that the blueprint puts in place".
@@ -333,7 +330,7 @@ it; a blueprint decides what it starts as.
 
 ## Later rounds
 
-Each is a card once the two open ones are answered.
+Each is a card once the open one is answered.
 
 1. **Where a blueprint's plugins come from**: programs built and published with the blueprint,
    source the project builds, or none until a blueprint needs one.
