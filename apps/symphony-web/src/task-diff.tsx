@@ -1,20 +1,18 @@
-// The task kind's changed files. The summary is its own live part; a file's patch is read only
-// after its details opens, bound to that summary's commits, and cancelled as the comparison leaves.
-import { useContext, useEffect, useMemo, useState } from "react";
+// The task kind's changed files. The summary is its own live part, the card's line its comparison;
+// the files themselves are task-diff-files.tsx, a chunk imported once a comparison has some to list
+// (chunk.tsx), which reads a file's patch only after its details opens, bound to that summary's
+// commits, and cancels it as the comparison leaves.
+import { type ComponentType, useContext, useMemo } from "react";
 import { Button } from "./button";
+import { chunkFailed, useChunk } from "./chunk";
 import { type Part, PartsContext, usePart } from "./parts";
 import { scoped } from "./project";
-import { getJson, said } from "./request";
+import { said } from "./request";
 import { field } from "./shared";
+import type { DiffFileListProps } from "./task-diff-files";
 import { changesTask, type TaskEvent } from "./task-live";
 import { failed } from "./trouble";
-import {
-  TASK_DIFF_FILE_PATH,
-  TASK_DIFF_PATH,
-  type TaskDiff,
-  type TaskDiffFile,
-  type TaskDiffPatch,
-} from "./wire";
+import { TASK_DIFF_PATH, type TaskDiff } from "./wire";
 import "./task-diff.css";
 
 const nullableText = (value: unknown) => value === null || typeof value === "string";
@@ -47,21 +45,6 @@ export function readDiff(value: unknown): TaskDiff | null {
   return value as TaskDiff;
 }
 
-export function readPatch(
-  value: unknown,
-  base: string,
-  head: string,
-  path: string,
-): TaskDiffPatch | null {
-  return field(value, "base") === base &&
-    field(value, "head") === head &&
-    field(value, "path") === path &&
-    typeof field(value, "patch") === "string" &&
-    typeof field(value, "truncated") === "boolean"
-    ? (value as TaskDiffPatch)
-    : null;
-}
-
 export function diffPart(scope: string, slug: string): Part<TaskDiff, TaskEvent> {
   return {
     key: `diff ${slug}`,
@@ -82,98 +65,26 @@ export function diffPart(scope: string, slug: string): Part<TaskDiff, TaskEvent>
   };
 }
 
-export function PatchText({ patch, truncated }: { patch: string; truncated: boolean }) {
-  return (
-    <>
-      {/* biome-ignore lint/a11y/noNoninteractiveTabindex: this code region scrolls in both directions and needs keyboard access */}
-      <section className="task-diff-patch" tabIndex={0} aria-label="File patch">
-        <pre>{patch}</pre>
-      </section>
-      {truncated && <p role="status">Patch stops at 256 KiB. View the full comparison in Git.</p>}
-    </>
-  );
-}
+/** The files' chunk once it has come: a comparison drawn after draws them at once. */
+let fileList: ComponentType<DiffFileListProps> | null = null;
 
-function Patch({
-  scope,
-  slug,
-  base,
-  head,
-  path,
-}: {
-  scope: string;
-  slug: string;
-  base: string;
-  head: string;
-  path: string;
-}) {
-  const [answer, setAnswer] = useState<TaskDiffPatch | null>(null);
-  const [error, setError] = useState("");
-  const [attempt, retry] = useState(0);
-  useEffect(() => {
-    void attempt;
-    const end = new AbortController();
-    setError("");
-    const query = new URLSearchParams({ slug, base, head, path });
-    void getJson(scoped(scope, `${TASK_DIFF_FILE_PATH}?${query}`), end.signal)
-      .then((value) => {
-        if (end.signal.aborted) return;
-        const patch = readPatch(value, base, head, path);
-        if (patch === null) throw new Error("The file patch is not readable");
-        setAnswer(patch);
-      })
-      .catch((why: unknown) => {
-        if (!end.signal.aborted) setError(said(why));
-      });
-    return () => end.abort();
-  }, [scope, slug, base, head, path, attempt]);
-  if (answer !== null) return <PatchText patch={answer.patch} truncated={answer.truncated} />;
-  return error === "" ? (
-    <p role="status" aria-busy="true">
-      Reading this file's patch…
-    </p>
+/** Import the files' chunk, kept once it has come. */
+export const loadFileList = () =>
+  import("./task-diff-files").then((chunk) => {
+    fileList = chunk.DiffFileList;
+    return fileList;
+  });
+
+/** The comparison's files, drawn by their chunk once it has come; said as read until then. */
+function FileList(props: DiffFileListProps) {
+  const [List, failed, retry] = useChunk(loadFileList, () => fileList);
+  if (List) return <List {...props} />;
+  return failed ? (
+    chunkFailed("The changed files", retry)
   ) : (
-    <p role="status">
-      {failed(error)} <Button onClick={() => retry((n) => n + 1)}>Retry patch</Button>
+    <p role="status" aria-busy="true" data-pending="true">
+      Reading changed files…
     </p>
-  );
-}
-
-function File({
-  file,
-  scope,
-  slug,
-  base,
-  head,
-}: {
-  file: TaskDiffFile;
-  scope: string;
-  slug: string;
-  base: string;
-  head: string;
-}) {
-  const [opened, setOpened] = useState(false);
-  return (
-    <details
-      onToggle={(event) => {
-        if (event.currentTarget.open) setOpened(true);
-      }}
-    >
-      <summary>
-        <span className="task-diff-path">{file.path}</span>
-        <span className="task-diff-counts">
-          {file.added === null ? (
-            "Binary file"
-          ) : (
-            <>
-              <span data-change="added">+{file.added}</span>{" "}
-              <span data-change="removed">−{file.removed}</span>
-            </>
-          )}
-        </span>
-      </summary>
-      {opened && <Patch scope={scope} slug={slug} base={base} head={head} path={file.path} />}
-    </details>
   );
 }
 
@@ -200,18 +111,9 @@ export function DiffFiles({ diff, scope, slug }: { diff: TaskDiff; scope: string
       {diff.source !== "unavailable" && diff.files.length === 0 && !diff.truncated && (
         <p>No changed files.</p>
       )}
-      {diff.base !== null &&
-        diff.head !== null &&
-        diff.files.map((file) => (
-          <File
-            key={`${diff.base}:${diff.head}:${file.path}`}
-            file={file}
-            scope={scope}
-            slug={slug}
-            base={diff.base as string}
-            head={diff.head as string}
-          />
-        ))}
+      {diff.base !== null && diff.head !== null && diff.files.length > 0 && (
+        <FileList files={diff.files} scope={scope} slug={slug} base={diff.base} head={diff.head} />
+      )}
     </>
   );
 }

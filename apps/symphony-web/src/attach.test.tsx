@@ -5,16 +5,15 @@ import {
   AttachControls,
   type Attachments,
   compose,
-  isUpload,
   MAX_FILES,
   restored,
   routed,
   saved,
+  sendAfter,
   storageKey,
-  take,
-  tooLarge,
-  upload,
+  UNSENT,
 } from "./attach";
+import { isUpload, take, tooLarge, upload } from "./attach-upload";
 import { reply, server, until } from "./testing";
 import { UPLOAD_ACCEPT, UPLOAD_MAX_BYTES, type Upload } from "./wire";
 
@@ -254,6 +253,105 @@ describe("a batch of files", () => {
     expect(changed).toHaveBeenCalledTimes(1);
     expect(attachments.files).toEqual([]);
     expect(attachments.pending).toEqual(["one.png"]);
+  });
+});
+
+describe("a composer's files before their sending has come", () => {
+  const held = (): Attachments => ({ files: [], pending: [], trouble: null });
+
+  /** The sending, come as `come` says: a take it records, or none, which fails. */
+  function sending(come: boolean) {
+    const took = vi.fn(async () => {});
+    const load = vi.fn(async () => {
+      if (!come) throw new Error("no such chunk");
+      return { take: took };
+    });
+    return { took, load };
+  }
+
+  /** The page's shell, which says its build is `gone`. */
+  function aShell(gone: boolean) {
+    const asked = vi.fn(async () => gone);
+    vi.stubGlobal("window", { reviewShell: { gone: asked } });
+    return asked;
+  }
+
+  it("are taken once it has come, after the batches before them", async () => {
+    const { took, load } = sending(true);
+    const attachments = held();
+    const [changed, kept, alive] = [vi.fn(), vi.fn(), () => true];
+    let before: () => void = () => {};
+    const earlier = new Promise<void>((done) => {
+      before = done;
+    });
+    const files = [picked("one.png")];
+    const done = sendAfter(earlier, files, attachments, changed, kept, alive, load);
+    await Promise.resolve();
+    expect(load).not.toHaveBeenCalled();
+    before();
+    await done;
+    expect(took).toHaveBeenCalledExactlyOnceWith(files, attachments, changed, kept, alive);
+  });
+
+  it("say they were not sent, once the shell says the build is there", async () => {
+    const gone = aShell(false);
+    const attachments = held();
+    const changed = vi.fn();
+    await sendAfter(
+      Promise.resolve(),
+      [picked("one.png")],
+      attachments,
+      changed,
+      () => {},
+      () => true,
+      sending(false).load,
+    );
+    expect(gone).toHaveBeenCalledOnce();
+    expect(attachments.trouble).toBe(UNSENT);
+    expect(changed).toHaveBeenCalledOnce();
+    expect([attachments.files, attachments.pending]).toEqual([[], []]);
+  });
+
+  it("say nothing where the build is gone, or the composer left", async () => {
+    for (const [gone, alive] of [
+      [true, true],
+      [false, false],
+    ]) {
+      const asked = aShell(gone);
+      const attachments = held();
+      const changed = vi.fn();
+      await sendAfter(
+        Promise.resolve(),
+        [picked("one.png")],
+        attachments,
+        changed,
+        () => {},
+        () => alive,
+        sending(false).load,
+      );
+      expect([gone, alive, attachments.trouble]).toEqual([gone, alive, null]);
+      expect(changed).not.toHaveBeenCalled();
+      expect(asked).toHaveBeenCalledTimes(alive ? 1 : 0);
+    }
+  });
+
+  it("are sent by the uploads' chunk itself by default", async () => {
+    vi.stubGlobal("document", { getElementById: () => null });
+    const asked = server();
+    const attachments = held();
+    const done = sendAfter(
+      Promise.resolve(),
+      [picked("one.png")],
+      attachments,
+      () => {},
+      () => {},
+      () => true,
+    );
+    await until(() => expect(asked).toHaveLength(1));
+    expect(asked[0]?.url).toBe("/api/upload?name=one.png");
+    asked[0]?.answer(reply(200, stored("one.png", true)));
+    await done;
+    expect(attachments.files).toEqual([stored("one.png", true)]);
   });
 });
 
