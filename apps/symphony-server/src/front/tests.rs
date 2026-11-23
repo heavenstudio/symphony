@@ -145,12 +145,9 @@ fn a_server_of_its_own_sweeps_where_its_project_asks_in_its_main_checkout_on_the
     let started = |root: &Path| {
         let shared = Shared::new(1, 1, root, None, crate::testing::open_gate());
         shared.stop();
-        let worker = session_maintenance_where(&shared, None, MachineClock, none);
-        let started = worker.is_some();
-        for worker in worker {
-            worker.join().unwrap();
-        }
-        started
+        session_maintenance_where(&shared, None, MachineClock, none)
+            .map(|worker| worker.join().unwrap())
+            .is_some()
     };
     assert!(
         started(&main),

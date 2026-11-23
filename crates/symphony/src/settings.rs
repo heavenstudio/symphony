@@ -949,6 +949,20 @@ fn identity(file: &FileRead, project: &Project) -> SettingsEntry {
             ),
             file.setting(
                 &["board"],
+                "sweep_disposable",
+                "Ignored paths that go with a merged worktree",
+                SettingKind::List,
+                "the board's own",
+            ),
+            file.setting(
+                &["board"],
+                "own_sweep",
+                "Whether a server of its own sweeps idle sessions",
+                SettingKind::Switch,
+                "off",
+            ),
+            file.setting(
+                &["board"],
                 "stale_writer_hours",
                 "Hours an unused build holds the board's move",
                 SettingKind::Number,
