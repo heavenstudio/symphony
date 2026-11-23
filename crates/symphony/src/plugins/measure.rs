@@ -31,7 +31,7 @@ use symphony_plugin::vocabulary::{
 use symphony_plugin::{
     Authority, BoardAction, BoardField, Card, CardKind, Command, Component, Describer, DocCheck,
     Docs, Drawing, FieldKind, File, Gates, Generator, HomeRegion, Page, Plugin, Problem, ProseRule,
-    Renderer, Reply, Route, Submission, Submitted, TaskRef, Theme, Transport, Watch,
+    Renderer, Reply, Route, Sender, Submission, Submitted, TaskRef, Theme, Transport, Watch,
 };
 
 /// The record of a project's plugin calls, under its artifacts folder: one JSON line per call.
@@ -507,6 +507,15 @@ impl BoardAction for On<dyn BoardAction> {
         submission: &Submission,
     ) -> Result<Submitted, String> {
         self.time::<Submit>(|a| a.submit(root, task, submission))
+    }
+    fn submit_from(
+        &self,
+        root: &Path,
+        task: &TaskRef<'_>,
+        submission: &Submission,
+        sender: &Sender,
+    ) -> Result<Submitted, String> {
+        self.time::<Submit>(|a| a.submit_from(root, task, submission, sender))
     }
 }
 

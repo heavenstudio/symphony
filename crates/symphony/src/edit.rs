@@ -37,10 +37,11 @@ const OWNER_STATES: [State; 5] = [
     State::Dismissed,
 ];
 
-/// An owner verdict line as the app writes it: `  [YYYY-MM-DD HH:MM] owner · STATE[ — NOTE]`.
-static OWNER_ENTRY: LazyLock<Regex> = LazyLock::new(|| {
+/// A verdict line as the app writes it: `  [YYYY-MM-DD HH:MM] WHO · STATE[ — NOTE]`, WHO the
+/// short name of who gave it (`owner` for the person at the machine).
+static VERDICT_ENTRY: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
-        r"^  \[(\d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}})\] owner · ({NS}+)(?: — (.*))?$"
+        r"^  \[(\d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}})\] ({NS}+) · ({NS}+)(?: — (.*))?$"
     ))
     .expect("the entry")
 });
@@ -218,6 +219,22 @@ pub fn set_decision(
     now: &str,
     plugins: &crate::plugins::Plugins,
 ) -> Result<String, EditError> {
+    set_decision_by(text, slug, state, note, now, plugins, Who::Owner.as_str())
+}
+
+/// [`set_decision`] given by `by`, the short name of who asked (`symphony_plugin::Actor`), which
+/// the entry carries in the owner's place: `owner` for the person at the machine, whose entry reads
+/// as [`set_decision`]'s. The record's readers know `owner` and `agent` alone until a board names
+/// people (docs/product/analysis/users-and-identity.md, "How a person's name is written").
+pub fn set_decision_by(
+    text: &str,
+    slug: &str,
+    state: &str,
+    note: &str,
+    now: &str,
+    plugins: &crate::plugins::Plugins,
+    by: &str,
+) -> Result<String, EditError> {
     let Some(state) = State::parse(state).filter(|s| OWNER_STATES.contains(s)) else {
         let owner: Vec<&str> = OWNER_STATES.iter().map(|s| s.as_str()).collect();
         return Err(EditError(format!(
@@ -230,7 +247,7 @@ pub fn set_decision(
     let index = find_card(&lines, slug).ok_or_else(|| no_card(slug))?;
     let end = card_end(&lines, index);
     let note = note_lines(note)?;
-    let mut entry = format!("  [{now}] owner · {}", state.as_str());
+    let mut entry = format!("  [{now}] {by} · {}", state.as_str());
     if let Some(first) = note.first() {
         entry.push_str(&format!(" — {first}"));
     }
@@ -260,6 +277,19 @@ pub fn is_repeat_decision(
     note: &str,
     now: &str,
 ) -> Result<bool, EditError> {
+    is_repeat_decision_by(text, slug, state, note, now, Who::Owner.as_str())
+}
+
+/// [`is_repeat_decision`] of a verdict given by `by` ([`set_decision_by`]): one that another gave
+/// with the same words is no repeat of it.
+pub fn is_repeat_decision_by(
+    text: &str,
+    slug: &str,
+    state: &str,
+    note: &str,
+    now: &str,
+    by: &str,
+) -> Result<bool, EditError> {
     let lines = splitlines(text);
     let note = written(note);
     let tail: Vec<String> = note.iter().skip(1).map(|line| continued(line)).collect();
@@ -273,11 +303,12 @@ pub fn is_repeat_decision(
     else {
         return Ok(false);
     };
-    let Some(entry) = OWNER_ENTRY.captures(lines[start]) else {
+    let Some(entry) = VERDICT_ENTRY.captures(lines[start]) else {
         return Ok(false);
     };
-    let said = entry.get(3).map_or("", |m| m.as_str());
-    if &entry[2] != state
+    let said = entry.get(4).map_or("", |m| m.as_str());
+    if &entry[2] != by
+        || &entry[3] != state
         || said != note.first().copied().unwrap_or("")
         || lines[start + 1..end] != tail[..]
     {
@@ -298,6 +329,19 @@ pub fn add_message(
     who: Who,
     verdict: Option<&str>,
 ) -> Result<String, EditError> {
+    add_message_by(text, slug, message, now, who.as_str(), verdict)
+}
+
+/// [`add_message`] said by `by`: `agent`, or the short name of the person who asked, which the line
+/// carries in the owner's place, as [`set_decision_by`]'s entry does.
+pub fn add_message_by(
+    text: &str,
+    slug: &str,
+    message: &str,
+    now: &str,
+    by: &str,
+    verdict: Option<&str>,
+) -> Result<String, EditError> {
     let message = note_lines(message)?;
     let Some(first) = message.first() else {
         return Err(EditError("a message needs some text".to_string()));
@@ -309,7 +353,7 @@ pub fn add_message(
         .filter(|v| !v.is_empty())
         .map_or(String::new(), |v| format!(" · {v}"));
     let mut out: Vec<String> = lines[..end].iter().map(|line| line.to_string()).collect();
-    out.push(format!("  [{now}] {}{verdict} — {first}", who.as_str()));
+    out.push(format!("  [{now}] {by}{verdict} — {first}"));
     out.extend(message.iter().skip(1).map(|line| continued(line)));
     out.extend(lines[end..].iter().map(|line| line.to_string()));
     Ok(out.join("\n") + "\n")

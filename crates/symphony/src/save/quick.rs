@@ -16,12 +16,14 @@ enum Filing {
 }
 
 impl Saves {
-    /// Apply a quick save with its page context and any already recorded task intent.
+    /// Apply a quick save by `by`, the short name of who asked, with its page context and any
+    /// already recorded task intent.
     pub(super) fn quick(
         &self,
         scope: &str,
         route: &str,
         payload: &Value,
+        by: &str,
     ) -> Result<Value, Failure> {
         let title = string(payload, "title").trim();
         if route == "/api/quick-task" {
@@ -43,7 +45,7 @@ impl Saves {
             if let Some(result) = receipt.completed() {
                 return result;
             }
-            let result = self.quick_task(scope, payload, &identity, &receipt);
+            let result = self.quick_task(scope, payload, &identity, &receipt, by);
             return receipt.finish(result);
         }
         let PageContext { page, doc, anchor } = self.quick_context(scope, payload)?;
@@ -56,11 +58,12 @@ impl Saves {
             std::env::var("ASKS_DB").ok().as_deref(),
         ))?;
         let readme = crate::project::Project::of(&self.root).entrypoints[0].route("README.md");
-        let id = store.ask(
+        let id = store.ask_by(
             if doc.is_empty() { &readme } else { &doc },
             &text,
             if doc.is_empty() { "" } else { &anchor },
             "",
+            by,
         )?;
         Ok(json!({"id":id}))
     }
@@ -71,6 +74,7 @@ impl Saves {
         payload: &Value,
         identity: &str,
         receipt: &quick_task::Receipt,
+        by: &str,
     ) -> Result<Value, Failure> {
         let record = quick_task::load(&self.root, identity, scope, payload).map_err(|error| {
             if receipt.fresh {
@@ -103,10 +107,11 @@ impl Saves {
         }
         let context = self.quick_context(scope, payload)?;
         let store = self.store().map_err(before_dispatch)?;
-        let new = match self.quick_task_fields(payload, context, &store, &receipt.fingerprint)? {
-            Filing::Saved(slug) => return Ok(json!({"slug":slug})),
-            Filing::New(new) => new,
-        };
+        let new =
+            match self.quick_task_fields(payload, context, &store, &receipt.fingerprint, by)? {
+                Filing::Saved(slug) => return Ok(json!({"slug":slug})),
+                Filing::New(new) => new,
+            };
         let record = quick_task::reserve(&self.root, identity, scope, payload, &new)
             .map_err(before_dispatch)?;
         quick_task::create(
@@ -123,6 +128,7 @@ impl Saves {
         context: PageContext,
         store: &symphony_board::Store,
         fingerprint: &str,
+        by: &str,
     ) -> Result<Filing, Failure> {
         let PageContext { page, doc, anchor } = context;
         let title = string(payload, "title").trim();
@@ -178,7 +184,7 @@ impl Saves {
             slug,
             title: title.into(),
             body,
-            by: "owner".into(),
+            by: by.into(),
             priority,
             status: "concept".into(),
             links: if doc.is_empty() {

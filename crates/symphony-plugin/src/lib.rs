@@ -46,6 +46,9 @@ pub mod execution;
 pub mod authority;
 pub use authority::Authority;
 
+pub mod actor;
+pub use actor::{Actor, Sender};
+
 mod serve;
 pub use serve::{ENDING, WORKERS, serve, serve_on};
 
@@ -368,7 +371,8 @@ pub struct TaskRef<'a> {
     pub branch: &'a str,
 }
 
-/// What the owner sends back on an offer: its payload, as it came, and their note.
+/// What the owner sends back on an offer: its payload, as it came, and their note. Who sent it
+/// travels beside it ([`Sender`], [`BoardAction::submit_from`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Submission {
     pub payload: String,
@@ -397,6 +401,20 @@ pub trait BoardAction: Send + Sync {
         task: &TaskRef<'_>,
         submission: &Submission,
     ) -> Result<Submitted, String>;
+    /// The answer to the offer on `task`, sent by `sender`: what the host calls, so that what the
+    /// action writes for them (a commit, a file, a record of its own) can name them and be
+    /// authored as them. An action that does not read who sent it implements [`Self::submit`]
+    /// alone, which this answers by.
+    fn submit_from(
+        &self,
+        root: &Path,
+        task: &TaskRef<'_>,
+        submission: &Submission,
+        sender: &Sender,
+    ) -> Result<Submitted, String> {
+        let _ = sender;
+        self.submit(root, task, submission)
+    }
 }
 
 /// What answers a project's own gates of a task: the stamps or checks its landing counts, as

@@ -597,7 +597,7 @@ async fn over_hub(shared: &Arc<Shared>, hub: Arc<Hub>, asked: Asked, request: Re
             task_diff::answer(hub.clone(), checkout(), &request, patch).await
         }
         "/api/feed" => feed(hub, scope, request).await,
-        symphony_api::TASK_ATTEMPTS_PATH => attempts(hub, &request).await,
+        symphony_api::TASK_ATTEMPTS_PATH => attempts(shared, hub, &request).await,
         symphony_api::workflow::WORKFLOW_GUARDS_PATH => guards(hub, &request).await,
         symphony_api::workflow::WORKFLOW_PATH | symphony_api::workflow::WORKFLOW_ACTIONS_PATH => {
             workflow(hub, path, &request).await
@@ -621,15 +621,17 @@ async fn over_hub(shared: &Arc<Shared>, hub: Arc<Hub>, asked: Asked, request: Re
     }
 }
 
-/// A task's execution attempts, the board's own read, the same for every branch: the local
-/// owner's, or the visitor's hosted admission verified (`crate::attempts`).
-async fn attempts(hub: Arc<Hub>, request: &Request) -> Response {
+/// A task's execution attempts, the board's own read, the same for every branch: the person's
+/// this machine's gate admits, or the visitor's hosted admission verified (`crate::attempts`).
+async fn attempts(shared: &Arc<Shared>, hub: Arc<Hub>, request: &Request) -> Response {
     let slug = query(request, "slug").unwrap_or_default();
-    let asker =
-        crate::hosted::admission(request).map_or(crate::attempts::Asker::Local, |admitted| {
+    let asker = crate::hosted::admission(request).map_or_else(
+        || crate::attempts::Asker::Local(shared.gate.person().principal.clone()),
+        |admitted| {
             let context = admitted.context();
             crate::attempts::Asker::hosted(&context.actor, &context.policy_revision)
-        });
+        },
+    );
     let read = crate::spawn::blocking(move || crate::attempts::read(&hub, &slug, &asker).map(Json));
     answered(read.await, "")
 }

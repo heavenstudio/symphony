@@ -23,7 +23,7 @@ use symphony_plugin::protocol::{
 use symphony_plugin::vocabulary::{Gate, Region, SettingsEntry, TaskOffer};
 use symphony_plugin::{
     Authority, BoardAction, Command, Describer, DocCheck, Docs, Drawing, File, Gates, HomeRegion,
-    Page, Problem, Renderer, Reply, Route, Submission, Submitted, TaskRef, Watch,
+    Page, Problem, Renderer, Reply, Route, Sender, Submission, Submitted, TaskRef, Watch,
 };
 
 use super::{Failure, Remote};
@@ -175,6 +175,23 @@ impl BoardAction for RemoteAction {
             TaskData::of(task),
             submission.clone(),
         ))
+    }
+    /// The submission with who sent it, which a plugin of minor 6 reads and an older one reads past.
+    fn submit_from(
+        &self,
+        root: &Path,
+        task: &TaskRef<'_>,
+        submission: &Submission,
+        sender: &Sender,
+    ) -> Result<Submitted, String> {
+        let mut asked = Submit::new(
+            self.name.clone(),
+            root.to_path_buf(),
+            TaskData::of(task),
+            submission.clone(),
+        );
+        asked.sender = Some(sender.clone());
+        self.ask(asked)
     }
 }
 

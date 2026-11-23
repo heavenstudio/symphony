@@ -5,7 +5,8 @@
 //! ([`symphony_api::ATTEMPT_VIEW_ROUTE`]).
 //!
 //! Who asks is the one the server authenticated, never a field of the request: on this machine's
-//! server the local owner ([`symphony_board::workflow::local_owner`], as a workflow edge is
+//! server the person its gate admits ([`crate::gate::Gate::person`], the local owner
+//! [`symphony_board::workflow::local_owner`] while a board names nobody, as a workflow edge is
 //! taken), and under hosted admission the principal and policy revision the host verified, which
 //! reads alone here (its controls are the host's dispatch). Each grant is on the one task the
 //! route names, under the board scope of the project the server serves
@@ -45,8 +46,8 @@ pub(crate) type Failed = (StatusCode, String);
 /// Who asks, as the server authenticated them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Asker {
-    /// The local owner, at this machine's board.
-    Local,
+    /// The person at this machine's board, by the principal its gate admitted them as.
+    Local(Principal),
     /// A visitor hosted admission verified: its principal and the policy that admitted it.
     Hosted {
         principal: Principal,
@@ -70,7 +71,7 @@ impl Asker {
     /// Its grant of `acts` on `task` alone, in `scope`.
     fn grant(&self, scope: &Scope, task: &str, acts: &[Act]) -> Grant {
         let (principal, policy) = match self {
-            Asker::Local => (symphony_board::workflow::local_owner(), POLICY.to_string()),
+            Asker::Local(principal) => (principal.clone(), POLICY.to_string()),
             Asker::Hosted { principal, policy } => (principal.clone(), policy.clone()),
         };
         Grant::from_host(principal, scope.clone(), acts, policy).on_tasks(&[task])
@@ -214,7 +215,7 @@ fn history(hub: &Hub, store: &Store, slug: &str, asker: &Asker) -> Result<TaskAt
             .iter()
             .map(|attempt| {
                 let mut wired = attempt.wire();
-                if *asker == Asker::Local {
+                if matches!(asker, Asker::Local(_)) {
                     wired.controls = controls(attempt, &hub.providers);
                 } else if local(attempt) {
                     // This machine's terminal address and conversation, which a hosted page
@@ -339,15 +340,22 @@ fn fields<T: serde::de::DeserializeOwned>(payload: Value) -> Result<T, Failed> {
     serde_json::from_value(payload).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))
 }
 
-/// `payload`'s control, taken by the local owner: answered with the task's attempts after it.
-pub(crate) fn control(hub: &Hub, payload: Value) -> Result<TaskAttempts, Failed> {
+/// `payload`'s control, taken by `asker`, this machine's person: answered with the task's
+/// attempts after it.
+pub(crate) fn control(hub: &Hub, payload: Value, asker: &Asker) -> Result<TaskAttempts, Failed> {
     let asked: AttemptControl = fields(payload)?;
-    on_board(hub, &asked.slug, |store| controlled(hub, store, &asked))
+    on_board(hub, &asked.slug, |store| {
+        controlled(hub, store, &asked, asker)
+    })
 }
 
-fn controlled(hub: &Hub, store: &Store, asked: &AttemptControl) -> Result<TaskAttempts, Failed> {
+fn controlled(
+    hub: &Hub,
+    store: &Store,
+    asked: &AttemptControl,
+    asker: &Asker,
+) -> Result<TaskAttempts, Failed> {
     let scope = scope_of(hub, store);
-    let asker = Asker::Local;
     let read = asker.grant(&scope, &asked.slug, &[Act::Read]);
     let attempt = Reader::new(store, scope.clone())
         .attempt(&read, &asked.attempt)
@@ -416,18 +424,23 @@ fn controlled(hub: &Hub, store: &Store, asked: &AttemptControl) -> Result<TaskAt
         }
         other => return Err(bad(format!("no control {other:?}: cancel, stop or resume"))),
     }
-    history(hub, store, &asked.slug, &asker)
+    history(hub, store, &asked.slug, asker)
 }
 
-/// A view of `payload`'s attempt, resolved now for the local owner through its provider.
-pub(crate) fn view(hub: &Hub, payload: Value) -> Result<AttemptLink, Failed> {
+/// A view of `payload`'s attempt, resolved now for `asker`, this machine's person, through its
+/// provider.
+pub(crate) fn view(hub: &Hub, payload: Value, asker: &Asker) -> Result<AttemptLink, Failed> {
     let asked: AttemptViewAsk = fields(payload)?;
-    on_board(hub, &asked.slug, |store| viewed(hub, store, &asked))
+    on_board(hub, &asked.slug, |store| viewed(hub, store, &asked, asker))
 }
 
-fn viewed(hub: &Hub, store: &Store, asked: &AttemptViewAsk) -> Result<AttemptLink, Failed> {
+fn viewed(
+    hub: &Hub,
+    store: &Store,
+    asked: &AttemptViewAsk,
+    asker: &Asker,
+) -> Result<AttemptLink, Failed> {
     let scope = scope_of(hub, store);
-    let asker = Asker::Local;
     let read = asker.grant(&scope, &asked.slug, &[Act::Read]);
     let attempt = Reader::new(store, scope.clone())
         .attempt(&read, &asked.attempt)

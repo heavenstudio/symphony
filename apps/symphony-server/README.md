@@ -48,7 +48,8 @@ The first profile refuses worktree selectors, machine diagnostics/controls, pane
 and actorless plugin dispatch. Saves and `/x/` routes go only to `Host::dispatch`, whose default
 is deny, with verified `Context` and canonical input, without credential headers. An adapter
 resolves any domain-specific references and rechecks authority before state or provider I/O.
-It must not forward hosted mutations into the local owner's save/plugin APIs. Binary upload
+It must not forward hosted mutations into the local owner's save/plugin APIs, and those saves
+refuse a request the hosted admission holds: each save is the person the local gate admits. Binary upload
 and storage integration need their own actor-aware adapter; a local upload URL is no grant.
 Redirects stay relative or on the configured origin, with no login redirects for refusals.
 

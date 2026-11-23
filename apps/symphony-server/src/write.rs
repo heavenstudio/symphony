@@ -1,4 +1,9 @@
 //! Native owner writes. Validate the browser's origin before reading or dispatching its body.
+//!
+//! Each save is asked by the person the local host's gate admits ([`crate::gate::Gate::person`]),
+//! the actor its save takes ([`symphony::save::Saves::post_as`]), never one its payload names. A
+//! request hosted admission let in is refused here: a hosted visitor's saves are its host's
+//! dispatch ([`crate::hosted::Host::dispatch`]) until hosted saves go through these.
 
 use crate::api::error;
 use crate::front::Shared;
@@ -16,6 +21,10 @@ const JSON_BYTES: usize = 2 * 1024 * 1024;
 const HOST_REFUSED: &str = "its Host is not this machine's";
 const ORIGIN_REFUSED: &str = "its Origin is not http:// and its Host";
 const CHECK_FAILED: &str = "its Host check did not finish";
+
+/// Why a save hosted admission let in is refused here.
+const HOSTED_SAVE: &str =
+    "a hosted visitor's saves are its host's to dispatch, never the local owner's";
 
 /// The server log's line for a refused write: its path, why, and its Host and Origin as sent, or
 /// `absent`. A refused write's body is never read.
@@ -74,6 +83,9 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
     if route == symphony_api::ATTEMPT_CONTROL_ROUTE || route == symphony_api::ATTEMPT_VIEW_ROUTE {
         return attempt(shared, &route, request).await;
     }
+    if crate::hosted::admission(&request).is_some() {
+        return error(StatusCode::FORBIDDEN, HOSTED_SAVE);
+    }
     let payload = match json_body(request.into_body()).await {
         Ok(payload) => payload,
         Err((status, why)) => return error(status, why),
@@ -86,6 +98,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
         let saves = shared
             .saves
             .get_or_init(|| symphony::save::Saves::start(&shared.root));
+        let actor = shared.gate.person();
         let result = if route == "/api/postpone" {
             match shared
                 .api
@@ -93,11 +106,11 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
                 .ok_or_else(|| "Symphony data is not ready".to_string())
                 .and_then(|hub| hub.queue_order())
             {
-                Ok(order) => saves.post_with_order(&scope, &route, &payload, &order),
+                Ok(order) => saves.post_with_order_as(actor, &scope, &route, &payload, &order),
                 Err(error) => Err(symphony::save::Failure { status: 503, error }),
             }
         } else {
-            saves.post(&scope, &route, &payload)
+            saves.post_as(actor, &scope, &route, &payload)
         };
         if result.as_ref().is_ok_and(|value| value["changed"] == true)
             && route == "/api/postpone"
@@ -150,7 +163,7 @@ async fn workflow_apply(shared: &Arc<Shared>, payload: serde_json::Value) -> Res
         let saves = shared
             .saves
             .get_or_init(|| symphony::save::Saves::start(&shared.root));
-        saves.apply_workflow(&payload)
+        saves.apply_workflow_as(shared.gate.person(), &payload)
     })
     .await;
     match applied {
@@ -172,8 +185,8 @@ async fn workflow_apply(shared: &Arc<Shared>, payload: serde_json::Value) -> Res
     }
 }
 
-/// A control or a view of an execution attempt (`crate::attempts`), the local owner's: never a
-/// hosted visitor's, whose posts are its host's dispatch. A view's address is answered `no-store`
+/// A control or a view of an execution attempt (`crate::attempts`), the person's the gate admits:
+/// never a hosted visitor's, whose posts are its host's dispatch. A view's address is answered `no-store`
 /// and said nowhere else, this server's log included.
 async fn attempt(shared: &Arc<Shared>, route: &str, request: Request) -> Response {
     if crate::hosted::admission(&request).is_some() {
@@ -191,11 +204,12 @@ async fn attempt(shared: &Arc<Shared>, route: &str, request: Request) -> Respons
         Err(starting) => return *starting,
     };
     let view = route == symphony_api::ATTEMPT_VIEW_ROUTE;
+    let asker = crate::attempts::Asker::Local(shared.gate.person().principal.clone());
     let answered = crate::spawn::blocking(move || {
         if view {
-            crate::attempts::view(&hub, payload).map(|link| json!(link))
+            crate::attempts::view(&hub, payload, &asker).map(|link| json!(link))
         } else {
-            crate::attempts::control(&hub, payload).map(|attempts| json!(attempts))
+            crate::attempts::control(&hub, payload, &asker).map(|attempts| json!(attempts))
         }
     })
     .await;
@@ -411,6 +425,9 @@ mod body_tests;
 
 #[cfg(test)]
 mod pending_tests;
+
+#[cfg(test)]
+mod actor_tests;
 
 #[cfg(test)]
 mod tests {

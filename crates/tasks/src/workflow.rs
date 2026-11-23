@@ -561,6 +561,16 @@ pub fn local_owner() -> Principal {
     Principal::new(PrincipalKind::Human, "local".into(), "owner".into())
 }
 
+/// The local owner as the actor of a write ([`symphony_plugin::Actor`]): the person at this
+/// machine, whose lines carry `owner` while a board names nobody, shown as `owner`, with no git
+/// handles of their own (a save is authored by the machine's git identity, as always), and the
+/// principal [`local_owner`], whose subject is that name.
+pub fn local_actor() -> symphony_plugin::Actor {
+    let owner = local_owner();
+    let sender = symphony_plugin::Sender::new(&owner.subject, &owner.subject, Vec::new());
+    symphony_plugin::Actor::new(sender, owner)
+}
+
 /// The board's own service `name` (its activation, its recovery), acting for no person.
 pub fn board_service(name: &str) -> Principal {
     Principal::new(PrincipalKind::Service, "board".into(), name.into())

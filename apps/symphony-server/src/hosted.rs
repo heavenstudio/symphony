@@ -6,8 +6,11 @@
 //! assertion alone is never transport proof. Errors are deliberately finite and nonsecret.
 //!
 //! Native read-only surfaces use the admitted project. Mutations and plugin routes go only to
-//! [`Host::dispatch`], with verified context, never to the local owner's actorless save API.
-//! Worktree selection and machine operations are excluded. No machine registry is consulted.
+//! [`Host::dispatch`], with verified context, never to the saves of the person the local gate
+//! admits (`crate::write`), which refuse a hosted request: a write's actor
+//! (`symphony_plugin::Actor`) is made from the verified [`Actor`] by the host that dispatches it,
+//! never by the local saves. Worktree selection and machine operations are excluded. No machine
+//! registry is consulted.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -159,8 +162,8 @@ pub trait Host: Send + Sync + 'static {
     ) -> BoxFuture<'a, Result<(), Refusal>> {
         Box::pin(async { Err(Refusal::Denied) })
     }
-    /// Context-aware integration only. Do not pass these operations to actorless owner/plugin
-    /// APIs. Resolve domain-specific references and recheck permission before state/provider I/O;
+    /// Context-aware integration only. Do not pass these operations to the local gate's saves or
+    /// to actorless plugin APIs. Resolve domain-specific references and recheck permission before state/provider I/O;
     /// the request is cancelled at expiry/revocation, including while its response is streaming.
     fn dispatch<'a>(
         &'a self,

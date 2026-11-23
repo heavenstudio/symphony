@@ -719,7 +719,7 @@ fn a_plugin_of_another_major_is_refused_killed_and_not_started_again_until_its_p
     let refused = remote.declaration().unwrap_err();
     assert_eq!(
         refused,
-        "its process is refused: the plugin speaks protocol 1.0 and this Symphony 0.5: install a \
+        "its process is refused: the plugin speaks protocol 1.0 and this Symphony 0.6: install a \
          Symphony that speaks protocol 1; it is not started again until its program or the \
          project's settings change"
     );
