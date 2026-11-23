@@ -491,6 +491,9 @@ impl Project {
         // The board reads `[stamps]` itself, from the main checkout's committed file, and refuses
         // a catalogue it cannot read where a command needs it; the lint and a load refuse it here.
         symphony_board::stamps::Catalogue::parse(text)?;
+        // The board reads the agents' switches itself (`[agents.launch.on]`), and refuses a launch
+        // while the file turns off the default it names; the lint and a load refuse it here.
+        symphony_board::launch::Defaults::parse(FILE, text)?;
         Ok(project)
     }
 

@@ -617,3 +617,116 @@ pub(super) fn under_delivery_settings_made_the_projects_in_turn_each_deliver(f: 
     }
     f.clean_workers();
 }
+
+/// An agent's switch from the page: the launch default's is refused in the store and in the file
+/// alike, saying to pick another default first; another's is kept and in force at once, named as
+/// the store's on the page and by `just tasks limits`; and made the project's once the default it
+/// would leave on is the file's own.
+pub(super) fn an_agents_switch_is_kept_and_made_the_projects_but_never_the_defaults(f: &Fixture) {
+    let root = committing(f, &with_preferences());
+    let saves = ClosingSaves::start(&root);
+    // The file names no default: codex, the board's own, is the default and cannot be off.
+    let (status, why) = refused(
+        &saves,
+        json!({"key":"agents.launch.on.codex","action":"store","value":false}),
+    );
+    assert_eq!(status, 400, "{why}");
+    assert_eq!(
+        why,
+        "the board's store: [agents.launch.on] codex turns off codex, the launch default (the \
+         board's own), which cannot be off: pick another default first: nothing was written"
+    );
+    assert_eq!(entry(f, "agents.launch.on.codex"), None);
+    // With claude the stored default, codex may be off, in force at once.
+    written(
+        &saves,
+        "agents.launch.default",
+        "store",
+        Some(json!("claude")),
+    );
+    let said = written(
+        &saves,
+        "agents.launch.on.codex",
+        "store",
+        Some(json!(false)),
+    );
+    assert_eq!(
+        said["said"],
+        "[agents.launch.on] codex is off in the board's store, in force at once unless \
+         symphony.local.toml writes it"
+    );
+    assert_eq!(
+        shown(&root, "[agents.launch.on] codex"),
+        (
+            "off".into(),
+            Some(SettingScope::Board),
+            "the board's store [agents.launch.on] codex".into(),
+            Some("none written".into()),
+        )
+    );
+    let listed: Vec<String> = page(&root)
+        .stored
+        .into_iter()
+        .map(|item| item.key)
+        .collect();
+    assert!(
+        listed.contains(&"agents.launch.on.codex".into()),
+        "{listed:?}"
+    );
+    assert!(
+        !listed.contains(&"agents.launch.on.claude".into()),
+        "{listed:?}"
+    );
+    let limits = symphony_board::sys::output(
+        symphony_board::sys::Command::new(std::env::var("SYMPHONY_AFTER_COMMIT_TASKS").unwrap())
+            .arg("limits")
+            .current_dir(&root),
+    )
+    .unwrap();
+    let printed = String::from_utf8_lossy(&limits.stdout);
+    let row = (printed.lines())
+        .find(|line| line.starts_with("codex "))
+        .unwrap_or_else(|| panic!("{printed}"));
+    assert!(
+        row.contains(" off ") && row.ends_with("the board's store [agents.launch.on] codex"),
+        "{row}"
+    );
+    // Made the project's while the file names no default, the file would turn off its own: the
+    // settings check refuses it, and the stored switch holds.
+    let tip = git(&root, &["rev-parse", "main"]);
+    let (status, why) = refused(
+        &saves,
+        json!({"key":"agents.launch.on.codex","action":"commit"}),
+    );
+    assert_eq!(status, 422, "{why}");
+    assert!(why.contains("pick another default first"), "{why}");
+    assert!(
+        why.ends_with("nothing was written, and the stored value holds"),
+        "{why}"
+    );
+    assert_eq!(git(&root, &["rev-parse", "main"]), tip);
+    assert_eq!(entry(f, "agents.launch.on.codex"), Some(json!(false)));
+    // The default made the project's first, the switch follows.
+    written(&saves, "agents.launch.default", "commit", None);
+    let said = written(&saves, "agents.launch.on.codex", "commit", None);
+    assert!(said["commit"].is_string(), "{said}");
+    assert_eq!(entry(f, "agents.launch.on.codex"), None);
+    let (held, scope, from, _) = shown(&root, "[agents.launch.on] codex");
+    assert_eq!((held.as_str(), scope), ("off", Some(SettingScope::Project)));
+    assert!(
+        from.starts_with("symphony.toml [agents.launch.on] codex, line "),
+        "{from}"
+    );
+    // The default's switch, refused against the default the file now names.
+    let (status, why) = refused(
+        &saves,
+        json!({"key":"agents.launch.on.claude","action":"store","value":false}),
+    );
+    assert_eq!(status, 400, "{why}");
+    assert!(
+        why.contains("the launch default (symphony.toml [agents] launch default, line "),
+        "{why}"
+    );
+    drop(saves);
+    f.clean_workers();
+}

@@ -562,7 +562,7 @@ fn the_stores_panes_hold_over_the_files_read_on_the_board_the_hub_holds() {
         let s = Served::new(file, &kept);
         let value = symphony_board::settings::value_of("agents.panes", stored);
         s.board()
-            .store_setting("agents.panes", &value, "owner")
+            .store_setting("agents.panes", &value, "owner", std::path::Path::new(""))
             .unwrap();
         let mut sent = Vec::new();
         for _ in 0..3 {
@@ -601,7 +601,7 @@ fn a_store_the_board_failed_the_panes_read_on_is_dropped_and_the_next_read_opens
     let s = Served::new("none", &kept);
     let value = symphony_board::settings::value_of("agents.panes", "hc");
     s.board()
-        .store_setting("agents.panes", &value, "owner")
+        .store_setting("agents.panes", &value, "owner", std::path::Path::new(""))
         .unwrap();
     assert_eq!(
         s.opened.load(Ordering::SeqCst),

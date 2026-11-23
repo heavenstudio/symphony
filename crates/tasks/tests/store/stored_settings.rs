@@ -5,7 +5,7 @@
 
 use crate::common::{Backend, Fixture, HOST, NOW, Seed, refused};
 use serde_json::json;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use symphony_board::launch::Defaults;
 use symphony_board::limits::Watched;
 use symphony_board::settings::{Entry, Stored, value_of};
@@ -15,16 +15,21 @@ fn board(backend: Backend) -> Fixture {
     Fixture::on(backend, Seed::default().session("amber-heron"))
 }
 
+/// No project file: the launch default a switch is judged against is the board's own, codex.
+fn no_file() -> &'static Path {
+    Path::new("")
+}
+
 /// `value` stored for `key` by amber-heron: the entry, and whether it changed.
 fn set(store: &Store, key: &str, value: &str) -> (Entry, bool) {
     store
-        .store_setting(key, &value_of(key, value), "amber-heron")
+        .store_setting(key, &value_of(key, value), "amber-heron", no_file())
         .unwrap()
 }
 
 /// Why storing `value` for `key` is refused.
 fn refusal(store: &Store, key: &str, value: &str) -> String {
-    refused(store.store_setting(key, &value_of(key, value), "amber-heron"))
+    refused(store.store_setting(key, &value_of(key, value), "amber-heron", no_file()))
 }
 
 /// A scratch main checkout: its folder, holding `committed` and, when given, `local`.
@@ -74,7 +79,7 @@ on_both! {
         // Another session's process writes the same setting: both changes stay in its record.
         let other = f.other();
         let (second, _) = other
-            .store_setting("limits.low_volume", &value_of("limits.low_volume", "0"), "teal-ibis")
+            .store_setting("limits.low_volume", &value_of("limits.low_volume", "0"), "teal-ibis", no_file())
             .unwrap();
         assert_eq!(second.revision, 2);
         // The value it holds already writes nothing and records nothing.
@@ -205,7 +210,7 @@ on_both! {
             assert!(said.starts_with(why), "{key}: {said}");
             assert!(said.ends_with(": nothing was written"), "{said}");
         }
-        let why = refused(f.store.store_setting("limits.low_volume", &value_of("limits.low_volume", "1"), " "));
+        let why = refused(f.store.store_setting("limits.low_volume", &value_of("limits.low_volume", "1"), " ", no_file()));
         assert!(why.contains("a change says who made it"), "{why}");
         assert_eq!(f.store.stored_entries().unwrap(), []);
     }
@@ -318,6 +323,78 @@ on_both! {
         f.store.remove_setting("agents.launch.default", "amber-heron").unwrap();
         f.store.remove_setting("agents.models.reviewer", "amber-heron").unwrap();
         assert_eq!(models(&f.store), ["codex:", "codex:mine", "codex:committed", "codex:fable"]);
+    }
+
+    fn a_switch_turning_off_the_launch_default_is_refused_and_any_other_kept(backend: Backend) {
+        let f = board(backend);
+        let off = |file: &Path, agent: &str| {
+            let key = format!("agents.launch.on.{agent}");
+            f.store.store_setting(&key, &value_of(&key, "off"), "amber-heron", file)
+        };
+        // No project file: codex, the board's own default, cannot be turned off.
+        assert_eq!(
+            refused(off(no_file(), "codex")),
+            "the board's store: [agents.launch.on] codex turns off codex, the launch default (the \
+             board's own), which cannot be off: pick another default first: nothing was written"
+        );
+        assert_eq!(f.store.stored_entries().unwrap(), []);
+        // Under a project file naming claude, claude cannot be off and codex can.
+        let checkout = Checkout::new(&backend.database(), "[agents.launch]\ndefault = \"claude\"\n", None);
+        let why = refused(off(&checkout.file(), "claude"));
+        assert!(
+            why.contains("the launch default (symphony.toml [agents] launch default, line 2)"),
+            "{why}"
+        );
+        let (entry, changed) = off(&checkout.file(), "codex").unwrap();
+        assert!(changed);
+        assert_eq!(entry.value, Some(json!(false)));
+        let defaults = Defaults::configured_with(&checkout.0, &f.store.stored()).unwrap();
+        assert_eq!(
+            defaults.off("codex").map(|switch| switch.said()).as_deref(),
+            Some("the board's store [agents.launch.on] codex")
+        );
+        // On again is the switch alone.
+        set(&f.store, "agents.launch.on.codex", "on");
+        assert_eq!(Defaults::configured_with(&checkout.0, &f.store.stored()).unwrap().off("codex"), None);
+        // The store's default stands over the project file's: with codex stored as the default,
+        // codex cannot be off, and claude can.
+        set(&f.store, "agents.launch.default", "codex");
+        let why = refused(off(&checkout.file(), "codex"));
+        assert!(why.contains("the launch default (the board's store [agents] launch default)"), "{why}");
+        off(&checkout.file(), "claude").unwrap();
+        // A default naming an agent turned off is taken: the default wins, its switch does not hold.
+        set(&f.store, "agents.launch.default", "claude");
+        let defaults = Defaults::configured_with(&checkout.0, &f.store.stored()).unwrap();
+        assert_eq!(defaults.off("claude"), None);
+        assert!(defaults.overruled().unwrap().contains("which does not hold: claude is the launch default"));
+        // A value that is no switch is refused by the switch's own rule.
+        let why = refusal(&f.store, "agents.launch.on.codex", "maybe");
+        assert!(why.starts_with("the board's store: [agents.launch.on] codex is \"maybe\"; a switch is true"), "{why}");
+    }
+
+    fn a_default_committed_after_an_older_stored_switch_wins_and_the_switch_does_not_hold(
+        backend: Backend
+    ) {
+        let f = board(backend);
+        let checkout = Checkout::new(&backend.database(), "[agents.launch]\ndefault = \"claude\"\n", None);
+        f.store
+            .store_setting("agents.launch.on.codex", &toml::Value::Boolean(false), "amber-heron", &checkout.file())
+            .unwrap();
+        // Later, the project commits codex as its default.
+        std::fs::write(checkout.file(), "[agents.launch]\ndefault = \"codex\"\n").unwrap();
+        let defaults = Defaults::configured_with(&checkout.0, &f.store.stored()).unwrap();
+        assert_eq!(defaults.default_agent(), "codex");
+        assert_eq!(defaults.off("codex"), None, "the default starts");
+        assert_eq!(
+            defaults.overruled().as_deref(),
+            Some(
+                "[agents.launch.on] codex turns off codex (the board's store [agents.launch.on] \
+                 codex), which does not hold: codex is the launch default, which wins; pick \
+                 another default to turn it off"
+            )
+        );
+        // The entry itself is read and listed as it was: only the merge overrules it.
+        assert!(f.store.stored().holds("agents.launch.on.codex"));
     }
 
     fn a_board_without_the_step_reads_no_entry_and_refuses_a_write_before_anything_is_sent(

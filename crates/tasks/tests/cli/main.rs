@@ -8,6 +8,11 @@ mod children;
 #[allow(dead_code)]
 mod common;
 
+// The agents' programs a launch finds, stand-ins in a folder of the test's own.
+#[path = "../support/stand_ins.rs"]
+#[allow(dead_code)]
+mod stand_ins;
+
 mod agents;
 mod api;
 mod asks;

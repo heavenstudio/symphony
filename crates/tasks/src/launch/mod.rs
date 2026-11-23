@@ -25,7 +25,8 @@
 //! Each launch, restore and close is recorded as an execution attempt as well, hc its provider
 //! ([`attempts`]), beside the records above, which no attempt replaces.
 //! For a command an agent ran unasked (`just tasks`), a launch and a restore start an agent only in
-//! the project, and a launch's first message is its skill's alone ([`Bounds`]).
+//! the project, and a launch's first message is its skill's alone ([`Bounds`]). Neither starts an
+//! agent turned off (`[agents.launch.on]`), nor one whose program this machine lacks ([`off`]).
 //!
 //! A terminal is closed only when all of these hold: it is this board's (`symphony.board`); its
 //! agent is idle (or it is a shell with nothing in it, or its program ended), its foreground is the
@@ -51,6 +52,7 @@ mod close;
 pub mod defaults;
 pub mod go;
 pub mod hc;
+pub mod off;
 mod place;
 mod recover;
 mod restore;
@@ -137,6 +139,9 @@ pub struct Machine {
     /// For a command run under the unasked recipes' marker, where the agents it starts may run
     /// ([`Bounds`]); none for the binary run by itself, which starts them anywhere.
     pub bounds: Option<Bounds>,
+    /// The search path an agent's program is looked for in before it starts ([`off`]): the
+    /// caller's `PATH`.
+    pub path: Option<std::ffi::OsString>,
 }
 
 impl Machine {
@@ -161,7 +166,16 @@ impl Machine {
             processes: procs::table(env),
             mode: PERMISSION_MODE.into(),
             board_env: board_env(env),
+            path: env.var("PATH").map(std::ffi::OsString::from),
         }
+    }
+
+    /// Why `agent` may not start here now ([`off::refusing`]), under the settings in force read
+    /// as a launch reads them, refused with why where they cannot be read.
+    pub(crate) fn refusing(&self, store: &Store, agent: &str) -> Result<Option<String>, Error> {
+        let defaults =
+            Defaults::configured_with(&self.root, &store.stored()).map_err(Error::Refused)?;
+        Ok(off::refusing(&defaults, self.path.as_deref(), agent))
     }
 
     /// The Herdr app space the board's terminals show in: the main checkout's folder name.
@@ -325,6 +339,12 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
                 ask.tab.as_deref(),
             );
         }
+    }
+    // An agent turned off, or whose program this machine lacks, starts nowhere: refused before
+    // anything is made for it.
+    let agent = agent_kind(ask);
+    if let Some(why) = m.refusing(store, agent)? {
+        return Err(Error::Refused(format!("no launch: {why}")));
     }
     let dashed = slug.replace('/', "-");
     let made_worktree = ask.worktree.is_none();

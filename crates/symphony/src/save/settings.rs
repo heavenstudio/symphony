@@ -170,8 +170,14 @@ impl Saves {
 
     fn keep(&self, key: &str, value: &toml::Value) -> Result<SettingWritten, Failure> {
         let _held = self.open()?;
-        let (entry, changed) = self.store()?.store_setting(key, value, BY)?;
-        let held = entry.value.as_ref().map(shown).unwrap_or_default();
+        // A switch is judged against the launch default the main checkout's project file names.
+        let project_file = symphony_board::builds::main_of(&self.root).join(FILE);
+        let (entry, changed) = self.store()?.store_setting(key, value, BY, &project_file)?;
+        // A switch is said as the page draws it: on or off.
+        let held = match &entry.value {
+            Some(Value::Bool(on)) => (if *on { "on" } else { "off" }).to_string(),
+            value => value.as_ref().map(shown).unwrap_or_default(),
+        };
         Ok(SettingWritten {
             said: if changed {
                 format!(

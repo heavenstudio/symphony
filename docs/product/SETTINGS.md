@@ -16,9 +16,10 @@ a reviewed task.
 - **Reads what is in force.** Every setting says its value and where it comes from: the
   Symphony's default, the project file with its line, the board, or this machine's own file.
 - **Checks what this machine has.** Each integration says whether it is on and whether the
-  program it needs is found here.
-- **Changes a preference.** The agent a launch starts, its model and effort, a role's model, a
-  limit or where agents' terminals open: kept on the board, in force at once.
+  program it needs is found here; each agent, how many of its sessions run now.
+- **Changes a preference.** The agent a launch starts, its model and effort, whether the board
+  starts each agent, a role's model, a limit or where agents' terminals open: kept on the board,
+  in force at once.
 - **Makes it the project's.** A value kept on the board is committed to the project file, so it
   holds for every machine and every clone.
 - **Puts the file's value back.** **Remove** takes the board's value away.
@@ -92,11 +93,13 @@ each place may hold is [the project file's](../operations/PROJECT_FILE.md#the-bo
 ![Models and limits, with their controls, wide](pictures/settings-models-wide.png)
 
 Only a preference the board keeps has a control: what a launch starts (its agent, model and
-effort), the model of each role, the work-in-progress limits and where agents' terminals open.
-The control is chosen by the kind of value, never by the setting:
+effort), whether the board starts each agent, the model of each role, the work-in-progress limits
+and where agents' terminals open. The control is chosen by the kind of value, never by the
+setting:
 
 | Kind | Settings | Control |
 | --- | --- | --- |
+| A switch | whether the board starts Claude Code, and Codex, but the launch default | a button saying **On** or **Off**, the other kept as it is pressed |
 | A choice | the agent a launch starts, what agents' terminals run in | a menu of its values, kept as another is chosen |
 | A number | each limit | a field and **Keep**; a number that is not whole is refused before it is sent |
 | A text | the launch's model and effort, each role's model | a field and **Keep** |
@@ -161,8 +164,14 @@ beside them. The tags' meanings and the files' paths wrap to the width, a path w
 - **Make it the project's** commits only while the checkout the server serves is on the default
   branch: otherwise it is refused with why, and the board's value holds.
 - A hosted visitor, or a page open while its server closes, writes nothing.
-- Claude Code and Codex are both **On**: nothing turns either off. The one the launch default names
-  is started when the caller names neither.
+- Claude Code and Codex are each **On** until its switch turns it **Off**: then no launch, no
+  staffing and no restore of a closed pane starts it, one already running keeps running, and its
+  files stay installed, so **On** again is the switch alone. The row says where it was turned off
+  and how many of its sessions run. The one the launch default names is started when the caller
+  names neither, and cannot be off: its switch has no control and says to pick another default
+  first, and a switch that turned it off before it became the default is said not to hold.
+- A launch of an agent whose program this machine does not find is refused with that reason,
+  whatever its switch says.
 - A project with no settings file at all shows every value a file would write as **default**,
   and the project file as *(not written)*.
 

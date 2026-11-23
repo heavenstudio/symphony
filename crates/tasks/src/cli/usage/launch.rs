@@ -27,7 +27,9 @@ thread that never arrived, a reviewer that left). --beside WHY resumes none:
 it starts a second reviewer beside the one still there. A reviewer goes on
 the task itself, never an instruction subtask.
 Refused while this machine runs as many agents as the project's [limits]
-machine_agents allows (`just tasks limits` prints it).
+machine_agents allows (`just tasks limits` prints it), for an agent turned
+off ([agents.launch.on], the Settings page's switch), and for one whose
+program this machine lacks.
 
 positional arguments:
   slug
