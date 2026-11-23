@@ -99,7 +99,8 @@ A tool that is absent or incompatible fails with setup guidance; no hosted GitHu
 - Acceptance: a working Chrome (installed, or `SYMPHONY_CHROME`) and the client's pinned Node (on
   PATH, or fnm to fetch it once: `tools/node.sh`).
 - The client build: Git, Bash and jq.
-- Board fixtures: lsof and the pinned SurrealDB (`tools/surreal.sh`, or `SYMPHONY_SURREAL`).
+- Board fixtures: lsof, the pinned SurrealDB (`tools/surreal.sh`, or `SYMPHONY_SURREAL`), and
+  PostgreSQL 18 or later, on which a fixture's first board command makes its board.
 - The board's server tests (`just test-rs -p symphony-board --test server`): PostgreSQL 18 or
   later with its programs beside it ([the setup](docs/operations/PROJECT_FILE.md#board)).
 - The hosted board's check (`just hosted-check`): PostgreSQL 16's programs as well, and

@@ -1281,17 +1281,17 @@ async fn plugin_response(shared: &Shared, root: &Path, path: &str, request: &Req
 
 /// The local owner's next actions on `slug`, with the accepted output standing for each task it
 /// depends on where an edge leaving its pair takes them, which the page sends with that edge
-/// (docs/workflow/WORKFLOW.md, "Accepted outputs").
+/// (docs/workflow/WORKFLOW.md, "Accepted outputs"): both from one read of the board.
 fn owner_actions(
     store: &symphony_board::Store,
     slug: &str,
 ) -> Result<symphony_api::workflow::ActionsRead, symphony_board::Error> {
-    let next = store.workflow_actions(
+    let (next, outputs) = store.workflow_actions_with_outputs(
         slug,
         &symphony_board::workflow::local_owner(),
         &symphony_board::workflow::Host::local(),
     )?;
-    let takes = (store.accepted_outputs(slug)?.takes.into_iter())
+    let takes = (outputs.takes.into_iter())
         .map(|(task, output)| symphony_api::workflow::TakenOutput { task, output })
         .collect();
     Ok(symphony_api::workflow::ActionsRead {

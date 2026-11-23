@@ -1,5 +1,6 @@
 //! Two projects' boards side by side, each its own SurrealDB server in its repository's common dir
-//! in a temporary folder, started by its project's first command (no `TASKS_SERVER`): each command
+//! in a temporary folder, named SurrealDB's and started by its project's first command (no
+//! `TASKS_SERVER`): each command
 //! line reaches its own project's board, and its sessions, heartbeat keys and sweep state stay with
 //! that project; an older command line is refused a board a newer build migrated before any write,
 //! naming the project, while the other project's board goes on as it was.
@@ -32,6 +33,11 @@ impl Two {
                 format!("[project]\nid = \"{id}\"\n"),
             )
             .unwrap();
+            // On SurrealDB, whose recorded servers and SurrealQL these cases read: named before
+            // the first command, which would otherwise make the board on PostgreSQL.
+            Two::home(&root)
+                .initialize_backend(symphony_board::server::Engine::SurrealDb)
+                .unwrap();
             root
         };
         Two {
