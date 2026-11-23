@@ -78,7 +78,10 @@ fn a_setting_write_after_a_close_is_refused_and_writes_nothing() {
             "{write}"
         );
     }
-    assert!(saves.committer.get().is_none(), "a committer started after the close");
+    assert!(
+        saves.committer.get().is_none(),
+        "a committer started after the close"
+    );
     assert_eq!(tree.read("symphony.toml"), "[limits]\nlow_volume = 2\n");
 }
 
@@ -86,7 +89,12 @@ fn a_setting_write_after_a_close_is_refused_and_writes_nothing() {
 fn git(root: &Path, args: &[&str]) -> String {
     let done = symphony_board::sys::output(
         symphony_board::sys::Command::new("git")
-            .args(["-c", "user.name=Owner", "-c", "user.email=owner@example.invalid"])
+            .args([
+                "-c",
+                "user.name=Owner",
+                "-c",
+                "user.email=owner@example.invalid",
+            ])
             .args(args)
             .current_dir(root),
     )
