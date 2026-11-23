@@ -554,7 +554,11 @@ fn the_stores_panes_hold_over_the_files_read_on_the_board_the_hub_holds() {
                 assert_eq!(status, StatusCode::OK, "{file} under {stored}: {body}");
                 assert_eq!(body["text"], SCREEN);
             } else {
-                assert_eq!(status, StatusCode::FORBIDDEN, "{file} under {stored}: {body}");
+                assert_eq!(
+                    status,
+                    StatusCode::FORBIDDEN,
+                    "{file} under {stored}: {body}"
+                );
                 assert_eq!(
                     body["error"],
                     "this project does not address its agents' panes ([agents] panes = \"none\")"

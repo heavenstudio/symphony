@@ -221,7 +221,11 @@ fn what_each_place_keeps_is_what_its_judge_takes() {
         (&["project"], "name", text("x")),
         (&["theme"], "accent", text("red")),
     ];
-    settings.extend(ROLES.iter().map(|role| (&["agents", "models"][..], *role, text("m"))));
+    settings.extend(
+        ROLES
+            .iter()
+            .map(|role| (&["agents", "models"][..], *role, text("m"))),
+    );
     settings.extend(limits::KEYS.map(|key| (&["limits"][..], key, Value::Integer(3))));
     for place in [Place::File, Place::Store] {
         for (path, key, value) in &settings {
@@ -231,7 +235,10 @@ fn what_each_place_keeps_is_what_its_judge_takes() {
         }
     }
     assert!(Place::Store.keeps(&["agents"], "panes"));
-    assert!(!Place::File.keeps(&["agents"], "panes"), "the store's alone");
+    assert!(
+        !Place::File.keeps(&["agents"], "panes"),
+        "the store's alone"
+    );
     assert!(Place::File.keeps(&["limits"], LOW));
     assert!(!Place::Store.keeps(&[], "panes"), "a key under no table");
 }
