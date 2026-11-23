@@ -517,6 +517,11 @@ fn verdict(board: &Judged, against: &Against<'_>) -> Verdict {
             board.folder.display()
         ));
     }
+    // A board's folder is written before its board is made (a session's heartbeat, a recorded
+    // run): one that names no engine and holds no data has no server to read, and is not down.
+    if board.home.unmade().unwrap_or(false) {
+        return Verdict::Done(format!("{id}: its board is not made yet: nothing to move"));
+    }
     let live = match board.home.schema(symphony_board::DATABASE) {
         Ok(Some(live)) => live,
         Ok(None) => {

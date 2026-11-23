@@ -23,7 +23,8 @@ start with the setup guidance ([the setting](PROJECT_FILE.md#board)), and nothin
 board is never made on SurrealDB in its place. A read of the board by the Symphony starts a
 board's server but never makes a board: one not made yet reads as none. Unknown formats, invalid
 JSON, unknown engines, an incomplete PostgreSQL data folder, or data of the wrong engine refuse
-explicitly. PostgreSQL data without an identity opens as PostgreSQL, never as SurrealDB.
+explicitly. PostgreSQL data without an identity opens as PostgreSQL, never as SurrealDB, and
+the first start that serves it writes the identity before it does.
 
 `Home::initialize_backend` names a scratch home's engine before it is made, under the starters'
 lock: a fixture's SurrealDB board, or its PostgreSQL one. It accepts no existing identity of
@@ -54,7 +55,9 @@ machine's load and to run the command again. A server that is starting is never 
 its start is refused, naming the retry. A stop (a move's, a hold's) can meet the same server
 on its way out after it has read its record: when `pg_ctl` finds the server's record gone, the
 stop waits for its end, which the kernel reports, under the same backstop, and the server is
-stopped. A command uses one connection
+stopped. A record that still names that server is refused as still stopping; one naming
+another server, or one whose process `ps` could not be run to tell of, is refused, saying
+so, never waited for as gone. A command uses one connection
 for its lifetime; there is no pool. Its backend lives as long
 and keeps what memory its largest statement took, so a read of long lists (a whole board, the
 messages to the owner) is sent a statement a list and answered an item a row, all in one transaction
