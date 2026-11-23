@@ -149,8 +149,8 @@ and the document counts once. The header board link, decision counts
 and previous/next navigation keep the same global view while a branch document is open.
 
 **A worktree with an owner line no commit has is never removed.** The worktree sweep (`just tasks sweep`) and
-`land`'s cleanup keep it and say so: the board reads the owner's dated lines under a card, in the documents of the
-project's entrypoint folders, that the worktree's HEAD does not hold, and keeps a worktree it cannot read as well;
+`land`'s cleanup keep it and say so: the board reads the owner's dated lines under a card, and any person's (every
+dated line not an agent's), in the documents of the project's entrypoint folders, that the worktree's HEAD does not hold, and keeps a worktree it cannot read as well;
 commit the verdict first. A consuming project's own gate asks the Symphony with
 `symphony::landing::owner_lines_left`, which names the documents holding such a line.
 
@@ -256,6 +256,11 @@ Keep the hidden `review:unseen-owner` comment under a card: it records that an a
 `[YYYY-MM-DD HH:MM] agent — <reply>` when an agent does. Deeper-indented lines
 continue the entry above. The web app writes the owner's lines; the history
 is how anyone can tell when something was decided and whether it changed.
+A person a board names writes their short name in the owner's place,
+`[YYYY-MM-DD HH:MM] ana · approved — A`: a person's line is any line that is
+not an agent's, and `agent`, `owner`, `board` and `unknown` are no one's name
+([users and identity](../product/analysis/users-and-identity.md#how-a-persons-name-is-written)).
+On a board with nobody named every person's line reads `owner ·`.
 
 **A note is drawn as a document's body is**, the owner's and an agent's alike:
 a single line break is a line break and a blank line a paragraph gap; bold,
@@ -519,7 +524,8 @@ which it would cut from the card: after the card's last line it is a comment
 on the document like any other.
 
 The first line is the tag and a short title; the `>` lines under it are the
-body. `comment`, `question` and `decision` are open work until an agent nests
+body. A comment a person a board names left carries their short name before
+the title, `> [!comment] ana · 141 lamps`; the owner's names nobody. `comment`, `question` and `decision` are open work until an agent nests
 a resolution under them. Older documents also hold `like` (what to keep, no
 answer needed) and `dislike` (open, like `comment`); the app no longer offers
 them. A resolution looks like this:

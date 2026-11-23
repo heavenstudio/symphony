@@ -174,7 +174,10 @@ pub(in crate::store) const CLAIMABLE: &str = concat!(
 /// Statements that put a line on a task's thread at `$now`, each argument a SurrealQL expression. A line is
 /// never dated before the one numbered ahead of it when that one is less than a minute ahead (a write reads
 /// its clock at most `PATIENCE` before it commits); one further ahead came from a wrong clock, and the
-/// lines after it keep their own dates rather than all take its.
+/// lines after it keep their own dates rather than all take its. A line whose sender is
+/// `$by_person`, the person a write is for ([`crate::Store::for_person`]), is marked a person's
+/// (`person`, [`crate::schema::PERSON_LINES`]); no other line names the field, so a board without
+/// the step takes every other line.
 pub(in crate::store) fn logged(
     slug: &str,
     sender: &str,
@@ -187,7 +190,8 @@ pub(in crate::store) fn logged(
 LET $sid = $counted.last;
 LET $ts = $counted.ts;
 CREATE type::record('message', [{slug}, $sid]) SET sid = $sid, slug = {slug}, sender = {sender}, recipient = {recipient},
-    kind = {kind}, text = {text}, ts = $ts RETURN NONE;"
+    kind = {kind}, text = {text}, ts = $ts RETURN NONE;
+IF $by_person != NONE AND {sender} = $by_person {{ UPDATE type::record('message', [{slug}, $sid]) SET person = true RETURN NONE; }};"
     )
 }
 

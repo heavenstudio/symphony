@@ -187,6 +187,13 @@ impl Saves {
         })
     }
 
+    /// The board, for the writes `by` asked for: these saves vouch for a person their host
+    /// admitted, by the short name their lines carry ([`symphony_board::Store::for_person`]); the
+    /// person at the machine and a session write as they always have.
+    fn store_by(&self, by: &str) -> Result<symphony_board::Store, Failure> {
+        Ok(self.store()?.for_person(by))
+    }
+
     /// The scope and document name a save names: the page's `scope` and `rel`, or those a document
     /// named `@<tree>/…` carries.
     fn named<'a>(&self, scope: &'a str, rel: &'a str) -> Result<(&'a str, &'a str), Failure> {
@@ -318,7 +325,7 @@ impl Saves {
                     Failure::from(format!("attestations: not signed statements: {e}"))
                 })?),
             };
-        let (store, owner) = (self.store()?, &actor.principal);
+        let (store, owner) = (self.store_by(actor.name())?, &actor.principal);
         let attestations = match given {
             Some(given) => given,
             None => attest::fetched(
@@ -442,7 +449,7 @@ impl Saves {
             | "/api/task-field"
             | "/api/task-cancel"
             | symphony_api::TASK_ACTION_ROUTE => on_task(
-                &self.store()?,
+                &self.store_by(actor.name())?,
                 || crate::plugins::Plugins::of(&self.root),
                 &self.root,
                 actor,
@@ -480,9 +487,16 @@ impl Saves {
                 let db = format!("'{}'", db.to_string_lossy().replace('\'', "'\\''"));
                 let reply = id.map_or_else(|| format!("Reply in the document/card at {}#{} using the chat-doc skill.", string(payload, "path"), string(payload, "slug")), |id| format!("Read: just symphony-ask --db {db} show {id}. Answer: just symphony-ask --db {db} answer {id} TEXT --as HANDLE."));
                 // When the owner said it, so a line delivered late (nobody heard chat then) is
-                // never read as new; a retry publishes this same text.
+                // never read as new; a retry publishes this same text. A person a board named is
+                // said by name (`by=ana`); the person at the machine's line reads as it always has,
+                // as `owner` is no one's short name.
+                let by = if symphony_docs::syntax::is_short_name(actor.name()) {
+                    format!(" by={}", actor.name())
+                } else {
+                    String::new()
+                };
                 let text = format!(
-                    "OWNER {route} at {} scope={scope} {}\n{reply}{}",
+                    "OWNER {route} at {} scope={scope}{by} {}\n{reply}{}",
                     clock::now_stamp(),
                     payload,
                     attached(&self.root, payload)
@@ -796,11 +810,14 @@ impl Saves {
         if main {
             self.committer
                 .get_or_init(|| commit::Committer::start(&self.root, self.writes.clone()))
-                .submit(commit::Edit {
-                    rel: crate::project::Project::of(&root).file(&rel),
-                    base: original,
-                    new: text,
-                })?;
+                .submit_as(
+                    commit::Edit {
+                        rel: crate::project::Project::of(&root).file(&rel),
+                        base: original,
+                        new: text,
+                    },
+                    actor.name(),
+                )?;
         }
         if !tap.is_empty() {
             taps.push_back((

@@ -385,9 +385,9 @@ IF $task.red AND $task.status NOT IN ['done', 'cancelled'] {{
 pub(in crate::store) const OWNER_SAVE: &str =
     "UPDATE type::record('task', $slug) SET fields._symphony.owner_save = $owner_save RETURN NONE;";
 
-/// The owner's tasks saved under the receipt `$receipt`, two at most: one is the save, two say it
-/// is not known which.
-pub(in crate::store) const OWNER_SAVED: &str = "SELECT VALUE slug FROM task WHERE created_by = 'owner' AND fields._symphony.owner_save = $receipt LIMIT 2;";
+/// The tasks the owner, or the person `$by_person`, saved under the receipt `$receipt`, two at
+/// most: one is the save, two say it is not known which.
+pub(in crate::store) const OWNER_SAVED: &str = "SELECT VALUE slug FROM task WHERE (created_by = 'owner' OR ($by_person != NONE AND created_by = $by_person)) AND fields._symphony.owner_save = $receipt LIMIT 2;";
 
 /// A filing as the board's own, refused (`$unplaced`) while a custom workflow is active: it is
 /// filed again at the workflow's initial pair (`super::workflow::PLACED`).

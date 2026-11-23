@@ -28,7 +28,7 @@ use crate::register::{
 };
 use crate::text::splitlines;
 
-pub(crate) use cards::compare_pictures;
+pub(crate) use cards::{BY_CLASS, compare_pictures};
 pub(crate) use links::{doc_name, doc_paths, find_docs};
 pub use media::{MOCKUP_NATIVE, MOCKUP_SANDBOX, is_mockup};
 

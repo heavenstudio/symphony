@@ -80,6 +80,7 @@ pub fn everything() -> Dump {
                 kind: "msg".into(),
                 text: "go — ✓".into(),
                 ts: NOW,
+                person: false,
             },
             MessageRow {
                 id: 9,
@@ -89,6 +90,7 @@ pub fn everything() -> Dump {
                 kind: "system".into(),
                 text: "x".into(),
                 ts: NOW,
+                person: false,
             },
         ],
         deliveries: vec![DeliveryRow {

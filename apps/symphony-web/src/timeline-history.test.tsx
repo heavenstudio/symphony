@@ -77,6 +77,7 @@ const entry = (id: number): TaskEntry => ({
     recipient: null,
     text: "Original full text",
     kind: "msg",
+    person: false,
   },
   stamp: "exact",
   blocks: [],

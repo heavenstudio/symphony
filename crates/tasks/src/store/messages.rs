@@ -36,7 +36,8 @@ pub const DELIVERED: [&str; 2] = ["msg", "verdict"];
 /// own and leaves it out of its inbox.
 pub const BOARD: &str = "board";
 
-/// Whom a post's write is authorized as: the owner, whose write checks no session; the board, for
+/// Whom a post's write is authorized as: the owner, or a person a board named
+/// ([`Store::is_person`]), whose write checks no session; the board, for
 /// a notice a session's command makes, which checks its session and records no activity of it; or
 /// the session posting, checked and its activity recorded.
 #[derive(Clone, Copy, Debug)]
@@ -72,12 +73,15 @@ fn unowned_mark(held: &[(&str, Health)]) -> String {
 /// ([`heard`]): those on the task stop, without an orchestrator relaying it.
 const NO_FURTHER: &str = "; it moves no further: stop work on it";
 
-/// `message`, which reached an inbox, as the inbox carries it: the owner's move of a task to a
-/// finished status says it moves no further ([`NO_FURTHER`]), and the owner's word about a task no
-/// live orchestrator holds, as an orchestrator it reached for that hears it, carries `mark`
-/// ([`unowned_mark`]). The thread keeps the line as written.
-fn heard(mut message: Message, mark: Option<&str>) -> Message {
-    if message.sender != OWNER {
+/// `row`, which reached an inbox, as the inbox carries it: the owner's move of a task to a
+/// finished status, or a person's ([`MessageRow::by_person`]), says it moves no further
+/// ([`NO_FURTHER`]), and their word about a task no live orchestrator holds, as an orchestrator it
+/// reached for that hears it, carries `mark` ([`unowned_mark`]). The thread keeps the line as
+/// written.
+fn heard(row: MessageRow, mark: Option<&str>) -> Message {
+    let by_person = row.by_person();
+    let mut message = message(row);
+    if !by_person {
         return message;
     }
     let finished = |to: &str| crate::health::FINISHED.contains(&to.trim());
@@ -125,7 +129,7 @@ impl Store {
         handle: &str,
         text: &str,
     ) -> Result<Message, Error> {
-        if handle == OWNER || handle.starts_with('@') {
+        if self.is_person(handle) || handle.starts_with('@') {
             return Err(refused("a notice needs a literal session handle".into()));
         }
         self.post(slug, actor, BOARD, text, Some(handle), None, false)
@@ -190,10 +194,10 @@ impl Store {
     }
 
     /// [`Store::say_asking`] by the person `sender`, the actor of the write
-    /// (`symphony_plugin::Actor`): the owner's line, which opens or joins the task's ask, when it
-    /// is `owner`, the one person a board knows. Any other is posted as a session's line is, so
-    /// one the board does not know is refused as every unknown actor is, until a board holds
-    /// people (docs/product/analysis/users-and-identity.md, "The way from one owner").
+    /// (`symphony_plugin::Actor`): a person's line, which opens or joins the task's ask, when it
+    /// is `owner` or the person this store writes for ([`Store::for_person`]), marked theirs. Any
+    /// other is posted as a session's line is, so one the board does not know is refused as every
+    /// unknown actor is (docs/product/analysis/users-and-identity.md, "The way from one owner").
     pub fn say_asking_as(
         &self,
         slug: &str,
@@ -232,7 +236,7 @@ impl Store {
             format!("{REFUSED}no role @{role}; use one of {}", roles.join(", "))
         });
         let handle = to.filter(|to| *to != OWNER && role.is_none());
-        let poster = if actor == OWNER {
+        let poster = if self.is_person(actor) {
             Poster::Owner
         } else if sender == BOARD {
             Poster::Board
@@ -469,7 +473,7 @@ impl Store {
             // The owner's word, a post, a verdict or a move, reaches everyone on the task and its
             // orchestrator; on a task no live orchestrator holds, every orchestrator, since none
             // relays it.
-            let owners_word = m.sender == OWNER
+            let owners_word = m.by_person()
                 && (roles.is_some()
                     || nearest(&m.slug)
                     || (orchestrating && unowned(&m.slug).is_some()));
@@ -491,10 +495,10 @@ impl Store {
             .filter(reaches)
             .map(|row| {
                 // Only an orchestrator it reached for that hears the mark, never the holder.
-                let marked = orchestrating && row.sender == OWNER && !nearest(&row.slug);
+                let marked = orchestrating && row.by_person() && !nearest(&row.slug);
                 let mark = marked.then(|| unowned(&row.slug)).flatten();
                 let mark = mark.map(|held| unowned_mark(&held));
-                heard(message(row), mark.as_deref())
+                heard(row, mark.as_deref())
             })
             .collect())
     }
@@ -546,13 +550,19 @@ impl Store {
     /// New messages in creation order, for the Symphony server's shared delta feed. The cursor is
     /// the snapshot's latest_message, so two writes between reads are both delivered.
     pub fn messages_after(&self, since: i64, through: i64) -> Result<Vec<Message>, Error> {
-        let rows: Vec<MessageRow> = self.retrying(|| {
+        let rows = self.messages_after_rows(since, through)?;
+        Ok(rows.into_iter().map(message).collect())
+    }
+
+    /// [`Store::messages_after`] as the board holds the lines, each with whether a person wrote
+    /// it ([`MessageRow::by_person`]).
+    pub fn messages_after_rows(&self, since: i64, through: i64) -> Result<Vec<MessageRow>, Error> {
+        self.retrying(|| {
             self.read_together(
                 both(sql::MESSAGES_AFTER, pg::messages_after()),
                 json!({"since": since, "through": through}),
             )
-        })?;
-        Ok(rows.into_iter().map(message).collect())
+        })
     }
 
     /// Each sender's latest message or verdict, by handle: what an agent last said on the board (the
@@ -607,8 +617,31 @@ mod tests {
         }
     }
 
+    /// [`said`] as the board holds it, a person's line when `person`.
+    fn row(sender: &str, kind: &str, text: &str, person: bool) -> MessageRow {
+        let Message {
+            id,
+            slug,
+            sender,
+            recipient,
+            kind,
+            text,
+            ts,
+        } = said(sender, kind, text);
+        MessageRow {
+            id,
+            slug,
+            sender,
+            recipient,
+            kind,
+            text,
+            ts,
+            person,
+        }
+    }
+
     fn heard_text(sender: &str, kind: &str, text: &str, unowned: bool) -> String {
-        heard(said(sender, kind, text), unowned.then_some(UNOWNED)).text
+        heard(row(sender, kind, text, false), unowned.then_some(UNOWNED)).text
     }
 
     #[test]
@@ -672,6 +705,23 @@ mod tests {
     }
 
     #[test]
+    fn a_persons_word_is_heard_as_the_owners_is_and_a_sessions_of_that_name_is_not() {
+        let moved = "ana moved it in_progress → done";
+        let ana = |kind, text, person| heard(row("ana", kind, text, person), Some(UNOWNED)).text;
+        assert_eq!(
+            ana("system", moved, true),
+            format!("{UNOWNED}{moved}{NO_FURTHER}")
+        );
+        assert_eq!(ana("msg", "stop", true), format!("{UNOWNED}stop"));
+        assert_eq!(
+            ana("system", moved, false),
+            moved,
+            "a session named ana is no person"
+        );
+        assert_eq!(ana("msg", "stop", false), "stop");
+    }
+
+    #[test]
     fn the_mark_names_the_holders_that_are_not_live_or_says_nobody_holds_it() {
         assert_eq!(unowned_mark(&[]), UNOWNED);
         assert_eq!(
@@ -684,7 +734,7 @@ mod tests {
         );
         let mark = unowned_mark(&[("amber", Health::Unknown)]);
         assert_eq!(
-            heard(said(OWNER, "msg", "stop"), Some(&mark)).text,
+            heard(row(OWNER, "msg", "stop", false), Some(&mark)).text,
             "[unowned: no live orchestrator holds it: amber (unknown)] stop"
         );
     }

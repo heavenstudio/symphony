@@ -2,6 +2,7 @@
 
 use super::{Pg, act, authorize, listed, logged, rows};
 use crate::store::messages::Poster;
+use std::sync::LazyLock;
 
 /// Whether `v ->> 'slug'` is a task, and its thread in order.
 pub(in crate::store) fn thread() -> Pg<'static> {
@@ -25,17 +26,20 @@ pub(in crate::store) fn threads() -> Pg<'static> {
     ))
 }
 
-/// The task's ask moves with a line just put on its thread (`sid_`, `ts_`): the owner's, when it
-/// asks, opens it or joins the open one; a line of a session holding a role on the task, or of the
-/// session the owner's last line named, answers it (`super::super::surreal::asks::ON_THREAD`).
-const ON_THREAD: &str = "DECLARE
+/// The task's ask moves with a line just put on its thread (`sid_`, `ts_`): the owner's or a
+/// person's, when it asks, opens it or joins the open one; a line of a session holding a role on
+/// the task, or of the session the last line of the owner's or a person's named, answers it
+/// (`super::super::surreal::asks::ON_THREAD`).
+static ON_THREAD: LazyLock<String> = LazyLock::new(|| {
+    format!("DECLARE
     task_ask_ bigint;
     holds_ boolean;
     named_ text;
     opened_ bigint;
 BEGIN
     SELECT sid INTO task_ask_ FROM ask WHERE about = v ->> 'task_about' AND open LIMIT 1;
-    IF v ->> 'sender' = 'owner' AND coalesce((v ->> 'asking')::boolean, false) THEN
+    IF (v ->> 'sender' = 'owner' OR v ->> 'sender' = v ->> 'by_person')
+        AND coalesce((v ->> 'asking')::boolean, false) THEN
         IF task_ask_ IS NOT NULL THEN
             UPDATE ask SET lines = lines + 1, last = greatest(last, ts_) WHERE sid = task_ask_;
         ELSE
@@ -50,14 +54,15 @@ BEGIN
         holds_ := EXISTS (SELECT 1 FROM role WHERE slug = v ->> 'slug' AND handle = v ->> 'sender');
         IF NOT holds_ THEN
             SELECT recipient INTO named_ FROM message
-                WHERE slug = v ->> 'slug' AND sender = 'owner' ORDER BY sid DESC LIMIT 1;
+                WHERE slug = v ->> 'slug' AND (sender = 'owner' OR {}) ORDER BY sid DESC LIMIT 1;
         END IF;
         IF holds_ OR named_ = v ->> 'sender' THEN
             UPDATE ask SET open = false, answered = ts_, answered_by = v ->> 'sender',
                 answer = '#' || sid_ WHERE sid = task_ask_;
         END IF;
     END IF;
-END;";
+END;", super::person("message"))
+});
 
 /// A line made once per key, optionally adopting the earliest matching old line.
 fn once(line: &str, same: Option<&str>) -> String {
@@ -84,14 +89,15 @@ pub(in crate::store) fn post(poster: Poster, keyed: Option<bool>) -> Pg<'static>
         Poster::Session => act(),
     };
     let line = format!(
-        "{} {ON_THREAD}",
+        "{} {}",
         logged(
             "v ->> 'slug'",
             "v ->> 'sender'",
             "'msg'",
             "v ->> 'text'",
             "v ->> 'to'"
-        )
+        ),
+        ON_THREAD.as_str()
     );
     let write = match keyed {
         None => format!("{line} board_answer := (SELECT {} FROM message m WHERE m.id = jsonb_build_array(v -> 'slug', sid_));", super::row("m")),
@@ -158,24 +164,34 @@ pub(in crate::store) fn ack() -> Pg<'static> {
 }
 
 pub(in crate::store) fn inbox() -> Pg<'static> {
-    let eligible = |moves: &str| {
+    // `person`: whether the row is a person's line, read through the table's row
+    // (`super::person`) or a pool's.
+    let eligible = |moves: &str, person: &str| {
         format!(
             "m.ts >= (SELECT connected FROM me) \
         AND (m.kind IN (SELECT jsonb_array_elements_text(v -> 'delivered')) OR {moves}) \
         AND m.sender <> v ->> 'handle' AND (m.sender = 'owner' OR m.recipient = v ->> 'handle' \
-            OR starts_with(m.recipient, '@') OR m.kind = 'verdict')"
+            OR starts_with(m.recipient, '@') OR m.kind = 'verdict' OR {person})"
         )
     };
+    let person = super::person("m");
     let scan = eligible(
-        "(m.kind = 'system' AND m.sender = 'owner' AND starts_with(m.text, 'owner moved it '))",
+        &format!(
+            "(m.kind = 'system' AND ((m.sender = 'owner' AND starts_with(m.text, 'owner moved it ')) \
+            OR ({person} AND starts_with(m.text, m.sender || ' moved it '))))"
+        ),
+        &person,
     );
-    let pooled = eligible("(m.kind = 'system' AND m.sender = 'owner')");
+    let pooled = eligible(
+        "(m.kind = 'system' AND (m.sender = 'owner' OR coalesce(m.person, false)))",
+        "coalesce(m.person, false)",
+    );
     Pg::read(format!(
         "(WITH me AS (SELECT connected, kind FROM session WHERE handle = v ->> 'handle'), \
         candidates AS (SELECT m.slug, m.sid FROM message m WHERE NOT (v ? 'pool') \
             AND (NOT (v ? 'since') OR m.sid > (v ->> 'since')::bigint) AND {scan} \
         UNION ALL SELECT m.slug, m.sid FROM jsonb_to_recordset(coalesce(v -> 'pool', '[]')) \
-            AS m (slug text, sid bigint, sender text, recipient text, kind text, ts double precision) \
+            AS m (slug text, sid bigint, sender text, recipient text, kind text, ts double precision, person boolean) \
             WHERE v ? 'pool' AND m.sid > (v ->> 'since')::bigint AND {pooled}), \
         wanted AS (SELECT m.* FROM candidates c JOIN message m ON m.slug = c.slug AND m.sid = c.sid \
             WHERE NOT EXISTS (SELECT 1 FROM delivery d WHERE d.message = c.sid AND d.handle = v ->> 'handle')), \
@@ -212,9 +228,13 @@ pub(in crate::store) fn to_owner() -> Pg<'static> {
 pub(in crate::store) fn questions_waiting() -> Pg<'static> {
     listed(
         "m",
-        "message m WHERE recipient = v ->> 'person' AND kind = 'msg' AND sender <> v ->> 'person' \
-        AND slug IN (SELECT jsonb_array_elements_text(v -> 'open')) \
-        AND NOT EXISTS (SELECT 1 FROM message a WHERE a.slug = m.slug AND a.sid > m.sid AND a.sender = v ->> 'person')",
+        &format!(
+            "message m WHERE recipient = v ->> 'person' AND kind = 'msg' AND sender <> v ->> 'person' \
+            AND slug IN (SELECT jsonb_array_elements_text(v -> 'open')) \
+            AND NOT EXISTS (SELECT 1 FROM message a WHERE a.slug = m.slug AND a.sid > m.sid \
+                AND (a.sender = v ->> 'person' OR (v ->> 'person' = 'owner' AND {})))",
+            super::person("a")
+        ),
         "m.sid",
     )
 }

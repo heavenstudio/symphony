@@ -994,6 +994,7 @@ on_both! {
                 kind: "system".into(),
                 text: text.into(),
                 ts: NOW,
+                person: false,
             });
         }
         let f = Fixture::on(backend, seed);

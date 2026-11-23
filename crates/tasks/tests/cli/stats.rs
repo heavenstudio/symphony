@@ -421,6 +421,7 @@ fn done_twice_and_undone() -> Case {
                 kind: kind.into(),
                 text: text.into(),
                 ts: d + hours * H,
+                person: false,
             });
         }
     }
@@ -523,6 +524,7 @@ fn seeded(tasks: usize) -> Case {
                 kind: kind.into(),
                 text: text.into(),
                 ts: NOW + step as f64 * 1800.0,
+                person: false,
             });
         }
     }

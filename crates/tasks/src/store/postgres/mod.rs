@@ -435,7 +435,9 @@ $board$"
 /// none. The shared row lock meets a migration's version update, including from an older
 /// repeatable-read snapshot: every migration writes that row, a move of additive steps alone too.
 /// On a board of the store's own contract, it then raises (`board_additions_*`) unless the board's
-/// additive steps are within what the write takes ([`crate::schema::Steps`]).
+/// additive steps are within what the write takes ([`crate::schema::Steps`]). A write for a person
+/// (`by_person`) raises `by_person_session` when a session, live or left, holds that handle
+/// ([`crate::schema::GUARD`]).
 pub(in crate::store) const GUARD: &str = "DO $guard$
 DECLARE
     v jsonb := current_setting('board.vars')::jsonb;
@@ -463,6 +465,9 @@ BEGIN
     ) THEN
         RAISE EXCEPTION '%', (v ->> 'board_additions_before') || additions_::text
             || (v ->> 'board_additions_after');
+    END IF;
+    IF v ? 'by_person' AND EXISTS (SELECT 1 FROM session WHERE handle = v ->> 'by_person') THEN
+        RAISE EXCEPTION '%', v ->> 'by_person_session';
     END IF;
 END
 $guard$";
@@ -518,8 +523,17 @@ pub(in crate::store) fn logged(
             AND counter.ts <= EXCLUDED.ts + 60 THEN counter.ts ELSE EXCLUDED.ts END
     RETURNING last, ts INTO sid_, ts_;
 INSERT INTO message (id, sid, slug, sender, recipient, kind, text, ts)
-    VALUES (jsonb_build_array(({slug})::text, sid_), sid_, {slug}, {sender}, {recipient}, {kind}, {text}, ts_);"
+    VALUES (jsonb_build_array(({slug})::text, sid_), sid_, {slug}, {sender}, {recipient}, {kind}, {text}, ts_);
+IF v ->> 'by_person' = ({sender}) THEN
+    UPDATE message SET person = true WHERE id = jsonb_build_array(({slug})::text, sid_);
+END IF;"
     )
+}
+
+/// Whether the row `row` of `message` is a person's line, read through the row
+/// ([`crate::schema::PERSON_LINES`]): a board without the step has no column, and reads none.
+pub(in crate::store) fn person(row: &str) -> String {
+    format!("(to_jsonb({row}) -> 'person') = 'true'::jsonb")
 }
 
 /// A row read as SurrealDB gives it, `row` a table's row or a query's: its unset columns and id

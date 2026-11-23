@@ -94,6 +94,7 @@ mod ordered_maps;
 mod owner_word;
 mod pass_reads;
 mod pending_pull;
+mod people;
 mod pg_client;
 mod pg_reading;
 mod priority;

@@ -86,6 +86,7 @@ fn quarter_board() -> Dump {
             kind: "msg".into(),
             text: words(TASKS + n, 60),
             ts: NOW + n as f64,
+            person: false,
         })
         .collect();
     let deliveries = (0..DELIVERIES)

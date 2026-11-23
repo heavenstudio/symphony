@@ -29,7 +29,8 @@ pub fn is_doc(project: &crate::project::Project, path: &str) -> bool {
     project.is_page(path)
 }
 
-/// Documents holding an owner answer no commit has, read by the board's landing/sweep reader.
+/// Documents holding an owner answer no commit has, the owner's or any person's a board names (a
+/// dated line not an agent's), read by the board's landing/sweep reader.
 /// A read failure returns a diagnostic entry, preserving the gate's nonempty-means-keep contract;
 /// disappearing checkouts are skipped.
 pub fn owner_lines_left(root: &Path) -> Vec<String> {

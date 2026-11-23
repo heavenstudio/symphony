@@ -33,9 +33,12 @@ use crate::{Decision, Who};
 /// message, and an approve of the new tip is read within it.
 pub const RESCAN_SECONDS: f64 = 60.0;
 
-/// One dated line of the owner's under a card.
+/// One dated line of a person's under a card: the owner's, or a person's a board named (any line
+/// not an agent's, docs/product/analysis/users-and-identity.md, "How a person's name is written").
 #[derive(Debug, Clone, PartialEq)]
 pub struct OwnerLine {
+    /// Who wrote it: `owner`, or a person's short name.
+    pub by: String,
     /// The page whose copy of the card holds it (`docs/X.md`, `@<tree>/docs/X.md`).
     pub page: String,
     /// Its stamp as written, `YYYY-MM-DD HH:MM`.
@@ -66,6 +69,7 @@ pub fn said<'a>(cards: impl IntoIterator<Item = (&'a str, &'a Decision)>) -> Sai
                 continue;
             };
             let line = OwnerLine {
+                by: entry.name,
                 page: page.to_string(),
                 stamp,
                 at,
@@ -74,7 +78,8 @@ pub fn said<'a>(cards: impl IntoIterator<Item = (&'a str, &'a Decision)>) -> Sai
             };
             let lines = said.entry(card.slug.clone()).or_default();
             let same = |kept: &OwnerLine| {
-                (&kept.stamp, &kept.verdict, &kept.text) == (&line.stamp, &line.verdict, &line.text)
+                (&kept.by, &kept.stamp, &kept.verdict, &kept.text)
+                    == (&line.by, &line.stamp, &line.verdict, &line.text)
             };
             if !lines.iter().any(same) {
                 lines.push(line);
@@ -98,9 +103,9 @@ const DECIDES: [(&str, &str); 3] = [
 /// What the owner said on a card since a block on it was recorded ([`word`]).
 #[derive(Debug, PartialEq)]
 pub enum Word<'a> {
-    /// The owner's newest verdict since then decides the card: its word (`approve`, `reject`,
-    /// `dismiss`).
-    Decided(&'static str),
+    /// The newest verdict since then decides the card: its word (`approve`, `reject`, `dismiss`),
+    /// and who gave it ([`OwnerLine::by`]).
+    Decided(&'static str, &'a str),
     /// Nothing the owner said since then decides it: those lines that decide nothing, oldest first,
     /// each to tell once.
     Said(Vec<&'a OwnerLine>),
@@ -118,10 +123,13 @@ pub fn word(lines: &[OwnerLine], since: f64) -> Word<'_> {
             .find(|(said, _)| *said == verdict)
             .map(|(_, word)| *word)
     };
-    // The card's verdict is the owner's newest; a line without one leaves it as it was.
-    let newest = after.iter().rev().find_map(|line| line.verdict.as_deref());
-    if let Some(word) = newest.and_then(decides) {
-        return Word::Decided(word);
+    // The card's verdict is the newest a person gave; a line without one leaves it as it was.
+    let newest = after
+        .iter()
+        .rev()
+        .find_map(|line| Some((line.verdict.as_deref()?, line.by.as_str())));
+    if let Some((word, by)) = newest.and_then(|(verdict, by)| Some((decides(verdict)?, by))) {
+        return Word::Decided(word, by);
     }
     Word::Said(
         after
@@ -132,9 +140,20 @@ pub fn word(lines: &[OwnerLine], since: f64) -> Word<'_> {
     )
 }
 
-/// Why a block on card `name` ended, as its line says it: `the owner decided NAME (approve)`.
-pub fn decided_why(name: &str, word: &str) -> String {
-    format!("the owner decided {name} ({word})")
+/// Why a block on card `name` ended, as its line says it: `the owner decided NAME (approve)`, or
+/// `ana decided NAME (approve)` for a person `by` names.
+pub fn decided_why(name: &str, word: &str, by: &str) -> String {
+    format!("{} decided {name} ({word})", whose(by))
+}
+
+/// A line's writer `by` as a line telling of it says them: `the owner` for the person at the
+/// machine, a person by their short name.
+fn whose(by: &str) -> String {
+    if by == crate::Who::Owner.as_str() {
+        "the owner".to_string()
+    } else {
+        by.to_string()
+    }
 }
 
 /// Why a block on the owner's approve ended, `tip` the commit it named: `the owner approved
@@ -171,15 +190,21 @@ pub fn told(name: &str, line: &OwnerLine) -> (String, String) {
         None => words,
     };
     let text = format!(
-        "the owner on card {name} [{}] ({}#{name}), deciding nothing, so it stays blocked on \
+        "{} on card {name} [{}] ({}#{name}), deciding nothing, so it stays blocked on \
          decision:{name}: {words}",
-        line.stamp, line.page
-    );
-    let key = format!(
-        "decided:{name}:{}:{:016x}",
+        whose(&line.by),
         line.stamp,
-        fnv(&format!("{:?} {}", line.verdict, line.text))
+        line.page
     );
+    // The owner's key reads as it always has, so a line told before is not told again; a person's
+    // is theirs, so two people's same words in one minute are each told.
+    let said = format!("{:?} {}", line.verdict, line.text);
+    let said = if line.by == crate::Who::Owner.as_str() {
+        said
+    } else {
+        format!("{} {said}", line.by)
+    };
+    let key = format!("decided:{name}:{}:{:016x}", line.stamp, fnv(&said));
     (text, key)
 }
 
@@ -250,8 +275,8 @@ impl Kept {
                 Some(Thing::Decision(name)) => {
                     let lines = said.get(name).map_or(&[][..], Vec::as_slice);
                     match word(lines, block.at) {
-                        Word::Decided(word) => {
-                            let why = decided_why(name, word);
+                        Word::Decided(word, by) => {
+                            let why = decided_why(name, word, by);
                             resume(store, &task.slug, &block, &why, &mut looked);
                         }
                         Word::Said(lines) => {

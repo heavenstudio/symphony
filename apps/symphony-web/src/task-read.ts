@@ -32,7 +32,8 @@ const maybeText = (value: unknown) => absent(value) || isText(value);
 const isId = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value);
 
-/** A message of a task's thread, or none: its id, task, sender, kind, text and time. */
+/** A message of a task's thread, or none: its id, task, sender, kind, text and time, and whether
+ * a person a board named wrote it (none from an older server, which names nobody). */
 export function readMessage(value: unknown): Message | null {
   const recipient = field(value, "recipient");
   return isId(field(value, "id")) &&
@@ -47,6 +48,7 @@ export function readMessage(value: unknown): Message | null {
         kind: field(value, "kind") as string,
         text: field(value, "text") as string,
         ts: field(value, "ts") as number,
+        person: field(value, "person") === true,
       }
     : null;
 }

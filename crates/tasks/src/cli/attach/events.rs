@@ -1,17 +1,19 @@
 //! The event lines for what changed between two looks ([`diff`]): ROLE, GIVEN, STATUS, NEW, and
 //! STALE, LOST or LIVENESS UNKNOWN for a quiet child, each said once. A recipient never hears its own
 //! writes, nor the roles its own children (sessions it registered, `parent`) take or let go, nor
-//! the move a child's claim or release makes: it staffed them. Nor is the owner's move said as a
-//! STATUS: the owner's line itself reaches its inbox, as a `MOVE` (`Store::inbox`).
+//! the move a child's claim or release makes: it staffed them. Nor is the owner's move, or a
+//! person's, said as a STATUS: their line itself reaches its inbox, as a `MOVE` (`Store::inbox`),
+//! read here as the board marks it ([`MessageRow::by_person`]).
 
 use super::Seen;
 use crate::health::{Health, LIVE_SECONDS};
 use crate::orchestration::{given, given_event, moved, moved_for, told};
+use crate::rows::MessageRow;
 use crate::stages::{CLAIMED, CREATED, MOVED, RELEASED};
-use crate::{Board, Error, Message, Store};
+use crate::{Board, Error, Store};
 use std::collections::BTreeSet;
 
-fn latest_status_action<'a>(messages: &'a [Message], slug: &str) -> Option<&'a Message> {
+fn latest_status_action<'a>(messages: &'a [MessageRow], slug: &str) -> Option<&'a MessageRow> {
     messages.iter().rev().find(|m| {
         m.slug == slug
             && (m.kind == "verdict"
@@ -65,7 +67,7 @@ pub fn diff_on(
         || !flipped.is_empty()
         || (now.ready.keys()).any(|slug| !before.ready.contains_key(slug));
     let messages = if needs_actions && since < through {
-        store.messages_after(since, through)?
+        store.messages_after_rows(since, through)?
     } else {
         Vec::new()
     };
@@ -93,7 +95,7 @@ pub fn diff_on(
     // the move the claim or release made is its own: a claim starts ready work, a release of the
     // last executor makes work in progress ready again. A move between the looks that ends
     // anywhere else (a block the child made before it let the work go) is said.
-    let staffing = |m: &Message, old: Option<&String>, status: &str| {
+    let staffing = |m: &MessageRow, old: Option<&String>, status: &str| {
         let made = match old.map(String::as_str) {
             Some("ready") => status == "in_progress" && m.text.contains(CLAIMED),
             Some("in_progress") => status == "ready" && m.text.contains(RELEASED),
@@ -104,17 +106,18 @@ pub fn diff_on(
     for (slug, status) in &now.statuses {
         let old = before.statuses.get(slug);
         // Its own move, a child's staffing, and a verdict it hears anyway are not said, nor the
-        // owner's move: its inbox carries that line to whoever would hear the move here
-        // (`Store::inbox`).
-        let decided = |m: &Message| {
+        // owner's move or a person's: its inbox carries that line to whoever would hear the move
+        // here (`Store::inbox`).
+        let decided = |m: &MessageRow| {
             m.sender == handle
-                || (m.sender == "owner"
+                || (m.by_person()
                     && m.kind == "system"
-                    && (m.text.strip_prefix("owner")).is_some_and(|rest| rest.starts_with(MOVED)))
+                    && (m.text.strip_prefix(m.sender.as_str()))
+                        .is_some_and(|rest| rest.starts_with(MOVED)))
                 || staffing(m, old, status)
                 || (m.kind == "verdict"
                     && (now.verdict_tasks.contains(slug)
-                        || (m.sender == "owner"
+                        || (m.by_person()
                             && (now.roles.iter()).any(|(s, who, _)| s == slug && who == handle))))
         };
         // Work nobody orchestrates is said only as it blocks; its digest rows say the rest.
@@ -149,12 +152,12 @@ fn role_moves<'m>(
     now: &Seen,
     handle: &str,
     flipped: &BTreeSet<String>,
-    messages: &'m [Message],
+    messages: &'m [MessageRow],
     emit: &mut dyn FnMut(&str),
 ) -> Result<BTreeSet<(&'m str, &'m str)>, Error> {
     let mut parties: BTreeSet<(&str, &str)> = BTreeSet::new();
     let mut gave: Vec<&str> = Vec::new();
-    let on_flipped = |m: &&Message| m.kind == "system" && flipped.contains(&m.slug);
+    let on_flipped = |m: &&MessageRow| m.kind == "system" && flipped.contains(&m.slug);
     let lines = messages.iter().filter(on_flipped);
     for message in lines {
         let Some((from, to)) = moved(&message.text) else {

@@ -127,6 +127,7 @@ fn blocked_before_the_record(backend: Backend, executor: bool) -> Fixture {
         kind: "system".into(),
         text: "blocked: cancelled dependencies: sim/old".into(),
         ts: NOW,
+        person: false,
     });
     if executor {
         seed = seed.role("sim/dep", "brisk-finch", "executor");

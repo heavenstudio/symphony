@@ -8,29 +8,33 @@ use crate::store::messages::Poster;
 use crate::store::work::OWNER;
 use std::sync::LazyLock;
 
-/// The owner's moves, the one record line an inbox carries: `owner moved it FROM → TO`
-/// ([`crate::stages::moved_line`]), the owner's word as its posts are. A table's row: its text is
-/// read; a [`crate::store::pool::Pool`] holds no other record line ([`POOLED_MOVES`]).
+/// The owner's moves and a person's, the one record line an inbox carries: `owner moved it FROM →
+/// TO`, `ana moved it FROM → TO` ([`crate::stages::moved_line`]), their word as their posts are
+/// (a person's line is marked theirs, `person`). A table's row: its text is read; a
+/// [`crate::store::pool::Pool`] holds no other record line ([`POOLED_MOVES`]).
 pub(in crate::store) static OWNER_MOVES: LazyLock<String> = LazyLock::new(|| {
     format!(
-        "(kind = 'system' AND sender = '{OWNER}' AND string::starts_with(text, '{OWNER}{MOVED}'))"
+        "(kind = 'system' AND ((sender = '{OWNER}' AND string::starts_with(text, '{OWNER}{MOVED}'))
+            OR (person = true AND string::starts_with(text, string::concat(sender, '{MOVED}')))))"
     )
 });
 
 /// [`OWNER_MOVES`] for a [`crate::store::pool::Pool`]'s row, `$m`: the pool reads no text, and
-/// holds no record line but the owner's moves.
-static POOLED_MOVES: LazyLock<String> =
-    LazyLock::new(|| format!("($m.kind = 'system' AND $m.sender = '{OWNER}')"));
+/// holds no record line but those moves.
+static POOLED_MOVES: LazyLock<String> = LazyLock::new(|| {
+    format!("($m.kind = 'system' AND ($m.sender = '{OWNER}' OR $m.person = true))")
+});
 
-/// Whether a message could reach `$handle`'s inbox: delivered, or the owner's move (`moves`, its
-/// test for the rows read), sent since the session connected, not its own, and from the owner, to
-/// it, to a role or a verdict (not addressed to another handle or the owner). Its fields are read
-/// under `m`: `""` for a row of the table, `"$m."` for a row of a [`crate::store::pool::Pool`].
-/// The roles and the tree decide the rest ([`crate::store::Store::inbox_read`]).
+/// Whether a message could reach `$handle`'s inbox: delivered, or a move of the owner's or a
+/// person's (`moves`, its test for the rows read), sent since the session connected, not its own,
+/// and from the owner or a person, to it, to a role or a verdict (not addressed to another handle
+/// or the owner). Its fields are read under `m`: `""` for a row of the table, `"$m."` for a row of
+/// a [`crate::store::pool::Pool`]. The roles and the tree decide the rest
+/// ([`crate::store::Store::inbox_read`]).
 fn could_reach(m: &str, moves: &str) -> String {
     format!(
         "{m}ts >= $connected AND ({m}kind IN $delivered OR {moves}) AND {m}sender != $handle
-        AND ({m}sender = 'owner' OR {m}recipient = $handle OR ({m}recipient != NONE AND string::starts_with({m}recipient, '@')) OR {m}kind = 'verdict')"
+        AND ({m}sender = 'owner' OR {m}person = true OR {m}recipient = $handle OR ({m}recipient != NONE AND string::starts_with({m}recipient, '@')) OR {m}kind = 'verdict')"
     )
 }
 
@@ -210,12 +214,13 @@ RETURN NONE;"
 pub(in crate::store) const TO_OWNER: &str = "RETURN SELECT * OMIT id FROM message WHERE recipient = 'owner' ORDER BY sid DESC LIMIT $limit;";
 
 /// The posts to `$person` from anyone else on the tasks `$open` that no line of `$person`'s on the
-/// same thread follows, oldest first.
+/// same thread follows, oldest first; a question to the owner is answered by any person's line
+/// too, a person a board named writing as the owner does.
 pub(in crate::store) const QUESTIONS_WAITING: &str = "
 LET $asked = (SELECT * OMIT id FROM message
     WHERE recipient = $person AND kind = 'msg' AND sender != $person AND slug IN $open ORDER BY sid ASC);
 RETURN $asked.filter(|$line| (SELECT VALUE sid FROM message:[$line.slug, $line.sid]>..[$line.slug, ..]
-    WHERE sender = $person LIMIT 1) = []);";
+    WHERE sender = $person OR ($person = 'owner' AND person = true) LIMIT 1) = []);";
 
 /// The newest verdict line whose text is `approve` or `changes`, alone or before its `: text`.
 pub(in crate::store) const NEWEST_VERDICT: &str =

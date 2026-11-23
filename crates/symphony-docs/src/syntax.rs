@@ -12,8 +12,9 @@ mod fold;
 mod wiki;
 
 pub use card::{
-    CARD_LINE, Card, Entry, REGION_END, REGION_START, card_end, card_line, card_state, carded,
-    cards, entries, entry_line, is_continuation, is_indented, unseen_owner, unseen_owner_line,
+    CARD_LINE, Card, Entry, REGION_END, REGION_START, RESERVED_NAMES, SHORT_NAME_MAX, Said,
+    card_end, card_line, card_state, carded, cards, entries, entry_line, is_continuation,
+    is_indented, is_short_name, said, said_line, unseen_owner, unseen_owner_line,
 };
 use fold::fold;
 pub use wiki::{Component, WikiLink, components, wikilinks};

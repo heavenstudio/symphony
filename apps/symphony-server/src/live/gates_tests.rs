@@ -33,6 +33,7 @@ fn said(mut seed: Seed, (id, kind): (i64, &str), slug: &str, by: &str, text: &st
         kind: kind.into(),
         text: text.into(),
         ts: NOW + f64::from(i32::try_from(id).unwrap()),
+        person: false,
     });
     seed
 }

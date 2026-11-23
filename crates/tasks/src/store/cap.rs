@@ -372,7 +372,7 @@ impl Store {
         by: &str,
         kept: Option<&str>,
     ) -> Result<Vec<Value>, Failure> {
-        let Some(cap) = self.slots().filter(|_| by != super::work::OWNER) else {
+        let Some(cap) = self.slots().filter(|_| !self.is_person(by)) else {
             return Ok(Vec::new());
         };
         let opens = Opens {

@@ -3,6 +3,7 @@
 // sent during an update still names its block. Each change gives new values and keeps the old ones
 // it did not touch, so a section drawn from an unchanged value draws nothing again.
 
+import { byline } from "./byline";
 import type {
   Document,
   DocumentCard,
@@ -202,7 +203,8 @@ function threadOf(document: Document, key: string): Fragment | undefined {
     : undefined;
 }
 
-/** How many lines of the owner's the card `key` (`card:SLUG`) shows in `document`'s thread. */
+/** How many lines of a person's (the owner's, or a person's a board named) the card `key`
+ * (`card:SLUG`) shows in `document`'s thread. */
 export function ownerLines(document: Document, key: string): number {
   return entries(threadOf(document, key)).filter((entry) => entry.who === "owner").length;
 }
@@ -326,7 +328,8 @@ function newestOwnerLine(
   const entry = entries(threadOf(document, key)).findLast((one) => one.who === "owner");
   if (entry === undefined) return null;
   let text = "";
-  for (const block of entry.blocks) {
+  // A person's name, first of a named person's blocks, is no word of the line's.
+  for (const block of byline(entry)[1]) {
     if (block.type !== "paragraph") return null;
     const words = plain(block.spans);
     if (words === null) return null;

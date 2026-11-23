@@ -395,11 +395,7 @@ impl Store {
                 initial.phase, initial.state, new.status
             )));
         }
-        let principal = if new.by == super::work::OWNER {
-            crate::workflow::local_owner()
-        } else {
-            crate::workflow::agent_session(&new.by)
-        };
+        let principal = self.principal_of(&new.by);
         Ok(Some(Transition {
             id: Transition::id_of(&new.slug, 1),
             slug: new.slug.clone(),
@@ -729,7 +725,8 @@ fn agent(principal: &Principal) -> Option<&str> {
 /// Who the thread names as having taken the edge.
 fn sender(principal: &Principal) -> String {
     match (principal.kind, principal.issuer.as_str()) {
-        (PrincipalKind::Agent | PrincipalKind::Human, "local") => principal.subject.clone(),
+        (PrincipalKind::Agent | PrincipalKind::Human, "local")
+        | (PrincipalKind::Human, crate::workflow::PEOPLE) => principal.subject.clone(),
         _ => format!("{}/{}", principal.issuer, principal.subject),
     }
 }

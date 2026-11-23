@@ -111,11 +111,7 @@ fn steps(card: &Decision, plugins: &Plugins) -> Vec<Step> {
         steps.push(Step {
             at: *at,
             waiting: waits_on_owner(&then, plugins),
-            who: if line.who == "owner" {
-                Who::Owner
-            } else {
-                Who::Agent
-            },
+            who: Who::of(line.who),
             verdict: line.verdict,
         });
     }

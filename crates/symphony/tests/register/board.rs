@@ -494,3 +494,28 @@ fn json_carries_decisions() {
     );
     assert_eq!(data["open"], 2);
 }
+
+#[test]
+fn json_names_a_person_a_board_named_on_their_lines_and_no_one_else() {
+    let tree = Tree::new();
+    tree.write(
+        "docs/DECISIONS.md",
+        "# Decisions\n\n- [x] **lamps** — Lamps.\n  [2026-11-23 09:00] ana · approved — A\n  \
+         [2026-11-23 09:10] agent — Recorded.\n  [2026-11-23 09:20] owner — thanks\n",
+    );
+    let data: Value = serde_json::from_str(&status_ok(&tree.root, &["--json"])).unwrap();
+    let doc = (data["docs"].as_array().unwrap().iter())
+        .find(|d| d["path"] == "docs/DECISIONS.md")
+        .unwrap();
+    let card = &doc["decisions"][0];
+    assert_eq!(card["state"], "approved");
+    assert_eq!(card["decided_at"], "2026-11-23 09:00");
+    let entries = card["entries"].as_array().unwrap();
+    let whose: Vec<(&str, Option<&str>)> = (entries.iter())
+        .map(|e| (e["who"].as_str().unwrap(), e["name"].as_str()))
+        .collect();
+    assert_eq!(
+        whose,
+        [("owner", Some("ana")), ("agent", None), ("owner", None)]
+    );
+}

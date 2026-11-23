@@ -15,7 +15,8 @@ use serde_json::{Value, json};
 /// no pool grows to carry it for every recipient.
 const POOL_SPAN: i64 = 2000;
 
-/// The delivered messages and the owner's moves ([`OWNER_MOVES`]) after `floor`, as of message
+/// The delivered messages and the moves of the owner's and a person's ([`OWNER_MOVES`]) after
+/// `floor`, as of message
 /// `latest`, that one dispatch pass reads every recipient's inbox from: one scan of the message
 /// table a pass, where each recipient's own read scanned it, and the deliveries, twice. Only the
 /// fields the inbox's `could_reach` reads and the row's id.
@@ -49,6 +50,7 @@ fn could_reach_row(row: &Value, handle: &str, since: i64) -> bool {
     (row.get("sid").and_then(Value::as_i64)).is_none_or(|sid| sid > since)
         && text("sender") != Some(handle)
         && (text("sender") == Some(OWNER)
+            || row.get("person") == Some(&Value::Bool(true))
             || recipient == Some(handle)
             || recipient.is_some_and(|to| to.starts_with('@'))
             || text("kind") == Some("verdict"))
@@ -212,5 +214,25 @@ mod tests {
             .expect("a row is an object")
             .remove("sid");
         assert!(could_reach_row(&unnumbered, ME, CURSOR), "{unnumbered}");
+    }
+
+    #[test]
+    fn a_persons_pool_row_could_reach_as_the_owners_does_and_an_unmarked_one_of_the_name_not() {
+        let mut person = Row {
+            sender: "ana",
+            ..Row::after(None)
+        }
+        .json();
+        assert!(
+            !could_reach_row(&person, ME, CURSOR),
+            "a session named ana: {person}"
+        );
+        person["person"] = json!(true);
+        assert!(could_reach_row(&person, ME, CURSOR), "{person}");
+        person["sid"] = json!(CURSOR);
+        assert!(
+            !could_reach_row(&person, ME, CURSOR),
+            "at the cursor: {person}"
+        );
     }
 }

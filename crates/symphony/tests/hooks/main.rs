@@ -13,6 +13,7 @@ mod installed_skills;
 mod installer;
 mod lifetime;
 mod named_recipes;
+mod names_on_lines;
 mod own_names;
 mod owner_words;
 mod recipe_variables;

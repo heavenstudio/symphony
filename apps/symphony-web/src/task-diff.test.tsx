@@ -186,6 +186,7 @@ describe("the task's changed files", () => {
         kind: "verdict",
         text: "landed",
         ts: 1,
+        person: false,
       },
       stamp: "now",
       blocks: [],

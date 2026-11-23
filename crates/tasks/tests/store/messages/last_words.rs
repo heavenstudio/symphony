@@ -110,6 +110,7 @@ fn equal_ids_on_two_threads_name_the_later_thread_whichever_comes_first(backend:
             kind: "msg".into(),
             text: slug.into(),
             ts: NOW,
+            person: false,
         })
         .into();
     let board = Fixture::on(backend, seed);
@@ -134,6 +135,7 @@ fn a_copy_holding_words_with_no_sender_names_their_word(backend: Backend) {
         kind: kind.into(),
         text: format!("{slug} {id}"),
         ts: NOW,
+        person: false,
     };
     let key_written = "said:['']";
     seed.dump.messages = vec![

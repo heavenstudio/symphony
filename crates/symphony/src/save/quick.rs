@@ -84,7 +84,7 @@ impl Saves {
             }
         })?;
         if let Some(record) = record {
-            return match self.store() {
+            return match self.store_by(&record.task().by) {
                 Ok(store) => quick_task::create(
                     &store,
                     &record.task(),
@@ -95,7 +95,7 @@ impl Saves {
             };
         }
         if !receipt.fresh {
-            return match self.store() {
+            return match self.store_by(by) {
                 Ok(store) => match quick_task::recover(&store, &receipt.fingerprint) {
                     Ok(Some(saved)) => Ok(saved),
                     Ok(None) => Err(Failure { status: 422,
@@ -106,7 +106,7 @@ impl Saves {
             };
         }
         let context = self.quick_context(scope, payload)?;
-        let store = self.store().map_err(before_dispatch)?;
+        let store = self.store_by(by).map_err(before_dispatch)?;
         let new =
             match self.quick_task_fields(payload, context, &store, &receipt.fingerprint, by)? {
                 Filing::Saved(slug) => return Ok(json!({"slug":slug})),
@@ -153,7 +153,7 @@ impl Saves {
             let mut n = 1;
             loop {
                 match store.get(&slug) {
-                    Ok(task) if crate::taskview::is_quick_task(&task, fingerprint) => {
+                    Ok(task) if crate::taskview::is_quick_task(&task, fingerprint, by) => {
                         return Ok(Filing::Saved(task.slug));
                     }
                     Ok(_) => {

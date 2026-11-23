@@ -44,13 +44,14 @@ RETURN NONE;"
 });
 
 /// What a post on a task's thread does to the task's ask, in the post's write, after its line
-/// (`$sid`, said at `$ts` by `$sender`): the owner's line, `$asking`, opens the ask about the task
-/// (`$task_about`) or joins the open one; another line of the owner's changes nothing; a line by a
-/// session holding a role on the task, or by the session the owner's last line there was sent to,
-/// answers the open one, the answer being that line.
+/// (`$sid`, said at `$ts` by `$sender`): the owner's line, or a person's (`$by_person`), `$asking`,
+/// opens the ask about the task (`$task_about`) or joins the open one; another line of the owner's
+/// changes nothing; a line by a session holding a role on the task, or by the session the last
+/// line there of the owner's or a person's was sent to, answers the open one, the answer being
+/// that line.
 pub(in crate::store) const ON_THREAD: &str = "
 LET $task_ask = (SELECT VALUE sid FROM ask WHERE about = $task_about AND open = true LIMIT 1)[0];
-IF $sender = 'owner' AND $asking {
+IF ($sender = 'owner' OR ($by_person != NONE AND $sender = $by_person)) AND $asking {
     IF $task_ask != NONE {
         UPDATE type::record('ask', $task_ask) SET lines += 1, last = math::max([last, $ts]) RETURN NONE;
     } ELSE {
@@ -63,7 +64,7 @@ IF $sender = 'owner' AND $asking {
 } ELSE IF $task_ask != NONE {
     LET $holds = array::len((SELECT VALUE id FROM role:[$slug, $sender, NONE]..[$slug, $sender, ..] LIMIT 1)) > 0;
     LET $named = IF $holds { NONE } ELSE {
-        (SELECT VALUE recipient FROM message:[$slug, NONE]..[$slug, ..] WHERE sender = 'owner' ORDER BY sid DESC LIMIT 1)[0]
+        (SELECT VALUE recipient FROM message:[$slug, NONE]..[$slug, ..] WHERE sender = 'owner' OR person = true ORDER BY sid DESC LIMIT 1)[0]
     };
     IF $holds OR $named = $sender {
         UPDATE type::record('ask', $task_ask) SET open = false, answered = $ts, answered_by = $sender,

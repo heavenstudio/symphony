@@ -556,6 +556,7 @@ impl Store {
             named_server: false,
             authority: None,
             reader: false,
+            person: None,
         }
     }
 

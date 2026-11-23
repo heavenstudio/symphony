@@ -609,6 +609,26 @@ describe("a thread", () => {
     );
   });
 
+  it("names a person a board named before their verdict, and the owner and an agent by none", () => {
+    const named: Block = {
+      type: "paragraph",
+      spans: [
+        {
+          type: "styled",
+          tag: "span",
+          presentation: { class: "entry-by" },
+          spans: [{ type: "text", text: "ana" }],
+        },
+      ],
+    };
+    const ana = { ...entry("owner", "approved", "A"), blocks: [named, paragraph("A")] };
+    expect(drawn([{ type: "thread", entries: [ana] }])).toBe(
+      '<ul class="history"><li class="entry owner"><time>2026-11-14 08:32</time> ' +
+        '<span class="from">ana</span><b class="entry-verdict">approved</b> ' +
+        '<span class="entry-text"><p>A</p></span></li></ul>',
+    );
+  });
+
   it("says an entry's author is unknown", () => {
     const html = drawn([
       { type: "thread", entries: [{ ...entry("unknown", null, "Who?"), timestamp: null }] },

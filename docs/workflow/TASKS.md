@@ -2235,7 +2235,9 @@ Who opens and closes them:
   task's ask in the message's own write. A line on the thread by a session
   holding a role on the task, or by the one the owner's last line there was
   sent to, answers it. A line the app posts as the owner for a board action with
-  no note opens none.
+  no note opens none. A person a board named writes here as the owner does: her
+  line, marked on its row as a person's (`message.person`), opens or joins the
+  ask, and answers a question an agent sent the owner.
 - **The shared server's clock.** It closes an ask once its answer can be read:
   one on a card once main's page holds the card, on the branch's page the owner
   saw it on or as main's, waiting on no agent; one on a comment once the comment

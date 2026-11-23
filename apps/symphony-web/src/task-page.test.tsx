@@ -25,6 +25,7 @@ import {
   type TaskDetailProps,
   TaskMessage,
   TaskPageView,
+  voice,
 } from "./task-page";
 import { aRole, aTask, aTaskPage, memoryStorage, reply, until } from "./testing";
 import type { Block, TaskBrief, TaskEntry, TaskPage } from "./wire";
@@ -47,7 +48,16 @@ const paragraph = (text: string): Block => ({ type: "paragraph", spans: [{ type:
 /** Message `id` of the task's thread, by `sender`, of `kind`, with `blocks`. */
 function anEntry(id: number, sender: string, kind = "message", blocks: Block[] = []): TaskEntry {
   return {
-    message: { id, slug: "fixture/task", sender, recipient: null, kind, text: "Said", ts: 1 },
+    message: {
+      id,
+      slug: "fixture/task",
+      sender,
+      recipient: null,
+      kind,
+      text: "Said",
+      ts: 1,
+      person: false,
+    },
     stamp: "2026-11-11",
     blocks,
   };
@@ -281,6 +291,19 @@ describe("a message of a task's thread", () => {
     );
     expect(upload).not.toContain("literal");
     expect(upload).toContain("A file");
+  });
+
+  it("from a person a board named, is a person's literal text under their name", () => {
+    const ana = anEntry(1, "ana", "message", [paragraph("x")]);
+    const named = { ...ana, message: { ...ana.message, person: true } };
+    const drawn = html(<TaskMessage entry={{ ...named, blocks: [] }} />);
+    expect(drawn).toContain('<div class="entry owner"><time>2026-11-11</time>');
+    expect(drawn).toContain('<span class="from">ana</span>');
+    expect(drawn).toContain('<div class="entry-text literal">Said</div>');
+    expect(voice(named.message)).toBe("owner");
+    // A session's handle that is no person's stays an agent's, whatever its name.
+    expect(voice(ana.message)).toBe("agent");
+    expect(voice({ ...ana.message, kind: "system" })).toBe("system");
   });
 
   it("from the system, is literal text", () => {

@@ -206,6 +206,43 @@ fn typed_sections_keep_source_keys_and_detach_the_whole_thread() {
 }
 
 #[test]
+fn a_persons_line_names_them_first_of_its_blocks_and_the_owners_and_an_agents_name_none() {
+    let tree = Tree::new();
+    let renderer = Render::new(&tree.root);
+    let source = "# D\n\n- [x] **pilot** — Choose.\n  [2026-11-23 09:00] agent — Asked.\n  [2026-11-23 10:00] ana · approved — A\n  [2026-11-23 11:00] owner · approved — B\n";
+    let history = renderer.typed_history(source, "docs/x.md");
+    let entries: Vec<_> = blocks::fragment(&history["pilot"], "docs/x.md")
+        .into_iter()
+        .flat_map(|block| match block {
+            Block::Thread { entries } => entries,
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    let read: Vec<_> = (entries.iter())
+        .map(|e| (e.who, e.verdict.as_deref(), e.blocks.clone()))
+        .collect();
+    let named = Block::Paragraph {
+        spans: vec![Span::Styled {
+            tag: symphony_api::InlineKind::Span,
+            presentation: Presentation::class("entry-by"),
+            spans: vec![text("ana")],
+        }],
+    };
+    assert_eq!(
+        read,
+        [
+            (ThreadAuthor::Agent, None, vec![paragraph("Asked.")]),
+            (
+                ThreadAuthor::Owner,
+                Some("approved"),
+                vec![named, paragraph("A")]
+            ),
+            (ThreadAuthor::Owner, Some("approved"), vec![paragraph("B")]),
+        ]
+    );
+}
+
+#[test]
 fn typed_prose_retains_inline_structure_tables_code_and_callouts() {
     let tree = Tree::new();
     let renderer = Render::new(&tree.root);

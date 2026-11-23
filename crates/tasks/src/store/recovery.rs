@@ -25,7 +25,7 @@
 use super::postgres::recovery as pg;
 use super::statement::both;
 use super::surreal::recovery as sql;
-use super::work::{OWNER, no_task};
+use super::work::no_task;
 use super::{Error, REFUSED, Store, refused};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -217,7 +217,7 @@ impl Store {
             return Err(refused("a task needs a title".into()));
         }
         let fence = self.bound_vars(slug, expected)?;
-        let acts = handle != OWNER;
+        let acts = !self.is_person(handle);
         let body = || both(sql::amend(acts), pg::amend(acts)).posting();
         self.bound_write(
             slug,
@@ -251,7 +251,7 @@ impl Store {
             ));
         }
         let fence = self.bound_vars(slug, expected)?;
-        let acts = handle != OWNER;
+        let acts = !self.is_person(handle);
         let more = json!({
             "retitle": title.is_some(), "title": title.unwrap_or_default(),
             "rewrite": edit.body.is_some(), "body": edit.body.as_deref().unwrap_or_default(),

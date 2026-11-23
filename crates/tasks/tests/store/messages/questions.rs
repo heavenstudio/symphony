@@ -45,6 +45,34 @@ fn a_question_waits_until_the_owner_posts_on_its_thread_after_it(backend: Backen
 }
 
 on_both! {
+fn a_persons_post_answers_the_question_to_the_owner_and_a_sessions_unmarked_line_does_not(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
+    let worker = f.session("worker");
+    f.task("sim/jump");
+    f.task("sim/dock");
+    for slug in ["sim/jump", "sim/dock"] {
+        f.store
+            .say(slug, &worker, &format!("which curve on {slug}?"), Some("owner"))
+            .unwrap();
+    }
+    f.other()
+        .for_person("ana")
+        .say("sim/jump", "ana", "flat", None)
+        .unwrap();
+    assert_eq!(
+        waiting(&f, &["sim/jump", "sim/dock"]),
+        ["which curve on sim/dock?"],
+        "her word answers it as the owner's would"
+    );
+    // A line the board did not mark is a session's, whatever its handle's shape: it answers
+    // nothing.
+    let other = f.session("worker");
+    f.store.say("sim/dock", &other, "flat", None).unwrap();
+    assert_eq!(waiting(&f, &["sim/dock"]), ["which curve on sim/dock?"]);
+}
+}
+
+on_both! {
 fn only_an_agents_lines_to_the_person_on_the_tasks_named_wait_on_them(backend: Backend) {
     let f = Fixture::on(backend, Seed::default());
     let worker = f.session("worker");

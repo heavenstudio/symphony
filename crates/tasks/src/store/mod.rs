@@ -279,6 +279,9 @@ pub struct Store {
     /// of its schema write it ([`schema::COMPATIBLE`]); set only by an opening that read the board,
     /// never by a store taken unchecked.
     reader: bool,
+    /// The person a board named whose writes this store makes ([`Store::for_person`]): none for
+    /// the owner's and a session's.
+    person: Option<String>,
 }
 
 /// The command that reaches the board on `database` again: `just tasks`, naming the database when
@@ -434,6 +437,12 @@ impl Store {
     }
 
     pub fn thread(&self, slug: &str) -> Result<Vec<Message>, Error> {
+        Ok(self.thread_rows(slug)?.into_iter().map(message).collect())
+    }
+
+    /// [`Store::thread`] as the board holds its lines, each with whether a person wrote it
+    /// ([`MessageRow::by_person`]).
+    pub fn thread_rows(&self, slug: &str) -> Result<Vec<MessageRow>, Error> {
         #[derive(Deserialize)]
         struct Thread {
             known: bool,
@@ -448,12 +457,24 @@ impl Store {
         if !thread.known {
             return Err(work::no_task(slug));
         }
-        Ok(thread.messages.into_iter().map(message).collect())
+        Ok(thread.messages)
     }
 
     /// The threads of `slugs`, each in order, in one round trip; a slug no task has is refused, as
     /// [`Store::thread`] refuses it.
     pub fn threads(&self, slugs: &[String]) -> Result<BTreeMap<String, Vec<Message>>, Error> {
+        let threads = self.threads_rows(slugs)?.into_iter();
+        Ok(
+            (threads.map(|(slug, rows)| (slug, rows.into_iter().map(message).collect())))
+                .collect_map(),
+        )
+    }
+
+    /// [`Store::threads`] as the board holds their lines ([`Store::thread_rows`]).
+    pub fn threads_rows(
+        &self,
+        slugs: &[String],
+    ) -> Result<BTreeMap<String, Vec<MessageRow>>, Error> {
         #[derive(Deserialize)]
         struct Threads {
             unknown: Vec<String>,
@@ -465,15 +486,7 @@ impl Store {
         if let Some(slug) = read.unknown.first() {
             return Err(work::no_task(slug));
         }
-        Ok(slugs
-            .iter()
-            .cloned()
-            .zip(
-                read.threads
-                    .into_iter()
-                    .map(|rows| rows.into_iter().map(message).collect()),
-            )
-            .collect_map())
+        Ok(slugs.iter().cloned().zip(read.threads).collect_map())
     }
 
     /// Become the executor. Of any number of claims at once, one wins. A claim that starts ready
@@ -818,11 +831,7 @@ impl Store {
             .filter(|r| r.slug == slug)
             .map(|r| (r.handle.clone(), r.role.clone(), true))
             .collect();
-        let principal = if actor == work::OWNER {
-            crate::workflow::local_owner()
-        } else {
-            crate::workflow::agent_session(actor)
-        };
+        let principal = self.principal_of(actor);
         let reopening = crate::workflow::activate::Reopening {
             slug,
             left: &task.status,
@@ -1450,7 +1459,9 @@ fn left_actor(handle: &str) -> String {
 }
 
 impl Store {
-    /// `ACT`'s variables, and `more`'s.
+    /// `ACT`'s variables, and `more`'s; with `by_person`, the person the write is for, when `actor`
+    /// is the one this store writes for ([`Store::for_person`]), whose lines are marked theirs
+    /// (`surreal::logged`).
     fn acting(&self, actor: &str, now: f64, more: Value) -> Value {
         let mut vars = json!({
             "actor": actor,
@@ -1458,10 +1469,49 @@ impl Store {
             "unknown_actor": format!("{REFUSED}{}", unknown_actor(&self.board_command(), actor)),
             "left_actor": format!("{REFUSED}{}", left_actor(actor)),
         });
+        if actor != work::OWNER && self.is_person(actor) {
+            vars["by_person"] = actor.into();
+        }
         if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
             vars.extend(more);
         }
         vars
+    }
+
+    /// This store, writing for `name`, a person a board named (docs/product/analysis/users-and-identity.md,
+    /// "How a person's name is written"): its writes by `name` are a person's, as the owner's are
+    /// (no session acts, and a line they write is marked a person's, [`MessageRow::person`]), never a
+    /// session's. The Symphony's saves vouch for the person their host admitted; the command line
+    /// never calls it, so `--as` stays a session's. `owner` is a person already, and a `name` that
+    /// is no short name ([`symphony_docs::syntax::is_short_name`]) is none: its writes are a
+    /// session's, refused as an unknown one is.
+    #[must_use]
+    pub fn for_person(mut self, name: &str) -> Store {
+        if name != work::OWNER {
+            self.person = Some(name.to_string());
+        }
+        self
+    }
+
+    /// Whether `actor` writes as a person, not a session: the owner, or the person this store
+    /// writes for ([`Store::for_person`]) when theirs is a short name.
+    pub fn is_person(&self, actor: &str) -> bool {
+        actor == work::OWNER
+            || (self.person.as_deref() == Some(actor)
+                && symphony_docs::syntax::is_short_name(actor))
+    }
+
+    /// The principal `actor`'s write is taken as: the person at the machine for the owner, a
+    /// person a board named for the one this store writes for ([`Store::is_person`]), else the
+    /// session of that handle.
+    pub(crate) fn principal_of(&self, actor: &str) -> symphony_plugin::execution::Principal {
+        if actor == work::OWNER {
+            crate::workflow::local_owner()
+        } else if self.is_person(actor) {
+            crate::workflow::person(actor)
+        } else {
+            crate::workflow::agent_session(actor)
+        }
     }
 
     /// Whether `error` is this board's refusal of `handle` as the session that acts: one it does
@@ -1474,14 +1524,22 @@ impl Store {
 }
 
 fn message(row: MessageRow) -> Message {
-    Message {
-        id: row.id,
-        slug: row.slug,
-        sender: row.sender,
-        recipient: row.recipient,
-        kind: row.kind,
-        text: row.text,
-        ts: row.ts,
+    Message::from(row)
+}
+
+/// A line as the board holds it, as its readers take it: its mark of a person's line
+/// ([`MessageRow::person`]) left behind.
+impl From<MessageRow> for Message {
+    fn from(row: MessageRow) -> Message {
+        Message {
+            id: row.id,
+            slug: row.slug,
+            sender: row.sender,
+            recipient: row.recipient,
+            kind: row.kind,
+            text: row.text,
+            ts: row.ts,
+        }
     }
 }
 

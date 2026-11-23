@@ -3,13 +3,17 @@
 use crate::register::{CALLOUT, KINDS, NESTED_RESOLVED, QUOTE, is_fence};
 use crate::text::{rstrip, strip};
 
-/// One callout the owner left in a document's text.
+/// One callout a person left in a document's text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Comment {
     /// 1-based.
     pub line: usize,
     pub kind: String,
     pub title: String,
+    /// Who left it: a person's short name written before the title (`> [!dislike] ana · Too many
+    /// lamps`, [`crate::edit::insert_comment_by`]), else `owner`, as every comment written before
+    /// names was.
+    pub by: String,
     pub body: Vec<String>,
     pub resolution: Option<String>,
     /// The callout as written, for the ledger (set by [`archive_callouts`]).
@@ -31,6 +35,18 @@ pub(crate) fn review_kind(line: &str) -> Option<(String, String)> {
         .then(|| (kind, strip(&caps["title"]).to_string()))
 }
 
+/// A callout's title read for who left it: `ana · Too many lamps` is `ana`'s, its name a short
+/// name ([`symphony_docs::syntax::is_short_name`]) followed by ` · `; any other title is the
+/// owner's, whole.
+fn named(title: &str) -> (String, String) {
+    match title.split_once(" · ") {
+        Some((name, rest)) if symphony_docs::syntax::is_short_name(name) => {
+            (name.to_string(), strip(rest).to_string())
+        }
+        _ => ("owner".to_string(), title.to_string()),
+    }
+}
+
 /// Every review callout in `lines`, with its body and any nested resolution.
 pub fn parse_comments<L: AsRef<str>>(lines: &[L]) -> Vec<Comment> {
     let mut found: Vec<Comment> = Vec::new();
@@ -47,10 +63,12 @@ pub fn parse_comments<L: AsRef<str>>(lines: &[L]) -> Vec<Comment> {
             continue;
         }
         if let Some((kind, title)) = review_kind(line) {
+            let (by, title) = named(&title);
             found.push(Comment {
                 line: index + 1,
                 kind,
                 title,
+                by,
                 body: Vec::new(),
                 resolution: None,
                 raw: Vec::new(),

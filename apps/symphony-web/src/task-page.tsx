@@ -64,10 +64,17 @@ function bone(width: string): CSSProperties {
 /** A task's priorities, as its field offers them. */
 const PRIORITIES: [string, string][] = [0, 1, 2, 3, 4].map((value) => [`${value}`, `p${value}`]);
 
+/** Whose line a task's message is, as its thread draws it: a person's (the owner's, or a person's
+ * a board named), the board's own, or an agent's. */
+export function voice(message: TaskEntry["message"]): "owner" | "system" | "agent" {
+  if (message.sender === "owner" || message.person) return "owner";
+  return message.kind === "system" ? "system" : "agent";
+}
+
 /** A message of a task's thread: its time, who sent it to whom, and its text or blocks. */
 export const TaskMessage = memo(function TaskMessage({ entry }: { entry: TaskEntry }) {
   const { message } = entry;
-  const who = message.sender === "owner" ? "owner" : message.kind === "system" ? "system" : "agent";
+  const who = voice(message);
   return (
     <div className={`entry ${who}`}>
       <time>{entry.stamp}</time>{" "}

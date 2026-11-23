@@ -192,7 +192,30 @@ pub const ADDED: &[Addition] = &[
               without it reads the same rows by scanning the table, and writes them as it did; \
               SurrealDB reads a session by its record id and has nothing to add",
     },
+    PERSON_LINES,
 ];
+
+/// The step that marks a person's line ([`crate::rows::MessageRow::person`]): the optional field
+/// `person` on `message`, an open table, written on a line a person a board named wrote
+/// ([`crate::Store::for_person`]) and on no other. It names no table of its own, so no write is
+/// refused for naming one; a write for a person needs it ([`crate::Store::is_person`]).
+pub const PERSON_LINES: Addition = Addition {
+    surreal: "DEFINE FIELD IF NOT EXISTS person ON message TYPE option<bool>;",
+    postgres: "ALTER TABLE message ADD COLUMN IF NOT EXISTS person boolean;",
+    tables: &[],
+    why: "the optional field person on message, true on a line a person a board named wrote: a \
+          build without it writes a line with none, as every line before it was written, and \
+          reads one with it past the field it does not know (OPEN), as the owner's word it does \
+          not hear; a build with it writes the field only for a person, which needs the step, and \
+          reads it on PostgreSQL through the row, so a board without it reads no person",
+};
+
+/// The number of [`PERSON_LINES`] among [`ADDED`], counted from 1: 0 once a breaking step made the
+/// field the contract's own, which every board of it has.
+pub(crate) fn person_step() -> i64 {
+    let at = ADDED.iter().position(|step| *step == PERSON_LINES);
+    at.map_or(0, |at| i64::try_from(at + 1).unwrap_or(i64::MAX))
+}
 
 /// How many additive steps this build has on its contract: [`ADDED`]'s length.
 pub const ADDITIONS: i64 = {
@@ -501,13 +524,17 @@ impl Refusal {
 /// every number, so the record is held to be an integer before it is compared. On a board of its
 /// own contract it then throws (`$board_additions_*`) unless the board's additive steps are
 /// within what the write takes ([`Steps`]): no fewer than the step of a table it names, and for a
-/// whole-board copy or a rebind, exactly the store's own.
+/// whole-board copy or a rebind, exactly the store's own. A write for a person (`$by_person`,
+/// [`crate::Store::for_person`]) throws `$by_person_session` when a session on the board, live or
+/// left, holds that name as its handle: the person never writes as that session, nor marks its
+/// lines theirs.
 pub(crate) const GUARD: &str = "LET $board_schema_meta = (SELECT version, writable_from FROM ONLY meta:schema);
 LET $board_schema_found = $board_schema_meta.version;
 LET $board_schema_from = $board_schema_meta.writable_from;
 IF $board_schema_found != $board_schema AND !($board_schema_ahead = true AND $board_schema_found = $board_schema + 1 AND type::is_int($board_schema_from) AND $board_schema_from <= $board_schema) { THROW string::concat($board_schema_before, <string> $board_schema_found, $board_schema_after) };
 LET $board_additions_found = (SELECT VALUE version FROM ONLY meta:additions) ?? 0;
-IF $board_schema_found = $board_schema AND ($board_additions_found < $board_additions_least OR $board_additions_found > $board_additions_most) { THROW string::concat($board_additions_before, <string> $board_additions_found, $board_additions_after) };";
+IF $board_schema_found = $board_schema AND ($board_additions_found < $board_additions_least OR $board_additions_found > $board_additions_most) { THROW string::concat($board_additions_before, <string> $board_additions_found, $board_additions_after) };
+IF $by_person != NONE AND record::exists(type::record('session', $by_person)) { THROW $by_person_session };";
 
 /// What a write takes of the board's additive steps on its contract, which the [`GUARD`] holds it
 /// to: no fewer than `least`, no more than `most`, refused in the words `before`, the board's

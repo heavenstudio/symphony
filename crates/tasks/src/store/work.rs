@@ -358,7 +358,7 @@ impl Store {
         }
         // Read the old value and write its replacement and history in the same transaction. A
         // concurrent edit conflicts and retries, so history always names the value replaced.
-        let acts = handle != OWNER;
+        let acts = !self.is_person(handle);
         let body = || both(sql::set_priority(acts), Pg::script(pg::set_priority(acts))).posting();
         self.retrying(|| {
             let vars = self.acting(
@@ -387,7 +387,7 @@ impl Store {
         if title.is_empty() {
             return Err(refused("a task needs a title".into()));
         }
-        let acts = handle != OWNER;
+        let acts = !self.is_person(handle);
         let body = || both(sql::amend(acts), pg::amend(acts)).posting();
         self.retrying(|| {
             let vars = self.acting(
@@ -417,11 +417,11 @@ impl Store {
             me: Option<Value>,
             known: bool,
         }
-        let acts = by != OWNER;
+        let acts = !self.is_person(by);
         self.retrying(|| {
             let read: Read =
                 self.read_together(both(sql::TREE_READ, pg::tree_read()), json!({"actor": by}))?;
-            if by != OWNER {
+            if !self.is_person(by) {
                 if !read.known {
                     return Err(Failure::Stop(refused(unknown_actor(&self.board_command(), by))));
                 }
@@ -459,7 +459,7 @@ impl Store {
                 return self.written(body, vars, slug);
             };
             // The give's fences go before the move moves the task's version.
-            let sender = if by == OWNER { BOARD } else { by };
+            let sender = if self.is_person(by) { BOARD } else { by };
             let body = both(
                 sql::set_parent(acts, guarded, true),
                 pg::set_parent(acts, guarded, true),
@@ -658,8 +658,8 @@ impl Store {
                 reason_line(status, &format!("on {thing}{why}"))
             }),
         };
-        if handle == OWNER && matches!(status, "cancelled" | "review") {
-            return self.move_as_owner(slug, status, reason.as_deref());
+        if self.is_person(handle) && matches!(status, "cancelled" | "review") {
+            return self.move_as_owner(slug, status, reason.as_deref(), handle);
         }
         let (task, from) = self.moving_from(slug, status, handle, Moving::Any, reason, on)?;
         if from == "done" {
@@ -884,9 +884,16 @@ impl Store {
         Ok(stages::in_status(facts, &lines).from)
     }
 
-    /// The owner's two moves: any open task to `cancelled`, a blocked one (never an instruction
-    /// subtask) back to `review`; `reason`'s line, when given, posted after the move's own.
-    fn move_as_owner(&self, slug: &str, status: &str, reason: Option<&str>) -> Result<Task, Error> {
+    /// The owner's two moves, and a person's (`by`, [`Store::is_person`]): any open task to
+    /// `cancelled`, a blocked one (never an instruction subtask) back to `review`; `reason`'s line,
+    /// when given, posted after the move's own, which names `by` (`ana moved it …`).
+    fn move_as_owner(
+        &self,
+        slug: &str,
+        status: &str,
+        reason: Option<&str>,
+        by: &str,
+    ) -> Result<Task, Error> {
         let cancelling = status == "cancelled";
         let from: Vec<_> = if cancelling {
             TRANSITIONS
@@ -910,7 +917,7 @@ impl Store {
             )
             .posting();
             let vars = self.acting(
-                OWNER,
+                by,
                 (self.clock)(),
                 json!({
                     "slug": slug, "status": status, "from": from, "slots": closed.slots, "version": closed.version,

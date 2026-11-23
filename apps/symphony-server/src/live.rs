@@ -1637,17 +1637,22 @@ impl Hub {
             && since < latest
         {
             let render = symphony::render::Render::new(&self.root);
-            lines = store
-                .messages_after(since, latest)
+            // As the board holds them: a person's line goes out marked as theirs.
+            let rows = store
+                .messages_after_rows(since, latest)
                 .map_err(|e| e.to_string())?;
-            for message in &lines {
-                let record = taskview::message(message);
+            for row in &rows {
+                let record = taskview::message_row(row);
                 let mut data = json!(record);
                 let entry = taskview::entry(&record, &render);
                 data["blocks"] = json!(entry.blocks);
                 data["stamp"] = entry.stamp.into();
                 changed.push(region_event("message", data));
             }
+            lines = rows
+                .into_iter()
+                .map(symphony_board::Message::from)
+                .collect();
         }
         *cursor = Some(latest);
         drop(cursor);

@@ -596,6 +596,18 @@ impl ClosingSaves {
             .post(scope, route, &payload)
             .unwrap_or_else(|e| panic!("{route}: {} {}", e.status, e.error))
     }
+    /// [`Self::post`] asked by `actor`, as a host that admitted them hands it over.
+    fn post_as(
+        &self,
+        actor: &symphony_plugin::Actor,
+        scope: &str,
+        route: &str,
+        payload: Value,
+    ) -> Value {
+        self.0
+            .post_as(actor, scope, route, &payload)
+            .unwrap_or_else(|e| panic!("{route}: {} {}", e.status, e.error))
+    }
 }
 impl Drop for ClosingSaves {
     fn drop(&mut self) {

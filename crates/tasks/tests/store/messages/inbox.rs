@@ -48,6 +48,7 @@ fn acknowledgements_keep_adjacent_large_integer_ids_and_recipients_distinct(back
             kind: "msg".into(),
             text: format!("message {id}"),
             ts: NOW,
+            person: false,
         })
         .collect();
     seed.dump.deliveries = [
@@ -160,6 +161,7 @@ fn acknowledged_and_unaddressed_history_does_not_travel_as_message_bodies() {
             kind: "msg".into(),
             text: body.clone(),
             ts: NOW,
+            person: false,
         })
         .collect();
     seed.dump.deliveries = (1..=64)
@@ -254,6 +256,7 @@ fn a_recipient_far_behind_the_board_reads_its_inbox_from_its_cursor(backend: Bac
             kind: "msg".into(),
             text: format!("line {id}"),
             ts: NOW,
+            person: false,
         })
         .collect();
     let f = Fixture::on(backend, seed);
