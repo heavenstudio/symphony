@@ -93,7 +93,7 @@ every command.
 | see the work | `list` (the open tasks), `show SLUG` (one task: roles, brief, thread), `search WORDS`, `next` (what to take) |
 | see who is there | `who` (sessions), `agents` (agents and their terminals), `status` (the board's health), `limits` |
 | file work | `create SLUG TITLE --body-file FILE`, then `priority`, `parent`, `depends` |
-| do a task | `claim SLUG`, `say SLUG TEXT --to @orchestrator`, `move SLUG review`, `done SLUG TEXT` for a subtask |
+| do a task | `claim SLUG`, `say SLUG TEXT --to @orchestrator` (`--file PATH` for a long one), `move SLUG review`, `done SLUG TEXT` for a subtask |
 | let one go | `release SLUG`, or `move SLUG blocked --on … --why …` when it cannot go on |
 | review one | `role SLUG reviewer`, `runs SLUG` (what its builds and tests recorded), `verdict SLUG approve` or `changes` |
 | land one | `just land SLUG`; `stamps SLUG` says what its landing still needs |
