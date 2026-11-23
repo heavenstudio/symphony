@@ -1141,7 +1141,7 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
 | What the watcher reads | What follows |
 | --- | --- |
 | A check that is not the Symphony's red at the head (a CI the repository adds), or the host reporting the pull request in conflict with the default branch | the task back to in progress (from done by review): its executor merges the default branch once, or puts the check right, and moves it to review, which dispatches it again |
-| The pull request closed unmerged, by someone | back to in progress, naming it, moved as its orchestrator whoever's write's dispatch found it (an assessor's included); the next dispatch opens another |
+| The pull request closed unmerged, by someone | back to in progress, naming it, the move made as its orchestrator whoever started the dispatch that found it, an assessor too; the next dispatch opens another |
 | Neither merged nor red once `[land] merge_within_minutes` (30) passed since its evidence stood (review time counts for nothing) | the task stays where it is, the work not at fault: `just land SLUG` arms it again |
 | Any of these where the task cannot go back (cancelled or closed, a document save, which stays pending and shown, or what the regenerator made, which it cancels and makes again) | `tools/delivery-failed-SLUG` filed to `@orchestrator`, naming the pull request and why; a second failure is a line on the one open |
 
@@ -1272,6 +1272,45 @@ Those asked while a pass is pending or running ask for one more pass together, n
 A save kept by a build that did not know the key is delivered the same way. A project's
 `[verdicts]` generators are not run for a kept save, on its branch or after its delivery: what
 they generate stays as it is.
+
+An agent's reply (`just symphony-reply`) and a tidy (`just symphony-status --tidy`) run in the
+checkout on the default branch are kept the same way, one save for each file they change. Each
+is written against the page as the saves still waiting leave it, under the lock the app's saves
+take. So a reply follows the owner's line it answers on the page, and it is committed only
+once the owner's save before it is delivered. Its entry names the agent's session
+(`TASKS_SESSION`, or the reply's `--as`; `agent` with none), and its task is filed as an agent's
+save rather than the owner's. The server watches the journal's folder, so
+a save another process keeps there is shown and taken up at once, with no document changed.
+
+One pass delivers an agent's saves as one task. The first agent's save whose turn has come
+takes with it every later agent's save whose turn has come too, of any document: one whose
+every earlier save of its document is delivered, on no way to the default branch, or going with
+it. They are committed in the order kept, as one commit on the first's branch, and filed as one
+task; each entry names that branch and its commit (`members` in the first's), so each is proved,
+held and closed by that branch's receipt, land and task. An owner's save never goes with one, so
+a pass splits only where one document's saves meet an owner's save still on its way, or a batch
+already on its way: the later saves of that document wait for it, and go with the next pass's
+batch. A save left out of a batch, because it no longer applies after those before it, waits for
+the next pass with every later save of its document. The next pass tries it alone: one that
+cannot be committed then is on no way to the default branch, says why on its page, and holds
+back no later save.
+
+The saves one tidy keeps go to the default branch in one commit or not at all: its ledger never
+reaches it without the pages whose comments it holds, nor a page without the ledger
+(`together` in each entry: the first's number and how many). They are led by the first of them,
+which waits while any of them would: a page's save waits behind its ledger's, and the ledger's
+behind a save of that page still on its way. A batch takes them all or none, and leaves them all
+out where one no longer applies.
+
+A tidy whose saves cannot go is on no way as a whole, as a save alone that cannot be committed
+is. That is the case when its first is held (one of them conflicts with the default branch, and
+so its commit fails), when its task closed with no delivery, or when it is no longer whole once
+kept, one of them dropped as another delivery brought it. Each of its saves then says why on its
+page, and none holds back a later save of its files: an owner's save of one of its pages goes,
+and so does a later tidy's ledger. The tidy writes its first entry last, so a tidy that could
+not keep all of its saves has no first in the journal. Those it did keep are never shown or
+delivered and hold back nothing, and the tidy says on its error output that nothing of it was
+kept.
 
 ### What the generators make, delivered by a pull request
 
@@ -2066,9 +2105,13 @@ orchestrator_tasks (line 2) is "sixteen"; not a whole number`).
   orchestrator_tasks): it gains none until one of them is done or cancelled or it lets one go`.
   The board gives it none: a filing passes it over and says so ([Tasks and
   roles](#tasks-and-roles), **Filed**), and the board's give at a leave, a reopen and every read
-  of the whole board takes the next that stays and is under it, else marks the task waiting. The
-  owner's hand-over, and a move that keeps moved work with the orchestrator it had, are held to
-  no limit, as the owner's moves and hand-overs are not to the cap.
+  of the whole board takes the next that stays and is under it, else marks the task waiting. Where
+  the places left are fewer than the tasks with no orchestrator, a pass gives first the tasks that
+  wait on nothing, each dependency the board holds being done, and then the ones that still wait on
+  another, which nobody can start whoever orchestrates them, each group in the board's order
+  (`crates/tasks/src/orchestration.rs`). The owner's hand-over, and a move that keeps moved work
+  with the orchestrator it had, are held to no limit, as the owner's moves and hand-overs are not
+  to the cap.
 - **A task with no orchestrator is well.** It waits for one under its limit that stays: `just
   tasks show` says so and names the `role` command any orchestrator under its limit takes it with,
   every orchestrator hears it, and the board's health counts it and warns of none ([Board

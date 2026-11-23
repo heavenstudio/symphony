@@ -8,12 +8,13 @@ use std::time::Duration;
 
 use symphony_plugin::authority::{Operation, Signed};
 use symphony_plugin::vocabulary::{
-    Block, Gate, GatePast, GateState, LinkTarget, NavItem, Picture, Presentation, ProgressBar,
-    Region, Span, TaskOffer, View, Viewer,
+    Block, EntryNeed, EntryState, Gate, GatePast, GateState, LinkTarget, NavItem, Picture,
+    Presentation, ProgressBar, Region, Setting, SettingClass, SettingKind, SettingScope,
+    SettingSource, SettingsEntry, Span, TaskOffer, View, Viewer,
 };
 use symphony_plugin::{
-    Authority, BoardAction, BoardField, Card, CardKind, Command, Component, DocCheck, Docs,
-    Drawing, FieldKind, File, Gates, Generator, HomeRegion, Page, Plugin, Problem, ProseRule,
+    Authority, BoardAction, BoardField, Card, CardKind, Command, Component, Describer, DocCheck,
+    Docs, Drawing, FieldKind, File, Gates, Generator, HomeRegion, Page, Plugin, Problem, ProseRule,
     Renderer, Reply, Route, Submission, Submitted, TaskRef, Theme, Transport, Watch,
 };
 
@@ -70,6 +71,9 @@ impl Plugin for Every {
     fn authorities(&self) -> Vec<&dyn Authority> {
         vec![self]
     }
+    fn describers(&self) -> Vec<&dyn Describer> {
+        vec![self, &UNREAD]
+    }
     fn watches(&self) -> Vec<&dyn Watch> {
         vec![self]
     }
@@ -108,8 +112,9 @@ impl Plugin for Every {
 }
 
 /// [`EVERY`] as a plugin's process serves it: its name and each seam a process answers (its
-/// components, card kind, renderer, route, navigation, home region, board action, watch, doc check,
-/// command and theme), and a component that takes as long as it is told.
+/// components, card kind, renderer, route, navigation, home region, board action, gates answerer,
+/// approval authority, Settings page describers, watch, doc check, command and theme), and a
+/// component and a gates answerer that take as long as they are told.
 pub(super) struct Piped;
 
 pub(super) static PIPED: Piped = Piped;
@@ -139,6 +144,15 @@ impl Plugin for Piped {
     fn board_actions(&self) -> Vec<&dyn BoardAction> {
         EVERY.board_actions()
     }
+    fn gates(&self) -> Vec<&dyn Gates> {
+        vec![&EVERY, &SLOW]
+    }
+    fn authorities(&self) -> Vec<&dyn Authority> {
+        EVERY.authorities()
+    }
+    fn describers(&self) -> Vec<&dyn Describer> {
+        EVERY.describers()
+    }
     fn watches(&self) -> Vec<&dyn Watch> {
         EVERY.watches()
     }
@@ -155,7 +169,9 @@ impl Plugin for Piped {
 
 /// A component that spends its argument's microseconds before it answers, so a measurement shows
 /// its meters move by a known time; `hang` it never answers in a test's time, the file
-/// [`HANGING`] written in the page's root first, so a test sees the call is in it.
+/// [`HANGING`] written in the page's root first, so a test sees the call is in it. As a gates
+/// answerer it meets its gate at the tip it is asked: at the tip `hang` it hangs the same way, and
+/// at a tip `held-N` it is held until its test lets it go ([`HELD`]).
 struct Slow;
 
 static SLOW: Slow = Slow;
@@ -174,13 +190,7 @@ impl Component for Slow {
         _: Option<&str>,
     ) -> Result<Vec<Block>, String> {
         if argument == "hang" {
-            // A root that is no folder (a test's `/r`) takes no mark, and the call hangs all the same.
-            let _ = std::fs::write(page.root.join(HANGING), "");
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "no-timed-waits baseline: a test plugin hangs by a length of time, not until its test releases it"
-            )]
-            std::thread::sleep(std::time::Duration::from_secs(600));
+            hang(page.root);
         }
         let micros: u64 = argument
             .parse()
@@ -194,6 +204,57 @@ impl Component for Slow {
             spans: vec![Span::Text {
                 text: format!("slow {micros}"),
             }],
+        }])
+    }
+}
+
+/// The FIFO in a root that a gates answer of [`SLOW`] at a tip `held-N` reads a byte of before it
+/// answers, so it is held until its test writes one: `slow-held-N` written beside it first, so the
+/// test sees the call is in the plugin. It is opened to read and write, an open that never waits
+/// on a writer, so no byte the test writes is missed. With no FIFO there it answers at once.
+pub const HELD: &str = "slow-held";
+
+/// `hang` in `root`: [`HANGING`] written there, so a test sees the call is in it, then never an
+/// answer in a test's time.
+fn hang(root: &Path) {
+    // A root that is no folder (a test's `/r`) takes no mark, and the call hangs all the same.
+    let _ = std::fs::write(root.join(HANGING), "");
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test plugin hangs by a length of time, not until its test releases it"
+    )]
+    std::thread::sleep(std::time::Duration::from_secs(600));
+}
+
+impl Gates for Slow {
+    fn name(&self) -> &str {
+        "slow"
+    }
+    fn answer(
+        &self,
+        root: &Path,
+        task: &TaskRef<'_>,
+        tip: Option<&str>,
+    ) -> Result<Vec<Gate>, String> {
+        if tip == Some("hang") {
+            hang(root);
+        }
+        if let Some(n) = tip.and_then(|tip| tip.strip_prefix("held-")) {
+            let _ = std::fs::write(root.join(format!("{HELD}-{n}")), "");
+            let held = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(root.join(HELD));
+            if let Ok(mut held) = held {
+                let _ = std::io::Read::read_exact(&mut held, &mut [0; 1]);
+            }
+        }
+        Ok(vec![Gate {
+            name: "slow".into(),
+            state: GateState::Met,
+            by: Some(task.slug.into()),
+            commit: tip.map(str::to_string),
+            ..Gate::default()
         }])
     }
 }
@@ -495,6 +556,85 @@ impl Gates for Every {
     }
     fn kept_while(&self, root: &Path, task: &TaskRef<'_>) -> String {
         format!("{} {} in {}", task.status, task.branch, root.display())
+    }
+}
+
+/// The file in a project's root whose text is the shade [`EVERY`]'s entry says: what shows its
+/// describer reads the checkout it is asked of.
+pub const SHADE: &str = "every-shade";
+
+/// What [`EVERY`]'s describer answers for the project at `root`: an entry of every part, with a
+/// setting of its own, a preference of the machine's scope, and the land's delivery, a protected key,
+/// which it calls a preference too.
+pub fn described(root: &Path) -> SettingsEntry {
+    let shade = std::fs::read_to_string(root.join(SHADE)).unwrap_or_else(|_| "plain".into());
+    let source = |said: &str, file: &str, line: u32| SettingSource {
+        scope: Some(SettingScope::Project),
+        said: said.into(),
+        file: Some(file.into()),
+        line: Some(line),
+        over: None,
+    };
+    SettingsEntry {
+        id: "anything".into(),
+        name: "Every widget".into(),
+        about: "Draws every widget the project holds.".into(),
+        state: Some(EntryState {
+            word: "On".into(),
+            on: Some(true),
+            why: format!("Its shade is {}, read in {}.", shade.trim(), root.display()),
+        }),
+        needs: vec![EntryNeed {
+            what: "the widget folder".into(),
+            met: root.join("widgets").is_dir(),
+            said: "widgets/ in the checkout".into(),
+        }],
+        settings: vec![
+            Setting {
+                key: "[every] shade".into(),
+                name: "The widgets' shade".into(),
+                kind: SettingKind::Choice,
+                value: shade.trim().into(),
+                choices: vec!["plain".into(), "bright".into()],
+                source: source("every.toml [every] shade, line 1", "every.toml", 1),
+                scopes: vec![SettingScope::Project, SettingScope::Machine],
+                class: SettingClass::Preference,
+            },
+            Setting {
+                key: "[land] delivery".into(),
+                name: "How a land is delivered".into(),
+                kind: SettingKind::Text,
+                value: "pull_request".into(),
+                choices: Vec::new(),
+                source: source("symphony.toml [land] delivery, line 3", "symphony.toml", 3),
+                scopes: vec![SettingScope::Project, SettingScope::Machine],
+                class: SettingClass::Preference,
+            },
+        ],
+        source: None,
+    }
+}
+
+impl Describer for Every {
+    fn id(&self) -> &str {
+        "widgets"
+    }
+    fn describe(&self, root: &Path) -> Result<SettingsEntry, String> {
+        Ok(described(root))
+    }
+}
+
+/// A describer that cannot say.
+struct Unread;
+
+static UNREAD: Unread = Unread;
+
+impl Describer for Unread {
+    fn id(&self) -> &str {
+        "unread"
+    }
+    fn describe(&self, _: &Path) -> Result<SettingsEntry, String> {
+        Err("every.toml does not read".into())
     }
 }
 

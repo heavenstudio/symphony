@@ -441,6 +441,12 @@ fn answer(plugin: &dyn Plugin, request: Request, pages: &Pages) -> Result<Box<Ra
             let within = std::time::Duration::from_millis(asked.within_ms);
             reply(&authority.attest(&asked.root, &asked.operation, within))
         }
+        Request::Describe(asked) => {
+            let describer = named(plugin.describers(), "describer", &asked.describer, |d| {
+                d.id()
+            })?;
+            reply(&describer.describe(&asked.root))
+        }
         Request::Changed(asked) => {
             let watches = plugin.watches();
             let watch = watches

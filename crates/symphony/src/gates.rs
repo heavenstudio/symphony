@@ -900,12 +900,21 @@ pub fn answerers(project: &Project, root: &Path) -> Vec<(&'static str, &'static 
         .collect()
 }
 
-/// What `answerer` says its answer for `asked` reads besides the tip; a panic is why it cannot.
+/// Why an answerer could not tell what its answer reads, as it said it: what a plugin's process
+/// unwinds [`Gates::kept_while`] with when the call has no answer (its process down, a refusal, no
+/// answer in time), as the trait has no error to return but a panic.
+pub(crate) struct Untold(pub(crate) String);
+
+/// What `answerer` says its answer for `asked` reads besides the tip; a panic is why it cannot,
+/// and an [`Untold`] its own words.
 fn told(answerer: &dyn Gates, root: &Path, asked: &Asked) -> Result<String, String> {
     catch_unwind(AssertUnwindSafe(|| {
         answerer.kept_while(root, &asked.task())
     }))
-    .map_err(|panic| panicked(answerer.name(), "telling what its answer reads", &*panic))
+    .map_err(|panic| match panic.downcast::<Untold>() {
+        Ok(untold) => untold.0,
+        Err(panic) => panicked(answerer.name(), "telling what its answer reads", &*panic),
+    })
 }
 
 /// Why `name` could not answer: it panicked while `doing` it, saying what `payload` says.

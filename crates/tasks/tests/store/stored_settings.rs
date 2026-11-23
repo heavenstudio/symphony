@@ -128,6 +128,57 @@ fn a_stored_value_is_kept_with_every_change_of_it_and_a_removed_entry_keeps_its_
 }
 
 #[test]
+fn an_entry_is_removed_for_a_commit_only_while_it_holds_the_value_committed() {
+    let f = board();
+    set(&f.store, "limits.low_volume", "2");
+    // Stored again since the commit of 2: the newer value stays, nothing written.
+    set(&f.store, "limits.low_volume", "3");
+    let kept = f
+        .store
+        .remove_setting_holding("limits.low_volume", &json!(2), "owner");
+    assert!(!kept.unwrap(), "a newer value stays");
+    let entries = f.store.stored_entries().unwrap();
+    assert_eq!(
+        (entries[0].value.clone(), entries[0].revision),
+        (Some(json!(3)), 2)
+    );
+    // Holding the value committed: removed, as owner's change, its record kept.
+    f.advance(60.0);
+    let removed = f
+        .store
+        .remove_setting_holding("limits.low_volume", &json!(3), "owner");
+    assert!(removed.unwrap(), "the value committed is removed");
+    let entries = f.store.stored_entries().unwrap();
+    let last = entries[0].changes.last().unwrap();
+    assert_eq!(
+        (
+            entries[0].value.clone(),
+            last.before.clone(),
+            last.after.clone(),
+            last.by.as_str()
+        ),
+        (None, Some(json!(3)), None, "owner")
+    );
+    assert!(f.store.stored().is_empty());
+    // Removed already, or never stored: nothing to do, and no refusal.
+    for key in ["limits.low_volume", "limits.machine_agents"] {
+        assert!(
+            !f.store
+                .remove_setting_holding(key, &json!(3), "owner")
+                .unwrap(),
+            "{key}"
+        );
+    }
+    assert_eq!(f.store.stored_entries().unwrap().len(), 1);
+    // Who removes it is said, as for any change.
+    let why = refused(
+        f.store
+            .remove_setting_holding("limits.low_volume", &json!(3), " "),
+    );
+    assert!(why.contains("says who made it"), "{why}");
+}
+
+#[test]
 fn each_preference_is_stored_and_read_in_the_local_files_shape() {
     let f = board();
     for (key, value) in [

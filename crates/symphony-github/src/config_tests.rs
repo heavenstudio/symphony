@@ -267,3 +267,30 @@ fn releases_are_off_unless_the_settings_say_publish_and_any_other_word_is_refuse
     assert!(parse(&format!("{ON}releases = \"draft\"\n")).is_err());
     assert!(parse(&format!("{ON}releases = true\n")).is_err());
 }
+
+#[test]
+fn a_key_is_found_at_the_line_that_writes_it_before_any_table() {
+    let text = "# the exchange\nenabled = true\n  repository=\"o/n\"\n\"issues\" = \"export\"\n\
+                enabled_too = 1\n[table]\nreleases = \"publish\"\n";
+    assert_eq!(line(text, "enabled"), Some(2));
+    assert_eq!(line(text, "repository"), Some(3));
+    assert_eq!(line(text, "issues"), Some(4));
+    // A key that only starts with another's name is not it, and one in a table is no setting.
+    assert_eq!(line(text, "enabled_too"), Some(5));
+    assert_eq!(line(text, "releases"), None);
+    assert_eq!(line(text, "token_file"), None);
+    assert_eq!(line("", "enabled"), None);
+}
+
+#[test]
+fn settings_loaded_keep_their_text_and_where_they_were_read() {
+    let loaded = load(ON).unwrap();
+    assert_eq!(loaded.text.as_deref(), Some(ON));
+    assert_eq!(loaded.place, FILE);
+    let moved = loaded.at("symphony-github.toml on trunk".into());
+    assert_eq!(moved.place, "symphony-github.toml on trunk");
+    assert_eq!(
+        (Loaded::absent().text, Loaded::absent().place),
+        (None, FILE.into())
+    );
+}

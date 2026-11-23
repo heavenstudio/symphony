@@ -182,8 +182,18 @@ pub struct Store {
     dir: PathBuf,
 }
 
-/// The lock, held until dropped.
-pub struct Locked(#[expect(dead_code, reason = "held for its lock, released when it drops")] File);
+/// The lock, held until dropped, and unlocked as it drops, before its descriptor closes. A close
+/// alone releases it only with the last copy of the descriptor, and a process started while it
+/// is held keeps a copy until its exec: on macOS a start that failed (each entry of `PATH` a
+/// program is not in, before the one it is) keeps one for a while after it returned, so the next
+/// run would be refused as a second writer. An unlock releases it for every copy.
+pub struct Locked(File);
+
+impl Drop for Locked {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
 
 fn wrong(path: &Path, error: impl std::fmt::Display) -> String {
     format!("{}: {error}", path.display())

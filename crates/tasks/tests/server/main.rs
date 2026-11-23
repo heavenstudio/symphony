@@ -14,7 +14,7 @@ mod export;
 #[path = "../../../../tools/test-support/script_process_cwd.rs"]
 #[expect(
     clippy::disallowed_methods,
-    reason = "the fixture scripts every crate's tests share start their children as a test likes, and wait by no timer"
+    reason = "the fixture scripts every crate's tests share start their children as a test likes, wait by no timer, and recover machine_copy.rs's and script_tests.rs's poisoned locks by std's PoisonError::into_inner, as a crate without the board's lock::Recovered must"
 )]
 mod fixture_script;
 mod git;

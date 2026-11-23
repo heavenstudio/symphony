@@ -1,16 +1,16 @@
 //! The shared server's part in the blocks the owner's word ends, on a board and a project of their
 //! own: a task blocked on a card goes back once the owner's save decides the card, on main's page
-//! or in the worktree of the task that posted it, with the verdict named, once; an owner's line
-//! that decides nothing leaves it blocked and is told to its orchestrator once; a hold on the
-//! owner's approve ends on the approve of its branch's tip alone; a verdict written while no
-//! server ran is read at the first look; a move of the owner's in between wins; and a private
-//! server leaves them all.
+//! or in the worktree of the task that posted it (a subtask's block on its parent's card too), with
+//! the verdict named, once; an owner's line that decides nothing leaves it blocked and is told to
+//! its orchestrator once; a hold on the owner's approve ends on the approve of its branch's tip
+//! alone; a verdict written while no server ran is read at the first look; a move of the owner's
+//! in between wins; and a private server leaves them all.
 
 use super::Hub;
 use crate::testing::{Tree, board::Fixture, git, repository_holding};
 use serde_json::json;
-use symphony_board::On;
 use symphony_board::waits_on::Blocked;
+use symphony_board::{NewTask, On};
 
 const DOC: &str = "docs/DECISIONS.md";
 const SLUG: &str = "app/x";
@@ -177,6 +177,45 @@ fn a_card_its_own_branch_posted_ends_its_block_once_approved_in_its_worktree() {
         lines(&f, "unblocked: "),
         ["unblocked: the owner decided layout (approve); back to in_progress"]
     );
+}
+
+/// The case as a consuming project met it: a subtask's executor posted the card on its parent's
+/// branch and blocked the subtask on it, and the owner approved it, with a note naming the option,
+/// from that branch's page, the save in the parent's worktree and uncommitted.
+#[test]
+fn a_subtasks_block_ends_on_a_card_its_parents_branch_posted_answered_in_that_worktree() {
+    let tree = Tree::new();
+    let root = project(&tree, "");
+    branch_posting_the_card(&tree, &root);
+    let (f, _) = board("in_progress", true);
+    let sub = format!("{SLUG}/layout");
+    f.task_with(NewTask {
+        parent: Some(SLUG.into()),
+        ..NewTask::new(&sub, "Settle the layout", "owner")
+    });
+    let worker = f.session("worker");
+    f.store.claim(&sub, &worker).unwrap();
+    let on = On {
+        thing: "decision:layout",
+        why: Some("wider or narrower"),
+    };
+    (f.store)
+        .move_on(&sub, "blocked", &worker, None, Some(on))
+        .unwrap();
+    decide(&root, SCOPE, "approved", "wider, as the first option says");
+    let shared = hub(&root, true);
+    assert!(look(&shared, &f));
+    assert_eq!(f.store.get(&sub).unwrap().status, "in_progress");
+    assert_eq!(status(&f), "in_progress", "its parent is left as it was");
+    let unblocked: Vec<String> = (f.store.thread(&sub).unwrap().into_iter())
+        .map(|m| m.text)
+        .filter(|text| text.starts_with("unblocked: "))
+        .collect();
+    assert_eq!(
+        unblocked,
+        ["unblocked: the owner decided layout (approve); back to in_progress"]
+    );
+    assert!(lines(&f, "unblocked: ").is_empty());
 }
 
 #[test]

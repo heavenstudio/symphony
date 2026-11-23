@@ -6,6 +6,8 @@ use symphony_board::{rpc, sys};
 mod delivery;
 #[path = "after_commit/publication_reports.rs"]
 mod publication_reports;
+#[path = "after_commit/settings.rs"]
+mod settings;
 #[path = "after_commit/uploads.rs"]
 mod uploads;
 
@@ -277,10 +279,90 @@ fn a_pending_save_settled_on_its_branch_is_proved_by_its_receipt_alone() {
 }
 
 #[test]
+fn an_agents_reply_kept_from_main_is_delivered_behind_the_owners_save_it_answers() {
+    isolated(
+        "an_agents_reply_kept_from_main_is_delivered_behind_the_owners_save_it_answers",
+        delivery::an_agents_reply_kept_from_main_is_delivered_behind_the_owners_save,
+    );
+}
+
+#[test]
+fn an_agents_saves_whose_turn_has_come_go_as_one_task() {
+    isolated(
+        "an_agents_saves_whose_turn_has_come_go_as_one_task",
+        delivery::an_agents_saves_whose_turn_has_come_go_as_one_task,
+    );
+}
+
+#[test]
+fn a_batch_made_and_never_journaled_is_taken_up_as_it_was() {
+    isolated(
+        "a_batch_made_and_never_journaled_is_taken_up_as_it_was",
+        delivery::a_batch_made_and_never_journaled_is_taken_up_as_it_was,
+    );
+}
+
+#[test]
+fn a_tidys_saves_reach_main_in_one_commit_or_not_at_all() {
+    isolated(
+        "a_tidys_saves_reach_main_in_one_commit_or_not_at_all",
+        delivery::a_tidys_saves_reach_main_in_one_commit_or_not_at_all,
+    );
+}
+
+#[test]
+fn a_tidy_that_cannot_be_committed_holds_back_no_later_save() {
+    isolated(
+        "a_tidy_that_cannot_be_committed_holds_back_no_later_save",
+        delivery::a_tidy_that_cannot_be_committed_holds_back_no_later_save,
+    );
+}
+
+#[test]
 fn the_land_of_a_pending_saves_task_is_said_from_its_journal() {
     isolated(
         "the_land_of_a_pending_saves_task_is_said_from_its_journal",
         delivery::the_land_of_a_pending_saves_task_is_said_from_its_journal,
+    );
+}
+
+#[test]
+fn a_stored_preference_holds_at_once_with_the_store_as_its_source() {
+    isolated(
+        "a_stored_preference_holds_at_once_with_the_store_as_its_source",
+        settings::each_preference_holds_at_once_with_the_store_as_its_source,
+    );
+}
+
+#[test]
+fn a_stored_value_made_the_projects_is_one_commit_and_its_entry_goes() {
+    isolated(
+        "a_stored_value_made_the_projects_is_one_commit_and_its_entry_goes",
+        settings::a_stored_value_made_the_projects_is_one_commit_and_its_entry_goes,
+    );
+}
+
+#[test]
+fn a_red_settings_check_commits_nothing_and_keeps_the_entry() {
+    isolated(
+        "a_red_settings_check_commits_nothing_and_keeps_the_entry",
+        settings::a_red_settings_check_commits_nothing_and_keeps_the_entry,
+    );
+}
+
+#[test]
+fn under_delivery_a_settings_commit_waits_until_its_delivery_is_proved() {
+    isolated(
+        "under_delivery_a_settings_commit_waits_until_its_delivery_is_proved",
+        settings::under_delivery_a_commit_waits_on_its_branch_until_its_delivery_is_proved,
+    );
+}
+
+#[test]
+fn under_delivery_settings_made_the_projects_in_turn_each_deliver() {
+    isolated(
+        "under_delivery_settings_made_the_projects_in_turn_each_deliver",
+        settings::under_delivery_settings_made_the_projects_in_turn_each_deliver,
     );
 }
 

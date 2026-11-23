@@ -25,11 +25,15 @@
 //! this process, which ends it (the SDK's `serve` at most its `ENDING` after).
 //!
 //! **Its seams.** What the plugin declared stands for it here: its components, card kinds,
-//! renderers, routes, home regions, board actions, watches and doc checks ([`seams`]), each
-//! forwarding its calls; its navigation and theme, which are declaration alone; and its commands,
-//! each run as its program ([`seams::RemoteCommand`]). A plugin declaring any other seam is refused,
-//! naming it ([`unanswered`]). A call newer than the agreed minor is not sent: the seam's own
-//! default answers it. A call that gets no answer (the process down, no answer in time, a refusal,
+//! renderers, routes, home regions, board actions, gates answerers, approval authorities, Settings
+//! page describers, watches and doc checks ([`seams`]), each forwarding its calls; its navigation
+//! and theme, which are declaration alone; and its commands, each run as its program
+//! ([`seams::RemoteCommand`]). A plugin declaring any other seam is refused, naming it
+//! ([`unanswered`]). A call newer than the agreed minor is not sent: the seam's own
+//! default answers it. A gates answer is waited for as long as a linked one may run, the gates'
+//! ceiling ([`Limits::gates`]), not a call's wait, and at most [`GATES_AT_ONCE`] are asked at once,
+//! so a slow answer never holds the worker the plugin's other calls are answered on
+//! ([`seams::RemoteGates`]). A call that gets no answer (the process down, no answer in time, a refusal,
 //! an answer that does not read) is shown where its answer would go: a component's in its place on
 //! the page ([`super::error`]), a card kind's as the kind's default, as if the plugin said nothing
 //! of the card, and each other seam's as [`seams`] says. A page's components share their `once`
@@ -59,15 +63,15 @@ use symphony_plugin::protocol::{
 };
 use symphony_plugin::vocabulary::{Block, NavItem, Picture};
 use symphony_plugin::{
-    Authority, BoardAction, Card, CardKind, Command, Component, DocCheck, HomeRegion, Page, Plugin,
-    Renderer, Route, Theme, Watch,
+    Authority, BoardAction, Card, CardKind, Command, Component, Describer, DocCheck, Gates,
+    HomeRegion, Page, Plugin, Renderer, Route, Theme, Watch,
 };
 
 use super::measure::{self, Line, Record};
 use crate::project::{PluginProcess, Project, Stamp};
 use seams::{
-    RemoteAction, RemoteAuthority, RemoteCheck, RemoteCommand, RemoteRegion, RemoteRenderer,
-    RemoteRoute, RemoteWatch,
+    RemoteAction, RemoteAuthority, RemoteCheck, RemoteCommand, RemoteDescriber, RemoteGates,
+    RemoteRegion, RemoteRenderer, RemoteRoute, RemoteWatch,
 };
 
 /// How long a call waits for its answer, as the gates seam waits for its answerers.
@@ -91,6 +95,10 @@ pub const LOG_MAX: u64 = 4 * 1024 * 1024;
 /// The host's lines queued for a process's stdin at most: one more, with none of them taken, ends
 /// it.
 pub const QUEUED: usize = 256;
+/// How many gates answers a process is asked at once: one fewer than the SDK's workers, so a slow
+/// answer, which may start a landing binary, never holds the worker its plugin's other calls are
+/// answered on. Another waits in the host for one of them to end.
+pub const GATES_AT_ONCE: usize = symphony_plugin::WORKERS - 1;
 /// What the log shows of a line of the plugin's that answers no call: its first bytes.
 const SHOWN: usize = 256;
 /// The longest line of a process's stderr its log takes whole: a longer one goes in pieces.
@@ -108,6 +116,9 @@ pub struct Limits {
     /// How long a call given up and sent a `cancel` may still be answered: a process that has not
     /// answered it by then is ended.
     pub cancel: Duration,
+    /// How long a gates answer waits for its turn among [`GATES_AT_ONCE`], and then for its
+    /// answer: the gates' ceiling, as long as a linked answer may run before a read asks again.
+    pub gates: Duration,
     /// The longest line either way, its newline aside.
     pub line: usize,
     /// The size past which its log is rolled.
@@ -121,6 +132,7 @@ impl Default for Limits {
             wait: WAIT,
             declare: WAIT,
             cancel: WAIT,
+            gates: crate::gates::CEILING,
             line: LINE_MAX,
             log: LOG_MAX,
         }
@@ -139,15 +151,16 @@ pub fn made(name: &str, process: &PluginProcess) -> &'static Remote {
     }) {
         return found;
     }
-    let started = process.clone();
-    let remote = Remote::leaked(
-        name,
-        process.clone(),
-        Box::new(move || spawn(&started)),
-        Limits::default(),
-    );
+    let remote = Remote::leaked(name, process.clone(), spawning(process), Limits::default());
     made.push(remote);
     remote
+}
+
+/// The start of `process` as a project's plugin is started: its program in its checkout, without
+/// the session, its three streams piped.
+pub fn spawning(process: &PluginProcess) -> Start {
+    let started = process.clone();
+    Box::new(move || spawn(&started))
 }
 
 /// The process answering for the plugin `name` of the checkout `own` is written for (`own.root`):
@@ -343,7 +356,6 @@ fn unanswered(declaration: &Declaration) -> Vec<&'static str> {
     let d = declaration;
     [
         ("board fields", d.board_fields.is_empty()),
-        ("gates", d.gates.is_empty()),
         ("prose rules", d.prose_rules.is_empty()),
         ("generators", d.generators.is_empty()),
         ("transports", d.transports.is_empty()),
@@ -371,6 +383,21 @@ pub struct Remote {
     ids: AtomicU64,
     /// Where its calls are recorded, when the project's settings say so.
     record: Mutex<Option<&'static Record>>,
+    /// How many of its gates answers are asked now, [`GATES_AT_ONCE`] at most, and told when one
+    /// ends.
+    gates_asked: Mutex<usize>,
+    gates_ended: Condvar,
+}
+
+/// A gates answer's turn among the [`GATES_AT_ONCE`] a remote asks at once, given back when it is
+/// dropped.
+pub(super) struct GatesTurn<'a>(&'a Remote);
+
+impl Drop for GatesTurn<'_> {
+    fn drop(&mut self) {
+        *self.0.gates_asked.lock().recover() -= 1;
+        self.0.gates_ended.notify_one();
+    }
 }
 
 enum State {
@@ -540,6 +567,8 @@ impl Remote {
             declared: OnceLock::new(),
             ids: AtomicU64::new(1),
             record: Mutex::new(None),
+            gates_asked: Mutex::new(0),
+            gates_ended: Condvar::new(),
         }));
         let _ = remote.me.set(remote);
         REMOTES.lock().recover().push(remote);
@@ -981,22 +1010,52 @@ impl Remote {
     /// body for every call ([`Self::asked`]), so each seam a process answers adds little to the
     /// binary.
     pub fn ask<A: Ask>(&self, name: &str, request: A) -> Result<A::Answer, Failure> {
+        self.ask_within(name, request, self.limits.wait)
+    }
+
+    /// [`Self::ask`], its answer waited for `wait` rather than a call's wait.
+    pub(super) fn ask_within<A: Ask>(
+        &self,
+        name: &str,
+        request: A,
+        wait: Duration,
+    ) -> Result<A::Answer, Failure> {
         let mut answer = None;
-        self.asked(name, Call::of::<A>(), request.into(), &mut |raw| {
+        self.asked(name, Call::of::<A>(), request.into(), wait, &mut |raw| {
             answer = Some(answer_of(A::TAG, raw)?);
             Ok(())
         })?;
         answer.ok_or_else(|| Failure::Down(format!("its answer to {} was not read", A::TAG)))
     }
 
-    /// [`Self::ask`] of every call: `request` sent as `call`, recorded, and its answer handed to
-    /// `read`; nothing once `read` took it, or why there is no answer.
+    /// A gates answer's turn among the [`GATES_AT_ONCE`] it asks at once, waited for
+    /// [`Limits::gates`] at most; why there is none once that passed.
+    pub(super) fn gates_turn(&self) -> Result<GatesTurn<'_>, String> {
+        let asked = self.gates_asked.lock().recover();
+        let (mut asked, _) = self
+            .gates_ended
+            .wait_timeout_while(asked, self.limits.gates, |asked| *asked >= GATES_AT_ONCE)
+            .recover();
+        if *asked >= GATES_AT_ONCE {
+            return Err(format!(
+                "the {GATES_AT_ONCE} gates answers it is asked at once ran for {:?}, so this one \
+                 was not asked",
+                self.limits.gates
+            ));
+        }
+        *asked += 1;
+        Ok(GatesTurn(self))
+    }
+
+    /// [`Self::ask`] of every call: `request` sent as `call`, recorded, its answer waited for
+    /// `wait` and handed to `read`; nothing once `read` took it, or why there is no answer.
     #[inline(never)]
     fn asked(
         &self,
         name: &str,
         call: Call,
         request: Request,
+        wait: Duration,
         read: ReadAnswer<'_>,
     ) -> Result<(), Failure> {
         if !call.piped {
@@ -1013,7 +1072,7 @@ impl Remote {
                     return Err(Failure::Newer(agreed));
                 }
                 // How the process ended is in its log already, once.
-                self.sent_within(&connection, request, self.limits.wait, read)
+                self.sent_within(&connection, request, wait, read)
                     .inspect_err(|why| {
                         if !why.starts_with("its process") {
                             self.log(&format!("{} of {name}: {why}", call.tag));
@@ -1244,11 +1303,22 @@ impl Plugin for Remote {
                 .collect()
         })
     }
+    fn gates(&self) -> Vec<&dyn Gates> {
+        self.each(|d| d.gates.iter().map(|g| -> &dyn Gates { g }).collect())
+    }
     fn authorities(&self) -> Vec<&dyn Authority> {
         self.each(|d| {
             d.authorities
                 .iter()
                 .map(|a| -> &dyn Authority { a })
+                .collect()
+        })
+    }
+    fn describers(&self) -> Vec<&dyn Describer> {
+        self.each(|d| {
+            d.describers
+                .iter()
+                .map(|d| -> &dyn Describer { d })
                 .collect()
         })
     }
@@ -1280,7 +1350,9 @@ struct Declared {
     routes: Vec<RemoteRoute>,
     home_regions: Vec<RemoteRegion>,
     board_actions: Vec<RemoteAction>,
+    gates: Vec<RemoteGates>,
     authorities: Vec<RemoteAuthority>,
+    describers: Vec<RemoteDescriber>,
     watches: Vec<RemoteWatch>,
     doc_checks: Vec<RemoteCheck>,
     commands: Vec<RemoteCommand>,
@@ -1346,12 +1418,28 @@ impl Declared {
                     name: name.clone(),
                 })
                 .collect(),
+            gates: declaration
+                .gates
+                .iter()
+                .map(|name| RemoteGates {
+                    remote,
+                    name: name.clone(),
+                })
+                .collect(),
             authorities: declaration
                 .authorities
                 .iter()
                 .map(|adapter| RemoteAuthority {
                     remote,
                     adapter: adapter.clone(),
+                })
+                .collect(),
+            describers: declaration
+                .describers
+                .iter()
+                .map(|id| RemoteDescriber {
+                    remote,
+                    id: id.clone(),
                 })
                 .collect(),
             watches: declaration

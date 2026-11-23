@@ -52,7 +52,8 @@ pub use serve::{ENDING, WORKERS, serve, serve_on};
 pub mod testing;
 
 use vocabulary::{
-    Block, FieldValue, Gate, InlineKind, NavItem, Picture, Presentation, Region, Span, TaskOffer,
+    Block, FieldValue, Gate, InlineKind, NavItem, Picture, Presentation, Region, SettingsEntry,
+    Span, TaskOffer,
 };
 
 /// What a host shows in a component's place for its error `problem`: one span of the class
@@ -113,6 +114,10 @@ pub trait Plugin: Send + Sync {
     }
     /// The project's approval authorities it answers for, one per adapter ([`Authority`]).
     fn authorities(&self) -> Vec<&dyn Authority> {
+        Vec::new()
+    }
+    /// The entries it adds to the project's Settings page, one per describer ([`Describer`]).
+    fn describers(&self) -> Vec<&dyn Describer> {
         Vec::new()
     }
     fn watches(&self) -> Vec<&dyn Watch> {
@@ -430,6 +435,34 @@ pub trait Gates: Send + Sync {
         String::new()
     }
 }
+
+/// An entry a plugin adds to its project's Settings page, in the one shape the Symphony's own
+/// entries take ([`SettingsEntry`]): its name, what it is for, its state and why, what it needs
+/// and whether this machine has it, and its settings, each a preference or reviewed. The page
+/// draws it with the component that draws the Symphony's own, after them, and knows it by no name;
+/// only the plugins a project selects (`[plugins] crates`) describe for it.
+///
+/// A description declares: it runs nothing, writes nothing and reaches no outside service. It
+/// cannot lower a setting's class: a setting the Symphony would run or that decides what lands
+/// (a key the local settings file refuses) is shown reviewed whatever the describer says, and a
+/// describer may mark a setting of its own reviewed. Nor can it take the board's scope
+/// ([`SettingScope::Board`](vocabulary::SettingScope::Board)): the board's store keeps the
+/// Symphony's own preferences alone, so the page shows a description's setting without it. A
+/// linked plugin and one answering from its process describe alike (`describers.describe`,
+/// protocol 0.5).
+pub trait Describer: Send + Sync {
+    /// Its id, unique among the plugin's describers: its entry's anchor on the page is the
+    /// plugin's name and this, whatever id the entry it answers gives, counted on where an entry
+    /// before took it.
+    fn id(&self) -> &str;
+    /// The entry for the project at `root`, or why it cannot say, which the page shows in the
+    /// entry's place.
+    fn describe(&self, root: &Path) -> Result<SettingsEntry, String>;
+}
+
+#[cfg(test)]
+#[path = "describer_tests.rs"]
+mod describer_tests;
 
 /// What a board field holds.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

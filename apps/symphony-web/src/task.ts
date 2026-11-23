@@ -75,9 +75,8 @@ function isCounts(value: unknown): value is [string, number][] {
 
 /**
  * A listing of the task board (`/api/task-board`) as this client reads it, or none: its tasks,
- * each as `readTask` reads it, and what a missing list of statuses, sign-offs, counts or
- * orchestrators, or a missing count of tasks waiting to start, reads as (none), as serde's
- * defaults do.
+ * each as `readTask` reads it, and what a missing list of statuses, counts or orchestrators, or a
+ * missing count of tasks waiting to start, reads as (none), as serde's defaults do.
  */
 export function readListing(value: unknown): TaskListing | null {
   const tasks = field(value, "tasks");
@@ -102,7 +101,6 @@ export function readListing(value: unknown): TaskListing | null {
         ))
     ) ||
     !listed("statuses", isTexts) ||
-    !listed("signoff", isTexts) ||
     !listed("counts", isCounts) ||
     !listed("lifecycle_counts", isCounts) ||
     !listed("orchestrators", (one) => Array.isArray(one) && one.every(isOrchestrator)) ||
@@ -115,7 +113,6 @@ export function readListing(value: unknown): TaskListing | null {
     ...(value as TaskListing),
     tasks: read as Task[],
     statuses: (field(value, "statuses") as string[] | undefined) ?? [],
-    signoff: (field(value, "signoff") as string[] | undefined) ?? [],
     counts: (field(value, "counts") as [string, number][] | undefined) ?? [],
     lifecycle_counts: (field(value, "lifecycle_counts") as [string, number][] | undefined) ?? [],
     next: (field(value, "next") as string | undefined) ?? null,
@@ -165,11 +162,6 @@ export function readItemChange(value: unknown): ItemChange<Task> | null {
   return read === null
     ? null
     : { key: field(value, "key") as string, value: read, removed: removed === true };
-}
-
-/** The slugs of the tasks waiting for the owner's sign-off, as the feed sends them, or none. */
-export function readSlugs(value: unknown): string[] | null {
-  return isTexts(value) ? value : null;
 }
 
 /** Whether `task` is a deliverable task rather than a slice of one: it has no parent. */

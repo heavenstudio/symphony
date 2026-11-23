@@ -510,14 +510,22 @@ fn a_codex_thread_is_present_in_the_terminal_its_launch_records_or_it_registered
     });
     presence_round(w.store(), &w.hc(), &how, &mut Vec::new()).unwrap();
     assert_eq!(present(&w), [true, false]);
+    // Registered from no terminal, as Codex registers: kept while its launch's terminal is live,
+    // though it runs something else; retired once that terminal is gone.
+    w.edit_terminal(&s.pane, |t| {
+        t.insert("agent".into(), json!("zsh"));
+        t.insert("argv".into(), json!(["zsh"]));
+    });
+    presence_round(w.store(), &w.hc(), &how, &mut Vec::new()).unwrap();
+    assert_eq!(present(&w), [true, false], "its launch's terminal is live");
     w.edit_terminal(&s.pane, |t| {
         t.insert("state".into(), json!("finished"));
     });
     presence_round(w.store(), &w.hc(), &how, &mut Vec::new()).unwrap();
     assert_eq!(
         present(&w),
-        [true, false],
-        "registered from no terminal: kept"
+        [false, false],
+        "every terminal it was launched in is gone: retired"
     );
     w.store()
         .callback_in(&s.handle, Some("codex:0abc"), false, false, Some(&s.pane))

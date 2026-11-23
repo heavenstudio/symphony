@@ -207,6 +207,7 @@ fn a_board_on_postgresql_is_judged_by_its_writers_alone_and_snapshotted_with_pg_
         matches!(&stopped.verdict, Verdict::Red(why) if why.contains("is not running")),
         "a board whose PostgreSQL does not run"
     );
+    assert!(stopped.down, "its project starts it");
     assert!(pg.current().unwrap().is_none());
     fs::remove_dir_all(&dir).unwrap();
 }
@@ -225,21 +226,29 @@ fn against<'a>(dir: &'a Path, logs: &'a Path) -> Against<'a> {
     }
 }
 
-/// A board still on SurrealDB, as an earlier release kept it, is red, naming how it moves, and
-/// nothing is read, made or started: no PostgreSQL is asked for it.
-#[test]
-fn a_board_still_on_surrealdb_is_red_naming_how_it_moves() {
+/// A registered project `alpha` under a tree of its own, its board's folder holding `held` alone:
+/// the tree, the board's common dir and folder, its registry entry, and the folder for the steps'
+/// logs.
+fn alpha_holding(held: &str) -> (Tree, PathBuf, PathBuf, Entry, PathBuf) {
     let tree = Tree::new();
     let root = tree.path("alpha");
     let common = root.join(".git");
     let folder = common.join(symphony_board::server::FOLDER);
-    fs::create_dir_all(folder.join("data")).unwrap();
+    fs::create_dir_all(folder.join(held)).unwrap();
     let entry: Entry = serde_json::from_value(serde_json::json!({
         "id": "alpha", "name": "alpha", "root": root, "pin": 1,
     }))
     .unwrap();
     let logs = tree.path("logs");
     fs::create_dir_all(&logs).unwrap();
+    (tree, common, folder, entry, logs)
+}
+
+/// A board still on SurrealDB, as an earlier release kept it, is red, naming how it moves, and
+/// nothing is read, made or started: no PostgreSQL is asked for it.
+#[test]
+fn a_board_still_on_surrealdb_is_red_naming_how_it_moves() {
+    let (tree, common, folder, entry, logs) = alpha_holding("data");
     let dir = tree.path("");
     let judged = judge(
         &entry,
@@ -261,4 +270,26 @@ fn a_board_still_on_surrealdb_is_red_naming_how_it_moves() {
     );
     assert!(!folder.join("postgresql").exists(), "nothing was made");
     assert!(!folder.join("backend.json").exists(), "nor named");
+}
+
+/// A board's folder its board was never made in, holding only what a session's heartbeat wrote
+/// there, is a board not made yet: nothing to move, as before PostgreSQL made a new board, and
+/// not a database down that its project should start. Nothing is made or started by the read.
+#[test]
+fn a_board_folder_with_no_board_made_in_it_is_nothing_to_move_and_not_down() {
+    let (tree, common, _, entry, logs) = alpha_holding("keys");
+    let dir = tree.path("");
+    let judged = judge(
+        &entry,
+        &common,
+        symphony_board::SCHEMA,
+        &against(&dir, &logs),
+    );
+    let Verdict::Done(said) = &judged.verdict else {
+        panic!("a board not made yet is judged done");
+    };
+    assert_eq!(said, "alpha: its board is not made yet: nothing to move");
+    assert!(!judged.down);
+    assert!(judged.home.unmade().unwrap(), "nothing was made");
+    assert_eq!(tree.names("alpha/.git/symphony/tasks"), ["keys"]);
 }

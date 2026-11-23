@@ -4250,6 +4250,18 @@
                   "class": "preference"
                 }
               ]
+            },
+            {
+              "id": "plugin-shop-catalogue",
+              "name": "Catalogue",
+              "about": "Described by the plugin shop.",
+              "state": { "word": "Read", "why": "Twelve lamps listed." },
+              "source": {
+                "scope": "project",
+                "said": "catalogue.toml, line 1",
+                "file": "catalogue.toml",
+                "line": 1
+              }
             }
           ]
         },
@@ -4273,9 +4285,9 @@
                     "said": "symphony.local.toml [agents.models] executor, line 2",
                     "file": "symphony.local.toml",
                     "line": 2,
-                    "over": "symphony.toml [agents.models] executor, line 16"
+                    "over": "\"opus\" (the board's store [agents.models] executor)"
                   },
-                  "scopes": ["project", "machine"],
+                  "scopes": ["project", "board", "machine"],
                   "class": "preference"
                 },
                 {
@@ -4284,7 +4296,20 @@
                   "kind": "number",
                   "value": "no limit",
                   "source": { "said": "default: no limit" },
-                  "scopes": ["project", "machine"],
+                  "scopes": ["project", "board", "machine"],
+                  "class": "preference"
+                },
+                {
+                  "key": "[limits] low_volume",
+                  "name": "Open slots below which an orchestrator hears low volume",
+                  "kind": "number",
+                  "value": "3",
+                  "source": {
+                    "scope": "board",
+                    "said": "the board's store [limits] low_volume",
+                    "over": "4 (symphony.toml [limits] low_volume, line 12)"
+                  },
+                  "scopes": ["project", "board", "machine"],
                   "class": "preference"
                 }
               ]
@@ -4320,12 +4345,18 @@
             {
               "id": "workflow",
               "name": "Workflow",
-              "about": "The stages a task moves through.",
-              "state": {
-                "word": "Built in",
-                "why": "The board's own workflow: no [workflow] written."
-              },
-              "source": { "said": "default: no [workflow] written" }
+              "about": "The stages a task moves through and what each move requires.",
+              "settings": [
+                {
+                  "key": "[workflow]",
+                  "name": "The workflow tasks move by",
+                  "kind": "sentence",
+                  "value": "The board's own, built-in v1.",
+                  "source": { "said": "default: no [workflow] written" },
+                  "scopes": ["project"],
+                  "class": "reviewed"
+                }
+              ]
             }
           ]
         },
@@ -4351,6 +4382,27 @@
               ]
             }
           ]
+        }
+      ],
+      "stored": [
+        {
+          "setting": "[limits] low_volume",
+          "key": "limits.low_volume",
+          "value": "3",
+          "held": true,
+          "changes": [
+            { "after": "2", "at": "2026-11-22 20:10", "by": "owner" },
+            { "before": "2", "after": "3", "at": "2026-11-22 20:15", "by": "owner" }
+          ],
+          "waiting": "docs/owner-save-4: waiting for its pull request"
+        },
+        { "setting": "[limits] machine_agents", "key": "limits.machine_agents", "held": false },
+        {
+          "setting": "[agents.models] executor",
+          "key": "agents.models.executor",
+          "value": "opus",
+          "held": false,
+          "changes": [{ "after": "opus", "at": "2026-11-22 20:12", "by": "owner" }]
         }
       ]
     },

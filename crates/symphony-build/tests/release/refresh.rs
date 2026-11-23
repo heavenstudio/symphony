@@ -1369,11 +1369,21 @@ fn a_board_not_running_is_red_alone_and_one_from_before_the_writer_record_is_its
     let (fixture, _) = refreshing();
     let alpha = a_project(&fixture, "alpha", &[]);
     let old = a_project(&fixture, "old", &[]);
-    registered(&fixture, &[("alpha", &alpha, &[]), ("old", &old, &[])]);
-    // alpha's board is made, its database stopped; old's from schema 17, before writers.
+    let fresh = a_project(&fixture, "fresh", &[]);
+    registered(
+        &fixture,
+        &[
+            ("alpha", &alpha, &[]),
+            ("old", &old, &[]),
+            ("fresh", &fresh, &[]),
+        ],
+    );
+    // alpha's board is made, its database stopped; old's from schema 17, before writers; fresh's
+    // folder holds what a session's heartbeat wrote before any board was made there, and no board.
     let common = alpha.join(".git");
     let (alpha_board, _, _) = board_at(&alpha, 18);
     alpha_board.postgres().stop().unwrap();
+    fs::create_dir_all(fresh.join(".git/symphony/tasks/keys")).unwrap();
     let (old_board, _, _) = board_at(&old, 17);
     let builder = builder(&fixture, 19);
     let extra = [(BUILDER, builder.as_str())];
@@ -1397,6 +1407,20 @@ fn a_board_not_running_is_red_alone_and_one_from_before_the_writer_record_is_its
         "nothing started it"
     );
     assert!(!common.join(FOLDER).join("snapshots").exists());
+    // A board not made yet is no database down: nothing to move, and no update fails for it.
+    assert!(
+        out.contains("release: refresh: fresh: its board is not made yet: nothing to move\n"),
+        "{out}"
+    );
+    assert!(!out.contains("updates: fresh@"), "{out}");
+    assert_eq!(
+        fs::read_dir(fresh.join(".git/symphony/tasks"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>(),
+        ["keys"],
+        "nothing was made or started for it"
+    );
     let own = format!(
         "release: refresh: old: the project's to finish: its board is at schema 17, from before \
          the board recorded who writes it (schema 18), so it is never moved here: `cd {} && just \

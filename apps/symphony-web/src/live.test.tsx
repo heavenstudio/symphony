@@ -1,14 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { BoardPage, drawKept, hearBoard } from "./board-page";
 import { BOARD, boardItem, FRESH, type Freshness } from "./cache";
 import {
-  BoardPage,
   type BoardRun,
-  drawKept,
   FEED_NOTICE,
   flushReload,
   followClient,
-  hearBoard,
   keepBoard,
   noticeGeometry,
   noticeParts,

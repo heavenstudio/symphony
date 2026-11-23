@@ -257,20 +257,23 @@ fn a_tidy_that_cannot_tidy_one_file_writes_none_of_them() {
 
 #[test]
 fn a_tidy_that_cannot_write_a_file_names_it_and_says_nothing_of_it() {
-    use std::os::unix::fs::PermissionsExt as _;
-    let tree = decision_tree();
+    let tree = Tree::new();
     let register =
         "# D\n\n<!-- register:start -->\n### T\n\n- [x] **done** — plain.\n<!-- register:end -->\n";
-    tree.write("docs/DECISIONS.md", register);
-    // A folder nothing can be written in: the file beside the register cannot be made.
-    let docs = tree.path("docs");
-    std::fs::set_permissions(&docs, std::fs::Permissions::from_mode(0o555)).unwrap();
+    // A register whose name is 253 bytes of the 255 a name may have: the file written beside it
+    // (`.NAME.PID.review-tmp`) cannot be named, so it cannot be made by any user, root included,
+    // which a folder's permissions would not keep out.
+    let name = format!("{}.md", "D".repeat(250));
+    let rel = format!("docs/{name}");
+    tree.write(&rel, register);
     let (code, out, err) = status(&tree.root, &["--tidy", "--now", "2026-09-26 08:00"]);
-    std::fs::set_permissions(&docs, std::fs::Permissions::from_mode(0o755)).unwrap();
     assert_eq!(code, 1, "{out}");
     assert_eq!(out, "");
-    assert!(err.starts_with("✖ docs/DECISIONS.md not tidied: "), "{err}");
-    assert_eq!(tree.read("docs/DECISIONS.md"), register);
+    assert!(err.starts_with(&format!("✖ {rel} not tidied: ")), "{err}");
+    // The planning step says the same prefix: the OS's own error is the write's.
+    assert!(err.contains("] File name too long: "), "{err}");
+    assert_eq!(tree.read(&rel), register);
+    assert_eq!(tree.names("docs"), [name]);
 }
 
 #[test]

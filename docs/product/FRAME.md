@@ -157,8 +157,8 @@ panels over the page as a phone does, rather than pushing it aside.
   repeats the same request.
 - The chat's **Message** needs words, even with a file attached.
 - On a branch's copy of a document, the header's **Home**, **Queue**, **Board**, **Reports**,
-  **Runs** and **Agents** are still the project's own; **Docs** and the crumbs stay on the
-  branch.
+  **Settings**, **Runs** and **Agents** are still the project's own; **Docs** and the crumbs stay
+  on the branch.
 - **↑ top** and the steps stay clear of an open panel: the bar, the toasts and the notices move
   left with the page.
 - With a panel open the header is narrower, and what does not fit its row, **Activity** first,
@@ -170,8 +170,8 @@ panels over the page as a phone does, rather than pushing it aside.
 
 - [Home](HOME.md): where **Home** leads.
 - [The review queue](QUEUE.md), [reading a document](DOCUMENT.md), [the task board](BOARD.md),
-  [Reports](REPORTS.md), [Runs](RUNS.md) and [the agents page](AGENTS.md): the other pages of the
-  header.
+  [Reports](REPORTS.md), [Settings](SETTINGS.md), [Runs](RUNS.md) and [the agents
+  page](AGENTS.md): the other pages of the header.
 - [Themes and appearance](THEMES.md): a project's own name, mark and look, and what
   **Appearance** imports.
 - [Review](../workflow/REVIEW.md): the cards the bar steps through, and attaching files.

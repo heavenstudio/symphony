@@ -251,7 +251,9 @@ impl Store {
 }
 
 /// `statement` on PostgreSQL, behind the schema's guard when `guarded`, `vars` its variables: its
-/// answer, null for a statement that answers nothing.
+/// answer, null for a statement that answers nothing. The request is the line's that sent the
+/// statement, as the board's health records it ([`crate::board_health::Query`]), never this one's.
+#[track_caller]
 pub(super) fn on_postgres(
     client: Postgres,
     statement: &Pg,
@@ -346,6 +348,34 @@ mod tests {
             Failure::Stop(error) => error.to_string(),
             Failure::Again => "again".into(),
         })
+    }
+
+    /// A request on PostgreSQL is recorded at the line that sent its statement, through the
+    /// store's read and the one sender beneath it ([`on_postgres`]), as the board's health names
+    /// an hour's slowest; one that got no answer is recorded all the same.
+    #[test]
+    fn a_postgresql_request_is_recorded_at_the_line_that_sent_its_statement() {
+        let socket = std::env::temp_dir().join(format!("sent-from-{}", std::process::id()));
+        // Nothing listens there: the request fails at its connection, and is counted.
+        let client = pg::Client::new(&socket, crate::DATABASE);
+        let log = client.queries();
+        let store = Store::unchecked_on(
+            client.into(),
+            Box::new(crate::store::now),
+            Box::new(|_| true),
+            "",
+            &crate::Opening::write(),
+        );
+        let statement = Statement::from(Pg::read("1"));
+        let sent = line!() + 1;
+        let read = store.read::<Value>(statement, json!({}));
+        assert!(read.is_err(), "no server answers");
+        let (report, _) = log.report(crate::sweep::trigger::now());
+        assert_eq!(report.count, 1);
+        assert_eq!(
+            report.slowest.map(|slowest| slowest.source),
+            Some(format!("{}:{sent}", file!()))
+        );
     }
 
     #[test]

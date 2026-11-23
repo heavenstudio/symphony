@@ -28,7 +28,7 @@ types cross.
 
 The kit's crates depend on no other workspace crate but each other, and build wherever Rust's
 standard library does: only a file's stamp, which tells `read_text` a file changed, reads more of it
-on Unix (its device, inode and change time). They carry one version, 1.1.0 now, and are made to be
+on Unix (its device, inode and change time). They carry one version, 1.2.0 now, and are made to be
 published on crates.io ([RELEASES](../workflow/RELEASES.md#packages-on-cratesio)), so they export what a plugin
 uses, and beside it the file's stamp (`text::FileStamp`, its fields private), which `read_text` and
 the library's board cache share, and no more: the text rules only the library uses (a one-sided
@@ -90,7 +90,8 @@ fn main() -> std::process::ExitCode {
 ```
 
 What answers from a process here is a plugin's components, card kinds, renderers, routes, home
-regions, board actions, watches and doc checks, each call a request on the pipe; its commands, each
+regions, board actions, gates ([below](#gates)), watches and doc checks, each call a request on the
+pipe; its commands, each
 run as its program ([below](#its-commands)); and its navigation and theme, which its declaration
 holds and which cost no call. A project that loads starts its plugins' processes for their
 declarations, as its navigation is among the routes an entrypoint's files must not meet. An
@@ -107,7 +108,7 @@ first read of the project, and the first after its file changes, are no retry: w
 waits for the declaration, ten seconds at most, the server's live loop as much as a request. Once
 the process declares, the project is served as its file says, with no change to the file. A command
 of such a project says why it is not known ([below](#its-commands)). Its other seams (board fields,
-gates, prose rules, generators and transports) are not asked of a process: a plugin that declares
+prose rules, generators and transports) are not asked of a process: a plugin that declares
 any of them is refused under `[plugins.process]`, naming them, rather than losing them without a
 word, and stays a linked plugin's to answer. The refusal is what holds: the protocol has their
 calls and the SDK's `serve` answers them, but no host asks one of a process. So is a plugin
@@ -145,11 +146,12 @@ for its life. The plugin's stdin ends when the host does: a plugin ends then, an
 exits at most 1 s after (`symphony_plugin::ENDING`), with code 1 if a call still runs, whatever that
 call is doing. A plugin written without the SDK must end when its stdin does, or it outlives its host.
 
-The first request is the declaration (below). A call then waits 10 s for its answer, the writing of
-its request included: the host's lines go to a writer thread through a queue of 256, so a plugin that
-stops reading holds no call past its wait. A call whose answer does not come in the wait is given
-up, sent a `cancel`, and shown as failed; a call whose request the plugin did not even read in the
-wait ends the process. The host ends a process (closes its stdin and kills it) when:
+The first request is the declaration (below). A call then waits 10 s for its answer (a gates answer
+a minute, [below](#gates)), the writing of its request included: the host's lines go to a writer
+thread through a queue of 256, so a plugin that stops reading holds no call past its wait. A call
+whose answer does not come in the wait is given up, sent a `cancel`, and shown as failed; a call
+whose request the plugin did not even read in the wait ends the process. The host ends a process
+(closes its stdin and kills it) when:
 
 - it is refused at its declaration (another major, another name, a seam a process does not answer);
 - its declaration has no answer in 10 s;
@@ -170,8 +172,10 @@ that does not read) is shown where its answer would go: a component's in its pla
 renderer's drawing the same way in the file's place, and a card kind's as the kind's default, as if
 the plugin said nothing of the card. A route answers not found and a home region shows nothing, why
 in the plugin's log. A board action's offer or submission is its error, naming why, as a linked
-action's error is shown, and a submission refused moves nothing. A watch that did not warm says so
-in the server's log, and one told to forget says nothing: a process that ends keeps nothing. A doc
+action's error is shown, and a submission refused moves nothing. A gates answerer's gates read
+unknown, why as their detail ([below](#gates)), never met. A watch that did not warm says so
+in the server's log, and one told to forget says nothing: a process that ends keeps nothing. A
+describer's entry on the Settings page says why in its place, as unknown. A doc
 check that did not run is a problem of the project file naming the plugin and the check, so
 `symphony status --lint` fails rather than passes, and names no component. A call that had no
 answer fails alone: the calls after it start the process again once its pause is over.
@@ -230,6 +234,39 @@ trip of its own; in one request, a register of 500 cards is one request of 1,000
 with its document and with none), 206 KB asked and 410 KB answered, well within a line. What the
 three reads cost in time is the second test of [Measured](#measured), taken as that section says.
 
+## Gates
+
+A plugin's gates answerers (`Gates`, declared in `gates` by their names) answer from its process as
+linked ones do: the same reads ask them, each answer kept by the task's status, its branch's tip
+and what the answerer says it reads besides, so the plugin is asked once a tip
+(`crates/symphony/src/gates.rs`). A read asks `gates.kept_while` with the project's checkout and the
+task (its slug, status and branch), and, when nothing kept holds, `gates.answer` with those and the
+branch's tip, none when the repository holds no such branch. A branch's checkout is answered by its
+main checkout's process, each call naming the branch's checkout. The plugin's own error is kept as
+it said it, and asked again after a while, as a linked answerer's is.
+
+An answer may start a landing binary, so it is waited for as long as a linked one may run: a minute,
+the gates' ceiling (`gates::CEILING`), not a call's 10 s. A read waits 10 s for it, as for a linked
+answer, and shows its gates unknown meanwhile; the answer comes on and is kept for the next read.
+The host asks a process three answers at once (`GATES_AT_ONCE`), one fewer than the SDK's four
+workers, so slow answers never hold the worker its other calls are answered on (a component's
+render, an authority's attestation, what an answer is kept while); another answer waits in the host
+for one of the three to end, a minute at most, and then has its own minute. An answer with none in
+its minute is given up and sent a `cancel` like any call, and a process that has not answered it
+10 s later is ended.
+
+`gates.kept_while` is a call's round trip on every read, the sign-off lane's on the server's live
+loop among them, where a linked answerer's is cheap and never blocks: a process that stops
+answering holds such a read for a call's wait, and the reads after it until the host ends it 10 s
+after the cancel, about twenty seconds once.
+
+A call that had no answer (the process down, or ended while it answered; a refusal, a panic in the
+plugin among them; no answer in its wait) is the answerer's error, `plugin NAME: WHY`. In
+`gates.answer` it is the answer, kept as an error is. `gates.kept_while` has no error to return, so
+its failure is the read's answer at once, and nothing kept is used past it. Either way each gate the
+answerer answered before reads unknown, why as its detail, in place of the Symphony's of its name,
+and never as met. Both calls are 0.1's, so a plugin of any minor is asked them.
+
 ## Approval authorities
 
 A project whose workflow guards an edge commits its approval authority's key
@@ -244,6 +281,30 @@ it answered to the board unchanged, which verifies it as one pushed to it
 ([WORKFLOW](../workflow/WORKFLOW.md#guards)); an error, a panic or no answer in its time refuses the operation
 as `guard_unavailable`, naming the guard and why. Nothing is kept: the next operation asks again.
 A plugin linked or answering from its process answers alike.
+
+## Settings describers
+
+A plugin may describe its own entries on the project's Settings page
+([PROJECT_FILE](../operations/PROJECT_FILE.md#the-settings-page)), each by a describer
+(`Describer`, declared in `describers` by its id). The page's read asks each describer of each
+plugin the project selects, `describers.describe` (0.5), with the project's checkout, and its
+answer is one entry in the page's own shape (`SettingsEntry`, `symphony_plugin::vocabulary`): its
+name, what it is for, its state and why, what it needs and whether this machine has it, and its
+settings, each with its key, value, source, scopes and class. It is drawn after the Symphony's own
+entries in the integrations, by the component that draws theirs, its id the host's
+(`plugin-NAME-ID`, counted on from `-2` where an entry before took it, as two describers of one
+id do, or plugin `x`'s describer `y-z` beside plugin `x-y`'s `z`), and a plugin the project does
+not select adds none. An error, a panic or no answer in a call's wait is said in the entry's
+place, the page drawn all the same.
+
+A description declares and runs nothing: it is what the page shows, and the host acts on none of
+it. Its class is not the describer's to lower: a setting whose key the local settings file refuses
+(the tables and keys of `PROTECTED` and `PROTECTED_KEYS` in `crates/tasks/src/local.rs`, which
+decide what runs and what lands) is shown reviewed, written in the project's scope alone, whatever
+its describer calls it, and a describer may mark a setting of its own reviewed. Nor is the board's
+scope its describer's to take: the board's store keeps the Symphony's own preferences alone, so a
+description's setting is shown without it and the page draws no control for one. A plugin built
+before the seam declares none and is asked nothing.
 
 ## The line
 
@@ -287,11 +348,11 @@ is a page of its own.
 ## Versions
 
 The host names its protocol in the first request, `plugin.declare`
-(`{"protocol":{"major":0,"minor":4}}`), and the plugin its own in its declaration: its name, each
+(`{"protocol":{"major":0,"minor":5}}`), and the plugin its own in its declaration: its name, each
 seam object's name and what it says of itself, its navigation and theme. They speak the lower minor
 of their major. A plugin of another major is refused by name, saying to install a Symphony that
 speaks the plugin's major or to rebuild the plugin with a `symphony-plugin` of the host's, and its
-process is killed and not started again until its program changes. The protocol is 0.4.
+process is killed and not started again until its program changes. The protocol is 0.5.
 
 Each call names the minor it came in (`since` in `symphony_plugin::protocol`, listed in `MINORS`).
 The host never sends a call newer than the minor the two agreed: the seam's own default answers it,
@@ -302,7 +363,9 @@ unless `[project] artifacts` names another), which a plugin of 0.1 reads past an
 as `artifacts` from a host of 0.1. 0.3 adds `card_kinds.read`, a register read's card kinds in one
 request: a plugin of 0.2 is asked them card by card, and answers the same. 0.4 adds
 `authorities.attest` ([below](#approval-authorities)) and the declaration's `authorities`, which a
-plugin of 0.3 does not write and a host reads as none: no authority is asked of it.
+plugin of 0.3 does not write and a host reads as none: no authority is asked of it. 0.5 adds
+`describers.describe` ([above](#settings-describers)) and the declaration's `describers`, which a
+plugin of 0.4 does not write and a host reads as none: no entry is asked of it.
 
 - A field the reader does not know is ignored, wherever it stands: in a request's fields, in a card,
   in an answer, in the declaration. A newer peer's additions reach an older one unread.
@@ -321,33 +384,35 @@ plugin of 0.3 does not write and a host reads as none: no authority is asked of 
   variant of it, and a match on it outside the kit ends with `_`. The protocol's other enums stay
   exhaustive: a variant of `Answered` or `Member` is a line an older peer cannot read, a new major
   of the protocol, and `Lined` never goes on the wire. The seam types' and the vocabulary's structs
-  (`Card`, `Picture`, `TaskOffer`, `Submission`, `Theme`, `Image`, `Viewer`…) and a variant's own
+  (`Card`, `Picture`, `TaskOffer`, `Submission`, `Theme`, `Image`, `Viewer`, `SettingsEntry`,
+  `Setting`…) and a variant's own
   fields are not marked, as a plugin and its tests build them by their fields: a field added to one
   is a new major of the kit, whichever minor of the protocol carries it.
-- **The vocabulary grows in a minor** ([its card](../workflow/RELEASES.md#kit-new-block-version)). A new
-  kind of block, text span or media is a minor of the kit (1.1.0), never a new major: a plugin
-  makes blocks and never has to list them, so one written for 1.0.0 keeps building. `Block`, `Span` and `Media` are `#[non_exhaustive]`,
-  and so is every other list of the kit a minor may add to: the words a block carries
-  (`CalloutKind`, `FigureSize`, `ContainerKind`, `InlineKind`, `VectorKind`, `CardState`,
-  `CardGroup`, `ThreadAuthor`), a gate's `GateState`, a board field's `FieldKind` and a renderer's
-  `Drawing`. A match on one outside the kit ends with `_`, a plugin's too, and a variant is made
-  as before. Two stay exhaustive: `FieldValue`, a number or text as JSON has them, which a field's
-  `validate` tells apart, and `Reply`, which a consuming project's route test matches whole, so
-  that a new kind of reply waits for a consumer release plan. The kit's own test holds the marks
-  and names those two with their reasons (`crates/symphony-plugin/tests/vocabulary.rs`, a crate
-  that links the kit alone and matches each list with `_`).
+- **The vocabulary grows in a minor** ([its card](../workflow/RELEASES.md#kit-new-block-version)).
+  A new kind of block, text span or media is a minor of the kit (1.1.0), never a new major: a
+  plugin makes blocks and never has to list them, so one written for 1.0.0 keeps building. `Block`,
+  `Span` and `Media` are `#[non_exhaustive]`, and so is every other list of the kit a minor may
+  add to: the words a block carries (`CalloutKind`, `FigureSize`, `ContainerKind`, `InlineKind`,
+  `VectorKind`, `CardState`, `CardGroup`, `ThreadAuthor`), a gate's `GateState`, a board field's
+  `FieldKind`, a renderer's `Drawing` and a Settings entry's `SettingScope`, `SettingClass` and
+  `SettingKind`. A match on one outside the kit ends with `_`, a plugin's too, and a variant is
+  made as before. Two stay exhaustive: `FieldValue`, a number or text as JSON has them, which a
+  field's `validate` tells apart, and `Reply`, which a consuming project's route test matches
+  whole, so that a new kind of reply waits for a consumer release plan. The kit's own test holds
+  the marks and names those two with their reasons (`crates/symphony-plugin/tests/vocabulary.rs`,
+  a crate that links the kit alone and matches each list with `_`).
 
   The compiler does not refuse a build of this workspace in which a kind has no arm, as each
-  match outside the kit ends with `_`, so tests do. `crates/symphony-api/tests/vocabulary_drawn.rs` reads each list from the kit's source
-  and fails on a variant that a match on it in the server or the wire types
-  does not name. The client is held by its types, written from the same lists: its
-  switches end in a value of type `never` and its tables name every kind, so a kind it does not
-  draw fails its type check, and `blocks.test.tsx` fails until the sample the wire types' example
-  writes holds the kind and it is drawn. A kind a client does not know, sent by a newer server, is
-  not a failed read: the React client lets it through with its fields unread and says it where it
-  stands (`Unsupported document content: NAME`, `Unsupported NAME` in a line, `Unsupported media:
-  NAME`), drawing the rest of the page. A word it does not know (a size, a tag, a shape) still
-  fails the read, which the page says and tries again.
+  match outside the kit ends with `_`, so tests do. `crates/symphony-api/tests/vocabulary_drawn.rs`
+  reads each list from the kit's source and fails on a variant that a match on it in the server
+  or the wire types does not name. The client is held by its types, written from the same lists:
+  its switches end in a value of type `never` and its tables name every kind, so a kind it does
+  not draw fails its type check, and `blocks.test.tsx` fails until the sample the wire types'
+  example writes holds the kind and it is drawn. A kind a client does not know, sent by a newer
+  server, is not a failed read: the React client lets it through with its fields unread and says
+  it where it stands (`Unsupported document content: NAME`, `Unsupported NAME` in a line,
+  `Unsupported media: NAME`), drawing the rest of the page. A word it does not know (a size, a
+  tag, a shape) still fails the read, which the page says and tries again.
 
   A host reading a process plugin's answer also keeps the surrounding content: a block or span
   whose kind it does not know becomes the existing `Unknown` block or span, with the kind as its

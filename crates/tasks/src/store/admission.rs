@@ -175,32 +175,24 @@ impl Store {
     pub fn accepted_outputs(&self, slug: &str) -> Result<Outputs, Error> {
         self.retrying(|| {
             let decided = self.decided(slug, &crate::workflow::board_service("reader"), None)?;
-            let context = context(&decided);
-            let at = decided.facts.position.as_ref().map(TaskPosition::at);
-            let own = Prerequisite {
-                slug: slug.to_string(),
-                found: Some((decided.task.status.clone(), decided.facts.position.clone())),
-                accepted: decided.facts.accepted.clone(),
-            };
-            let takes = (context.definition.edges.iter()).any(|e| {
-                Some(&e.from) == at.as_ref()
-                    && e.dependencies == symphony_api::workflow::Dependency::AcceptedOutput
-            });
-            let mut outputs = Outputs {
-                own: admit::standing(context, &own).map(str::to_string),
-                takes: Vec::new(),
-            };
-            if takes {
-                outputs.takes = (decided.facts.dependencies.iter())
-                    .map(|p| {
-                        (
-                            p.slug.clone(),
-                            admit::standing(context, p).map(str::to_string),
-                        )
-                    })
-                    .collect();
-            }
-            Ok(outputs)
+            Ok(outputs(&decided))
+        })
+    }
+
+    /// [`Store::workflow_actions`] and [`Store::accepted_outputs`] from one read, so the outputs
+    /// a page sends with an edge are those of the snapshot it previews; refused as
+    /// [`Store::workflow_actions`] is.
+    pub fn workflow_actions_with_outputs(
+        &self,
+        slug: &str,
+        principal: &Principal,
+        host: &Host,
+    ) -> Result<(NextActions, Outputs), Error> {
+        self.retrying(|| {
+            let decided = self.decided(slug, principal, None)?;
+            let next = admit::next_actions(context(&decided), &decided.facts, principal, host)
+                .map_err(refusal)?;
+            Ok((next, outputs(&decided)))
         })
     }
 
@@ -703,6 +695,34 @@ fn request_digest(request: &OperationRequest) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+/// The task's accepted outputs as `decided` reads them ([`Outputs`]): its own standing, and,
+/// where an edge leaving its pair depends on `accepted_output`, the one standing for each task it
+/// depends on.
+fn outputs(decided: &Decided) -> Outputs {
+    let context = context(decided);
+    let at = decided.facts.position.as_ref().map(TaskPosition::at);
+    let own = Prerequisite {
+        slug: decided.facts.slug.clone(),
+        found: Some((decided.task.status.clone(), decided.facts.position.clone())),
+        accepted: decided.facts.accepted.clone(),
+    };
+    let takes = (context.definition.edges.iter()).any(|e| {
+        Some(&e.from) == at.as_ref()
+            && e.dependencies == symphony_api::workflow::Dependency::AcceptedOutput
+    });
+    let standing = |p: &Prerequisite| admit::standing(context, p).map(str::to_string);
+    Outputs {
+        own: standing(&own),
+        takes: if takes {
+            (decided.facts.dependencies.iter())
+                .map(|p| (p.slug.clone(), standing(p)))
+                .collect()
+        } else {
+            Vec::new()
+        },
+    }
 }
 
 /// The handle of an agent principal, which the write checks is still on the board.

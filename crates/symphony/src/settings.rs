@@ -1,8 +1,12 @@
 //! The Settings page's read ([`symphony_api::SettingsPage`]): everything in force for the project
 //! at a root, each value with where it was written, as a list of entries in one shape. It reads
-//! and never writes, runs no program and reaches no outside service: a program an entry needs is
-//! looked for on the search path, and the GitHub exchange's settings are read from the commit of
-//! the default branch, as that program reads them.
+//! and never writes, and reaches no outside service: a program an entry needs is looked for on the
+//! search path, and the one program it runs is one that describes itself, for its entry alone.
+//!
+//! The Symphony's own entries come first; then what is not its own, in that same shape
+//! ([`described`]): a program's, the answer of one command (the GitHub exchange's, `symphony-github
+//! describe`), and each describer's of the plugins the project selects, its class judged so that
+//! no describer lowers one.
 //!
 //! A value of the project file is the one the file writes while the project loads, else its
 //! default; while the file does not load the project runs on every default, and the page says so
@@ -11,14 +15,23 @@
 //! (`symphony_board::limits`, `symphony_board::launch::Defaults`), and their sources are named as
 //! `just tasks limits` names them.
 //!
+//! The board's store of preferences is read between the two ([`stored`]): a value it holds in
+//! force is named as the store's, with the committed value it stands over, and a local file's
+//! value over it says so. The page lists what it writes beside its entries
+//! ([`SettingsPage::stored`](symphony_api::SettingsPage)), the settings the store keeps, each with
+//! the store's entry and record.
+//!
 //! A setting's class comes from the lists the local settings file's reader holds
 //! (`symphony_board::local::PROTECTED`, `PROTECTED_KEYS`) and from no other list ([`class`]): what
 //! that file refuses as holding a command or deciding what lands is reviewed, and every other
 //! key of the project file is a preference. The scopes a setting may be written in come from the
-//! same reader ([`scopes`]): the machine's where the local file may hold the key.
+//! same reader ([`scopes`]): the board's where its store keeps the key, and the machine's where
+//! the local file may hold it.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+
+pub mod stored;
 
 use symphony_api::{
     EntryNeed, EntryState, Setting, SettingClass, SettingKind, SettingScope, SettingSource,
@@ -28,15 +41,15 @@ use symphony_board::launch::Defaults;
 use symphony_board::launch::defaults::{AGENTS, Chosen, ROLES};
 use symphony_board::limits::{self, Written};
 use symphony_board::local::{self, Local};
+use symphony_board::settings::Stored;
 use symphony_board::{alarm, builds};
 use toml::Value;
 
+use crate::plugins::Plugins;
 use crate::project::{FILE, LOCAL_FILE, PANES, Project, Releases};
+use stored::Board;
 
-/// The GitHub exchange's settings file, at the root of the tree the default branch commits
-/// (docs/operations/GITHUB.md), and its program.
-pub const GITHUB_FILE: &str = "symphony-github.toml";
-const GITHUB_PROGRAM: &str = "symphony-github";
+pub mod described;
 
 /// What of this machine the read looks at: where its programs are found.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -82,12 +95,13 @@ impl Machine {
 
 /// The class of `key` in the top-level table `table` of the project file: reviewed where the
 /// local settings file's reader refuses it as holding a command or deciding what lands, the whole
-/// table or the key by name; a preference otherwise.
+/// table or the key by name, and the table said whole (`key` empty) where it holds a key so
+/// refused; a preference otherwise.
 pub fn class(table: &str, key: &str) -> SettingClass {
     let reviewed = local::PROTECTED.contains(&table)
         || local::PROTECTED_KEYS
             .iter()
-            .any(|(of, keys)| *of == table && keys.contains(&key));
+            .any(|(of, keys)| *of == table && (key.is_empty() || keys.contains(&key)));
     if reviewed {
         SettingClass::Reviewed
     } else {
@@ -95,8 +109,10 @@ pub fn class(table: &str, key: &str) -> SettingClass {
     }
 }
 
-/// The scopes `key` of the table `path` leads to may be written in: the project's, and the
-/// machine's too where the local settings file may hold it.
+/// The scopes `key` of the table `path` leads to may be written in: the project's; the board's
+/// where its store keeps it, which is where the page writes it; and the machine's too where the
+/// local settings file may hold it. The store keeps what the local file may hold, and `[agents]
+/// panes` besides (`symphony_board::local::Place::Store`).
 pub fn scopes(path: &[&str], key: &str) -> Vec<SettingScope> {
     let machine = match path {
         [table] => *table == limits::TABLE && limits::KEYS.contains(&key),
@@ -104,7 +120,11 @@ pub fn scopes(path: &[&str], key: &str) -> Vec<SettingScope> {
         ["agents", "models"] => ROLES.contains(&key),
         _ => false,
     };
+    let board = machine || (path == ["agents"] && key == "panes");
     let mut scopes = vec![SettingScope::Project];
+    if board {
+        scopes.push(SettingScope::Board);
+    }
     if machine {
         scopes.push(SettingScope::Machine);
     }
@@ -126,9 +146,18 @@ fn default(what: &str) -> SettingSource {
     }
 }
 
-/// `written`, as the board names a setting in force, as a source: the local file's when its name
-/// opens it, else the project file's, named before it.
+/// `written`, as the board names a setting in force, as a source: the board's store's or the local
+/// file's when its name opens it, else the project file's, named before it.
 fn source(written: &Written) -> SettingSource {
+    if written.at.starts_with(symphony_board::settings::SAID) {
+        return SettingSource {
+            scope: Some(SettingScope::Board),
+            said: written.said(),
+            file: None,
+            line: None,
+            over: None,
+        };
+    }
     let local = written.at.starts_with(LOCAL_FILE);
     let (scope, file, said) = if local {
         (SettingScope::Machine, LOCAL_FILE, written.said())
@@ -280,8 +309,16 @@ fn program(machine: &Machine, program: &str, missing: &str) -> EntryNeed {
     }
 }
 
-/// The settings of the project at `root`, as `machine` finds its programs.
+/// The settings of the project at `root`, as `machine` finds its programs, from its files alone:
+/// a board never told anything.
 pub fn page(root: &Path, machine: &Machine) -> SettingsPage {
+    page_with(root, machine, &Board::default())
+}
+
+/// The settings of the project at `root`, as `machine` finds its programs, with what `board`, its
+/// board, holds: the store's entries between the project file and the local file, and the commits
+/// of the project file waiting for delivery.
+pub fn page_with(root: &Path, machine: &Machine, board_held: &Board) -> SettingsPage {
     let main = builds::main_of(root);
     let project = Project::of(root);
     let problem = Project::problem(root);
@@ -300,10 +337,11 @@ pub fn page(root: &Path, machine: &Machine) -> SettingsPage {
     // The board's own reading: the main checkout's file, whatever the project's load says.
     let board_text = std::fs::read_to_string(&board_file).unwrap_or_default();
     let board = FileRead::of(Some(board_text));
-    let read = limits::read_at(&board_file);
+    let stored = board_held.stored();
+    let read = limits::read_with(&board_file, &stored);
     problems.extend(read.problems.iter().cloned());
     let held = local::beside(&board_file).ok().flatten();
-    let defaults = Defaults::configured(&main).unwrap_or_else(|problem| {
+    let defaults = Defaults::configured_with(&main, &stored).unwrap_or_else(|problem| {
         problems.push(format!(
             "{problem}; the launch and the models read as the board's own"
         ));
@@ -332,22 +370,25 @@ pub fn page(root: &Path, machine: &Machine) -> SettingsPage {
             entries: vec![
                 agent(machine, &defaults, "claude", "Claude Code"),
                 agent(machine, &defaults, "codex", "Codex"),
-                herdr(machine, &file, &project),
-                github(machine, &main),
+                herdr(machine, &file, &project, &stored),
+                described::program(machine, &main, &described::GITHUB),
                 plugins(&file, &project),
-            ],
+            ]
+            .into_iter()
+            .chain(described::plugins(&Plugins::at(&project, root), root))
+            .collect(),
         },
         SettingsSection {
             id: "models".into(),
             title: "Models and limits".into(),
             about: "What a launch starts, the model each role runs on and the limits the board \
-                    holds work to: the project's, or this machine's where its local file writes \
-                    one."
+                    holds work to: the project's, the board's where its store holds one, or this \
+                    machine's where its local file writes one."
                 .into(),
             entries: vec![
-                launch(&board, &defaults, held.as_ref()),
-                models(&board, &defaults, held.as_ref()),
-                limits_entry(&board, &read),
+                launch(&board, &defaults, held.as_ref(), &stored),
+                models(&board, &defaults, held.as_ref(), &stored),
+                limits_entry(&board, &read, &stored),
                 alarm_entry(&read),
             ],
         },
@@ -382,10 +423,17 @@ pub fn page(root: &Path, machine: &Machine) -> SettingsPage {
             entries: vec![appearance()],
         },
     ];
+    let stored = stored::list(
+        &sections,
+        board_held,
+        held.as_ref(),
+        &project.default_branch,
+    );
     SettingsPage {
         files,
         problems,
         sections,
+        stored,
     }
 }
 
@@ -412,9 +460,10 @@ fn agent(machine: &Machine, defaults: &Defaults, agent: &str, name: &str) -> Set
     }
 }
 
-/// Herdr's panes: `[agents] panes`.
-fn herdr(machine: &Machine, file: &FileRead, project: &Project) -> SettingsEntry {
-    let on = project.agents.panes == PANES[0];
+/// Herdr's panes: `[agents] panes`, the board's store's over the project file's.
+fn herdr(machine: &Machine, file: &FileRead, project: &Project, stored: &Stored) -> SettingsEntry {
+    let in_force = stored.panes(&project.agents.panes);
+    let on = in_force == PANES[0];
     let mut panes = file.setting(
         &["agents"],
         "panes",
@@ -423,6 +472,18 @@ fn herdr(machine: &Machine, file: &FileRead, project: &Project) -> SettingsEntry
         &project.agents.panes,
     );
     panes.choices = PANES.iter().map(|pane| (*pane).to_string()).collect();
+    const KEY: &str = "agents.panes";
+    if stored.holds(KEY) {
+        let over = match file.get(&["agents"], "panes") {
+            Some(committed) => format!("{:?} ({})", shown(committed), panes.source.said),
+            None => format!("its default, {:?}", project.agents.panes),
+        };
+        panes.value = in_force.to_string();
+        panes.source = SettingSource {
+            over: Some(over),
+            ..source(&Stored::written(KEY))
+        };
+    }
     SettingsEntry {
         state: state(
             if on { "On" } else { "Off" },
@@ -443,157 +504,6 @@ fn herdr(machine: &Machine, file: &FileRead, project: &Project) -> SettingsEntry
             "herdr",
             "Herdr panes",
             "Agents' terminals in Herdr, which the pages can show and go to.",
-        )
-    }
-}
-
-/// `file` of the tree the branch `branch` commits in the repository of the checkout `main`: none
-/// when that tree holds none, or there is no such repository or commit.
-fn committed(main: &Path, branch: &str, file: &str) -> Result<Option<String>, String> {
-    // No repository, or no commit of the branch yet, holds no file.
-    let Ok(repo) = gix::open(main) else {
-        return Ok(None);
-    };
-    let Ok(id) = repo.rev_parse_single(branch) else {
-        return Ok(None);
-    };
-    let commit = id
-        .object()
-        .map_err(|e| e.to_string())?
-        .peel_to_commit()
-        .map_err(|e| e.to_string())?;
-    let tree = commit.tree().map_err(|e| e.to_string())?;
-    let Some(entry) = tree.lookup_entry_by_path(file).map_err(|e| e.to_string())? else {
-        return Ok(None);
-    };
-    let blob = repo.find_blob(entry.id()).map_err(|e| e.to_string())?;
-    String::from_utf8(blob.data.clone())
-        .map(Some)
-        .map_err(|e| e.to_string())
-}
-
-/// The default branch as the GitHub program names it: `[project] default_branch` of the
-/// `symphony.toml` the main checkout's HEAD commits, `main` where none is committed or it names
-/// none. An edit of the working file names no branch until it is committed.
-fn committed_branch(main: &Path) -> Result<String, String> {
-    let text = committed(main, "HEAD", "symphony.toml")?.unwrap_or_default();
-    let table = toml::from_str::<toml::Table>(&text).map_err(|e| e.message().to_string())?;
-    Ok(table
-        .get("project")
-        .and_then(|project| project.get("default_branch"))
-        .and_then(Value::as_str)
-        .unwrap_or("main")
-        .to_string())
-}
-
-/// What the page can say of the GitHub exchange without running its program.
-enum Exchange {
-    /// Nothing turns it on: no committed file, one that leaves `enabled` out or false, or one that
-    /// does not read, or a project file at HEAD that does not read and so names no branch. The
-    /// program runs each as off.
-    Off(String),
-    /// The committed file writes `enabled = true`, with what else it writes. Whether the program
-    /// accepts the file is its own to say: one it refuses runs as off.
-    Written(String),
-}
-
-/// The GitHub exchange, by what the default branch's committed settings write. The page runs no
-/// program and holds no copy of its rules, so it says what the file writes and claims the
-/// exchange on for none: a file its program refuses runs as off, which that program's own status
-/// tells. Its settings decide what lands and what is written to an outside service, so they are
-/// reviewed.
-fn github(machine: &Machine, main: &Path) -> SettingsEntry {
-    let branch = committed_branch(main);
-    let on_branch = match &branch {
-        Ok(branch) => format!("{GITHUB_FILE} on {branch}"),
-        Err(_) => GITHUB_FILE.to_string(),
-    };
-    let text = match &branch {
-        Ok(branch) => committed(main, &format!("refs/heads/{branch}"), GITHUB_FILE),
-        Err(problem) => Err(problem.clone()),
-    };
-    let table = match &text {
-        Ok(Some(text)) => toml::from_str::<toml::Table>(text)
-            .map(Some)
-            .map_err(|e| e.message().to_string()),
-        Ok(None) => Ok(None),
-        Err(problem) => Err(problem.clone()),
-    };
-    let enabled = match &table {
-        Ok(Some(table)) => table.get("enabled").and_then(Value::as_bool) == Some(true),
-        _ => false,
-    };
-    let exchange = match (&branch, &table) {
-        (Err(problem), _) => Exchange::Off(format!(
-            "Off: {FILE} at HEAD does not read ({problem}), so it names no branch to read \
-             {GITHUB_FILE} on."
-        )),
-        (_, Err(problem)) => Exchange::Off(format!("Off: {on_branch} does not read ({problem}).")),
-        (_, Ok(None)) => Exchange::Off(format!("Off: no {on_branch}.")),
-        (_, Ok(Some(table))) => {
-            let word = |key: &str| table.get(key).map_or_else(|| "off".to_string(), shown);
-            let writes = format!(
-                "repository {}, issues {}, pull requests {}, releases {}",
-                word("repository"),
-                word("issues"),
-                word("pull_requests"),
-                word("releases")
-            );
-            if enabled {
-                Exchange::Written(format!(
-                    "{on_branch} writes enabled = true; {writes}. Whether the exchange runs is \
-                     its program's to say: a file it refuses, or a token it lacks, leaves it \
-                     off (docs/operations/GITHUB_SETUP.md)."
-                ))
-            } else {
-                Exchange::Off(format!("Off: {on_branch} does not enable it; {writes}."))
-            }
-        }
-    };
-    let written = match (&text, &table) {
-        (Ok(Some(text)), Ok(Some(table))) if table.contains_key("enabled") => Some(Written {
-            at: "enabled".into(),
-            line: limits::line(text, &[], "enabled"),
-        }),
-        _ => None,
-    };
-    let found = builds::of_main(main, GITHUB_PROGRAM, &machine.beyond);
-    SettingsEntry {
-        state: match exchange {
-            Exchange::Off(why) => state("Off", Some(false), why),
-            Exchange::Written(why) => state("Enabled in its file", None, why),
-        },
-        needs: vec![EntryNeed {
-            what: format!("the {GITHUB_PROGRAM} program"),
-            met: found.is_some(),
-            said: match found {
-                Some(path) => format!("Found on this machine: {}.", path.display()),
-                None => "Not found on this machine: nothing is exchanged from here.".into(),
-            },
-        }],
-        settings: vec![Setting {
-            key: "enabled".into(),
-            name: "What its committed file writes for the exchange".into(),
-            kind: SettingKind::Switch,
-            value: if enabled { "on" } else { "off" }.into(),
-            choices: Vec::new(),
-            source: match written {
-                Some(written) => SettingSource {
-                    scope: Some(SettingScope::Project),
-                    said: format!("{on_branch}, {}", written.said()),
-                    file: Some(GITHUB_FILE.into()),
-                    line: written.line.and_then(|line| u32::try_from(line).ok()),
-                    over: None,
-                },
-                None => default(&format!("no {on_branch}")),
-            },
-            scopes: vec![SettingScope::Project],
-            class: SettingClass::Reviewed,
-        }],
-        ..entry(
-            "github",
-            "GitHub",
-            "Issues exchanged, lands delivered by pull request, releases published.",
         )
     }
 }
@@ -655,12 +565,37 @@ fn plugins(file: &FileRead, project: &Project) -> SettingsEntry {
     }
 }
 
-/// A setting the board reads with the local file over the committed one: the local file's value
-/// and line where it writes one that is not empty, over the committed one's when that is written
-/// too; else the committed one's; else `unset`, said by `chosen`.
+/// What the board's store holds in force for `key` of the table `path` leads to, as the page
+/// shows it: none where it holds no entry in force, or one written empty.
+fn stored_value(stored: &Stored, path: &[&str], key: &str) -> Option<String> {
+    let at = format!("{}.{key}", path.join("."));
+    let held = &stored.held;
+    let value = match path {
+        ["agents", "launch"] => local::LAUNCH
+            .iter()
+            .position(|known| *known == key)
+            .and_then(|at| held.launch[at].clone()),
+        ["agents", "models"] => held.model_of(key).map(str::to_string),
+        _ => None,
+    };
+    value.filter(|value| stored.holds(&at) && !value.trim().is_empty())
+}
+
+/// What stands over the committed settings: the local file where one is read, and the board's
+/// store.
+#[derive(Clone, Copy)]
+struct Over<'a> {
+    local: Option<&'a Local>,
+    stored: &'a Stored,
+}
+
+/// A setting the board reads with the board's store and then the local file over the committed
+/// one: the local file's value and line where it writes one that is not empty, over the store's
+/// where it holds one, else over the committed one's when that is written; else the store's, over
+/// the committed value; else the committed one's; else `unset`, said by `chosen`.
 fn overridden(
     board: &FileRead,
-    held: Option<&Local>,
+    Over { local, stored }: Over<'_>,
     (at, path, key): (&str, &[&str], &str),
     name: &str,
     kind: SettingKind,
@@ -668,22 +603,30 @@ fn overridden(
     unset: (&str, &str),
 ) -> Setting {
     let committed = board.written(at, path, key).map(|written| source(&written));
-    let local = held.filter(|local| {
-        let wrote = match path {
-            ["agents", "launch"] => local::LAUNCH
-                .iter()
-                .position(|known| *known == key)
-                .and_then(|at| local.launch[at].as_deref()),
-            _ => local.model_of(key),
-        };
-        wrote.is_some_and(|value| !value.trim().is_empty())
-    });
-    let source = match (local, committed) {
-        (Some(local), committed) => SettingSource {
-            over: committed.map(|committed| committed.said),
+    let store_key = format!("{}.{key}", path.join("."));
+    let in_store = stored_value(stored, path, key);
+    let local = local.filter(|local| stored::local_writes(local, &store_key));
+    let source = match (local, &in_store, committed) {
+        (Some(local), in_store, committed) => SettingSource {
+            over: match in_store {
+                Some(in_store) => Some(format!(
+                    "{in_store:?} ({})",
+                    Stored::written(&store_key).said()
+                )),
+                None => committed.map(|committed| committed.said),
+            },
             ..source(&local.written(at, path, key))
         },
-        (None, Some(committed)) if value.is_some() => committed,
+        (None, Some(_), committed) => SettingSource {
+            over: Some(match (board.get(path, key), committed) {
+                (Some(value), Some(committed)) => {
+                    format!("{:?} ({})", shown(value), committed.said)
+                }
+                _ => "none written".into(),
+            }),
+            ..source(&Stored::written(&store_key))
+        },
+        (None, None, Some(committed)) if value.is_some() => committed,
         _ => default(unset.1),
     };
     Setting {
@@ -702,11 +645,20 @@ const LAUNCH: [&str; 2] = ["agents", "launch"];
 const MODELS: [&str; 2] = ["agents", "models"];
 
 /// What a launch starts when its caller names none: `[agents] launch`.
-fn launch(board: &FileRead, defaults: &Defaults, held: Option<&Local>) -> SettingsEntry {
+fn launch(
+    board: &FileRead,
+    defaults: &Defaults,
+    held: Option<&Local>,
+    stored: &Stored,
+) -> SettingsEntry {
     let resolved = defaults.resolve(None, None);
+    let over = Over {
+        local: held,
+        stored,
+    };
     let mut agent = overridden(
         board,
-        held,
+        over,
         ("[agents] launch default", &LAUNCH, "default"),
         "The agent a launch starts",
         SettingKind::Choice,
@@ -719,7 +671,7 @@ fn launch(board: &FileRead, defaults: &Defaults, held: Option<&Local>) -> Settin
             agent,
             overridden(
                 board,
-                held,
+                over,
                 ("[agents] launch model", &LAUNCH, "model"),
                 "Its model",
                 SettingKind::Text,
@@ -731,7 +683,7 @@ fn launch(board: &FileRead, defaults: &Defaults, held: Option<&Local>) -> Settin
             ),
             overridden(
                 board,
-                held,
+                over,
                 ("[agents] launch effort", &LAUNCH, "effort"),
                 "Its effort",
                 SettingKind::Text,
@@ -754,7 +706,16 @@ fn launch(board: &FileRead, defaults: &Defaults, held: Option<&Local>) -> Settin
 }
 
 /// The model each role runs on: `[agents.models]`, else where the board takes it from.
-fn models(board: &FileRead, defaults: &Defaults, held: Option<&Local>) -> SettingsEntry {
+fn models(
+    board: &FileRead,
+    defaults: &Defaults,
+    held: Option<&Local>,
+    stored: &Stored,
+) -> SettingsEntry {
+    let over = Over {
+        local: held,
+        stored,
+    };
     let settings = ROLES
         .iter()
         .map(|role| {
@@ -764,7 +725,7 @@ fn models(board: &FileRead, defaults: &Defaults, held: Option<&Local>) -> Settin
             let written = |value: Option<String>, unset: (&str, &str)| {
                 overridden(
                     board,
-                    held,
+                    over,
                     (&at, &MODELS, role),
                     &name,
                     SettingKind::Text,
@@ -794,50 +755,76 @@ fn models(board: &FileRead, defaults: &Defaults, held: Option<&Local>) -> Settin
     }
 }
 
+/// `key` of `[limits]` as `held` holds it, as the page shows it: a number, or `unset` for none.
+fn limit(held: &limits::Limits, key: &str, unset: &str) -> String {
+    let none = |value: Option<usize>| value.map_or_else(|| unset.to_string(), |n| n.to_string());
+    match key {
+        limits::SLOTS => none(held.orchestrator_slots),
+        limits::TASKS => held.orchestrator_tasks.to_string(),
+        limits::LOW => held.low_volume.to_string(),
+        _ => none(held.machine_agents),
+    }
+}
+
 /// The work-in-progress limits: `[limits]`, as the board reads them.
-fn limits_entry(board: &FileRead, read: &limits::Read) -> SettingsEntry {
-    let held = read.limits;
-    let none = |value: Option<usize>, unset: &str| {
-        value.map_or_else(|| unset.to_string(), |n| n.to_string())
-    };
+fn limits_entry(board: &FileRead, read: &limits::Read, stored: &Stored) -> SettingsEntry {
     let rows = [
         (
             limits::SLOTS,
             "Tasks in progress an orchestrator holds",
-            none(held.orchestrator_slots, "no cap"),
             "no cap",
         ),
         (
             limits::TASKS,
             "Open tasks an orchestrator holds the role on",
-            held.orchestrator_tasks.to_string(),
             "",
         ),
         (
             limits::LOW,
             "Open slots below which an orchestrator hears low volume",
-            held.low_volume.to_string(),
             "",
         ),
         (
             limits::MACHINE_AGENTS,
             "Agents this machine runs",
-            none(held.machine_agents, "no limit"),
             "no limit",
         ),
     ];
+    // What the project file alone holds, which a stored or a local value stands over.
+    let committed = limits::parse(FILE, &board.text);
     let settings = rows
         .into_iter()
-        .map(|(key, name, value, unset)| {
+        .map(|(key, name, unset)| {
             let at = format!("[{}] {key}", limits::TABLE);
+            let value = limit(&read.limits, key, unset);
             let mut from = read.written.get(key).map_or_else(|| default(unset), source);
-            // A local file's value holds over the committed one, where that is written too.
-            if from.scope == Some(SettingScope::Machine) {
-                from.over = limits::parse(FILE, &board.text)
-                    .written
-                    .get(key)
-                    .map(|written| source(written).said);
-            }
+            let store_key = format!("{}.{key}", limits::TABLE);
+            let in_store = stored
+                .held
+                .limits
+                .get(key)
+                .filter(|_| stored.holds(&store_key));
+            let written = committed
+                .written
+                .get(key)
+                .map(|written| source(written).said);
+            from.over = match (from.scope, in_store) {
+                // A local file's value holds over the store's, else over the committed one.
+                (Some(SettingScope::Machine), Some(n)) => {
+                    Some(format!("{n} ({})", Stored::written(&store_key).said()))
+                }
+                (Some(SettingScope::Machine), None) => written,
+                // The store's over the committed value, or its default.
+                (Some(SettingScope::Board), _) => {
+                    let was = limit(&committed.limits, key, unset);
+                    Some(match written {
+                        Some(written) => format!("{was} ({written})"),
+                        None if was.is_empty() => "its default".into(),
+                        None => format!("its default, {was}"),
+                    })
+                }
+                _ => None,
+            };
             Setting {
                 key: at,
                 name: name.into(),

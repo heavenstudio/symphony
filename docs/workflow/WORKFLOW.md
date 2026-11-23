@@ -261,9 +261,10 @@ output standing then. What a supersession does to a dependant already admitted o
 not this check's (`tools/workflow-revision-guards`). `just tasks workflow actions SLUG` prints the
 task's own output standing and, where an edge leaving its pair depends on accepted outputs, the
 one standing for each task it depends on, which `workflow apply … --accept SLUG=OUTPUT` names;
-`Store::accepted_outputs` reads the same, and the board's claim names the ones it reads there
-(`just tasks claim`, a launch, the staffing pass). PULL and the staffing pass find such an edge
-open by the outputs standing too ([Operations](#operations)).
+`Store::accepted_outputs` reads the same. The board's claim names the ones it reads
+(`just tasks claim`, a launch, the staffing pass), and it and `workflow actions` take them from
+the read that gave the revision they name (`Store::workflow_actions_with_outputs`). PULL and the
+staffing pass find such an edge open by the outputs standing too ([Operations](#operations)).
 
 ## External effects
 
@@ -633,8 +634,9 @@ A task the board's own writers keep carries none, and its wire is the text it wa
 `GET /api/workflow-actions?slug=SLUG` (`WORKFLOW_ACTIONS_PATH`) answers that task's
 `ActionsRead` for the local owner: its `NextActions`, a preview and never a permit, and `takes`,
 the accepted output standing for each task it depends on where an edge leaving its pair depends on
-`accepted_output` (`Store::accepted_outputs`, none standing as null), empty otherwise. A hosted
-visitor is refused it, as the apply route refuses one.
+`accepted_output` (`Store::accepted_outputs`, none standing as null), empty otherwise, both from
+one read (`Store::workflow_actions_with_outputs`). A hosted visitor is refused it, as the apply
+route refuses one.
 `GET /api/workflow-guards?slug=SLUG` (`WORKFLOW_GUARDS_PATH`) answers that task's `TaskGuards`,
 the local owner's too: each authority the active activation commits, with the epoch and
 generation the board accepted from it, whether it is in conflict, the admissions counted on it
@@ -674,7 +676,7 @@ falls back to the first tab; the ghost drawn before the board's first read draws
 the count the phase last had. The state facet chosen is the page's own and is not kept. A
 definition the board cannot draw leaves it as its own writers draw it.
 
-- [x] **workflow-board-labels** — On a board a custom workflow holds, the project's own words can match the board's: a phase named Build beside the machine's Build column, a state chip Working beside the Working wait chip. As built, the machine's columns read Machine build and Machine test, and the workflow's chips follow a small Workflow label. A board with no workflow is unchanged.
+- [r] **workflow-board-labels** — On a board a custom workflow holds, the project's own words can match the board's: a phase named Build beside the machine's Build column, a state chip Working beside the Working wait chip. As built, the machine's columns read Machine build and Machine test, and the workflow's chips follow a small Workflow label. A board with no workflow is unchanged.
   [2026-11-20 00:04] agent — Posted for the board task `app/workflow-pages-follow-ups`, at its tip 57ac59eb3; the change is its commit f80b7c2bc. Both pictures are the browser test's board, drawn from main's build at e00700b13 and from that tip.
 
     **Before**, wide and on a phone: ![The board before, wide](../design/analysis/workflow-board-labels/before-wide.png) ![The board before, on a phone](../design/analysis/workflow-board-labels/before-phone.png)
@@ -693,6 +695,7 @@ definition the board cannot draw leaves it as its own writers draw it.
 
     Approve to keep it, reject to drop it, or comment with other words.
   [2026-11-20 04:14] owner · approved
+  [2026-11-22 21:51] agent · resolved
 
 **The task page.** A task with a place loads the next-actions chunk
 (`apps/symphony-web/src/nextactions.tsx`). It says the place, the pair a blocked task resumes to
