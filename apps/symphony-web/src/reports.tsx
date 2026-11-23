@@ -370,7 +370,7 @@ interface Spec {
   source: Source;
   series: Series[];
   /** What the readout says of a period its source recorded with no value (`ChartData.none`). */
-  none?: string;
+  none?: (bucket: Bucket) => string;
   /** What the readout says after a period's name, none where it says nothing. */
   when?: (bucket: Bucket) => string | null;
 }
@@ -405,6 +405,17 @@ export const SPEND = "Tokens and cost";
 function landedSaid(bucket: Bucket): string | null {
   const tasks = bucket.written("landed.tasks");
   return tasks === null ? null : `${tasks} landed`;
+}
+
+/**
+ * What the cost of 100 lines says of a period with none: that its lines were not read, where a
+ * task it landed with a priced cost landed before lines were kept and its roll-up counted no git
+ * line; else that no line changed, as of a period whose lines were read and none was counted.
+ */
+function linesNone(bucket: Bucket): string {
+  return !bucket.has("git") && (bucket.number("landed.unread") ?? 0) > 0
+    ? "lines not read"
+    : "no line changed";
 }
 
 /** How the roll-up tells an hour's tokens, said under each chart of them. */
@@ -556,7 +567,7 @@ export const SECTIONS: [string, Spec[]][] = [
           line("p90", "landed.p90"),
           { name: "All in", mark: "line", pick: { ratio: "all-in" } },
         ],
-        none: "no task landed",
+        none: () => "no task landed",
         when: landedSaid,
       },
       {
@@ -572,7 +583,7 @@ export const SECTIONS: [string, Spec[]][] = [
           { name: "Landed tasks", mark: "line", pick: { ratio: "lines" } },
           { name: "All in", mark: "line", pick: { ratio: "lines-all-in" } },
         ],
-        none: "no line changed",
+        none: linesNone,
         when: landedSaid,
       },
     ],
@@ -834,7 +845,7 @@ function fixedCharts(page: Page, hidden: string[]): [string, ChartData[]][] {
         spec.id === "lead" && page.grain === "hour"
           ? "The roll-up keeps lead time by the day: switch to Days or Weeks to see it."
           : null,
-      ...(spec.none === undefined ? {} : { none: spec.none }),
+      ...(spec.none === undefined ? {} : { none: page.buckets.map(spec.none) }),
       ...(spec.when === undefined ? {} : { whens: page.buckets.map(spec.when) }),
     })),
   ]);

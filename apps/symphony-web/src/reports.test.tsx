@@ -1496,7 +1496,7 @@ const spending = (role: string, n: number, dollars: number, unpriced = 0) => ({
  * The fixture week with what the roll-up told of tokens: Monday's by four roles, a worker's on a
  * model with no price; Tuesday's none, as no source recorded it; Wednesday's none, its hours with
  * no pair of roll-ups. Monday landed three top-level tasks, two priced, one of them with its 400
- * lines read; Wednesday, rolled up in part, landed none.
+ * lines read and the other landed before lines were kept; Wednesday, rolled up in part, landed none.
  */
 function spendWire(): Wire {
   const whole = wire();
@@ -1512,7 +1512,7 @@ function spendWire(): Wire {
           spending("orchestrator", 100_000, 0.4),
           spending("worker", 300_000, 0, 300_000),
         ],
-        landed: { tasks: 3, priced: 2, median: 5, p90: 5.8, lined: 1, lined_cost: 6, lines: 400 },
+        landed: { tasks: 3, median: 5, p90: 5.8, lined_cost: 6, lines: 400, unread: 1 },
       },
       { ...tuesday, spend: null },
       { ...wednesday, landed: null },
@@ -1637,12 +1637,11 @@ describe("the tokens and their cost", () => {
     const [monday] = none.buckets as Wire[];
     (monday as Wire).landed = {
       tasks: 0,
-      priced: 0,
       median: null,
       p90: null,
-      lined: 0,
       lined_cost: 0,
       lines: 0,
+      unread: 0,
     };
     (monday as Wire).git = { commits: 0, merges: 0, added: 0, removed: 0, reverts: 0 };
     const drawn = charts(read(none), []);
@@ -1651,18 +1650,50 @@ describe("the tokens and their cost", () => {
     delete (monday as Wire).spend;
     (monday as Wire).landed = {
       tasks: 2,
-      priced: 2,
       median: 1,
       p90: 1,
-      lined: 1,
       lined_cost: 2,
       lines: 10,
+      unread: 1,
     };
     (monday as Wire).git = { commits: 1, merges: 0, added: 5, removed: 5, reverts: 0 };
     const untold = charts(read(none), []);
     expect(values(untold, "landed-cost", 2)).toEqual([null, null, null]);
     expect(values(untold, "line-cost", 1)).toEqual([null, null, null]);
     expect(values(untold, "line-cost", 0)).toEqual([20, null, null]);
+  });
+
+  it("say a period's lines were not read where neither its landings' nor git's were", () => {
+    const shown = (landed: Wire | null, git: Wire | null) => {
+      const one = spendWire();
+      const [monday] = one.buckets as Wire[];
+      (monday as Wire).landed = landed;
+      (monday as Wire).git = git;
+      const page = read(one);
+      const lines = find(charts(page, []), "line-cost");
+      return renderToStaticMarkup(<Readout chart={lines} axis={axis(page)} at={0} />)
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .replace(/ Settings changed.*$/, "")
+        .trim();
+    };
+    const landed = { tasks: 2, median: 3, p90: 3, lined_cost: 0, lines: 0, unread: 1 };
+    // A landing's lines not read and no git line counted: nothing says whether a line changed.
+    expect(shown(landed, null)).toBe("Mon 9 Nov · lines not read · 2 landed");
+    // Git counted none: no line reached the branch, whatever the landings' lines.
+    const still = { commits: 0, merges: 0, added: 0, removed: 0, reverts: 0 };
+    expect(shown(landed, still)).toBe("Mon 9 Nov · no line changed · 2 landed");
+    // Every landing's lines read, and none counted.
+    expect(shown({ ...landed, unread: 0 }, null)).toBe("Mon 9 Nov · no line changed · 2 landed");
+    // From a server that counted no unread lines, as before it did.
+    const { unread: _, ...older } = landed;
+    expect(shown(older, null)).toBe("Mon 9 Nov · no line changed · 2 landed");
+    // A period that landed none, its git not counted.
+    expect(shown(null, null)).toBe("Mon 9 Nov · no line changed");
+    // One landing's lines not read, another's read: its cost per 100 lines is drawn.
+    expect(shown({ ...landed, lined_cost: 2, lines: 400 }, null)).toBe(
+      "Mon 9 Nov · 2 landed Landed tasks $0.50 All in no data",
+    );
   });
 
   it("are drawn in their section, and read from the wire's own sample", () => {

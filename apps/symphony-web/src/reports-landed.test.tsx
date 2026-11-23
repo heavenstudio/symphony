@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { seriesKey } from "./chart";
+import { RowChart, seriesKey } from "./chart";
 import {
   DEAREST,
   dearestChart,
@@ -402,6 +402,15 @@ describe("the kinds", () => {
       ["docs", null, [1], "var(--chart-5)", "1 task · $1.00 in all · no lines counted"],
       ["No kind", null, [0.5], "var(--chart-none)", "1 task · $0.50 in all · no lines counted"],
     ]);
+    // What a kind's line under its bar says, the readout says nothing more of: its name and median.
+    expect(chart.rows.map((row) => row.said)).toEqual([[], [], []]);
+    const drawn = renderToStaticMarkup(<RowChart chart={chart} selected={0} onSelect={() => {}} />);
+    expect(drawn.split("$0.88 per 100 lines").length - 1).toBe(1);
+    expect(drawn).toContain(
+      '<div class="chart-readout" aria-live="polite"><p class="chart-when"><strong>feature</strong></p>' +
+        '<ul><li><span class="swatch" style="--c:var(--chart-1)" aria-hidden="true"></span>' +
+        "Median a task <strong>$3.50</strong></li></ul></div>",
+    );
     expect(chart.note).toContain("a task landed before kinds were kept counts under No kind.");
     expect(chart.note).toMatch(/ The first with a kind landed 9 Nov 2026\.$/);
     expect(chart.table()).toEqual({

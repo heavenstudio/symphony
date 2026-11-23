@@ -395,8 +395,9 @@ export function kindsChart(page: LandedPage): RowsData {
       href: null,
       values: [kind.median ?? 0],
       colour: kindColour(kind.kind),
+      // Said once, under its bar: the readout names the kind and its median alone.
       meta: kindSaid(kind).join(" · "),
-      said: kindSaid(kind),
+      said: [],
     })),
     tableToggle: "Show the table",
     table: () => ({
