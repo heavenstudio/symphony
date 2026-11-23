@@ -1,0 +1,1 @@
+import{Bt as e,ut as t}from"./shared-53acff45acb78a03.js";var n=t();function r({children:t}){return(0,n.jsxs)(`p`,{className:`first-steps`,children:[t,` `,(0,n.jsx)(`a`,{href:e,target:`_blank`,rel:`noopener noreferrer`,children:`Getting started`})]})}function i(e){return e.every(([,e])=>e===0)}export{i as n,r as t};
