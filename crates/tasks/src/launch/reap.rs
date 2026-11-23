@@ -156,7 +156,9 @@ pub struct Reap<'a> {
 
 /// What hc's live terminals say of Codex agents: the terminals running Codex, the threads the
 /// board's open launch records put in one of them, and the threads its launch records name of which
-/// no open record names a live terminal ([`Presence::gone`]), all from one read of the records.
+/// no open record names a live terminal ([`Presence::gone`]), all from one read of the records that
+/// name a Codex thread and of only what this judges of each (`Store::codex_launches`): a record
+/// the board cannot read elsewhere is no information here, and stops no sweep.
 pub fn presence(store: &Store, live: &[Object]) -> Result<Presence, Error> {
     let address = |t: &Object| Some(text_of(t, "address")).filter(|a| !a.is_empty());
     let listed: BTreeSet<String> = live.iter().filter_map(address).collect();
@@ -165,15 +167,13 @@ pub fn presence(store: &Store, live: &[Object]) -> Result<Presence, Error> {
         .filter_map(address)
         .collect();
     let (mut threads, mut held, mut launched) = Default::default();
-    for record in store.all_task_sessions()? {
-        let Some(thread) = (record.claude_session.strip_prefix(crate::launch::CODEX))
-            .filter(|thread| !thread.is_empty())
-        else {
+    for record in store.codex_launches()? {
+        let Some(thread) = record.claude_session.strip_prefix(crate::launch::CODEX) else {
             continue;
         };
         let insert = |set: &mut BTreeSet<String>| set.insert(thread.to_string());
         insert(&mut launched);
-        if record.closed.is_none() && listed.contains(&record.pane) {
+        if record.open && listed.contains(&record.pane) {
             insert(&mut held);
             if terminals.contains(&record.pane) {
                 insert(&mut threads);
