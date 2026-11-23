@@ -3130,7 +3130,9 @@ fn a_gates_answer_given_up_holds_its_turn_until_its_late_answer_comes() {
     drop(remote.gates_turn().unwrap());
     assert_eq!(remote.down(), None);
     assert_eq!(seen.kills(), 0);
-    // The call it gave up was the one cancelled.
+    // The call it gave up was the one cancelled: the peer reads the cancel only once it has
+    // written its late answer.
+    until("the cancel was heard", || seen.heard().len() == 3);
     let heard = seen.heard();
     let asked: Raw = serde_json::from_str(&heard[1]).unwrap();
     assert!(
