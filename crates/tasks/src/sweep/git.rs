@@ -8,9 +8,11 @@ mod worktrees;
 
 pub(crate) use command::{Object, blobs, objects, read, stdout, told};
 pub use command::{git, rev, succeeds};
-pub use files::{DISPOSABLE, FINISHED_OUTPUT, fnmatch, last_touched, left_behind, modified};
+pub use files::{
+    DISPOSABLE, FINISHED_OUTPUT, fnmatch, last_touched, left_behind, left_behind_with, modified,
+};
 pub(super) use files::{admin, clean_regenerable};
-pub(super) use files::{file_status, regenerable};
+pub(super) use files::{file_status, os_metadata, regenerable};
 pub(super) use locks::SAVED_LOCK;
 pub(super) use locks::{WorktreeLock, hold_head};
 pub(crate) use owner::pathspecs;

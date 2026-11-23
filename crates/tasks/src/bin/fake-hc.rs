@@ -18,7 +18,8 @@
 //! `working` and the answer says `started` (null for a program that reports no status), `status`
 //! (its word when the text went in) and `turn`. `FAKE_HC_SILENT=N` leaves the first N agents saying
 //! nothing, `FAKE_HC_BUSY=N` `working` before any message, `FAKE_HC_BLOCKED=N` `blocked` on Claude's
-//! folder-trust dialog (its status `msg` the question), and `FAKE_HC_DEAF=N` never starting a turn
+//! folder-trust dialog (its status `msg` the question; with `FAKE_HC_BLOCKED_SCREEN=FILE`, on a
+//! dialog showing FILE that hc names only `dialog open`), and `FAKE_HC_DEAF=N` never starting a turn
 //! on what is sent (`started` false); `FAKE_HC_EXIT=N` ends the first N at once.
 //! `FAKE_HC_START_SCREEN=FILE` makes a codex start show FILE as its hooks chooser, silent until a
 //! `keys` press confirms a choice (`FAKE_HC_START_SELECTED` picks the highlighted one,
@@ -429,6 +430,7 @@ fn start(argv: &[String], state: &mut Map<String, Value>) -> Answer {
         "notify": !options.iter().any(|a| a == "--no-notify"),
     });
     let screen = var("FAKE_HC_START_SCREEN");
+    let dialog = var("FAKE_HC_BLOCKED_SCREEN");
     if is_agent {
         if knob(state, "FAKE_HC_EXIT") {
             t["state"] = json!("finished");
@@ -441,6 +443,10 @@ fn start(argv: &[String], state: &mut Map<String, Value>) -> Answer {
         } else if knob(state, "FAKE_HC_SILENT") {
         } else if knob(state, "FAKE_HC_BUSY") {
             t["status"] = json!("working");
+        } else if !dialog.is_empty() && knob(state, "FAKE_HC_BLOCKED") {
+            t["status"] = json!("blocked");
+            t["status_msg"] = json!("dialog open");
+            t["screen"] = json!(std::fs::read_to_string(&dialog).unwrap_or_default());
         } else if knob(state, "FAKE_HC_BLOCKED") {
             t["status"] = json!("blocked");
             t["status_msg"] = json!(TRUST_QUESTION);
