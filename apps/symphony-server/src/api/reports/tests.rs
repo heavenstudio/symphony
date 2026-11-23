@@ -1213,4 +1213,11 @@ fn a_landed_tab_with_no_landing_no_folder_or_a_file_that_does_not_read_says_so()
         "{:?}",
         broken.unread
     );
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    let folder = landed_page(&Ok(tree.path("reports")), Grain::Day, 3, wednesday());
+    assert_eq!(
+        folder.unread,
+        [format!("{}: not a regular file", path.display())]
+    );
 }
