@@ -267,3 +267,25 @@ fn a_project_that_writes_no_switch_launches_either_agent_as_before() {
     })
     .expect("claude starts");
 }
+
+#[test]
+fn the_sessions_each_agent_runs_are_counted_from_the_board_and_a_closed_one_is_not() {
+    let w = World::new();
+    let count = || symphony_board::launch::running::by_agent(w.store()).unwrap();
+    assert_eq!(count(), [0, 0]);
+    w.task("sim/fast", None);
+    let codex_one = w.try_launch(&codex(&w)).unwrap().row;
+    w.try_launch(&Ask {
+        kind: Some("claude".into()),
+        ..w.ask("sim/fast")
+    })
+    .unwrap();
+    assert_eq!(count(), [1, 1], "codex, then claude");
+    // A pane closed and its closure recorded is no session running.
+    use symphony_board::launch::hc::Hc as _;
+    w.hc().close(&codex_one.pane).unwrap();
+    w.store()
+        .close_task_session(&codex_one.slug, &codex_one.handle, "idle", "closed")
+        .unwrap();
+    assert_eq!(count(), [0, 1]);
+}
