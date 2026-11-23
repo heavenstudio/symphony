@@ -316,7 +316,7 @@ describe("a composer's files before their sending has come", () => {
     for (const [gone, alive] of [
       [true, true],
       [false, false],
-    ]) {
+    ] as const) {
       const asked = aShell(gone);
       const attachments = held();
       const changed = vi.fn();

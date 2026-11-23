@@ -12,7 +12,7 @@
 
 import "./styles/media.css";
 import { useEffect } from "react";
-import { decode, localAsset, pathOf, WAITING } from "./media";
+import { decode, localAsset, pathOf, WAITING } from "./media-picture";
 import { useMount } from "./mount";
 import { snapshot } from "./shared";
 

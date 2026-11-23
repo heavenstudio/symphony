@@ -64,7 +64,8 @@ What the kinds share:
   [its analysis](../../docs/design/analysis/components-draw-when-their-data-arrives.md)).
 - **Loading and visibility** (`viewport.tsx`: `NearViewport`, `Settle`, the remembered heights).
 - **Content** (`blocks.tsx`, `blocks-read.ts`, `media.tsx`, `media-layer.ts`): blocks and spans,
-  pictures, mockups and a plugin's viewers.
+  pictures, mockups and a plugin's viewers; a board's picture and a mockup's frame, which home
+  draws as the blocks do, are `media-picture.tsx`.
 - **The shared controls** (`button.tsx`, `input.tsx`, `textarea.tsx`, `select.tsx`, `tabs.tsx`,
   `tooltip.tsx`), the attach control (`attach.tsx`, its sending `attach-upload.ts`), the task card
   (`taskcard.tsx`) and a task's work phases (`work-phases.tsx`).
