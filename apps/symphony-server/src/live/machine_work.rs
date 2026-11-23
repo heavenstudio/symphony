@@ -397,8 +397,11 @@ impl Hub {
             )
         })?;
         let project = symphony::project::Project::of(&self.root);
-        // Each agent's way into its session, its pane only where the project addresses panes.
-        symphony_api::resolve_sessions(&mut agents.agents, project.agents.panes == "hc");
+        // Each agent's way into its session, its pane only where the project addresses panes: the
+        // board's store's setting over the project file's.
+        let panes = store.stored();
+        let panes = panes.panes(&project.agents.panes);
+        symphony_api::resolve_sessions(&mut agents.agents, panes == "hc");
         let mut guidance = BTreeMap::new();
         for (id, limits) in &project.board.machine_wip {
             guidance.insert(
