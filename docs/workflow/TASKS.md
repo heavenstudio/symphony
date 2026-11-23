@@ -2436,10 +2436,11 @@ disabled and creates no task, session or terminal.
 
 **Idle agents are closed by the board, not by a reminder.** A task
 that becomes done or cancelled closes its sessions at once, but for the executors of a task an
-approve left done and not landed: its land may still ask its executor for a stamp of its at the
-approved tip, a conflict settled or a red check mended, so their terminals stay, each a line of
-the verdict's output, and close when the land closes the task, or at the sweep once idle with
-nothing asked of them (`crates/tasks/src/launch/cleanup.rs`, `approved`). The rest is a sweep the
+approve left done and not landed: its land may still ask its executor for a stamp of its at
+the approved tip, a conflict settled or a red check mended, so their terminals stay, each a line
+of the verdict's output, and close when a land run here closes the task, or at the sweep once
+idle with nothing asked of them, as after a merge the host made
+(`crates/tasks/src/launch/cleanup.rs`, `approved`). The rest is a sweep the
 Symphony's process (`just symphony`) runs every five minutes for each project it serves that
 has a board, each on a schedule of its own in its own checkout, started as the project is
 registered and stopped as it is removed, so one project's failing or hung sweep holds up no

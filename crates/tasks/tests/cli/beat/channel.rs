@@ -145,6 +145,60 @@ fn a_subagent_and_a_beat_an_agent_wrote_register_nothing() {
     // A call that is no board command of the handle's connects nothing either.
     l.beat(&path, &bash("cargo test tasks").session(CONVERSATION).0);
     assert_eq!(l.address(), None);
+    // Nor does the board command's return: only the hook's event before it runs.
+    let returned = bash(&format!("just tasks inbox --as {}", l.handle))
+        .session(CONVERSATION)
+        .ended()
+        .0;
+    l.beat(&path, &returned);
+    assert_eq!(l.address(), None);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn a_launch_already_closed_connects_nothing() {
+    let l = Launched::new("closed");
+    let (path, _listener) = l.socket("closed");
+    l.case
+        .store()
+        .close_task_session("sim/a", &l.handle, "its pane is gone", "restore it")
+        .unwrap();
+    l.beat(&path, &l.inbox());
+    assert_eq!(l.address(), None);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn a_socket_nobody_listens_on_yet_is_tried_again_at_the_next_board_command() {
+    let l = Launched::new("deaf");
+    let (path, listener) = l.socket("deaf");
+    drop(listener);
+    // The board refuses a socket it cannot reach: nothing is registered, and nothing remembered.
+    l.beat(&path, &l.inbox());
+    assert_eq!(l.address(), None);
+    assert!(!l.folder.join(format!("{CONVERSATION}.channel")).exists());
+    let (path, _listener) = l.socket("deaf");
+    l.beat(&path, &l.inbox());
+    assert_eq!(l.address(), uds(&path));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn the_socket_remembered_for_a_session_goes_with_its_binding() {
+    let l = Launched::new("unbound");
+    let (path, _listener) = l.socket("unbound");
+    l.beat(&path, &l.inbox());
+    let remembered = l.folder.join(format!("{CONVERSATION}.channel"));
+    assert_eq!(
+        std::fs::read_to_string(&remembered).unwrap(),
+        path.to_string_lossy()
+    );
+    // The handle leaves: the session's next beat finds it bound to nobody.
+    super::ok(&l.case.env, &["--as", &l.handle, "leave"]);
+    let read = serde_json::json!({"hook_event_name": "PostToolUse", "tool_name": "Read",
+                                  "session_id": CONVERSATION});
+    super::beat(&l.case.env, &read);
+    assert!(!l.folder.join(CONVERSATION).exists() && !remembered.exists());
     let _ = std::fs::remove_file(path);
 }
 

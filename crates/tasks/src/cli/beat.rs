@@ -448,8 +448,10 @@ fn connect(
     Some(())
 }
 
-/// `just tasks beat < EVENT.json`: always 0.
-pub fn run(input: &mut dyn std::io::Read, env: &Env) -> i32 {
+/// `just tasks beat < EVENT.json`: always 0. A channel it registers ([`connect`]) leaves its
+/// delivery to a detached `program dispatch`, as every command line's write does, so the tool call
+/// waits on no delivery.
+pub fn run(input: &mut dyn std::io::Read, env: &Env, program: Option<&Path>) -> i32 {
     let _ = (|| -> Option<()> {
         let mut raw = String::new();
         input.read_to_string(&mut raw).ok()?;
@@ -492,6 +494,12 @@ pub fn run(input: &mut dyn std::io::Read, env: &Env) -> i32 {
         let beaten = beaten.ok()??;
         let folder = keys_folder(env, &cwd);
         if bind {
+            // The dispatcher reaches the board from where the beat did: the event's folder.
+            let here = Env {
+                vars: env.vars.clone(),
+                cwd: cwd.clone(),
+            };
+            let store = super::detaching(store, &here, program);
             connect(&store, env, event, &beaten, folder.as_deref());
         }
         if beaten.full {
