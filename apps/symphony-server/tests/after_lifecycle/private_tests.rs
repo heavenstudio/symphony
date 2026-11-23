@@ -24,95 +24,43 @@ fn private_servers_clean_their_port_record_on_each_shutdown_signal() {
 }
 
 /// How many servers of its own [`a_stop_sent_as_soon_as_a_server_can_be_seen_ends_it_by_the_stop_path_every_time`]
-/// starts and stops at each moment it can first be seen.
+/// starts and stops at the first moment it can be seen.
 const SEEN_RUNS: usize = 10;
 
-/// A stop sent at the first moment a server of its own can be seen ends it by the stop path every
-/// time: its signals are watched before it can be seen, so it exits well, says it stopped and
-/// leaves no port record. The moments are its port record's appearance, looked for by the tests'
-/// wait (a file's event is one the machine's watcher drops under load), and its URL line, read
-/// from the terminal its output is as it is written.
+/// A stop sent at the first moment a server of its own can be seen, its port record's appearance,
+/// ends it by the stop path every time: its signals are watched before it can be seen, so it exits
+/// well, says it stopped and leaves no port record. The record is looked for by the tests' wait (a
+/// file's event is one the machine's watcher drops under load). The last moment of its start, its
+/// URL line, is `front::signals_tests::a_stop_sent_as_the_url_line_is_written_ends_it_by_the_stop_path`'s,
+/// which holds that line so that its stop comes before it every time.
 #[test]
 fn a_stop_sent_as_soon_as_a_server_can_be_seen_ends_it_by_the_stop_path_every_time() {
     let repo = Repo::new("seen-stop");
     let record = repo.tree.join("artifacts/docs-app.port");
     for run in 1..=SEEN_RUNS {
-        let moment = "its port record's appearance";
         let mut server = repo.private(&repo.tree);
-        until(moment, || {
+        until("its port record's appearance", || {
             assert!(
                 server.child.try_wait().unwrap().is_none(),
-                "the server ended before {moment}: {}",
+                "the server ended before its port record's appearance: {}",
                 server.output()
             );
             record.exists().then_some(())
         });
-        stopped_at(&mut server, &record, moment, run);
+        eprintln!("· SIGTERM at its port record's appearance, run {run} of {SEEN_RUNS}");
+        server.signal(libc::SIGTERM);
+        server.success();
+        assert!(
+            !record.exists(),
+            "a stop at its port record's appearance left the record (run {run} of {SEEN_RUNS})"
+        );
+        assert!(
+            server.output().contains("· Symphony server stopped"),
+            "a stop at its port record's appearance did not run the stop path (run {run} of \
+             {SEEN_RUNS}): {}",
+            server.output()
+        );
     }
-    for run in 1..=SEEN_RUNS {
-        let moment = "its URL line";
-        let (mut server, terminal) = repo.run_terminal(repo.private_command(&repo.tree));
-        let (said, read) = read_on_a_thread(terminal);
-        while !said.lock().unwrap().contains("→ Symphony at ") {
-            assert!(
-                server.child.try_wait().unwrap().is_none(),
-                "the server ended before {moment}: {}",
-                server.output()
-            );
-            read.recv_timeout(fixture::BACKSTOP).unwrap_or_else(|_| {
-                panic!(
-                    "stalled: its terminal to say {moment}\n(the wait's wall-clock backstop of \
-                     {:?} ran out; {}): {}",
-                    fixture::BACKSTOP,
-                    test_time::Load::now(),
-                    server.output()
-                )
-            });
-        }
-        stopped_at(&mut server, &record, moment, run);
-    }
-}
-
-/// What `terminal` says, kept as it is read on a thread of its own, and a wake at each read; the
-/// thread ends when the terminal does, as its server ends.
-fn read_on_a_thread(
-    mut terminal: fs::File,
-) -> (
-    std::sync::Arc<std::sync::Mutex<String>>,
-    std::sync::mpsc::Receiver<()>,
-) {
-    let said = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
-    let (wake, wakes) = std::sync::mpsc::channel();
-    let kept = said.clone();
-    std::thread::spawn(move || {
-        let mut chunk = [0u8; 4096];
-        while let Ok(read @ 1..) = terminal.read(&mut chunk) {
-            kept.lock()
-                .unwrap()
-                .push_str(&String::from_utf8_lossy(&chunk[..read]));
-            if wake.send(()).is_err() {
-                return;
-            }
-        }
-    });
-    (said, wakes)
-}
-
-/// SIGTERM to `server` at `moment`, then its end: a success of its own, by the stop path, which
-/// says so and clears `record`.
-fn stopped_at(server: &mut fixture::Process, record: &Path, moment: &str, run: usize) {
-    eprintln!("· SIGTERM at {moment}, run {run} of {SEEN_RUNS}");
-    server.signal(libc::SIGTERM);
-    server.success();
-    assert!(
-        !record.exists(),
-        "a stop at {moment} left the port record (run {run} of {SEEN_RUNS})"
-    );
-    assert!(
-        server.output().contains("· Symphony server stopped"),
-        "a stop at {moment} did not run the stop path (run {run} of {SEEN_RUNS}): {}",
-        server.output()
-    );
 }
 
 #[test]
