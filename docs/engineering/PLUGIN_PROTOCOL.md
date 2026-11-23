@@ -256,14 +256,18 @@ answer is one entry in the page's own shape (`SettingsEntry`, `symphony_plugin::
 name, what it is for, its state and why, what it needs and whether this machine has it, and its
 settings, each with its key, value, source, scopes and class. It is drawn after the Symphony's own
 entries in the integrations, by the component that draws theirs, its id the host's
-(`plugin-NAME-ID`), and a plugin the project does not select adds none. An error, a panic or no
-answer in a call's wait is said in the entry's place, the page drawn all the same.
+(`plugin-NAME-ID`, counted on from `-2` where an entry before took it, as two describers of one
+id do, or plugin `x`'s describer `y-z` beside plugin `x-y`'s `z`), and a plugin the project does
+not select adds none. An error, a panic or no answer in a call's wait is said in the entry's
+place, the page drawn all the same.
 
 A description declares and runs nothing: it is what the page shows, and the host acts on none of
 it. Its class is not the describer's to lower: a setting whose key the local settings file refuses
 (the tables and keys of `PROTECTED` and `PROTECTED_KEYS` in `crates/tasks/src/local.rs`, which
 decide what runs and what lands) is shown reviewed, written in the project's scope alone, whatever
-its describer calls it, and a describer may mark a setting of its own reviewed. A plugin built
+its describer calls it, and a describer may mark a setting of its own reviewed. Nor is the board's
+scope its describer's to take: the board's store keeps the Symphony's own preferences alone, so a
+description's setting is shown without it and the page draws no control for one. A plugin built
 before the seam declares none and is asked nothing.
 
 ## The line
@@ -348,30 +352,31 @@ plugin of 0.4 does not write and a host reads as none: no entry is asked of it.
   `Setting`…) and a variant's own
   fields are not marked, as a plugin and its tests build them by their fields: a field added to one
   is a new major of the kit, whichever minor of the protocol carries it.
-- **The vocabulary grows in a minor** ([its card](../workflow/RELEASES.md#kit-new-block-version)). A new
-  kind of block, text span or media is a minor of the kit (1.1.0), never a new major: a plugin
-  makes blocks and never has to list them, so one written for 1.0.0 keeps building. `Block`, `Span` and `Media` are `#[non_exhaustive]`,
-  and so is every other list of the kit a minor may add to: the words a block carries
-  (`CalloutKind`, `FigureSize`, `ContainerKind`, `InlineKind`, `VectorKind`, `CardState`,
-  `CardGroup`, `ThreadAuthor`), a gate's `GateState`, a board field's `FieldKind`, a renderer's
-  `Drawing` and a Settings entry's `SettingScope`, `SettingClass` and `SettingKind`. A match on one outside the kit ends with `_`, a plugin's too, and a variant is made
-  as before. Two stay exhaustive: `FieldValue`, a number or text as JSON has them, which a field's
-  `validate` tells apart, and `Reply`, which a consuming project's route test matches whole, so
-  that a new kind of reply waits for a consumer release plan. The kit's own test holds the marks
-  and names those two with their reasons (`crates/symphony-plugin/tests/vocabulary.rs`, a crate
-  that links the kit alone and matches each list with `_`).
+- **The vocabulary grows in a minor** ([its card](../workflow/RELEASES.md#kit-new-block-version)).
+  A new kind of block, text span or media is a minor of the kit (1.1.0), never a new major: a
+  plugin makes blocks and never has to list them, so one written for 1.0.0 keeps building. `Block`,
+  `Span` and `Media` are `#[non_exhaustive]`, and so is every other list of the kit a minor may
+  add to: the words a block carries (`CalloutKind`, `FigureSize`, `ContainerKind`, `InlineKind`,
+  `VectorKind`, `CardState`, `CardGroup`, `ThreadAuthor`), a gate's `GateState`, a board field's
+  `FieldKind`, a renderer's `Drawing` and a Settings entry's `SettingScope`, `SettingClass` and
+  `SettingKind`. A match on one outside the kit ends with `_`, a plugin's too, and a variant is
+  made as before. Two stay exhaustive: `FieldValue`, a number or text as JSON has them, which a
+  field's `validate` tells apart, and `Reply`, which a consuming project's route test matches
+  whole, so that a new kind of reply waits for a consumer release plan. The kit's own test holds
+  the marks and names those two with their reasons (`crates/symphony-plugin/tests/vocabulary.rs`,
+  a crate that links the kit alone and matches each list with `_`).
 
   The compiler does not refuse a build of this workspace in which a kind has no arm, as each
-  match outside the kit ends with `_`, so tests do. `crates/symphony-api/tests/vocabulary_drawn.rs` reads each list from the kit's source
-  and fails on a variant that a match on it in the server or the wire types
-  does not name. The client is held by its types, written from the same lists: its
-  switches end in a value of type `never` and its tables name every kind, so a kind it does not
-  draw fails its type check, and `blocks.test.tsx` fails until the sample the wire types' example
-  writes holds the kind and it is drawn. A kind a client does not know, sent by a newer server, is
-  not a failed read: the React client lets it through with its fields unread and says it where it
-  stands (`Unsupported document content: NAME`, `Unsupported NAME` in a line, `Unsupported media:
-  NAME`), drawing the rest of the page. A word it does not know (a size, a tag, a shape) still
-  fails the read, which the page says and tries again.
+  match outside the kit ends with `_`, so tests do. `crates/symphony-api/tests/vocabulary_drawn.rs`
+  reads each list from the kit's source and fails on a variant that a match on it in the server
+  or the wire types does not name. The client is held by its types, written from the same lists:
+  its switches end in a value of type `never` and its tables name every kind, so a kind it does
+  not draw fails its type check, and `blocks.test.tsx` fails until the sample the wire types'
+  example writes holds the kind and it is drawn. A kind a client does not know, sent by a newer
+  server, is not a failed read: the React client lets it through with its fields unread and says
+  it where it stands (`Unsupported document content: NAME`, `Unsupported NAME` in a line,
+  `Unsupported media: NAME`), drawing the rest of the page. A word it does not know (a size, a
+  tag, a shape) still fails the read, which the page says and tries again.
 
   A host reading a process plugin's answer also keeps the surrounding content: a block or span
   whose kind it does not know becomes the existing `Unknown` block or span, with the kind as its
