@@ -358,8 +358,8 @@ fn unshared_copy(socket: &UnixStream) -> std::io::Result<UnixStream> {
     use std::os::fd::AsRawFd as _;
     let mut options = std::fs::File::options();
     options.read(true).write(true);
-    let copy = process_cwd::close_on_fork(&mut options)
-        .open(format!("/dev/fd/{}", socket.as_raw_fd()))?;
+    let copy =
+        process_cwd::close_on_fork(&mut options).open(format!("/dev/fd/{}", socket.as_raw_fd()))?;
     Ok(UnixStream::from(std::os::fd::OwnedFd::from(copy)))
 }
 

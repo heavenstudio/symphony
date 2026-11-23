@@ -389,7 +389,9 @@ fn a_script_the_server_ends_or_does_not_answer_is_unknown_and_is_not_sent_again(
 #[test]
 fn only_a_request_that_got_no_answer_is_unanswered_in_the_boards_health() {
     let unanswered = |client: &symphony_board::pg::hosted::Client| {
-        let (queries, _) = client.queries().report(symphony_board::sweep::trigger::now());
+        let (queries, _) = client
+            .queries()
+            .report(symphony_board::sweep::trigger::now());
         (queries.count, queries.failed)
     };
     for major in MAJORS {

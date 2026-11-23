@@ -624,7 +624,11 @@ fn a_request_the_server_takes_and_never_answers_says_it_is_slow_at_the_clients_w
         crate::rpc::slow(&format!("the board's database: {said}")),
         "{said}"
     );
-    assert_eq!(recorded(&log), (1, 1, Some(true)), "a request with no answer");
+    assert_eq!(
+        recorded(&log),
+        (1, 1, Some(true)),
+        "a request with no answer"
+    );
 }
 
 #[test]
@@ -662,7 +666,11 @@ fn a_startup_the_server_never_answers_says_it_is_slow_and_that_no_request_was_se
         )
     );
     assert!(crate::rpc::slow(&said), "{said}");
-    assert_eq!(recorded(&log), (1, 1, Some(true)), "a request with no answer");
+    assert_eq!(
+        recorded(&log),
+        (1, 1, Some(true)),
+        "a request with no answer"
+    );
 }
 
 #[test]
@@ -977,8 +985,18 @@ fn an_error_the_server_answered_is_no_unanswered_request() {
     let failed = |said: &Result<Vec<Answer>, DbError>| matches!(said, Err(DbError::Failed(_)));
     type Judged = fn(&Result<Vec<Answer>, DbError>) -> bool;
     let cases: [(&str, &'static str, Vec<&'static str>, Judged); 5] = [
-        ("a raised exception", STARTED, vec![RAISED_AFTER_ONE], thrown),
-        ("a serialization failure", STARTED, vec![SERIALIZATION, ROLLED_BACK], conflict),
+        (
+            "a raised exception",
+            STARTED,
+            vec![RAISED_AFTER_ONE],
+            thrown,
+        ),
+        (
+            "a serialization failure",
+            STARTED,
+            vec![SERIALIZATION, ROLLED_BACK],
+            conflict,
+        ),
         ("a syntax error", STARTED, vec![SYNTAX], failed),
         ("a database not there", NO_SUCH_DATABASE, vec![], failed),
         ("a password asked for", PASSWORD, vec![], failed),
@@ -1042,7 +1060,10 @@ fn a_connections_socket_never_reaches_a_forked_child() {
         let writer = connection.writer.as_raw_fd();
         assert_ne!(reader, writer, "two descriptors");
         for (side, fd) in [("reader", reader), ("writer", writer)] {
-            assert!(!a_forked_child_holds(fd), "the {side} reached a forked child");
+            assert!(
+                !a_forked_child_holds(fd),
+                "the {side} reached a forked child"
+            );
             // SAFETY: F_GETFD reads the flags of a descriptor the connection keeps open.
             let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
             assert_eq!(flags & libc::FD_CLOEXEC, libc::FD_CLOEXEC, "the {side}");
@@ -1057,7 +1078,11 @@ fn a_connections_socket_never_reaches_a_forked_child() {
     assert_eq!(next[0].rows, [[Some("{\"a\": 1}".to_string()), None]]);
     drop(client);
     let (_, after) = fake.sent();
-    assert_eq!(kinds(&after), b"PBESPBESX", "both requests on the one connection");
+    assert_eq!(
+        kinds(&after),
+        b"PBESPBESX",
+        "both requests on the one connection"
+    );
 }
 
 #[test]
