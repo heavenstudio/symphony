@@ -9,8 +9,8 @@
 use super::Hub;
 use crate::testing::{Tree, board::Fixture, git, repository_holding};
 use serde_json::json;
-use symphony_board::{NewTask, On};
 use symphony_board::waits_on::Blocked;
+use symphony_board::{NewTask, On};
 
 const DOC: &str = "docs/DECISIONS.md";
 const SLUG: &str = "app/x";
