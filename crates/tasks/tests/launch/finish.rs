@@ -1,10 +1,12 @@
 //! `finish`: a task that becomes done or cancelled closes its own sessions' terminals, and those of
 //! the sessions launched below it; it never fails, since the status change must stand. (What becomes
-//! of their worktrees is the worktree sweep's: `tasks sweep --task SLUG`.)
+//! of their worktrees is the worktree sweep's: `tasks sweep --task SLUG`.) `approved`: a task an
+//! approve left done and not landed keeps its executors' terminals until the land's `finish`.
 
 use crate::{Hooked, World};
 use symphony_board::Store;
-use symphony_board::launch::{LaunchError, finish};
+use symphony_board::launch::hc::Hc as _;
+use symphony_board::launch::{LaunchError, NOT_LANDED, approved, finish, landed};
 use symphony_board::rpc::Client;
 
 impl World {
@@ -31,6 +33,92 @@ fn the_terminals_of_a_done_task_close_and_say_how_to_restore_them() {
     let worktree = w.wt.join("sim-jump");
     assert!(worktree.is_dir());
     assert_eq!(read.worktree, worktree.display().to_string());
+}
+
+#[test]
+fn an_approve_closes_the_reviewers_terminal_and_keeps_the_executors_until_the_land_finishes() {
+    let w = World::new();
+    let (executor, worked) = w.worker("sim/jump", None);
+    let store = w.store();
+    store.claim("sim/jump", &executor).unwrap();
+    store.move_to("sim/jump", "review", &executor).unwrap();
+    let reviewer = w.review("sim/jump").row;
+    w.edit_terminal(&reviewer.pane, |t| {
+        t.insert("status".into(), "idle".into());
+    });
+    store
+        .verdict("sim/jump", &reviewer.handle, "approve", "ok")
+        .unwrap();
+    let m = w.machine();
+    let lines = approved(w.store(), &w.hc(), &*m.processes, "sim/jump");
+    assert_eq!(
+        lines,
+        [
+            format!(
+                "closed pane {} of {} (its tasks are finished); restore: just tasks restore {} {}",
+                reviewer.pane, reviewer.handle, reviewer.slug, reviewer.handle
+            ),
+            format!("kept pane {worked} of {executor} ({NOT_LANDED})"),
+        ]
+    );
+    assert!(w.has_terminal(&worked) && !w.has_terminal(&reviewer.pane));
+    let open = |slug: &str, handle: &str| {
+        let sessions = w.store().task_sessions(slug).unwrap();
+        let session = sessions.iter().find(|s| s.handle == handle).unwrap();
+        session.closed.is_none()
+    };
+    assert!(open("sim/jump", &executor) && !open(&reviewer.slug, &reviewer.handle));
+    // A land that ended with the approve still waiting (a pull request not merged yet) closes
+    // nothing; one whose landing closed the task closes it, as any finished task's.
+    assert_eq!(
+        landed(w.store(), &w.hc(), &*m.processes, "sim/jump"),
+        Vec::<String>::new()
+    );
+    assert!(w.has_terminal(&worked));
+    w.store()
+        .landed("sim/jump", &w.orch, "landed at abc1234", true, &["done"])
+        .unwrap();
+    assert_eq!(
+        landed(w.store(), &w.hc(), &*m.processes, "sim/jump"),
+        [format!(
+            "closed pane {worked} of {executor} (its tasks are finished); restore: just tasks restore sim/jump {executor}"
+        )]
+    );
+    assert!(!w.has_terminal(&worked));
+}
+
+#[test]
+fn an_approve_records_an_executors_terminal_that_is_gone_as_closed_and_keeps_none() {
+    let w = World::new();
+    let (executor, worked) = w.worker("sim/jump", Some("done"));
+    w.hc().close(&worked).unwrap();
+    let m = w.machine();
+    let lines = approved(w.store(), &w.hc(), &*m.processes, "sim/jump");
+    let [line] = <[_; 1]>::try_from(lines).unwrap();
+    assert!(
+        line.starts_with(&format!("closed pane {worked} of {executor} (")),
+        "{line}"
+    );
+    assert!(
+        w.store().task_sessions("sim/jump").unwrap()[0]
+            .closed
+            .is_some()
+    );
+    // A task that is not finished, as one a changes verdict sent back, is left alone.
+    w.task("sim/dock", None);
+    let (_, docked) = w.worker("sim/dock", None);
+    assert_eq!(
+        approved(w.store(), &w.hc(), &*m.processes, "sim/dock"),
+        Vec::<String>::new()
+    );
+    assert!(w.has_terminal(&docked));
+    // A land of a slug the board does not hold says so, and closes nothing.
+    let [line] = <[_; 1]>::try_from(landed(w.store(), &w.hc(), &*m.processes, "sim/none")).unwrap();
+    assert!(
+        line.starts_with("could not clean up the sessions of sim/none: "),
+        "{line}"
+    );
+    assert!(w.has_terminal(&docked));
 }
 
 #[test]

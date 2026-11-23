@@ -389,3 +389,21 @@ pub(super) fn close_finished(store: &Store, c: &mut Context, slug: &str) {
         c.say(&format!("→ {line}"));
     }
 }
+
+/// [`close_finished`] once a land of `slug` ended: where a landing closed the task
+/// ([`launch::landed`]).
+pub(super) fn close_landed(store: &Store, c: &mut Context, slug: &str) {
+    let lines = launch::landed(store, &Binary::of(c.env), &*procs::table(c.env), slug);
+    for line in lines {
+        c.say(&format!("→ {line}"));
+    }
+}
+
+/// [`close_finished`] for `slug` approved and not landed: its executors' terminals stay, each a
+/// line ([`launch::approved`]).
+pub(super) fn close_approved(store: &Store, c: &mut Context, slug: &str) {
+    let lines = launch::approved(store, &Binary::of(c.env), &*procs::table(c.env), slug);
+    for line in lines {
+        c.say(&format!("→ {line}"));
+    }
+}

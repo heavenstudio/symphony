@@ -1430,7 +1430,9 @@ fn a_chooser_hc_calls_blocked_is_answered_and_only_the_look_right_after_enter_wa
             failed_launch(
                 &w,
                 launched,
-                "the agent in terminal {t} waits on a person before it took its first message",
+                // hc says nothing of what it waits on, so the refusal says what the screen showed.
+                "the agent in terminal {t} waits on a person before it took its first message; \
+                 its terminal showed: › Ask Codex to do anything",
             );
             assert_eq!(w.calls_of(&["send"]), Vec::<Vec<String>>::new());
         }

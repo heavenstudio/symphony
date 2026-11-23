@@ -2385,7 +2385,10 @@ projects' terminals are never a destination. Once hc calls the agent ready (`idl
 `done`), its first message goes in by `hc send`, never forced, and the launch is confirmed
 only by that send's receipt (`started`): an agent waiting on a person (a folder-trust
 dialog), never ready, or not starting on the message fails the launch naming the terminal,
-which is killed and removed. It writes its handle, role, agent session
+which is killed and removed. The refusal of an agent waiting on a person carries hc's word
+for what it waits on and, where that word is not on the screen (hc names some dialogs only
+as open), the screen's last lines, since the terminal is gone by the time anyone reads it
+(`crates/tasks/src/launch/startup.rs`, `shows`). It writes its handle, role, agent session
 id, worktree, branch, terminal and start time; `just tasks show` lists them under
 `Sessions:`. No terminal the owner may be looking at is closed: one in the tab the Herdr
 app shows, the agent it shows, or held over them (`herdr-app status`, read last, right
@@ -2488,7 +2491,12 @@ the task; deferrals and dry runs post nothing. A dry run previews even while
 disabled and creates no task, session or terminal.
 
 **Idle agents are closed by the board, not by a reminder.** A task
-that becomes done or cancelled closes its sessions at once; the rest is a sweep the
+that becomes done or cancelled closes its sessions at once, but for the executors of a task an
+approve left done and not landed: its land may still ask its executor for a stamp of its at
+the approved tip, a conflict settled or a red check mended, so their terminals stay, each a line
+of the verdict's output, and close when a land run here closes the task, or at the sweep once
+idle with nothing asked of them, as after a merge the host made
+(`crates/tasks/src/launch/cleanup.rs`, `approved`). The rest is a sweep the
 Symphony's process (`just symphony`) runs every five minutes for each project it serves that
 has a board, each on a schedule of its own in its own checkout, started as the project is
 registered and stopped as it is removed, so one project's failing or hung sweep holds up no
@@ -2735,7 +2743,15 @@ such as `just land` run under someone's `TASKS_SESSION`) binds nothing. From
 then on each of its tool calls beats for that handle, until a later board
 command names another. A full session with no agent id (one started in an hc terminal, or a
 `claude -p` run) is bound and beats the same way, keyed by its session id, but keeps the first handle
-it names: naming another (registering or relaying for a child) moves nothing. A handle
+it names: naming another (registering or relaying for a child) moves nothing. A launched
+Claude session's beat also registers the channel its agent did not: before a board command of
+the handle bound to it, where an open launch of that handle records the session's conversation,
+the hook registers the session's own inbox socket (`CLAUDE_CODE_MESSAGING_SOCKET`, which Claude
+Code gives a session's hooks) as `just tasks callback --as HANDLE` would have, so an agent that
+skips that command still hears its messages. It does so once for each socket: a channel the
+session turns off stays off, and a restored conversation, a new process on a new socket, is
+connected again. A session no launch records, a subagent, a registration holding the chat seat and
+a Codex thread are left as they are (`crates/tasks/src/cli/beat.rs`, `connect`). A handle
 with a monitor of its own (an orchestrator) is never bound: its monitor beats for it,
 and a session that names such a handle is barred from binding at all, so the calls of
 an orchestrator never keep a child it registered alive. The hook looks at the board

@@ -59,7 +59,8 @@ pub(super) fn first_message(
 
 /// Wait until hc calls the agent in `terminal` ready for a message (`idle` or `done`). A look hc
 /// cannot answer is no evidence; a terminal that ended, or that hc no longer knows, fails at once,
-/// as does an agent blocked on a person (a folder-trust dialog), and one still not ready after
+/// as does an agent blocked on a person (a folder-trust dialog; where hc's word for it is not on
+/// the screen, the refusal also carries the screen's last lines), and one still not ready after
 /// [`CONFIRM_LOOKS`]. A resumed Codex still live and working then is reported separately. A Codex
 /// start that shows its hooks chooser is answered "Continue without
 /// trusting", the one answer that keeps the hooks off: navigation first, then enter only once a
@@ -132,10 +133,12 @@ fn ready(
             continue;
         }
         if status == "blocked" && !settling {
+            let asked = asks(&found);
+            let shown = hc.read(terminal, 0).unwrap_or_default();
             return Err(LaunchError(format!(
                 "the agent in terminal {terminal} waits on a person before it took its first \
-                 message{}",
-                asks(&found)
+                 message{asked}{}",
+                shows(&shown, &asked)
             )));
         }
     }
@@ -156,6 +159,32 @@ fn asks(terminal: &Object) -> String {
         }
         _ => String::new(),
     }
+}
+
+/// How many of a blocked start's last screen lines its refusal carries, and how much of each.
+const SHOWN_LINES: usize = 8;
+const SHOWN_WIDTH: usize = 160;
+
+/// What a blocked program's `screen` ends with, for a refusal whose `asked` (hc's word, as
+/// [`asks`] gives it) is not what the screen says: hc names some dialogs only as open, and the
+/// terminal is closed with the failed start, so the refusal is the one place left that says what
+/// was asked. Nothing where the screen is empty or already holds hc's word.
+fn shows(screen: &str, asked: &str) -> String {
+    let asked = asked.trim_start_matches(": ");
+    if !asked.is_empty() && screen.contains(asked) {
+        return String::new();
+    }
+    let lines: Vec<String> = screen
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| line.chars().take(SHOWN_WIDTH).collect())
+        .collect();
+    if lines.is_empty() {
+        return String::new();
+    }
+    let from = lines.len().saturating_sub(SHOWN_LINES);
+    format!("; its terminal showed: {}", lines[from..].join(" | "))
 }
 
 /// The keys that answer the hooks chooser the bottom of `screen` shows, if it shows one: the
@@ -250,6 +279,30 @@ mod tests {
         ] {
             assert_eq!(hooks_choice(&screen), None, "{screen}");
         }
+    }
+
+    #[test]
+    fn a_refusal_carries_the_screens_end_only_where_hcs_word_is_not_on_it() {
+        let dialog = "  A long conversation\n\n  Continue it whole or from a summary?\n\n❯ 1. From a \
+                      summary\n  2. Whole\n";
+        let end = "; its terminal showed: A long conversation | Continue it whole or from a \
+                   summary? | ❯ 1. From a summary | 2. Whole";
+        assert_eq!(shows(dialog, ": dialog open"), end);
+        assert_eq!(shows(dialog, ""), end);
+        // hc's word is the question the screen asks: the refusal already says it.
+        assert_eq!(shows(dialog, ": Continue it whole or from a summary?"), "");
+        assert_eq!(shows(" \n\n", ": dialog open"), "");
+        // Only the last lines, each cut: a screen full of history stays one readable line.
+        let long: String = (0..20)
+            .map(|n| format!("line {n} {}\n", "x".repeat(300)))
+            .collect();
+        let said = shows(&long, ": dialog open");
+        let kept: Vec<&str> = said["; its terminal showed: ".len()..]
+            .split(" | ")
+            .collect();
+        assert_eq!(kept.len(), SHOWN_LINES);
+        assert!(kept[0].starts_with("line 12 ") && kept[7].starts_with("line 19 "));
+        assert!(kept.iter().all(|line| line.chars().count() == SHOWN_WIDTH));
     }
 
     #[test]
