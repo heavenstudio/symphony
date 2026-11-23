@@ -476,7 +476,7 @@ struct Plan {
     root: PathBuf,
     kept: bool,
     steps: Vec<Step>,
-    /// Said once the tidy is done: what it left as it was, and why.
+    /// Said once a kept tidy is done: what it left as it was, and why.
     left: Vec<String>,
 }
 
@@ -661,9 +661,6 @@ pub fn tidy_with(
             return 1;
         }
         let _ = out.write_all(step.said.as_bytes());
-    }
-    for left in &plan.left {
-        let _ = writeln!(out, "{left}");
     }
     0
 }
