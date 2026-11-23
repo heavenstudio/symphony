@@ -1294,7 +1294,7 @@ own read of their own work, which the fresh-reviewer rule keeps out for sessions
 same rule from sessions to people. Its cost is small: the board's staffed reviewers are shared
 agents, and still review anyone's task.
 
-- [ ] **review-not-own-agent** — With several people, a task could be reviewed by a personal agent of the very person who filed it or started its work: a fresh session, but working on that person's word. Today's rule reads sessions alone. A: as today, a fresh session reviews whoever's agent it is. B: a personal agent of the person who filed the task or started work on it gives it no verdict; a shared agent, or another person's agent, does. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Whose agent may review]]
+- [x] **review-not-own-agent** — With several people, a task could be reviewed by a personal agent of the very person who filed it or started its work: a fresh session, but working on that person's word. Today's rule reads sessions alone. A: as today, a fresh session reviews whoever's agent it is. B: a personal agent of the person who filed the task or started work on it gives it no verdict; a shared agent, or another person's agent, does. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Whose agent may review]]
   [2026-11-23 01:10] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
 
     ![Whose agent may review a task](users-and-identity/review-whose.svg)
@@ -1316,6 +1316,7 @@ agents, and still review anyone's task.
     - **words-without-agent-reach** (A) is about what an agent is told, not who may give a verdict.
 
     Neither decides this.
+  [2026-11-23 11:10] owner · approved — This should follow the member/owner aspect. If the person can interact with agents on a task, so should their own agents too. This sounds like A
 
 ## The way from one owner
 
