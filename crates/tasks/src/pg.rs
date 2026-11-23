@@ -22,7 +22,11 @@
 //! the words the statement raised; anything else is [`DbError::Failed`], in the server's words and
 //! with its code. A connection that fails mid-request is dropped and never used again; a request
 //! is never sent twice, a read no more than a write, so a client never repeats work the server may
-//! have done.
+//! have done. One the server took on a connection that worked and did not answer within the
+//! client's wait ([`Client::waiting`]), or a startup it did not answer in that time, says the
+//! server is slow in the words SurrealDB's client says it in ([`crate::rpc::slow`] knows both): a
+//! server that is there and late, never one that cannot be reached. The system says such a wait
+//! run out as its bare error, `EAGAIN`, "Resource temporarily unavailable", which names no wait.
 
 use crate::db::DbError;
 use crate::lock::Recovered as _;
@@ -259,11 +263,24 @@ impl Client {
             Ok(answered) => answered,
             Err(broken) => {
                 *held = None;
-                Err(DbError::Failed(format!(
-                    "the board's PostgreSQL at {}: {broken}",
-                    self.socket.display()
-                )))
+                Err(DbError::Failed(self.broke(&broken)))
             }
+        }
+    }
+
+    /// What a request whose connection failed with `broken` says: that the server is slow, when it
+    /// is the client's wait run out on a write or a read of it ([`waited_out`]), and that the
+    /// request may have run, since it went out on a connection that worked; else the failure.
+    fn broke(&self, broken: &std::io::Error) -> String {
+        let at = format!("the board's PostgreSQL at {}", self.socket.display());
+        if waited_out(broken) {
+            format!(
+                "{at}{}{:?}: {broken}; the request may have run there, so it was not sent again",
+                crate::rpc::SLOW,
+                self.timeout
+            )
+        } else {
+            format!("{at}: {broken}")
         }
     }
 
@@ -298,6 +315,15 @@ impl Client {
             .started(&startup)
             .map_err(|failed| match failed {
                 Started::Refused(error) => error,
+                // The socket took the connection: the server is there, and late.
+                Started::Broken(why) if waited_out(&why) => DbError::Failed(format!(
+                    "the board's PostgreSQL at {}{}{:?} to the connection's startup on {}: {why}; \
+                     the request was not sent",
+                    self.socket.display(),
+                    crate::rpc::SLOW,
+                    self.timeout,
+                    path.display()
+                )),
                 Started::Broken(why) => unreachable(why),
             })?;
         Ok(connection)
@@ -488,6 +514,16 @@ fn given<T>(
         (Err((why, true)), _) | (_, Err((why, true))) => Err(why),
         (Err((why, false)), _) | (_, Err((why, false))) => Err(why),
     }
+}
+
+/// Whether `why`, a write's or a read's failure on a connection, is the client's wait run out
+/// ([`Client::waiting`]): a socket's timeout on a blocking write or read is `EAGAIN` (`EWOULDBLOCK`),
+/// on macOS as on Linux, and `ETIMEDOUT` where a system says that instead.
+fn waited_out(why: &std::io::Error) -> bool {
+    matches!(
+        why.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    )
 }
 
 /// A write's failure, said as the sending of a request.

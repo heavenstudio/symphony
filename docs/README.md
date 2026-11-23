@@ -85,8 +85,8 @@ Extending it, and the contracts a project or a provider builds against:
 ## Operations
 
 Setting it up and running it: [its page](operations/README.md). A project on one machine needs
-neither PostgreSQL nor the repositories around this one: its board runs on the SurrealDB that
-`symphony init` fetches.
+none of the repositories around this one: its board runs on the machine's PostgreSQL, which
+`symphony init` asks for ([the setting](operations/PROJECT_FILE.md#board)).
 
 - [Getting started](operations/GETTING_STARTED.md) and [the commands](operations/COMMANDS.md), as
   above.
@@ -103,7 +103,7 @@ neither PostgreSQL nor the repositories around this one: its board runs on the S
   contract between its builds, which build moves a live board, who writes it, its server,
   snapshots and holds, what the command may write, stuck servers, a board that went back or was
   copied, and board health.
-- [PostgreSQL board lifecycle](operations/POSTGRESQL.md) — a board on PostgreSQL: scratch engine
+- [PostgreSQL board lifecycle](operations/POSTGRESQL.md) — a board on PostgreSQL: its engine
   identity, server selection, holds, snapshots, recovery and space reclamation; the hosted board,
   which no command reaches yet.
 - [Upstream and downstream repositories](operations/UPSTREAM_DOWNSTREAM.md) — the regular import

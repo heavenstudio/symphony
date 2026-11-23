@@ -7,9 +7,12 @@ use super::boards_tests::{Project, answer, asked, env, writer};
 use crate::front::Shared;
 use crate::testing::Tree;
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::time::Duration;
-use symphony_api::workflow::Source;
-use symphony_board::workflow::{Custom, Host, written};
+use symphony_api::workflow::{OperationRequest, Source};
+use symphony_board::workflow::{Custom, Host, agent_session, local_owner, written};
+use symphony_board::{NewSession, NewTask};
+use symphony_plugin::execution::Principal;
 
 /// The wall-clock backstop of a wait for the hub's read: only a stall reaches it.
 const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(30));
@@ -246,6 +249,97 @@ fn the_owner_reads_a_workflow_and_takes_an_edge_through_the_pages_routes() {
         asked("GET", "/api/workflow-actions?slug=flow/none", None),
     );
     assert_eq!(status, 404, "{missing}");
+}
+
+/// [`TWO`] and [`READY`] with its claim taking the accepted output of each task a task depends on.
+fn taking() -> Custom {
+    let claim = "operation = \"claim\", authority = [{ kind = \"task_role\", role = \"executor\" }], \
+                 inputs = [], dependencies = \"none\"";
+    assert!(TWO.contains(claim));
+    let text = TWO.replacen(claim, &claim.replace("\"none\"", "\"accepted_output\""), 1);
+    committed(&format!("{text}{READY}"), '4')
+}
+
+/// `edge` on `slug` taken by `principal` from where it reads the task now: the transition.
+fn took(board: &symphony_board::Store, slug: &str, principal: &Principal, edge: &str) -> String {
+    let host = Host::local();
+    let next = board.workflow_actions(slug, principal, &host).unwrap();
+    let request = OperationRequest {
+        project: board.database().database().to_string(),
+        task: slug.into(),
+        edge: edge.into(),
+        expected: next.snapshot,
+        input_revisions: BTreeMap::new(),
+        idempotency_key: format!("{slug}:{edge}"),
+        inputs: BTreeMap::new(),
+    };
+    let result = board.apply_operation(principal, &host, &request);
+    result
+        .unwrap_or_else(|e| panic!("{edge} on {slug}: {e}"))
+        .transition
+}
+
+/// A take in flight through the actions route: a dependant whose claim takes the accepted output
+/// of the task it depends on names that task with none standing, then with the output its
+/// acceptance minted; a task whose edges take none names none.
+#[test]
+fn the_owners_actions_carry_the_output_a_dependants_claim_takes() {
+    let tree = Tree::new();
+    let project = Project::made_by(&tree, "flow", writer);
+    let board = writer(&project.root);
+    board
+        .create(&NewTask {
+            depends: vec!["flow/one".into()],
+            ..NewTask::new("flow/two", "Made second", "owner")
+        })
+        .unwrap();
+    project.reads(&["flow/one", "flow/two"]);
+    let shared = Shared::new(1, 1234, &project.root, None, crate::testing::open_gate());
+    assert!(shared.api.set(project.hub.clone()).is_ok());
+    board.activate_workflow(&taking(), &Host::local()).unwrap();
+    reads_at(&project, "flow/two", "available");
+    let actions = |slug: &str| {
+        let (status, read) = answer(
+            &shared,
+            asked("GET", &format!("/api/workflow-actions?slug={slug}"), None),
+        );
+        assert_eq!(status, 200, "{read}");
+        read
+    };
+
+    let read = actions("flow/two");
+    assert_eq!(
+        read["takes"],
+        json!([{"task": "flow/one", "output": null}]),
+        "{read}"
+    );
+    // flow/one depends on nothing, so its claim takes nothing.
+    assert_eq!(actions("flow/one")["takes"], json!([]));
+
+    let amber = board
+        .register(&NewSession::new("worker"))
+        .unwrap()
+        .row
+        .handle;
+    let amber = agent_session(&amber);
+    took(&board, "flow/one", &amber, "claim");
+    took(&board, "flow/one", &amber, "submit");
+    let output = took(&board, "flow/one", &local_owner(), "accept");
+    assert_eq!(output, "flow/one@4");
+    let read = actions("flow/two");
+    assert_eq!(
+        read["takes"],
+        json!([{"task": "flow/one", "output": output}]),
+        "{read}"
+    );
+    // The page sends it with the claim it previews, which nothing else stops now.
+    let claim = (read["actions"].as_array().unwrap().iter())
+        .find(|a| a["edge"] == "claim")
+        .unwrap();
+    assert!(
+        !(claim["unavailable"].as_array().unwrap()).contains(&json!("dependency")),
+        "{claim}"
+    );
 }
 
 /// A relabel moves no task, and the page still hears its generation: the board's own read carries
