@@ -1209,7 +1209,7 @@ is, set up once by whoever runs the server; nothing of it is in a project's `sym
 program sends to reaches nobody. Its cost is the Symphony's to keep: Slack's interface followed
 as Slack changes it, and its token kept safe, where mail (C) is a standard that changes little.
 
-- [ ] **notice-program-shipped** — Follows notice-sender, where you chose B: a notice by mail or Slack is sent by a separate program, the server's plugin, outside the core. What is left is what the Symphony ships of it. A: the message's format alone; notices stay on the page and in the Mac app until someone writes a program. B: the format and a notice program of its own, for mail and Slack, which any other replaces. C: the format and a program for mail alone; Slack is left to programs others write. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#What the Symphony ships for notices]]
+- [x] **notice-program-shipped** — Follows notice-sender, where you chose B: a notice by mail or Slack is sent by a separate program, the server's plugin, outside the core. What is left is what the Symphony ships of it. A: the message's format alone; notices stay on the page and in the Mac app until someone writes a program. B: the format and a notice program of its own, for mail and Slack, which any other replaces. C: the format and a program for mail alone; Slack is left to programs others write. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#What the Symphony ships for notices]]
   [2026-11-23 01:10] agent — Posted for the board task `app/users-and-identity`, from your B on **notice-sender**. A concept: nothing is built by this card.
 
     ![What the Symphony ships for sending notices](users-and-identity/notice-shipped.svg)
@@ -1231,6 +1231,7 @@ as Slack changes it, and its token kept safe, where mail (C) is a standard that 
     - **sign-in-service-shipped** (B) ships a sign-in service of the Symphony's own. It is about signing in, not notices.
 
     Neither decides this.
+  [2026-11-23 11:18] owner · approved — A. But I would like plugins added (separate from the current core of Symphony) for Slack, WhatsApp and Email.
 
 ## Sessions
 
