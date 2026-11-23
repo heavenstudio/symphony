@@ -1,13 +1,22 @@
 //! Saved pane observations and their generated outbox lines.
 use super::Pg;
 
-const QUEUED: &str = "coalesce((SELECT jsonb_agg(jsonb_build_object('key', doc -> 'key', 'text', doc -> 'text')) FROM callback_event WHERE doc ->> 'handle' = v ->> 'handle' AND doc -> 'delivered' IS DISTINCT FROM 'true'::jsonb AND NOT doc ? 'message' AND starts_with(doc ->> 'key', 'pane-')), '[]')";
+/// The pane lines still queued for the recipient `of` names (its `handle`).
+fn queued_of(of: &str) -> String {
+    format!(
+        "coalesce((SELECT jsonb_agg(jsonb_build_object('key', doc -> 'key', 'text', doc -> 'text')) FROM callback_event WHERE doc ->> 'handle' = {of} ->> 'handle' AND doc -> 'delivered' IS DISTINCT FROM 'true'::jsonb AND NOT doc ? 'message' AND starts_with(doc ->> 'key', 'pane-')), '[]')"
+    )
+}
 pub(in crate::store) fn queued() -> Pg<'static> {
-    Pg::read(QUEUED)
+    Pg::read(super::callbacks::each_recipient(&format!(
+        "'queued', {}",
+        queued_of("r")
+    )))
 }
 pub(in crate::store) fn saved() -> Pg<'static> {
     Pg::read(format!(
-        "jsonb_build_object('watch', coalesce((SELECT doc -> 'pane_watch' FROM callback_state WHERE id = v -> 'handle'), '{{}}'), 'queued', {QUEUED})"
+        "jsonb_build_object('watch', coalesce((SELECT doc -> 'pane_watch' FROM callback_state WHERE id = v -> 'handle'), '{{}}'), 'queued', {})",
+        queued_of("v")
     ))
 }
 

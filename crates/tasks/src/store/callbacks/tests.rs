@@ -701,7 +701,15 @@ fn a_stored_state_is_observed_against_a_board_at_least_as_new_as_it() {
     let mut read = |pass, sequence: u64| {
         let visit = Visit::new(pass, &env, store, None);
         let mut sequence = sequence;
-        let state = store.stored_state(&handle, &callback, &mut board, &mut sequence, &visit);
+        let stored = store.stored_one(&callback).unwrap();
+        let state = store.stored_state(
+            &handle,
+            &callback,
+            &mut board,
+            &mut sequence,
+            &visit,
+            stored,
+        );
         (
             state.unwrap().map(|(state, _, _)| state.snapshot_sequence),
             sequence,
@@ -754,7 +762,7 @@ fn a_visit_with_nothing_to_observe_reaches_its_recipient_and_takes_no_lease() {
         .unwrap();
         let visit = Visit::new(Pass::Deliver, &env, store, None);
         let mut sequence = marker;
-        (store.dispatch_one(handle, &callback, &mut board, &mut sequence, &visit)).unwrap()
+        (store.dispatch_one(handle, &callback, &mut board, &mut sequence, &visit, None)).unwrap()
     };
     assert_eq!(visit(&here), (true, f64::INFINITY), "no state yet");
     let gone = "zinc-otter";
@@ -789,4 +797,199 @@ fn a_stored_look_says_the_unknown_children_as_the_board_does() {
     assert_eq!(stored.children["zinc-otter"], crate::Health::Left);
     assert_eq!(stored.children["amber-wren"], crate::Health::Stale);
     assert_eq!(stored.children[&here], fixture.health(&here));
+}
+
+/// A recipient on `store`'s host holding the owner's chat seat when `chat`, as a pass reads it.
+fn recipient_on(store: &Store, handle: &str, chat: bool) -> Callback {
+    serde_json::from_value(json!({
+        "handle":handle, "address":"", "host":store.host, "chat":chat,
+        "session":crate::rows::SessionRow::default()
+    }))
+    .unwrap()
+}
+
+/// `handle`'s outbox line `key`, with `fields` over a line never tried.
+fn line(store: &Store, handle: &str, key: &str, fields: Value) {
+    let mut line = json!({"handle":handle, "key":key, "text":key, "sequence":1, "attempts":0, "delivered":false});
+    line.as_object_mut()
+        .unwrap()
+        .extend(fields.as_object().unwrap().clone());
+    let row = store.raw().row("callback_event", json!([handle, key]));
+    row.put(line).unwrap();
+}
+
+/// What `work` sent the board, in requests.
+fn requests<T>(store: &Store, work: impl FnOnce() -> T) -> (T, usize) {
+    let before = store.database().requests();
+    let done = work();
+    (done, store.database().requests() - before)
+}
+
+/// Every recipient's stored state comes in one read, each under its handle: its callback state
+/// (none for a recipient with no row), when its PULL was last checked, the lines a hand-over can
+/// take back, and whether a line of its outbox is due, as the read of one recipient alone gives
+/// them; the owner's chat events due only for the one holding the seat. No recipient reads nothing.
+fn stored_states_of_every_recipient_in_one_read(backend: crate::store_fixture::Backend) {
+    let fixture = crate::store_fixture::Fixture::on(backend, crate::store_fixture::Seed::default());
+    let store = &fixture.store;
+    let now = store.now();
+    let (amber, birch, cedar) = ("amber-wren", "birch-fox", "cedar-owl");
+    for (handle, sequence) in [(amber, 7), (birch, 9)] {
+        let state = store.raw().row("callback_state", handle);
+        state.put(json!({"snapshot_sequence":sequence})).unwrap();
+    }
+    store
+        .raw()
+        .row("callback_lease", amber)
+        .put(json!({"pull": 5.0}))
+        .unwrap();
+    line(store, amber, "pull-3", json!({}));
+    line(store, amber, "agent-4", json!({"delivered":true}));
+    line(store, birch, "agent-1", json!({"attempts":3}));
+    line(store, birch, "agent-2", json!({"retry_at": now + 60.0}));
+    line(store, birch, "chat-1", json!({}));
+    store
+        .raw()
+        .row("chat_event", "1")
+        .put(json!({"key":"1", "text":"hello", "delivered":false}))
+        .unwrap();
+    let recipients = [
+        recipient_on(store, amber, false),
+        recipient_on(store, birch, false),
+        recipient_on(store, cedar, false),
+    ];
+    let all: Vec<&Callback> = recipients.iter().collect();
+    let (stored, sent) = requests(store, || store.stored_states(&all).unwrap());
+    assert_eq!(sent, 1, "one read for every recipient");
+    assert_eq!(
+        stored.keys().map(String::as_str).collect::<Vec<_>>(),
+        [amber, birch, cedar]
+    );
+    let amber_stored = &stored[amber];
+    assert_eq!(
+        amber_stored.state.as_ref().map(|s| s.snapshot_sequence),
+        Some(7)
+    );
+    assert_eq!(amber_stored.checked_pull, 5.0);
+    let queued: Vec<&str> = amber_stored.queued.iter().map(|q| q.key.as_str()).collect();
+    assert_eq!(queued, ["pull-3"], "a delivered line is no longer queued");
+    assert!(amber_stored.pending, "its PULL line is due");
+    let birch_stored = &stored[birch];
+    assert_eq!(
+        birch_stored.state.as_ref().map(|s| s.snapshot_sequence),
+        Some(9)
+    );
+    assert_eq!(birch_stored.checked_pull, 0.0, "no lease, never checked");
+    assert!(birch_stored.queued.is_empty());
+    assert!(
+        !birch_stored.pending,
+        "tried out, not due yet, or chat it does not hear"
+    );
+    let cedar_stored = &stored[cedar];
+    assert!(cedar_stored.state.is_none() && cedar_stored.queued.is_empty());
+    assert!(!cedar_stored.pending);
+    for recipient in &recipients {
+        let alone = store.stored_one(recipient).unwrap();
+        let together = &stored[&recipient.handle];
+        assert_eq!(
+            (
+                alone.handle.as_str(),
+                alone.checked_pull,
+                alone.pending,
+                alone.queued.len()
+            ),
+            (
+                together.handle.as_str(),
+                together.checked_pull,
+                together.pending,
+                together.queued.len()
+            ),
+        );
+    }
+    let (pending, sent) = requests(store, || store.pending(&all).unwrap());
+    assert_eq!((pending, sent), ([amber.to_string()].into(), 1));
+    let seated = [recipient_on(store, birch, true)];
+    let seated: Vec<&Callback> = seated.iter().collect();
+    assert!(
+        store.stored_states(&seated).unwrap()[birch].pending,
+        "the seat hears the chat"
+    );
+    assert_eq!(store.pending(&seated).unwrap(), [birch.to_string()].into());
+    assert!(store.callback_pending(seated[0]).unwrap());
+    store
+        .raw()
+        .row("chat_event", "1")
+        .set(json!({"delivered":true}))
+        .unwrap();
+    assert!(
+        !store.callback_pending(seated[0]).unwrap(),
+        "a delivered chat event is not due"
+    );
+    let (nothing, sent) = requests(store, || {
+        (
+            store.stored_states(&[]).unwrap(),
+            store.pending(&[]).unwrap(),
+        )
+    });
+    assert!(nothing.0.is_empty() && nothing.1.is_empty());
+    assert_eq!(sent, 0, "no recipient, no read");
+}
+
+#[test]
+fn stored_states_of_every_recipient_in_one_read_on_surrealdb() {
+    stored_states_of_every_recipient_in_one_read(crate::store_fixture::Backend::SurrealDb);
+}
+
+#[test]
+fn stored_states_of_every_recipient_in_one_read_on_postgresql() {
+    stored_states_of_every_recipient_in_one_read(crate::store_fixture::Backend::PostgreSql);
+}
+
+/// The pane lines still queued for every recipient come in one read, each under its handle: a
+/// line delivered, one of a message, or one that is no pane line left out.
+fn queued_panes_of_every_recipient_in_one_read(backend: crate::store_fixture::Backend) {
+    let fixture = crate::store_fixture::Fixture::on(backend, crate::store_fixture::Seed::default());
+    let store = &fixture.store;
+    let (amber, birch, cedar) = ("amber-wren", "birch-fox", "cedar-owl");
+    line(store, amber, "pane-1-0", json!({}));
+    line(store, amber, "pane-1-1", json!({"delivered":true}));
+    line(store, amber, "pane-2-0", json!({"message":12}));
+    line(store, amber, "agent-3", json!({}));
+    line(store, birch, "pane-4-0", json!({"text":"BLOCKED pane"}));
+    let recipients = [
+        recipient_on(store, amber, false),
+        recipient_on(store, birch, false),
+        recipient_on(store, cedar, false),
+    ];
+    let all: Vec<&Callback> = recipients.iter().collect();
+    let (queued, sent) = requests(store, || store.queued_panes(&all).unwrap());
+    assert_eq!(sent, 1, "one read for every recipient");
+    let keys = |handle: &str| -> Vec<(String, String)> {
+        queued[handle]
+            .iter()
+            .map(|q| (q.key.clone(), q.text.clone()))
+            .collect()
+    };
+    assert_eq!(
+        keys(amber),
+        [("pane-1-0".to_string(), "pane-1-0".to_string())]
+    );
+    assert_eq!(
+        keys(birch),
+        [("pane-4-0".to_string(), "BLOCKED pane".to_string())]
+    );
+    assert!(keys(cedar).is_empty());
+    let (none, sent) = requests(store, || store.queued_panes(&[]).unwrap());
+    assert!(none.is_empty());
+    assert_eq!(sent, 0, "no recipient, no read");
+}
+
+#[test]
+fn queued_panes_of_every_recipient_in_one_read_on_surrealdb() {
+    queued_panes_of_every_recipient_in_one_read(crate::store_fixture::Backend::SurrealDb);
+}
+
+#[test]
+fn queued_panes_of_every_recipient_in_one_read_on_postgresql() {
+    queued_panes_of_every_recipient_in_one_read(crate::store_fixture::Backend::PostgreSql);
 }
