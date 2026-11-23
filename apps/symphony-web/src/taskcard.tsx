@@ -1,12 +1,16 @@
-// A task's card, as the board's columns draw it, and the agents page and a task's page will: its
-// slug and priority, its status, its title (the card's one link to its task), its build and test
-// phases, the task it is a subtask of, the documents it links and who holds its roles.
+// A task's card, as the board's columns and the agents page draw it: its slug and priority, its
+// status, its title (the card's one link to its task), its build and test phases, the task it is a
+// subtask of, the documents it links and who holds its roles. A status's words and the phases'
+// chips are work-phases.tsx's, which a task's page draws without the card, and are named here too.
 
 import { memo, useEffect } from "react";
 import { linkName } from "./cardheight";
 import { href } from "./project";
 import type { MachineWork, Role, Task } from "./wire";
-import { NO_WORK, type Phase, phaseLabel, samePhases, shownPhases } from "./work";
+import { NO_WORK, samePhases, shownPhases } from "./work";
+import { statusWords, WorkPhases } from "./work-phases";
+
+export { PhaseChips, statusWords, WorkPhases } from "./work-phases";
 
 /** The performance mark set once a task's card is first drawn. */
 const READY_MARK = "tasks-ready";
@@ -17,11 +21,6 @@ export function markTasksReady(): void {
   if (marked) return;
   marked = true;
   performance.mark(READY_MARK);
-}
-
-/** A status as the board says it: `in_progress` reads "in progress". */
-export function statusWords(status: string): string {
-  return status.replaceAll("_", " ");
 }
 
 /** Who holds a task's roles, each chip in the health of its holder's session. */
@@ -38,48 +37,6 @@ export function Roles({ roles }: { roles: Role[] }) {
         </span>
       ))}
     </span>
-  );
-}
-
-/**
- * The builds and tests of `slug`'s task, a chip each: live while a fresh machine runs it, else
- * stale, each saying how sure it is; nothing for a task with none.
- */
-export function WorkPhases({
-  work,
-  slug,
-  connected,
-}: {
-  work: MachineWork;
-  slug: string;
-  connected: boolean;
-}) {
-  return <PhaseChips rows={shownPhases(work, slug, connected)} />;
-}
-
-/** Builds and tests as a card, an agent or a machine shows them: a chip each, or nothing. */
-export function PhaseChips({ rows }: { rows: Phase[] }) {
-  if (rows.length === 0) return null;
-  return (
-    // A group, so the label is read: a plain box's is not.
-    // biome-ignore lint/a11y/useSemanticElements: a row of chips, laid out as the card's others are, not a form's fieldset
-    <div className="work-phases chips" role="group" aria-label="Build and test work">
-      {rows.map((row, at) => (
-        <span
-          // biome-ignore lint/suspicious/noArrayIndexKey: a phase is its place in the machines' report
-          key={at}
-          className={
-            row.freshness === "fresh" && row.operation.state === "running"
-              ? "chip work-phase health-live"
-              : "chip work-phase health-stale"
-          }
-          data-work-kind={row.operation.kind === "build" ? "build" : "test"}
-          title={`${row.operation.recipe} · ${row.operation.resource} · ${row.operation.reason}`}
-        >
-          {phaseLabel(row)}
-        </span>
-      ))}
-    </div>
   );
 }
 

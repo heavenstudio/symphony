@@ -19,7 +19,7 @@ fn payload(text: &str) -> Value {
 }
 
 /// The fixture's repository delivering by pull request, with a remote that holds its `main`.
-fn delivering(f: &Fixture) -> PathBuf {
+pub(super) fn delivering(f: &Fixture) -> PathBuf {
     let root = f.repo();
     write(
         &root.join("symphony.toml"),
@@ -79,7 +79,7 @@ fn receipt(root: &Path, slug: &str, head: &str, parent: &str, squash: &str) {
 
 /// What a delivered land of `branch` leaves: the host's one commit on the remote's `main`, its
 /// tree the merge of that tip and the branch, and the land's receipt of it under `slug`.
-fn landed(root: &Path, slug: &str, branch: &str) -> String {
+pub(super) fn landed(root: &Path, slug: &str, branch: &str) -> String {
     let parent = git(root, &["rev-parse", "origin/main"]);
     let tree = git(root, &["merge-tree", "--write-tree", "origin/main", branch]);
     let squash = git(root, &["commit-tree", &tree, "-p", &parent, "-m", "squash"]);
@@ -94,7 +94,7 @@ fn landed(root: &Path, slug: &str, branch: &str) -> String {
 }
 
 /// One pass of a server's committer over the journal: a start, then its close.
-fn pass(root: &Path) {
+pub(super) fn pass(root: &Path) {
     let saves = ClosingSaves::start(root);
     saves.0.settle();
 }

@@ -5,7 +5,7 @@
 
 import { memo, useEffect, useState } from "react";
 import { openActivity } from "./frame";
-import { PictureView } from "./media";
+import { PictureView } from "./media-picture";
 import { documentsHref, href, project } from "./project";
 import { TaskTag } from "./task-tag";
 import { tick } from "./timing";

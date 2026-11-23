@@ -1,18 +1,17 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  focus,
   type Going,
   GoToSession,
-  press,
-  readScreen,
+  pressed,
   type SessionControl,
   SessionView,
-  screen,
   sessionControl,
+  UNPRESSED,
   viaParent,
   whiteSpace,
 } from "./session";
+import { focus, press, readScreen, screen } from "./session-press";
 import { asking, CASES, reply, server } from "./testing";
 import type { AgentScreen } from "./wire";
 
@@ -208,6 +207,115 @@ describe("a press of Go to session", () => {
         ["said", ""],
       ]);
     }
+  });
+});
+
+describe("a press before what it does has come", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const FOCUS: SessionControl = { kind: "focus", pane: "w1:p2" };
+
+  /** What a press does, come as `come` says: a press it records, or none, which fails. */
+  function chunk(come: boolean) {
+    const made = vi.fn(async () => {});
+    const load = vi.fn(async () => {
+      if (!come) throw new Error("no such chunk");
+      return { press: made };
+    });
+    return { made, load };
+  }
+
+  /** The page's shell, which says its build is `gone`. */
+  function aShell(gone: boolean) {
+    const asked = vi.fn(async () => gone);
+    vi.stubGlobal("window", { reviewShell: { gone: asked } });
+    return asked;
+  }
+
+  it("asks for nothing while one is on its way, nor for a link the browser follows", async () => {
+    const { made, load } = chunk(true);
+    const [shows, shown] = going();
+    const live = new AbortController().signal;
+    await pressed(FOCUS, "amber", "", true, live, shows, load);
+    await pressed({ kind: "link", url: "https://h" }, "amber", "", false, live, shows, load);
+    expect(load).not.toHaveBeenCalled();
+    expect(made).not.toHaveBeenCalled();
+    expect(shown).toEqual([]);
+  });
+
+  it("is on its way while it comes, then is the press it does", async () => {
+    const { made, load } = chunk(true);
+    const [shows, shown] = going();
+    const live = new AbortController().signal;
+    await pressed(FOCUS, "amber", "wt", false, live, shows, load);
+    expect(shown).toEqual([["busy", true]]);
+    expect(made).toHaveBeenCalledExactlyOnceWith(FOCUS, "amber", "wt", false, live, shows);
+  });
+
+  it("says it did not come, and may be pressed again, once the shell says the build is there", async () => {
+    const gone = aShell(false);
+    const [shows, shown] = going();
+    await pressed(
+      FOCUS,
+      "amber",
+      "",
+      false,
+      new AbortController().signal,
+      shows,
+      chunk(false).load,
+    );
+    expect(gone).toHaveBeenCalledOnce();
+    expect(shown).toEqual([
+      ["busy", true],
+      ["busy", false],
+      ["said", UNPRESSED],
+    ]);
+  });
+
+  it("says nothing where the build is gone, and the page loads again", async () => {
+    const gone = aShell(true);
+    const [shows, shown] = going();
+    await pressed(
+      FOCUS,
+      "amber",
+      "",
+      false,
+      new AbortController().signal,
+      shows,
+      chunk(false).load,
+    );
+    expect(gone).toHaveBeenCalledOnce();
+    expect(shown).toEqual([["busy", true]]);
+  });
+
+  it("does nothing more once the page is gone while it came, or did not", async () => {
+    const gone = aShell(false);
+    for (const come of [true, false]) {
+      const { made, load } = chunk(come);
+      const [shows, shown] = going();
+      const mount = new AbortController();
+      const done = pressed(FOCUS, "amber", "", false, mount.signal, shows, load);
+      mount.abort();
+      await done;
+      expect([come, shown]).toEqual([come, [["busy", true]]]);
+      expect(made).not.toHaveBeenCalled();
+    }
+    expect(gone).not.toHaveBeenCalled();
+  });
+
+  it("imports what a press does, by default, and does it", async () => {
+    const asked = server();
+    const [shows, shown] = going();
+    const done = pressed(FOCUS, "amber", "", false, new AbortController().signal, shows);
+    await asking(asked, 1);
+    asked[0]?.answer(reply(200, CASES.samples.agentFocus));
+    await done;
+    expect(shown).toEqual([
+      ["busy", true],
+      ["busy", true],
+      ["said", ""],
+      ["said", "Shown in the Herdr app"],
+      ["busy", false],
+    ]);
   });
 });
 

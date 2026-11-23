@@ -1,5 +1,6 @@
 /* The Settings page (settings.tsx): its head, what does not load, what each tag means, the files
-   read, then a panel a part, an entry a block of it and a setting a line.
+   read, then a panel a part, an entry a block of it and a setting a line, a preference the
+   board's store keeps with its control under its value.
    A scope and a class wear their colour on a tag that says its word, never on colour alone. */
 .settings {
   display: grid;
@@ -210,6 +211,9 @@
 .setting-tag[data-scope="project"] {
   --c: var(--decision);
 }
+.setting-tag[data-scope="board"] {
+  --c: var(--auto);
+}
 .setting-tag[data-scope="machine"] {
   --c: var(--question);
 }
@@ -218,6 +222,78 @@
 }
 .setting-tag[data-scope="reviewed"] {
   --c: var(--dislike);
+}
+.setting-control {
+  display: grid;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+  min-width: 0;
+}
+.setting-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.setting-field .dx-input {
+  flex: 1 1 12rem;
+  min-width: 0;
+  max-width: 22rem;
+}
+.setting-control .dx-select {
+  max-width: 22rem;
+}
+.setting-switch {
+  justify-self: start;
+  min-width: 4.5rem;
+}
+.setting-switch[aria-checked="true"] {
+  border-color: color-mix(in srgb, var(--like) 55%, transparent);
+  color: var(--like);
+}
+.setting-store {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.setting-stored {
+  flex: 1 1 100%;
+  color: var(--muted-foreground);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+.setting-waiting,
+.setting-refused,
+.setting-said {
+  margin: 0;
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.setting-waiting {
+  color: var(--question);
+}
+.setting-refused,
+.setting-said[data-refused="true"] {
+  color: var(--dislike);
+}
+.setting-said[data-refused="false"] {
+  color: var(--like);
+}
+.setting-record {
+  color: var(--muted-foreground);
+  font-size: var(--fs-xs);
+}
+.setting-record summary {
+  cursor: pointer;
+}
+.setting-record ol {
+  margin: 4px 0 0;
+  padding-left: 1.4em;
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
 }
 @media (max-width: 640px) {
   .setting-entry {
