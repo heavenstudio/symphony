@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: cb3575da4a4a0182 files=SKILL.md -->
+<!-- symphony-stamp: 5ff5d6d59357db7e files=SKILL.md -->
 
 # Work from the task board
 
@@ -27,9 +27,11 @@ project's board, permission, staffing, testing and landing instructions first.
    finding, a verdict or a question, addressed to who must act (`--to @orchestrator`,
    `--to @reviewer`, `--to HANDLE`). Never acknowledge a message, and never repeat a post on a
    subtask and its parent. A long post, such as a request for review with its evidence, is
-   written as a file and posted with `just tasks say SLUG --file PATH --as HANDLE`, so no quote,
-   backtick or `$(…)` in it meets a shell; `--file -` reads stdin, which a Codex rule never
-   passes from a heredoc.
+   written as a file in the project's artifacts folder under the task's slug (`artifacts/SLUG/`
+   unless the project names another), which git ignores and the sweep sets aside with the
+   worktree, and posted with `just tasks say SLUG --file PATH --as HANDLE`, so no quote, backtick
+   or `$(…)` in it meets a shell; `--file -` reads stdin, which a Codex rule never passes from a
+   heredoc.
 
 ## Events
 

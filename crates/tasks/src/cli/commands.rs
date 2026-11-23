@@ -663,26 +663,21 @@ fn recipient(to: &str) -> String {
     }
 }
 
-/// The line `say` posts: its `text` argument, or what `--file` names (stdin for `-`), its trailing
-/// line ends dropped, so a long post is written as a file and never quoted for a shell. One of the
-/// two, never both and never neither.
+/// The line `say` posts: its `text` argument, or what `--file` names (stdin for `-`), so a long
+/// post is written as a file and never quoted for a shell; the store trims its ends as it trims any
+/// line (`Store::say`). One of the two, never both and never neither.
 fn said(c: &mut Context) -> Result<String, Stop> {
     let p = c.parsed;
-    let read = match (p.get("file"), p.get("text")) {
-        (Some(_), Some(_)) => {
-            return Err(Stop::Refused(
-                "say takes its line as TEXT or from --file, never both".into(),
-            ));
-        }
-        (None, None) => {
-            return Err(Stop::Refused(
-                "say needs its line: TEXT, or --file FILE (- for stdin)".into(),
-            ));
-        }
-        (None, Some(text)) => return Ok(text.to_string()),
-        (Some(file), None) => file_or_stdin(c, file, "line", "--file")?,
-    };
-    Ok(read.trim_end_matches(['\n', '\r']).to_string())
+    match (p.get("file"), p.get("text")) {
+        (Some(_), Some(_)) => Err(Stop::Refused(
+            "say takes its line as TEXT or from --file, never both".into(),
+        )),
+        (None, None) => Err(Stop::Refused(
+            "say needs its line: TEXT, or --file FILE (- for stdin)".into(),
+        )),
+        (None, Some(text)) => Ok(text.to_string()),
+        (Some(file), None) => file_or_stdin(c, file, "line", "--file"),
+    }
 }
 
 /// What `file` holds, by its path from the command's folder, or stdin for `-`: the text an option

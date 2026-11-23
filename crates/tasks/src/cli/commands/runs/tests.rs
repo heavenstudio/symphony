@@ -334,7 +334,8 @@ fn each_red_run_at_the_tip_that_kept_a_log_is_followed_by_the_logs_path_and_no_o
         // A red recorded with no pipeline kept no log: nothing to name.
         red(5, "just test-client", TIP, 1),
         kept(green(6, board, TIP), "logs/2026-01-01/c.log", None),
-        // Two reds of one command, each named, the older first; the run still going is no red.
+        // Two reds of one command, the newer its newest run there, the one that keeps the stamp
+        // from standing: each named, the older first.
         kept(
             red(7, "just lint-rs", TIP, 1),
             "logs/2026-01-01/d.log",
@@ -345,9 +346,15 @@ fn each_red_run_at_the_tip_that_kept_a_log_is_followed_by_the_logs_path_and_no_o
             "logs/2026-01-01/f.log",
             None,
         ),
+        // A red under a run still going: the red is named, the run that goes is no red.
         kept(
-            run(9, SLUG, "just lint-rs", TIP, Step::Running, 0),
+            red(9, "just client-lint", TIP, 1),
             "logs/2026-01-01/g.log",
+            None,
+        ),
+        kept(
+            run(11, SLUG, "just client-lint", TIP, Step::Running, 0),
+            "logs/2026-01-01/i.log",
             None,
         ),
         // A command its runner refused ran nothing, so its log holds no failed test.
@@ -375,6 +382,7 @@ fn each_red_run_at_the_tip_that_kept_a_log_is_followed_by_the_logs_path_and_no_o
             log(board, 3060.0, "a.log"),
             log("just lint-rs", 7060.0, "d.log"),
             log("just lint-rs", 8060.0, "f.log"),
+            log("just client-lint", 9060.0, "g.log"),
         ],
         "{lines:#?}"
     );
@@ -384,5 +392,5 @@ fn each_red_run_at_the_tip_that_kept_a_log_is_followed_by_the_logs_path_and_no_o
         lines[first + logs.len()].starts_with("REFUSED"),
         "{lines:#?}"
     );
-    assert_eq!(lines.iter().filter(|line| line.contains("LOG")).count(), 3);
+    assert_eq!(lines.iter().filter(|line| line.contains("LOG")).count(), 4);
 }
