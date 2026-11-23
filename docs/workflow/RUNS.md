@@ -223,7 +223,10 @@ report it printed ends none: the list that ends the real one names the test whos
 output comes first. Anything else in the log is passed over, and the command's output
 is never changed. A log that names no test binary (a lint's, a build's) leaves both
 fields out, and so do a run with no log (its caller at a terminal), a start line and
-the end line a sweep writes for a recorder that died.
+the end line a sweep writes for a recorder that died. `just tasks runs SLUG` reads
+`failed` back from a red run's end line, found by its id in the file of the day it
+ended, and names the first five under its `LOG` line, then how many more
+([TASKS](TASKS.md#needed-stamps)).
 
 The order is the log's ([Logs](#logs)). From one file, as an agent's tool call and the
 release run's steps hand it, it is cargo's. From two files stdout's results come before

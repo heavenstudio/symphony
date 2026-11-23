@@ -12,6 +12,7 @@ use crate::Tree;
 use crate::board::HELD_FLOW;
 use serde_json::json;
 use symphony::commit::pending::{Save, State};
+use symphony::settings::described::GITHUB;
 use symphony::settings::stored::Board;
 use symphony::settings::{Machine, class, page, page_with, scopes};
 use symphony_api::{Setting, SettingClass, SettingKind, SettingScope, SettingsEntry, SettingsPage};
@@ -925,6 +926,12 @@ fn every_key_of_the_reference_has_the_class_the_local_file_s_lists_give_it() {
     }
 }
 
+/// Whether `entry` is one the Symphony says itself, not a describer's (`settings::described`): the
+/// GitHub exchange's, or a plugin's (`plugin-NAME-ID`).
+fn symphony_s(entry: &SettingsEntry) -> bool {
+    entry.id != GITHUB.id && !entry.id.starts_with("plugin-")
+}
+
 /// The table a setting of the page is written in, as the path to it, and its key there, empty for
 /// a table said whole (`[stamps]`, `[[entrypoints]]`); none for the device's, the one setting no
 /// file writes. `[agents] launch model` is `[agents.launch]`'s `model`, as `just tasks limits`
@@ -994,7 +1001,7 @@ fn every_setting_the_page_shows_is_one_the_project_file_reads() {
     // The reference lists every key the project file reads and no other (`reference.rs`), so a
     // key it does not list, a removed one among them, is one the file refuses: a row of it would
     // show a setting no file can write. The Symphony's own entries alone: a describer's are its
-    // program's to name.
+    // program's to name, so they are left out here.
     let tree = Tree::new();
     tree.write("symphony.toml", PROJECT);
     let page = page(&tree.root, &bare());
@@ -1004,8 +1011,15 @@ fn every_setting_the_page_shows_is_one_the_project_file_reads() {
         .iter()
         .map(|(heading, key)| (table(heading), key.as_str()))
         .collect();
+    let (own, described): (Vec<&SettingsEntry>, Vec<_>) = (page.sections.iter())
+        .flat_map(|section| &section.entries)
+        .partition(|entry| symphony_s(entry));
+    // The GitHub exchange's entry is on every page, said in its program's place on this bare
+    // machine: what is left out is an entry the page has.
+    let ids: Vec<&str> = described.iter().map(|entry| entry.id.as_str()).collect();
+    assert_eq!(ids, [GITHUB.id]);
     let mut seen = 0;
-    for setting in settings(&page) {
+    for setting in own.iter().flat_map(|entry| &entry.settings) {
         let Some((path, key)) = written_as(setting) else {
             continue;
         };
