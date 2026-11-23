@@ -6109,7 +6109,7 @@
     },
     {
       "rust": "crates/symphony-blocks/src/media.rs decode",
-      "typescript": "decode, src/media.tsx",
+      "typescript": "decode, src/media-picture.tsx",
       "source": [
         "    pub fn decode(value: &str) -> Vec<(&str, &str)> {",
         "        value",
@@ -6122,7 +6122,7 @@
     },
     {
       "rust": "crates/symphony-blocks/src/media.rs is_name",
-      "typescript": "isName, src/media.tsx",
+      "typescript": "isName, src/media-picture.tsx",
       "source": [
         "fn is_name(name: &str) -> bool {",
         "    let mut chars = name.chars();",

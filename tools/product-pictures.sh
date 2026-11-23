@@ -81,7 +81,7 @@ waited() {
 # the run starts holds no descriptor 9 (`9>&-`, `waited`) but its own quick commands: no server,
 # output's reader, board command, PostgreSQL or shot holds the lock once the run has ended.
 exec 9>>"$lock"
-take() {
+wait_for_lock() {
     if command -v flock >/dev/null; then
         exec flock -w 1800 9
     else
@@ -94,7 +94,7 @@ if ! command -v flock >/dev/null && ! command -v perl >/dev/null; then
     exit 1
 fi
 # The wait for the lock is the one step to keep descriptor 9: it takes the lock on it.
-take &
+wait_for_lock &
 running=$!
 trap 'kill "$running" 2>/dev/null || true' EXIT
 if ! wait "$running"; then
