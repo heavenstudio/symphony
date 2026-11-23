@@ -1099,7 +1099,7 @@ keeps every reader that looks for `owner ·` as it is, at the cost of a word tha
 what it means. A asks each reader to take any line that is not an agent's as a person's, and
 keeps two words from being anyone's name.
 
-- [ ] **person-name-on-lines** — Once several people are on a board, each line a person writes on a card carries their short name where it says `owner` today. The choice is how it is written. A: the name takes the owner's place, `ana · approved — A`; a person's line is any line that is not an agent's, and `agent` and `owner` are never anyone's name. B: the word stays and the name follows, `owner ana · approved — A`. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#How a person's name is written]]
+- [x] **person-name-on-lines** — Once several people are on a board, each line a person writes on a card carries their short name where it says `owner` today. The choice is how it is written. A: the name takes the owner's place, `ana · approved — A`; a person's line is any line that is not an agent's, and `agent` and `owner` are never anyone's name. B: the word stays and the name follows, `owner ana · approved — A`. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#How a person's name is written]]
   [2026-11-23 00:52] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
 
     ![How a person's name is written on a card's lines](users-and-identity/name-on-lines.svg)
@@ -1123,6 +1123,7 @@ keeps two words from being anyone's name.
     - **group-answer-settles** (A) settles a card by one member's answer, under that member's name. It does not say how the name is written.
 
     Neither decides this.
+  [2026-11-23 01:02] owner · approved — A
 
 ### Who sends a notice
 
@@ -1152,7 +1153,7 @@ service keeps the OAuth secret, on the line drawn for signing in. A leaves unuse
 usernames the owner named for a person's record. C puts each chat service's interface and secret
 in the core.
 
-- [ ] **notice-sender** — Today a notice reaches you only on the page and in the Mac app. A person's profile can hold their email and their Slack username, and which notices they want by which way; what sends a notice by mail or Slack? A: nothing; notices stay on the page and in the Mac app. B: a notice program, the server's plugin like the sign-in service, outside the core; the server hands it one person's notice and address, and it keeps the Slack token or the mail password. C: the core sends them itself, with each service's credentials in the server's settings. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Who sends a notice]]
+- [x] **notice-sender** — Today a notice reaches you only on the page and in the Mac app. A person's profile can hold their email and their Slack username, and which notices they want by which way; what sends a notice by mail or Slack? A: nothing; notices stay on the page and in the Mac app. B: a notice program, the server's plugin like the sign-in service, outside the core; the server hands it one person's notice and address, and it keeps the Slack token or the mail password. C: the core sends them itself, with each service's credentials in the server's settings. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Who sends a notice]]
   [2026-11-23 00:52] agent — Posted for the board task `app/users-and-identity`, from your note on **public-name-where-declared**, which named "communication usernames and preferences (for example slack user)" for a person's record. A concept: nothing is built by this card.
 
     ![What sends a notice outside the page](users-and-identity/notice-sender.svg)
@@ -1178,6 +1179,7 @@ in the core.
     - **identity-provider-how-added** (B) and **sign-in-service-shipped** (B) put signing in outside the core. They are about signing in, not notices.
 
     None decides this.
+  [2026-11-23 01:01] owner · approved — B
 
 ## Sessions
 
