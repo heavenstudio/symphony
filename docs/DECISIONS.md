@@ -5,48 +5,6 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
-## Needs your decision
-
-### Blueprints
-
-- [ ] **blueprint-shape** — A blueprint would be a ready-made setup a project starts from: its board columns, checks, recipes, skills, rules and look. This card decides what a blueprint is inside a project once taken, which decides whether similar projects can stay alike. A: a starter. Its files are copied in once and are the project's from then on; nothing updates them. B: a layer. Its files are committed in a folder of their own that the project never edits, the project's own settings, recipes and skills sit over them, and an update replaces that folder by a task that lands in the project. C: a reference. The project names a blueprint, and Symphony reads it from the release installed on the machine; an update arrives with the release, with no commit in the project. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/blueprints#How a project takes one]]
-  [2026-11-20 06:25] agent — Posted for the board task `app/blueprints`, from your ask: "an out of the box setup, that has a certain set of preconfigured elements, including ui compoenents and themes, columns, tooling and quality gate checks, and so on", for new projects and to "\"maintain\" similar boards projects on the same set of processes, tools and UI". Nothing is built; this is the first of several rounds.
-
-    **Base.** Today `symphony init` installs the nine skills, their recipes and two hooks. Everything else a project writes by hand: the three projects on this machine have three project files with nothing shared.
-
-    **A** gives a good first day and nothing after it: each project drifts from the day it starts. **B** keeps similar projects alike, each by its own landing, and a project loses nothing of its own because it never edits the blueprint's folder. **C** keeps them alike with no landing at all.
-
-    **Why B.** A blueprint holds commands (checks, recipes) and decides what a land needs (stamps, columns). Symphony reads such settings from a commit and reviews a change of them; the settings file of one machine may not hold them for that reason. Under C what lands in a project would change when the machine takes a release, with no commit in that project. B is how `symphony init` already treats its skills: a stamped file is Symphony's and is brought current, a file beside it is the project's and is never touched.
-
-    **What B costs.** The project file gains a layer under it, in each place that reads it: the app, the board, the settings check and `just tasks limits`. A and C cost less to build.
-
-    **Earlier verdicts checked.**
-    - **project-workflow-shape** (C) and **configurable-workflow-activation** (B) decide what a project's workflow may be and when a committed one takes effect. Under B here a blueprint's changed columns take effect when its update lands, by that rule.
-    - **needed-stamps** decides what a land requires, read from the committed project file.
-    - **release-delivery** and **plugin-delivery-choice** (B) decide how a project takes a release of Symphony itself.
-
-    None of them says what a setup shared between projects is.
-- [ ] **blueprint-home** — Where blueprints are kept, and what a version of one is. This decides who can make a blueprint and how far a project has to trust it. A: in Symphony's own repository, shipped in each release beside the skills; a blueprint's version is the release, and a blueprint is made or changed only by work that lands here. B: each blueprint a Git repository of its own, named by its address and a tag; anyone can publish one, and Symphony fetches it. C: another project on the machine is the blueprint; a project takes its setup from that project's checkout. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/blueprints#Where blueprints live]]
-  [2026-11-20 06:25] agent — Posted for the board task `app/blueprints`.
-
-    **Base.** Today the only setup Symphony hands a project is the skills and recipes its release ships.
-
-    **A** needs no fetching and no new trust: a release can always read the blueprints it ships, as both come from one commit. It does not cover a private blueprint, such as one organisation's own process for its own projects. **B** covers that, and has Symphony fetch commands from an address and run them in a project, which it does nowhere today. **C** is the shortest way to "like that project", and copies what is that project's alone with what is shareable: most of the first consuming project's file is its own landing tool, its test slots and its content generators.
-
-    **Why A.** The three blueprints you named are general ones. A blueprint under A is a plain folder, so a folder of the same format kept elsewhere can be added later, as a card of its own, without changing A.
-
-    **Earlier verdicts checked.** **release-delivery** decides how a release reaches a machine, and **consumer-contract-versioning** (B) what a project links of Symphony. Neither says where a shared setup is kept.
-- [ ] **blueprint-first** — Which blueprint is built first. The first one proves the mechanism, so it decides how soon it works and where. A: Rust web, taken from this repository's own setup (its rules, its checks, its lint and test recipes), with this repository as the first project on it. B: Godot, taken from the first consuming project's setup. C: the personal assistant. Recommended: A, then B, then C. Approve and say A, B or C in the note, or comment. [[analysis/blueprints#Which one first]]
-  [2026-11-20 06:25] agent — Posted for the board task `app/blueprints`.
-
-    **Base.** No blueprint exists. Each of the three would be pulled out of something: two out of a working project, one out of nothing yet.
-
-    **A** has its source and its first user in one repository, so one task can prove a blueprint, its update and the split between "any Rust project" and "Symphony itself". **B** is the case the idea came from and proves a project that is not Rust. That project's checkout is read-only to agents here, so the split is work on its board, by its agents, brought here afterwards. **C** needs a calendar plugin and a to-do plugin, neither written, and a board for work with no branch, diff or land; most of that is not about blueprints.
-
-    **Why A first.** It is the only one a single task here can finish, and it puts this repository's own process under the mechanism before another project depends on it.
-
-    **Earlier verdicts checked.** No card names a first blueprint or an order of project kinds.
-
 ## Auto-approved: spot-check
 
 ### Releases
@@ -68,6 +26,50 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
 
 ## Waiting on an agent
+
+### Blueprints
+
+- [x] **blueprint-first** — Which blueprint is built first. The first one proves the mechanism, so it decides how soon it works and where. A: Rust web, taken from this repository's own setup (its rules, its checks, its lint and test recipes), with this repository as the first project on it. B: Godot, taken from the first consuming project's setup. C: the personal assistant. Recommended: A, then B, then C. Approve and say A, B or C in the note, or comment. [[analysis/blueprints#Which one first]]
+  [2026-11-20 06:25] agent — Posted for the board task `app/blueprints`.
+
+    **Base.** No blueprint exists. Each of the three would be pulled out of something: two out of a working project, one out of nothing yet.
+
+    **A** has its source and its first user in one repository, so one task can prove a blueprint, its update and the split between "any Rust project" and "Symphony itself". **B** is the case the idea came from and proves a project that is not Rust. That project's checkout is read-only to agents here, so the split is work on its board, by its agents, brought here afterwards. **C** needs a calendar plugin and a to-do plugin, neither written, and a board for work with no branch, diff or land; most of that is not about blueprints.
+
+    **Why A first.** It is the only one a single task here can finish, and it puts this repository's own process under the mechanism before another project depends on it.
+
+    **Earlier verdicts checked.** No card names a first blueprint or an order of project kinds.
+  [2026-11-23 11:18] owner · approved — A
+  [2026-11-23 11:18] owner · approved — Agree with A -> B -> C rollout
+- [x] **blueprint-home** — Where blueprints are kept, and what a version of one is. This decides who can make a blueprint and how far a project has to trust it. A: in Symphony's own repository, shipped in each release beside the skills; a blueprint's version is the release, and a blueprint is made or changed only by work that lands here. B: each blueprint a Git repository of its own, named by its address and a tag; anyone can publish one, and Symphony fetches it. C: another project on the machine is the blueprint; a project takes its setup from that project's checkout. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/blueprints#Where blueprints live]]
+  [2026-11-20 06:25] agent — Posted for the board task `app/blueprints`.
+
+    **Base.** Today the only setup Symphony hands a project is the skills and recipes its release ships.
+
+    **A** needs no fetching and no new trust: a release can always read the blueprints it ships, as both come from one commit. It does not cover a private blueprint, such as one organisation's own process for its own projects. **B** covers that, and has Symphony fetch commands from an address and run them in a project, which it does nowhere today. **C** is the shortest way to "like that project", and copies what is that project's alone with what is shareable: most of the first consuming project's file is its own landing tool, its test slots and its content generators.
+
+    **Why A.** The three blueprints you named are general ones. A blueprint under A is a plain folder, so a folder of the same format kept elsewhere can be added later, as a card of its own, without changing A.
+
+    **Earlier verdicts checked.** **release-delivery** decides how a release reaches a machine, and **consumer-contract-versioning** (B) what a project links of Symphony. Neither says where a shared setup is kept.
+  [2026-11-23 11:15] owner · approved — B. Could use submodules to add it to a symphony project (inside the project repo?)
+- [-] **blueprint-shape** — A blueprint would be a ready-made setup a project starts from: its board columns, checks, recipes, skills, rules and look. This card decides what a blueprint is inside a project once taken, which decides whether similar projects can stay alike. A: a starter. Its files are copied in once and are the project's from then on; nothing updates them. B: a layer. Its files are committed in a folder of their own that the project never edits, the project's own settings, recipes and skills sit over them, and an update replaces that folder by a task that lands in the project. C: a reference. The project names a blueprint, and Symphony reads it from the release installed on the machine; an update arrives with the release, with no commit in the project. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/blueprints#How a project takes one]]
+  [2026-11-20 06:25] agent — Posted for the board task `app/blueprints`, from your ask: "an out of the box setup, that has a certain set of preconfigured elements, including ui compoenents and themes, columns, tooling and quality gate checks, and so on", for new projects and to "\"maintain\" similar boards projects on the same set of processes, tools and UI". Nothing is built; this is the first of several rounds.
+
+    **Base.** Today `symphony init` installs the nine skills, their recipes and two hooks. Everything else a project writes by hand: the three projects on this machine have three project files with nothing shared.
+
+    **A** gives a good first day and nothing after it: each project drifts from the day it starts. **B** keeps similar projects alike, each by its own landing, and a project loses nothing of its own because it never edits the blueprint's folder. **C** keeps them alike with no landing at all.
+
+    **Why B.** A blueprint holds commands (checks, recipes) and decides what a land needs (stamps, columns). Symphony reads such settings from a commit and reviews a change of them; the settings file of one machine may not hold them for that reason. Under C what lands in a project would change when the machine takes a release, with no commit in that project. B is how `symphony init` already treats its skills: a stamped file is Symphony's and is brought current, a file beside it is the project's and is never touched.
+
+    **What B costs.** The project file gains a layer under it, in each place that reads it: the app, the board, the settings check and `just tasks limits`. A and C cost less to build.
+
+    **Earlier verdicts checked.**
+    - **project-workflow-shape** (C) and **configurable-workflow-activation** (B) decide what a project's workflow may be and when a committed one takes effect. Under B here a blueprint's changed columns take effect when its update lands, by that rule.
+    - **needed-stamps** decides what a land requires, read from the committed project file.
+    - **release-delivery** and **plugin-delivery-choice** (B) decide how a project takes a release of Symphony itself.
+
+    None of them says what a setup shared between projects is.
+  [2026-11-23 11:14] owner · rejected — This should work like the create-react-app used to work like. Which is to have it be and starter but that allows future changes to continue to propagate, as long as the project does not change settings that the blueprint puts in place. Once they do, then this now becomes a separate and its own version, which the user can still ask for upstream changes, but would require an agent task for updates given there's no guarantee of non breaking changes there. This sounds like C? But not exactly
 
 ### Task timeline
 
