@@ -16,7 +16,7 @@ use axum::http::{HeaderMap, Request, StatusCode, header};
 use serde_json::{Value, json};
 use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use symphony_board::launch::LaunchError;
@@ -174,9 +174,9 @@ struct Served {
     held: (Tree, Fixture),
     /// How many times the hub opened the board for the page reads ([`Hub::reader`]).
     opened: Arc<AtomicUsize>,
-    /// How many of the next openings hand back a store whose server went: nothing listens where
-    /// it was.
-    gone: Arc<AtomicUsize>,
+    /// Whether the next opening hands back a store whose server went: nothing listens where it
+    /// was.
+    gone: Arc<AtomicBool>,
 }
 
 impl Served {
@@ -245,12 +245,14 @@ impl Served {
         let f = Fixture::new(seed);
         let mut hub = Hub::new(&root, &root.join("build/client"));
         let board = f.other_client();
-        let (opened, gone) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let (opened, gone) = (
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicBool::new(false)),
+        );
         let (opening, going) = (opened.clone(), gone.clone());
         hub.connect_reader = Box::new(move |_| {
             opening.fetch_add(1, Ordering::SeqCst);
-            let took = going.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
-            if took.is_ok() {
+            if going.swap(false, Ordering::SeqCst) {
                 let left = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
                 let addr = left.local_addr().unwrap().to_string();
                 drop(left);
@@ -606,7 +608,7 @@ fn a_store_the_board_failed_the_panes_read_on_is_dropped_and_the_next_read_opens
         0,
         "no read opened the board yet"
     );
-    s.gone.store(1, Ordering::SeqCst);
+    s.gone.store(true, Ordering::SeqCst);
     let (status, body) = s.screen(PHONE, "amber");
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     assert_eq!(
