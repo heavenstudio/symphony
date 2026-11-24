@@ -184,7 +184,7 @@ fn a_key_it_does_not_know_or_a_file_that_does_not_read_is_refused_without_its_va
         format!("phone_number_id = {TOKEN_TEXT}\n"),
         format!("{TOKEN_TEXT}\n"),
         format!("phone_number_id = \"1\" \"{TOKEN_TEXT}\"\n"),
-        format!(r#"language = '''{TOKEN_TEXT}"#),
+        format!("language = '''{TOKEN_TEXT}"),
         pasted,
     ] {
         let refused = read(&broken).unwrap_err();
