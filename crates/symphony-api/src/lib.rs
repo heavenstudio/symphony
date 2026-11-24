@@ -53,6 +53,7 @@ pub mod health;
 mod links;
 pub mod listing;
 mod machine_work;
+mod people;
 mod project;
 pub mod report_page;
 pub mod reports;
@@ -80,6 +81,10 @@ pub use runs::{
     End, FailedTest, PIPELINES, RUN_LOG_MOST, RUN_LOG_PATH, RUN_LOG_TAIL, RUN_PATH, RUN_SCHEMA,
     RUNS_DAYS, RUNS_FILE_BYTES, RUNS_PAGE, RUNS_PATH, RUNS_READ_BYTES, RunLine, RunLog, RunPage,
     RunsPage, Suite, TRIGGERS, fold, run_day, run_name,
+};
+pub use people::{
+    GroupRow, PEOPLE_CHANGE_PATH, PEOPLE_PATH, PROFILE_PATH, PeopleAction, PeopleChange,
+    PeopleLogLine, PeoplePage, PersonRow, ProfileWrite,
 };
 pub use runs_rollup::{RUNS_DAY_SCHEMA, RUNS_ROLLUP, RunsDay};
 pub use schema_updates::{

@@ -866,6 +866,7 @@ const SYMPHONY_ROUTES = [
   "reports",
   "runs",
   "settings",
+  "people",
   "api",
   "assets",
   "static",
@@ -944,6 +945,7 @@ function route(path: string): string | null {
     clean === "reports" ||
     clean === "runs" ||
     clean === "settings" ||
+    clean === "people" ||
     clean === "agents"
   )
     return clean;

@@ -74,6 +74,7 @@
         ["/tasks", "Board"],
         ["/reports", "Reports"],
         ["/settings", "Settings"],
+        ["/people", "People"],
         ["/runs", "Runs"],
         ["/agents", "Agents"]
       ],
@@ -123,6 +124,7 @@
         ["/tasks", "Board"],
         ["/reports", "Reports"],
         ["/settings", "Settings"],
+        ["/people", "People"],
         ["/runs", "Runs"],
         ["/agents", "Agents"]
       ],
@@ -172,6 +174,7 @@
         ["/tasks", "Board"],
         ["/reports", "Reports"],
         ["/settings", "Settings"],
+        ["/people", "People"],
         ["/runs", "Runs"],
         ["/agents", "Agents"]
       ],
@@ -221,6 +224,7 @@
         ["/tasks", "Board"],
         ["/reports", "Reports"],
         ["/settings", "Settings"],
+        ["/people", "People"],
         ["/runs", "Runs"],
         ["/agents", "Agents"]
       ],
@@ -278,6 +282,7 @@
         ["/tasks", "Board"],
         ["/reports", "Reports"],
         ["/settings", "Settings"],
+        ["/people", "People"],
         ["/runs", "Runs"],
         ["/agents", "Agents"]
       ],
@@ -4433,6 +4438,94 @@
       ]
     },
     "emptySettings": { "files": [], "sections": [] },
+    "people": {
+      "people": [
+        {
+          "name": "ana",
+          "display": "Ana Lima",
+          "powers": ["read", "speak", "decide"],
+          "own": ["speak"],
+          "groups": ["staff"],
+          "signins": ["tailscale", "github"],
+          "git": ["ana-lima"],
+          "profile": true
+        },
+        {
+          "name": "bo",
+          "display": "bo",
+          "powers": ["read", "administer"],
+          "own": ["administer"],
+          "groups": [],
+          "signins": [],
+          "git": [],
+          "profile": false
+        },
+        {
+          "name": "cy",
+          "display": "Cy Okafor",
+          "powers": ["read"],
+          "own": ["read"],
+          "groups": [],
+          "signins": ["tailscale"],
+          "git": [],
+          "profile": true
+        }
+      ],
+      "groups": [{ "name": "staff", "powers": ["decide"] }],
+      "log": [
+        {
+          "n": 1,
+          "at": 1763003600.0,
+          "by": "owner",
+          "did": "group-add",
+          "name": "staff",
+          "powers": ["decide"]
+        },
+        {
+          "n": 2,
+          "at": 1763007200.0,
+          "by": "owner",
+          "did": "add",
+          "name": "ana",
+          "powers": ["speak"]
+        },
+        {
+          "n": 3,
+          "at": 1763010800.0,
+          "by": "owner",
+          "did": "join",
+          "name": "ana",
+          "group": "staff"
+        },
+        {
+          "n": 4,
+          "at": 1763014400.0,
+          "by": "owner",
+          "did": "add",
+          "name": "bo",
+          "powers": ["administer"]
+        },
+        {
+          "n": 5,
+          "at": 1763018000.0,
+          "by": "owner",
+          "did": "add",
+          "name": "cy",
+          "powers": ["read"]
+        }
+      ],
+      "revision": 5,
+      "administers": true,
+      "machine": true
+    },
+    "emptyPeople": {
+      "people": [],
+      "groups": [],
+      "log": [],
+      "revision": 0,
+      "administers": true,
+      "machine": true
+    },
     "taskTokens": {
       "total": {
         "input": 20,
@@ -5807,8 +5900,8 @@
       "rust": "crates/symphony-api/src/project.rs own_pages",
       "typescript": "ownPages, src/project.ts",
       "source": [
-        "    pub fn own_pages(&self) -> [(String, &'static str); 8] {",
-        "        use page_names::{AGENTS, BOARD, DOCS, HOME, QUEUE, REPORTS, RUNS, SETTINGS};",
+        "    pub fn own_pages(&self) -> [(String, &'static str); 9] {",
+        "        use page_names::{AGENTS, BOARD, DOCS, HOME, PEOPLE, QUEUE, REPORTS, RUNS, SETTINGS};",
         "        [",
         "            (\"/\".into(), HOME),",
         "            (\"/queue\".into(), QUEUE),",
@@ -5816,6 +5909,7 @@
         "            (\"/tasks\".into(), BOARD),",
         "            (\"/reports\".into(), REPORTS),",
         "            (\"/settings\".into(), SETTINGS),",
+        "            (\"/people\".into(), PEOPLE),",
         "            (\"/runs\".into(), RUNS),",
         "            (\"/agents\".into(), AGENTS),",
         "        ]",

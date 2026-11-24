@@ -7,7 +7,9 @@
 //! board's agents (a comment, a message, a task's message, an ask and its reply, a quick chat, a
 //! quick task) is speaking that directs them, and an attempt's control or view deciding that
 //! directs them: no one is given direct agents until a board speaks to its agents for a person
-//! (step 5), so those stay the person at the machine's. An upload is speaking alone. A route this
+//! (step 5), so those stay the person at the machine's. An upload is speaking alone. A change of
+//! the board's people is administering; a profile's write needs no power beyond being on the
+//! board, as whose profile it may write is `symphony_board::people::change`'s to say. A route this
 //! table does not place is the person at the machine's alone, as the agent focus is.
 
 use symphony_board::people::{Power, Powers};
@@ -25,6 +27,9 @@ const DECIDE: Needs = Needs::Powers(&[Power::Decide]);
 const SPEAK_TO_AGENTS: Needs = Needs::Powers(&[Power::Speak, Power::DirectAgents]);
 const SPEAK: Needs = Needs::Powers(&[Power::Speak]);
 const DIRECT_ATTEMPTS: Needs = Needs::Powers(&[Power::Decide, Power::DirectAgents]);
+const ADMINISTER: Needs = Needs::Powers(&[Power::Administer]);
+/// Being on the board, which every person a board named is.
+const ON_THE_BOARD: Needs = Needs::Powers(&[]);
 
 /// What a write to `route` (unscoped: `/api/…`) needs.
 pub(crate) fn needs(route: &str) -> Needs {
@@ -38,6 +43,8 @@ pub(crate) fn needs(route: &str) -> Needs {
         | "/api/quick-chat" | "/api/quick-task" => SPEAK_TO_AGENTS,
         symphony_api::UPLOAD_PATH => SPEAK,
         symphony_api::ATTEMPT_CONTROL_ROUTE | symphony_api::ATTEMPT_VIEW_ROUTE => DIRECT_ATTEMPTS,
+        symphony_api::PEOPLE_CHANGE_PATH => ADMINISTER,
+        symphony_api::PROFILE_PATH => ON_THE_BOARD,
         _ => Needs::Machine,
     }
 }

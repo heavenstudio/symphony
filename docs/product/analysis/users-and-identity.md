@@ -450,7 +450,11 @@ Kept once, with the server, and written by the person
 ([its card](#person-profile-where), B).
 
 - **The server keeps one profile for each person**: in the machine folder on a machine, in the
-  platform's own store on a hosted board. The person writes their own, and an admin can.
+  platform's own store on a hosted board. The person at the machine writes any profile. A person
+  writes their own display name and git handles. A board's admin makes a profile only for
+  someone who has none, and an existing profile's sign-ins are the person at the machine's
+  alone, as a sign-in says who a visitor is on every board of the machine
+  ([TASKS](../../workflow/TASKS.md#the-people-page)).
 - **A board keeps only that person's groups and powers**, and refers to the profile. Who someone
   is, is kept apart from what they may do, as signing in is.
 - **A line carries the short name and nothing else.** A name once used is never given to
@@ -1395,8 +1399,9 @@ Each step can ship alone, and a machine with one person sees none of them.
    Built: names on lines; a board's people, groups and powers as rows, the command that changes
    them and the log it keeps; the profiles in the machine folder; a visitor under another login
    on the boards that give them a power; each write checked against the powers it needs; and the
-   `owner` stamp opened by decide ([TASKS](../../workflow/TASKS.md#people)). The People page is
-   still to build.
+   `owner` stamp opened by decide ([TASKS](../../workflow/TASKS.md#people)); and the People
+   page, read by everyone on the board, its changes guarded by administer
+   ([TASKS](../../workflow/TASKS.md#the-people-page)).
 4. **Ownership.** A card and a task have their group, from the board's map of places or a name
    written on them; queues and notices follow it, and any member's answer settles what the
    group owns. Its members move, prioritize and cancel its tasks. The Settings page is one of

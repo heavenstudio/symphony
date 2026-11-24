@@ -1,0 +1,563 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  addition,
+  doneLine,
+  listed,
+  logLine,
+  openPeople,
+  PeoplePage,
+  PeopleView,
+  Person,
+  PowerTags,
+  powerName,
+  powerState,
+  powersSaid,
+  profileWrite,
+  readPeople,
+  type Said,
+  type Told,
+  type Writes,
+  writePeople,
+} from "./people";
+import { asking, CASES, elementOf, type Found, fire, reply, server } from "./testing";
+import type { PeoplePage as Page, PeopleChange, PeopleLogLine, ProfileWrite } from "./wire";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+const SAMPLE = CASES.samples.people as Page;
+const EMPTY = CASES.samples.emptyPeople as Page;
+const ana = () => {
+  const found = SAMPLE.people.find((person) => person.name === "ana");
+  if (!found) throw new Error("no ana");
+  return found;
+};
+/** The sample as a reader without administer reads it: Cy, at another machine. */
+const READER: Page = { ...SAMPLE, administers: false, machine: false, you: "cy" };
+
+/** The sample with the value at `path` set to `value`, or taken out when `value` is undefined. */
+function changed(path: (string | number)[], value?: unknown): unknown {
+  const copy = JSON.parse(JSON.stringify(SAMPLE));
+  let at = copy;
+  for (const step of path.slice(0, -1)) at = at[step];
+  const last = path[path.length - 1] ?? "";
+  if (value === undefined) delete at[last];
+  else at[last] = value;
+  return copy;
+}
+
+function telling(): { told: unknown[]; check: Told } {
+  const told: unknown[] = [];
+  return {
+    told,
+    check: {
+      answered: (page) => told.push(["answered", page]),
+      failed: (why, missing) => told.push(["failed", why, missing]),
+    },
+  };
+}
+
+/** Writes that keep what is sent, by the part that sent it. */
+function writing(said: Said | null = null): { sent: unknown[]; writes: Writes } {
+  const sent: unknown[] = [];
+  return {
+    sent,
+    writes: { busy: false, said, send: (part, route, body) => sent.push([part, route, body]) },
+  };
+}
+
+describe("the read", () => {
+  it("takes the server's page, and an empty one", () => {
+    expect(readPeople(SAMPLE)).toEqual({ ...SAMPLE, you: null, problem: null });
+    expect(readPeople(EMPTY)).toEqual({
+      people: [],
+      groups: [],
+      log: [],
+      revision: 0,
+      administers: true,
+      machine: true,
+      you: null,
+      problem: null,
+    });
+    expect(readPeople({ ...SAMPLE, you: "cy", problem: "down" })).toMatchObject({
+      you: "cy",
+      problem: "down",
+    });
+  });
+
+  it("refuses an answer missing or mistyping a field it draws, and a log line's powers left out are none", () => {
+    const broken: [(string | number)[], unknown][] = [
+      [["people"], undefined],
+      [["people", 0, "display"], 3],
+      [["people", 0, "powers"], "speak"],
+      [["people", 0, "own"], undefined],
+      [["people", 0, "groups"], [1]],
+      [["people", 0, "signins"], undefined],
+      [["people", 0, "git"], undefined],
+      [["people", 0, "profile"], "yes"],
+      [["groups"], undefined],
+      [["groups", 0, "powers"], undefined],
+      [["log"], {}],
+      [["log", 0, "n"], "1"],
+      [["log", 0, "at"], undefined],
+      [["log", 0, "by"], undefined],
+      [["log", 0, "did"], 2],
+      [["log", 0, "group"], 2],
+      [["log", 0, "powers"], "decide"],
+      [["revision"], undefined],
+      [["administers"], "yes"],
+      [["machine"], undefined],
+      [["you"], 3],
+      [["problem"], []],
+    ];
+    for (const [path, value] of broken) {
+      expect(readPeople(changed(path, value)), path.join(".")).toBeNull();
+    }
+    for (const value of [null, "people", [], 3]) expect(readPeople(value)).toBeNull();
+    expect(readPeople(changed(["log", 0, "powers"]))).not.toBeNull();
+  });
+
+  it("asks once and tells the page what the server answered", async () => {
+    const asked = server();
+    const { told, check } = telling();
+    const done = openPeople(new AbortController().signal, check, async () => {
+      throw new Error("an answered read waits for nothing");
+    });
+    await asking(asked, 1);
+    expect(asked[0]?.url).toBe("/api/people");
+    asked[0]?.answer(reply(200, SAMPLE));
+    await done;
+    expect(told).toEqual([["answered", readPeople(SAMPLE)]]);
+  });
+
+  it("says a failed read, tries again by itself and stops once it is answered", async () => {
+    const asked = server();
+    const { told, check } = telling();
+    let waits = 0;
+    const done = openPeople(new AbortController().signal, check, async () => {
+      waits += 1;
+    });
+    await asking(asked, 1);
+    asked[0]?.answer(reply(503, { error: "the task board cannot be reached" }));
+    await asking(asked, 2);
+    asked[1]?.answer(reply(200, { people: "nobody" }));
+    await asking(asked, 3);
+    asked[2]?.answer(reply(200, SAMPLE));
+    await done;
+    expect(waits).toBe(2);
+    expect(told.map((each) => (each as unknown[])[0])).toEqual(["failed", "failed", "answered"]);
+    expect(told[1]).toEqual([
+      "failed",
+      "The people's answer is not a page of people. Trying again…",
+      false,
+    ]);
+  });
+
+  it("ends on a server that has no such page, and says nothing once its page left", async () => {
+    const asked = server();
+    const { told, check } = telling();
+    const gone = openPeople(new AbortController().signal, check, async () => {
+      throw new Error("a missing page is not asked for again");
+    });
+    await asking(asked, 1);
+    asked[0]?.answer(reply(404, { error: "no such page" }));
+    await gone;
+    expect(told).toEqual([["failed", expect.not.stringContaining("Trying again"), true]]);
+    const page = new AbortController();
+    const left = openPeople(page.signal, check);
+    await asking(asked, 2);
+    page.abort();
+    asked[1]?.answer(reply(200, SAMPLE));
+    await left;
+    const failing = openPeople(page.signal, check);
+    await asking(asked, 3);
+    asked[2]?.answer(reply(500, { error: "boom" }));
+    await failing;
+    expect(told).toHaveLength(1);
+  });
+});
+
+describe("the page's words", () => {
+  const line = (did: string, more: Partial<PeopleLogLine> = {}): PeopleLogLine => ({
+    n: 7,
+    at: 0,
+    by: "owner",
+    did,
+    name: "ana",
+    powers: ["speak", "direct_agents"],
+    ...more,
+  });
+
+  it("says a power as a sentence does, and powers as a list", () => {
+    expect(powerName("direct_agents")).toBe("direct agents");
+    expect(powerName("decide")).toBe("decide");
+    expect(powerName("fly")).toBe("fly");
+    expect(powersSaid([])).toBe("no power");
+    expect(powersSaid(["speak", "direct_agents"])).toBe("speak, direct agents");
+  });
+
+  it("says each change of the log, a group's own grant as the group's", () => {
+    expect(
+      [
+        line("add"),
+        line("remove"),
+        line("join", { group: "staff" }),
+        line("leave", { group: "staff" }),
+        line("join", { group: null }),
+        line("grant"),
+        line("revoke", { powers: [] }),
+        line("grant", { name: "staff", group: "staff", powers: ["decide"] }),
+        line("revoke", { name: "staff", group: "staff" }),
+        // A line whose powers the server left out, as it does for none.
+        { n: 7, at: 0, by: "owner", did: "group-add", name: "staff" },
+        line("group-remove", { name: "staff" }),
+        line("rename"),
+      ].map(logLine),
+    ).toEqual([
+      "owner put ana on the board, holding speak, direct agents",
+      "owner took ana off the board",
+      "owner put ana in staff",
+      "owner took ana out of staff",
+      "owner put ana in a group",
+      "owner gave ana speak, direct agents",
+      "owner took no power from ana",
+      "owner gave the group staff decide",
+      "owner took speak, direct agents from the group staff",
+      "owner made the group staff, holding no power",
+      "owner removed the group staff",
+      "owner: rename ana",
+    ]);
+  });
+
+  it("says what a write did: its log line, nothing needed, or a profile written", () => {
+    expect(doneLine(4, SAMPLE, false)).toBe("owner put cy on the board, holding read.");
+    expect(doneLine(5, SAMPLE, false)).toBe("It holds that already: nothing was written.");
+    expect(doneLine(0, EMPTY, false)).toBe("It holds that already: nothing was written.");
+    expect(doneLine(4, SAMPLE, true)).toBe("The profile is written.");
+  });
+
+  it("reads a field's list by its commas, and sends a form's fields as a change and a profile", () => {
+    expect(listed(" ana-l, ,ana ")).toEqual(["ana-l", "ana"]);
+    expect(listed("")).toEqual([]);
+    const fields = {
+      name: " bo ",
+      display: " Bo Reis ",
+      signin: "tailscale:bo@example.com",
+      git: "bo, bo-r",
+      group: "staff",
+      powers: ["read", "speak"],
+    };
+    expect(addition(fields)).toEqual({
+      action: "add",
+      name: "bo",
+      display: "Bo Reis",
+      powers: ["read", "speak"],
+      groups: ["staff"],
+      signins: ["tailscale:bo@example.com"],
+      git: ["bo", "bo-r"],
+    } satisfies PeopleChange);
+    expect(addition({ ...fields, display: " ", group: "" })).not.toHaveProperty("display");
+    expect(addition({ ...fields, group: "" }).groups).toEqual([]);
+    expect(profileWrite("ana", { display: "", git: "ana-l", signin: "" })).toEqual({
+      name: "ana",
+      git: ["ana-l"],
+      signins: [],
+    } satisfies ProfileWrite);
+    expect(profileWrite("ana", { display: " Ana ", git: "", signin: "github:ana" })).toEqual({
+      name: "ana",
+      display: "Ana",
+      git: [],
+      signins: ["github:ana"],
+    });
+  });
+});
+
+describe("a write", () => {
+  function told() {
+    const said: unknown[] = [];
+    return {
+      said,
+      check: {
+        answered: (page: Page) => said.push(["answered", page.revision]),
+        said: (spoken: Omit<Said, "part">) => said.push(["said", spoken.text, spoken.refused]),
+      },
+    };
+  }
+  const change: PeopleChange = { action: "add", name: "cy", powers: ["read"] };
+
+  it("posts the change, draws the page it answers and says what it did", async () => {
+    const asked = server();
+    const { said, check } = told();
+    const done = writePeople("/api/people-change", change, 4, new AbortController().signal, check);
+    await asking(asked, 1);
+    expect(asked[0]?.url).toBe("/api/people-change");
+    expect(asked[0]?.body).toEqual(change);
+    asked[0]?.answer(reply(200, SAMPLE));
+    await done;
+    expect(said).toEqual([
+      ["answered", 5],
+      ["said", "owner put cy on the board, holding read.", false],
+    ]);
+  });
+
+  it("says a refusal in the server's words, and an answer that is no page", async () => {
+    const asked = server();
+    const { said, check } = told();
+    const refused = writePeople(
+      "/api/people-change",
+      change,
+      4,
+      new AbortController().signal,
+      check,
+    );
+    await asking(asked, 1);
+    asked[0]?.answer(reply(403, { error: "Forbidden: cy may not administer on this board" }));
+    await refused;
+    const odd = writePeople(
+      "/api/people-profile",
+      { name: "cy" },
+      4,
+      new AbortController().signal,
+      check,
+    );
+    await asking(asked, 2);
+    asked[1]?.answer(reply(200, { done: true }));
+    await odd;
+    expect(said).toEqual([
+      ["said", "Forbidden: cy may not administer on this board", true],
+      ["said", "The server's answer is not a page of people", true],
+    ]);
+  });
+
+  it("tells nothing once its page is gone", async () => {
+    const asked = server();
+    const { said, check } = told();
+    const page = new AbortController();
+    const done = writePeople("/api/people-change", change, 4, page.signal, check);
+    await asking(asked, 1);
+    page.abort();
+    asked[0]?.answer(reply(200, SAMPLE));
+    await done;
+    const failed = writePeople("/api/people-change", change, 4, page.signal, check);
+    await asking(asked, 2);
+    asked[1]?.answer(reply(500, { error: "boom" }));
+    await failed;
+    expect(said).toEqual([]);
+  });
+});
+
+describe("a person's and a group's powers", () => {
+  const labelled = (label: string) => (element: Found) => element.props["aria-label"] === label;
+
+  it("holds read as one's own where another power of one's own includes it", () => {
+    const state = (word: string, held: string[], own: string[]) => powerState(word, held, own);
+    // Given alone, read is given and may be taken.
+    expect(state("read", ["read"], ["read"])).toEqual({
+      state: "own",
+      given: true,
+      implied: false,
+    });
+    // With another power of one's own, read is theirs and taking it would change nothing.
+    expect(state("read", ["read", "administer"], ["administer"])).toEqual({
+      state: "own",
+      given: false,
+      implied: true,
+    });
+    expect(state("read", ["read", "speak"], ["read", "speak"])).toEqual({
+      state: "own",
+      given: true,
+      implied: true,
+    });
+    // Held only by a group, read is the group's, and may be given of their own.
+    expect(state("read", ["read", "decide"], [])).toEqual({
+      state: "group",
+      given: false,
+      implied: false,
+    });
+    expect(state("decide", ["read", "decide"], ["speak"])).toEqual({
+      state: "group",
+      given: false,
+      implied: false,
+    });
+    expect(state("administer", [], [])).toEqual({ state: "none", given: false, implied: false });
+  });
+
+  it("draws the powers held as tags, a group's dashed, when nothing may change them", () => {
+    const html = renderToStaticMarkup(
+      <PowerTags held={ana().powers} own={ana().own} label="ana" busy={false} />,
+    );
+    expect(html).toBe(
+      '<ul class="people-powers" aria-label="ana&#x27;s powers">' +
+        '<li class="people-power" data-held="own">read</li>' +
+        '<li class="people-power" data-held="own">speak</li>' +
+        '<li class="people-power" data-held="group">decide</li></ul>',
+    );
+    expect(
+      renderToStaticMarkup(<PowerTags held={[]} own={[]} label="bo" busy={false} />),
+    ).toContain('<li class="people-none">no power</li>');
+    // A group given decide alone holds read with it.
+    expect(
+      renderToStaticMarkup(
+        <PowerTags held={["decide"]} own={["decide"]} label="staff" busy={false} />,
+      ),
+    ).toBe(
+      '<ul class="people-powers" aria-label="staff&#x27;s powers">' +
+        '<li class="people-power" data-held="own">read</li>' +
+        '<li class="people-power" data-held="own">decide</li></ul>',
+    );
+  });
+
+  it("draws every power as a toggle that gives one not given and takes one that is", () => {
+    const toggled: unknown[] = [];
+    const tags = PowerTags({
+      held: ana().powers,
+      own: ana().own,
+      label: "ana",
+      busy: false,
+      toggle: (word, given) => toggled.push([word, given]),
+    });
+    const html = renderToStaticMarkup(tags);
+    expect(html.match(/<button/g)).toHaveLength(5);
+    expect(html).toContain(
+      'data-held="own" aria-pressed="true" aria-label="speak for ana" title="Take speak from ana"',
+    );
+    expect(html).toContain(
+      'data-held="group" aria-pressed="false" aria-label="decide for ana" title="Held by a group; give ana decide of their own"',
+    );
+    expect(html).toContain(
+      'data-held="none" aria-pressed="false" aria-label="administer for ana" title="Give ana administer"',
+    );
+    // Read, which her own speak includes: hers, and not offered, as taking it changes nothing.
+    expect(html).toContain(
+      'data-held="own" aria-pressed="true" aria-label="read for ana" title="Held with every other power of ana&#x27;s own" aria-disabled="true"',
+    );
+    fire(tags, labelled("speak for ana"), "onClick");
+    fire(tags, labelled("read for ana"), "onClick");
+    fire(tags, labelled("direct agents for ana"), "onClick");
+    expect(toggled).toEqual([
+      ["speak", true],
+      ["direct_agents", false],
+    ]);
+  });
+
+  it("sends a person's grant, revoke, join, leave and removal for an admin, by the person's part", () => {
+    const { sent, writes } = writing();
+    const drawn = Person({ person: ana(), page: SAMPLE, writes });
+    const tags = elementOf(drawn, (element) => element.type === PowerTags);
+    const toggle = tags?.props.toggle as (word: string, given: boolean) => void;
+    toggle("speak", true);
+    toggle("administer", false);
+    fire(drawn, labelled("Take ana out of staff"), "onClick");
+    fire(drawn, (element) => typeof element.props.onRemove === "function", "onRemove");
+    expect(sent).toEqual([
+      ["person-ana", "/api/people-change", { action: "revoke", name: "ana", powers: ["speak"] }],
+      [
+        "person-ana",
+        "/api/people-change",
+        { action: "grant", name: "ana", powers: ["administer"] },
+      ],
+      ["person-ana", "/api/people-change", { action: "leave", name: "ana", group: "staff" }],
+      ["person-ana", "/api/people-change", { action: "remove", name: "ana" }],
+    ]);
+    const bo = SAMPLE.people[1];
+    if (!bo) throw new Error("no bo");
+    const select = elementOf(
+      Person({ person: bo, page: SAMPLE, writes }),
+      (element) => element.props.label === "Put bo in a group",
+    );
+    const onChange = select?.props.onChange as (group: string) => void;
+    onChange("");
+    onChange("staff");
+    expect(sent.at(-1)).toEqual([
+      "person-bo",
+      "/api/people-change",
+      { action: "join", name: "bo", group: "staff" },
+    ]);
+    expect(sent).toHaveLength(5);
+  });
+});
+
+describe("the page", () => {
+  const draw = (page: Page | null, writes?: Writes, error: string | null = null, missing = false) =>
+    renderToStaticMarkup(
+      <PeopleView
+        page={page}
+        error={error}
+        missing={missing}
+        writes={writes}
+        now={new Date(1_763_000_000_000 + 6 * 3_600_000)}
+      />,
+    );
+
+  it("opens busy on its outline while its read is out", () => {
+    vi.stubGlobal("document", { getElementById: () => null });
+    const html = renderToStaticMarkup(<PeoplePage />);
+    expect(html).toMatch(
+      /^<main class="people-page"><div class="people" data-ready="loading" aria-busy="true">/,
+    );
+    expect(html).toContain('class="people-ghost" aria-hidden="true"');
+  });
+
+  it("draws each person, group and change, the log newest first, for the person at the machine", () => {
+    const html = draw(SAMPLE, writing().writes);
+    expect(html).toMatch(/^<div class="people" data-ready="people" aria-busy="false">/);
+    expect(
+      [...html.matchAll(/<article class="people-person[^"]*" id="([a-z-]+)"/g)].map((f) => f[1]),
+    ).toEqual(["person-ana", "person-bo", "person-cy", "group-staff"]);
+    expect(html).toContain('<h3>Ana Lima</h3><span class="people-name">ana</span>');
+    expect(html).toContain("Signs in by tailscale, github · git ana-lima");
+    expect(html).toContain("No sign-in yet: reaches no board");
+    expect(html).toContain('<span class="people-name">ana</span></header>');
+    expect([...html.matchAll(/<li value="(\d)">/g)].map((f) => f[1])).toEqual([
+      "5",
+      "4",
+      "3",
+      "2",
+      "1",
+    ]);
+    expect(html).toContain("owner put cy on the board, holding read</li>");
+    // The person at the machine adds, makes a group, and writes every profile, a sign-in with it.
+    expect(html).toContain('aria-label="Add a person"');
+    expect(html).toContain('aria-label="Make a group"');
+    expect(html.match(/<details class="people-profile">/g)).toHaveLength(3);
+    expect(html).toContain('aria-label="Sign-in of bo"');
+    expect(html).toContain("<summary>Make a profile</summary>");
+  });
+
+  it("draws a reader without administer no control but their own profile, and no sign-in to give", () => {
+    const html = draw(READER, writing().writes);
+    expect(html).toContain("Changing who is on the board needs administer, which you do not hold.");
+    expect(html).not.toContain('aria-label="Add a person"');
+    expect(html).not.toContain("Take off the board");
+    expect(html).not.toContain("aria-pressed");
+    expect(html.match(/<details class="people-profile">/g)).toHaveLength(1);
+    expect(html).toContain('aria-label="Display name of cy"');
+    expect(html).not.toContain('aria-label="Sign-in of cy"');
+    expect(html).toContain('<span class="people-you">you</span>');
+    // Drawn with no writes at all, nothing is a control.
+    expect(draw(SAMPLE)).not.toMatch(/<(button|input|form|details)\b/);
+  });
+
+  it("says an empty board, a problem, a failed read, and a write's words on the part that sent it", () => {
+    const empty = draw(EMPTY, writing().writes);
+    expect(empty).toContain(
+      "Nobody is on this board but the person at the machine, who holds every power.",
+    );
+    expect(empty).toContain("No group yet.");
+    expect(empty).toContain("No change yet.");
+    expect(empty).not.toContain("needs administer");
+    expect(draw({ ...EMPTY, problem: "the board's people could not be read: down" })).toContain(
+      '<p class="people-error" role="alert">the board&#x27;s people could not be read: down</p>',
+    );
+    const failed = draw(null, undefined, "The server could not be reached");
+    expect(failed).toContain('data-ready="failed" aria-busy="false"');
+    expect(failed).toContain("The people could not be read. The server could not be reached");
+    const spoken = draw(SAMPLE, writing({ part: "person-bo", text: "no", refused: true }).writes);
+    const bo = spoken.slice(spoken.indexOf('id="person-bo"')).split("</article>")[0] ?? "";
+    expect(bo).toContain('<p class="people-said" data-refused="true" aria-live="polite">no</p>');
+    const anas = spoken.slice(spoken.indexOf('id="person-ana"')).split("</article>")[0] ?? "";
+    expect(anas).toContain('<p class="people-said" aria-live="polite"></p>');
+  });
+});

@@ -13,6 +13,7 @@ mod blocked_panes;
 mod blocks;
 mod board;
 mod board_people;
+mod board_people_change;
 mod callbacks;
 mod cancel;
 mod carried;

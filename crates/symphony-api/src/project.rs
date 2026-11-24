@@ -135,9 +135,10 @@ impl ProjectView {
 
     /// The Symphony's own pages in the header, in its order, each as its path and its name: the
     /// review home, the owner's queue, the documents' folder page, the task board, the reports, the
-    /// settings, the runs and the agents. The plugins' pages ([`ProjectView::nav`]) follow them.
-    pub fn own_pages(&self) -> [(String, &'static str); 8] {
-        use page_names::{AGENTS, BOARD, DOCS, HOME, QUEUE, REPORTS, RUNS, SETTINGS};
+    /// settings, the people, the runs and the agents. The plugins' pages ([`ProjectView::nav`])
+    /// follow them.
+    pub fn own_pages(&self) -> [(String, &'static str); 9] {
+        use page_names::{AGENTS, BOARD, DOCS, HOME, PEOPLE, QUEUE, REPORTS, RUNS, SETTINGS};
         [
             ("/".into(), HOME),
             ("/queue".into(), QUEUE),
@@ -145,6 +146,7 @@ impl ProjectView {
             ("/tasks".into(), BOARD),
             ("/reports".into(), REPORTS),
             ("/settings".into(), SETTINGS),
+            ("/people".into(), PEOPLE),
             ("/runs".into(), RUNS),
             ("/agents".into(), AGENTS),
         ]
@@ -168,6 +170,9 @@ pub mod page_names {
     /// The project's settings, `/settings`: everything in force and where each value comes
     /// from.
     pub const SETTINGS: &str = "Settings";
+    /// Who is on the project's board, `/people`: its people, groups and powers, and the log of
+    /// every change of them.
+    pub const PEOPLE: &str = "People";
     /// The project's runs, `/runs`: what runs now, every run with its steps and its log.
     pub const RUNS: &str = "Runs";
     /// The agents, `/agents`.
@@ -188,6 +193,7 @@ pub const SYMPHONY_ROUTES: &[&str] = &[
     "reports",
     "runs",
     "settings",
+    "people",
     "api",
     "assets",
     "static",
@@ -304,6 +310,7 @@ mod tests {
                 "Board /tasks",
                 "Reports /reports",
                 "Settings /settings",
+                "People /people",
                 "Runs /runs",
                 "Agents /agents"
             ]

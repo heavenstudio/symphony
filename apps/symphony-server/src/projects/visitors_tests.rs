@@ -291,3 +291,66 @@ async fn a_board_that_added_a_visitor_lets_them_reach_it_and_no_other() {
         assert_eq!(status, StatusCode::OK, "{path}");
     }
 }
+
+/// [`ana_on`]`(id)`, each ask counted by the project folder it names.
+fn counted(id: &'static str, asks: Arc<std::sync::Mutex<Vec<String>>>) -> Roster {
+    let roster = ana_on(id);
+    Arc::new(move |root: &Path, visitor: &Visitor| {
+        let named = root.file_name().unwrap().to_string_lossy().into_owned();
+        asks.lock().unwrap().push(named);
+        roster(root, visitor)
+    })
+}
+
+/// The roster asks `exchange` of `path` from `client` made, emptied after.
+async fn asked_of(
+    machine: &Machine,
+    asks: &std::sync::Mutex<Vec<String>>,
+    client: &str,
+    path: &'static str,
+) -> Vec<String> {
+    asks.lock().unwrap().clear();
+    let (status, _, body) = exchange(&machine.projects, client, ("GET", path, &[], "")).await;
+    assert_ne!(
+        status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "{path}: {}",
+        String::from_utf8_lossy(&body)
+    );
+    std::mem::take(&mut *asks.lock().unwrap())
+}
+
+#[tokio::test]
+async fn a_request_under_a_boards_id_that_added_the_visitor_asks_that_board_alone() {
+    let asks = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let machine = Machine::with_gate(gate(counted("beta", asks.clone())));
+    for path in ["/beta/docs/README.md", "/beta/api/pending", "/beta"] {
+        assert_eq!(
+            asked_of(&machine, &asks, LAPTOP, path).await,
+            ["beta"],
+            "{path}"
+        );
+    }
+    // A board that has not added her is asked once, then every other, so she is answered as for
+    // a project the server does not hold.
+    assert_eq!(
+        asked_of(&machine, &asks, LAPTOP, "/alpha/docs/README.md").await,
+        ["alpha", "beta"]
+    );
+    // The project list, the machine's front, a path no project's id begins and a respelled id ask
+    // every board.
+    for path in ["/api/projects", "/", "/tasks", "/%62eta/tasks"] {
+        assert_eq!(
+            asked_of(&machine, &asks, LAPTOP, path).await,
+            ["alpha", "beta"],
+            "{path}"
+        );
+    }
+    // The person at the machine is on every board, and no board is asked of her.
+    for path in ["/beta/docs/README.md", "/api/projects"] {
+        assert!(
+            asked_of(&machine, &asks, PHONE, path).await.is_empty(),
+            "{path}"
+        );
+    }
+}

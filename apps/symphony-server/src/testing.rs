@@ -484,3 +484,59 @@ mod tests {
         });
     }
 }
+
+/// A colleague's laptop under a login other than this machine's (`ana@example.com`), as a peer
+/// [`laptop_with`]'s whois names it.
+pub const LAPTOP: &str = "100.101.102.104:5000";
+
+/// A gate whose whois names a colleague's laptop at [`LAPTOP`], under a login other than this
+/// machine's, and whose roster is `roster`.
+pub fn laptop_with(roster: crate::gate::Roster) -> crate::gate::Gate {
+    crate::gate::Gate::new(
+        std::sync::Arc::new(|address: &str| {
+            Ok((address == "100.101.102.104").then(|| {
+                r#"{"Node": {"Name": "laptop"}, "UserProfile": {"ID": 12, "LoginName": "ana@example.com"}}"#.to_string()
+            }))
+        }),
+        std::sync::Arc::new(std::time::Instant::now),
+    )
+    .with_status(std::sync::Arc::new(|| {
+        Ok(r#"{"Self": {"DNSName": "studio.tail.ts.net.", "UserID": 11}}"#.to_string())
+    }))
+    .with_roster(roster)
+}
+
+/// The board of the project at a root, made on PostgreSQL as its command line makes it, in the
+/// checkout's git folder: its server stopped when it drops.
+pub struct Board(symphony_board::server::Home);
+
+impl Board {
+    /// The board at `root`, each of `people` on it with their powers, added by the person at the
+    /// machine.
+    pub fn holding(
+        root: &std::path::Path,
+        people: &[(&str, &[symphony_board::people::Power])],
+    ) -> Board {
+        let board = Board(symphony_board::server::Home::in_common(&root.join(".git")));
+        let store = Board::store(root);
+        for (name, powers) in people {
+            store.add_person(name, &[], powers, "owner").unwrap();
+        }
+        board
+    }
+
+    /// A store on the board at `root`, as its command line reaches it.
+    pub fn store(root: &std::path::Path) -> symphony_board::Store {
+        symphony_board::cli::connect(&symphony_board::cli::Env {
+            vars: Default::default(),
+            cwd: root.to_path_buf(),
+        })
+        .unwrap()
+    }
+}
+
+impl Drop for Board {
+    fn drop(&mut self) {
+        let _ = self.0.stop_board();
+    }
+}

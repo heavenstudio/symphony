@@ -2351,8 +2351,8 @@ as it did before. That person stays `owner`, with every power, once others are n
   nothing. `direct_agents` is given to no one yet: it is refused as a grant, a person's or a
   group's, until a board holds the words of someone who may not direct agents (step 5 of [the way
   from one owner](../product/analysis/users-and-identity.md#the-way-from-one-owner)), so every
-  route that reaches the agents stays the person at the machine's. `administer` guards nothing
-  yet: the command is the terminal's.
+  route that reaches the agents stays the person at the machine's. `administer` guards the
+  People page's changes ([below](#the-people-page)); the command is the terminal's.
 - **One name space.** A person's name and a group's are short names, as a line writes them
   ([REVIEW](REVIEW.md#card-history)), never `owner`, `agent`, `board` or
   `unknown`, never another person's or group's, and never a handle any session on the board was
@@ -2374,7 +2374,8 @@ as it did before. That person stays `owner`, with every power, once others are n
   approve that is the `owner` stamp among them), a workflow's edge and a setting need `decide`; a
   comment, a message, a task's message, an ask, its reply, the quick chat and a quick task need
   `speak` and `direct_agents`; an upload needs `speak`; an attempt's controls need `decide` and
-  `direct_agents`; anything else is the person at the machine's alone. A refusal is a 403 naming
+  `direct_agents`; a change of the board's people needs `administer`, and a profile's write from
+  the People page being on the board; anything else is the person at the machine's alone. A refusal is a 403 naming
   the power, `Forbidden: ana may not decide on this board`, and nothing is written. A custom
   workflow's `owner` capability is held by each person holding `decide`, as by the person at the
   machine.
@@ -2400,6 +2401,35 @@ the machine folder:
   GROUP POWER…`, `revoke --group GROUP POWER…`, `group add GROUP [POWER…]`, `group remove GROUP`
   (its members are out of it).
 - `profile NAME [--display D] [--signin …]… [--git H]…`: the profile alone, on no board.
+
+### The People page
+
+`/people`, after Settings in the header, shows whoever is on the board its people, each with
+the powers they hold, their own told apart from their groups' by a word as well as an edge, their
+groups, the services they sign in by and their git handles; its groups; and its log, newest
+first. It shows no sign-in's subject, no email and no chat address to anyone. Its controls are
+drawn for whoever holds `administer`, as the person at the machine always does: a person added
+with a display name, sign-ins, git handles, powers and groups, put in a group or taken out of
+one, given a power or one taken back, taken off the board; a group made, given a power or
+removed. Each is one change of the log, the command's own, named as the actor who made it
+(`owner` for the person at the machine). `administer` is read from the board as the change
+arrives, so one from someone without it is a 403, `Forbidden: ana may not administer on this
+board`, with nothing written. The page is the project's own board's: a worktree's server and a
+hosted visitor are refused it ([the server guide](../../apps/symphony-server/README.md)).
+
+Who writes a profile:
+
+- the person at the machine writes any profile, its sign-ins among them;
+- a person writes their own display name and git handles, from their own row, and no sign-in;
+- a board's admin makes a profile only for someone the machine holds none of: someone who has
+  one is added as their profile is, and an add that names a display name, a sign-in or a git
+  handle for them is refused, with nothing written. An existing profile's sign-ins are the person
+  at the machine's alone, as a sign-in says who a visitor is on every board of the machine.
+
+Nothing keeps a board's last `administer`: the person at the machine always administers. A
+process on the machine reaches the save routes as the machine's person, so the page's write is
+as open to a local agent as every other save is; the ask-first rule covers the command, and the
+board refusing a session is not this step's.
 
 ## Sessions
 
