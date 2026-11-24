@@ -63,8 +63,9 @@ leave less room (each slot's file names its holder's pid, by which the count kno
 segment). A start with no slot free says once what it waits on and waits on the slots' locks
 themselves for one to come free. One still waiting after 120 s is refused, naming the pids the
 held slots name, and one that finds no slot held and no room is refused at once. A project's own
-board, whose server outlives its starter, takes no slot and never waits for one. A test gives its
-homes slots of its own (`Home::slots`).
+board, whose server outlives its starter, takes no slot and never waits for one. A restore over
+it does take one, for the copy it serves once to end its leases, which ends with the restore.
+A test gives its homes slots of its own (`Home::slots`).
 
 PostgreSQL removes its segment at a clean end, and a later start on the same data removes one its
 predecessor left; but a scratch board's data goes with its test, and nothing comes back for it.

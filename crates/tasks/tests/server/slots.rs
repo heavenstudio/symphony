@@ -1,7 +1,7 @@
 //! The slots scratch boards' servers take, on real servers, each test's slots a folder of its own
 //! apart from the machine's: more boards than slots start in turn, a server killed with -9 leaves
-//! no segment once its supervisor has ended, a slot is free again however its server ended, and a
-//! project's own board starts with every slot taken.
+//! no segment once its supervisor has ended but one its record no longer names as its own, a slot
+//! is free again however its server ended, and a project's own board starts with every slot taken.
 
 use crate::postgres::{Board, GONE, folder, programs, signalled};
 use std::path::Path;
@@ -158,9 +158,67 @@ fn a_slot_is_free_again_once_its_server_has_ended_by_any_signal() {
     drop(slots.0.take(|_| {}).unwrap());
     board.none_left();
     if creator(&id) == Some(serving.pid) {
-        let removed = sys::output(command("ipcrm").args(["-m", &id])).unwrap();
-        assert!(removed.status.success(), "{removed:?}");
+        removed(&id);
     }
+}
+
+/// The segment `id`, one a test's own server left, removed.
+fn removed(id: &str) {
+    let removed = sys::output(command("ipcrm").args(["-m", id])).unwrap();
+    assert!(removed.status.success(), "{removed:?}");
+}
+
+/// The server on `board` held stopped, line `index` of its record written as `line`, then killed
+/// with -9: held stopped first, so it cannot read its record in between and end on its own.
+fn killed_with_its_record_rewritten(board: &Board, pid: i64, index: usize, line: &str) {
+    signalled(pid, "STOP");
+    let path = board.pg.data().join("postmaster.pid");
+    let record = std::fs::read_to_string(&path).unwrap();
+    let mut lines: Vec<&str> = record.lines().collect();
+    assert!(lines.len() > index, "{record}");
+    lines[index] = line;
+    std::fs::write(&path, format!("{}\n", lines.join("\n"))).unwrap();
+    signalled(pid, "KILL");
+}
+
+/// A supervisor whose server's record names another server by then, as one a later start wrote,
+/// removes no segment: the killed server's is left, and the test removes its own.
+#[test]
+fn a_killed_servers_supervisor_leaves_the_segment_once_its_record_names_another_server() {
+    let slots = OwnSlots::new("record-rewritten", 1);
+    let board = slots.board("record-rewritten", |home| home);
+    let serving = board.pg.ensure().unwrap();
+    let id = segment_of(&board);
+    killed_with_its_record_rewritten(&board, serving.pid, 0, &i32::MAX.to_string());
+    drop(slots.0.take(|_| {}).unwrap());
+    board.none_left();
+    assert_eq!(creator(&id), Some(serving.pid), "segment {id} is left");
+    removed(&id);
+}
+
+/// A supervisor whose killed server's record names a segment another server made removes nothing:
+/// that server's segment stays and it still serves, and the killed one's is left.
+#[test]
+fn a_killed_servers_supervisor_leaves_a_segment_another_server_made() {
+    let first_slots = OwnSlots::new("other-creator-1", 1);
+    let second_slots = OwnSlots::new("other-creator-2", 1);
+    let first = first_slots.board("other-creator-1", |home| home);
+    let second = second_slots.board("other-creator-2", |home| home);
+    let killed = first.pg.ensure().unwrap();
+    let serving = second.pg.ensure().unwrap();
+    let (own, other) = (segment_of(&first), segment_of(&second));
+    assert_eq!(creator(&other), Some(serving.pid));
+    killed_with_its_record_rewritten(&first, killed.pid, 6, &format!("0 {other}"));
+    drop(first_slots.0.take(|_| {}).unwrap());
+    first.none_left();
+    assert_eq!(
+        creator(&other),
+        Some(serving.pid),
+        "segment {other} is left"
+    );
+    assert_eq!(second.psql(&serving, "SELECT 1"), "1");
+    assert_eq!(creator(&own), Some(killed.pid), "segment {own} is left");
+    removed(&own);
 }
 
 /// A project's own board, whose server outlives its starter, starts while every slot is held and

@@ -150,7 +150,9 @@ fn a_handed_slot_is_held_by_the_child_alone_until_it_ends() {
     let mut child = child.spawn().unwrap();
     let handed = slot.handed();
     drop(passed);
-    handed.serving(4242);
+    // A pid no process can have, so the line it is named in never depends on the machine.
+    let server = i64::from(i32::MAX);
+    handed.serving(server);
     drop(handed);
     let refused = folder
         .slots(1)
@@ -161,7 +163,7 @@ fn a_handed_slot_is_held_by_the_child_alone_until_it_ends() {
     assert!(
         refused
             .to_string()
-            .contains("slot 0 by pid 4242, which has ended"),
+            .contains(&format!("slot 0 by pid {server}, which has ended")),
         "the file names the server it was handed to: {refused}"
     );
     drop(writer);
