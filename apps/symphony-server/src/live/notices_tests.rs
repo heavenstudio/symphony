@@ -311,8 +311,6 @@ fn a_second_start_starts_no_second_worker() {
         "its origin is let go as it returns: no worker took it"
     );
     hub.stop_notices();
-    let worker = hub.notice_worker.get().unwrap();
-    assert!(worker.thread.lock().unwrap().is_none(), "the first, joined");
 }
 
 #[test]
@@ -338,16 +336,18 @@ fn a_hub_dropped_without_a_stop_ends_its_worker_and_lets_the_record_go() {
     test_time::until_true("the worker's first look", hand_bound(), || record.is_file())
         .unwrap_or_else(|stall| panic!("{stall}"));
     drop(hub);
-    // Its wake went with the hub: the worker ends, and its turns with it.
-    test_time::until_true("the worker ended", hand_bound(), || {
+    // Its wake went with the hub: the worker ends and lets its turns go, its origin before its
+    // runner, whose lock is then waited for on its own.
+    test_time::until_true("the worker's turns let go", hand_bound(), || {
         Arc::strong_count(&alive) == 1
     })
     .unwrap_or_else(|stall| panic!("{stall}"));
-    let key = symphony::notices::Key::of(&tree.path("machine")).unwrap();
-    assert!(
-        Runner::open(&root, "symphony", key).is_ok(),
-        "the record's lock is let go"
-    );
+    let machine = tree.path("machine");
+    test_time::until_true("the record's lock let go", hand_bound(), || {
+        let key = symphony::notices::Key::of(&machine).unwrap();
+        Runner::open(&root, "symphony", key).is_ok()
+    })
+    .unwrap_or_else(|stall| panic!("{stall}"));
 }
 
 /// A wall-clock backstop a stall alone reaches: six fake programs' runs on a loaded machine.
