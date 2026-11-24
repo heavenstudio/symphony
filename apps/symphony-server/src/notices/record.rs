@@ -1,11 +1,11 @@
 //! The project's record of its notices, `notices.json` under its artifacts folder
 //! ([`symphony::notices::RECORD`]): what the runner looked at, what it told, and each notice not
 //! settled yet, so a restart neither tells an event again nor loses a notice it was to hand again.
-//! It holds no address: a notice keeps the SHA-256 of the address it goes to, and the address is
-//! read again from the person's profile at each hand.
+//! It holds no address: a notice keeps a digest of the address it goes to under the machine's key
+//! ([`symphony::notices::Key`]), and the address is read again from the person's profile at each
+//! hand.
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{ErrorKind, Read as _};
 use std::path::Path;
@@ -37,7 +37,8 @@ pub(crate) struct Pending {
     pub person: String,
     /// The way's word.
     pub way: String,
-    /// The SHA-256 of the address it goes to, in hex ([`digest`]): never the address.
+    /// The digest of the address it goes to under the machine's key
+    /// ([`symphony::notices::Key::digest`]): never the address.
     pub digest: String,
     /// How many times its program was started for it.
     pub hands: u32,
@@ -83,15 +84,6 @@ impl Record {
         }
         written.map_err(|e| symphony::text::os_error(&e, path))
     }
-}
-
-/// What a notice keeps of the `address` it goes to: its SHA-256 in hex, which tells whether the
-/// address is still the one it was made for and says nothing of it.
-pub(crate) fn digest(address: &str) -> String {
-    Sha256::digest(address.as_bytes())
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
 }
 
 /// A new notice id: 32 hex digits of the machine's randomness, never given twice.

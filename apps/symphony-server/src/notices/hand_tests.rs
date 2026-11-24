@@ -39,12 +39,19 @@ fn a_sent_notice_reaches_its_program_on_stdin_alone() {
         "cat > \"$here/got\"\nprintf '%s|' \"$@\" > \"$here/args\"\nenv > \"$here/env\"\nexit 0",
     );
     assert_eq!(handed(&sends), Handed::Sent);
-    assert_eq!(tree.read("got"), format!("{LINE}\n"), "one line and its newline");
+    assert_eq!(
+        tree.read("got"),
+        format!("{LINE}\n"),
+        "one line and its newline"
+    );
     assert_eq!(tree.read("args"), "|", "no argument");
     // No part of the message is in its environment; the environment itself is not printed.
     let env = tree.read("env");
     for part in [ADDRESS, LINK, "\"notice\":1"] {
-        assert!(!env.contains(part), "{part} is in the program's environment");
+        assert!(
+            !env.contains(part),
+            "{part} is in the program's environment"
+        );
     }
 }
 
@@ -54,7 +61,9 @@ fn a_75_is_handed_again_with_its_words_the_address_and_the_link_hidden() {
     let later = program(
         &tree,
         "later",
-        &format!("cat >/dev/null\necho \"ratelimited for {ADDRESS}\" >&2\necho \"at {LINK}\" >&2\nexit 75"),
+        &format!(
+            "cat >/dev/null\necho \"ratelimited for {ADDRESS}\" >&2\necho \"at {LINK}\" >&2\nexit 75"
+        ),
     );
     assert_eq!(
         handed(&later),
@@ -119,7 +128,38 @@ fn a_program_that_does_not_end_is_ended_with_its_whole_group() {
     else {
         panic!("a program ended at its bound is handed again");
     };
-    assert_eq!(why, "it did not end within 60 s, so it and its group were ended");
+    assert_eq!(
+        why,
+        "it did not end within 60 s, so it and its group were ended"
+    );
+    let pid: i64 = tree.read("child").trim().parse().unwrap();
+    test_time::until_true("the stuck program's child ended", MOST, || {
+        !symphony_board::sys::pid_alive(pid)
+    })
+    .unwrap_or_else(|stall| panic!("{stall}"));
+}
+
+#[test]
+fn a_program_whose_end_cannot_be_watched_is_ended_with_its_group_and_handed_again() {
+    let tree = Tree::new();
+    let stuck = program(
+        &tree,
+        "stuck",
+        "sleep 600 &\necho $! > \"$here/child.tmp\"\nmv \"$here/child.tmp\" \"$here/child\"\nexec sleep 600",
+    );
+    let child = tree.path("child");
+    let unwatched = |_pid: u32| {
+        test_time::until_true("the stuck program's child", MOST, || child.is_file())
+            .unwrap_or_else(|stall| panic!("{stall}"));
+        Err(io::Error::other("no watch"))
+    };
+    let handed = hand(&stuck, LINE, &[], &Running::default(), &unwatched);
+    assert_eq!(
+        handed,
+        Handed::Later(
+            "its end could not be watched (no watch), so it and its group were ended".into()
+        )
+    );
     let pid: i64 = tree.read("child").trim().parse().unwrap();
     test_time::until_true("the stuck program's child ended", MOST, || {
         !symphony_board::sys::pid_alive(pid)
@@ -153,7 +193,10 @@ fn the_servers_stop_ends_a_hand_under_way_and_starts_none_after() {
 
 #[test]
 fn what_a_program_says_is_one_line_cut_short_with_every_hidden_word_replaced() {
-    assert_eq!(hidden_in(b"  a  \n\n b U1 \n", &["U1", ""]), "a / b <hidden>");
+    assert_eq!(
+        hidden_in(b"  a  \n\n b U1 \n", &["U1", ""]),
+        "a / b <hidden>"
+    );
     let long = "x".repeat(SAID + 20);
     let said = hidden_in(long.as_bytes(), &[]);
     assert_eq!(said.chars().count(), SAID + 1);

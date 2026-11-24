@@ -402,6 +402,11 @@ fn a_group_tells_each_of_its_members_a_person_themself_and_the_machine_nobody() 
     assert!(told(&people, &gone).is_empty());
     // A board that names nobody: every thing is the person at the machine's, told to no one.
     let nobody = board(&[], &[]);
-    let any = owning(&nobody, &Map::default(), Some("design"), &[Place::Area("app".into())]);
+    let any = owning(
+        &nobody,
+        &Map::default(),
+        Some("design"),
+        &[Place::Area("app".into())],
+    );
     assert!(told(&nobody, &any).is_empty());
 }

@@ -138,15 +138,17 @@ worktree or a preview makes none, so nothing is told twice. Its module doc is
 
 - **Handed again** after a `75`: a minute after, then twice as long each time, at most an hour,
   eight hands in all; after the eighth it is dropped, said. Any other status is said once and the
-  notice dropped. A program that does not end within 60 s is ended with its whole process group,
-  as a `75`. A notice whose person's way or address for it changed since it was made, or whose way
+  notice dropped. A program that does not end within 60 s, or whose end the server cannot watch,
+  is ended with its whole process group, as a `75`. A notice whose person's way or address for it changed since it was made, or whose way
   has no program now, is dropped unhanded.
 - **Through a restart.** The project's record is `notices.json` in its artifacts folder: the newest
   board line looked at, who was told of each card while it waits, and each notice still to hand
-  with its id, its person, its way and a digest of their address, never the address. A hand is
-  written there before its program starts and settled after, so a notice handed when the server
-  stopped is handed again, with the same id, and a restart in a notice's wait hands it once, when
-  it is due.
+  with its id, its person, its way and a digest of their address, never the address. The digest
+  is keyed by the machine's own secret, `notices/record.key` in the machine folder, made once and
+  its owner's alone, so the record says nothing of an address, a phone number's among them, to
+  whoever reads it without the key. A hand is written there before its program starts and settled
+  after, so a notice handed when the server stopped is handed again, with the same id, and a
+  restart in a notice's wait hands it once, when it is due.
 - **Its link** is the page under the project, `http://NAME:PORT/<id>/…`, by the machine's tailnet
   name (`127.0.0.1` without one).
 - **What it says.** Each outcome is a `NOTICE` line in the server's log, by the notice's id, kind,

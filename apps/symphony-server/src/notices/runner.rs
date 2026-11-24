@@ -4,12 +4,12 @@
 //! within [`MOST_HANDS`], each step written to the record before the next.
 
 use std::path::{Path, PathBuf};
-use symphony::notices::{Kind, Programs, line};
+use symphony::notices::{Key, Kind, Programs, line};
 use symphony_board::people::ownership::{Owning, told};
 use symphony_board::people::{People, Profiles};
 
 use super::hand::Handed;
-use super::record::{Pending, Record, digest, new_id};
+use super::record::{Pending, Record, new_id};
 
 /// The most times a notice's program is started for it: after the last `75` it is dropped.
 pub(crate) const MOST_HANDS: u32 = 8;
@@ -58,10 +58,12 @@ pub(crate) struct Look<'a> {
     pub latest: i64,
 }
 
-/// One project's runner: its id, its record's file and the record.
+/// One project's runner: its id, its record's file, the machine's key for the digests the record
+/// keeps, and the record.
 pub(crate) struct Runner {
     project: String,
     path: PathBuf,
+    key: Key,
     /// None until the first look, which takes what stands then as told.
     record: Option<Record>,
 }
@@ -78,10 +80,10 @@ impl std::fmt::Debug for Runner {
 }
 
 impl Runner {
-    /// The runner of the project `project` at `root`, its record read from its artifacts folder;
-    /// with why where a record is there and does not read, which is then made anew at the first
-    /// look, as one never made.
-    pub(crate) fn open(root: &Path, project: &str) -> (Runner, Option<String>) {
+    /// The runner of the project `project` at `root`, its record read from its artifacts folder
+    /// and its digests made under `key`; with why where a record is there and does not read, which
+    /// is then made anew at the first look, as one never made.
+    pub(crate) fn open(root: &Path, project: &str, key: Key) -> (Runner, Option<String>) {
         let artifact = symphony::project::Project::of(root).artifact(symphony::notices::RECORD);
         let path = root.join(artifact);
         let (record, unread) = match Record::read(&path) {
@@ -91,6 +93,7 @@ impl Runner {
         let runner = Runner {
             project: project.into(),
             path,
+            key,
             record,
         };
         (runner, unread)
@@ -157,7 +160,7 @@ impl Runner {
                 link: format!("{}/{}{page}", origin(), self.project),
                 person: person.into(),
                 way: reach.way().into(),
-                digest: digest(reach.address()),
+                digest: self.key.digest(reach.address()),
                 hands: 0,
                 due: now,
                 handing: false,
@@ -227,7 +230,9 @@ impl Runner {
             let kind = Kind::of(&notice.kind);
             let reach = kind
                 .and_then(|kind| profiles.reach(&notice.person, kind.word()))
-                .filter(|reach| reach.way() == notice.way && digest(reach.address()) == notice.digest);
+                .filter(|reach| {
+                    reach.way() == notice.way && self.key.digest(reach.address()) == notice.digest
+                });
             let program = programs.program(&notice.way);
             let why = if kind.is_none() || reach.is_none() {
                 "its person's way or address for it changed since it was made"

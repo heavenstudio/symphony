@@ -11,7 +11,7 @@ use crate::notices::runner::Runner;
 use crate::testing::board::{Fixture, Seed};
 use crate::testing::{Tree, repository_holding, store_on};
 use serde_json::json;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use symphony_board::people::ownership::Place;
 use symphony_board::people::{Power, Profile, Profiles};
@@ -70,7 +70,10 @@ impl Telling {
             for (name, group) in [("ana", "design"), ("bo", "design"), ("cy", "engineering")] {
                 (store.add_person(name, &[group.into()], &[Power::Speak], "owner")).unwrap();
             }
-            for place in [Place::Folder("docs/design".into()), Place::Area("app".into())] {
+            for place in [
+                Place::Folder("docs/design".into()),
+                Place::Area("app".into()),
+            ] {
                 store.map_place(&place, "design", "owner").unwrap();
             }
         }
@@ -84,10 +87,7 @@ impl Telling {
         );
         tree.write(
             "machine/notices/programs.toml",
-            &format!(
-                "slack = \"{0}\"\nemail = \"{0}\"\n",
-                sender.display()
-            ),
+            &format!("slack = \"{0}\"\nemail = \"{0}\"\n", sender.display()),
         );
         profiles().write(&machine).unwrap();
         let mut hub = Hub::new(&root, &root.join("build/client"));
@@ -106,7 +106,8 @@ impl Telling {
 
     /// The notices the fake program was handed, each its kind, way, address and link.
     fn told(&self) -> Vec<(String, String, String, String)> {
-        let told = std::fs::read_to_string(self.tree.path("machine/notices/told")).unwrap_or_default();
+        let told =
+            std::fs::read_to_string(self.tree.path("machine/notices/told")).unwrap_or_default();
         (told.lines())
             .map(|line| {
                 let notice = symphony_notice::Notice::read(line).unwrap();
@@ -167,13 +168,13 @@ struct Passes {
 }
 
 impl Passes {
-    fn of(root: &Path) -> Passes {
-        let (runner, unread) = Runner::open(root, "symphony");
-        assert_eq!(unread, None);
+    fn of(telling: &Telling) -> Passes {
+        let mut said = Said::default();
+        let runner = telling.hub.open_notices("symphony", &mut said).unwrap();
         Passes {
             runner,
             last: None,
-            said: Said::default(),
+            said,
             running: Running::default(),
         }
     }
@@ -207,16 +208,21 @@ fn ask_everything(telling: &Telling) {
 #[test]
 fn a_waiting_card_a_question_and_a_verdict_reach_each_member_of_its_group_once_by_their_way() {
     let telling = Telling::new(false);
-    let mut passes = Passes::of(&telling.root);
+    let mut passes = Passes::of(&telling);
     passes.pass(&telling.hub);
-    assert_eq!(passes.runner.cursor().is_some(), true, "the first look");
+    assert!(passes.runner.cursor().is_some(), "the first look");
     assert!(telling.told().is_empty(), "nothing of what stood");
     ask_everything(&telling);
     passes.pass(&telling.hub);
     let task = format!("{ORIGIN}/symphony/task/app/x");
     let card = format!("{ORIGIN}/symphony/{DOC}#new-palette");
     let by = |kind: &str, way: &str, address: &str, link: &str| {
-        (kind.to_string(), way.to_string(), address.to_string(), link.to_string())
+        (
+            kind.to_string(),
+            way.to_string(),
+            address.to_string(),
+            link.to_string(),
+        )
     };
     assert_eq!(
         telling.told(),
@@ -250,13 +256,16 @@ fn a_waiting_card_a_question_and_a_verdict_reach_each_member_of_its_group_once_b
         ]
     );
     let record = std::fs::read_to_string(telling.root.join("artifacts/notices.json")).unwrap();
-    assert!(!record.contains(ANA_SLACK) && !record.contains(BO_EMAIL), "{record}");
+    assert!(
+        !record.contains(ANA_SLACK) && !record.contains(BO_EMAIL),
+        "{record}"
+    );
 }
 
 #[test]
 fn a_board_that_names_nobody_tells_no_one() {
     let telling = Telling::new(true);
-    let mut passes = Passes::of(&telling.root);
+    let mut passes = Passes::of(&telling);
     passes.pass(&telling.hub);
     ask_everything(&telling);
     passes.pass(&telling.hub);
@@ -276,8 +285,10 @@ fn the_worker_hands_what_a_wake_finds_and_ends_at_the_stop() {
         .unwrap_or_else(|stall| panic!("{stall}"));
     ask_everything(&telling);
     telling.hub.wake_notices();
-    test_time::until_true("the six notices handed", hand_bound(), || telling.told().len() == 6)
-        .unwrap_or_else(|stall| panic!("{stall}"));
+    test_time::until_true("the six notices handed", hand_bound(), || {
+        telling.told().len() == 6
+    })
+    .unwrap_or_else(|stall| panic!("{stall}"));
     telling.hub.stop_notices();
     let worker = telling.hub.notice_worker.get().unwrap();
     assert!(worker.thread.lock().unwrap().is_none(), "joined");

@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
-use symphony::notices::{Kind, Programs};
+use symphony::notices::{Key, Kind, Programs};
 use symphony_board::lock::Recovered as _;
 use symphony_board::people::ownership::{self, Map, Thing};
 use symphony_board::people::{People, Profiles};
@@ -125,6 +125,25 @@ impl Hub {
         }
     }
 
+    /// The runner of the project `project`, its digests under the machine's key: none where the
+    /// hub has no machine folder, or the key cannot be read or made there, said once.
+    fn open_notices(&self, project: &str, said: &mut Said) -> Option<Runner> {
+        let machine = self.machine.as_deref()?;
+        let key = match Key::of(machine) {
+            Ok(key) => key,
+            Err(why) => {
+                said.once(project, "key", format!("nothing is told: {why}"));
+                return None;
+            }
+        };
+        said.clear("key");
+        let (runner, unread) = Runner::open(&self.root, project, key);
+        if let Some(why) = unread {
+            eprintln!("NOTICE {project}: its record is made anew, as it does not read: {why}");
+        }
+        Some(runner)
+    }
+
     /// One pass of `runner`: a look, where what it reads moved since `last`, then the hand of what
     /// is due. A machine folder, a board or profiles that cannot be read leaves the record as it
     /// was, said once; programs that are refused send nothing, said once, and the look goes on.
@@ -175,8 +194,8 @@ impl Hub {
         let page = {
             let pages = self.pages.read().recover();
             (pages.get("")).map(|page| {
-                let cards: Vec<(String, String)> = (page.queue.waiting.iter())
-                    .map(|card| (card.doc.clone(), card.slug.clone()))
+                let cards: Vec<(String, String, String)> = (page.queue.waiting.iter())
+                    .map(|card| (card.doc.clone(), card.slug.clone(), card.href()))
                     .collect();
                 (page.board.version, cards)
             })
@@ -194,7 +213,11 @@ impl Hub {
                     match store.messages_after_rows(cursor, latest) {
                         Ok(rows) => told_lines(&store, &people, &map, rows),
                         Err(error) => {
-                            return said.once(project, "lines", format!("the board's lines: {error}"));
+                            return said.once(
+                                project,
+                                "lines",
+                                format!("the board's lines: {error}"),
+                            );
                         }
                     }
                 }
@@ -202,11 +225,14 @@ impl Hub {
             };
             said.clear("lines");
             let cards = page.map(|(_, cards)| {
-                let owners = symphony::owners::waiting(&people, &map, &self.root, &cards);
+                let named: Vec<(String, String)> = (cards.iter())
+                    .map(|(doc, slug, _)| (doc.clone(), slug.clone()))
+                    .collect();
+                let owners = symphony::owners::waiting(&people, &map, &self.root, &named);
                 (cards.into_iter().zip(owners))
-                    .map(|((doc, slug), owning)| Waiting {
+                    .map(|((doc, slug, href), owning)| Waiting {
                         key: format!("{doc}#{slug}"),
-                        page: format!("/{doc}#{slug}"),
+                        page: href,
                         owning,
                     })
                     .collect()
@@ -283,14 +309,7 @@ fn work(
     project: &str,
     mut origin: Origin,
 ) {
-    let Some(root) = hub.upgrade().map(|hub| hub.root.clone()) else {
-        return;
-    };
-    let (mut runner, unread) = Runner::open(&root, project);
-    if let Some(why) = unread {
-        eprintln!("NOTICE {project}: its record is made anew, as it does not read: {why}");
-    }
-    let (mut last, mut said) = (None, Said::default());
+    let (mut runner, mut last, mut said) = (None, None, Said::default());
     loop {
         if running.stopping() {
             return;
@@ -299,12 +318,17 @@ fn work(
             let Some(hub) = hub.upgrade() else {
                 return;
             };
-            hub.notice_pass(&mut runner, &mut last, running, &mut *origin, &mut said, project);
+            if runner.is_none() {
+                runner = hub.open_notices(project, &mut said);
+            }
+            if let Some(runner) = &mut runner {
+                hub.notice_pass(runner, &mut last, running, &mut *origin, &mut said, project);
+            }
             (hub.clock)()
         };
         // Until a wake, or until the next notice is due: a retry's backoff, its deadline the
         // record's own (RULES.md `code/no-timed-waits`).
-        let woke = match runner.next_due() {
+        let woke = match runner.as_ref().and_then(Runner::next_due) {
             None => woken.recv().is_ok(),
             Some(due) => !matches!(
                 woken.recv_timeout(Duration::from_secs_f64((due - now).max(0.0))),

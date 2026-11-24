@@ -14,7 +14,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 /// The folder of the machine folder where each notice plugin keeps what it needs, and the server
@@ -25,6 +25,8 @@ pub const PROGRAMS: &str = "programs.toml";
 /// The project's record of its notices, under its artifacts folder
 /// ([`crate::project::Project::artifact`]).
 pub const RECORD: &str = "notices.json";
+/// The file in [`FOLDER`] holding the machine's key for the digests a record keeps ([`Key`]).
+pub const KEY: &str = "record.key";
 
 /// A plugin's exit status for a notice it sent.
 pub const SENT: i32 = 0;
@@ -152,6 +154,159 @@ impl Programs {
     }
 }
 
+/// The machine's key for the digest of an address a project's record keeps, so the record says
+/// whether a notice's address is still the one it was made for and nothing of the address: a
+/// digest of a phone number or an email with no key is read back by trying them all. It is made
+/// once, at random, in `notices/record.key` of the machine folder, the folder made its owner's
+/// alone when it is not there, and the file its owner's alone always. Printed, it shows nothing.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Key([u8; KEY_BYTES]);
+
+const KEY_BYTES: usize = 32;
+
+impl std::fmt::Debug for Key {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Key(<hidden>)")
+    }
+}
+
+impl Key {
+    /// The key of the machine folder `machine`, made there when it holds none.
+    ///
+    /// # Errors
+    ///
+    /// The folder or the file is a link, is not this account's, may be read or written by
+    /// another account (the file) or written by another (the folder), does not hold a key, or
+    /// cannot be read or made. Said by the path and the rule, never by what it holds.
+    pub fn of(machine: &Path) -> Result<Key, String> {
+        let folder = machine.join(FOLDER);
+        match fs::symlink_metadata(&folder) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                (fs::DirBuilder::new().recursive(true).mode(0o700))
+                    .create(&folder)
+                    .map_err(|error| format!("{}: {error}", folder.display()))?;
+            }
+            Err(error) => return Err(format!("{}: {error}", folder.display())),
+            Ok(meta) if meta.file_type().is_symlink() => return Err(unkept(&folder, "a link")),
+            Ok(meta) => secret(&folder, &meta, fs::Metadata::is_dir, 0o022)?,
+        }
+        let path = folder.join(KEY);
+        let opened = (fs::OpenOptions::new().read(true))
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(&path);
+        let file = match opened {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Key::make(&path),
+            Err(error) if error.raw_os_error() == Some(libc::ELOOP) => {
+                return Err(unkept(&path, "a link"));
+            }
+            Err(error) => return Err(format!("{}: {error}", path.display())),
+            Ok(file) => file,
+        };
+        let meta = (file.metadata()).map_err(|error| format!("{}: {error}", path.display()))?;
+        secret(&path, &meta, fs::Metadata::is_file, 0o077)?;
+        let text =
+            io::read_to_string(file).map_err(|error| format!("{}: {error}", path.display()))?;
+        Key::parse(text.trim()).ok_or_else(|| unkept(&path, "no key"))
+    }
+
+    /// A new key at `path`, its owner's alone; the one another start made first where it won.
+    fn make(path: &Path) -> Result<Key, String> {
+        let mut bytes = [0u8; KEY_BYTES];
+        (fs::File::open("/dev/urandom")
+            .and_then(|mut random| io::Read::read_exact(&mut random, &mut bytes)))
+        .map_err(|error| format!("no randomness to make {}: {error}", path.display()))?;
+        let key = Key(bytes);
+        let made = (fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600))
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path);
+        match made {
+            Ok(mut file) => {
+                let text = format!("{}\n", hex(&key.0));
+                io::Write::write_all(&mut file, text.as_bytes())
+                    .map_err(|error| format!("{}: {error}", path.display()))?;
+                Ok(key)
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                Key::of(path.parent().and_then(Path::parent).unwrap_or(path))
+            }
+            Err(error) => Err(format!("{}: {error}", path.display())),
+        }
+    }
+
+    fn parse(text: &str) -> Option<Key> {
+        let mut bytes = [0u8; KEY_BYTES];
+        if text.len() != KEY_BYTES * 2 || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        for (at, byte) in bytes.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&text[at * 2..at * 2 + 2], 16).ok()?;
+        }
+        Some(Key(bytes))
+    }
+
+    /// The digest of `address` a record keeps, in hex: HMAC-SHA256 under the key.
+    pub fn digest(&self, address: &str) -> String {
+        hex(&hmac_sha256(&self.0, address.as_bytes()))
+    }
+}
+
+/// HMAC-SHA256 of `message` under `key` (RFC 2104).
+fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
+    use sha2::{Digest as _, Sha256};
+    const BLOCK: usize = 64;
+    let mut padded = [0u8; BLOCK];
+    if key.len() > BLOCK {
+        padded[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        padded[..key.len()].copy_from_slice(key);
+    }
+    let inner = (Sha256::new())
+        .chain_update(padded.map(|b| b ^ 0x36))
+        .chain_update(message)
+        .finalize();
+    (Sha256::new())
+        .chain_update(padded.map(|b| b ^ 0x5c))
+        .chain_update(inner)
+        .finalize()
+        .into()
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The refusal of the key's folder or file at `path`, which is `what`.
+fn unkept(path: &Path, what: &str) -> String {
+    format!(
+        "{} is {what}, so no notice is made: keep the key's folder and file themselves there, \
+         the file its owner's alone (chmod 600), or remove the file to make a new key",
+        path.display()
+    )
+}
+
+/// Whether `meta`, of `path`, is what `is` says, this account's, and has none of the mode bits
+/// `closed` for another account.
+fn secret(
+    path: &Path,
+    meta: &fs::Metadata,
+    is: fn(&fs::Metadata) -> bool,
+    closed: u32,
+) -> Result<(), String> {
+    if !is(meta) {
+        return Err(unkept(path, "not what it should be"));
+    }
+    if meta.uid() != effective_uid() {
+        return Err(unkept(path, "another account's"));
+    }
+    if meta.permissions().mode() & closed != 0 {
+        return Err(unkept(path, "open to another account"));
+    }
+    Ok(())
+}
+
 /// Whether `text` is a way's word: lowercase ASCII letters and digits, single dashes between them.
 fn is_way(text: &str) -> bool {
     !text.is_empty()
@@ -196,7 +351,10 @@ fn kept(
 }
 
 /// The account this process runs as.
-#[expect(unsafe_code, reason = "geteuid: libc's own call, which reads nothing of ours")]
+#[expect(
+    unsafe_code,
+    reason = "geteuid: libc's own call, which reads nothing of ours"
+)]
 fn effective_uid() -> u32 {
     // SAFETY: geteuid takes no argument and cannot fail.
     unsafe { libc::geteuid() }

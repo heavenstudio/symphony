@@ -7,6 +7,7 @@ use super::*;
 use crate::testing::Tree;
 use serde_json::json;
 use std::cell::RefCell;
+use symphony::notices::Key;
 use symphony_board::people::ownership::{self, Map};
 use symphony_board::people::{Group, Member, Profile};
 
@@ -107,9 +108,19 @@ fn task_line(people: &People, id: i64, kind: Kind, group: &str) -> Line {
     }
 }
 
+/// The machine's key, kept in `tree`'s machine folder: made at the first call, the same after.
+fn key(tree: &Tree) -> Key {
+    Key::of(&tree.path("machine")).unwrap()
+}
+
+/// The runner of the project `symphony` in `tree`, as a start opens it.
+fn opened(tree: &Tree) -> (Runner, Option<String>) {
+    Runner::open(&tree.path(""), "symphony", key(tree))
+}
+
 /// A runner of the project `symphony` in `tree`, its first look taken at line 10 over `cards`.
 fn started(tree: &Tree, people: &People, cards: Vec<Waiting>) -> Runner {
-    let (mut runner, unread) = Runner::open(&tree.path(""), "symphony");
+    let (mut runner, unread) = opened(tree);
     assert_eq!(unread, None);
     look(&mut runner, people, Some(cards), vec![], 10);
     runner
@@ -186,7 +197,7 @@ fn record(runner: &Runner) -> &Record {
 fn the_first_look_takes_what_stands_as_told_and_waits_for_the_cards() {
     let tree = Tree::new();
     let people = people();
-    let (mut runner, _) = Runner::open(&tree.path(""), "symphony");
+    let (mut runner, _) = opened(&tree);
     look(&mut runner, &people, None, vec![], 7);
     assert_eq!(runner.cursor(), None, "no look before the cards are read");
     assert!(!tree.path("artifacts/notices.json").exists());
@@ -200,7 +211,11 @@ fn the_first_look_takes_what_stands_as_told_and_waits_for_the_cards() {
     );
     assert_eq!(runner.next_due(), None);
     let kept = Record::read(&tree.path("artifacts/notices.json")).unwrap();
-    assert_eq!(kept.as_ref(), Some(record), "written under the artifacts folder");
+    assert_eq!(
+        kept.as_ref(),
+        Some(record),
+        "written under the artifacts folder"
+    );
 }
 
 #[test]
@@ -233,7 +248,12 @@ fn a_card_waiting_on_a_group_tells_each_member_once_by_their_way_and_nobody_with
     );
     assert_eq!(link.project(), "symphony");
     assert_eq!(
-        hands.log.borrow().iter().filter(|l| l.ends_with(": sent")).count(),
+        hands
+            .log
+            .borrow()
+            .iter()
+            .filter(|l| l.ends_with(": sent"))
+            .count(),
         2
     );
     assert!(record(&runner).pending.is_empty());
@@ -296,7 +316,13 @@ fn a_75_is_handed_again_with_the_same_id_on_its_backoff_until_its_last_hand() {
     let tree = Tree::new();
     let people = people();
     let mut runner = started(&tree, &people, vec![]);
-    look(&mut runner, &people, None, vec![task_line(&people, 11, Kind::Verdict, "ana")], 11);
+    look(
+        &mut runner,
+        &people,
+        None,
+        vec![task_line(&people, 11, Kind::Verdict, "ana")],
+        11,
+    );
     let hands = Hands::default();
     let later = || Handed::Later("ratelimited".into());
     let mut times = Vec::new();
@@ -312,7 +338,11 @@ fn a_75_is_handed_again_with_the_same_id_on_its_backoff_until_its_last_hand() {
         [0.0, 60.0, 180.0, 420.0, 900.0, 1860.0, 3780.0, 7380.0]
     );
     let ids: std::collections::BTreeSet<_> = hands.read().into_iter().map(|n| n.0).collect();
-    assert_eq!((hands.given.borrow().len(), ids.len()), (8, 1), "eight hands of one notice");
+    assert_eq!(
+        (hands.given.borrow().len(), ids.len()),
+        (8, 1),
+        "eight hands of one notice"
+    );
     let log = hands.log.borrow();
     assert!(log[0].ends_with("not sent this time (hand 1 of 8), again in 60 s: ratelimited"));
     assert!(log[7].ends_with("not sent after 8 hands, so dropped: ratelimited"));
@@ -327,9 +357,17 @@ fn any_other_status_is_said_once_and_dropped() {
     let tree = Tree::new();
     let people = people();
     let mut runner = started(&tree, &people, vec![]);
-    look(&mut runner, &people, None, vec![task_line(&people, 11, Kind::Question, "bo")], 11);
+    look(
+        &mut runner,
+        &people,
+        None,
+        vec![task_line(&people, 11, Kind::Question, "bo")],
+        11,
+    );
     let hands = Hands::default();
-    hands.at(&mut runner, 0.0, &|| Handed::Never("exit 1: refused".into()));
+    hands.at(&mut runner, 0.0, &|| {
+        Handed::Never("exit 1: refused".into())
+    });
     hands.at(&mut runner, 1e9, &|| Handed::Sent);
     assert_eq!(hands.given.borrow().len(), 1);
     assert_eq!(hands.log.borrow().len(), 1);
@@ -350,16 +388,24 @@ fn a_restart_mid_retry_hands_the_notice_once_when_due_and_tells_nothing_again() 
     assert_eq!(first.next_due(), Some(60.0));
     drop(first);
 
-    let (mut again, unread) = Runner::open(&tree.path(""), "symphony");
+    let (mut again, unread) = opened(&tree);
     assert_eq!(unread, None);
     look(&mut again, &people, waits(), lines(), 11);
-    assert_eq!(record(&again).pending.len(), 2, "the same two, none made again");
+    assert_eq!(
+        record(&again).pending.len(),
+        2,
+        "the same two, none made again"
+    );
     hands.at(&mut again, 30.0, &|| Handed::Sent);
     assert_eq!(hands.given.borrow().len(), 2, "not due yet");
     hands.at(&mut again, 60.0, &|| Handed::Sent);
     let read = hands.read();
     assert_eq!(read.len(), 4);
-    assert_eq!((&read[0].0, &read[1].0), (&read[2].0, &read[3].0), "the same ids");
+    assert_eq!(
+        (&read[0].0, &read[1].0),
+        (&read[2].0, &read[3].0),
+        "the same ids"
+    );
     assert_eq!(again.next_due(), None);
 }
 
@@ -368,14 +414,20 @@ fn a_hand_a_restart_cut_is_handed_again_at_once_with_the_same_id() {
     let tree = Tree::new();
     let people = people();
     let mut first = started(&tree, &people, vec![]);
-    look(&mut first, &people, None, vec![task_line(&people, 11, Kind::Question, "ana")], 11);
+    look(
+        &mut first,
+        &people,
+        None,
+        vec![task_line(&people, 11, Kind::Question, "ana")],
+        11,
+    );
     let hands = Hands::default();
     hands.at(&mut first, 0.0, &|| Handed::Cut);
     let kept = record(&first).pending[0].clone();
     assert!(kept.handing);
     assert_eq!(kept.hands, 1);
     drop(first);
-    let (mut again, _) = Runner::open(&tree.path(""), "symphony");
+    let (mut again, _) = opened(&tree);
     assert_eq!(again.next_due(), Some(0.0), "due at once");
     hands.at(&mut again, -5.0, &|| Handed::Sent);
     let read = hands.read();
@@ -395,7 +447,9 @@ fn a_notice_whose_way_address_or_program_moved_since_it_was_made_is_dropped_unha
     ];
     look(&mut runner, &people, None, lines, 12);
     let mut moved = profiles();
-    moved.people[0].chat.insert("slack".into(), json!("U0NEWNEW1"));
+    moved.people[0]
+        .chat
+        .insert("slack".into(), json!("U0NEWNEW1"));
     let hands = Hands::default();
     let email = Programs::parse("email = \"/fake/email\"\n").unwrap();
     // bo's goes as made, by email; ana's address moved.
@@ -410,15 +464,29 @@ fn a_notice_whose_way_address_or_program_moved_since_it_was_made_is_dropped_unha
 
     let second = Tree::new();
     let mut runner = started(&second, &people, vec![]);
-    look(&mut runner, &people, None, vec![task_line(&people, 11, Kind::Question, "ana")], 11);
+    look(
+        &mut runner,
+        &people,
+        None,
+        vec![task_line(&people, 11, Kind::Question, "ana")],
+        11,
+    );
     let mut by_email = profiles();
-    by_email.people[0].preferences.insert("question".into(), json!("email"));
+    by_email.people[0]
+        .preferences
+        .insert("question".into(), json!("email"));
     let hands = Hands::default();
     hands.with(&mut runner, 0.0, &by_email, &programs(), &|| Handed::Sent);
     assert!(hands.given.borrow().is_empty(), "her way moved");
     let third = Tree::new();
     let mut runner = started(&third, &people, vec![]);
-    look(&mut runner, &people, None, vec![task_line(&people, 11, Kind::Question, "ana")], 11);
+    look(
+        &mut runner,
+        &people,
+        None,
+        vec![task_line(&people, 11, Kind::Question, "ana")],
+        11,
+    );
     let hands = Hands::default();
     hands.with(&mut runner, 0.0, &profiles(), &email, &|| Handed::Sent);
     assert!(hands.given.borrow().is_empty());
@@ -442,7 +510,13 @@ fn a_board_that_names_nobody_sends_nothing() {
         page: "/task/app/x".into(),
         owning: owning.clone(),
     };
-    look(&mut runner, &nobody, Some(vec![waiting("one"), waiting("two")]), vec![line], 11);
+    look(
+        &mut runner,
+        &nobody,
+        Some(vec![waiting("one"), waiting("two")]),
+        vec![line],
+        11,
+    );
     assert!(record(&runner).pending.is_empty());
     assert_eq!(runner.next_due(), None);
 }
@@ -452,30 +526,57 @@ fn no_address_is_in_the_record_the_log_or_a_printed_runner() {
     let tree = Tree::new();
     let people = people();
     let mut runner = started(&tree, &people, vec![]);
-    look(&mut runner, &people, Some(vec![card(&people, "one", "design")]), vec![], 10);
+    look(
+        &mut runner,
+        &people,
+        Some(vec![card(&people, "one", "design")]),
+        vec![],
+        10,
+    );
     let hands = Hands::default();
     hands.at(&mut runner, 0.0, &|| Handed::Later("busy".into()));
     let kept = std::fs::read_to_string(tree.path("artifacts/notices.json")).unwrap();
     let printed = format!("{runner:?}");
     let log = hands.log.borrow().join("\n");
-    assert_eq!(hands.given.borrow().len(), 2, "both were handed their address");
+    assert_eq!(
+        hands.given.borrow().len(),
+        2,
+        "both were handed their address"
+    );
     for address in [ANA_SLACK, BO_EMAIL] {
         assert!(!kept.contains(address), "the record: {kept}");
         assert!(!printed.contains(address), "a printed runner: {printed}");
         assert!(!log.contains(address), "the log: {log}");
     }
-    assert!(kept.contains(&super::digest(ANA_SLACK)), "its digest is kept");
+    assert!(
+        kept.contains(&key(&tree).digest(ANA_SLACK)),
+        "its digest is kept"
+    );
+    // A digest with no key is read back by trying every address: it is not what is kept.
+    let unkeyed: String = (<sha2::Sha256 as sha2::Digest>::digest(ANA_SLACK.as_bytes()).iter())
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    assert!(!kept.contains(&unkeyed));
 }
 
 #[test]
 fn a_record_that_does_not_read_is_said_and_made_anew_at_the_first_look() {
     let tree = Tree::new();
     tree.write("artifacts/notices.json", "{ not json");
-    let (mut runner, unread) = Runner::open(&tree.path(""), "symphony");
+    let (mut runner, unread) = opened(&tree);
     let why = unread.unwrap();
     assert!(why.contains("notices.json"), "{why}");
     let people = people();
-    look(&mut runner, &people, Some(vec![card(&people, "one", "design")]), vec![], 4);
+    look(
+        &mut runner,
+        &people,
+        Some(vec![card(&people, "one", "design")]),
+        vec![],
+        4,
+    );
     assert_eq!(runner.cursor(), Some(4));
-    assert!(record(&runner).pending.is_empty(), "made anew as at a first look");
+    assert!(
+        record(&runner).pending.is_empty(),
+        "made anew as at a first look"
+    );
 }

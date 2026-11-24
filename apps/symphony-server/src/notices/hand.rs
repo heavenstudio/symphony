@@ -119,11 +119,10 @@ pub(crate) fn hand(
     });
     let ended = ends_within(pid);
     {
+        // Ended, not ended within its bound, or its end not watched: the leader is not reaped yet,
+        // so what of its group still runs ends now, and the wait below is never unbounded.
         let mut group = running.group.lock().recover();
-        if ended.is_ok() {
-            // Ended or not, the leader is not reaped yet: what of its group still runs ends now.
-            symphony_board::sys::end_group(pid, true);
-        }
+        symphony_board::sys::end_group(pid, true);
         *group = None;
     }
     let status = child.wait();
@@ -138,6 +137,10 @@ pub(crate) fn hand(
         (Ok(false), _) => Handed::Later(format!(
             "it did not end within {} s, so it and its group were ended{}",
             MOST.as_secs(),
+            colon(&said)
+        )),
+        (Err(error), _) => Handed::Later(format!(
+            "its end could not be watched ({error}), so it and its group were ended{}",
             colon(&said)
         )),
         (_, Err(error)) => Handed::Later(format!("its end could not be read: {error}")),

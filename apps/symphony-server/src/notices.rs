@@ -20,7 +20,8 @@
 //!   program is ended, with its group, after [`hand::MOST`]. A restart takes the record up where it
 //!   was: a notice due again is handed once when due, and one a restart cut mid-hand is handed again
 //!   with the same id, which a plugin keeping its ids answers as sent.
-//! - **No address but on the program's stdin**: the record keeps a digest of it; the log names the
+//! - **No address but on the program's stdin**: the record keeps a digest of it under the machine's
+//!   key ([`symphony::notices::Key`]), which says nothing of it without the key; the log names the
 //!   project, the notice's id, kind, person and way; what a program says is repeated with the address
 //!   and the link replaced; no agent, plugin of a project, page or feed is handed one.
 
