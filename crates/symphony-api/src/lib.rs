@@ -53,6 +53,7 @@ pub mod health;
 mod links;
 pub mod listing;
 mod machine_work;
+mod ownership;
 mod people;
 mod project;
 pub mod report_page;
@@ -75,6 +76,7 @@ pub use gates::{Gate, GatePast, GateState, GatesSeen, TASK_GATES_PATH, TaskGates
 pub use health::{HEALTH_SCHEMA, HealthHour, HourPasses, HourRequests, HourSlowest, HourWrites};
 pub use links::{app_path, linkable};
 pub use listing::{ListedCard, ListedProject, PROJECTS_PATH, ProjectList, TaskAsks, TaskVerdict};
+pub use ownership::{CARD_HAND_ROUTE, CARD_OWNERS_PATH, CardOwners, Owner, TASK_HAND_ROUTE};
 pub use people::{
     Addresses, GroupRow, NoticeWay, PEOPLE_CHANGE_PATH, PEOPLE_PATH, PROFILE_PATH, PeopleAction,
     PeopleChange, PeopleLogLine, PeoplePage, PersonRow, ProfileWrite, WithheldPower,
@@ -711,6 +713,9 @@ pub struct TaskPage {
     /// at none: a page draws their history only for a task that has some.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub attempts: usize,
+    /// Whose the task is ([`Owner`]): none on a board that names nobody.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<Owner>,
 }
 
 /// A chunk of a long brief: its blocks, the byte it ends at, the bytes still left and the

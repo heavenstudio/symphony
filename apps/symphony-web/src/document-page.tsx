@@ -11,6 +11,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -35,10 +36,11 @@ import { useFrame, useRefreshed } from "./frame";
 import { appPath } from "./links";
 import { PageNotices } from "./live";
 import { useMount } from "./mount";
+import { CardOwnersContext, type CardOwnersValue, OwnerLine, readCardOwners } from "./owner";
 import { PostponeControls } from "./postpone";
 import { documentsHref, entrypoints, fileAddress, href, project, scoped } from "./project";
 import { ComparisonNote, DocumentWithTasks, SectionDifference } from "./related";
-import { getJson, said } from "./request";
+import { getJson, post, said } from "./request";
 import { anchor, anchorIds, scrollAnchor, useAnchor } from "./route";
 import { failed as failedRead, ready as readyWord, Trouble } from "./trouble";
 import { AtOnce, NearViewport, Settle, Skeleton } from "./viewport";
@@ -49,10 +51,11 @@ import type {
   Folder,
   Fragment,
   LinkTarget,
+  Owner,
   Section,
   Version,
 } from "./wire";
-import { PAGE_NAMES } from "./wire";
+import { CARD_HAND_ROUTE, CARD_OWNERS_PATH, PAGE_NAMES } from "./wire";
 
 /** The original reader reserves a contents column only for three or more headings. */
 const TOC_MIN_HEADINGS = 3;
@@ -240,6 +243,7 @@ export function DocumentPage({ path, scope, embedded = false }: DocumentPageProp
     return () => reading.abort();
   }, [scope, refreshed, orders]);
   const state = page.state;
+  const owners = useCardOwners(path, scope, state?.latest ?? null, refreshed);
   const device = shown(page.freshness);
   const trouble = page.trouble;
   // An intro the server no longer has follows no feed: the folder's next read drops it.
@@ -321,27 +325,77 @@ export function DocumentPage({ path, scope, embedded = false }: DocumentPageProp
   }
   return (
     <PageContext.Provider value={page}>
-      <div
-        className="document-page"
-        data-ready={ready}
-        data-feed={page.stale ? "stale" : "live"}
-        data-cache={device ? "device" : undefined}
-        aria-busy={`${state === null && trouble === null && !missing}`}
-      >
-        {body}
-        {/* Until the document is shown, what kept it away is the block above's to say, once. */}
-        {!embedded && (
-          <PageNotices
-            reconnecting={page.stale && state !== null}
-            reconnect={RECONNECT}
-            error={state !== null ? (trouble ?? "") : ""}
-            documentRemoved={removed}
-            device={device}
-            composer
-          />
-        )}
-      </div>
+      <CardOwnersContext.Provider value={owners}>
+        <div
+          className="document-page"
+          data-ready={ready}
+          data-feed={page.stale ? "stale" : "live"}
+          data-cache={device ? "device" : undefined}
+          aria-busy={`${state === null && trouble === null && !missing}`}
+        >
+          {body}
+          {/* Until the document is shown, what kept it away is the block above's to say, once. */}
+          {!embedded && (
+            <PageNotices
+              reconnecting={page.stale && state !== null}
+              reconnect={RECONNECT}
+              error={state !== null ? (trouble ?? "") : ""}
+              documentRemoved={removed}
+              device={device}
+              composer
+            />
+          )}
+        </div>
+      </CardOwnersContext.Provider>
     </PageContext.Provider>
+  );
+}
+
+/**
+ * The owners of the cards of the document `path` of the checkout `scope`, read once its copy
+ * `latest` holds a card and again as it moves, as the frame refreshes and after a hand-over from
+ * the page: none until read, and none where the board names nobody. A failed read draws no
+ * owner; the next move reads it again.
+ */
+function useCardOwners(
+  path: string,
+  scope: string,
+  latest: Document | null,
+  refreshed: unknown,
+): CardOwnersValue | null {
+  const [owners, setOwners] = useState<Record<string, Owner> | null>(null);
+  const [handed, setHanded] = useState(0);
+  const version = latest?.version ?? null;
+  const carded = (latest?.cards.length ?? 0) > 0;
+  useEffect(() => {
+    void refreshed;
+    void version;
+    void handed;
+    if (!carded) return;
+    const reading = new AbortController();
+    getJson(api(scope, CARD_OWNERS_PATH, path), reading.signal).then(
+      (value) => {
+        if (reading.signal.aborted) return;
+        const read = readCardOwners(value);
+        if (read !== null) setOwners(read);
+      },
+      () => {},
+    );
+    return () => reading.abort();
+  }, [path, scope, carded, version, refreshed, handed]);
+  return useMemo(
+    () =>
+      owners === null || Object.keys(owners).length === 0
+        ? null
+        : {
+            owners,
+            hand: async (slug: string, to: string) => {
+              const answer = await post(scoped(scope, CARD_HAND_ROUTE), { path, slug, to });
+              setHanded((count) => count + 1);
+              return answer;
+            },
+          },
+    [owners, path, scope],
   );
 }
 
@@ -660,6 +714,8 @@ function DocSection({
   postponed,
 }: SectionProps) {
   const [editing, setEditing] = useState(false);
+  const cardOwners = useContext(CardOwnersContext);
+  const owner = card !== null ? (cardOwners?.owners[card.slug] ?? null) : null;
   const settled = isSettled(card);
   const summary = settledSummary(section) ?? [];
   const only = section.blocks.length === 1 ? section.blocks[0] : undefined;
@@ -698,6 +754,13 @@ function DocSection({
       )}
       {card !== null ? (
         <div className="doc-actions">
+          {owner !== null && cardOwners !== null && card !== null && (
+            <OwnerLine
+              owner={owner}
+              id={`hand-${encodeURIComponent(`${path}:${card.slug}`)}`}
+              hand={(to) => cardOwners.hand(card.slug, to)}
+            />
+          )}
           {postponed && <small className="postponed">postponed</small>}
           <Button
             id={opener}

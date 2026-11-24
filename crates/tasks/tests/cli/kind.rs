@@ -99,3 +99,28 @@ fn the_apis_create_takes_a_kind_and_refuses_one_of_no_kind() {
     );
     assert!(c.store().get("tests/odd").is_err());
 }
+
+#[test]
+fn the_apis_create_takes_a_group_and_refuses_a_word_that_is_no_short_name() {
+    let c = Case::new();
+    let actor = c.register("worker");
+    let call = |args: Value| {
+        let ran = c.run_as(
+            "",
+            &["api"],
+            &json!({"method": "create", "args": args}).to_string(),
+        );
+        assert_eq!(ran.code, 0, "{}", ran.err);
+        serde_json::from_str::<Value>(&ran.out).unwrap()
+    };
+    let made = call(json!({"slug": "app/x", "title": "X", "by": actor, "group": "design"}));
+    assert!(made["ok"].is_object(), "{made}");
+    assert_eq!(c.store().get("app/x").unwrap().group(), Some("design"));
+    let refused = call(json!({"slug": "app/y", "title": "Y", "by": actor, "group": "Design"}));
+    let said = refused["refused"].as_str().unwrap_or_default();
+    assert!(
+        said.starts_with("a task is filed for a group's or a person's short name"),
+        "{refused}"
+    );
+    assert!(c.store().get("app/y").is_err());
+}

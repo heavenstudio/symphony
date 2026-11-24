@@ -104,6 +104,20 @@ impl Store {
             Some(kind) => Some(crate::kind::named(kind).map_err(refused)?),
             None => red.map(|_| crate::kind::RED),
         };
+        let group = new
+            .group
+            .as_deref()
+            .map(str::trim)
+            .filter(|g| !g.is_empty());
+        if let Some(group) = group
+            && group != crate::people::ownership::MACHINE
+            && !symphony_docs::syntax::is_short_name(group)
+        {
+            return Err(refused(format!(
+                "a task is filed for a group's or a person's short name, or owner, not {}",
+                repr(group)
+            )));
+        }
         let parent = new.parent.as_deref().filter(|p| !p.is_empty());
         if new.instruction && parent.is_none() {
             return Err(refused(
@@ -135,6 +149,7 @@ impl Store {
                 red: red.is_some(),
                 arm: arm.is_some(),
                 kind: kind.is_some(),
+                group: group.is_some(),
                 placed: placing.is_some(),
             };
             let body = || Statement::from(Pg::script(pg::create(&creating))).posting();
@@ -146,6 +161,7 @@ impl Store {
                     "priority": new.priority, "parent": parent, "instruction": new.instruction,
                     "needed": needed, "links": links, "assignee": new.assignee, "said": said,
                     "owner_save": receipt, "red": red, "arm": arm, "kind": kind,
+                    "group": group,
                     "taken": format!("{REFUSED}task {} already exists", new.slug),
                     "unassignable": new.assignee.as_ref()
                         .map(|a| format!("{REFUSED}no session {} to assign it to", repr(a))),

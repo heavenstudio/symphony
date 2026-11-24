@@ -1,10 +1,11 @@
 //! The Markdown syntax every reader of the docs shares, against the rules the docs are read by.
 
 use symphony_docs::syntax::{
-    CARD_LINE, LineIndex, RESERVED_NAMES, SHORT_NAME_MAX, WikiLink, anchors, card_end, card_line,
-    carded, cards, code_ranges, components, entries, entry_line, heading, heading_anchor,
-    is_continuation, is_indented, is_short_name, line_links, line_of, lines, links,
-    mask_code_spans, pictures, said, said_line, unseen_owner, unseen_owner_line, wikilinks,
+    CARD_LINE, FOR, LineIndex, RESERVED_NAMES, SHORT_NAME_MAX, WikiLink, anchors, card_end,
+    card_for, card_line, card_line_for, carded, cards, code_ranges, components, entries,
+    entry_line, heading, heading_anchor, is_continuation, is_indented, is_short_name, line_links,
+    line_of, lines, links, mask_code_spans, pictures, said, said_line, unseen_owner,
+    unseen_owner_line, wikilinks,
 };
 
 #[test]
@@ -678,4 +679,66 @@ fn said_names_every_entry_of_a_card_and_entries_reads_the_same_lines() {
     assert_eq!(found[1].entry.text, "Which?\nand when?");
     let plain: Vec<_> = found.into_iter().map(|said| said.entry).collect();
     assert_eq!(entries(&raw), plain);
+}
+
+#[test]
+fn a_card_is_for_the_first_name_its_text_writes_after_for() {
+    assert_eq!(FOR, "*For:*");
+    assert_eq!(card_for("*For:* design. Which palette?"), Some("design"));
+    assert_eq!(
+        card_for("Which palette? *For:* ana-lima, as she drew it"),
+        Some("ana-lima")
+    );
+    assert_eq!(card_for("*For:* owner"), Some("owner"));
+    assert_eq!(
+        card_for("*For:*  design-"),
+        Some("design"),
+        "a hyphen ends no name"
+    );
+    assert_eq!(
+        card_for("*For:* design *For:* engineering"),
+        Some("design"),
+        "the first"
+    );
+    for none in [
+        "Which palette?",
+        "*For:*design",
+        "*For:* Design",
+        "*For:* ",
+        "For: design",
+    ] {
+        assert_eq!(card_for(none), None, "{none:?}");
+    }
+}
+
+#[test]
+fn a_cards_line_is_written_for_a_name_in_its_place_or_first_in_its_text() {
+    let line = "- [ ] **new-palette** — Which palette? Approve, or comment.";
+    let named = card_line_for(line, "design").unwrap();
+    assert_eq!(
+        named,
+        "- [ ] **new-palette** — *For:* design. Which palette? Approve, or comment."
+    );
+    assert_eq!(card_line(&named).unwrap().1, "new-palette");
+    assert_eq!(card_for(card_line(&named).unwrap().2), Some("design"));
+    let renamed = card_line_for(&named, "engineering").unwrap();
+    assert_eq!(
+        renamed,
+        "- [ ] **new-palette** — *For:* engineering. Which palette? Approve, or comment."
+    );
+    assert_eq!(
+        card_line_for("- [x] **a** Plain text *For:* ana here.", "owner").unwrap(),
+        "- [x] **a** Plain text *For:* owner here."
+    );
+    assert_eq!(
+        card_line_for("- [ ] **a**", "design").unwrap(),
+        "- [ ] **a** *For:* design."
+    );
+    assert_eq!(card_line_for("not a card", "design"), None);
+    assert_eq!(card_line_for(line, "Not A Name"), None);
+    assert_eq!(
+        card_line_for(line, "agent"),
+        None,
+        "a reserved word is no one's"
+    );
 }
