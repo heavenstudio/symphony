@@ -110,12 +110,26 @@ pub(super) fn consumer(fixture: &Fixture) -> PathBuf {
     root
 }
 
-/// Everything under the checkout at `root` but its `.git`, as it stands.
+/// Everything under the checkout at `root` but its `.git`, as it stands. The walk never enters
+/// `.git`: a project's board keeps its PostgreSQL data there, whose server makes and removes files
+/// as it runs, so a file listed there may be gone by the time it is read.
 pub(super) fn checkout(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
-    Fixture::files(root)
-        .into_iter()
-        .filter(|(path, _)| !path.starts_with(root.join(".git")))
-        .collect()
+    let mut found = Vec::new();
+    if let Ok(entries) = fs::read_dir(root) {
+        for entry in entries {
+            let path = entry.unwrap().path();
+            if path.file_name().is_some_and(|name| name == ".git") {
+                continue;
+            }
+            if path.is_dir() {
+                found.extend(Fixture::files(&path));
+            } else {
+                found.push((path.clone(), fs::read(&path).unwrap()));
+            }
+        }
+    }
+    found.sort();
+    found
 }
 
 /// The names of the checks a recorded run `run` holds, in order.
