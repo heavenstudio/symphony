@@ -322,26 +322,32 @@ fn a_held_message_tells_who_of_its_tasks_group_may_pass_it_never_its_author() {
         [("held".into(), "email".into(), BO_EMAIL.into(), link.clone())],
         "bo alone: ana wrote it and cy may not direct agents"
     );
-    // Ana may pass a message now; hers is still not told to her.
+    // Ana may pass a message now; hers are still not told to her, two in one look each told.
     telling.direct_agents(&["ana"]);
     let (_, second) = telling.hold("And the footer");
+    let (_, third) = telling.hold("And the margins");
     passes.pass(&telling.hub);
-    assert_eq!(
-        telling.told()[1..],
-        [("held".into(), "email".into(), BO_EMAIL.into(), second)]
-    );
+    let bo = |link: &str| {
+        (
+            "held".into(),
+            "email".into(),
+            BO_EMAIL.into(),
+            link.to_string(),
+        )
+    };
+    assert_eq!(telling.told()[1..], [bo(&second), bo(&third)]);
     // A pass, a person's line, tells no one.
     (telling.f.store.pass("app/x", held, "owner")).unwrap();
     telling.hub.observe(&telling.f.store);
     passes.pass(&telling.hub);
-    assert_eq!(telling.told().len(), 2, "the pass is a person's line");
+    assert_eq!(telling.told().len(), 3, "the pass is a person's line");
     // One passed on before the runner looked at its line tells no one.
     let ana = telling.f.other().for_person("ana");
     let early = (ana.hold_words("app/x", "ana", "Never mind", None)).unwrap();
     (telling.f.store.pass("app/x", early.id, "owner")).unwrap();
     telling.hub.observe(&telling.f.store);
     passes.pass(&telling.hub);
-    assert_eq!(telling.told().len(), 2, "passed before its notice was made");
+    assert_eq!(telling.told().len(), 3, "passed before its notice was made");
     // An agent's line to owner that reads as one is a question to the group, ana, bo and cy.
     let marker = format!("{}#{held}", symphony_board::held::MARKER);
     (telling
@@ -352,7 +358,7 @@ fn a_held_message_tells_who_of_its_tasks_group_may_pass_it_never_its_author() {
     telling.hub.observe(&telling.f.store);
     passes.pass(&telling.hub);
     assert_eq!(
-        told_after(&telling, 2),
+        told_after(&telling, 3),
         [
             notice("question", "slack", ANA_SLACK),
             notice("question", "email", BO_EMAIL),
