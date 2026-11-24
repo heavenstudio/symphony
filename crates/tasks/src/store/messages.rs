@@ -292,12 +292,11 @@ impl Store {
         sender: &str,
         recipient: Option<&str>,
     ) {
-        let only = match recipient {
-            Some("@executor") => None,
-            Some(to) if to != OWNER && !to.starts_with('@') => Some(to),
+        let (to, only) = match recipient {
+            Some(to @ "@executor") => (to, None),
+            Some(to) if to != OWNER && !to.starts_with('@') => (to, Some(to)),
             _ => return,
         };
-        let to = recipient.unwrap_or_default();
         let what = format!("#{id} from {sender} to {to}");
         self.tell_if_unread(slug, only, &what, Some(&format!("unread:{id}")));
     }
