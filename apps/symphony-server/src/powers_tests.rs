@@ -135,3 +135,36 @@ fn a_refusal_names_the_person_and_the_first_power_they_lack() {
         }
     }
 }
+
+/// Who may pass a held message on, by what the pass route needs: speak and direct agents, their
+/// own or a group's; a name the board holds no person by never may.
+#[test]
+fn one_may_pass_a_held_message_holding_speak_and_direct_agents_by_themselves_or_a_group() {
+    use symphony_board::people::{Group, Member, People};
+    let member = |name: &str, groups: &[&str], powers: &[Power]| Member {
+        name: name.into(),
+        groups: groups.iter().map(|group| group.to_string()).collect(),
+        powers: powers.to_vec(),
+        revision: 0,
+    };
+    let people = People {
+        members: vec![
+            member("ana", &[], &[Power::Speak, Power::DirectAgents]),
+            member("bo", &[], &[Power::Speak]),
+            member("cy", &[], &[Power::DirectAgents]),
+            member("di", &["leads"], &[Power::Speak]),
+            member("ed", &[], &Power::ALL),
+        ],
+        groups: vec![Group {
+            name: "leads".into(),
+            powers: vec![Power::DirectAgents],
+            revision: 0,
+        }],
+        revision: 1,
+    };
+    let passing: Vec<&str> = ["ana", "bo", "cy", "di", "ed", "owner", "zed"]
+        .into_iter()
+        .filter(|name| may_pass(&people, name))
+        .collect();
+    assert_eq!(passing, ["ana", "di", "ed"]);
+}

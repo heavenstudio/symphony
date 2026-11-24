@@ -29,6 +29,10 @@ fn the_text_says_what_waits_in_which_project_and_links_it() {
         text(&notice(Kind::Verdict, LINK)),
         format!("A reviewer gave a verdict in *symphony*. <{LINK}|Open it>")
     );
+    assert_eq!(
+        text(&notice(Kind::Held, LINK)),
+        format!("A person's words wait on you to pass on in *symphony*. <{LINK}|Open it>")
+    );
 }
 
 #[test]

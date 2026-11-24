@@ -19,12 +19,14 @@ use super::Hub;
 use crate::notices::hand::{self, Bounds, Running};
 use crate::notices::runner::{Line, Look, Runner, Waiting};
 use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use symphony::notices::{Key, Kind, Programs};
+use symphony_board::held::Held;
 use symphony_board::lock::Recovered as _;
-use symphony_board::people::ownership::{self, Map, Thing};
+use symphony_board::people::ownership::{self, Map, Owning, Thing};
 use symphony_board::people::{People, Profiles};
 use symphony_board::recording::State;
 
@@ -280,8 +282,9 @@ impl Hub {
         if last.as_ref() != Some(&read) {
             let lines = match runner.cursor() {
                 Some(cursor) if cursor < latest => {
-                    match store.messages_after_rows(cursor, latest) {
-                        Ok(rows) => told_lines(&store, &people, &map, rows),
+                    let rows = store.messages_after_rows(cursor, latest);
+                    match rows.and_then(|rows| told_lines(&store, &people, &map, rows)) {
+                        Ok(lines) => lines,
                         Err(error) => {
                             return said.once(
                                 project,
@@ -331,20 +334,30 @@ impl Hub {
     }
 }
 
-/// The board lines among `rows` that tell, each with whose its task is on `people` and `map`: a
-/// reviewer's verdict, and an agent's question to the person at the machine (a `msg` line to
-/// `owner` that no person wrote). A line of a task the board no longer holds tells no one.
+/// The board lines among `rows` that tell, each with whom it tells on `people` and `map`: a
+/// reviewer's verdict and an agent's question to the person at the machine (a `msg` line to
+/// `owner` that no person wrote) tell whose its task is; the board's line of a held message, a line
+/// to `owner` whose number a message held on its task has (`symphony_board::held`), tells those
+/// who may pass it on ([`passers`]), never its author, a link to its place on the task's page, and
+/// no one once it was passed on. A line of a task the board no longer holds tells no one.
+///
+/// # Errors
+///
+/// The messages held on a task cannot be read: no line is taken, and the look reads them again.
 fn told_lines(
     store: &symphony_board::Store,
     people: &People,
     map: &Map,
     rows: Vec<symphony_board::rows::MessageRow>,
-) -> Vec<Line> {
+) -> Result<Vec<Line>, symphony_board::Error> {
     let mut groups: BTreeMap<String, Option<Option<String>>> = BTreeMap::new();
+    let mut held: BTreeMap<String, Vec<Held>> = BTreeMap::new();
     let mut lines = Vec::new();
     for row in rows {
         let question =
             row.kind == "msg" && row.recipient.as_deref() == Some("owner") && !row.by_person();
+        // Its text is only where to look: a held row of its number says it is one.
+        let marker = question && row.text.starts_with(symphony_board::held::MARKER);
         let (id, slug) = (row.id, row.slug.clone());
         let verdict = symphony_board::reviewer_verdict(&symphony_board::Message::from(row));
         let kind = match (verdict, question) {
@@ -359,14 +372,52 @@ fn told_lines(
             continue;
         };
         let places = Thing::Task(slug.clone()).places();
-        lines.push(Line {
-            id,
-            kind,
-            page: format!("/task/{slug}"),
-            owning: ownership::owning(people, map, group.as_deref(), &places),
+        let owning = ownership::owning(people, map, group.as_deref(), &places);
+        let message = if marker && kind == Kind::Question {
+            let on_task = match held.entry(slug.clone()) {
+                Entry::Occupied(read) => read.into_mut(),
+                Entry::Vacant(unread) => unread.insert(store.held_on(&slug)?),
+            };
+            on_task.iter().find(|message| message.id == id)
+        } else {
+            None
+        };
+        lines.push(match message {
+            Some(message) if message.passed.is_some() => continue,
+            Some(message) => Line {
+                id,
+                kind: Kind::Held,
+                page: format!("/task/{slug}#message-{id}"),
+                told: passers(people, &owning, &message.author),
+            },
+            None => Line {
+                id,
+                kind,
+                page: format!("/task/{slug}"),
+                told: ownership::told(people, &owning),
+            },
         });
     }
-    lines
+    Ok(lines)
+}
+
+/// Who is told of a message `author` wrote, held on a task `owning` says whose it is on a board of
+/// `people`: those who may pass it on ([`crate::powers::may_pass`]) of whose the task is, its
+/// group's members or the person it is written to; else, where none of them may, every person of
+/// the board who may; never its author. None where nobody but its author may, and on a board that
+/// names nobody: the person at the machine, whom no profile names, is told by the page.
+fn passers(people: &People, owning: &Owning, author: &str) -> Vec<String> {
+    let may = |name: &String| name != author && crate::powers::may_pass(people, name);
+    let own: Vec<String> = (ownership::told(people, owning).into_iter())
+        .filter(may)
+        .collect();
+    if !own.is_empty() {
+        return own;
+    }
+    (people.members.iter())
+        .map(|member| member.name.clone())
+        .filter(may)
+        .collect()
 }
 
 /// The worker: a pass at each wake, and when the next notice is due, until the server stops or the
