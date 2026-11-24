@@ -102,6 +102,9 @@ none of the repositories around this one: its board runs on the machine's Postgr
   adapter, turned off unless the default branch commits its settings: its settings and token
   files, its commands, what a reconcile writes, what it keeps, what pauses it, and how a land is
   delivered and the protection that delivery reads.
+- [WhatsApp notices](operations/NOTICE_WHATSAPP.md) — `symphony-notice-whatsapp`, the notice
+  plugin that sends a person's notice by WhatsApp: what Meta must give and approve first, the
+  person's agreement and the cost, its folder, settings and token, and what its exit says.
 - [Operating the board](operations/BOARD_OPERATIONS.md) — the board's store and the schema
   contract between its builds, which build moves a live board, who writes it, its server,
   snapshots and holds, what the command may write, stuck servers, a board that went back or was

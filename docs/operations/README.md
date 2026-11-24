@@ -21,6 +21,9 @@ Setting the Symphony up and running it: a first project, the commands, the proje
   turned off unless the default branch commits its settings: its settings and token files, its
   commands, what a reconcile writes, what it keeps, what pauses it, and how a land is delivered
   and the protection that delivery reads.
+- [WhatsApp notices](NOTICE_WHATSAPP.md) — `symphony-notice-whatsapp`, the notice plugin that
+  sends a person's notice by WhatsApp: what Meta must give and approve first, the person's
+  agreement and the cost, its folder, settings and token, and what its exit says.
 - [Upstream and downstream repositories](UPSTREAM_DOWNSTREAM.md) — the regular import of the
   public repository into a private copy with its ancestry kept, the export of selected reusable
   changes back, their checks, refusals and recovery; manual tasks, with PR delivery not enabled.

@@ -4489,6 +4489,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "symphony-notice-whatsapp"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "symphony-board",
+ "symphony-notice",
+ "toml 1.1.7+spec-1.1.0",
+]
+
+[[package]]
 name = "symphony-plugin"
 version = "1.3.0"
 dependencies = [
