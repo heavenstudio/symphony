@@ -5,7 +5,8 @@
 
 import { scoped } from "./project";
 import { getJson, post, said } from "./request";
-import type { Going, SessionControl } from "./session";
+import type { Going } from "./session";
+import type { SessionControl } from "./session-control";
 import { field } from "./shared";
 import { AGENT_FOCUS_PATH, AGENT_SCREEN_PATH, type AgentScreen } from "./wire";
 

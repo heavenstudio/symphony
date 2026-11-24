@@ -266,6 +266,10 @@ pub(crate) struct Hub {
     renders: AtomicU64,
     /// The store the page reads of the board share ([`Hub::reader`]), once one has been opened.
     reader: Mutex<BoardReader>,
+    /// The machine's one server's notices for the project, its worker started as the hub is
+    /// published under the project's id ([`notices`]); none on a private server, which tells no
+    /// one.
+    notice_worker: OnceLock<notices::Worker>,
     /// Independent deadlines for failed board work ([`retry`]).
     board_retry: Mutex<retry::Retry>,
     chat_retry: Mutex<retry::Retry>,
@@ -449,6 +453,7 @@ impl Hub {
             reads: AtomicU64::new(0),
             renders: AtomicU64::new(0),
             reader: Mutex::default(),
+            notice_worker: OnceLock::new(),
             board_retry: Mutex::default(),
             chat_retry: Mutex::default(),
             dispatch_retry: Mutex::default(),
@@ -2275,6 +2280,8 @@ fn documents(
             if let Some(then) = hub.refreshed.get() {
                 then();
             }
+            // The cards waiting may have moved: the notices look again ([`notices`]).
+            hub.wake_notices();
         }
         hub.watch(&mut watcher, &mut watched);
     }
@@ -2590,6 +2597,7 @@ mod asks;
 mod board_status;
 mod health;
 mod machine_work;
+mod notices;
 
 pub(crate) use health::{Signal, Standing};
 mod decided;

@@ -839,8 +839,16 @@ const CARRIED: &[(&str, &str, &str)] = &[
         "defaultDays, src/reports.tsx",
     ),
     (API_AGENTS, "web_address", "webAddress, src/links.ts"),
-    (API_AGENTS, "control", "sessionControl, src/session.tsx"),
-    (API_AGENTS, "via_parent", "viaParent, src/session.tsx"),
+    (
+        API_AGENTS,
+        "control",
+        "sessionControl, src/session-control.ts",
+    ),
+    (
+        API_AGENTS,
+        "via_parent",
+        "viaParent, src/session-control.ts",
+    ),
     (API_LINKS, "app_path", "appPath, src/links.ts"),
     (API_LINKS, "linkable", "linkable, src/links.ts"),
     (API_GATES, "count", "countOf, src/gates-model.ts"),

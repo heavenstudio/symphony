@@ -52,6 +52,9 @@ tower-http = { version = "0.6", default-features = false, features = ["compressi
 tower = { version = "0.5", default-features = false, features = ["util"] }
 
 [dev-dependencies]
+# The notice format the runner writes (`src/notices`), read back as a plugin reads it: that crate is
+# not published, so its tests alone link it.
+symphony-notice = { path = "../../crates/symphony-notice" }
 # The board store's test fixture (src/testing.rs, tests/after_http.rs) waits for its server through
 # the tests' wait (RULES.md `tests/no-test-fails-on-load`).
 test-time = { path = "../../crates/test-time" }

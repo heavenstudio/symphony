@@ -6,7 +6,7 @@
 
 import { readBlocks } from "./blocks-read";
 import { readGatesSeen } from "./gates-model";
-import { readOwner } from "./owner";
+import { readOwner } from "./owner-read";
 import { field } from "./shared";
 import { readTask } from "./task";
 import type {

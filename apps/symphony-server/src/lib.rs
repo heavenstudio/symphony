@@ -26,6 +26,7 @@ mod live;
 pub mod log;
 mod mark;
 mod media_files;
+mod notices;
 mod pages;
 mod people;
 mod powers;

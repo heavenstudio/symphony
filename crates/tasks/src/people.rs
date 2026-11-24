@@ -29,9 +29,11 @@
 //! machine is on every board with every power, and no row says so ([`Powers::all`]).
 
 pub mod change;
+mod fault;
 pub mod ownership;
 pub mod ways;
 
+use fault::Step;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
@@ -568,11 +570,7 @@ impl Profiles {
 
 /// `people.json`'s text as profiles; else the field it does not parse at ([`field`]) and why.
 fn parse(text: &str) -> Result<Profiles, (String, serde_json::Error)> {
-    let mut json = serde_json::Deserializer::from_str(text);
-    let profiles = serde_path_to_error::deserialize(&mut json)
-        .map_err(|e| (field(e.path()), e.into_inner()))?;
-    json.end().map_err(|e| (String::new(), e))?;
-    Ok(profiles)
+    serde_json::from_str(text).map_err(|e| (field(&fault::steps(text, &e)), e))
 }
 
 /// The names a profile's fields have in `people.json`, the only keys said of a fault in it.
@@ -589,16 +587,16 @@ const FIELDS: [&str; 10] = [
     "preferences",
 ];
 
-/// The field a fault in `people.json` is at, as `people[0].signins[1].subject`: a profile's own
-/// field names and the places in its lists, up to the first key the file chose, which is never
-/// said: a field no profile has, or one in `chat` or `preferences`, whose keys are the file's.
-fn field(path: &serde_path_to_error::Path) -> String {
-    use serde_path_to_error::Segment;
+/// The field a fault in `people.json` is at, by the steps serde_json was reading there
+/// ([`fault::steps`]), as `people[0].signins[1].subject`: a profile's own field names and the
+/// places in its lists, up to the first key the file chose, which is never said: a field no
+/// profile has, or one in `chat` or `preferences`, whose keys are the file's.
+fn field(steps: &[Step]) -> String {
     let mut said = String::new();
-    for segment in path {
-        match segment {
-            Segment::Seq { index } => said.push_str(&format!("[{index}]")),
-            Segment::Map { key } if FIELDS.contains(&key.as_str()) => {
+    for step in steps {
+        match step {
+            Step::Item(index) => said.push_str(&format!("[{index}]")),
+            Step::Key(key) if FIELDS.contains(&key.as_str()) => {
                 if !said.is_empty() {
                     said.push('.');
                 }
@@ -607,7 +605,7 @@ fn field(path: &serde_path_to_error::Path) -> String {
                     break;
                 }
             }
-            Segment::Map { .. } | Segment::Enum { .. } | Segment::Unknown => break,
+            Step::Key(_) => break,
         }
     }
     said
