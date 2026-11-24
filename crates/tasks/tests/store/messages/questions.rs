@@ -2,7 +2,7 @@
 //! still wait on them (`questions_waiting`), and the newest reviewer's verdict (`newest_verdict`).
 
 use super::texts;
-use crate::common::{Backend, Fixture, Seed, task};
+use crate::common::{Fixture, Seed, task};
 use symphony_board::rows::TaskRow;
 
 fn open(slugs: &[&str]) -> Vec<String> {
@@ -13,9 +13,9 @@ fn waiting(f: &Fixture, slugs: &[&str]) -> Vec<String> {
     texts(f.store.questions_waiting("owner", &open(slugs)).unwrap())
 }
 
-on_both! {
-fn a_question_waits_until_the_owner_posts_on_its_thread_after_it(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn a_question_waits_until_the_owner_posts_on_its_thread_after_it() {
+    let f = Fixture::new(Seed::default());
     let worker = f.session("worker");
     f.task("sim/jump");
     for text in ["which yield curve?", "and the drift?"] {
@@ -40,41 +40,11 @@ fn a_question_waits_until_the_owner_posts_on_its_thread_after_it(backend: Backen
         .say("sim/jump", &worker, "one more: the cap?", Some("owner"))
         .unwrap();
     assert_eq!(waiting(&f, &["sim/jump"]), ["one more: the cap?"]);
-
-}
 }
 
-on_both! {
-fn a_persons_post_answers_the_question_to_the_owner_and_a_sessions_unmarked_line_does_not(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
-    let worker = f.session("worker");
-    f.task("sim/jump");
-    f.task("sim/dock");
-    for slug in ["sim/jump", "sim/dock"] {
-        f.store
-            .say(slug, &worker, &format!("which curve on {slug}?"), Some("owner"))
-            .unwrap();
-    }
-    f.other()
-        .for_person("ana")
-        .say("sim/jump", "ana", "flat", None)
-        .unwrap();
-    assert_eq!(
-        waiting(&f, &["sim/jump", "sim/dock"]),
-        ["which curve on sim/dock?"],
-        "her word answers it as the owner's would"
-    );
-    // A line the board did not mark is a session's, whatever its handle's shape: it answers
-    // nothing.
-    let other = f.session("worker");
-    f.store.say("sim/dock", &other, "flat", None).unwrap();
-    assert_eq!(waiting(&f, &["sim/dock"]), ["which curve on sim/dock?"]);
-}
-}
-
-on_both! {
-fn only_an_agents_lines_to_the_person_on_the_tasks_named_wait_on_them(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn only_an_agents_lines_to_the_person_on_the_tasks_named_wait_on_them() {
+    let f = Fixture::new(Seed::default());
     let worker = f.session("worker");
     for slug in ["sim/jump", "sim/dock"] {
         f.task(slug);
@@ -121,14 +91,12 @@ fn only_an_agents_lines_to_the_person_on_the_tasks_named_wait_on_them(backend: B
         Vec::<String>::new(),
         "each person's own"
     );
-
-}
 }
 
-on_both! {
-fn the_newest_verdict_is_the_newest_reviewers_approve_or_changes(backend: Backend) {
+#[test]
+fn the_newest_verdict_is_the_newest_reviewers_approve_or_changes() {
     // `sim/jump`, and `sim/jump/m`, a slice of it in progress that `amber-heron` executes.
-    let f = Fixture::on(backend,
+    let f = Fixture::new(
         Seed::default()
             .session("amber-heron")
             .task("sim/jump", "ready")
@@ -176,6 +144,36 @@ fn the_newest_verdict_is_the_newest_reviewers_approve_or_changes(backend: Backen
         .say("sim/jump", &reviewer, "approve: said as a message", None)
         .unwrap();
     assert_eq!(f.store.newest_verdict().unwrap(), Some(approve));
-
 }
+
+#[test]
+fn a_persons_post_answers_the_question_to_the_owner_and_a_sessions_unmarked_line_does_not() {
+    let f = Fixture::new(Seed::default());
+    let worker = f.session("worker");
+    f.task("sim/jump");
+    f.task("sim/dock");
+    for slug in ["sim/jump", "sim/dock"] {
+        f.store
+            .say(
+                slug,
+                &worker,
+                &format!("which curve on {slug}?"),
+                Some("owner"),
+            )
+            .unwrap();
+    }
+    f.other()
+        .for_person("ana")
+        .say("sim/jump", "ana", "flat", None)
+        .unwrap();
+    assert_eq!(
+        waiting(&f, &["sim/jump", "sim/dock"]),
+        ["which curve on sim/dock?"],
+        "her word answers it as the owner's would"
+    );
+    // A line the board did not mark is a session's, whatever its handle's shape: it answers
+    // nothing.
+    let other = f.session("worker");
+    f.store.say("sim/dock", &other, "flat", None).unwrap();
+    assert_eq!(waiting(&f, &["sim/dock"]), ["which curve on sim/dock?"]);
 }

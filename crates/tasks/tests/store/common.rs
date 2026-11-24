@@ -1,40 +1,23 @@
-//! What the store's tests share: one SurrealDB server for the whole test binary, a database of its own
-//! per test, a settable clock and process table (`tasks_store_test.py`'s `Clock` and `alive`), and a
-//! board seeded through the one-way copy ([`Seed`], `seed.rs`).
+//! What the store's tests share: one PostgreSQL server for the whole test binary, a database of
+//! its own per test ([`postgresql`], [`database`]), a settable clock and process table
+//! (`tasks_store_test.py`'s `Clock` and `alive`), and a board seeded through the one-way copy
+//! ([`Seed`], `seed.rs`).
 //!
-//! The server is the pinned `surreal` (`SYMPHONY_SURREAL`, else `tools/surreal.sh` fetches it), in
-//! memory on a free local port, its outbound connections allowed to this machine alone
-//! (`--allow-net=127.0.0.1`, after the address, which a stand-in reads as its fourth word), for the
-//! gates a test's statement waits at (`gate.rs`). The target is joined to the flag: `--allow-net`
-//! takes every word after it up to the next flag, so an engine after a target set apart would be a
-//! second target, and the server would run on its default `memory` whatever engine it was handed
-//! ([`store_held_in`] refuses such a start). It runs under a shell that stops it when this
-//! process's pipe to the shell closes,
-//! so it goes with the test binary however that ends, and that ends as soon as the server does, so a
-//! server whose port was taken before it bound it is started again at once on another
-//! (`symphony_board::port`), every start within one backstop only a stall reaches
-//! (`test_time::backstop`); one that ends for any other reason
-//! fails the tests with its exit status and its log, which also holds what the shell said. The
-//! fixture makes the log's folder itself ([`launch`]). The shell says the server's pid, so an
-//! answer on the port counts only once that process itself listens there. At a normal exit the binary also waits for the
-//! shell, so the server's CPU is counted in the rusage of whoever ran the tests, as a child's,
-//! rather than lost with an orphan's, and removes the server's log.
+//! The server is a scratch board's PostgreSQL under the temporary folder, its programs the ones
+//! the repository's project file names (`[board] postgresql`), otherwise found on PATH. It starts
+//! on its socket alone at the first test that asks for it and ends with the test binary however
+//! that ends, as every board's PostgreSQL ends with the process that started it
+//! (`symphony_board::server::postgres`); at a normal exit it is stopped and its folder removed.
 
 use std::collections::HashSet;
-use std::convert::Infallible;
-use std::io::{BufRead, BufReader, Read};
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
-use symphony_board::db::DbError;
+use std::time::Duration;
 use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
-use symphony_board::lock::Recovered as _;
 use symphony_board::pg;
-use symphony_board::port::{NotStarted, Start};
-use symphony_board::rpc::{self, Client};
-use symphony_board::server::{Home, Postgres, Storage};
+use symphony_board::server::{Home, Postgres};
 use symphony_board::sys::{Child, Command};
 use symphony_board::{Database, Health, NewSession, NewTask, Store, Task};
 
@@ -42,14 +25,11 @@ use symphony_board::{Database, Health, NewSession, NewTask, Store, Task};
 mod fixture_root;
 #[path = "seed.rs"]
 mod seed;
-#[path = "server_child.rs"]
-mod server_child;
 #[allow(
     unused_imports,
     reason = "each test binary including this file uses some of the seed's builders"
 )]
 pub use seed::{Seed, session, task};
-pub use server_child::ServerChild;
 
 pub const NOW: f64 = 1_800_000_000.0;
 /// Past the lost line.
@@ -64,89 +44,6 @@ pub const HOST: &str = "this-host";
 )]
 pub const LOOKUP_BACKSTOP: &str = "86400";
 
-/// Raw fixture writes can meet SurrealDB's deferred HNSW compaction even after a store call
-/// commits. Retry conflicts, with capped, jittered backoff, until [`conflicts_deadline`]: a loaded
-/// machine slows the compaction, never ends it.
-/// Multi-statement callers must be idempotent or supply their own transaction.
-pub trait RawWrite {
-    fn write(&self, sql: &str, vars: serde_json::Value) -> Result<Vec<serde_json::Value>, DbError>;
-}
-
-impl RawWrite for Client {
-    fn write(&self, sql: &str, vars: serde_json::Value) -> Result<Vec<serde_json::Value>, DbError> {
-        retry_conflicts(conflicts_deadline(), || self.query(sql, vars.clone()))
-    }
-}
-
-/// Until when a fixture's write is sent again on a conflict ([`retry_conflicts`]), from now: the
-/// backstop of the store's 30 s patience, which only a stall reaches.
-pub fn conflicts_deadline() -> Instant {
-    Instant::now() + test_time::backstop(Duration::from_secs(30))
-}
-
-pub fn retry_conflicts<T>(
-    until: Instant,
-    mut once: impl FnMut() -> Result<T, DbError>,
-) -> Result<T, DbError> {
-    use std::hash::{BuildHasher, RandomState};
-
-    let mut attempt = 0;
-    loop {
-        match once() {
-            Err(DbError::Conflict) if Instant::now() < until => {
-                let ceiling = 1000u64 << attempt.min(6);
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "no-timed-waits baseline: a test's backoff of its own, where the board store's is the helper"
-                )]
-                std::thread::sleep(Duration::from_micros(
-                    RandomState::new().hash_one(attempt) % ceiling,
-                ));
-                attempt += 1;
-            }
-            result => return result,
-        }
-    }
-}
-
-#[test]
-fn raw_writes_retry_conflicts_and_return_other_results_without_repeating_them() {
-    let mut attempts = 0;
-    let result = retry_conflicts(Instant::now() + Duration::from_secs(30), || {
-        attempts += 1;
-        if attempts < 3 {
-            Err(DbError::Conflict)
-        } else {
-            Ok(17)
-        }
-    });
-    assert_eq!(result, Ok(17));
-    assert_eq!(attempts, 3);
-
-    let future = Instant::now() + Duration::from_secs(30);
-    for (error, until) in [
-        (DbError::Failed("invalid vector".into()), future),
-        (DbError::Thrown("refused".into()), future),
-        (DbError::Conflict, Instant::now()),
-    ] {
-        let mut attempts = 0;
-        let result = retry_conflicts::<()>(until, || {
-            attempts += 1;
-            assert_eq!(attempts, 1, "terminal errors must not be retried");
-            Err(error.clone())
-        });
-        assert_eq!(result, Err(error));
-        assert_eq!(attempts, 1);
-    }
-}
-
-struct Server {
-    addr: String,
-    shell: Mutex<ServerChild>,
-    log: PathBuf,
-}
-
-static SERVER: OnceLock<Server> = OnceLock::new();
 static DATABASES: AtomicUsize = AtomicUsize::new(0);
 
 unsafe extern "C" {
@@ -161,34 +58,6 @@ pub fn on_exit(cleanup: extern "C" fn()) {
     assert_eq!(registered, 0, "fixture cleanup is registered");
 }
 
-/// At the test binary's exit: the server ends, the shell it ran under is waited for, and its log goes
-/// (a server that never came up is reported, log and all, by `start`).
-extern "C" fn stop_server() {
-    if let Some(server) = SERVER.get() {
-        let mut shell = server.shell.lock().recover();
-        let _ = shell.shutdown();
-        let _ = std::fs::remove_file(&server.log);
-    }
-}
-
-/// The pinned `surreal`: `SYMPHONY_SURREAL`, else the one `tools/surreal.sh` fetches (once per
-/// machine).
-pub fn surreal() -> PathBuf {
-    if let Some(named) = symphony_env::SURREAL.os() {
-        return named.into();
-    }
-    let script = project_root().join("tools/surreal.sh");
-    let found = symphony_board::sys::output(symphony_board::sys::command("bash").arg(&script))
-        .expect("bash runs tools/surreal.sh");
-    assert!(
-        found.status.success(),
-        "tools/surreal.sh found no SurrealDB server for the tests: {}",
-        String::from_utf8_lossy(&found.stderr)
-    );
-    PathBuf::from(String::from_utf8(found.stdout).unwrap().trim())
-}
-
-/// The workspace of the native caller in this layout, with its owned fixture scripts.
 pub fn project_root() -> PathBuf {
     fixture_root::workspace(Path::new(env!("CARGO_MANIFEST_DIR")))
 }
@@ -196,306 +65,15 @@ pub fn project_root() -> PathBuf {
 /// `command` started with its stdin a [`symphony_board::sys::pipe`], kept as `child.stdin`, and its other
 /// streams as `command` sets them: what the child reads ends once the test drops that input, never
 /// later because a child another test spawned took a copy of it.
+#[allow(
+    dead_code,
+    reason = "the test binaries that start children of their own call it; the store's start none"
+)]
 pub fn spawn_with_input(command: &mut Command) -> std::io::Result<Child> {
     let (input, stdin) = symphony_board::sys::pipe()?;
     let mut child = command.stdin(input).spawn()?;
     child.stdin = Some(OwnedFd::from(stdin).into());
     Ok(child)
-}
-
-fn start() -> Server {
-    let log = option_env!("CARGO_TARGET_TMPDIR")
-        .map_or_else(std::env::temp_dir, PathBuf::from)
-        .join(format!("surreal-{}.log", std::process::id()));
-    let (addr, shell) = launch(&surreal(), &log).unwrap_or_else(|why| {
-        panic!(
-            "the SurrealDB server did not come up: {why}; its log is {}",
-            log.display()
-        )
-    });
-    on_exit(stop_server);
-    Server {
-        addr,
-        shell: Mutex::new(shell),
-        log,
-    }
-}
-
-/// `binary` started as the tests' server, in memory on a free local port: its address and the shell
-/// it runs under, which stops it once the shell's input closes. The shell's own output and the
-/// server's go to `log`, made here with its folder: Cargo makes `CARGO_TARGET_TMPDIR` only while it
-/// compiles a test, so a test binary built earlier can find it gone. A server that ends before it
-/// answers is reported with its exit status and its log.
-pub fn launch(binary: &Path, log: &Path) -> Result<(String, ServerChild), NotStarted<Infallible>> {
-    launch_on(binary, log, "memory")
-}
-
-/// [`launch`], the server keeping its data in `engine` (`memory`, or `surrealkv://FOLDER`, the
-/// engine the board runs on): a server up that holds no store where `engine` names fails the test,
-/// with its log ([`store_held_in`]).
-pub fn launch_on(
-    binary: &Path,
-    log: &Path,
-    engine: &str,
-) -> Result<(String, ServerChild), NotStarted<Infallible>> {
-    launch_under(binary, log, engine, None)
-}
-
-/// [`launch_on`], the server keeping its data as `storage` says where one is given: without one,
-/// SurrealKV's memtable is its own, a share of the machine's memory, so what one transaction may
-/// hold differs from machine to machine.
-pub fn launch_under(
-    binary: &Path,
-    log: &Path,
-    engine: &str,
-    storage: Option<Storage>,
-) -> Result<(String, ServerChild), NotStarted<Infallible>> {
-    if let Some(folder) = log.parent() {
-        std::fs::create_dir_all(folder).unwrap_or_else(|error| {
-            panic!(
-                "the SurrealDB server's log folder {} cannot be made: {error}",
-                folder.display()
-            )
-        });
-    }
-    let said = || {
-        let mut said = String::new();
-        let _ = std::fs::File::open(log).and_then(|mut f| f.read_to_string(&mut said));
-        said
-    };
-    // Up once it answers and the server itself listens there (the shell says its pid): a process
-    // that took its port answers too. A quiet machine has it up within `READY`. Every start, a port
-    // taken tried again on another included, waits within the one backstop, which only a stall
-    // reaches: each attempt has what is left of it (RULES.md `tests/no-test-fails-on-load`).
-    const READY: Duration = Duration::from_secs(20);
-    let until = Instant::now() + test_time::backstop(READY);
-    let started = symphony_board::port::start_on_free_port(
-        symphony_board::port::ATTEMPTS,
-        until,
-        |reserved| {
-            let addr = reserved.to_string();
-            let output = std::fs::File::create(log).unwrap_or_else(|error| {
-                panic!(
-                    "the SurrealDB server's log {} cannot be written: {error}",
-                    log.display()
-                )
-            });
-            let (announced, announcer) =
-                symphony_board::sys::pipe().expect("a pipe for the server's pid");
-            let shell = spawn_with_input(
-            symphony_board::sys::command("bash")
-                .arg("-c")
-                .arg(concat!(
-                    r#". "$2"; fixture_close_fds; exec 3<&0; "$0" start --unauthenticated --bind "$1" --log error --allow-net=127.0.0.1 "$3" >&2 3<&- & s=$!; "#,
-                    r#"echo "$s"; exec >/dev/null; "#,
-                    r#"(fixture_wait_eof <&3; kill $s 2>/dev/null) & c=$!; exec 3<&-; wait $s; r=$?; kill $c 2>/dev/null; wait $c 2>/dev/null; exit $r"#,
-                ))
-                .arg(binary)
-                .arg(&addr)
-                .arg(project_root().join("tools/fixture_process.sh"))
-                .arg(engine)
-                .envs(storage.into_iter().flat_map(Storage::environment))
-                .stdout(announcer)
-                .stderr(output),
-        )
-        .expect("sh starts the server");
-            // Own it before reading the announcement or checking readiness: either can unwind.
-            let mut shell = ServerChild {
-                shell,
-                server: None,
-            };
-            let mut line = String::new();
-            let _ = BufReader::new(announced).read_line(&mut line);
-            shell.server = line.trim().parse().ok();
-            let server = shell.server;
-            let up = test_time::until(
-                format!("the SurrealDB server answering on {addr}"),
-                until.saturating_duration_since(Instant::now()),
-                || match shell.shell.try_wait().unwrap() {
-                    Some(status) => Some(Err(status)),
-                    None => (rpc::healthy(&addr)
-                        && server.is_some_and(|pid| {
-                            symphony_board::port::listens(
-                                pid,
-                                reserved,
-                                symphony_board::sys::output,
-                            )
-                            .unwrap()
-                        }))
-                    .then_some(Ok(())),
-                },
-            );
-            match up {
-                Ok(Ok(())) => Ok::<_, Infallible>(Start::Up((addr, shell))),
-                Ok(Err(status)) => Ok(Start::Ended(format!("{status}; it said: {}", said()))),
-                Err(stall) => {
-                    let _ = shell.shutdown();
-                    panic!("{stall}; its log ({}):\n{}", log.display(), said());
-                }
-            }
-        },
-    );
-    let (addr, shell) = started.map(|(up, _)| up)?;
-    if let Err(why) = store_held_in(engine) {
-        // Unwinding drops `shell`, which ends the server.
-        panic!(
-            "the SurrealDB server on {addr}: {why}; its log ({}):\n{}",
-            log.display(),
-            said()
-        );
-    }
-    Ok((addr, shell))
-}
-
-/// Whether a server holds the store `engine` names: for `surrealkv://FOLDER`, the lock SurrealKV
-/// takes in FOLDER when it opens the store there, before the server answers. Any other engine
-/// names no folder, and holds. One that does not is a server on another engine, its default
-/// `memory` say: where it keeps nothing a restart finds, and copies a board many times slower.
-pub fn store_held_in(engine: &str) -> Result<(), String> {
-    let Some(folder) = engine.strip_prefix("surrealkv://") else {
-        return Ok(());
-    };
-    let lock = Path::new(folder).join("LOCK");
-    let elsewhere = format!("so it runs on an engine other than {engine}");
-    let file = std::fs::File::open(&lock).map_err(|error| {
-        format!(
-            "it holds no store in {folder}: its lock {} cannot be opened ({error}), {elsewhere}",
-            lock.display()
-        )
-    })?;
-    match file.try_lock() {
-        Err(std::fs::TryLockError::WouldBlock) => Ok(()),
-        Ok(()) => Err(format!(
-            "it holds no store in {folder}: nothing holds its lock {}, {elsewhere}",
-            lock.display()
-        )),
-        Err(std::fs::TryLockError::Error(error)) => Err(format!(
-            "its store's lock {} cannot be tried: {error}",
-            lock.display()
-        )),
-    }
-}
-
-/// A database of its own on the shared server.
-pub fn client() -> Client {
-    let server = SERVER.get_or_init(start);
-    let db = format!(
-        "t{}_{}",
-        std::process::id(),
-        DATABASES.fetch_add(1, Ordering::SeqCst)
-    );
-    Client::new(&server.addr, "sf", &db)
-}
-
-pub fn server_addr() -> String {
-    SERVER.get_or_init(start).addr.clone()
-}
-
-/// A SurrealDB server of a test's own on the engine a board's server runs on: `surrealkv://` under
-/// the board's storage ([`Storage::BOARD`], its 256 MiB memtable), in a folder of its own that goes
-/// with it, the server ended first, or with the next run if the test's process was killed
-/// ([`BoardServer::start`]). It is for a test that copies a whole board: a copy is one request, so
-/// its client's wait is its whole bound, and the shared server's in-memory engine takes the copy's
-/// one transaction many times slower than a board's engine, slow enough that a loaded machine
-/// stretched it past that wait. What each engine took is measured on its task's thread,
-/// tests/round-trip-copy-slow-under-load.
-pub struct BoardServer {
-    addr: String,
-    shell: ServerChild,
-    dir: PathBuf,
-}
-
-/// How a [`BoardServer`]'s folder's name starts: `board-surrealkv-PID-N`, PID its test process's.
-const BOARD_FOLDER: &str = "board-surrealkv-";
-
-/// Every [`BoardServer`] folder under `root` whose test process has ended removed: one a run
-/// killed before its server dropped left behind. A run still going keeps its own, and nothing else
-/// under `root` is touched.
-pub fn remove_ended_board_folders(root: &Path) {
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let ended = (entry.file_name().to_str())
-            .and_then(|name| name.strip_prefix(BOARD_FOLDER))
-            .and_then(|rest| rest.split_once('-'))
-            .and_then(|(pid, _)| pid.parse::<i64>().ok())
-            .is_some_and(|pid| !symphony_board::sys::pid_alive(pid));
-        if ended {
-            let _ = std::fs::remove_dir_all(entry.path());
-        }
-    }
-}
-
-impl BoardServer {
-    /// The server up on a store in a folder of its own under the target's temporary folder, where
-    /// the binary's first one removes what ended runs left ([`remove_ended_board_folders`]).
-    pub fn start() -> BoardServer {
-        static SWEPT: std::sync::Once = std::sync::Once::new();
-        let root =
-            option_env!("CARGO_TARGET_TMPDIR").map_or_else(std::env::temp_dir, PathBuf::from);
-        SWEPT.call_once(|| remove_ended_board_folders(&root));
-        let dir = root.join(format!(
-            "{BOARD_FOLDER}{}-{}",
-            std::process::id(),
-            DATABASES.fetch_add(1, Ordering::SeqCst)
-        ));
-        let _ = std::fs::remove_dir_all(&dir); // an ended run's, whose process had this one's id
-        let engine = format!("surrealkv://{}", dir.join("data").display());
-        let (addr, shell) = launch_under(
-            &surreal(),
-            &dir.join("surreal.log"),
-            &engine,
-            Some(Storage::BOARD),
-        )
-        .unwrap_or_else(|why| panic!("the board's SurrealDB server did not come up: {why}"));
-        BoardServer { addr, shell, dir }
-    }
-
-    /// The folder it keeps its store (`data/`) and its log in.
-    pub fn folder(&self) -> &Path {
-        &self.dir
-    }
-
-    /// A client of a database of its own on this server, which waits for each answer as any
-    /// board's client does until told otherwise ([`Client::waiting`]).
-    pub fn client(&self) -> Client {
-        let db = format!("t{}", DATABASES.fetch_add(1, Ordering::SeqCst));
-        Client::new(&self.addr, "sf", &db)
-    }
-}
-
-impl Drop for BoardServer {
-    fn drop(&mut self) {
-        let _ = self.shell.shutdown();
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
-}
-
-/// The database a store test's board is in. A test that runs on both is written once, by
-/// [`crate::on_both`], and named by each: `NAME::surrealdb` and `NAME::postgresql`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(
-    dead_code,
-    reason = "each test binary including this file runs on the databases its tests name"
-)]
-pub enum Backend {
-    SurrealDb,
-    PostgreSql,
-}
-
-#[allow(
-    dead_code,
-    reason = "each test binary including this file runs on the databases its tests name"
-)]
-impl Backend {
-    /// A database of its own on this binary's server of the backend.
-    pub fn database(self) -> Database {
-        match self {
-            Backend::SurrealDb => client().into(),
-            Backend::PostgreSql => postgresql().into(),
-        }
-    }
 }
 
 /// The test binary's PostgreSQL: a scratch board's server under the temporary folder, started on
@@ -527,6 +105,15 @@ pub fn postgresql() -> pg::Client {
     pg::Client::new(&server.socket, &db)
 }
 
+/// A database of its own on the test binary's PostgreSQL, as the store takes it.
+#[allow(
+    dead_code,
+    reason = "each test binary including this file reaches its boards as its tests name"
+)]
+pub fn database() -> Database {
+    postgresql().into()
+}
+
 fn start_postgresql() -> PgServer {
     let dir = std::env::temp_dir().join(format!("board-pg-{}", std::process::id()));
     if dir.exists() {
@@ -534,7 +121,7 @@ fn start_postgresql() -> PgServer {
     }
     std::fs::create_dir_all(&dir).unwrap();
     let programs = symphony_board::server::postgres::discover_programs(&project_root()).unwrap();
-    let pg = Home::new(&dir.join("board"), Path::new("/no/surreal"))
+    let pg = Home::at(&dir.join("board"))
         .telling(|_| {})
         .postgresql(&programs);
     let serving = pg
@@ -607,8 +194,8 @@ impl Fixture {
             .unwrap();
     }
 
-    /// Every row of each of the board's tables, as [`Store::raw`] reads them past every rule, on
-    /// either database: what a write refused leaves as it was.
+    /// Every row of each of the board's tables, as [`Store::raw`] reads them past every rule:
+    /// what a write refused leaves as it was.
     #[allow(
         dead_code,
         reason = "each test binary including this file reads the board as its tests need"
@@ -662,14 +249,9 @@ impl Fixture {
             .health
     }
 
-    /// A board on SurrealDB seeded with `seed`.
+    /// A board of its own seeded with `seed`.
     pub fn new(seed: Seed) -> Fixture {
-        Fixture::on(Backend::SurrealDb, seed)
-    }
-
-    /// A board on `backend` seeded with `seed`.
-    pub fn on(backend: Backend, seed: Seed) -> Fixture {
-        Fixture::in_database(backend.database(), seed)
+        Fixture::in_database(database(), seed)
     }
 
     /// A board in `db` seeded with `seed`. A seed that does not copy says why and the load average
@@ -770,21 +352,48 @@ impl Fixture {
         .expect("the store opens")
     }
 
-    /// A SurrealDB client of its own on this board's database.
-    pub fn other_client(&self) -> Client {
-        match self.db.another() {
-            Database::SurrealDb(client) => client,
-            Database::PostgreSql(_) => panic!("this board is on PostgreSQL"),
-        }
-    }
-
-    /// A client of its own on this board's database, on either database.
+    /// A client of its own on this board's database.
     #[allow(
         dead_code,
         reason = "each test binary including this file runs on the databases its tests name"
     )]
     pub fn other_database(&self) -> Database {
         self.db.another()
+    }
+
+    /// A PostgreSQL client of its own on this board's database: for a test's statement of its
+    /// own, past the store, where no command and no [`Store::raw`] row does what it needs.
+    #[allow(
+        dead_code,
+        reason = "each test binary including this file runs on the databases its tests name"
+    )]
+    pub fn postgresql(&self) -> pg::Client {
+        self.db.another().into_postgresql()
+    }
+
+    /// Counts each row of `table` written from now on (made, changed or removed) by a trigger of
+    /// the test's own: how many so far.
+    #[allow(
+        dead_code,
+        reason = "each test binary including this file reads the board as its tests need"
+    )]
+    pub fn writes_to(&self, table: &str) -> impl Fn() -> i64 + use<> {
+        let client = self.postgresql();
+        client
+            .simple(&format!(
+                "CREATE TABLE fixture_writes_{table} (n bigint NOT NULL); \
+                 INSERT INTO fixture_writes_{table} VALUES (0); \
+                 CREATE FUNCTION fixture_count_{table}() RETURNS trigger LANGUAGE plpgsql AS $$ \
+                 BEGIN UPDATE fixture_writes_{table} SET n = n + 1; RETURN NULL; END $$; \
+                 CREATE TRIGGER fixture_count AFTER INSERT OR UPDATE OR DELETE ON {table} \
+                 FOR EACH ROW EXECUTE FUNCTION fixture_count_{table}();"
+            ))
+            .unwrap();
+        let count = format!("SELECT n::text FROM fixture_writes_{table}");
+        move || {
+            let answer = client.request(&[pg::Step::bare(&count)]).unwrap();
+            answer[0].value().unwrap().parse().unwrap()
+        }
     }
 
     pub fn advance(&self, seconds: f64) {
@@ -806,19 +415,14 @@ impl Fixture {
     }
 }
 
-/// The default report fixture, shared with the server's roll-up tests.
-pub fn report_board() -> Fixture {
-    report_board_on(Backend::SurrealDb)
-}
-
 /// The scratch board the day files' tests read (`tests/store/reports.rs`, the server's roll-up),
 /// written through the store's commands from the day before the UTC midnight before [`NOW`] to 09:30
 /// after it, where its clock is left: tasks across statuses, `sim/b` bounced twice by two `changes`
 /// verdicts, the red `tests/main-red-1` filed and closed, `sim/a` approved and landed, `sim/old`
 /// open since the day before, `sim/gone` closed then, and `sim/b`'s review subtask; the sessions
 /// that work it registered the day before but one, an opus worker at 01:00.
-pub fn report_board_on(backend: Backend) -> Fixture {
-    let f = Fixture::on(backend, Seed::default());
+pub fn report_board() -> Fixture {
+    let f = Fixture::new(Seed::default());
     f.at_hour(-24.0);
     let orch = f.session("orchestrator");
     let exe = f.session("worker");
@@ -910,9 +514,8 @@ fn open(db: &Database, clock: &Arc<Mutex<f64>>, alive: &Arc<Mutex<HashSet<i64>>>
 
 /// Two sessions and two tasks, and a store whose rule sees amber-heron come back between its read and
 /// its write, by acting on the other task (acting is being seen).
-pub fn amber_back_meanwhile(backend: Backend) -> (Fixture, Store) {
-    let f = Fixture::on(
-        backend,
+pub fn amber_back_meanwhile() -> (Fixture, Store) {
+    let f = Fixture::new(
         Seed::default()
             .session("amber-heron")
             .session("brisk-finch")
@@ -957,8 +560,8 @@ pub fn under(slug: &str, parent: &str) -> NewTask {
 }
 
 /// An orchestrator on `a`; `a/b` under it, `a/b/c` under that.
-pub fn chain(backend: Backend) -> (Fixture, String) {
-    let f = Fixture::on(backend, Seed::default());
+pub fn chain() -> (Fixture, String) {
+    let f = Fixture::new(Seed::default());
     let orch = f.session("orchestrator");
     f.task("a");
     f.store.take_role("a", &orch, "orchestrator").unwrap();
@@ -968,9 +571,8 @@ pub fn chain(backend: Backend) -> (Fixture, String) {
 }
 
 /// `amber-heron` and `brisk-finch`, and `sim/jump` at `status`.
-pub fn two_and_a_task(backend: Backend, status: &str) -> Fixture {
-    Fixture::on(
-        backend,
+pub fn two_and_a_task(status: &str) -> Fixture {
+    Fixture::new(
         Seed::default()
             .session("amber-heron")
             .session("brisk-finch")
@@ -980,9 +582,8 @@ pub fn two_and_a_task(backend: Backend, status: &str) -> Fixture {
 
 /// `sim/jump` in review, everyone seen at `NOW`: `ochre-owl` orchestrates, `amber-heron` executed
 /// it, `brisk-finch` reviews it.
-pub fn in_review(backend: Backend) -> Fixture {
-    Fixture::on(
-        backend,
+pub fn in_review() -> Fixture {
+    Fixture::new(
         Seed::default()
             .session("ochre-owl")
             .session("amber-heron")

@@ -3,8 +3,7 @@
 //! database transactions own durable compare-and-set. No route or local upload selects this table.
 
 use super::postgres::artifacts as pg;
-use super::statement::both;
-use super::surreal::artifacts as sql;
+use super::statement::Statement;
 use super::{Error, Store};
 use serde_json::{Value, json};
 
@@ -15,7 +14,7 @@ impl Store {
         check(tenant, project)?;
         let row: Option<Value> = self.retrying(|| {
             self.read(
-                both(sql::LOAD, pg::load()),
+                Statement::from(pg::load()),
                 json!({"key": [tenant, project]}),
             )
         })?;
@@ -46,7 +45,7 @@ impl Store {
                 "invalid artifact ledger revision or body".into(),
             ));
         }
-        self.retrying(|| self.transact_dispatch(both(sql::CAS, pg::cas()),
+        self.retrying(|| self.transact_dispatch(Statement::from(pg::cas()),
             // Preserve nested nulls through the board's optional-field normalization and both
             // backends' projections. The opaque envelope is never inspected by a SQL statement.
             json!({"key": [tenant, project], "expected": expected, "body": {"encoded": body.to_string()}}), false))

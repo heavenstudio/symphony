@@ -3,9 +3,9 @@
 //! it with nothing said since, top-level and subtasks, each with its whole thread (a post by its
 //! sender and time alone) and the red mark; one request, and no write. Then the board's figures of
 //! the day file from that read, on the scratch board the store itself wrote through its commands
-//! ([`crate::common::report_board_on`]).
+//! ([`crate::common::report_board`]).
 
-use crate::common::{Backend, Fixture, NOW, Seed, report_board, report_board_on};
+use crate::common::{Fixture, NOW, Seed, report_board};
 use symphony_board::NewTask;
 use symphony_board::reports::{DAY, HOUR, day, day_start};
 use symphony_board::sweep::trigger::now;
@@ -15,13 +15,10 @@ fn midnight() -> f64 {
     day_start(NOW)
 }
 
-on_both! {
-fn one_request_reads_every_open_task_and_every_one_written_since_and_writes_nothing(backend: Backend) {
-    // Exercise the default fixture that the server's roll-up tests share too.
-    let f = match backend {
-        Backend::SurrealDb => report_board(),
-        Backend::PostgreSql => report_board_on(backend),
-    };
+#[test]
+fn one_request_reads_every_open_task_and_every_one_written_since_and_writes_nothing() {
+    // Exercise the fixture that the server's roll-up tests share too.
+    let f = report_board();
     let log = f.store.database().queries();
     let (before, writes_before) = log.report(now());
     let read = f.store.report_records(midnight()).unwrap();
@@ -76,11 +73,10 @@ fn one_request_reads_every_open_task_and_every_one_written_since_and_writes_noth
         "a verdict is cut to its first words"
     );
 }
-}
 
-on_both! {
-fn a_task_approved_before_the_window_and_landed_in_it_is_read_and_its_landing_counted(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn a_task_approved_before_the_window_and_landed_in_it_is_read_and_its_landing_counted() {
+    let f = Fixture::new(Seed::default());
     f.at_hour(-3.0);
     let orch = f.session("orchestrator");
     let exe = f.session("worker");
@@ -133,16 +129,14 @@ fn a_task_approved_before_the_window_and_landed_in_it_is_read_and_its_landing_co
         .map(|w| (w.slug.as_str(), w.seconds / HOUR))
         .collect();
     assert_eq!(waited, [("sim/late", 0.75)]);
-
-}
 }
 
-on_both! {
 /// A red's filer names the commits it came between in its body, and the read takes them back to
 /// the red's day file; a red that names none, and a task not marked red whose body names some,
 /// read none.
-fn a_red_s_body_names_the_commits_it_came_between_and_the_read_takes_them_to_its_day_file(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn a_red_s_body_names_the_commits_it_came_between_and_the_read_takes_them_to_its_day_file() {
+    let f = Fixture::new(Seed::default());
     f.at_hour(1.0);
     let filer = f.session("filer");
     let orch = f.session("orchestrator");
@@ -194,13 +188,11 @@ fn a_red_s_body_names_the_commits_it_came_between_and_the_read_takes_them_to_its
         day.reds.iter().all(|red| red.landed.is_none()),
         "the landings in a range are the roll-up's to read from git"
     );
-
-}
 }
 
-on_both! {
-fn the_day_file_of_the_board_counts_its_bounces_reds_verdicts_landings_and_waits(backend: Backend) {
-    let f = report_board_on(backend);
+#[test]
+fn the_day_file_of_the_board_counts_its_bounces_reds_verdicts_landings_and_waits() {
+    let f = report_board();
     let read = f.store.report_records(midnight()).unwrap();
     let start = midnight();
     let day = day("sim", start, f.now(), f.now(), &read);
@@ -261,6 +253,4 @@ fn the_day_file_of_the_board_counts_its_bounces_reds_verdicts_landings_and_waits
     );
     assert!(day.top.lead.is_some_and(|lead| lead.n == 2));
     assert!(!day.closed && day.until < start + DAY);
-
-}
 }

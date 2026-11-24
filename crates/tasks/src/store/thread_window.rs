@@ -1,9 +1,9 @@
 //! A bounded recorded range for role history and message metadata. This is separate from the
 //! full thread read used by existing consumers. Non-system bodies never enter this projection.
 
-use super::statement::both;
+use super::postgres::thread_window as pg;
+use super::statement::Statement;
 use super::{Error, Message, Store, message};
-use super::{postgres::thread_window as pg, surreal::thread_window as sql};
 use crate::rows::MessageRow;
 use serde::Deserialize;
 use serde_json::json;
@@ -47,7 +47,7 @@ impl Store {
         }
         let read: Read = self.retrying(|| {
             self.read(
-                both(sql::read(), pg::read()),
+                Statement::from(pg::read()),
                 json!({"slug": slug, "before": before.unwrap_or(i64::MAX)}),
             )
         })?;

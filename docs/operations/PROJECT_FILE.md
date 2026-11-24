@@ -510,9 +510,9 @@ A generator, in `[land] generators` or `[verdicts] generators`, usually written 
 | `assessments` | none: an assessment is refused | the folder of the project's landing assessments; under `.git/`, the git common dir |
 
 A project's board runs on the machine's PostgreSQL: a board not made yet is made on it by its
-first command ([getting started](GETTING_STARTED.md#2-set-the-project-up)), and only a board made
-on SurrealDB before that, which holds its store and names no other engine, still runs there
-until it is moved ([POSTGRESQL](POSTGRESQL.md)). Its setup requires version 18 or later,
+first command ([getting started](GETTING_STARTED.md#2-set-the-project-up)), and a board still on
+SurrealDB is refused until it is moved
+([POSTGRESQL](POSTGRESQL.md#a-board-still-on-surrealdb)). Its setup requires version 18 or later,
 installed by the machine's package manager. Without an explicit `postgresql`, discovery takes the
 first executable `postgres` on `PATH`; `initdb`, `pg_ctl` and `psql` must be executable in the
 same folder. On a Mac with Homebrew:

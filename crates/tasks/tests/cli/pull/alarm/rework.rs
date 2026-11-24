@@ -141,11 +141,12 @@ fn overlapping_late_receipt_after_a_fix_and_return_keeps_ten_four_raised_seven_h
     c.tip("sim/review-0", "asked", asked);
     c.tip("sim/review-0", "fixed", asked + 1.0);
     c.tip("sim/review-0", "asked", asked + 2.0);
-    let first = symphony_board::Store::unchecked(
-        c.f.other_client(),
+    let first = symphony_board::Store::unchecked_on(
+        c.f.other_database(),
         Box::new(move || asked),
         Box::new(|_| false),
         crate::common::HOST,
+        &symphony_board::Opening::write(),
     );
     c.f.advance(3.0);
     let late = c.f.late(move || {
@@ -259,7 +260,7 @@ fn historical_timestamp_ends_need_a_unique_matching_thread_occurrence() {
         };
         // A historical board kept no sequence beside the standing assessment, only time-keyed
         // saved ends. The real thread still contains the unique sequence of every occurrence.
-        symphony_board::Raw::on(&c.f.other_client())
+        symphony_board::Raw::of(&c.f.other_database())
             .row("task", "sim/review-0")
             .set(json!({
                 "fields._board.fixed": {"asked": {at.to_string(): saved}},

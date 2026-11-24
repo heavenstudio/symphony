@@ -27,8 +27,8 @@
 //! is never sent twice, a read no more than a write, so a client never repeats work the server may
 //! have done. One the server took on a connection that worked and did not answer within the
 //! client's wait ([`Client::waiting`]), or a startup it did not answer in that time, says the
-//! server is slow in the words SurrealDB's client says it in ([`crate::rpc::slow`] knows both): a
-//! server that is there and late, never one that cannot be reached. The system says such a wait
+//! server is slow in the words [`crate::rpc::slow`] knows, as the `rpc` client consumers keep says
+//! it: a server that is there and late, never one that cannot be reached. The system says such a wait
 //! run out as its bare error, `EAGAIN`, "Resource temporarily unavailable", which names no wait.
 
 use crate::db::DbError;
@@ -53,8 +53,8 @@ mod tests;
 pub const USER: &str = crate::server::postgres::USER;
 /// The database a connection that makes another names: PostgreSQL's own.
 pub const MAINTENANCE: &str = "postgres";
-/// How long a request may wait on the server, as the SurrealDB client's, to take each write of it
-/// and to give each read of its answers: a whole board's copy, on a loaded machine, is the longest.
+/// How long a request may wait on the server, to take each write of it and to give each read of
+/// its answers: a whole board's copy, on a loaded machine, is the longest.
 const TIMEOUT: Duration = Duration::from_secs(300);
 /// SQLSTATEs a write is tried again on: `serialization_failure` and `deadlock_detected`.
 const AGAIN: [&str; 2] = ["40001", "40P01"];
@@ -228,9 +228,17 @@ impl Client {
 
     /// The database this client names, made on its server if it is not there: through a
     /// connection to [`MAINTENANCE`]. Another's making it first is its being there.
+    ///
+    /// It is a copy of `template0`, which takes no connection, never of `template1`, which does:
+    /// PostgreSQL refuses to copy a database another session is in (`55006`) once it has waited
+    /// 5 s for it to leave, and an autovacuum worker visits `template1` as it does every
+    /// database, slow to leave on a loaded machine. A board's server is one its board made
+    /// (`initdb`, [`crate::server::postgres`]), and nothing adds to its `template1`, so the two
+    /// copies hold the same.
     pub fn make_database(&self) -> Result<(), DbError> {
         let maker = self.of(MAINTENANCE);
-        match maker.simple(&format!("CREATE DATABASE {}", self.database)) {
+        let make = format!("CREATE DATABASE {} TEMPLATE template0", self.database);
+        match maker.simple(&make) {
             Ok(_) => Ok(()),
             Err(DbError::Failed(said)) if database_there(&said) => Ok(()),
             Err(other) => Err(other),

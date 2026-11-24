@@ -1,8 +1,8 @@
 # symphony-board
 
-Symphony's task board: tasks in a tree, the sessions and agents that claim, review and land them, their threads and verdicts, and the builds and tests each records, kept in a local SurrealDB server the board starts in a repository's git folder. It installs the `tasks` command (every board command), `agent-send` (a message to another agent's session), `tasks-copy` (a whole board copied into its database and back out) and `tasks-reclaim` (the store rebuilt from an export of itself).
+Symphony's task board: tasks in a tree, the sessions and agents that claim, review and land them, their threads and verdicts, and the builds and tests each records, kept in a local PostgreSQL server the board starts on its data in a repository's git folder. It installs the `tasks` command (every board command), `agent-send` (a message to another agent's session), `tasks-copy` (a whole board copied into its database and back out), `tasks-reclaim` (the board's dead space given back to the disk) and `tasks-move` (a snapshot of the board put back over it).
 
-That server is SurrealDB's own binary, at the version the board pins, which this package does not install: `symphony init` ends by printing the line that fetches it into the repository's git folder and checks its SHA-256, and `SYMPHONY_SURREAL` names a copy of it elsewhere.
+That server is the machine's own PostgreSQL, 18 or later, which this package does not install: the board finds its programs on `PATH`, or in the folder a project's `symphony.toml` names (`[board] postgresql`), and `symphony init` says what to install when they are missing.
 
 Symphony is a document, review and task workspace. The product's commands install together:
 

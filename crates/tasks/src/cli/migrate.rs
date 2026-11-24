@@ -87,7 +87,7 @@ pub fn run(args: &[String], env: &Env, out: &mut dyn Write, err: &mut dyn Write)
 fn migrate(env: &Env, leave_behind: bool) -> Result<String, String> {
     let reached = reach(env, &env.cwd, true)?;
     let version_reader = Store::unchecked_on(
-        reached.database(),
+        reached.database()?,
         Box::new(crate::store::now),
         Box::new(|_| true),
         "",
@@ -199,9 +199,9 @@ fn in_main(live: &crate::live::Live, env: &Env) -> Result<(), String> {
 /// its own, which defines and writes nothing.
 pub(super) fn version(client: &Client) -> Result<Option<i64>, String> {
     Store::unchecked_on(
-        super::named_database(
-            Client::new(client.addr(), NAMESPACE, client.database()).waiting(client.wait_limit()),
-        ),
+        crate::Database::named(
+            &Client::new(client.addr(), NAMESPACE, client.database()).waiting(client.wait_limit()),
+        )?,
         Box::new(crate::store::now),
         Box::new(|_| true),
         "",

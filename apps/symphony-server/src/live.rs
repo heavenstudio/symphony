@@ -245,9 +245,6 @@ pub(crate) struct Hub {
     /// updates' route read ([`symphony::machine::updates`]): the machine's, none where it cannot be
     /// found and in the library's tests, which read no machine's unless they give one.
     pub(crate) machine: Option<PathBuf>,
-    /// What the pages say of a replay of the board's store's log while the worker's last reach of
-    /// the board was refused for one ([`symphony_board::server::replaying_in`]).
-    replaying: Mutex<Option<String>>,
     /// The time the board's health is recorded and read at, in seconds since the epoch: the wall
     /// clock's, or a test's.
     pub(crate) clock: Box<dyn Fn() -> f64 + Send + Sync>,
@@ -445,7 +442,6 @@ impl Hub {
             notices: Mutex::new(health::Notices::of(root)),
             base: OnceLock::new(),
             machine: health::machine_folder(),
-            replaying: Mutex::new(None),
             clock: Box::new(symphony_board::sweep::trigger::now),
             asks: Mutex::new(asks::AskWatch::default()),
             chat: Mutex::new(None),
@@ -2800,7 +2796,7 @@ mod tests {
         let signoff_inputs = hub.signoff_pending.lock().unwrap().clone();
         f.advance(91.0);
         let board = f.store.board().unwrap();
-        let before = f.store.client().requests();
+        let before = f.store.database().requests();
         hub.update_board(&f.store, board, hub.agent_snapshot().unwrap())
             .unwrap();
         let pages = hub.pages.read().unwrap();
@@ -2813,13 +2809,13 @@ mod tests {
             .collect();
         eprintln!(
             "health flip: {} requests; regions: {}",
-            f.store.client().requests() - before,
+            f.store.database().requests() - before,
             regions.join(", ")
         );
         // Two small reads: no sign-off thread read, no column counts, and no read of the active
         // workflow, whose generation the board read carries (`Hub::workflow_read`).
         assert_eq!(
-            f.store.client().requests() - before,
+            f.store.database().requests() - before,
             2,
             "no sign-off thread read"
         );

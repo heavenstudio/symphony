@@ -29,9 +29,8 @@ server when it is not running: a `just tasks`, `just symphony` as it starts, a p
 of the Symphony, which never makes a board. It starts detached, so it outlives
 whoever started it, and that is also the restart: a server that was killed is
 started again on the same data. A start says so in one line on stderr, as it
-takes seconds. A board made before PostgreSQL was a new board's runs on SurrealDB
-(namespace `sf`, database `tasks`, its address recorded beside its store) until
-its store is moved ([POSTGRESQL](../operations/POSTGRESQL.md)).
+takes seconds. A board still on SurrealDB is refused until it is moved
+([POSTGRESQL](../operations/POSTGRESQL.md#a-board-still-on-surrealdb)).
 The heartbeat hook never starts it. `TASKS_SERVER` (an address) and
 `TASKS_DATABASE` reach another board, as the tests do. It is working state, not
 history: `just tasks export` writes a readable snapshot to
@@ -41,7 +40,7 @@ Each project has a board of its own. A run's project is named by the nearest
 `symphony.toml` from its folder up, never past the top of the checkout it is in;
 with none, by the machine registry's entry for its repository's main checkout,
 else by that checkout's folder name. Its board is that repository's, in its
-common dir, under the same namespace and database. The Symphony serves each
+common dir, in the same database. The Symphony serves each
 registered project's board, and reconnects to one whose server restarted. A
 project's heartbeat keys, sweep state and staffing lock stay in its common dir.
 
@@ -65,17 +64,10 @@ whichever worktree it runs; a branch's own build runs only on a scratch board
 (`--database NAME`). The heartbeat hook finds the build as the recipe does, and
 builds nothing. The sweeps work finishing starts, and the Symphony's reap and
 finish, run the main checkout's build found that way, never a linked worktree's.
-There is no Python board adapter. The server is the pinned
-SurrealDB at `symphony/surreal/VERSION/surreal` in the git common dir, or the binary
-`SYMPHONY_SURREAL` names. In this repository `bash tools/surreal.sh` fetches it there,
-checked against its pinned SHA-256 (the Rust tests fetch it the same way). A
-project fetches the same tarball there, checked against the same SHA-256, by the
-line `symphony init` lists among the steps left, which the board also says when
-it is missing; a machine no build is pinned for puts SurrealDB's release binary
-there. A new project's board is made by its first board command, `just tasks list`
-say, which `symphony init` lists among the steps left too while the board is not
-made: the Symphony only reads a board, and its board page says so, in the
-refusal's words, in place of the board until a read answers.
+There is no Python board adapter. A new project's board is made by its first
+board command, `just tasks list` say, which `symphony init` lists among the steps
+left while the board is not made: the Symphony only reads a board, and its board
+page says so, in the refusal's words, in place of the board until a read answers.
 
 | | |
 |---|---|
@@ -87,9 +79,9 @@ refusal's words, in place of the board until a read answers.
 | `just tasks asks [--all] [--json]` | what the owner waits on an agent for: the open asks, oldest first, each with its age and who holds it; `--all` adds those answered in the last day ([Asks](#asks)) |
 | `just tasks asks close ID "WHY" --as HANDLE` | close an ask that needs no answer, saying why |
 | `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout (any checkout of a repository with none), and in a project whose main checkout holds no board source, or that has none, only by it; it moves nothing while a writer seen in the last week is behind the schema it would move to, naming each, unless `--leave-behind` ([Who writes a board](../operations/BOARD_OPERATIONS.md#who-writes-a-board)) |
-| `just tasks database [hold WHY \| release [--of HOLDER]] [--as HANDLE]` | the board's database: whether it is held, what runs on its data, what a start or replay under way does, and the snapshots kept until the owner removes them; `hold` stops its server cleanly and keeps every board command and the Symphony from starting it, naming the hold, until `release` by its holder (or by another naming it with `--of`), which starts nothing |
+| `just tasks database [hold WHY \| release [--of HOLDER]] [--as HANDLE]` | the board's database: whether it is held and what runs on its data; `hold` stops its server cleanly and keeps every board command and the Symphony from starting it, naming the hold, until `release` by its holder (or by another naming it with `--of`), which starts nothing |
 | `just tasks schema [--accept VERSION]` | the board's schema and the highest its live board was seen at; exit 1, in the rollback's words, while it went back below it; `--accept VERSION` (`none` for a store with no board), the owner's, accepts an older board they meant ([A board that went back](../operations/BOARD_OPERATIONS.md#a-board-that-went-back)) |
-| `just tasks snapshot [--list]` | a copy-on-write clone of the board's store, taken only while no server has it open; one whose write-ahead log holds writes is kept until the owner removes it, and the newest three of the others; `--list` names them ([Snapshots](../operations/BOARD_OPERATIONS.md#the-store-and-its-server)) |
+| `just tasks snapshot [--list]` | a copy of the board's whole PostgreSQL cluster, copy-on-write where the volume clones, taken only while no server runs on it, and kept until the owner removes it; `--list` names them ([Snapshots](../operations/BOARD_OPERATIONS.md#the-store-and-its-server)) |
 | `just tasks callback [ADDRESS] [--chat] [--if-free] [--off] --as HANDLE` | register a native channel; addressed events start a turn directly (`just tasks help callback`) |
 | `just tasks callback --session-url URL --as HANDLE` | give the session the web address its Go to session control links to; empty clears it ([Going to a session](#going-to-a-session)) |
 | `just tasks pull --as HANDLE` | the whole PULL digest as HANDLE hears it now; a callback carries only what changed since the last PULL it received |
@@ -1040,7 +1032,9 @@ A land keeps a journal of the delivery in the lands' folder, written before each
    eligible at its head is refused before anything is published.
 2. **Eligible.** `publish` makes the head and its evidence public and answers the pull request,
    which the task is bound to from then on. The evidence is read again: of another revision, it is
-   published again or refused, never merged as it was.
+   published again or refused, never merged as it was. Each `publish` names the pull request the
+   journal binds (`pull`), or none once the journal of one closed unmerged is dropped, so the
+   program binds another only once no journal names the one closed.
 3. **Armed.** `arm` turns on the host's own merge of that head, by the squash and the text a
    merge asks: the host merges it once every check it requires passes, `symphony/eligible` among
    them, and the watcher closes the task ([below](#a-land-dispatched-at-review)). A pull request
@@ -3507,13 +3501,13 @@ reads of them before it moves a board: [BOARD_OPERATIONS](../operations/BOARD_OP
 
 ### Stuck servers
 
-A board server that outlasts its one ask to end, or a private replay nobody can tell is
-through, and what the owner does about each: [BOARD_OPERATIONS](../operations/BOARD_OPERATIONS.md#stuck-servers).
+A board server that outlasts its one ask to stop, or does not say it is ready, and what the
+owner does about each: [BOARD_OPERATIONS](../operations/BOARD_OPERATIONS.md#stuck-servers).
 
 ### A board that went back
 
 A board refused because its store holds less than the schema it was seen at: what it means,
-accepting an older board that was meant, and recovering what was lost, step by step:
+accepting an older board that was meant, and recovering what was lost:
 [BOARD_OPERATIONS](../operations/BOARD_OPERATIONS.md#a-board-that-went-back). Do not run `just tasks migrate` on it.
 
 ### A board that was copied or restored

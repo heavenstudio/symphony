@@ -1,25 +1,23 @@
-//! Each sender's last word (`said`) on the generated board, as its event keeps it where the board
-//! is biggest: a sender's newest word deleted gives way to its word before it, however far back,
-//! and every message deleted with the last words still named (the copy of a store of schema 12,
-//! which does not empty `said` first) looks back at each sender's word as it goes. Each within a
-//! bound of the CPU it costs the board's server ([`crate::cpu`]), from quiet to quiet again,
-//! stated once, at the end.
+//! Each sender's last word (`said`) on the generated board, as its trigger keeps it where the board
+//! is biggest (`store/postgres/schema.rs`'s `board_said`): a sender's newest word deleted gives
+//! way to its word before it, however far back, and every message deleted with the last words
+//! still named looks back at each sender's word as it goes, each a read of the sender's newest
+//! remaining word. Each within a bound of the CPU it costs the board's server ([`crate::cpu`]),
+//! from quiet to quiet again, stated once, at the end. The trigger's read is planned on an index
+//! by the plan check (`plans::every_statement_the_triggers_run_is_planned_on_an_index`).
 //!
-//! The look back walked `message_sid` from the newest message down until 2026-11-07: a delete of
-//! a rare sender's newest word, its other word the board's first, did not answer in 600 s on a
-//! board just copied. In an event, SurrealKV walks a range backward over the rows it still holds in
-//! memory (every row its server took since it started, up to 4 GiB) at a cost out of all
-//! proportion: that walk over 50k messages ran past 150 s in an event, where it took 4.6 s as a
-//! statement of its own, 0.9 s forward in the event and 1.8 s backward once a restart had written
-//! the rows to disk. The look back now reads the last key of two ranges of `message_sender`.
+//! The look back walked `message_sid` from the newest message down until 2026-11-07, on
+//! SurrealDB: a delete of a rare sender's newest word, its other word the board's first, did not
+//! answer in 600 s on a board just copied. The look back reads the last key of the sender's range
+//! of `message_sender`.
 
 use crate::board::{Board, board};
 use crate::cpu;
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
-use symphony_board::Raw;
 use symphony_board::db::DbError;
-use symphony_board::rpc::Client;
+use symphony_board::pg::Step;
+use symphony_board::{Database, Raw};
 
 /// A sender the generated board has no message of.
 const RARE: &str = "perf-rare-sender";
@@ -28,8 +26,8 @@ const RARE: &str = "perf-rare-sender";
 const PAST_EVERY_ID: i64 = 1_000_000_000;
 
 /// A message of [`RARE`] with id `sid` on a thread of its own, `kind` a post or a verdict.
-fn word(client: &Client, slug: &str, sid: i64, kind: &str) {
-    (Raw::on(client).row("message", json!([slug, sid])))
+fn word(db: &Database, slug: &str, sid: i64, kind: &str) {
+    (Raw::of(db).row("message", json!([slug, sid])))
         .create(json!({
             "sid": sid, "slug": slug, "sender": RARE, "recipient": null, "kind": kind,
             "text": "a rare word", "ts": 0.0,
@@ -38,8 +36,8 @@ fn word(client: &Client, slug: &str, sid: i64, kind: &str) {
 }
 
 /// The word `said` names for [`RARE`], as `[sid, slug]`, or none.
-fn rare_word(client: &Client) -> Value {
-    let word = Raw::on(client).row("said", json!([RARE]));
+fn rare_word(db: &Database) -> Value {
+    let word = Raw::of(db).row("said", json!([RARE]));
     let word = word.fields(&["sid", "slug"]).unwrap();
     if word.is_null() {
         return Value::Null;
@@ -47,15 +45,15 @@ fn rare_word(client: &Client) -> Value {
     json!([word["sid"], word["slug"]])
 }
 
-/// The CPU the board's server took for the delete of message `[slug, sid]`, its event's look back
-/// with it, which is all of its work, from quiet to quiet again ([`Board::bill`]), and the
+/// The CPU the board's server took for the delete of message `[slug, sid]`, its trigger's look
+/// back with it, which is all of its work, from quiet to quiet again ([`Board::bill`]), and the
 /// delete's wall. A delete of a few milliseconds may read none on a meter of 10 ms ticks (Linux's),
 /// so the board's copy, seconds of the server's work, is what shows its meter reads the server
 /// (`Board::make`).
 fn deleted(board: &Board, slug: &str, sid: i64) -> (Duration, Duration) {
     let (wall, cpu) = board.bill(|| {
         let began = Instant::now();
-        (Raw::on(&board.client())
+        (Raw::of(&board.database())
             .row("message", json!([slug, sid]))
             .delete())
         .unwrap_or_else(|why| panic!("the delete of {RARE}'s word {sid} on {slug}: {why:?}"));
@@ -65,8 +63,8 @@ fn deleted(board: &Board, slug: &str, sid: i64) -> (Duration, Duration) {
 }
 
 /// How many rows `table` holds.
-fn rows(client: &Client, table: &str) -> Value {
-    json!(Raw::on(client).table(table).count().unwrap())
+fn rows(db: &Database, table: &str) -> Value {
+    json!(Raw::of(db).table(table).count().unwrap())
 }
 
 /// A rare sender's newest word deleted gives way to its only other word, a verdict with the
@@ -74,15 +72,15 @@ fn rows(client: &Client, table: &str) -> Value {
 #[test]
 fn a_rare_senders_newest_word_deleted_gives_way_to_its_first_within_a_bound() {
     let board = board();
-    let client = board.client();
+    let db = board.database();
     let (first, newest) = ("perf/rare-first", "perf/rare-newest");
-    word(&client, first, 1, "verdict");
-    word(&client, newest, PAST_EVERY_ID, "msg");
-    assert_eq!(rare_word(&client), json!([PAST_EVERY_ID, newest]));
+    word(&db, first, 1, "verdict");
+    word(&db, newest, PAST_EVERY_ID, "msg");
+    assert_eq!(rare_word(&db), json!([PAST_EVERY_ID, newest]));
     let (newest_cpu, newest_wall) = deleted(&board, newest, PAST_EVERY_ID);
-    assert_eq!(rare_word(&client), json!([1, first]), "after its newest");
+    assert_eq!(rare_word(&db), json!([1, first]), "after its newest");
     let (last_cpu, last_wall) = deleted(&board, first, 1);
-    assert_eq!(rare_word(&client), Value::Null, "after its last");
+    assert_eq!(rare_word(&db), Value::Null, "after its last");
     eprintln!(
         "perf: a rare sender's newest word deleted in CPU {newest_cpu:.3?} (wall {newest_wall:.3?}), its last in {last_cpu:.3?} ({last_wall:.3?}), bound {LOOK_BACK:.1?}"
     );
@@ -94,22 +92,24 @@ fn a_rare_senders_newest_word_deleted_gives_way_to_its_first_within_a_bound() {
     assert!(over.is_empty(), "over {LOOK_BACK:.1?}: {over:?}");
 }
 
-/// Every message deleted in one transaction with `said` still naming each sender's word, as a
-/// store of schema 12 copying onto the board deletes them: each sender's word, deleted, gives way to
-/// its next, until none is left. Thrown away at its end, which leaves the board as it was.
+/// Every message deleted in one transaction with `said` still naming each sender's word: each
+/// sender's word, deleted, gives way to its next, until none is left. Thrown away at its end, its
+/// last statement raising what is left, which rolls it back and leaves the board as it was.
 #[test]
 fn every_message_deleted_with_the_last_words_named_looks_back_within_a_bound() {
     let board = board();
+    let db = board.database();
+    let (messages, words) = (rows(&db, "message"), rows(&db, "said"));
     let client = board.client();
-    let (messages, words) = (rows(&client, "message"), rows(&client, "said"));
     let ((answer, wall), cpu) = board.bill(|| {
         let began = Instant::now();
-        let answer = client.query(
-            "BEGIN TRANSACTION; DELETE message RETURN NONE;
-             THROW <string> [count(SELECT VALUE id FROM said), count(SELECT VALUE id FROM message)];
-             COMMIT TRANSACTION;",
-            json!({}),
-        );
+        let answer = client.request(&[
+            Step::bare("DELETE FROM message"),
+            Step::bare(
+                "DO $perf$ BEGIN RAISE EXCEPTION '%', jsonb_build_array( \
+                 (SELECT count(*) FROM said), (SELECT count(*) FROM message))::text; END $perf$",
+            ),
+        ]);
         (answer, began.elapsed())
     });
     cpu::worked("every message deleted", cpu).unwrap_or_else(|why| panic!("{why}"));
@@ -118,7 +118,7 @@ fn every_message_deleted_with_the_last_words_named_looks_back_within_a_bound() {
         "no word and no message left at the end: {answer:?}"
     );
     assert_eq!(
-        [rows(&client, "message"), rows(&client, "said")],
+        [rows(&db, "message"), rows(&db, "said")],
         [messages, words],
         "the board as it was"
     );
@@ -132,12 +132,13 @@ fn every_message_deleted_with_the_last_words_named_looks_back_within_a_bound() {
 }
 
 /// The bounds of the server's CPU, which the machine's load does not multiply as it multiplies a
-/// wall, for a machine other agents' runs share. Measured on 2026-11-12 in five runs at load 62
-/// to 222, one with a workspace build from scratch beside it: a rare sender's newest word deleted
-/// in 1.9 to 7.6 ms of CPU (walls of 8 to 58 ms), its last in 2.0 to 4.7 ms (12 to 42 ms); every
-/// message deleted with the last words named in 18.3 to 18.9 s, 25.1 s beside the build (walls of
-/// 35 to 85 s, where a bound on the wall stood at 120 s). The delete's bound is over 60 times the
-/// slowest, the copy's over twice, and both far under what the look back cost when it walked
-/// `message_sid`: no answer in 600 s, past 150 s in an event.
+/// wall, for a machine other agents' runs share. Measured on SurrealDB on 2026-11-12 in five runs
+/// at load 62 to 222, one with a workspace build from scratch beside it: a rare sender's newest
+/// word deleted in 1.9 to 7.6 ms of CPU (walls of 8 to 58 ms), its last in 2.0 to 4.7 ms (12 to
+/// 42 ms); every message deleted with the last words named in 18.3 to 18.9 s, 25.1 s beside the
+/// build (walls of 35 to 85 s, where a bound on the wall stood at 120 s). The delete's bound is
+/// over 60 times the slowest, the bulk delete's over twice, and both far under what the look back
+/// cost when it walked `message_sid`: no answer in 600 s, past 150 s in an event. Kept on
+/// PostgreSQL, whose figures the run prints.
 const LOOK_BACK: Duration = Duration::from_millis(500);
 const COPY_DELETE: Duration = Duration::from_secs(60);

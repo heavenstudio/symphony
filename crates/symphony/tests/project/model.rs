@@ -34,7 +34,7 @@ fn the_model_command_changes_main_and_limits_reads_it_without_a_review() {
     let (main, linked) = layouts::repository(&tree.root);
     let machine = tree.path("machine");
     let fixture = Fixture::empty();
-    let client = fixture.other_client();
+    let client = fixture.other_database();
     let before = fixture.rows();
     let (code, out, err) = model(&linked.join("docs"), &machine, &["all", "unlisted-model"]);
     assert_eq!((code, err.as_str()), (0, ""), "{out}");
@@ -59,7 +59,7 @@ fn the_model_command_changes_main_and_limits_reads_it_without_a_review() {
     let env = Env {
         cwd: linked.clone(),
         vars: BTreeMap::from([
-            ("TASKS_SERVER".into(), client.addr().into()),
+            ("TASKS_SERVER".into(), client.addr()),
             ("TASKS_DATABASE".into(), client.database().into()),
             ("SYMPHONY_MACHINE_DIR".into(), machine.display().to_string()),
         ]),

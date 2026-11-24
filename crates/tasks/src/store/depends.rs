@@ -3,8 +3,7 @@
 
 use super::postgres::depends as pg;
 use super::resume::back_to;
-use super::statement::both;
-use super::surreal::depends as sql;
+use super::statement::Statement;
 use super::work::{BLOCK_LINE, no_task};
 use super::{Error, Failure, Opens, Store, Task, Which, executors_or, refused};
 use crate::slots::OPEN;
@@ -124,7 +123,7 @@ impl Store {
         let said = said.trim_end_matches(';').to_string();
         self.retrying(|| {
             let read: Read =
-                self.read_together(both(sql::READ, pg::READ), json!({"slug": slug}))?;
+                self.read_together(Statement::from(pg::READ), json!({"slug": slug}))?;
             let statuses: HashMap<&str, &str> = (read.tasks.iter())
                 .map(|(slug, status)| (slug.as_str(), status.as_str()))
                 .collect();
@@ -202,7 +201,7 @@ impl Store {
                     "slots": slots,
                 }),
             );
-            let body = both(sql::change(acts, guarded), pg::change(acts, guarded)).posting();
+            let body = Statement::from(pg::change(acts, guarded)).posting();
             self.written(body, vars, slug)
         })
     }

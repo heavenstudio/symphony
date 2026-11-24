@@ -306,7 +306,7 @@ The task board opts into read-only Build/Test placement with `activity=1`; its
 status filter, counts and cursor use one filtered machine snapshot. The returned
 `lifecycle_counts` retain the underlying task totals. Without that opt-in,
 queries keep lifecycle status and paging semantics.
-Search uses SurrealDB full-text indexes over titles, briefs, slugs and thread
+Search uses the board's full-text word index over titles, briefs, slugs and thread
 messages, ordered by BM25 relevance with an exact slug first. Matching remains
 in the database; a message-only match keeps its task in the returned results.
 Canonical `/tasks`, `/task/…`, `/reports`, `/settings` and `/agents` routes serve the client shell.
@@ -323,10 +323,9 @@ write, and every page says so on the notice until the board and the build agree.
 a board whose step is declared to keep the Symphony writing: its ticks and saves write it as at
 the build's own schema, and the notice says nothing of it (`Hub::read_only_ahead`). A board that
 took a read on a connection that worked and did not answer it within the 3 s wait is slow: 504,
-"the task board is slow", never "cannot be reached". On PostgreSQL the wait bounds each write of a
-request and each read of its answer, and a request is never sent again, as the server may have run
-it; a board still on SurrealDB sends a read once more, so it waits at most twice the wait, inside
-the client's 15 s request limit. Native routes apply both
+"the task board is slow", never "cannot be reached". The wait bounds each write of a request and
+each read of its answer, inside the client's 15 s request limit, and a request is never sent
+again, as the server may have run it. Native routes apply both
 the peer gate and the Host check; sandboxed frames cannot read the API.
 
 `just symphony` installs the release client with the shared server, in

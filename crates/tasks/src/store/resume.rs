@@ -14,8 +14,7 @@
 //! ([`crate::stages::unblocked_line`]).
 
 use super::postgres::resume as pg;
-use super::statement::both;
-use super::surreal::resume as sql;
+use super::statement::Statement;
 use super::{Error, Failure, Opens, Store, Which, executors_or};
 use crate::slots::OPEN;
 use crate::waits_on::{Blocked, Thing};
@@ -42,7 +41,7 @@ impl Store {
 
     pub(super) fn resume_task_blocks(&self) -> Result<bool, Error> {
         let candidates: Vec<String> =
-            self.retrying(|| self.read(both(sql::CANDIDATES, pg::candidates()), json!({})))?;
+            self.retrying(|| self.read(Statement::from(pg::candidates()), json!({})))?;
         let mut changed = false;
         for slug in candidates {
             changed |= self.resume_task_block(&slug)?;
@@ -60,7 +59,7 @@ impl Store {
             required.sort();
             required.dedup();
             let prerequisites: Vec<Prerequisite> = self.read(
-                both(sql::PREREQUISITES, pg::prerequisites()),
+                Statement::from(pg::prerequisites()),
                 json!({"required": required}),
             )?;
             if prerequisites.len() != required.len()
@@ -164,7 +163,7 @@ impl Store {
                 "watch": watch, "slots": slots, "said": said,
             });
             let _: serde_json::Value =
-                self.transact_dispatch(both(sql::resume(), pg::resume()).posting(), vars, false)?;
+                self.transact_dispatch(Statement::from(pg::resume()).posting(), vars, false)?;
             Ok(Some(back.to_string()))
         })
     }

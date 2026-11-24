@@ -8,7 +8,6 @@
 //! Only an older dispatcher's own PULL of the same entries reads as the one awaited, so work
 //! withheld from the orchestrator is counted once more after one when a hand-over makes it its
 //! own, never lost, and nothing repeats after.
-use crate::common::Backend;
 
 use super::common::sweep_presence;
 use super::hand_over_outage::Outage;
@@ -133,9 +132,9 @@ fn older_dispatch(outage: &Outage, older: Older) {
     state.set(fields).unwrap();
 }
 
-on_both! {
-fn an_older_dispatcher_acknowledging_the_pull_this_one_queued_records_what_it_told(backend: Backend) {
-    let outage = waited(backend, Attempts::One);
+#[test]
+fn an_older_dispatcher_acknowledging_the_pull_this_one_queued_records_what_it_told() {
+    let outage = waited(Attempts::One);
     let Outage {
         fixture,
         elsewhere,
@@ -154,7 +153,6 @@ fn an_older_dispatcher_acknowledging_the_pull_this_one_queued_records_what_it_to
     let back = outage.back();
     said_once(&outage, &back);
 }
-}
 
 /// What an older dispatcher writes before it delivers the PULL waiting for the former orchestrator.
 #[derive(Clone, Copy, Debug)]
@@ -169,15 +167,15 @@ enum OlderWrites {
     Return,
 }
 
-on_both! {
-fn work_handed_to_the_orchestrator_is_counted_once_whatever_an_older_dispatcher_acknowledged(backend: Backend) {
+#[test]
+fn work_handed_to_the_orchestrator_is_counted_once_whatever_an_older_dispatcher_acknowledged() {
     let cases = [
         OlderWrites::Nothing,
         OlderWrites::Observation,
         OlderWrites::Return,
     ];
     for case in cases {
-        let outage = waited(backend, Attempts::One);
+        let outage = waited(Attempts::One);
         let Outage {
             fixture,
             elsewhere,
@@ -220,7 +218,6 @@ fn work_handed_to_the_orchestrator_is_counted_once_whatever_an_older_dispatcher_
         );
         said_once(&outage, &back);
     }
-}
 }
 
 /// The former orchestrator's task is executing, and the successor's has a child awaiting review;
@@ -269,9 +266,9 @@ fn handed_over(outage: &Outage, head: &str) -> [String; 4] {
     ]
 }
 
-on_both! {
-fn an_older_observation_never_hides_work_withheld_from_the_orchestrator_until_it_is_its_own(backend: Backend) {
-    let outage = Outage::on(backend);
+#[test]
+fn an_older_observation_never_hides_work_withheld_from_the_orchestrator_until_it_is_its_own() {
+    let outage = Outage::on();
     let Outage {
         fixture,
         elsewhere,
@@ -296,7 +293,6 @@ fn an_older_observation_never_hides_work_withheld_from_the_orchestrator_until_it
     assert_eq!(told, handed_over(&outage, CHANGED));
     said_once(&outage, &back);
 }
-}
 
 /// Which generation acknowledges the former orchestrator's first PULL.
 #[derive(Clone, Copy, Debug)]
@@ -307,10 +303,10 @@ enum FirstReceipt {
     Older,
 }
 
-on_both! {
-fn work_the_first_pull_withheld_is_counted_after_a_hand_over_whoever_acknowledged_it(backend: Backend) {
+#[test]
+fn work_the_first_pull_withheld_is_counted_after_a_hand_over_whoever_acknowledged_it() {
     for first in [FirstReceipt::ThisGeneration, FirstReceipt::Older] {
-        let outage = Outage::on(backend);
+        let outage = Outage::on();
         let Outage {
             fixture,
             elsewhere,
@@ -351,11 +347,10 @@ fn work_the_first_pull_withheld_is_counted_after_a_hand_over_whoever_acknowledge
         said_once(&outage, &back);
     }
 }
-}
 
-on_both! {
-fn an_inbox_receipt_of_a_pull_keeps_what_it_withheld_untold(backend: Backend) {
-    let outage = waited(backend, Attempts::One);
+#[test]
+fn an_inbox_receipt_of_a_pull_keeps_what_it_withheld_untold() {
+    let outage = waited(Attempts::One);
     let Outage {
         fixture,
         elsewhere,
@@ -377,7 +372,6 @@ fn an_inbox_receipt_of_a_pull_keeps_what_it_withheld_untold(backend: Backend) {
         "PULL ready_unstaffed=10 (was 9)\nready_unstaffed p2 scratch/theirs — Jump departure";
     assert_eq!(pull, changed, "{told:?}");
     said_once(&outage, &back);
-}
 }
 
 /// The entries `handle`'s callback record holds as told, of either generation's acknowledgement.
@@ -406,15 +400,15 @@ enum AfterReceipt {
     SweptElsewhere,
 }
 
-on_both! {
-fn an_inbox_receipt_while_a_dispatch_builds_the_digest_again_is_never_undone(backend: Backend) {
+#[test]
+fn an_inbox_receipt_while_a_dispatch_builds_the_digest_again_is_never_undone() {
     let cases = [
         AfterReceipt::Nothing,
         AfterReceipt::SweptHere,
         AfterReceipt::SweptElsewhere,
     ];
     for after in cases {
-        let outage = Outage::on(backend);
+        let outage = Outage::on();
         let Outage {
             fixture,
             elsewhere,
@@ -445,7 +439,11 @@ fn an_inbox_receipt_while_a_dispatch_builds_the_digest_again_is_never_undone(bac
             ..NewTask::new("scratch/foreign/new", "Another row", "owner")
         };
         elsewhere.create(&new).unwrap();
-        let (client, other, here) = (fixture.other_database(), fixture.elsewhere(), fixture.other());
+        let (client, other, here) = (
+            fixture.other_database(),
+            fixture.elsewhere(),
+            fixture.other(),
+        );
         let round = std::env::temp_dir().join(format!("{}-sweep.json", client.database()));
         let met = Arc::new(Mutex::new(Receipt::default()));
         let (recipient, during) = (former.clone(), Arc::clone(&met));
@@ -514,7 +512,6 @@ fn an_inbox_receipt_while_a_dispatch_builds_the_digest_again_is_never_undone(bac
         assert_eq!(older, older_record(fixture, former), "{after:?}");
     }
 }
-}
 
 /// What the former orchestrator heard of the successor's task before it was handed over.
 #[derive(Clone, Copy, Debug)]
@@ -526,10 +523,10 @@ enum Before {
     ToldByAnOlderPull,
 }
 
-on_both! {
-fn work_a_hand_over_brings_is_counted_in_one_pull_however_many_an_older_dispatcher_queues_after(backend: Backend) {
+#[test]
+fn work_a_hand_over_brings_is_counted_in_one_pull_however_many_an_older_dispatcher_queues_after() {
     for before in [Before::Withheld, Before::ToldByAnOlderPull] {
-        let outage = waited(backend, Attempts::One);
+        let outage = waited(Attempts::One);
         let Outage {
             fixture,
             elsewhere,
@@ -581,7 +578,6 @@ fn work_a_hand_over_brings_is_counted_in_one_pull_however_many_an_older_dispatch
         said_once(&outage, &back);
     }
 }
-}
 
 /// A dispatcher that keeps `pull_awaiting` but not `pull_said` (one built before PULLs said only
 /// what changed) delivers what waits for the former orchestrator: it records the PULL's entries as
@@ -612,9 +608,9 @@ fn unsaid_acknowledges(outage: &Outage) {
         .unwrap();
 }
 
-on_both! {
-fn a_pull_acknowledged_without_its_baseline_is_followed_by_the_whole_digest(backend: Backend) {
-    let outage = Outage::on(backend);
+#[test]
+fn a_pull_acknowledged_without_its_baseline_is_followed_by_the_whole_digest() {
+    let outage = Outage::on();
     let Outage {
         fixture,
         elsewhere,
@@ -642,5 +638,4 @@ ready_unstaffed p2 scratch/more — Jump departure
 ready_unstaffed p2 scratch/one — Jump departure";
     assert_eq!(pull, whole, "{told:?}");
     said_once(&outage, &back);
-}
 }

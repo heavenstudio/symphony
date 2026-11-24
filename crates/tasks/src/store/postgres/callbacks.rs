@@ -3,9 +3,9 @@
 use super::Pg;
 
 /// Every channel of a session that has not left, with its session and whether its agent's
-/// binding is an in-process one (`super::super::surreal::callbacks::REGISTRATIONS`): the channels
-/// by `callback_state_address`, which serves `doc ->> 'address' IS NOT NULL` where `doc ? 'address'`
-/// is served by no index (a channel's address is never a JSON null: its write strips nulls).
+/// binding is an in-process one: the channels by `callback_state_address`, which serves
+/// `doc ->> 'address' IS NOT NULL` where `doc ? 'address'` is served by no index (a channel's
+/// address is never a JSON null: its write strips nulls).
 pub(in crate::store) fn registrations() -> Pg<'static> {
     Pg::read(format!(
         "coalesce((SELECT jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
@@ -50,8 +50,8 @@ fn pending_of(of: &str) -> String {
         chat(of)
     )
 }
-/// `fields` of each of `v`'s `recipients`, `r` in them, each object with its `handle`, in their order
-/// (`super::super::surreal::callbacks::STORED`'s `SELECT … FROM $recipients`).
+/// `fields` of each of `v`'s `recipients`, `r` in them, each object with its `handle`, in their
+/// order.
 pub(in crate::store) fn each_recipient(fields: &str) -> String {
     format!(
         "coalesce((SELECT jsonb_agg(jsonb_build_object('handle', r -> 'handle', {fields}) ORDER BY n) FROM jsonb_array_elements(v -> 'recipients') WITH ORDINALITY AS recipient(r, n)), '[]')"
@@ -210,7 +210,7 @@ pub(in crate::store) fn pull_checked() -> Pg<'static> {
         "UPDATE callback_lease SET doc = doc || jsonb_build_object('pull', v -> 'now') WHERE id = v -> 'handle' AND doc -> 'revision' = v -> 'revision';",
     )
 }
-/// Each recipient's stored state, with `more` fields (`super::super::surreal::callbacks::stored`).
+/// Each recipient's stored state, with `more` fields.
 fn stored_with(more: &str) -> Pg<'static> {
     Pg::read(each_recipient(&format!(
         "'state', (SELECT doc FROM callback_state WHERE id = r -> 'handle'), 'checked_pull', coalesce((SELECT doc -> 'pull' FROM callback_lease WHERE id = r -> 'handle'), '0'), 'queued', coalesce((SELECT jsonb_agg(jsonb_strip_nulls(jsonb_build_object('key', doc -> 'key', 'text', doc -> 'text', 'sequence', doc -> 'sequence', 'pull_entries', doc -> 'pull_entries', 'pull_withheld', doc -> 'pull_withheld', 'pull_said', doc -> 'pull_said'))) FROM callback_event WHERE doc ->> 'handle' = r ->> 'handle' AND doc -> 'delivered' IS DISTINCT FROM 'true'::jsonb AND (starts_with(doc ->> 'key', 'pull-') OR starts_with(doc ->> 'key', 'event-') OR (starts_with(doc ->> 'key', 'pane-') AND starts_with(doc ->> 'text', 'BLOCKED ')))), '[]'){more}"

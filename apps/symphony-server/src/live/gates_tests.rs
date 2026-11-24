@@ -46,7 +46,7 @@ const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(30));
 /// asked again only past a backstop, so no test's steps, however slow, reach a retry.
 fn hub(root: &Path, f: &Fixture, wait: Duration) -> Hub {
     let mut hub = Hub::new(root, &root.join("build/client"));
-    let board = f.other_client();
+    let board = f.other_database();
     hub.connect_reader = Box::new(move |_| Ok(store_on(&board)));
     hub.gates = symphony::gates::Kept::new(symphony::gates::Limits {
         wait,

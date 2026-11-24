@@ -1,8 +1,9 @@
 //! A task's kind given or changed after it was filed ([`crate::kind`]): an orchestrator names one
 //! for a task the owner filed from a page as it briefs it, as it sets a priority.
 
-use super::{Error, REFUSED, Store, Task, both, no_task, pg, refused, sql};
+use super::{Error, REFUSED, Store, Task, no_task, pg, refused};
 use crate::store::postgres::Pg;
+use crate::store::statement::Statement;
 use serde_json::json;
 
 impl Store {
@@ -14,7 +15,7 @@ impl Store {
         let kind = crate::kind::named(kind).map_err(refused)?;
         // The kind it had is read in the write, so the line names the one it replaced.
         let acts = !self.is_person(handle);
-        let body = || both(sql::set_kind(acts), Pg::script(pg::set_kind(acts))).posting();
+        let body = || Statement::from(Pg::script(pg::set_kind(acts))).posting();
         self.retrying(|| {
             let vars = self.acting(
                 handle,

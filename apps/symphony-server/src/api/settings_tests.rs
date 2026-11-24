@@ -19,14 +19,9 @@ const TEST: &str =
 #[test]
 fn the_settings_wait_for_a_hub_then_answer_the_project_s_with_each_source() {
     if std::env::var_os(CHILD).is_none() {
-        let board = crate::testing::board::client();
+        let board = crate::testing::board::database();
         // The board's command line makes the board; the Symphony, a reader, never does.
-        let store = symphony_board::Store::open(symphony_board::rpc::Client::new(
-            board.addr(),
-            "sf",
-            board.database(),
-        ))
-        .unwrap();
+        let store = crate::testing::store_on(&board);
         store
             .store_setting(
                 "limits.low_volume",

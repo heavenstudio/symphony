@@ -25,9 +25,9 @@ enum Board {
     Fails,
     /// It panics, as a defect in connecting, reading or probing would.
     Panics,
-    /// It returns [`SLOW`], as a board that took a read and answered it late, twice, does.
+    /// It returns [`SLOW`], as a board whose PostgreSQL took a request and answered it late does.
     Slow,
-    /// It returns what a project with no board says: no store, and no SurrealDB here to serve one.
+    /// It returns what a project with no board says: none is made yet, and a reader never makes one.
     Absent,
 }
 
@@ -48,7 +48,7 @@ async fn within<T>(what: &str, work: impl Future<Output = T>) -> T {
 }
 
 /// A board read's failure on a server that took the request and gave no answer within the wait.
-pub(super) const SLOW: &str = "the board's database: the server at 127.0.0.1:1 is slow: no answer within 3s: read failed on a freshly opened socket after 0 completed requests: Resource temporarily unavailable (os error 35); the request only reads, so it went once more, on a new connection: read failed on a freshly opened socket after 0 completed requests: Resource temporarily unavailable (os error 35); it was not sent a third time";
+pub(super) const SLOW: &str = "the board's database: the board's PostgreSQL at /tmp/symphony-pg-board is slow: no answer within 3s: Resource temporarily unavailable (os error 35); the request may have run there, so it was not sent again";
 
 struct Held {
     hub: Arc<Hub>,
@@ -104,10 +104,12 @@ impl Held {
                         return Err(SLOW.into());
                     }
                     if matches!(board, Board::Absent) {
-                        return Err(symphony_board::server::ServerError::NoSurreal(
-                            "/nowhere/surreal".into(),
-                        )
-                        .to_string());
+                        return Err(
+                            "the main board is not made yet, and a reader never makes a \
+                                    board: nothing was made or started; `just tasks list` in main \
+                                    makes it, on PostgreSQL"
+                                .into(),
+                        );
                     }
                     store
                         .take()
@@ -271,8 +273,8 @@ async fn stopping_releases_initial_board_waiters_and_joins_the_owned_read() {
 }
 
 /// Whether the project has a board is not known until the hub's first board read is done: then a
-/// board read, or one that cannot be reached now (unwell, but there), is one, and a project with no
-/// store and no SurrealDB to serve one has none. The server's maintenance of the project waits on it.
+/// board read, or one that cannot be reached now (unwell, but there), is one, and a project whose
+/// board is not made yet has none. The server's maintenance of the project waits on it.
 #[tokio::test]
 async fn a_hub_knows_whether_its_project_has_a_board_once_its_first_read_is_done() {
     for (board, has) in [

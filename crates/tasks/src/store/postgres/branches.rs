@@ -3,7 +3,7 @@
 use super::Pg;
 
 /// The branches recorded for the tasks `scope` keeps (a condition on `b`, a `task_session` row),
-/// as a list (`super::super::surreal::branches::OF_TASKS`).
+/// as a list.
 pub(in crate::store) fn of_tasks(scope: &str) -> String {
     format!(
         "coalesce((SELECT jsonb_agg(jsonb_build_object('slug', b.slug, 'branch', b.branch, \

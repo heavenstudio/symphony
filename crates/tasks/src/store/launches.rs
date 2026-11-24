@@ -1,8 +1,7 @@
 //! The agent sessions `just tasks launch` started for a task: what restoring one needs.
 
 use super::postgres::{Pg, launches as pg};
-use super::statement::both;
-use super::surreal::launches as sql;
+use super::statement::Statement;
 use super::work::no_task;
 use super::{Error, REFUSED, Store, refused, repr};
 use crate::rows::TaskSessionRow;
@@ -93,7 +92,7 @@ fn said(launch: &NewLaunch) -> (String, String) {
     (before, after)
 }
 
-/// The variables [`sql::HOLDS`] reads, for the hold `revision` of `handle`'s session.
+/// The variables [`pg::HOLDS`] reads, for the hold `revision` of `handle`'s session.
 pub(super) fn held(vars: &mut Value, handle: &str, revision: u64) {
     if let Value::Object(vars) = vars {
         let taken =
@@ -152,7 +151,6 @@ impl Store {
             started: (self.clock)(),
             ..TaskSessionRow::default()
         };
-        let body = sql::record_launch(launch.log);
         let (before, after) = said(launch);
         let vars = json!({
             "slug": launch.slug, "handle": launch.handle, "row": row, "now": row.started,
@@ -162,7 +160,7 @@ impl Store {
         });
         let claude_session = self.retrying(|| {
             self.transact::<String>(
-                both(&body, pg::record_launch(launch.log)).posting_when(launch.log),
+                Statement::from(pg::record_launch(launch.log)).posting_when(launch.log),
                 vars.clone(),
             )
         })?;
@@ -176,10 +174,7 @@ impl Store {
     pub fn task_sessions(&self, slug: &str) -> Result<Vec<TaskSessionRow>, Error> {
         self.retrying(|| {
             self.read_together(
-                super::statement::both(
-                    sql::sessions_of_task(),
-                    super::postgres::launches::sessions_of_task(),
-                ),
+                Statement::from(super::postgres::launches::sessions_of_task()),
                 json!({"slug": slug}),
             )
         })
@@ -187,20 +182,16 @@ impl Store {
 
     /// The tasks `handle` was launched for, by when it started on each.
     pub fn sessions_of(&self, handle: &str) -> Result<Vec<TaskSessionRow>, Error> {
-        self.task_sessions_where(
-            &sql::sessions_of_handle(),
-            pg::sessions_of_handle(),
-            json!({"handle": handle}),
-        )
+        self.task_sessions_where(pg::sessions_of_handle(), json!({"handle": handle}))
     }
 
     pub fn all_task_sessions(&self) -> Result<Vec<TaskSessionRow>, Error> {
-        self.task_sessions_where(&sql::all_sessions(), pg::all_sessions(), json!({}))
+        self.task_sessions_where(pg::all_sessions(), json!({}))
     }
 
     /// Those whose pane is not closed.
     pub fn open_task_sessions(&self) -> Result<Vec<TaskSessionRow>, Error> {
-        self.task_sessions_where(&sql::open_sessions(), pg::open_sessions(), json!({}))
+        self.task_sessions_where(pg::open_sessions(), json!({}))
     }
 
     /// The launch records, open or closed, that name a Codex thread, each read only for its thread,
@@ -209,16 +200,15 @@ impl Store {
     /// `started` not a number) stops nothing.
     pub(crate) fn codex_launches(&self) -> Result<Vec<CodexLaunch>, Error> {
         let vars = json!({"prefix": crate::launch::CODEX});
-        self.task_sessions_where(sql::CODEX_LAUNCHES, pg::codex_launches(), vars)
+        self.task_sessions_where(pg::codex_launches(), vars)
     }
 
     fn task_sessions_where<T: DeserializeOwned>(
         &self,
-        read: &str,
         pg: Pg<'static>,
         vars: Value,
     ) -> Result<Vec<T>, Error> {
-        self.retrying(|| self.read_together(both(read, pg.clone()), vars.clone()))
+        self.retrying(|| self.read_together(Statement::from(pg.clone()), vars.clone()))
     }
 
     /// Its pane is closed. The record stays, with the line that brings it back. A Codex record whose
@@ -233,14 +223,14 @@ impl Store {
         restore: &str,
     ) -> Result<(), Error> {
         let vars = closure_vars(slug, handle, why, restore);
-        self.change_task_session::<Value>(slug, handle, &sql::close(), pg::close(), vars)
+        self.change_task_session::<Value>(slug, handle, pg::close(), vars)
             .map(|_| ())
     }
 
     /// [`Store::close_task_session`] of the session `record` was read as, by the close or restore
     /// holding it as `hold` ([`Store::take_session`]), only while it is still that launch, open, in
     /// that terminal: never a session restored into another terminal since, nor one another close
-    /// has closed already. Whether it closed it; refused once the hold is another's ([`sql::HOLDS`]).
+    /// has closed already. Whether it closed it; refused once the hold is another's ([`pg::HOLDS`]).
     pub fn close_task_session_as(
         &self,
         record: &TaskSessionRow,
@@ -251,18 +241,12 @@ impl Store {
         let mut vars = closure_vars(&record.slug, &record.handle, why, restore);
         same_launch(&mut vars, record);
         held(&mut vars, &record.handle, hold);
-        self.change_task_session(
-            &record.slug,
-            &record.handle,
-            &sql::close_as(),
-            pg::close_as(),
-            vars,
-        )
+        self.change_task_session(&record.slug, &record.handle, pg::close_as(), vars)
     }
 
     /// Record `launch` as a session found running in its pane and closed there at once, said in one
     /// line: the closure's ([`Store::close_task_session`]), by the close holding the session as
-    /// `hold` (refused once it is another's, [`sql::HOLDS`]). Nothing is written when the record of its
+    /// `hold` (refused once it is another's, [`pg::HOLDS`]). Nothing is written when the record of its
     /// task and handle already names that terminal: its closure is recorded already, or it is open
     /// there. The record written, if any.
     pub fn record_found_closed(
@@ -287,7 +271,6 @@ impl Store {
             closed_why: why.into(),
             restore: restore.into(),
         };
-        let body = sql::record_found_closed();
         let mut vars = closure_vars(&launch.slug, &launch.handle, why, restore);
         if let Value::Object(more) = &mut vars {
             more.extend([
@@ -308,7 +291,7 @@ impl Store {
         held(&mut vars, &launch.handle, hold);
         let kept: Option<String> = self.retrying(|| {
             self.transact(
-                both(&body, pg::record_found_closed()).posting(),
+                Statement::from(pg::record_found_closed()).posting(),
                 vars.clone(),
             )
         })?;
@@ -320,12 +303,10 @@ impl Store {
 
     /// It runs again, in `pane`.
     pub fn reopen_task_session(&self, slug: &str, handle: &str, pane: &str) -> Result<(), Error> {
-        let body = sql::reopen();
         let said = format!("restored {handle} in pane {pane}");
         self.change_task_session::<Value>(
             slug,
             handle,
-            &body,
             pg::reopen(),
             json!({"pane": pane, "said": said}),
         )
@@ -337,7 +318,7 @@ impl Store {
     /// in the terminal it was read in: never one a close recorded in another terminal since (the
     /// new one, killed as it started). The session is revived with it ([`Store::revive`]): cleanup
     /// leaves handles that closed, and the restored agent must be able to use the board. Whether it
-    /// reopened it; refused once the hold is another's ([`sql::HOLDS`]).
+    /// reopened it; refused once the hold is another's ([`pg::HOLDS`]).
     pub fn reopen_task_session_as(
         &self,
         record: &TaskSessionRow,
@@ -348,8 +329,7 @@ impl Store {
         let mut vars = json!({"into": pane, "said": format!("restored {handle} in pane {pane}")});
         same_launch(&mut vars, record);
         held(&mut vars, handle, hold);
-        let body = sql::reopen_as();
-        self.change_task_session(&record.slug, handle, &body, pg::reopen_as(), vars)
+        self.change_task_session(&record.slug, handle, pg::reopen_as(), vars)
     }
 
     /// Take `handle`'s session for `doing` (`a close by ACTOR`, `a restore`): the lease a close and a
@@ -358,12 +338,12 @@ impl Store {
     /// ([`SESSION_LEASE_SECONDS`]), so a close or a restore stopped part way holds it no longer than
     /// that. The revision that names this hold: [`Store::renew_session`],
     /// [`Store::release_session`], and the fencing token every write of its holder carries, so none
-    /// lands once another took the session over ([`sql::HOLDS`]).
+    /// lands once another took the session over ([`pg::HOLDS`]).
     pub fn take_session(&self, handle: &str, doing: &str) -> Result<u64, Error> {
         let now = self.now();
         let taken: Lease = self.retrying(|| {
             self.transact(
-                both(sql::TAKE_SESSION, pg::take_session()),
+                Statement::from(pg::take_session()),
                 json!({"handle": handle, "doing": doing, "now": now, "seconds": SESSION_LEASE_SECONDS}),
             )
         })?;
@@ -385,7 +365,7 @@ impl Store {
     pub fn renew_session(&self, handle: &str, revision: u64) -> Result<bool, Error> {
         self.retrying(|| {
             self.transact(
-                both(sql::RENEW_SESSION, pg::renew_session()),
+                Statement::from(pg::renew_session()),
                 json!({"handle": handle, "revision": revision, "now": self.now(), "seconds": SESSION_LEASE_SECONDS}),
             )
         })
@@ -395,7 +375,7 @@ impl Store {
     pub fn release_session(&self, handle: &str, revision: u64) -> Result<(), Error> {
         self.retrying(|| {
             self.transact::<Value>(
-                both(sql::RELEASE_SESSION, pg::release_session()),
+                Statement::from(pg::release_session()),
                 json!({"handle": handle, "revision": revision}),
             )
         })
@@ -406,7 +386,6 @@ impl Store {
         &self,
         slug: &str,
         handle: &str,
-        body: &str,
         pg: Pg<'static>,
         more: Value,
     ) -> Result<T, Error> {
@@ -417,7 +396,7 @@ impl Store {
         if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
             vars.extend(more);
         }
-        self.retrying(|| self.transact(both(body, pg.clone()).posting(), vars.clone()))
+        self.retrying(|| self.transact(Statement::from(pg.clone()).posting(), vars.clone()))
     }
 }
 

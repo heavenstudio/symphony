@@ -7,8 +7,7 @@
 use serde_json::json;
 
 use super::postgres::waits as pg;
-use super::statement::both;
-use super::surreal::waits as sql;
+use super::statement::Statement;
 use super::{Error, REFUSED, Store, Task, refused, repr};
 use crate::alarm::{ASSESSED, FIXED, Tip, WAITS, WAITS_SET, Waits, Written};
 use crate::red::FIELDS;
@@ -44,7 +43,7 @@ impl Store {
     /// One snapshot of the task's assessment fence. It writes and migrates nothing.
     pub fn assessment_state(&self, slug: &str) -> Result<AssessmentState, Error> {
         let states: Vec<AssessmentState> = self.retrying(|| {
-            let read = both(sql::ASSESSMENT_STATE, pg::assessment_state());
+            let read = Statement::from(pg::assessment_state());
             self.read(read, json!({"slug": slug}))
         })?;
         states
@@ -133,7 +132,6 @@ impl Store {
             ));
         }
         let acting = !self.is_person(handle);
-        let body = sql::record(acting);
         self.retrying(|| {
             let observed = match source.as_mut().map_or(Ok(true), |check| check()) {
                 Ok(current) => SourceObservation { current, unavailable: None },
@@ -161,7 +159,7 @@ impl Store {
                     "source_changed": format!("{REFUSED}assessment source changed before publication"),
                 }),
             );
-            self.written(both(body.as_str(), pg::record(acting)).posting(), vars, slug)
+            self.written(Statement::from(pg::record(acting)).posting(), vars, slug)
         })
     }
 
@@ -186,8 +184,7 @@ impl Store {
                 "invalid rework occurrence or end: {record:?}, {first:?}"
             )));
         }
-        let body = sql::fixed();
-        let read = || both(body.as_str(), pg::fixed());
+        let read = || Statement::from(pg::fixed());
         let written = record.key();
         let vars = json!({
             "slug": slug,

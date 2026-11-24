@@ -267,10 +267,7 @@ fn changed_often() -> Value {
         .zip(CHANGED)
         .map(|(n, day)| {
             let subject = if n == 0 {
-                format!(
-                    "Pin the board's SurrealDB at {}",
-                    "0123456789abcdef".repeat(4)
-                )
+                format!("Pin the Symphony at {}", "0123456789abcdef".repeat(4))
             } else {
                 format!("Merge branch 'tools/settings-change-{n}': the board's limits and models")
             };

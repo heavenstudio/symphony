@@ -1,17 +1,17 @@
-//! The starters' lock (`symphony/tasks/lock`), which every start, stop, hold, release and reclaim
-//! of the board's server and every snapshot of its store takes, one at a time, and what its holder
-//! does (`symphony/tasks/lock.json`, written whole by the holder once it has the lock, and removed
+//! The starters' lock (`symphony/tasks/lock`), which every start, stop, hold, release, snapshot,
+//! restore and reclaim of the board's server takes, one at a time, and what its holder does
+//! (`symphony/tasks/lock.json`, written whole by the holder once it has the lock, and removed
 //! before it lets the lock go).
 //!
 //! A caller that finds the lock held waits, and once it has waited [`GRACE`] says through the
 //! board's [`Home::telling`] what it waits on, as the holder's note says it (a start of the board's
-//! server, a private replay of the store's log and its size, a stop, the hold's stop, a reclaim,
-//! a snapshot), then again every [`AGAIN`] while it waits. A caller with a bound
-//! ([`Home::waiting_at_most`]: the Symphony's reads, whose thread serves its pages too) says nothing
-//! and is refused once the bound passes, the refusal naming the same. A holder whose note is
-//! missing, or names a process that has ended, is a build that writes none, and is said as one.
+//! server, a stop, the hold's stop, a release, a reclaim, a snapshot, a restore), then again every
+//! [`AGAIN`] while it waits. A caller with a bound ([`Home::waiting_at_most`]: the Symphony's
+//! reads, whose thread serves its pages too) says nothing and is refused once the bound passes,
+//! the refusal naming the same. A holder whose note is missing, or names a process that has ended,
+//! is a build that writes none, and is said as one.
 
-use super::{Home, LOCK, LOG, ServerError, io};
+use super::{Home, LOCK, ServerError, io};
 use crate::sys::{FileLock, local_minute, pid_alive};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
@@ -26,63 +26,52 @@ const GRACE: Duration = Duration::from_secs(1);
 const AGAIN: Duration = Duration::from_secs(30);
 /// How often a waiting caller tries the lock.
 const POLL: Duration = Duration::from_millis(50);
-/// What a replay is said as, then its log's size, then [`REPLAYED_BEFORE`]: the words a page reads a
-/// replay by ([`super::apart::replaying_in`]).
-pub(super) const REPLAYING: &str = "a private replay of the store's log";
-/// What follows a replay's size where it is said.
-pub(super) const REPLAYED_BEFORE: &str = " before the board's server starts";
-
 /// What the starters' lock's holder does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum Doing {
-    /// Finds the board's server, waiting until it answers, or starts it ([`Home::ensure`]).
+    /// Finds the board's server, or starts it ([`super::Postgres::ensure`]).
     Starting,
-    /// Replays the store's log in a private server before the board's starts ([`Home::replay`]).
-    Replaying,
-    /// Stops the board's server ([`Home::stop`]).
+    /// Stops the board's server ([`super::Postgres::stop`]).
     Stopping,
-    /// Holds the board's database stopped ([`Home::hold`]).
+    /// Holds the board's database stopped ([`super::Postgres::hold`]).
     Holding,
     /// Releases the hold ([`Home::release`]).
     Releasing,
-    /// Rebuilds the board's store ([`Home::reclaim`]).
+    /// Reclaims the dead space of the board's database ([`super::Postgres::reclaim`]).
     Reclaiming,
-    /// Takes a snapshot of the board's store ([`Home::snapshot`]).
+    /// Takes a snapshot of the board's data, or recovers one into a new board
+    /// ([`super::Postgres::snapshot`], [`super::Postgres::restore`]).
     Snapshotting,
-    /// Moves the board's store to another engine, or restores a snapshot over it
-    /// ([`Home::move_to`], [`super::Postgres::restore_over`]).
+    /// Restores a snapshot over the board, or settles a switch an earlier release left
+    /// ([`super::Postgres::restore_over`], [`Home::move_to`]).
     Moving,
 }
 
 /// What `symphony/tasks/lock.json` says: who holds the starters' lock, doing what, since when.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub(super) struct Note {
+struct Note {
     /// The process that holds it.
-    pub pid: i64,
-    pub doing: Doing,
+    pid: i64,
+    doing: Doing,
     /// Since when it does it, in seconds since the epoch.
-    pub at: f64,
-    /// For a replay, the bytes of the log it replays.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub logged: Option<u64>,
+    at: f64,
 }
 
 /// The starters' lock, held: its note goes before the lock does.
 pub(super) struct Starters {
     note: PathBuf,
-    lock: FileLock,
+    _lock: FileLock,
 }
 
 impl Starters {
-    /// Say that its holder now does `doing`, for a replay of `logged` bytes. A note that cannot be
-    /// written leaves waiters saying they wait on a holder that says nothing, and stops nothing.
-    pub(super) fn doing(&self, doing: Doing, logged: Option<u64>) {
+    /// Say that its holder now does `doing`. A note that cannot be written leaves waiters saying
+    /// they wait on a holder that says nothing, and stops nothing.
+    fn doing(&self, doing: Doing) {
         let note = Note {
             pid: i64::from(std::process::id()),
             doing,
             at: crate::store::now(),
-            logged,
         };
         let next = self
             .note
@@ -90,19 +79,6 @@ impl Starters {
         let text = serde_json::to_string(&note).expect("a note serialises");
         if fs::write(&next, text).is_err() || fs::rename(&next, &self.note).is_err() {
             let _ = fs::remove_file(&next);
-        }
-    }
-
-    /// Whether the lock this holds is still the one in the board's folder: a folder removed while
-    /// it was held, made again or not, holds another or none.
-    pub(super) fn here(&self) -> bool {
-        use std::os::unix::fs::MetadataExt as _;
-        match (
-            self.lock.0.metadata(),
-            fs::metadata(self.note.with_file_name(LOCK)),
-        ) {
-            (Ok(held), Ok(there)) => held.dev() == there.dev() && held.ino() == there.ino(),
-            _ => false,
         }
     }
 }
@@ -132,9 +108,9 @@ impl Home {
         }
         let starters = Starters {
             note: self.dir.join(NOTE),
-            lock: FileLock(file),
+            _lock: FileLock(file),
         };
-        starters.doing(doing, None);
+        starters.doing(doing);
         Ok(starters)
     }
 
@@ -193,7 +169,7 @@ impl Home {
 
     /// What the starters' lock's holder does, as its note says, while that process runs: none when
     /// the note is missing, does not read, or names a process that has ended.
-    pub(super) fn note(&self) -> Option<Note> {
+    fn note(&self) -> Option<Note> {
         let text = fs::read_to_string(self.dir.join(NOTE)).ok()?;
         let note: Note = crate::objects::parse(&text)?;
         pid_alive(note.pid).then_some(note)
@@ -210,35 +186,23 @@ impl Home {
         )
     }
 
-    /// What the starters' lock's holder is doing, while one does: what `tasks database` says of it.
+    /// What the starters' lock's holder is doing, while one does.
     pub fn under_way(&self) -> Option<String> {
         self.note().map(|note| self.said(&note))
     }
 
     /// `note`, said.
-    pub(super) fn said(&self, note: &Note) -> String {
+    fn said(&self, note: &Note) -> String {
         let doing = match note.doing {
-            Doing::Starting => "a start of the board's server (or a wait for it to answer)".into(),
-            Doing::Replaying => format!(
-                "{REPLAYING}{}{REPLAYED_BEFORE}: a log of gigabytes takes minutes, and its server's \
-                 lines go to {}",
-                note.logged
-                    .map(|logged| format!(" of {}", crate::size(logged)))
-                    .unwrap_or_default(),
-                self.dir.join(LOG).display()
-            ),
-            Doing::Stopping => {
-                "a stop of the board's server, waiting while it closes its store".into()
+            Doing::Starting => "a start of the board's server (or a wait for it to be ready)",
+            Doing::Stopping => "a stop of the board's server, waiting for its end",
+            Doing::Holding => "the hold's stop of the board's server, waiting for its end",
+            Doing::Releasing => "a release of the board's hold",
+            Doing::Reclaiming => "a reclaim of the board's dead space (`tasks-reclaim`)",
+            Doing::Snapshotting => {
+                "a snapshot of the board's data (`tasks snapshot`), or a recovery from one"
             }
-            Doing::Holding => {
-                "the hold's stop of the board's server, waiting while it closes its store".into()
-            }
-            Doing::Releasing => "a release of the board's hold".into(),
-            Doing::Reclaiming => "a reclaim of the board's store (`tasks-reclaim`)".into(),
-            Doing::Snapshotting => "a snapshot of the board's store (`tasks snapshot`)".into(),
-            Doing::Moving => "a move of the board's store to another engine, or a restore of a \
-                              snapshot over it (`tasks-move`)"
-                .into(),
+            Doing::Moving => "a restore of a snapshot over the board (`tasks-move`)",
         };
         format!("pid {}, since {}: {doing}", note.pid, local_minute(note.at))
     }

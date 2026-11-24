@@ -41,7 +41,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use symphony_board::sys::{Command, output};
-use symphony_board::{Store, Task, rpc};
+use symphony_board::{Opening, Store, Task, pg};
 
 use common::Tree;
 
@@ -97,6 +97,8 @@ struct Fixture {
     origin: PathBuf,
     main: PathBuf,
     env: Vec<(String, String)>,
+    /// The scratch board: a database of its own on the test binary's PostgreSQL.
+    db: pg::Client,
 }
 
 impl Fixture {
@@ -113,11 +115,11 @@ impl Fixture {
             &root,
             &["clone", "-q", &origin.to_string_lossy(), "symphony"],
         );
-        let db = board::client();
+        let db = board::postgresql();
         let hostile = root.join("hostile.gitconfig");
         fs::write(&hostile, HOSTILE).unwrap();
         let env = vec![
-            ("TASKS_SERVER".into(), db.addr().to_string()),
+            ("TASKS_SERVER".into(), db.addr()),
             ("TASKS_DATABASE".into(), db.database().to_string()),
             (
                 "SYMPHONY_TASKS_CLI".into(),
@@ -142,6 +144,7 @@ impl Fixture {
             origin,
             main,
             env,
+            db,
         };
         fixture.write("symphony.toml", &Fixture::project_file(""));
         fixture.write(
@@ -331,19 +334,12 @@ impl Fixture {
 
     /// The scratch board, through the store itself.
     fn store(&self) -> Store {
-        let value = |name: &str| {
-            self.env
-                .iter()
-                .find(|(key, _)| key == name)
-                .unwrap()
-                .1
-                .clone()
-        };
-        Store::with(
-            rpc::Client::new(&value("TASKS_SERVER"), "sf", &value("TASKS_DATABASE")),
+        Store::opening_on(
+            self.db.another().into(),
             Box::new(|| board::NOW),
             Box::new(|_| false),
             board::HOST,
+            &Opening::write(),
         )
         .unwrap()
     }

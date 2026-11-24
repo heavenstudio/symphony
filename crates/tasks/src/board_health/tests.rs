@@ -130,42 +130,28 @@ fn a_board_failing_every_other_tick_is_warned_of_throughout_until_a_minute_of_go
 }
 
 #[test]
-fn a_board_not_made_or_with_no_store_nor_surrealdb_is_absent_and_any_other_failure_is_not() {
+fn a_board_not_made_or_whose_folder_is_gone_is_absent_and_any_other_failure_is_not() {
     use crate::schema::{Access, Opened, VERSION, decide};
-    use crate::server::ServerError;
+    use crate::server::{Home, ServerError};
     let program = crate::Program::named("tasks", "/repo/.target/bin/tasks");
     let refused = |found| match decide(found, VERSION, Access::Read, Some("demo"), &program) {
         Opened::Refused(why) => why,
         other => panic!("{other:?}"),
     };
-    let pinned = std::path::Path::new("/repo/.git")
-        .join(crate::folders::SURREAL)
-        .join(crate::server::SURREAL_VERSION)
-        .join("surreal");
     for error in [
         refused(None),
-        ServerError::NoSurreal(pinned.clone()).to_string(),
-        ServerError::NoSurreal(PathBuf::from("/opt/surreal")).to_string(),
+        format!("the board's folder is gone: {}", crate::project::GONE),
     ] {
         assert!(absent(&error), "{error}");
         let wrapped = format!("no pass, the board could not be reached: {error}");
         assert!(absent(&wrapped), "its wrapper keeps its words: {wrapped}");
     }
-    // The same missing SurrealDB with the board's store there is a board that cannot be served.
-    let data = PathBuf::from("/repo/.git")
-        .join(crate::folders::TASKS)
-        .join("data");
+    // A board still on SurrealDB is there, and unwell until it is moved.
+    let on_surrealdb = Home::at(&PathBuf::from("/repo/.git").join(crate::folders::TASKS))
+        .on_surrealdb("Nothing was started")
+        .to_string();
     for error in [
-        ServerError::Unserved {
-            surreal: pinned,
-            data: data.clone(),
-        }
-        .to_string(),
-        ServerError::Unserved {
-            surreal: PathBuf::from("/opt/surreal"),
-            data,
-        }
-        .to_string(),
+        on_surrealdb,
         refused(Some(VERSION - 1)),
         ServerError::NotUp("the server did not come up".into()).to_string(),
         "connection refused".to_string(),
@@ -487,29 +473,26 @@ fn an_age_reads_in_seconds_minutes_or_hours() {
 
 #[test]
 fn every_client_of_a_board_counts_its_requests_in_the_boards_one_log() {
-    let client = crate::store_fixture::client();
-    let other = Client::new(client.addr(), "sf", client.database());
-    let elsewhere = crate::store_fixture::client();
+    let client = crate::store_fixture::postgresql();
+    let other = client.another();
+    let elsewhere = crate::store_fixture::postgresql();
     assert!(Arc::ptr_eq(&client.queries(), &other.queries()));
     assert!(!Arc::ptr_eq(&client.queries(), &elsewhere.queries()));
 
+    // The database is made through the server's maintenance one, whose log is its own.
+    client.make_database().unwrap();
     let before = crate::sweep::trigger::now();
-    // Every test's database is defined in the shared server's one namespace, and SurrealDB
-    // answers a conflict to one of two defined there at once: the write is sent again, as the
-    // store's opening sends its own, and each time it was sent is a request the log counts.
-    let mut sent = 0u64;
-    let until = crate::store_fixture::conflicts_deadline();
-    crate::store_fixture::retry_conflicts(until, || {
-        sent += 1;
-        client.define_then("CREATE thing SET n = 1 RETURN NONE;", json!({}))
-    })
-    .unwrap();
-    other.query("SELECT * FROM thing;", json!({})).unwrap();
+    client
+        .simple("CREATE TABLE thing (n integer); INSERT INTO thing VALUES (1)")
+        .unwrap();
+    other
+        .request(&[crate::pg::Step::bare("SELECT n FROM thing")])
+        .unwrap();
     let (requests, writes) = client.queries().report(crate::sweep::trigger::now());
     assert_eq!(
         (requests.count, requests.failed, writes.count),
-        (sent + 1, 0, sent),
-        "one read, and the write each time it was sent"
+        (2, 0, 1),
+        "one read and one write"
     );
     let slowest = requests.slowest.unwrap();
     assert!(

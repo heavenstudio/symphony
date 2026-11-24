@@ -103,9 +103,9 @@ none of the repositories around this one: its board runs on the machine's Postgr
   contract between its builds, which build moves a live board, who writes it, its server,
   snapshots and holds, what the command may write, stuck servers, a board that went back or was
   copied, and board health.
-- [PostgreSQL board lifecycle](operations/POSTGRESQL.md) — a board on PostgreSQL: its engine
-  identity, server selection, holds, snapshots, recovery and space reclamation; the hosted board,
-  which no command reaches yet.
+- [PostgreSQL board lifecycle](operations/POSTGRESQL.md) — the board's PostgreSQL: its engine
+  identity, a board still on SurrealDB and how it moves, server selection, holds, snapshots,
+  recovery and space reclamation; the hosted board, which no command reaches yet.
 - [Upstream and downstream repositories](operations/UPSTREAM_DOWNSTREAM.md) — the regular import
   of the public repository into a private copy with its ancestry kept, the export of selected
   reusable changes back, their checks, refusals and recovery; manual tasks, with PR delivery not

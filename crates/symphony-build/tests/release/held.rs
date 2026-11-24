@@ -18,11 +18,10 @@ use symphony::machine::held::{self, Host, Retry};
 use symphony::machine::updates::{self, Failure, Ledger, Task, TaskBoard, Update};
 use symphony::machine::writers;
 use symphony::taskcli::CliBoard;
-use symphony_board::Raw;
-use symphony_board::rpc::Client;
-use symphony_board::server::Home;
+use symphony_board::server::{FOLDER, Home};
 use symphony_board::sweep::trigger::now;
 use symphony_board::sys::Command;
+use symphony_board::{Database, Raw};
 
 use super::Fixture;
 use super::refresh::{Board, a_project, board_at, executable, machine, registered, wrote};
@@ -36,15 +35,15 @@ const BEHIND: i64 = symphony_board::SCHEMA - 1;
 const BOUND: Duration = Duration::from_secs(240);
 
 /// The Symphony's checkout and a project `alpha`, both registered; the release installed with
-/// `current` naming it, its `tasks` running the board's own binary; `alpha`'s board started at
-/// [`BEHIND`], its one writer a build at `held` on this host; and the update `alpha@SCHEMA` open as
-/// the refresh that left it filed it, its task on the Symphony's board.
+/// `current` naming it, its `tasks` running the board's own binary; `alpha`'s board started on its
+/// own PostgreSQL at [`BEHIND`], its one writer a build at `held` on this host; and the update
+/// `alpha@SCHEMA` open as the refresh that left it filed it, its task on the Symphony's board.
 struct Held {
     /// Stopped before the fixture's folder goes: fields drop in this order.
     _board: Board,
     fixture: Fixture,
     alpha: PathBuf,
-    client: Client,
+    db: Database,
     /// The program the writer that holds the board ran: there while it holds.
     held: PathBuf,
     slug: String,
@@ -74,25 +73,17 @@ impl Held {
             machine(&fixture).join("current"),
         )
         .unwrap();
-        // The project's own pinned SurrealDB, where its `just tasks` fetches it: what its snapshot
-        // runs.
-        let pinned = alpha
-            .join(".git")
-            .join(symphony_board::folders::SURREAL)
-            .join(symphony_board::server::SURREAL_VERSION);
-        fs::create_dir_all(&pinned).unwrap();
-        std::os::unix::fs::symlink(super::board::surreal(), pinned.join("surreal")).unwrap();
-        let (board, _, client) = board_at(&alpha, BEHIND);
-        Raw::on(&client).table("writer").delete().unwrap();
+        let (board, _, db) = board_at(&alpha, BEHIND);
+        Raw::of(&db).table("writer").delete().unwrap();
         let program = fixture.root.join("alpha-build/tasks");
         executable(&program, "#!/bin/sh\n");
-        wrote(&client, "tasks", &program, BEHIND, 60.0);
+        wrote(&db, "tasks", &program, BEHIND, 60.0);
         let slug = updates::slug("alpha", SCHEMA, 1);
         let held = Held {
             _board: board,
             fixture,
             alpha,
-            client,
+            db,
             held: program,
             slug,
         };
@@ -164,7 +155,7 @@ impl Held {
     }
 
     fn home(&self) -> Home {
-        Home::in_common(&self.alpha.join(".git"), Some(&super::board::surreal()))
+        Home::in_common(&self.alpha.join(".git"))
     }
 
     /// What the refresh said holds the board now: its writers behind, judged by the rule.
@@ -234,7 +225,7 @@ impl Held {
 
     fn snapshot(&self) -> PathBuf {
         self.alpha.join(format!(
-            ".git/symphony/tasks/snapshots/before-schema-{SCHEMA}-{RELEASE}.surql"
+            ".git/{FOLDER}/snapshots/before-schema-{SCHEMA}-{RELEASE}.sql"
         ))
     }
 }
@@ -283,7 +274,7 @@ impl TaskBoard for Theirs {
 }
 
 /// The machine's server as a round needs it: each command run to its end in the machine's own
-/// environment (its folder, its SurrealDB), or, `late`, out of time as its sweep's bound ends one;
+/// environment (its folder), or, `late`, out of time as its sweep's bound ends one;
 /// its word that it writes the board a read of it made now, or, `unloaded`, none yet; the
 /// Symphony's board, or, `refuse`, one that cannot be reached; and a project's own, each call
 /// through it in `told` and the release binary it was reached by in `through`.
@@ -307,9 +298,7 @@ impl Host for Machine {
         if self.late.get() {
             return Err(format!("no answer within {} s", bound.as_secs()));
         }
-        command
-            .env("SYMPHONY_MACHINE_DIR", &self.machine)
-            .env("SYMPHONY_SURREAL", super::board::surreal());
+        command.env("SYMPHONY_MACHINE_DIR", &self.machine);
         symphony_board::sys::output(&mut command).map_err(|e| e.to_string())
     }
 
@@ -434,7 +423,7 @@ fn a_board_still_held_stays_and_its_task_hears_once_for_each_change_and_never_fo
     // Another writer behind: a change, heard once.
     let other = held.fixture.root.join("beta-build/agent-send");
     executable(&other, "#!/bin/sh\n");
-    wrote(&held.client, "agent-send", &other, BEHIND, 30.0);
+    wrote(&held.db, "agent-send", &other, BEHIND, 30.0);
     let said = held.round(&host);
     assert_eq!(said.len(), 1);
     assert!(
@@ -577,8 +566,7 @@ fn a_move_whose_ledger_was_not_written_and_a_close_that_failed_are_finished_by_t
         .current_dir(&held.alpha)
         .env_remove("TASKS_SERVER")
         .env_remove("TASKS_DATABASE")
-        .env("SYMPHONY_MACHINE_DIR", machine(&held.fixture))
-        .env("SYMPHONY_SURREAL", super::board::surreal());
+        .env("SYMPHONY_MACHINE_DIR", machine(&held.fixture));
     let migrate = symphony_board::sys::output(&mut command).unwrap();
     assert!(
         migrate.status.success(),
@@ -746,7 +734,7 @@ fn a_task_on_the_projects_own_board_is_told_by_the_release_writing_its_schema_an
     // What holds it changes: heard on alpha's board, through that release's own `tasks`.
     let other = held.fixture.root.join("beta-build/agent-send");
     executable(&other, "#!/bin/sh\n");
-    wrote(&held.client, "agent-send", &other, BEHIND, 30.0);
+    wrote(&held.db, "agent-send", &other, BEHIND, 30.0);
     let said = held.round(&host);
     assert!(
         said[0].ends_with(&format!("; heard on {}", held.slug)),

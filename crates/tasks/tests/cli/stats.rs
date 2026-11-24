@@ -851,7 +851,7 @@ fn list_reads_when_tasks_took_their_status_in_one_request_however_many_it_lists(
     assert_eq!(since(&many), vec![json!(NOW + 3.5 * H); 300]);
     let reads = |requests: &[proxy::Request]| {
         (requests.iter())
-            .filter(|r| r.sql.contains("WHERE kind IN ['system', 'verdict']"))
+            .filter(|r| r.sql.contains("m.kind IN ('system', 'verdict')"))
             .count()
     };
     assert_eq!(reads(&few_requests), 1);

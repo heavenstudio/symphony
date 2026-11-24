@@ -5,8 +5,7 @@ use super::Pg;
 /// The board's recovery generation, as a value.
 const VALUE: &str = "(SELECT generation FROM recovery WHERE id = '\"board\"')";
 
-/// The board's recovery generation replaced by one the database makes
-/// (`super::super::surreal::recovery::REBIND`).
+/// The board's recovery generation replaced by one the database makes.
 pub(in crate::store) const ROTATE: &str =
     "INSERT INTO recovery (id, generation) VALUES ('\"board\"', gen_random_uuid()::text)
     ON CONFLICT (id) DO UPDATE SET generation = EXCLUDED.generation;";
@@ -35,9 +34,9 @@ pub(in crate::store) fn read() -> Pg<'static> {
     Pg::read(read_value())
 }
 
-/// The fence a bound write starts with (`super::super::surreal::recovery::FENCED`). The shared
-/// lock on the generation's row meets a copy's or a rebind's replacement of it, from an older
-/// snapshot too, as the schema's guard meets a migration.
+/// The fence a bound write starts with. The shared lock on the generation's row meets a copy's or
+/// a rebind's replacement of it, from an older snapshot too, as the schema's guard meets a
+/// migration.
 pub(in crate::store) const FENCED: &str = "PERFORM 1 FROM recovery WHERE id = '\"board\"'
     AND generation = v -> 'bound' ->> 'generation' FOR SHARE;
 IF NOT FOUND THEN
@@ -62,9 +61,8 @@ pub(in crate::store) fn amend(acts: bool) -> Pg<'static> {
     Pg::script_then(format!("{FENCED}\n{block}"), read_value())
 }
 
-/// A bound edit (`super::super::surreal::recovery::edit`): [`FENCED`], then the title replaced
-/// when `retitle`, the brief when `rewrite` and `links` added, each change of the two a line on
-/// the thread, then the task as the write left it.
+/// A bound edit: [`FENCED`], then the title replaced when `retitle`, the brief when `rewrite` and
+/// `links` added, each change of the two a line on the thread, then the task as the write left it.
 pub(in crate::store) fn edit(acts: bool) -> Pg<'static> {
     let act = if acts { super::act() } else { String::new() };
     let said = super::work::said;

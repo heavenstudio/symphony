@@ -1,8 +1,7 @@
-//! The snapshot a read of tasks gives on PostgreSQL (`super::super::surreal::reading`): the
-//! tasks picked, then what the view reads beside them, over `v`. A read lists its tasks, links,
-//! roles and sessions an item a row ([`reading`], [`super::Pg::Listed`]), so a whole board costs
-//! its backend a sort's memory and not the board's; a write's read of its one task is one value
-//! ([`written`]).
+//! The snapshot a read of tasks gives on PostgreSQL: the tasks picked, then what the view reads
+//! beside them, over `v`. A read lists its tasks, links, roles and sessions an item a row
+//! ([`reading`], [`super::Pg::Listed`]), so a whole board costs its backend a sort's memory and
+//! not the board's; a write's read of its one task is one value ([`written`]).
 
 use super::branches::of_tasks;
 use super::{List, Listed, Pg, cap, row};
@@ -30,8 +29,8 @@ pub(in crate::store) const HAS_CALLBACKS: &str = "EXISTS (SELECT 1 FROM callback
 /// Whether the task `v ->> 'slug'` is there.
 const KNOWN: &str = "EXISTS (SELECT 1 FROM task WHERE slug = v ->> 'slug')";
 
-/// Twin of `super::super::surreal::reading::CLAIM_STATUSES`: the pullable statuses, with those
-/// the positions an executor's claim edge leaves project to in the active custom workflow.
+/// The pullable statuses, with those the positions an executor's claim edge leaves project to in
+/// the active custom workflow.
 const CLAIM_STATUSES: &str = "WHERE t.status IN (SELECT jsonb_array_elements_text(v -> 'pullable') \
     UNION SELECT p ->> 'legacy' FROM workflow d \
         CROSS JOIN LATERAL jsonb_array_elements(d.body -> 'definition' -> 'positions') p \
@@ -41,8 +40,7 @@ const CLAIM_STATUSES: &str = "WHERE t.status IN (SELECT jsonb_array_elements_tex
             WHERE e -> 'from' = p -> 'at' AND coalesce((e ->> 'automatic')::boolean, false) = false \
             AND e -> 'effects' @> '[{\"kind\": \"acquire_role\", \"role\": \"executor\"}]'::jsonb))";
 
-/// Twin of `super::super::surreal::reading::ACTIVE_GENERATION`: the active workflow's
-/// generation, or JSON null on a board that never activated one.
+/// The active workflow's generation, or JSON null on a board that never activated one.
 const ACTIVE_GENERATION: &str =
     "(SELECT body -> 'generation' FROM workflow WHERE id = '[\"active\"]'::jsonb)";
 

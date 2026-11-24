@@ -2,22 +2,21 @@
 //! post-commit dispatch.
 //!
 //! The one place the store sends anything to its database: every statement the store's modules
-//! name ([`super::surreal`], and its twin in [`super::postgres`], [`super::statement`]) goes out
-//! through [`Store::run_transaction`], [`Store::read`], [`Store::bounded_read`] or, for the open's
-//! own and a writer's line, [`Store::request`] and [`Store::define`], to the database the board is
-//! in ([`Database`]). On PostgreSQL a statement with no twin yet is refused here, before anything
-//! is sent, naming the line that sent it, and on SurrealDB one written for PostgreSQL alone.
+//! name ([`super::postgres`], [`super::statement`]) goes out through [`Store::run_transaction`],
+//! [`Store::read`], [`Store::bounded_read`] or, for the open's own and a writer's line,
+//! [`Store::request`] and [`Store::define`], to the database the board is in
+//! ([`super::Database`]).
 //!
-//! What a transaction does is what its call and its statement say, never what either text reads
-//! as: [`Store::transact`] sends a write behind the guard, [`Store::read_together`] a read, and
-//! the statement says whether it posts a line, which dispatches its callbacks, and which tables of
-//! an additive step it names ([`Statement`]). A debug build refuses, before anything is sent, a
-//! statement whose SurrealQL does other than it says ([`Statement::disagreement`]).
+//! What a transaction does is what its call and its statement say, never what its text reads as:
+//! [`Store::transact`] sends a write behind the guard, [`Store::read_together`] a read, and the
+//! statement says whether it posts a line, which dispatches its callbacks, and which tables of an
+//! additive step it names ([`Statement`]). A debug build refuses, before anything is sent, a
+//! statement whose text names other additive steps' tables than it says
+//! ([`Statement::disagreement`]).
 
-use super::database::{Board, Postgres, Reach};
+use super::database::{Board, Postgres};
 use super::postgres::{self, Pg};
 use super::statement::Statement;
-use super::surreal as sql;
 use super::{Error, Failure, REFUSED, Store};
 use crate::db::DbError;
 use crate::pg;
@@ -42,9 +41,8 @@ pub(super) enum Run {
 
 impl Store {
     /// `body`'s statements in one write, behind the schema's guard, its committed line dispatched to
-    /// its callbacks when it posts one; the last of them is a `RETURN` of the answer. A null among
-    /// `vars` is left out, so it reads as NONE: SurrealDB's NULL is a value an `option` field
-    /// refuses, and that is never equal to NONE.
+    /// its callbacks when it posts one, its answer the statement's. A null among `vars` is left
+    /// out, so a field it would set reads as absent.
     #[track_caller]
     pub(super) fn transact<'a, T: DeserializeOwned>(
         &self,
@@ -55,8 +53,8 @@ impl Store {
     }
 
     /// `body`'s statements, which read and write nothing, in one transaction behind no guard, so
-    /// all of them read one snapshot of the board; the last of them is a `RETURN` of the answer,
-    /// and `vars` are read as [`Store::transact`] reads them.
+    /// all of them read one snapshot of the board, and `vars` are read as [`Store::transact`]
+    /// reads them.
     #[track_caller]
     pub(super) fn read_together<'a, T: DeserializeOwned>(
         &self,
@@ -64,7 +62,7 @@ impl Store {
         vars: Value,
     ) -> Result<T, Failure> {
         let body = body.into();
-        said_as(&body, false, &self.added)?;
+        said_as(&body, &self.added)?;
         self.run_transaction(body, vars, Run::Unguarded)
     }
 
@@ -107,14 +105,14 @@ impl Store {
         dispatch: bool,
     ) -> Result<T, Failure> {
         let body = body.into();
-        said_as(&body, true, &self.added)?;
+        said_as(&body, &self.added)?;
         self.run_transaction(body, vars, Run::Guarded { dispatch })
     }
 
     /// `body` in one transaction, as `run` says: a write starts with the schema guard, so on a
     /// board at another version than this store's it is refused before any statement of its own,
     /// but for a reader's ordinary write on a board one ahead whose record lets it
-    /// ([`schema::GUARD`]).
+    /// ([`postgres::GUARD`]).
     #[track_caller]
     pub(super) fn run_transaction<'a, T: DeserializeOwned>(
         &self,
@@ -132,7 +130,7 @@ impl Store {
         if !matches!(run, Run::Staging) {
             unset_nulls(&mut vars);
         }
-        let (guard, dispatch) = match run {
+        let (guarded, dispatch) = match run {
             Run::Guarded { .. } | Run::Staging | Run::Own => {
                 // Only a reader's ordinary write takes a board one schema ahead that lets it: a
                 // whole-board copy (its staging and its swap) and a rebind are held to the store's
@@ -154,12 +152,9 @@ impl Store {
                     )
                     .into();
                 }
-                (
-                    schema::GUARD,
-                    matches!(run, Run::Guarded { dispatch: true }),
-                )
+                (true, matches!(run, Run::Guarded { dispatch: true }))
             }
-            Run::Unguarded => ("", false),
+            Run::Unguarded => (false, false),
         };
         // Once the write has committed, before its answer is read: delivery failure must never turn
         // it into a failed write that a caller might repeat. The shared server also drains this
@@ -169,27 +164,9 @@ impl Store {
                 self.after_write();
             }
         };
-        match self.db.reach() {
-            Reach::SurrealDb(client) => {
-                let surreal = body.surreal_at(Location::caller()).map_err(Failure::Stop)?;
-                let results = client.query(&sql::transaction(guard, surreal), vars)?;
-                committed();
-                let answer = results
-                    .len()
-                    .checked_sub(2)
-                    .and_then(|last| results.into_iter().nth(last));
-                answer
-                    .ok_or_else(|| Failure::Stop(Error::Db("a transaction gave no answer".into())))
-            }
-            Reach::PostgreSql(client) => {
-                let twin = body
-                    .postgres_at(Location::caller())
-                    .map_err(Failure::Stop)?;
-                let answer = on_postgres(client, twin, &vars, !guard.is_empty())?;
-                committed();
-                Ok(answer)
-            }
-        }
+        let answer = on_postgres(self.db.reach(), &body.postgres, &vars, guarded)?;
+        committed();
+        Ok(answer)
     }
 }
 
@@ -226,16 +203,16 @@ impl Store {
     }
 }
 
-/// `body`, sent as a write when `writes` by a store whose additive steps define `added`, refused
-/// before anything is sent where what it says it does disagrees with what its SurrealQL does
+/// `body`, sent by a store whose additive steps define `added`, refused before anything is sent
+/// where the tables it says it names disagree with those its text names
 /// ([`Statement::disagreement`]), naming the line it was sent from: in a debug build alone, every
-/// test's, as a release build sends what a statement says and reads no SurrealQL for it.
+/// test's, as a release build sends what a statement says and reads no text for it.
 #[track_caller]
-fn said_as(body: &Statement, writes: bool, added: &[(String, i64)]) -> Result<(), Failure> {
+fn said_as(body: &Statement, added: &[(String, i64)]) -> Result<(), Failure> {
     if !cfg!(debug_assertions) {
         return Ok(());
     }
-    match body.disagreement(writes, added) {
+    match body.disagreement(added) {
         None => Ok(()),
         Some(why) => {
             let at = Location::caller();
@@ -260,12 +237,9 @@ pub(super) fn unshaped(e: serde_json::Error) -> Error {
 }
 
 impl Store {
-    /// `sql`'s statements as they are, in no transaction of the store's and behind no guard, each
-    /// statement's answer in order: the open's reads of a board that may not be made yet, the
-    /// analyzers an index needs committed first, and a writer's line, which builds of other
-    /// schemas write too ([`super::writers`]).
-    ///
-    /// On PostgreSQL, the one answer of its statements, which run in one transaction of their own.
+    /// `sql`'s statements as they are, behind no guard, in one transaction of their own, and their
+    /// one answer: the open's reads of a board that may not be made yet, and a writer's line,
+    /// which builds of other schemas write too ([`super::writers`]).
     #[track_caller]
     pub(super) fn request<'a>(
         &self,
@@ -277,33 +251,24 @@ impl Store {
 
     #[track_caller]
     fn request_statement(&self, sql: &Statement, vars: Value) -> Result<Vec<Value>, DbError> {
-        match self.db.reach() {
-            Reach::SurrealDb(client) => {
-                let surreal = sql
-                    .surreal_at(Location::caller())
-                    .map_err(|refused| DbError::Failed(refused.to_string()))?;
-                client.query(surreal, vars)
-            }
-            Reach::PostgreSql(client) => {
-                let twin = sql
-                    .postgres_at(Location::caller())
-                    .map_err(|refused| DbError::Failed(refused.to_string()))?;
-                Ok(vec![on_postgres(client, twin, &vars, false)?])
-            }
-        }
+        Ok(vec![on_postgres(
+            self.db.reach(),
+            &sql.postgres,
+            &vars,
+            false,
+        )?])
     }
 
-    /// The board's namespace and database, made if they are not there yet.
+    /// The board's database, made if it is not there yet.
     #[track_caller]
     pub(super) fn define(&self) -> Result<(), DbError> {
-        self.db.define(sql::NOTHING)
+        self.db.define()
     }
 }
 
 /// `statement` on PostgreSQL, behind the schema's guard when `guarded`, `vars` its variables: its
-/// answer, null for a statement that sends nothing or answers nothing. The request is the line's
-/// that sent the statement, as the board's health records it ([`crate::board_health::Query`]),
-/// never this one's.
+/// answer, null for a statement that answers nothing. The request is the line's that sent the
+/// statement, as the board's health records it ([`crate::board_health::Query`]), never this one's.
 #[track_caller]
 pub(super) fn on_postgres(
     client: Postgres,
@@ -311,10 +276,7 @@ pub(super) fn on_postgres(
     vars: &Value,
     guarded: bool,
 ) -> Result<Value, DbError> {
-    let Some(request) = postgres::request(statement, guarded) else {
-        return Ok(Value::Null);
-    };
-    let (steps, answer) = match request {
+    let (steps, answer) = match postgres::request(statement, guarded) {
         postgres::Request::Simple(sql) => {
             client.simple(&sql)?;
             return Ok(Value::Null);
@@ -366,19 +328,7 @@ pub(super) fn on_postgres(
 #[track_caller]
 fn read_on(db: &Board, body: &Statement, mut vars: Value) -> Result<Value, Failure> {
     unset_nulls(&mut vars);
-    let answer = match db.reach() {
-        Reach::SurrealDb(client) => {
-            let surreal = body.surreal_at(Location::caller()).map_err(Failure::Stop)?;
-            client.query(surreal, vars)?.pop()
-        }
-        Reach::PostgreSql(client) => {
-            let twin = body
-                .postgres_at(Location::caller())
-                .map_err(Failure::Stop)?;
-            Some(on_postgres(client, twin, &vars, false)?)
-        }
-    };
-    answer.ok_or_else(|| Failure::Stop(Error::Db("a read gave no answer".into())))
+    Ok(on_postgres(db.reach(), &body.postgres, &vars, false)?)
 }
 
 fn unset_nulls(value: &mut Value) {
@@ -432,7 +382,7 @@ mod tests {
             "",
             &crate::Opening::write(),
         );
-        let statement = super::super::statement::both("RETURN 1;", Pg::read("1"));
+        let statement = Statement::from(Pg::read("1"));
         let sent = line!() + 1;
         let read = store.read::<Value>(statement, json!({}));
         assert!(read.is_err(), "no server answers");
@@ -493,61 +443,12 @@ mod tests {
              struct Answer"
         );
     }
-
-    /// A debug build refuses, on either database, a statement whose SurrealQL does other than its
-    /// call and it say, naming the line it was sent from, before anything of it is sent: none of
-    /// the refused ones is a statement either database could parse. The same read sent as a read
-    /// is answered.
-    #[test]
-    #[cfg(debug_assertions)]
-    fn a_statement_saying_other_than_its_surrealql_does_is_refused_before_it_is_sent() {
-        use crate::store::statement::both;
-        use crate::store_fixture::{Backend, Fixture, Seed};
-        let read = || both("RETURN 1;", Pg::read("to_jsonb(1)"));
-        let unparsed = "and this is no statement";
-        let write = || {
-            both(
-                format!("UPSERT counter:walk SET last = 1; {unparsed}"),
-                Pg::script(unparsed),
-            )
-        };
-        let line = sql::logged("'sim/walk'", "'board'", "'msg'", "'said'", "NONE");
-        let posting = || both(format!("{line} {unparsed}"), Pg::script(unparsed));
-        for backend in [Backend::SurrealDb, Backend::PostgreSql] {
-            let f = Fixture::on(backend, Seed::default());
-            // Each send on a line of its own, the line its refusal names.
-            let store = &f.store;
-            let refused = |sent: Result<Value, Failure>, at: u32, why: &str| match sent {
-                Err(Failure::Stop(error)) => {
-                    let said = error.to_string();
-                    let expected = format!("{}:{at} {why}: nothing was sent", file!());
-                    assert!(said.contains(&expected), "{backend:?}: {said}");
-                }
-                other => panic!("{backend:?}: {other:?}"),
-            };
-            let at = line!() + 1;
-            let sent = store.transact::<Value>(read(), json!({}));
-            refused(
-                sent,
-                at,
-                "is sent as a write, and its SurrealQL changes nothing",
-            );
-            let at = line!() + 1;
-            let sent = store.read_together::<Value>(write(), json!({}));
-            refused(sent, at, "is sent as a read, and its SurrealQL writes");
-            let at = line!() + 1;
-            let sent = store.transact_dispatch::<Value>(posting(), json!({}), false);
-            refused(
-                sent,
-                at,
-                "says it posts no line, and its SurrealQL posts one",
-            );
-            let answer: i64 = store.read_together(read(), json!({})).unwrap();
-            assert_eq!(answer, 1, "{backend:?}");
-        }
-    }
 }
 
 #[cfg(test)]
 #[path = "transaction_tests.rs"]
 mod guard_tests;
+
+#[cfg(test)]
+#[path = "sender_fence_tests.rs"]
+mod sender_fence_tests;

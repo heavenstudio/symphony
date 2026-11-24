@@ -7,8 +7,7 @@
 use serde_json::{Value, json};
 
 use super::postgres::fields as pg;
-use super::statement::both;
-use super::surreal::fields as sql;
+use super::statement::Statement;
 use super::{Error, REFUSED, Store, Task, refused, repr};
 
 impl Store {
@@ -49,7 +48,7 @@ impl Store {
             }
         };
         let acts = !self.is_person(handle);
-        let body = || both(sql::set_field(acts), pg::set_field(acts)).posting();
+        let body = || Statement::from(pg::set_field(acts)).posting();
         self.retrying(|| {
             let vars = self.acting(
                 handle,

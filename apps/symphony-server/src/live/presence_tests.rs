@@ -237,7 +237,7 @@ mod tick {
             let state = std::env::temp_dir().join(format!(
                 "presence-night-{}-{}.json",
                 std::process::id(),
-                self.f.store.client().database()
+                self.f.store.database().database()
             ));
             sweep_presence(&self.f.store, state);
             self.second();

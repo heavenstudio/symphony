@@ -1115,12 +1115,12 @@ fn the_board_unreachable_is_exit_2_in_one_line() {
     let mut c = Case::new();
     c.env
         .vars
-        .insert("TASKS_SERVER".into(), "127.0.0.1:1".into());
+        .insert("TASKS_SERVER".into(), crate::UNREACHED_SERVER.into());
     let ran = c.run_as("", &["list"], "");
     assert_eq!((ran.code, ran.out.as_str()), (2, ""));
     assert!(
         ran.err.starts_with("✖ ")
-            && ran.err.contains("127.0.0.1:1")
+            && ran.err.contains(crate::UNREACHED_FOLDER)
             && ran.err.matches('\n').count() == 1,
         "{}",
         ran.err

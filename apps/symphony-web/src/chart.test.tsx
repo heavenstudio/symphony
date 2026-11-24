@@ -41,7 +41,7 @@ import {
   upTo,
   valued,
 } from "./chart";
-import { childrenOf } from "./testing";
+import { childrenOf, elementOf, type Found, fire } from "./testing";
 
 function series(name: string, mark: Mark, values: (number | null)[]): SeriesData {
   return { name, mark, values, hidden: false };
@@ -818,5 +818,152 @@ describe("a chart of dots", () => {
     expect(
       dotsCard({ ...data, series: [data.series[0] as DotsData["series"][number]] }, null),
     ).not.toContain("chart-legend");
+  });
+});
+
+describe("every shape of chart", () => {
+  /** The card's caption, as every shape opens: its title, which names the figure, and its note. */
+  const opens = (figure: string, id: string, title: string, note: string) =>
+    `<figure class="${figure}" id="chart-${id}" aria-labelledby="chart-${id}-title"><figcaption>` +
+    `<h3 id="chart-${id}-title">${title}</h3><p class="chart-note">${note}</p></figcaption>`;
+  /** Its table's button, closed, which every shape ends with. */
+  const ends = (label: string) =>
+    `<button class="chart-table-toggle" type="button" aria-expanded="false">${label}</button></figure>`;
+
+  it("opens with its title and note and ends with its table's button, closed", () => {
+    const periods = card(openChart(), null);
+    expect(periods.startsWith(opens("chart", "open", "Open work", "A test chart."))).toBe(true);
+    expect(periods.endsWith(ends("Show the table"))).toBe(true);
+    const rows = rowsCard(dearest([row("a/b", [3, 1])], true), null);
+    expect(
+      rows.startsWith(opens("chart hchart side", "dearest", "Dearest tasks", "The dearest first.")),
+    ).toBe(true);
+    expect(rows.endsWith(ends("Show all 2 as a table"))).toBe(true);
+    const dots = dotsCard({ ...spread([dot("a/b", 10, 1)]), tableToggle: "Show all 1" }, null);
+    expect(
+      dots.startsWith(
+        opens("chart dchart", "spread", "Every task, cost against size", "Both on a log scale."),
+      ),
+    ).toBe(true);
+    expect(dots.endsWith(ends("Show all 1"))).toBe(true);
+  });
+
+  it("has the same legend, a button a series, each with its shape's swatch", () => {
+    const legend = (title: string, swatches: [string, string][]) =>
+      `<ul class="chart-legend" aria-label="${title}: series shown">${swatches
+        .map(
+          ([swatch, name]) =>
+            `<li><button class="chart-key" type="button" aria-pressed="true">${swatch}${name}</button></li>`,
+        )
+        .join("")}</ul>`;
+    const swatch = (className: string, colour: string) =>
+      `<span class="${className}" style="--c:${colour}" aria-hidden="true"></span>`;
+    const lines = chart("count", [series("Done", "bar", [1]), series("Lead", "line", [2])]);
+    expect(card(lines, null)).toContain(
+      legend("Test", [
+        [swatch("swatch", "var(--chart-1)"), "Done"],
+        [swatch("swatch line", "var(--chart-2)"), "Lead"],
+      ]),
+    );
+    expect(rowsCard(dearest([row("a/b", [3, 1])]), null)).toContain(
+      legend("Dearest tasks", [
+        [swatch("swatch", "var(--chart-1)"), "First round"],
+        [swatch("swatch", "var(--chart-2)"), "Review rounds"],
+      ]),
+    );
+    expect(dotsCard(spread([dot("a/b", 10, 1)]), null)).toContain(
+      legend("Every task, cost against size", [
+        [swatch("swatch dot", "var(--chart-1)"), "feature"],
+        [swatch("swatch dot", "var(--chart-none)"), "No kind"],
+      ]),
+    );
+  });
+
+  /** Each shape, called as React calls it, with what it asks of its page. */
+  function shapes() {
+    const picked: number[] = [];
+    const toggled: string[] = [];
+    const onSelect = (at: number) => picked.push(at);
+    const onToggle = (key: string) => toggled.push(key);
+    const drawn = [
+      ChartCard({ chart: openChart(), axis: AXIS, selected: null, onSelect, onToggle }),
+      RowChart({
+        chart: dearest([row("a/b", [3, 1]), row("c/d", [2, 0])]),
+        selected: null,
+        onSelect,
+        onToggle,
+      }),
+      DotChart({
+        chart: spread([dot("a/b", 10, 1), dot("c/d", 100, 5, 1)]),
+        selected: null,
+        onSelect,
+        onToggle,
+      }),
+    ];
+    return { drawn, picked, toggled };
+  }
+
+  /** A key pressed on a plot, and whether the page's own use of it was prevented. */
+  function press(node: ReturnType<typeof shapes>["drawn"][number], key: string): boolean {
+    let prevented = false;
+    fire(node, (element) => element.props.role === "group", "onKeyDown", {
+      key,
+      preventDefault: () => {
+        prevented = true;
+      },
+    });
+    return prevented;
+  }
+
+  it("picks by its plot's keys, and leaves a key it does not take to the page", () => {
+    const { drawn, picked } = shapes();
+    const [periods, rows, dots] = drawn;
+    if (!periods || !rows || !dots) throw new Error("three shapes");
+    // The last period with a value is shown, so the one before it; the first row; the first dot.
+    expect([
+      press(periods, "ArrowLeft"),
+      press(rows, "ArrowDown"),
+      press(dots, "ArrowRight"),
+    ]).toEqual([true, true, true]);
+    expect(picked).toEqual([1, 1, 0]);
+    expect([press(periods, "a"), press(rows, "Enter"), press(dots, "Tab")]).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    expect(picked).toEqual([1, 1, 0]);
+  });
+
+  it("hides a series by its legend's button, by its chart's id and the series' name", () => {
+    const { drawn, toggled } = shapes();
+    for (const node of drawn) {
+      const legend = elementOf(node, (element) => "swatch" in element.props);
+      if (legend === undefined) throw new Error("no legend drawn");
+      const list = (legend.type as (props: Found["props"]) => Found)(legend.props);
+      fire(list, (element) => element.type === "button", "onClick");
+    }
+    expect(toggled).toEqual(["open:Ready", "dearest:First round", "spread:feature"]);
+  });
+
+  it("makes the table it opens only once asked, its caption the chart's", () => {
+    const { drawn } = shapes();
+    const tables = drawn.map((node) => {
+      const toggle = elementOf(node, (element) => "label" in element.props);
+      const table = toggle?.props.table;
+      if (typeof table !== "function") throw new Error("no table's button drawn");
+      return renderToStaticMarkup(table());
+    });
+    expect(tables.map((html) => html.match(/<caption>(.*?)<\/caption>/)?.[1])).toEqual([
+      "Open work, by period",
+      "Every task",
+      "Every dot",
+    ]);
+  });
+
+  it("says in its plot's place what the window cannot show, with no legend or table", () => {
+    const html = card({ ...openChart(), instead: "Switch to Days." }, null, NO_AXIS);
+    expect(html).toBe(
+      `${opens("chart", "open", "Open work", "A test chart.")}<p class="chart-instead">Switch to Days.</p></figure>`,
+    );
   });
 });

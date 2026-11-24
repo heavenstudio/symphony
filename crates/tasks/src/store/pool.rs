@@ -5,7 +5,6 @@
 use crate::lock::Recovered as _;
 
 use super::messages::DELIVERED;
-use super::surreal::pool as sql;
 use super::work::OWNER;
 use super::{Error, Message, Store};
 use serde_json::{Value, json};
@@ -100,10 +99,9 @@ impl Store {
             .is_some_and(|pool| pool.floor <= since && pool.latest >= latest)
         {
             let floor = pool.as_ref().map_or(since, |pool| pool.floor.min(since));
-            let read = sql::pool();
             let (latest, rows): (i64, Value) = self.retrying(|| {
                 self.read(
-                    super::statement::both(&read, super::postgres::pool::pool()),
+                    super::statement::Statement::from(super::postgres::pool::pool()),
                     json!({"floor": floor, "delivered": DELIVERED}),
                 )
             })?;
@@ -242,45 +240,37 @@ mod tests {
     #[test]
     fn a_pool_on_a_board_made_without_the_step_hears_the_owners_word_and_no_other() {
         use crate::schema::{ADDED, PERSON_LINES, Schema};
-        use crate::store_fixture::{Backend, HOST, NOW};
+        use crate::store_fixture::{HOST, NOW, database};
         use crate::{NewSession, NewTask, Opening, Store};
         let step = ADDED.iter().position(|step| *step == PERSON_LINES).unwrap();
         let before = Opening::write().at(Schema::of_this_contract(i64::try_from(step).unwrap()));
-        for backend in [Backend::SurrealDb, Backend::PostgreSql] {
-            let db = backend.database();
-            let store = Store::opening_on(
-                db.another(),
-                Box::new(|| NOW),
-                Box::new(|_| false),
-                HOST,
-                &before,
-            )
+        let db = database();
+        let store = Store::opening_on(
+            db.another(),
+            Box::new(|| NOW),
+            Box::new(|_| false),
+            HOST,
+            &before,
+        )
+        .unwrap();
+        let worker = store
+            .register(&NewSession::new("worker"))
+            .unwrap()
+            .row
+            .handle;
+        store
+            .create(&NewTask::new("tools/x", "Jump departure", "owner"))
             .unwrap();
-            let worker = store
-                .register(&NewSession::new("worker"))
-                .unwrap()
-                .row
-                .handle;
-            store
-                .create(&NewTask::new("tools/x", "Jump departure", "owner"))
-                .unwrap();
-            store.claim("tools/x", &worker).unwrap();
-            store.inbox(&worker).unwrap();
-            let own = store.say("tools/x", &worker, "on it", None).unwrap().id;
-            assert!(
-                !store.could_hear(&worker, own - 1, own).unwrap(),
-                "{backend:?}"
-            );
-            let owners = store
-                .say("tools/x", "owner", "how far along?", None)
-                .unwrap();
-            assert!(
-                store.could_hear(&worker, own, owners.id).unwrap(),
-                "{backend:?}"
-            );
-            let heard = store.inbox_pooled(&worker, own - 1, owners.id).unwrap();
-            let heard: Vec<&str> = heard.iter().map(|m| m.text.as_str()).collect();
-            assert_eq!(heard, ["how far along?"], "{backend:?}");
-        }
+        store.claim("tools/x", &worker).unwrap();
+        store.inbox(&worker).unwrap();
+        let own = store.say("tools/x", &worker, "on it", None).unwrap().id;
+        assert!(!store.could_hear(&worker, own - 1, own).unwrap());
+        let owners = store
+            .say("tools/x", "owner", "how far along?", None)
+            .unwrap();
+        assert!(store.could_hear(&worker, own, owners.id).unwrap());
+        let heard = store.inbox_pooled(&worker, own - 1, owners.id).unwrap();
+        let heard: Vec<&str> = heard.iter().map(|m| m.text.as_str()).collect();
+        assert_eq!(heard, ["how far along?"]);
     }
 }

@@ -25,15 +25,14 @@
 //! ones that wait on nothing ([`orchestration::first_free`]), so the places under the limit go to
 //! work that can start. The limit is fenced as the cap is: a pass holds each receiver's
 //! slot counter as it read it before the board, and a take or hand-over of the role that the limit
-//! holds reads the taker's open tasks and its counter together (`surreal::work::GAINING`, `Store::gaining`), so
+//! holds reads the taker's open tasks and its counter together (`postgres::work::GAINING`, `Store::gaining`), so
 //! two writes that each saw a place cannot both fill it.
 
 use crate::health::FINISHED;
 use crate::orchestration::{self, Owners, Pool};
 use crate::store::messages::BOARD;
 use crate::store::postgres::{cap as pg_cap, work as pg};
-use crate::store::statement::both;
-use crate::store::surreal::work as sql;
+use crate::store::statement::Statement;
 use crate::store::{Board, Error, Failure, Store, Task, Which};
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
@@ -249,7 +248,7 @@ impl Store {
         }
         let session = by.filter(|by| !self.is_person(by));
         let acts = session.is_some();
-        let body = both(sql::give_pass(acts), pg::give_pass(acts)).posting();
+        let body = Statement::from(pg::give_pass(acts)).posting();
         let now = (self.clock)();
         let sender = by.unwrap_or(BOARD);
         let vars = match session {
@@ -284,7 +283,7 @@ impl Store {
             #[serde(default)]
             red: Option<Value>,
         }
-        let read = both(sql::GAINING, pg::GAINING);
+        let read = Statement::from(pg::GAINING);
         let mine: Mine = self.read(read, json!({"handle": to}))?;
         let held = (mine.tasks.iter())
             .filter(|t| !FINISHED.contains(&t.status.as_str()))
@@ -304,12 +303,11 @@ impl Store {
         Ok(())
     }
 
-    /// Every orchestrator's slot counter, `counter:['slots', HANDLE]`, which every give and every
+    /// Every orchestrator's slot counter, `counter` `['slots', HANDLE]`, which every give and every
     /// take of the role or hand-over to it moves: what a pass reads before the board it decides on,
     /// to hold its receivers' where it read them ([`Pass::guard`]).
     pub(in crate::store) fn slot_counters(&self) -> Result<Vec<(String, i64)>, Failure> {
-        let read = format!("RETURN ({});", crate::store::surreal::cap::COUNTERS);
-        self.read(both(read, pg_cap::counted()), json!({}))
+        self.read(Statement::from(pg_cap::counted()), json!({}))
     }
 
     /// The orchestrators of `board` that stay, but `except` ([`Pool::of`]), none given a task past
@@ -323,7 +321,7 @@ impl Store {
         let listening: BTreeSet<String> = match candidates.is_empty() {
             true => BTreeSet::new(),
             false => {
-                let read = both(sql::LISTENING, pg::LISTENING);
+                let read = Statement::from(pg::LISTENING);
                 self.read(read, json!({"candidates": candidates}))?
             }
         };

@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { deviceNotice, fixed, localMoment, moment, parseMoment, plural, savedAt } from "./words";
+import {
+  deviceNotice,
+  fixed,
+  localMoment,
+  MONTHS,
+  moment,
+  parseMoment,
+  plural,
+  savedAt,
+  twoDigits,
+  WEEKDAYS,
+} from "./words";
 
 describe("a number to a few places", () => {
   it.each([
@@ -157,5 +168,27 @@ describe("a register's moment", () => {
   it("is the wall clock's where the owner is", () => {
     expect(localMoment(at(2026, 10, 8, 7, 42))).toBe(minutes("2026-10-08 07:42"));
     expect(localMoment(at(1999, 12, 31, 23, 59))).toBe(minutes("1999-12-31 23:59"));
+  });
+});
+
+describe("a date's words", () => {
+  it("name each month and weekday as `Date` counts them, January's and Sunday's at 0", () => {
+    expect(MONTHS).toEqual("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" "));
+    expect(WEEKDAYS).toEqual(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]);
+    // 15 Nov 2026 was a Sunday.
+    const day = new Date(Date.UTC(2026, 10, 15));
+    expect(`${WEEKDAYS[day.getUTCDay()]} ${MONTHS[day.getUTCMonth()]}`).toBe("Sun Nov");
+    const first = new Date(Date.UTC(2027, 0, 1));
+    expect(`${WEEKDAYS[first.getUTCDay()]} ${MONTHS[first.getUTCMonth()]}`).toBe("Fri Jan");
+  });
+
+  it.each([
+    [0, "00"],
+    [7, "07"],
+    [10, "10"],
+    [59, "59"],
+    [123, "123"],
+  ])("write %i in two digits at least: %s", (n, text) => {
+    expect(twoDigits(n)).toBe(text);
   });
 });

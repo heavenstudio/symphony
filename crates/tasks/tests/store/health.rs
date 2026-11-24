@@ -1,15 +1,14 @@
 //! Health as the store reads it: the rule itself is `src/health.rs`; these hold what the store gives
 //! it (the clock, the process table, the work a session holds).
-use crate::common::Backend;
 
 use crate::common::{Fixture, GONE, HOST, NOW, Seed, refused, session};
 use symphony_board::Health;
 use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
 use symphony_board::rows::SessionRow;
 
-on_both! {
-fn health_ages_from_live_to_stale_to_lost(backend: Backend) {
-    let f = Fixture::on(backend,
+#[test]
+fn health_ages_from_live_to_stale_to_lost() {
+    let f = Fixture::new(
         Seed::default()
             .session("amber-heron")
             .task("sim/jump", "ready"),
@@ -24,16 +23,15 @@ fn health_ages_from_live_to_stale_to_lost(backend: Backend) {
     f.advance(STALE_SECONDS);
     assert_eq!(f.store.session("amber-heron").unwrap().health, Health::Lost);
 }
-}
 
-on_both! {
-fn a_dead_local_pid_is_stale_at_once_but_only_time_makes_it_lost(backend: Backend) {
+#[test]
+fn a_dead_local_pid_is_stale_at_once_but_only_time_makes_it_lost() {
     let monitored = SessionRow {
         pid: Some(41),
         host: HOST.into(),
         ..session("amber-heron")
     };
-    let f = Fixture::on(backend,
+    let f = Fixture::new(
         Seed::default()
             .session_row(monitored)
             .task("sim/jump", "ready"),
@@ -49,45 +47,41 @@ fn a_dead_local_pid_is_stale_at_once_but_only_time_makes_it_lost(backend: Backen
     f.advance(GONE);
     assert_eq!(f.store.session("amber-heron").unwrap().health, Health::Lost);
 }
-}
 
-on_both! {
-fn a_pid_on_another_host_is_not_probed(backend: Backend) {
+#[test]
+fn a_pid_on_another_host_is_not_probed() {
     let elsewhere = SessionRow {
         pid: Some(41),
         host: "some-other-machine".into(),
         ..session("amber-heron")
     };
-    let f = Fixture::on(backend, Seed::default().session_row(elsewhere));
+    let f = Fixture::new(Seed::default().session_row(elsewhere));
     assert_eq!(f.store.session("amber-heron").unwrap().health, Health::Live);
 }
-}
 
-on_both! {
-fn leaving_is_its_own_state(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default().session_row(SessionRow {
+#[test]
+fn leaving_is_its_own_state() {
+    let f = Fixture::new(Seed::default().session_row(SessionRow {
         left_at: Some(NOW),
         ..session("amber-heron")
     }));
     assert_eq!(f.store.session("amber-heron").unwrap().health, Health::Left);
 }
-}
 
-on_both! {
-fn gone_holding_nothing_reads_left(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default().session("amber-heron"));
+#[test]
+fn gone_holding_nothing_reads_left() {
+    let f = Fixture::new(Seed::default().session("amber-heron"));
     f.advance(GONE);
     assert_eq!(f.store.session("amber-heron").unwrap().health, Health::Left);
 }
-}
 
-on_both! {
-fn a_busy_mark_nobody_clears_lapses_to_lost(backend: Backend) {
+#[test]
+fn a_busy_mark_nobody_clears_lapses_to_lost() {
     let busy = SessionRow {
         busy_until: Some(NOW + 600.0),
         ..session("amber-heron")
     };
-    let f = Fixture::on(backend,
+    let f = Fixture::new(
         Seed::default()
             .session_row(busy)
             .task("sim/jump", "in_progress")
@@ -102,11 +96,10 @@ fn a_busy_mark_nobody_clears_lapses_to_lost(backend: Backend) {
     f.advance(GONE);
     assert_eq!(f.store.session("amber-heron").unwrap().health, Health::Lost);
 }
-}
 
-on_both! {
-fn gone_holding_only_finished_work_reads_left(backend: Backend) {
-    let f = Fixture::on(backend,
+#[test]
+fn gone_holding_only_finished_work_reads_left() {
+    let f = Fixture::new(
         Seed::default()
             .session("amber-heron")
             .session("brisk-finch")
@@ -129,11 +122,10 @@ fn gone_holding_only_finished_work_reads_left(backend: Backend) {
         [("amber-heron", Health::Left), ("brisk-finch", Health::Left)]
     );
 }
-}
 
-on_both! {
-fn an_executor_whose_work_waits_in_review_ends_quietly_until_changes_are_asked(backend: Backend) {
-    let f = Fixture::on(backend,
+#[test]
+fn an_executor_whose_work_waits_in_review_ends_quietly_until_changes_are_asked() {
+    let f = Fixture::new(
         Seed::default()
             .session("amber-heron")
             .session("brisk-finch")
@@ -148,11 +140,10 @@ fn an_executor_whose_work_waits_in_review_ends_quietly_until_changes_are_asked(b
         .unwrap();
     assert_eq!(f.store.session("amber-heron").unwrap().health, Health::Lost);
 }
-}
 
-on_both! {
-fn a_reviewer_gone_before_its_verdict_is_lost(backend: Backend) {
-    let f = Fixture::on(backend,
+#[test]
+fn a_reviewer_gone_before_its_verdict_is_lost() {
+    let f = Fixture::new(
         Seed::default()
             .session("amber-heron")
             .session("brisk-finch")
@@ -164,11 +155,10 @@ fn a_reviewer_gone_before_its_verdict_is_lost(backend: Backend) {
     assert_eq!(f.store.session("brisk-finch").unwrap().health, Health::Lost);
     assert_eq!(f.store.claimable("brisk-finch").unwrap(), ["sim/jump"]);
 }
-}
 
-on_both! {
-fn claimable_is_only_work_another_session_could_take(backend: Backend) {
-    let f = Fixture::on(backend,
+#[test]
+fn claimable_is_only_work_another_session_could_take() {
+    let f = Fixture::new(
         Seed::default()
             .session("amber-heron")
             .session("brisk-finch")
@@ -194,23 +184,20 @@ fn claimable_is_only_work_another_session_could_take(backend: Backend) {
     );
     assert!(f.store.claimable("nobody").unwrap().is_empty());
 }
-}
 
-on_both! {
-fn an_unknown_session_is_refused(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn an_unknown_session_is_refused() {
+    let f = Fixture::new(Seed::default());
     assert_eq!(refused(f.store.session("nobody")), "no session 'nobody'");
 }
-}
 
-on_both! {
-fn a_role_held_by_a_session_the_board_does_not_know_reads_lost(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default().task("sim/jump", "in_progress").role(
+#[test]
+fn a_role_held_by_a_session_the_board_does_not_know_reads_lost() {
+    let f = Fixture::new(Seed::default().task("sim/jump", "in_progress").role(
         "sim/jump",
         "ghost-wren",
         "executor",
     ));
     let task = f.store.get("sim/jump").unwrap();
     assert_eq!(task.roles[0].health, Health::Lost);
-}
 }

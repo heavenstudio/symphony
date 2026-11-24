@@ -55,8 +55,8 @@ and sets the dock badge.
 `just test-rs -p symphony-desktop` runs the library's tests and `tests/real_server.rs`: the one
 server on a private port over a temporary machine folder and project, followed as the app follows
 it. It builds `symphony-server` through `tools/rs-bin.sh --build`, or takes it from the folder
-`SYMPHONY_TEST_BINARIES` names, and runs the pinned SurrealDB as the board's tests do. The stub's
-test is the browser target's `desktop_stub`
+`SYMPHONY_TEST_BINARIES` names, and makes its board on the machine's PostgreSQL as the board's
+tests do. The stub's test is the browser target's `desktop_stub`
 (`apps/symphony-web-tests/tests/browser/desktop_stub.rs`).
 
 ## Not in it yet

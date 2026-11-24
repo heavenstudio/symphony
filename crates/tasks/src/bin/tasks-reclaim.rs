@@ -1,10 +1,10 @@
-//! The board's store rebuilt from an export of itself, which holds only what is live:
+//! The board's dead space given back to the filesystem by PostgreSQL's VACUUM FULL and ANALYZE:
 //!
 //!     tasks-reclaim
 //!     tasks-reclaim --dir FOLDER
 //!
-//! The board in the git common dir of the working directory, its server down meanwhile
-//! (`symphony_board::server::Home::reclaim`): `tasks-reclaim`, the owner's to run. `--dir`
+//! The board in the git common dir of the working directory, its server running meanwhile
+//! (`symphony_board::server::Postgres::reclaim`): `tasks-reclaim`, the owner's to run. `--dir`
 //! names a board folder elsewhere, a copy of the board's to rehearse on. It says what it did, or
 //! why not (exit 2), in one line; `--help` alone says how it is run, and `--version` its version.
 

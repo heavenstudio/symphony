@@ -3,15 +3,15 @@
 //! post under the key finds that, and taking the thread's line made under no key when asked to
 //! (`Store::adopt_or_say`), with the board's notice of it said under no key.
 
-use crate::common::{Backend, Fixture, Seed};
+use crate::common::{Fixture, Seed};
 use serde_json::json;
 use symphony_board::health::LIVE_SECONDS;
 
-on_both! {
 /// A post under a key is made once on a thread: every later one under the key answers the line the
 /// first made, whatever it says, and writes nothing; another key or another thread is another post.
-fn a_keyed_post_is_made_once_per_key_on_a_thread(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn a_keyed_post_is_made_once_per_key_on_a_thread() {
+    let f = Fixture::new(Seed::default());
     let a = f.session("worker");
     f.task("sim/jump");
     f.task("sim/dock");
@@ -79,14 +79,12 @@ fn a_keyed_post_is_made_once_per_key_on_a_thread(backend: Backend) {
         lines("sim/dock"),
         vec![(other_thread.id, "main is red".into(), None)]
     );
-
-}
 }
 
-on_both! {
 /// Two posts under one key at once make one line: the one that commits second finds the first's.
-fn two_posts_under_one_key_at_once_make_one_line(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn two_posts_under_one_key_at_once_make_one_line() {
+    let f = Fixture::new(Seed::default());
     let a = f.session("worker");
     f.task("sim/jump");
     let barrier = std::sync::Barrier::new(2);
@@ -113,16 +111,14 @@ fn two_posts_under_one_key_at_once_make_one_line(backend: Backend) {
         .map(|m| m.text)
         .collect();
     assert_eq!(lines, vec![said[0].text.clone()]);
-
-}
 }
 
-on_both! {
 /// The board says once that no executor reads a keyed line, whichever post under the key finds
 /// that: a repeat after the first post's run stopped before saying so, or after the executor went,
 /// says it, and a repeat after it was said adds nothing.
-fn a_repeated_keyed_post_says_once_that_no_executor_reads_it(backend: Backend) {
-    let f = Fixture::on(backend,
+#[test]
+fn a_repeated_keyed_post_says_once_that_no_executor_reads_it() {
+    let f = Fixture::new(
         Seed::default()
             .session("ochre-owl")
             .session("amber-heron")
@@ -178,17 +174,15 @@ fn a_repeated_keyed_post_says_once_that_no_executor_reads_it(backend: Backend) {
         )
         .unwrap();
     assert_eq!(told(), vec![notice]);
-
-}
 }
 
-on_both! {
 /// Asked to adopt, a key naming no line yet takes the thread's line reading its text to its
 /// recipient, one made under no key, and the board's notice of that line: nothing is written, a
 /// later post under the key answers the line, and a key not asked to, or asked with a text the
 /// thread lacks, makes its own line.
-fn a_post_asked_to_adopt_takes_the_threads_line_reading_it_and_the_notice_of_it(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn a_post_asked_to_adopt_takes_the_threads_line_reading_it_and_the_notice_of_it() {
+    let f = Fixture::new(Seed::default());
     let a = f.session("worker");
     f.task("sim/jump");
     let thread = || -> (Vec<i64>, usize) {
@@ -248,15 +242,13 @@ fn a_post_asked_to_adopt_takes_the_threads_line_reading_it_and_the_notice_of_it(
         .unwrap();
     assert!(old.id < own.id && own.id < other.id);
     assert_eq!(thread(), (vec![old.id, own.id, other.id], 3));
-
-}
 }
 
-on_both! {
 /// A post that took a line made under no key says once that no executor reads it when nothing
 /// said so yet: the executor was live at the line's post and is stale by the taking.
-fn a_post_that_takes_a_line_says_once_that_no_executor_reads_it(backend: Backend) {
-    let f = Fixture::on(backend,
+#[test]
+fn a_post_that_takes_a_line_says_once_that_no_executor_reads_it() {
+    let f = Fixture::new(
         Seed::default()
             .session("ochre-owl")
             .session("amber-heron")
@@ -305,17 +297,15 @@ fn a_post_that_takes_a_line_says_once_that_no_executor_reads_it(backend: Backend
         )
         .unwrap();
     assert_eq!(told(), vec![notice]);
-
-}
 }
 
-on_both! {
 /// A post that takes a line made under no key takes the board's notice of it said under no key
 /// too: the key naming the line's notice (`unread:<id>`) takes the thread's earliest line of the
 /// board saying the line reaches no live executor, so neither the taking nor a repeat under the
 /// key says it again.
-fn a_post_that_takes_a_line_takes_the_notice_said_of_it_under_no_key(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn a_post_that_takes_a_line_takes_the_notice_said_of_it_under_no_key() {
+    let f = Fixture::new(Seed::default());
     let a = f.session("worker");
     f.task("sim/jump");
     let by = |sender: &str| -> Vec<(i64, String)> {
@@ -333,9 +323,12 @@ fn a_post_that_takes_a_line_takes_the_notice_said_of_it_under_no_key(backend: Ba
         let counter = f.store.raw().row("counter", "message");
         let sid = counter.field("last").unwrap().as_i64().unwrap_or(0) + 1;
         counter.set(json!({"last": sid, "ts": f.now()})).unwrap();
-        f.store.raw().row("message", json!(["sim/jump", sid]))
+        f.store
+            .raw()
+            .row("message", json!(["sim/jump", sid]))
             .create(json!({"slug":"sim/jump", "sid":sid, "sender":sender,
-                "recipient":to, "kind":"msg", "text":text, "ts":f.now()})).unwrap();
+                "recipient":to, "kind":"msg", "text":text, "ts":f.now()}))
+            .unwrap();
     };
     seed(&a, "@executor", "main is red");
     let old = f
@@ -375,6 +368,4 @@ fn a_post_that_takes_a_line_takes_the_notice_said_of_it_under_no_key(backend: Ba
     assert_eq!(again, old);
     assert_eq!(by(&a), vec![(old.id, "main is red".into())]);
     assert_eq!(by("board"), vec![(old.id + 1, notice)]);
-
-}
 }

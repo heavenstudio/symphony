@@ -65,6 +65,41 @@ fn concurrent_database_makers_all_reach_the_same_database() {
     });
 }
 
+/// What a database holds that a copy carries from its template: its encoding and locale, and
+/// what its catalogs hold.
+const HELD: &str = "SELECT (SELECT format('%s %s %s %s %s', encoding, datlocprovider, datlocale, \
+                    datcollate, datctype) FROM pg_database WHERE datname = current_database()), \
+                    (SELECT string_agg(extname || ' ' || extversion, ', ' ORDER BY extname) \
+                    FROM pg_extension), \
+                    (SELECT count(*) FROM pg_class), (SELECT count(*) FROM pg_proc), \
+                    (SELECT count(*) FROM pg_type), (SELECT count(*) FROM pg_namespace)";
+
+#[test]
+fn a_session_in_template1_does_not_keep_a_database_from_being_made_nor_changes_what_it_holds() {
+    let client = postgresql();
+    // A session in template1 for the whole of the making, as an autovacuum worker slow to leave
+    // or another client is: a copy of template1 is refused past the server's 5 s wait.
+    let in_template1 = client.of("template1");
+    let template1 = in_template1
+        .request(&[Step::bare(HELD), Step::bare("SELECT pg_backend_pid()")])
+        .unwrap();
+    client.make_database().unwrap();
+    let made = client.request(&[Step::bare(HELD)]).unwrap();
+    let pid = value(&template1, 1).unwrap();
+    let still = client
+        .request(&[Step::bare(&format!(
+            "SELECT datname FROM pg_stat_activity WHERE pid = {pid}"
+        ))])
+        .unwrap();
+    assert_eq!(
+        value(&still, 0),
+        Some("template1"),
+        "the session stayed in template1 while the database was made"
+    );
+    assert_eq!(made[0].rows, template1[0].rows);
+    assert_eq!(made[0].rows[0][1].as_deref(), Some("plpgsql 1.0"));
+}
+
 #[test]
 fn a_parameter_is_one_jsonb_and_a_null_column_is_none() {
     let client = postgresql();
@@ -255,10 +290,7 @@ fn marker_store(client: &pg::Client, how: symphony_board::Opening) -> symphony_b
 }
 
 fn marker_client(store: &symphony_board::Store) -> &pg::Client {
-    let symphony_board::Database::PostgreSql(client) = store.database() else {
-        unreachable!()
-    };
-    client
+    store.database().postgresql()
 }
 
 fn marker_value(client: &pg::Client, expression: &str) -> i64 {

@@ -28,8 +28,7 @@ pub(in crate::store) fn threads() -> Pg<'static> {
 
 /// The task's ask moves with a line just put on its thread (`sid_`, `ts_`): the owner's or a
 /// person's, when it asks, opens it or joins the open one; a line of a session holding a role on
-/// the task, or of the session the last line of the owner's or a person's named, answers it
-/// (`super::super::surreal::asks::ON_THREAD`).
+/// the task, or of the session the last line of the owner's or a person's named, answers it.
 static ON_THREAD: LazyLock<String> = LazyLock::new(|| {
     format!("DECLARE
     task_ask_ bigint;
@@ -264,9 +263,8 @@ pub(in crate::store) fn last_messages() -> Pg<'static> {
     )
 }
 
-/// The landings no status change follows (`super::super::surreal::messages::LANDINGS_POSTED`): the
-/// lines holding the word `landed` found by `words`' index of each line's terms, as SurrealDB's
-/// full-text match finds them, each by its key, then each slug's thread after its newest.
+/// The landings no status change follows: the lines holding the word `landed` found by `words`'
+/// index of each line's terms, each by its key, then each slug's thread after its newest.
 pub(in crate::store) fn landings_posted() -> Pg<'static> {
     Pg::read(
         "(WITH landed AS (SELECT m.slug, max(m.sid) AS sid FROM words w JOIN message m ON m.id = w.id -> 1 \

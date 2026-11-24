@@ -4,7 +4,6 @@
 //! before a write hears that write, and a recipient a later write's observation reached first is
 //! never told the older board back. Each case is the same with the delivery made in the write. A
 //! write takes no recipient's lease to read an inbox no message since could reach.
-use crate::common::Backend;
 
 use super::common::Fixture;
 use super::dispatch_later::{deferring, ids, listen};
@@ -19,10 +18,10 @@ fn writing(f: &Fixture, deferred: bool) -> Store {
     if deferred { deferring(f) } else { f.other() }
 }
 
-on_both! {
-fn a_post_to_a_role_reaches_its_holder_at_the_post_though_it_was_handed_over_before_delivery(backend: Backend) {
+#[test]
+fn a_post_to_a_role_reaches_its_holder_at_the_post_though_it_was_handed_over_before_delivery() {
     for deferred in [false, true] {
-        let f = Fixture::on(backend, crate::common::Seed::default());
+        let f = Fixture::new(crate::common::Seed::default());
         let (former, successor) = (f.session("orchestrator"), f.session("orchestrator"));
         let sender = f.session("worker");
         f.task("tools/target");
@@ -67,12 +66,11 @@ fn a_post_to_a_role_reaches_its_holder_at_the_post_though_it_was_handed_over_bef
         );
     }
 }
-}
 
-on_both! {
-fn a_claim_and_a_move_before_delivery_are_each_heard_in_their_order(backend: Backend) {
+#[test]
+fn a_claim_and_a_move_before_delivery_are_each_heard_in_their_order() {
     for deferred in [false, true] {
-        let f = Fixture::on(backend, crate::common::Seed::default());
+        let f = Fixture::new(crate::common::Seed::default());
         let (observer, worker, sender) = (
             f.session("orchestrator"),
             f.session("worker"),
@@ -111,12 +109,11 @@ fn a_claim_and_a_move_before_delivery_are_each_heard_in_their_order(backend: Bac
         );
     }
 }
-}
 
-on_both! {
-fn a_verdict_after_a_registration_reaches_it_though_no_dispatcher_ran_between(backend: Backend) {
+#[test]
+fn a_verdict_after_a_registration_reaches_it_though_no_dispatcher_ran_between() {
     for deferred in [false, true] {
-        let f = Fixture::on(backend, crate::common::Seed::default());
+        let f = Fixture::new(crate::common::Seed::default());
         let (executor, reviewer) = (f.session("worker"), f.session("reviewer"));
         f.task("tools/verdict");
         f.store.claim("tools/verdict", &executor).unwrap();
@@ -152,7 +149,6 @@ fn a_verdict_after_a_registration_reaches_it_though_no_dispatcher_ran_between(ba
         );
     }
 }
-}
 
 /// Two orchestrators' sessions in their handles' order, the order a pass visits recipients in. The
 /// first holds no role: the look older dispatchers keep of an orchestrator takes in the staffing of
@@ -172,10 +168,10 @@ fn inbox_cursor(store: &Store, handle: &str) -> Value {
     state.field("inbox_cursor").unwrap()
 }
 
-on_both! {
-fn a_write_whose_later_recipient_heard_a_newer_board_never_says_a_status_back(backend: Backend) {
+#[test]
+fn a_write_whose_later_recipient_heard_a_newer_board_never_says_a_status_back() {
     for deferred in [false, true] {
-        let f = Fixture::on(backend, crate::common::Seed::default());
+        let f = Fixture::new(crate::common::Seed::default());
         let (first, orchestrator) = two_orchestrators(&f);
         let (worker, sender) = (f.session("worker"), f.session("worker"));
         f.task("tools/raced");
@@ -226,7 +222,6 @@ fn a_write_whose_later_recipient_heard_a_newer_board_never_says_a_status_back(ba
         );
     }
 }
-}
 
 /// `handle`'s lease revision, which each taking of its lease moves.
 fn lease_revision(store: &Store, handle: &str) -> Value {
@@ -241,10 +236,10 @@ fn queued(store: &Store, handle: &str, id: i64) -> bool {
     line.exists().unwrap()
 }
 
-on_both! {
-fn a_write_queues_its_post_for_its_recipient_and_leaves_an_inbox_it_cannot_reach_to_the_dispatcher(backend: Backend)
+#[test]
+fn a_write_queues_its_post_for_its_recipient_and_leaves_an_inbox_it_cannot_reach_to_the_dispatcher()
 {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+    let f = Fixture::new(crate::common::Seed::default());
     let (addressed, bystander, sender) = (
         f.session("worker"),
         f.session("worker"),
@@ -302,5 +297,4 @@ fn a_write_queues_its_post_for_its_recipient_and_leaves_an_inbox_it_cannot_reach
         !ids(&overheard).contains_key(&id),
         "the bystander never hears it: {overheard:?}"
     );
-}
 }

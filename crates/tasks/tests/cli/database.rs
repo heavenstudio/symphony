@@ -1,15 +1,22 @@
-//! `tasks database`: the board's database said, held stopped with every board command refused
-//! naming the hold, and released, on the board of a fixture repository of its own outside this one
-//! (no `TASKS_SERVER`), on SurrealDB, its server started by its first command and stopped when the
-//! case ends.
+//! `tasks database`: the board's PostgreSQL said, held stopped with every board command refused
+//! naming the hold, and released; and `tasks-move --restore`, a snapshot of it put back over it. On
+//! the board of a fixture repository of its own outside this one (no `TASKS_SERVER`), its project
+//! file naming the machine's PostgreSQL, its server started by its first command and stopped when
+//! the case ends.
 
-use crate::common::{NOW, surreal};
-use crate::{repository, run, scratch};
+use crate::common::NOW;
+use crate::{project_file, repository, run, scratch};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use symphony_board::cli::Env;
-use symphony_board::server::{Engine, Home, Running};
+use symphony_board::server::{Home, Postgres};
 use symphony_board::sys::pid_alive;
+
+/// The folder of the machine's PostgreSQL programs, as the project file names them.
+fn programs() -> PathBuf {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    symphony_board::server::postgres::discover_programs(&workspace).unwrap()
+}
 
 /// A fixture project, `alpha`, its machine folder its own: its board's hold released and its server
 /// stopped when the case ends, however it ends.
@@ -22,19 +29,14 @@ impl Alpha {
     fn new(name: &str) -> Alpha {
         let dir = scratch(name);
         let root = repository(&dir.join("alpha"));
-        std::fs::write(root.join("symphony.toml"), "[project]\nid = \"alpha\"\n").unwrap();
+        std::fs::write(root.join("symphony.toml"), project_file("alpha", "")).unwrap();
         let machine = dir.join("machine");
         std::fs::create_dir_all(&machine).unwrap();
-        let alpha = Alpha { root, machine };
-        // A board on SurrealDB, whose server, store and replays these cases are about: named
-        // before its first command, which would otherwise make it on PostgreSQL.
-        alpha.home().initialize_backend(Engine::SurrealDb).unwrap();
-        alpha
+        Alpha { root, machine }
     }
 
     fn env(&self) -> Env {
         let vars: BTreeMap<String, String> = [
-            ("SYMPHONY_SURREAL", surreal().display().to_string()),
             ("SYMPHONY_MACHINE_DIR", self.machine.display().to_string()),
             ("TASKS_NOW", NOW.to_string()),
             ("TASKS_SWEEP", "off".to_string()),
@@ -49,7 +51,12 @@ impl Alpha {
     }
 
     fn home(&self) -> Home {
-        Home::in_common(&self.root.join(".git"), Some(&surreal()))
+        Home::in_common(&self.root.join(".git"))
+    }
+
+    /// The board's PostgreSQL, its programs the project file's.
+    fn pg(&self) -> Postgres {
+        self.home().postgresql(&programs())
     }
 
     /// `tasks ARGS` here: its exit code, stdout and stderr.
@@ -61,20 +68,23 @@ impl Alpha {
 
 impl Drop for Alpha {
     fn drop(&mut self) {
+        let _ = std::fs::remove_file(self.root.join(".git/symphony/tasks/move.json"));
         let home = self.home();
         if let Some(hold) = home.held() {
             let _ = home.release(&hold.by, None);
         }
-        let _ = home.stop();
+        let _ = self.pg().stop();
     }
 }
 
 fn data(root: &Path) -> String {
-    root.join(".git/symphony/tasks/data").display().to_string()
+    root.join(".git/symphony/tasks/postgresql")
+        .display()
+        .to_string()
 }
 
 /// A board whose server is not running is said so, and held and released without one ever
-/// starting.
+/// starting: a board not made yet stays one.
 #[test]
 fn a_board_with_no_server_is_held_and_released_and_none_starts() {
     let alpha = Alpha::new("database-idle");
@@ -85,25 +95,27 @@ fn a_board_with_no_server_is_held_and_released_and_none_starts() {
         (code, out),
         (
             0,
-            format!(
-                "the board's database at {data} is not held. No server runs on its data: the \
-                 board's next command starts one\n"
-            )
+            format!("the board's PostgreSQL at {data} is not held; no server runs on its data\n")
         )
     );
     let (code, out, err) = alpha.run(&["database", "hold", "a clone", "--as", "russet-lynx"]);
     assert_eq!(code, 0, "{err}");
     assert!(
-        out.ends_with(&format!(
-            ": a clone. No server ran on its data. Nothing serves {data} now, and nothing starts \
-             a server on it until `just tasks database release --as russet-lynx`\n"
-        )),
+        out.starts_with("✔ the board's PostgreSQL is held by russet-lynx since "),
+        "{out}"
+    );
+    assert!(
+        out.ends_with(&format!(": a clone. Nothing serves {data} now\n")),
         "{out}"
     );
     let (code, _, err) = alpha.run(&["database", "release", "--as", "russet-lynx"]);
     assert_eq!(code, 0, "{err}");
-    assert_eq!(home.recorded(), None, "nothing started the board");
-    assert_eq!(home.serving(), None);
+    assert_eq!(
+        alpha.pg().current().unwrap(),
+        None,
+        "nothing started the board"
+    );
+    assert!(home.unmade().unwrap(), "nothing made the board");
 }
 
 #[test]
@@ -112,8 +124,10 @@ fn a_held_board_refuses_every_command_naming_the_hold_until_its_release() {
     let home = alpha.home();
     let (code, handle, err) = alpha.run(&["register", "--kind", "worker"]);
     assert_eq!(code, 0, "{err}");
-    let running = home
-        .recorded()
+    let running = alpha
+        .pg()
+        .current()
+        .unwrap()
         .expect("the first command started the board");
     let data = data(&alpha.root);
 
@@ -123,8 +137,9 @@ fn a_held_board_refuses_every_command_naming_the_hold_until_its_release() {
         (
             0,
             format!(
-                "the board's database at {data} is not held. Its server is pid {} at {}\n",
-                running.pid, running.addr
+                "the board's PostgreSQL at {data} is not held; pid {} on {}\n",
+                running.pid,
+                running.socket.display()
             )
         )
     );
@@ -136,15 +151,11 @@ fn a_held_board_refuses_every_command_naming_the_hold_until_its_release() {
     let (code, out, err) = alpha.run(&["database", "hold", "a snapshot", "--as", "russet-lynx"]);
     assert_eq!(code, 0, "{err}");
     assert!(
-        out.starts_with("✔ the board's database is held by russet-lynx since "),
+        out.starts_with("✔ the board's PostgreSQL is held by russet-lynx since "),
         "{out}"
     );
     assert!(
-        out.ends_with(&format!(
-            ": a snapshot. Stopped pid {} at {} cleanly. Nothing serves {data} now, and nothing \
-             starts a server on it until `just tasks database release --as russet-lynx`\n",
-            running.pid, running.addr
-        )),
+        out.ends_with(&format!(": a snapshot. Nothing serves {data} now\n")),
         "{out}"
     );
     assert!(!pid_alive(running.pid));
@@ -186,20 +197,20 @@ fn a_held_board_refuses_every_command_naming_the_hold_until_its_release() {
         String::from_utf8(err).unwrap(),
         format!("❌ tasks-copy: {held}\n")
     );
-    assert_eq!(home.recorded(), None, "a refused command started the board");
-    assert_eq!(home.serving(), None);
+    assert_eq!(
+        alpha.pg().current().unwrap(),
+        None,
+        "a refused command started the board"
+    );
 
     let (code, out, _) = alpha.run(&["database"]);
     assert_eq!(code, 0);
     assert_eq!(
         out,
-        format!(
-            "the board's database at {data} is {hold}; nothing starts it until its holder \
-             releases it. No server runs on its data\n"
-        )
+        format!("the board's PostgreSQL at {data} is {hold}; no server runs on its data\n")
     );
     let (code, _, err) = alpha.run(&["database", "hold", "a swap", "--as", "vivid-swift"]);
-    assert_eq!((code, err), (1, refused.clone()));
+    assert_eq!((code, err), (2, refused.clone()));
     // Nor does another handle release it, unless it names the holder.
     let (code, out, err) = alpha.run(&["database", "release", "--as", "vivid-swift"]);
     assert_eq!((code, out.as_str()), (1, ""));
@@ -225,7 +236,11 @@ fn a_held_board_refuses_every_command_naming_the_hold_until_its_release() {
         ),
         "{out}"
     );
-    assert_eq!(home.recorded(), None, "the release started the board");
+    assert_eq!(
+        alpha.pg().current().unwrap(),
+        None,
+        "the release started the board"
+    );
     let (code, out, _) = alpha.run(&["database", "release", "--as", "russet-lynx"]);
     assert_eq!(
         (code, out.as_str()),
@@ -237,7 +252,7 @@ fn a_held_board_refuses_every_command_naming_the_hold_until_its_release() {
     let (code, _, err) = alpha.run(&["list"]);
     assert_eq!(code, 0, "{err}");
     assert!(
-        home.recorded().is_some(),
+        alpha.pg().current().unwrap().is_some(),
         "the next command started the board"
     );
     let (code, out, _) = alpha.run(&["help", "database"]);
@@ -251,225 +266,17 @@ fn a_held_board_refuses_every_command_naming_the_hold_until_its_release() {
     );
 }
 
-/// A server the private replay's record names, its starter gone, is said as the replay's, never
-/// the board's; the board's next command stops it cleanly, as it answers, and starts the board's
-/// own, which `tasks database` then says.
-#[test]
-fn a_replays_server_its_starter_left_running_is_said_as_such_and_the_next_command_replaces_it() {
-    let alpha = Alpha::new("database-left-replay");
-    let home = alpha.home();
-    let (code, _, err) = alpha.run(&["list"]);
-    assert_eq!(code, 0, "{err}");
-    let left = home
-        .recorded()
-        .expect("the first command started the board");
-    // As a replay whose starter ended leaves it: named by the replay's record, by no address file.
-    let dir = alpha.root.join(".git/symphony/tasks");
-    std::fs::write(
-        dir.join("replay.json"),
-        serde_json::json!({
-            "by": 1, "at": 0.0, "logged": 3 << 20, "memtable": 6 << 20, "server": left,
-        })
-        .to_string(),
-    )
-    .unwrap();
-    std::fs::remove_file(dir.join("server.json")).unwrap();
-    let data = data(&alpha.root);
-    let (code, out, _) = alpha.run(&["database"]);
-    assert_eq!(
-        (code, out),
-        (
-            0,
-            format!(
-                "the board's database at {data} is not held. Its private replay's server is pid {} \
-                 at {}, left running when its starter ended: never the board's server, it is \
-                 stopped cleanly by the board's next command once it answers (never before), \
-                 which then starts the board's own\n",
-                left.pid, left.addr
-            )
-        )
-    );
-
-    let (code, _, err) = alpha.run(&["list"]);
-    assert_eq!(code, 0, "{err}");
-    let log = std::fs::read_to_string(dir.join("server.log")).unwrap();
-    let stopped = |which: &str, besides: &str, running: &Running| {
-        format!(
-            "· the private replay's record stands, and {which} (pid {}, {}){besides} answers: \
-             while the record stands every server on the data is taken for the replay's, so this \
-             one is stopped cleanly, never adopted as the board's server\n",
-            running.pid, running.addr
-        )
-    };
-    assert!(
-        log.contains(&stopped(
-            "the server it names",
-            ", left running when its starter ended,",
-            &left
-        )),
-        "{log}"
-    );
-    assert!(!pid_alive(left.pid), "the replay's server still runs");
-    assert!(!dir.join("replay.json").exists());
-    let running = home.recorded().expect("the board's own server");
-    assert_ne!(running.pid, left.pid);
-    let (code, out, _) = alpha.run(&["database"]);
-    assert_eq!(
-        (code, out),
-        (
-            0,
-            format!(
-                "the board's database at {data} is not held. Its server is pid {} at {}\n",
-                running.pid, running.addr
-            )
-        )
-    );
-
-    // A record that does not read, naming none, while the board's own server runs: that server is
-    // said as one the record does not name, taken for the replay's, and replaced by the next.
-    std::fs::write(dir.join("replay.json"), "{not json").unwrap();
-    let (code, out, _) = alpha.run(&["database"]);
-    assert_eq!(
-        (code, out),
-        (
-            0,
-            format!(
-                "the board's database at {data} is not held. Its server is pid {} at {}, which \
-                 the private replay's record (symphony/tasks/replay.json) does not name: while \
-                 that record stands every server on the data is taken for the replay's, never the \
-                 board's, so the board's next command stops it cleanly once it answers (never \
-                 before), then starts the board's own\n",
-                running.pid, running.addr
-            )
-        )
-    );
-    let (code, _, err) = alpha.run(&["list"]);
-    assert_eq!(code, 0, "{err}");
-    let log = std::fs::read_to_string(dir.join("server.log")).unwrap();
-    assert!(
-        log.contains(&stopped(
-            "the server the address file names",
-            ", which the record does not name,",
-            &running
-        )),
-        "{log}"
-    );
-    assert!(!dir.join("replay.json").exists());
-    assert_ne!(home.recorded().map(|r| r.pid), Some(running.pid));
-}
-
-/// While whether the private replay's server still runs cannot be told (here the pid its record
-/// names runs, and no server is on the data), `tasks database` says so, why, and what the owner
-/// does, never that the next command starts a server: that command is refused, starting none.
-#[test]
-fn a_replay_whose_server_cannot_be_told_is_said_as_such_and_refuses_the_next_command() {
-    let alpha = Alpha::new("database-untold");
-    let home = alpha.home();
-    let dir = alpha.root.join(".git/symphony/tasks");
-    std::fs::create_dir_all(&dir).unwrap();
-    // This test's own process: it runs, and serves no data.
-    let pid = std::process::id();
-    std::fs::write(
-        dir.join("replay.json"),
-        serde_json::json!({
-            "by": 1, "at": 0.0, "logged": 3 << 20, "memtable": 6 << 20,
-            "server": {"addr": "127.0.0.1:1", "pid": pid, "version": "3.0.0"},
-        })
-        .to_string(),
-    )
-    .unwrap();
-    let data = data(&alpha.root);
-    let record = dir.join("replay.json");
-    let why = format!(
-        "the server it names, pid {pid}, runs, and neither it nor any other process is a server \
-         on this board's data as `ps` lists them: it may be between programs as it starts"
-    );
-    let rule = format!(
-        "While its record ({}) stands, every server on the data is the replay's: none is adopted \
-         as the board's, none is started beside it, and the record is removed only once the \
-         server it names has ended and `ps` lists no server on the data. The next command asks \
-         again, and settles the record once `ps` can tell. Should it never, remove the record by \
-         hand once `ps -ww -axo pid,command` lists no `surreal start` on surrealkv://{data} \
-         (docs/operations/BOARD_OPERATIONS.md, Stuck servers)",
-        record.display()
-    );
-    let (code, out, _) = alpha.run(&["database"]);
-    assert_eq!(
-        (code, out),
-        (
-            0,
-            format!(
-                "the board's database at {data} is not held. No server is found on its data. The \
-                 private replay's record stands, and whether its server still runs on the data \
-                 cannot be told: {why}, so the board's next command is refused while it cannot. \
-                 {rule}\n"
-            )
-        )
-    );
-    let (code, _, err) = alpha.run(&["list"]);
-    assert_ne!(code, 0);
-    assert!(
-        err.contains(&format!(
-            "whether the private replay's server still runs on this board's data cannot be told: \
-             {why}. {rule}"
-        )),
-        "{err}"
-    );
-    assert!(record.exists(), "the record went");
-    assert_eq!(home.recorded(), None, "a server started beside it");
-}
-
-/// The snapshots that hold a log (one taken before a replay among them) are listed with the bytes
-/// of their logs, the owner's to remove, the oldest first, and so is a clone cut short; one whose
-/// log is empty, pruned by count, is not.
-#[test]
-fn the_snapshots_that_hold_a_log_are_listed_for_the_owner() {
-    let alpha = Alpha::new("database-kept");
-    let dir = alpha.root.join(".git/symphony/tasks");
-    let snapshots = dir.join("snapshots");
-    let kept = snapshots.join("2026-11-12T07-45-00Z");
-    std::fs::create_dir_all(kept.join("wal")).unwrap();
-    std::fs::write(
-        kept.join("wal/00000000000000000017.wal"),
-        vec![0u8; 3 << 20],
-    )
-    .unwrap();
-    let later = snapshots.join("2026-11-12T08-00-00Z");
-    std::fs::create_dir_all(later.join("wal")).unwrap();
-    std::fs::write(
-        later.join("wal/00000000000000000018.wal"),
-        vec![0u8; 1 << 20],
-    )
-    .unwrap();
-    std::fs::create_dir_all(snapshots.join("2026-11-12T09-00-00Z/wal")).unwrap();
-    let cut = snapshots.join(".taking");
-    std::fs::create_dir_all(&cut).unwrap();
-    let (code, out, err) = alpha.run(&["database"]);
-    assert_eq!(code, 0, "{err}");
-    assert_eq!(
-        out,
-        format!(
-            "the board's database at {} is not held. No server runs on its data: the board's \
-             next command starts one. Snapshots that hold a log (taken after an unclean end, \
-             before a replay, or of a store that went back), each kept until the owner removes it \
-             once the board reads as it should: {} (its log 3.0 MiB), {} (its log 1.0 MiB). Cut \
-             short in the middle of its clone or copy, not whole, removed by the next snapshot: \
-             {}\n",
-            data(&alpha.root),
-            kept.display(),
-            later.display(),
-            cut.display()
-        )
-    );
-    assert_eq!(alpha.home().recorded(), None, "saying it started the board");
-}
-
-/// The Symphony's read of a board whose starters' lock another holds (a start, a replay of
-/// minutes) is refused once its bound passes, naming the holder, rather than hold the thread that
+/// The Symphony's read of a board whose starters' lock another holds (a start, a snapshot, a
+/// restore) is refused once its bound passes, naming the holder, rather than hold the thread that
 /// serves its pages; it starts no server. A holder that writes no note is said as one.
 #[test]
 fn the_symphonys_read_waits_on_anothers_start_at_most_its_bound() {
     let alpha = Alpha::new("database-read-wait");
+    // A board made, its server stopped: the read would start it, and first takes the lock. One
+    // not made yet the read refuses before it, as nothing would start.
+    let (code, _, err) = alpha.run(&["list"]);
+    assert_eq!(code, 0, "{err}");
+    alpha.pg().stop().unwrap();
     let dir = alpha.root.join(".git/symphony/tasks");
     std::fs::create_dir_all(&dir).unwrap();
     let lock = std::fs::OpenOptions::new()
@@ -504,7 +311,7 @@ fn the_symphonys_read_waits_on_anothers_start_at_most_its_bound() {
         )
     );
     assert_eq!(
-        alpha.home().recorded(),
+        alpha.pg().current().unwrap(),
         None,
         "the refused read started the board"
     );
@@ -567,12 +374,6 @@ fn another_handle_releases_a_hold_only_by_naming_its_holder() {
     );
 }
 
-/// The folder of the machine's PostgreSQL programs, as the project file names them.
-fn programs() -> PathBuf {
-    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    symphony_board::server::postgres::discover_programs(&workspace).unwrap()
-}
-
 /// `tasks-move ARGS` in `env`: its code, what it said and what it refused.
 fn moving(env: &symphony_board::cli::Env, args: &[&str]) -> (i32, String, String) {
     let args: Vec<String> = args.iter().map(|word| (*word).to_string()).collect();
@@ -585,35 +386,13 @@ fn moving(env: &symphony_board::cli::Env, args: &[&str]) -> (i32, String, String
     )
 }
 
-/// `alpha`'s PostgreSQL stopped when the case ends, whichever engine its board is on then.
-struct Stopped<'a>(&'a Alpha);
-
-impl Drop for Stopped<'_> {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(self.0.root.join(".git/symphony/tasks/move.json"));
-        let home = self.0.home();
-        if let Some(hold) = home.held() {
-            let _ = home.release(&hold.by, None);
-        }
-        let _ = home.postgresql(&programs()).stop();
-    }
-}
-
-/// The board's store is moved to PostgreSQL and back by `tasks-move`, a snapshot of its
-/// PostgreSQL put back over it, and the board's own command takes neither word.
+/// A snapshot of the board's PostgreSQL is put back over it by `tasks-move --restore`, by its
+/// name, under the caller's hold or one of its own, and the board's own command takes neither
+/// `move` nor `restore`.
 #[test]
-fn a_board_is_moved_between_engines_and_a_snapshot_restored_over_it_by_the_command() {
+fn a_snapshot_is_restored_over_the_board_by_the_command() {
     use symphony_board::NewTask;
-    let alpha = Alpha::new("database-move");
-    let _stopped = Stopped(&alpha);
-    std::fs::write(
-        alpha.root.join("symphony.toml"),
-        format!(
-            "[project]\nid = \"alpha\"\n[board]\npostgresql = {:?}\n",
-            programs().display().to_string()
-        ),
-    )
-    .unwrap();
+    let alpha = Alpha::new("database-restore");
     let create = |slug: &str| {
         symphony_board::cli::connect(&alpha.env())
             .unwrap()
@@ -623,37 +402,15 @@ fn a_board_is_moved_between_engines_and_a_snapshot_restored_over_it_by_the_comma
     create("sim/one");
 
     let env = alpha.env();
-    // The board's own command takes neither word: the move is a program of its own.
+    // The board's own command takes neither word: the restore is a program of its own.
     for word in ["move", "restore"] {
         let (code, _, err) = alpha.run(&["database", word, "postgresql", "--as", "mover"]);
         assert_eq!(code, 2, "{word}");
         assert!(err.contains("usage: just tasks database"), "{err}");
     }
-    let (code, _, err) = moving(&env, &["postgresql"]);
+    let (code, _, err) = moving(&env, &["--restore", "never-taken"]);
     assert_eq!(code, 2);
     assert!(err.contains("no session: pass --as HANDLE"), "{err}");
-    assert_eq!(alpha.home().backend().unwrap(), Engine::SurrealDb);
-
-    let (code, out, err) = moving(&env, &["postgresql", "--as", "mover"]);
-    assert_eq!(code, 0, "{err}");
-    assert!(out.contains("✔ the board is on PostgreSQL"), "{out}");
-    assert!(out.contains("rows compared with what was read"), "{out}");
-    assert!(out.contains("Its SurrealDB store is kept in"), "{out}");
-    assert!(
-        out.contains("`just tasks recovery rebind` binds it again"),
-        "{out}"
-    );
-    assert!(out.contains("The hold is released"), "{out}");
-    assert_eq!(alpha.home().backend().unwrap(), Engine::PostgreSql);
-    let (code, out, err) = alpha.run(&["list"]);
-    assert_eq!(code, 0, "{err}");
-    assert!(out.contains("sim/one"), "{out}");
-    let (code, _, err) = moving(&env, &["postgresql", "--as", "mover"]);
-    assert_eq!(code, 2);
-    assert!(
-        err.contains("is on PostgreSQL already: nothing was moved"),
-        "{err}"
-    );
 
     // A snapshot of it, a task made after, and the snapshot put back by its name.
     assert_eq!(
@@ -666,7 +423,7 @@ fn a_board_is_moved_between_engines_and_a_snapshot_restored_over_it_by_the_comma
     assert_eq!(code, 0, "{err}");
     assert_eq!(alpha.run(&["database", "release", "--as", "mover"]).0, 0);
     create("sim/two");
-    let snapshots = alpha.home().postgresql(&programs()).snapshots().unwrap();
+    let snapshots = alpha.pg().snapshots().unwrap();
     let name = snapshots[0]
         .file_name()
         .unwrap()
@@ -686,118 +443,35 @@ fn a_board_is_moved_between_engines_and_a_snapshot_restored_over_it_by_the_comma
         "{out}"
     );
     assert!(out.contains("The cluster it replaced is kept in"), "{out}");
+    assert!(
+        out.contains("`just tasks recovery rebind` binds it again"),
+        "{out}"
+    );
+    assert_eq!(
+        alpha.home().held(),
+        None,
+        "the restore's own hold is released"
+    );
     let (_, out, _) = alpha.run(&["list"]);
     assert!(out.contains("sim/one") && !out.contains("sim/two"), "{out}");
 
-    // And back, under the caller's own hold, which the move leaves standing.
+    // Again under the caller's own hold, which the restore leaves standing.
     assert_eq!(
         alpha
-            .run(&["database", "hold", "a move", "--as", "mover"])
+            .run(&["database", "hold", "a restore", "--as", "mover"])
             .0,
         0
     );
-    let (code, out, err) = moving(&env, &["surrealdb", "--as", "mover"]);
+    let (code, _, err) = moving(&env, &["--restore", &name, "--as", "mover"]);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("✔ the board is on SurrealDB"), "{out}");
-    assert!(
-        out.contains("The board is still held, by the hold set before the move"),
-        "{out}"
+    assert_eq!(
+        alpha.home().held().map(|hold| hold.why),
+        Some("a restore".to_string()),
+        "the caller's hold stands"
     );
     assert_eq!(alpha.run(&["database", "release", "--as", "mover"]).0, 0);
     let (_, out, _) = alpha.run(&["list"]);
     assert!(out.contains("sim/one"), "{out}");
-}
-
-/// A release as its install lays it in `machine` (`releases/NAME/bin/`, `current` naming it),
-/// holding this build's `tasks` and `tasks-move`: each a link to the file Cargo built, which
-/// has run before, where a copy would be a new file macOS assesses under the case's clock.
-fn released(machine: &Path) {
-    let bin = machine.join("releases/release-2026-11-21/bin");
-    std::fs::create_dir_all(&bin).unwrap();
-    for (name, built) in [
-        ("tasks", env!("CARGO_BIN_EXE_tasks")),
-        ("tasks-move", env!("CARGO_BIN_EXE_tasks-move")),
-    ] {
-        std::os::unix::fs::symlink(built, bin.join(name)).unwrap();
-    }
-    std::os::unix::fs::symlink("releases/release-2026-11-21", machine.join("current")).unwrap();
-}
-
-/// The release's `name` in `alpha`'s machine folder, found as a recipe finds it past a
-/// checkout's links, run with `args` in the project: its code, what it said and what it refused.
-fn installed(alpha: &Alpha, name: &str, args: &[&str]) -> (i32, String, String) {
-    assert!(
-        symphony_board::builds::link(&alpha.root, name).is_none(),
-        "the project has no build of its own"
-    );
-    let beyond = symphony_board::builds::Beyond {
-        machine: Some(alpha.machine.clone()),
-        path: None,
-    };
-    let binary = beyond
-        .find(name)
-        .unwrap_or_else(|| panic!("the release holds no {name}"));
-    assert!(binary.starts_with(alpha.machine.join("current/bin")));
-    let mut vars = alpha.env().vars;
-    vars.extend(std::env::var("PATH").map(|path| ("PATH".to_string(), path)));
-    // A locale, as a shell has one: macOS's PostgreSQL does not start in an environment
-    // naming none ("postmaster became multithreaded during startup").
-    vars.insert("LC_ALL".to_string(), "C".to_string());
-    let done = symphony_board::sys::output(
-        symphony_board::sys::command_with(&binary, &vars)
-            .args(args)
-            .current_dir(&alpha.root),
-    )
-    .unwrap();
-    (
-        done.status.code().unwrap_or(-1),
-        String::from_utf8_lossy(&done.stdout).into_owned(),
-        String::from_utf8_lossy(&done.stderr).into_owned(),
-    )
-}
-
-/// A project with no build of its own, on the release the machine runs, moves its seeded board
-/// to PostgreSQL and back with what the release installed alone: its `tasks-move` beside its
-/// `tasks`, each run by its path under `current`.
-#[test]
-fn a_project_on_the_installed_release_moves_its_board_with_the_releases_own_program() {
-    let alpha = Alpha::new("database-move-released");
-    let _stopped = Stopped(&alpha);
-    released(&alpha.machine);
-    std::fs::write(
-        alpha.root.join("symphony.toml"),
-        format!(
-            "[project]\nid = \"alpha\"\n[board]\npostgresql = {:?}\n",
-            programs().display().to_string()
-        ),
-    )
-    .unwrap();
-    let listed = |engine: Engine| {
-        assert_eq!(alpha.home().backend().unwrap(), engine);
-        let (code, out, err) = installed(&alpha, "tasks", &["list"]);
-        assert_eq!(code, 0, "{err}");
-        assert!(out.contains("sim/one") && out.contains("sim/two"), "{out}");
-    };
-    let (code, out, err) = installed(&alpha, "tasks", &["register", "--kind", "orchestrator"]);
-    assert_eq!(code, 0, "{err}");
-    let handle = out.trim();
-    for slug in ["sim/one", "sim/two"] {
-        let (code, _, err) =
-            installed(&alpha, "tasks", &["create", slug, "A task", "--as", handle]);
-        assert_eq!(code, 0, "{err}");
-    }
-    listed(Engine::SurrealDb);
-
-    let (code, out, err) = installed(&alpha, "tasks-move", &["postgresql", "--as", "mover"]);
-    assert_eq!(code, 0, "{err}");
-    assert!(out.contains("✔ the board is on PostgreSQL"), "{out}");
-    assert!(out.contains("rows compared with what was read"), "{out}");
-    listed(Engine::PostgreSql);
-
-    let (code, out, err) = installed(&alpha, "tasks-move", &["surrealdb", "--as", "mover"]);
-    assert_eq!(code, 0, "{err}");
-    assert!(out.contains("✔ the board is on SurrealDB"), "{out}");
-    listed(Engine::SurrealDb);
 }
 
 /// Under the marker the board recipes set, a board outside a scratch place is not moved or

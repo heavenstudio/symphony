@@ -24,8 +24,7 @@ pub(in crate::store) fn spent_on() -> Pg<'static> {
         "u.handle, u.slug, u.role, u.model, u.speed, u.round",
     )
 }
-/// [`super::super::surreal::spending::SPENT_UNDER`]'s answer: the rows spent on `slugs` and on
-/// their subtasks, and each such subtask's parent.
+/// The rows spent on `slugs` and on their subtasks, and each such subtask's parent.
 pub(in crate::store) fn spent_under() -> Pg<'static> {
     let slugs = "(SELECT jsonb_array_elements_text(v -> 'slugs'))";
     Pg::read(format!(

@@ -108,7 +108,7 @@ A notice floats over the foot of the window while something about the page is no
 | *Reconnecting: the board may be out of date*, on a document *Reconnecting: this document may be out of date* | the page lost its live connection and is opening another |
 | *Shown from this device, saved 14:32. Checking for changes…* | the page was drawn at once from what this device kept, and the server has not answered yet |
 | *Not reachable: shown from this device, saved 14:32* | the same, and the server does not answer |
-| *The task board is unwell: …* or *The task board is starting: …* | the project's board cannot be relied on; the notice says why |
+| *The task board is unwell: …* | the project's board cannot be relied on; the notice says why |
 | *The task board is unavailable. Reconnecting…*, or *The task board is slow to answer. Retrying…* | on the board, a task's page and the agents page: the board does not answer, or answers slowly |
 | *The task board is at schema N, ahead of this Symphony's …* | the board is read and nothing is written to it from here; a verdict or a message saved now is kept, and reaches no agent until then |
 | *This project's settings do not load, so it is served with the defaults: …* | the project's settings file has an error, which the notice quotes |

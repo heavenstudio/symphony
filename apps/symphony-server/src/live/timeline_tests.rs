@@ -206,7 +206,7 @@ fn gates() -> Value {
 /// A hub over `root` and `f`'s board.
 fn hub(root: &Path, f: &Fixture) -> Hub {
     let mut hub = Hub::new(root, &root.join("build/client"));
-    let board = f.other_client();
+    let board = f.other_database();
     hub.connect_reader = Box::new(move |_| Ok(store_on(&board)));
     hub.refresh_page("", root).unwrap();
     observe(&hub, &f.store, &[]);

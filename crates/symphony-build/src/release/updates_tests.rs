@@ -179,13 +179,10 @@ impl World {
         let against = Against {
             run: "2026-11-20T1000-1",
             main: &dir,
-            root: &dir,
             ours: &dir,
             machine: &machine,
             tag: RELEASE,
-            commit: "0000000",
             logs: &logs,
-            surreal: None,
             until: super::super::waits::far(),
         };
         let look = Look {
