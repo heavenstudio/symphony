@@ -1,8 +1,9 @@
 //! Which group a card or a task belongs to, as a page draws it (docs/workflow/TASKS.md, "Which
-//! group a thing belongs to"): its group or person, what gave it, and whom the one reading may
-//! hand it to. A task's page carries its [`Owner`] ([`crate::TaskPage::owner`]); `GET`
-//! [`CARD_OWNERS_PATH`]`?path=DOC` answers a document's [`CardOwners`]. Neither is said on a board
-//! that names nobody, where every thing is the person at the machine's and the page draws nothing.
+//! group a thing belongs to"): its group or person, what gave it, whom the one reading may hand it
+//! to and whether they may decide it. A task's page carries its [`Owner`]
+//! ([`crate::TaskPage::owner`]); `GET` [`CARD_OWNERS_PATH`]`?path=DOC` answers a document's
+//! [`CardOwners`]. Neither is said on a board that names nobody, where every thing is the person at
+//! the machine's and the page draws nothing.
 //!
 //! `POST` [`TASK_HAND_ROUTE`] (`{slug, to}`) and [`CARD_HAND_ROUTE`] (`{path, slug, to}`) hand a
 //! thing on, by a member of its group: the task's name written on it with the board's line on its
@@ -34,6 +35,10 @@ pub struct Owner {
     /// Whom the one reading may hand it to, groups then people: empty where they may not.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hand_to: Vec<String>,
+    /// Whether the one reading may decide it: a card's verdict, a task's move, priority, cancel
+    /// and approve. A page draws those controls for them alone.
+    #[serde(default)]
+    pub decides: bool,
 }
 
 /// The owners of a document's cards, by slug: empty on a board that names nobody.

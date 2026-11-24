@@ -79,6 +79,25 @@ const TASK_ROUTES: [&str; 8] = [
     symphony_api::TASK_HAND_ROUTE,
 ];
 
+/// The task routes that decide the task: its move, priority, field, cancel and a board action (the
+/// approve that meets its `owner` stamp among them), which only those of its owner make
+/// ([`crate::owners::refused_task`]). A message speaks and a hand-over is its own rule's.
+const DECIDING: [&str; 4] = [
+    "/api/task-priority",
+    "/api/task-field",
+    "/api/task-cancel",
+    symphony_api::TASK_ACTION_ROUTE,
+];
+
+/// Refused, with nothing written, where `refused` says why its asker may not decide what they
+/// write to ([`Failure::forbidden`]).
+fn deciding(refused: Result<Option<String>, symphony_board::Error>) -> Result<(), Failure> {
+    match refused? {
+        Some(why) => Err(Failure::forbidden(&why)),
+        None => Ok(()),
+    }
+}
+
 fn string<'a>(payload: &'a Value, key: &str) -> &'a str {
     payload[key].as_str().unwrap_or("")
 }
@@ -333,6 +352,12 @@ impl Saves {
                 })?),
             };
         let (store, owner) = (self.store_by(actor.name())?, &actor.principal);
+        // A person moves a task by its workflow only while they are of its owner, refused here in
+        // the board's words before any authority is asked; its host grants them its edges as well.
+        if crate::owners::person(actor).is_some() {
+            let task = store.get(&request.task).map_err(Failure::from)?;
+            deciding(crate::owners::refused_task(&store, &task, actor))?;
+        }
         let attestations = match given {
             Some(given) => given,
             None => attest::fetched(
@@ -343,7 +368,7 @@ impl Saves {
                 owner,
             )?,
         };
-        let host = store.host_for(owner).map_err(|e| Refused {
+        let host = store.host_on(owner, &request.task).map_err(|e| Refused {
             failure: Failure::from(e),
             guard: None,
         })?;
@@ -476,7 +501,9 @@ impl Saves {
                 (self.workflow_apply(actor, payload)).map_err(|refused| refused.failure)
             }
             "/api/ask" | "/api/ask-reply" => self.ask(actor, scope, route, payload),
-            symphony_api::SETTING_WRITE_PATH => self.setting(scope, payload, actor.name()),
+            symphony_api::SETTING_WRITE_PATH => self
+                .settings_refused(actor)
+                .and_then(|()| self.setting(scope, payload, actor.name())),
             "/api/quick-chat" | "/api/quick-task" => {
                 self.quick(scope, route, payload, actor.name())
             }
@@ -528,6 +555,19 @@ impl Saves {
             }
         }
         result
+    }
+
+    /// Refused, with nothing written, where `actor`, a person a board named, is not of the Settings
+    /// page's owner ([`crate::owners::refused_settings`]): nothing is read for the person at the
+    /// machine.
+    fn settings_refused(&self, actor: &Actor) -> Result<(), Failure> {
+        if crate::owners::person(actor).is_none() {
+            return Ok(());
+        }
+        deciding(crate::owners::refused_settings(
+            &self.store_by(actor.name())?,
+            actor,
+        ))
     }
 
     /// A card postponed, brought back or visited for the owner: `payload`'s `action` on the card
@@ -748,6 +788,16 @@ impl Saves {
         } else {
             None
         };
+        // A verdict is a person's only on a card they are of the owner of, read as the page shows
+        // the card; a card the document lacks is refused by the edit below, in its own words.
+        if route == "/api/decision" && crate::owners::person(actor).is_some() {
+            let lines = crate::text::splitlines(&original);
+            let cards = register::parse_decisions(&lines);
+            if let Some(card) = cards.iter().find(|card| card.slug == slug) {
+                let store = self.store_by(actor.name())?;
+                deciding(crate::owners::refused_card(&store, &rel, card, actor))?;
+            }
+        }
         // A card handed on: the board records who did once the file's edit is known to be whole,
         // just before it is written.
         let mut handing: Option<Handing> = None;
@@ -977,7 +1027,9 @@ fn handed(
 /// field, its cancel, a board action), asked by `actor`, `plugins` the project's at `root`, read
 /// only by a field or an action: the actor's short name is the sender and the mover the board
 /// records, as it always was `owner` for the person at the machine. A message of a person who may
-/// not direct agents is held for people (`symphony_board::held`), and answers `"held"`: its id.
+/// not direct agents is held for people (`symphony_board::held`), and answers `"held"`: its id. A
+/// write that decides the task ([`DECIDING`]) is refused, with nothing written, to a person not of
+/// its owner.
 fn on_task(
     store: &symphony_board::Store,
     plugins: impl FnOnce() -> crate::plugins::Plugins,
@@ -987,6 +1039,9 @@ fn on_task(
     payload: &Value,
 ) -> Result<Value, Failure> {
     let slug = string(payload, "slug");
+    if DECIDING.contains(&route) && crate::owners::person(actor).is_some() {
+        deciding(crate::owners::refused_task(store, &store.get(slug)?, actor))?;
+    }
     match route {
         "/api/task-message" => {
             // The board opens the task's ask in the message's own write, or holds it.

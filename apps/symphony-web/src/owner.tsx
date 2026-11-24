@@ -3,9 +3,11 @@
 // may hand it on, whom to. A task's comes with its page (`TaskPage.owner`); a document's cards'
 // with a read of their own (`CARD_OWNERS_PATH`), read again as the document moves. A board that
 // names nobody says none, and nothing is drawn. The select is drawn only where the server named
-// someone to hand it to: a control that could not act is left out. A document's page imports this
-// module; a task's page imports its line as a chunk (`owner-part.tsx`) for a task with an owner
-// alone, and reads the owner with owner-read.ts.
+// someone to hand it to, and a thing's deciding controls (a card's verdict, a task's priority,
+// cancel and approve) only where it says the reader decides it (`decides`, owner-read.ts's
+// [`decides`]): a control that could not act is left out. A document's page imports this module; a
+// task's page imports its line as a chunk (`owner-part.tsx`) for a task with an owner alone, and
+// reads the owner with owner-read.ts.
 
 import { createContext, useState } from "react";
 import { useMount } from "./mount";

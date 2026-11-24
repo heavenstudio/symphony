@@ -222,7 +222,11 @@ describe("a task's page", () => {
 
   it("keeps whose the task is where the server says it, and none where it is null", () => {
     const owner = { name: "design", kind: "group", by: "named", said: "named on it" };
-    expect(readTaskPage({ ...BARE_PAGE, owner })?.owner).toEqual({ ...owner, hand_to: [] });
+    expect(readTaskPage({ ...BARE_PAGE, owner })?.owner).toEqual({
+      ...owner,
+      hand_to: [],
+      decides: false,
+    });
     expect(readTaskPage({ ...BARE_PAGE, owner: null })).not.toHaveProperty("owner");
     expect(readTaskPage({ ...BARE_PAGE, owner: { name: "design" } })).toBeNull();
   });

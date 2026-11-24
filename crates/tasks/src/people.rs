@@ -24,9 +24,10 @@
 //!
 //! What a person may do there is their own powers and their groups' ([`People::powers_of`]): every
 //! power includes read, and one who holds none is not on the board. A group owns cards and tasks
-//! ([`ownership`]), which its members hand on, but its powers still hold on the whole board: who
-//! moves a group's task and whose answer settles are later parts of step 4. The person at the
-//! machine is on every board with every power, and no row says so ([`Powers::all`]).
+//! ([`ownership`]): its members hand them on and, holding decide, decide them (a card's verdict, a
+//! task's move, priority, field, cancel and approve), and the Settings page is a place its group's
+//! members change ([`ownership::refused_decide`]). Every other power holds on the whole board. The
+//! person at the machine is on every board with every power, and no row says so ([`Powers::all`]).
 
 pub mod change;
 mod fault;

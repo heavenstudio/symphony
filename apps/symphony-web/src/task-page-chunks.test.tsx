@@ -197,7 +197,14 @@ describe("a part of a task's page that is a chunk of its own", () => {
 type Page = typeof import("./task-page");
 
 const OWNER: OwnerLineProps = {
-  owner: { name: "design", kind: "group", by: "map", said: "from the area app", hand_to: ["bo"] },
+  owner: {
+    name: "design",
+    kind: "group",
+    by: "map",
+    said: "from the area app",
+    hand_to: ["bo"],
+    decides: true,
+  },
   id: "task-hand",
   hand: async () => ({}),
 };
