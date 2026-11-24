@@ -48,7 +48,7 @@ import {
   type UpdateState,
   type UpdateTime,
 } from "./wire";
-import { plural } from "./words";
+import { MONTHS, plural, twoDigits, WEEKDAYS } from "./words";
 
 /** How often an open page reads what runs now, in ms. */
 export const NOW_MS = 5_000;
@@ -314,7 +314,7 @@ export function duration(seconds: number): string {
   const minutes = Math.floor(whole / 60);
   if (minutes < 10) return whole % 60 === 0 ? `${minutes} min` : `${minutes} min ${whole % 60} s`;
   if (minutes < 60) return `${minutes} min`;
-  return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`;
+  return `${Math.floor(minutes / 60)} h ${twoDigits(minutes % 60)} min`;
 }
 
 /** How long `line`'s run took, or has run by `now`; none for one that never started. */
@@ -329,16 +329,12 @@ export function cpu(line: RunLine): string | null {
   return `${line.cpu_partial === true ? "at least " : ""}${duration(line.cpu_s)} of CPU`;
 }
 
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const two = (n: number) => String(n).padStart(2, "0");
-
 /** `at`, seconds since the epoch, in UTC: `Sun 15 Nov, 02:47 UTC`. */
 export function when(at: number): string {
   const date = new Date(at * 1000);
   return (
     `${WEEKDAYS[date.getUTCDay()]} ${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]}, ` +
-    `${two(date.getUTCHours())}:${two(date.getUTCMinutes())} UTC`
+    `${twoDigits(date.getUTCHours())}:${twoDigits(date.getUTCMinutes())} UTC`
   );
 }
 

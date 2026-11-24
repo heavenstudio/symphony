@@ -28,6 +28,7 @@ import { field } from "./shared";
 import { amount, dollars, estimate } from "./spend";
 import { NearViewport } from "./viewport";
 import type { Grain, KindRow, LandedFigures, LandedPage, LandedRow, ReviewRow } from "./wire";
+import { MONTHS } from "./words";
 
 /** Each kind's colour, the same on every chart: a red's the palette's red-orange. */
 const KIND_COLOURS: Record<string, string> = {
@@ -368,8 +369,7 @@ function kindSaid(kind: KindRow): string[] {
 /** The day a kind was first met in the window, as the By kind chart's note says it. */
 function day(at: number): string {
   const date = new Date(at * 1000);
-  const months = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
-  return `${date.getUTCDate()} ${months[date.getUTCMonth()] ?? ""} ${date.getUTCFullYear()}`;
+  return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()] ?? ""} ${date.getUTCFullYear()}`;
 }
 
 /** The median a task of each kind as bars, each in its kind's colour, No kind last. */
