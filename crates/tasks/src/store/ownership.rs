@@ -16,7 +16,7 @@ use super::work::{OWNER, no_task};
 use super::{Error, Failure, REFUSED, Store, Task, refused};
 use crate::people::People;
 use crate::people::ownership::{
-    By, Did, Line, Map, Owning, Place, Thing, deciders, owning, refused_hand,
+    By, Did, Line, Map, Owning, Place, Thing, deciders, owning, refused_decide, refused_hand,
 };
 use crate::schema;
 use serde_json::{Value, json};
@@ -94,6 +94,21 @@ impl Store {
             ))
         };
         read().unwrap_or_default()
+    }
+
+    /// Why the person `name`, holding decide, may not decide the task `slug`: no member of its
+    /// group, not the person it is written for, or a task this board maps no group to
+    /// ([`refused_decide`]); none where they may, and none on a board that names nobody. Refused
+    /// for a slug no task has.
+    pub fn refused_task_decide(&self, slug: &str, name: &str) -> Result<Option<String>, Error> {
+        let task = self.get(slug)?;
+        let people = self.people()?;
+        if people.members.is_empty() {
+            return Ok(None);
+        }
+        let places = Thing::Task(task.slug.clone()).places();
+        let owning = owning(&people, &self.ownership_map()?, task.group(), &places);
+        Ok(refused_decide(&people, &owning, &places, name, false))
     }
 
     /// [`Store::task_deciders`] of the task `slug`: none for a slug no task has.

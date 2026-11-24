@@ -2420,11 +2420,12 @@ as it did before. That person stays `owner`, with every power, once others are n
   cards, named as theirs: `Approved by ana at 1a2b3c4`. Who decides is read when the stamp is
   read, and a task's stamp carries the map's lines, so a remap is read at once. A revoke or a
   remap withdraws an approve its person gave, and a grant or a map made after an approve counts
-  that approve too. That is safe: while she lacked `decide`
-  the server refused her verdicts and her approve, the board refuses her a task's message whose
-  first word is `approve`, and her held words passed on read as the passer's first (`[passed on
-  by bo] approve …`), so no line of hers that reads as an approve was written through the
-  Symphony while she could not decide. A line committed into a document by hand is its
+  that approve too. That is safe: while she could not decide the task (she lacked `decide`, or
+  was not of its owner) the server refused her verdicts and her approve, the board refuses her a
+  task's message whose first word is `approve` (`… so may not decide it, and a line of theirs that
+  starts with approve reads as one: nothing was written`), and her held words passed on read as
+  the passer's first (`[passed on by bo] approve …`), so no line of hers that reads as an approve
+  was written through the Symphony while she could not decide. A line committed into a document by hand is its
   committer's, as an owner's line written so already is.
 
 `just tasks-people … --as HANDLE` changes them, each change a line of the log naming `--as`; a
