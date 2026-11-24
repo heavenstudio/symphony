@@ -49,9 +49,16 @@ fn segment_of(board: &Board) -> String {
 /// The creator of the segment `id`, as `ipcs -m -p` lists it on macOS or Linux: none once it is
 /// gone.
 fn creator(id: &str) -> Option<i64> {
-    let said = sys::output(command("ipcs").args(["-m", "-p"])).unwrap();
-    assert!(said.status.success(), "{said:?}");
-    String::from_utf8_lossy(&said.stdout)
+    created(id).unwrap_or_else(|said| panic!("{said}"))
+}
+
+/// The creator of the segment `id`, or what `ipcs` said when it could not list the segments.
+fn created(id: &str) -> Result<Option<i64>, String> {
+    let said = sys::output(command("ipcs").args(["-m", "-p"])).map_err(|why| why.to_string())?;
+    if !said.status.success() {
+        return Err(format!("{said:?}"));
+    }
+    Ok(String::from_utf8_lossy(&said.stdout)
         .lines()
         .find_map(
             |line| match line.split_whitespace().collect::<Vec<_>>()[..] {
@@ -60,7 +67,7 @@ fn creator(id: &str) -> Option<i64> {
                 }
                 _ => None,
             },
-        )
+        ))
 }
 
 /// More scratch boards asked for than there are slots: the two first start, the third says it
@@ -143,29 +150,65 @@ fn a_slot_is_free_again_once_its_server_has_ended_by_any_signal() {
         board.none_left();
     }
     let serving = board.pg.ensure().unwrap();
-    let id = segment_of(&board);
-    let all = board.processes();
+    let _left = Left::by(&board, serving.pid);
+    let all = all_killed_at_once(&board);
     assert!(
         all.len() > 1,
         "the server and its supervisor's shells: {all:?}"
     );
-    for line in &all {
-        signalled(
-            line.split_whitespace().next().unwrap().parse().unwrap(),
-            "KILL",
-        );
-    }
     drop(slots.0.take(|_| {}).unwrap());
     board.none_left();
-    if creator(&id) == Some(serving.pid) {
-        removed(&id);
+}
+
+/// Every process naming `board`'s data held stopped, then each killed with -9, their pids
+/// returned: all stopped first, so none acts on another's end in between (the supervisor's shell
+/// ending its watchdog, or starting its cleanup) and every kill finds the process it names.
+fn all_killed_at_once(board: &Board) -> Vec<i64> {
+    let all: Vec<i64> = board
+        .processes()
+        .iter()
+        .map(|line| line.split_whitespace().next().unwrap().parse().unwrap())
+        .collect();
+    for &pid in &all {
+        signalled(pid, "STOP");
+    }
+    for &pid in &all {
+        signalled(pid, "KILL");
+    }
+    all
+}
+
+/// The segment a test's own server made, which a kill its supervisor cannot clean up after leaves:
+/// removed as this goes, however the test ends, once its server has ended and while that server
+/// is still its creator, so a failed test leaks none. Made after the board it is of, so it goes
+/// first, and a server still running is left to the board to stop.
+struct Left {
+    id: String,
+    server: i64,
+}
+
+impl Left {
+    fn by(board: &Board, server: i64) -> Left {
+        Left {
+            id: segment_of(board),
+            server,
+        }
     }
 }
 
-/// The segment `id`, one a test's own server left, removed.
-fn removed(id: &str) {
-    let removed = sys::output(command("ipcrm").args(["-m", id])).unwrap();
-    assert!(removed.status.success(), "{removed:?}");
+impl Drop for Left {
+    fn drop(&mut self) {
+        let ended = sys::output(command("kill").args(["-0", &self.server.to_string()]))
+            .is_ok_and(|said| !said.status.success());
+        if !ended || created(&self.id) != Ok(Some(self.server)) {
+            return;
+        }
+        let removed = sys::output(command("ipcrm").args(["-m", &self.id]));
+        if !std::thread::panicking() {
+            let removed = removed.unwrap();
+            assert!(removed.status.success(), "{removed:?}");
+        }
+    }
 }
 
 /// The server on `board` held stopped, line `index` of its record written as `line`, then killed
@@ -188,12 +231,16 @@ fn a_killed_servers_supervisor_leaves_the_segment_once_its_record_names_another_
     let slots = OwnSlots::new("record-rewritten", 1);
     let board = slots.board("record-rewritten", |home| home);
     let serving = board.pg.ensure().unwrap();
-    let id = segment_of(&board);
+    let left = Left::by(&board, serving.pid);
     killed_with_its_record_rewritten(&board, serving.pid, 0, &i32::MAX.to_string());
     drop(slots.0.take(|_| {}).unwrap());
     board.none_left();
-    assert_eq!(creator(&id), Some(serving.pid), "segment {id} is left");
-    removed(&id);
+    assert_eq!(
+        creator(&left.id),
+        Some(serving.pid),
+        "segment {} is left",
+        left.id
+    );
 }
 
 /// A supervisor whose killed server's record names a segment another server made removes nothing:
@@ -206,7 +253,8 @@ fn a_killed_servers_supervisor_leaves_a_segment_another_server_made() {
     let second = second_slots.board("other-creator-2", |home| home);
     let killed = first.pg.ensure().unwrap();
     let serving = second.pg.ensure().unwrap();
-    let (own, other) = (segment_of(&first), segment_of(&second));
+    let own = Left::by(&first, killed.pid);
+    let other = segment_of(&second);
     assert_eq!(creator(&other), Some(serving.pid));
     killed_with_its_record_rewritten(&first, killed.pid, 6, &format!("0 {other}"));
     drop(first_slots.0.take(|_| {}).unwrap());
@@ -217,8 +265,12 @@ fn a_killed_servers_supervisor_leaves_a_segment_another_server_made() {
         "segment {other} is left"
     );
     assert_eq!(second.psql(&serving, "SELECT 1"), "1");
-    assert_eq!(creator(&own), Some(killed.pid), "segment {own} is left");
-    removed(&own);
+    assert_eq!(
+        creator(&own.id),
+        Some(killed.pid),
+        "segment {} is left",
+        own.id
+    );
 }
 
 /// A project's own board, whose server outlives its starter, starts while every slot is held and
