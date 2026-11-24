@@ -705,6 +705,11 @@ fn a_pull_request_closed_by_someone_sends_the_task_back_to_work_and_is_bound_no_
     let (r, bare) = delivering();
     let (people, ..) = ready(&r, SLUG);
     let (host, green) = armed_green(&r, &bare, &people);
+    assert_eq!(
+        host.request("publish")["pull"],
+        Value::Null,
+        "bound to none yet"
+    );
     host.close_by_hand();
     let (said, ..) = watched(&r, &host, green, 1, &[]);
     assert!(
@@ -722,6 +727,22 @@ fn a_pull_request_closed_by_someone_sends_the_task_back_to_work_and_is_bound_no_
         !Journal::path(&lands(&r), SLUG).exists(),
         "the next dispatch opens another"
     );
+    // Its next move to review publishes naming no pull request, which is what lets the program
+    // forget the one closed and open another (its own tests); the host here opens it.
+    *host.pull.borrow_mut() = Default::default();
+    let asked = host.verbs().len();
+    (r.board.store)
+        .move_to(SLUG, "review", &people.exe)
+        .unwrap();
+    let (_, result) = dispatched(&r, SLUG, &people.exe, &host);
+    result.unwrap();
+    assert_eq!(
+        host.verbs()[asked],
+        "publish",
+        "no result of the one closed first"
+    );
+    assert_eq!(host.request("publish")["pull"], Value::Null);
+    assert!(journal(&r, SLUG).binding.is_some(), "bound again");
 }
 
 #[test]
