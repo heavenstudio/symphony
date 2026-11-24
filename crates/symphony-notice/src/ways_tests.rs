@@ -185,9 +185,15 @@ fn the_kinds_are_the_messages_kinds() {
         Kind::Card | Kind::Question | Kind::Verdict => Some(kind.word()),
         Kind::Held | Kind::Other => None,
     };
-    let made: Vec<&str> = [Kind::Card, Kind::Question, Kind::Verdict, Kind::Held, Kind::Other]
-        .into_iter()
-        .filter_map(made)
-        .collect();
+    let made: Vec<&str> = [
+        Kind::Card,
+        Kind::Question,
+        Kind::Verdict,
+        Kind::Held,
+        Kind::Other,
+    ]
+    .into_iter()
+    .filter_map(made)
+    .collect();
     assert_eq!(made, KINDS);
 }
