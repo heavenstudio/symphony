@@ -1,13 +1,25 @@
 // A task's page (`/task/SLUG`): its head (slug, title, state, who filed it, the owner's priority and
-// cancel, its facts, its roles and their sessions, its builds and tests), its gates, its subtasks,
-// its timeline, its brief, its changes, its execution attempts where it has some (attempts.tsx, a
-// chunk of their own), its thread and the composer under it. Each part is drawn from its own
-// read (task-live.ts's parts, in the page's store) as soon as that read is there, and is its own
-// mock-up until then: the head and the brief at the height this browser last drew them, the gates'
-// outline, the timeline's box, the thread's and the composer's ghosts, so a part that comes moves
-// none of the others. Live, it is task-live.ts's `LiveTask`, under the board's notices.
+// cancel, its facts, whose it is where its board names an owner (owner.tsx's line, a chunk of its
+// own), its roles and their sessions (session.tsx's control, a chunk of its own, for a holder whose
+// session it names a way into), its builds and tests), its gates, its subtasks, its timeline,
+// its brief, its changes, its execution attempts where it has some (attempts.tsx, a chunk of their
+// own), its thread and the composer under it. Each part is drawn from its own read (task-live.ts's
+// parts, in the page's store) as soon as that read is there, and is its own mock-up until then:
+// the head and the brief at the height this browser last drew them, the gates' outline, the
+// timeline's box, the thread's and the composer's ghosts, so a part that comes moves none of the
+// others. Live, it is task-live.ts's `LiveTask`, under the board's notices.
 
-import { type CSSProperties, memo, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import {
+  type ComponentType,
+  type CSSProperties,
+  memo,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { AttachControls, useAttach } from "./attach";
 import type { AttemptsProps } from "./attempts";
 import { BlocksView } from "./blocks";
@@ -20,13 +32,14 @@ import { taskKind } from "./kind";
 import { PageNotices } from "./live";
 import { useMount } from "./mount";
 import type { NextActionsProps } from "./nextactions";
-import { OwnerLine } from "./owner";
+import type { OwnerLineProps } from "./owner";
 import { PartsContext, type Shown, usePart } from "./parts";
 import { writer as drawnWriter, href, scoped } from "./project";
 import { getJson, post, said } from "./request";
 import { currentRoute } from "./route";
 import { SelectField } from "./select";
-import { GoToSession } from "./session";
+import type { GoToSessionProps } from "./session";
+import { sessionControl, viaParent } from "./session-control";
 import { field, STALE, useStore } from "./shared";
 import { load, save } from "./storage";
 import { TaskDiffPanel } from "./task-diff";
@@ -284,7 +297,7 @@ export function RoleChips({
           title={`${role.role} is ${role.health}`}
         >
           {`${role.role} ${role.handle}`}
-          <GoToSession
+          <SessionPart
             handle={role.handle}
             go={sessions[role.handle] ?? null}
             local={local}
@@ -660,6 +673,96 @@ export function Brief({ slug, revision, blocks, omitted, next }: BriefProps) {
   );
 }
 
+/** Whose a task is, its line's chunk once it has come: a task drawn after draws it at once. */
+let ownerLine: ComponentType<OwnerLineProps> | null = null;
+
+/** Import whose a task is, its line's chunk, kept once it has come. */
+export const loadOwnerLine = () =>
+  import("./owner-part").then((chunk) => {
+    ownerLine = chunk.OwnerLine;
+    return ownerLine;
+  });
+
+/** A held Hand to select's box: as tall as the select, a line within its padding, and as wide. */
+const HAND_BOX: CSSProperties = {
+  width: "6.95rem",
+  height: "calc(1lh + 16px)",
+  boxSizing: "border-box",
+};
+
+/**
+ * Whose a task is and whom it may be handed to, a chunk of its own (owner.tsx's line, which a
+ * document's cards draw too), imported for a task whose board names its owner alone (chunk.tsx).
+ * Until it has come, its place is held as the line it stands for: a bar for its words in a line of
+ * their text and, for one who may hand it on, the select's box.
+ */
+export function OwnerPart(props: OwnerLineProps) {
+  const [Line, failed, retry] = useChunk(loadOwnerLine, () => ownerLine);
+  if (Line) return <Line {...props} />;
+  if (failed) return chunkFailed("The task's ownership", retry);
+  return (
+    <span className="owner">
+      <span>
+        <span className="bone" style={bone("24ch")} />
+      </span>
+      {(props.owner.hand_to ?? []).length > 0 && <span className="ghost-field" style={HAND_BOX} />}
+    </span>
+  );
+}
+
+/** A holder's Go to session control, its chunk once it has come: a chip drawn after draws it at once. */
+let goToSession: ComponentType<GoToSessionProps> | null = null;
+
+/** Import a holder's Go to session control, its chunk, kept once it has come. */
+export const loadGoToSession = () =>
+  import("./session-part").then((chunk) => {
+    goToSession = chunk.GoToSession;
+    return goToSession;
+  });
+
+/** A held Go to session button's box: as tall as the button, its border within, and about as wide. */
+const SESSION_BOX: CSSProperties = { width: "5.7rem", boxSizing: "border-box" };
+/** A held Go to session link's words: a bar about as wide, in the chip's line. */
+const SESSION_LINK = bone("11ch");
+
+/**
+ * A role's holder's Go to session control, a chunk of its own (session.tsx's control, which the
+ * agents page draws too), imported for a holder the page names a control for alone (chunk.tsx):
+ * none, and nothing imported, for one whose session it names none of or with no way in. Until it
+ * has come, its place is held as the control it will be (session-control.ts): a button's box, or a
+ * bar in the chip's line for a link, then whose session it is, for a subagent's, as it says it.
+ */
+export function SessionPart(props: GoToSessionProps) {
+  const { go, handle, local } = props;
+  const control = go === null ? null : sessionControl(go, local);
+  if (go === null || control === null) return null;
+  return (
+    <SessionChunk
+      {...props}
+      held={
+        <>
+          {control.kind === "link" ? (
+            <span className="bone" style={SESSION_LINK} />
+          ) : (
+            <span className="ghost-field" style={SESSION_BOX} />
+          )}
+          {viaParent(go, handle) && (
+            <span className="go-session-via">{`in ${go.handle}'s session`}</span>
+          )}
+        </>
+      }
+    />
+  );
+}
+
+/** The control of a holder the page names one for, `held` in its place until its chunk comes. */
+function SessionChunk({ held, ...props }: GoToSessionProps & { held: ReactNode }) {
+  const [Go, failed, retry] = useChunk(loadGoToSession, () => goToSession);
+  if (Go) return <Go {...props} />;
+  if (failed) return chunkFailed("The session's control", retry, true);
+  return held;
+}
+
 /** A workflow's next actions, imported for a task a custom workflow holds alone. */
 const nextActions = () => import("./nextactions").then((chunk) => chunk.NextActions);
 
@@ -725,7 +828,7 @@ export function TaskHead({ page, scope, connected }: TaskHeadProps) {
         )}
         {page.owner && (
           <li>
-            <OwnerLine
+            <OwnerPart
               owner={page.owner}
               id="task-hand"
               hand={(to) => post(url(TASK_HAND_ROUTE), { slug, to })}

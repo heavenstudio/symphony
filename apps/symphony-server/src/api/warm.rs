@@ -37,6 +37,13 @@ pub(crate) async fn start(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
         if let Some(folder) = shared.gate.machine() {
             hub.gates.machine_at(folder.to_path_buf());
         }
+        // The machine's one server tells the project's people of its notices, under the
+        // project's id; a private server tells no one, so no event is told twice.
+        if shared.one_server()
+            && let Some(project) = shared.base.strip_prefix('/').filter(|id| !id.is_empty())
+        {
+            hub.start_notices(project, shared.port);
+        }
         // Saves kept for delivery by pull request are taken up again now and after each refresh.
         let settle = settling(&shared);
         settle();

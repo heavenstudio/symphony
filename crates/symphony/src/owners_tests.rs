@@ -145,3 +145,55 @@ fn a_pending_card_and_a_question_wait_and_an_answered_one_does_not() {
         assert!(!waits(state), "{state:?}");
     }
 }
+
+#[test]
+fn the_waiting_cards_are_owned_as_mains_file_holds_them_each_document_read_once() {
+    let tree = crate::test_tree::Tree::checkout();
+    tree.write(
+        "docs/design/palette.md",
+        "# Palette\n\n<!-- register:start -->\n\
+         - [ ] **new-palette** — Which palette?\n\
+         - [ ] **new-type** — *For:* bo. Which typeface?\n\
+         <!-- register:end -->\n",
+    );
+    let people = people();
+    let map = map(&[("folder:docs/design", "design"), ("default", "engineering")]);
+    let card = |doc: &str, slug: &str| (doc.to_string(), slug.to_string());
+    let owners = waiting(
+        &people,
+        &map,
+        &tree.path(""),
+        &[
+            card("docs/design/palette.md", "new-palette"),
+            card("docs/design/palette.md", "new-type"),
+            // A branch's proposal of a card main's file holds, and of one it does not.
+            card("@app-x/docs/design/palette.md", "new-type"),
+            card("@app-x/docs/design/palette.md", "brand-new"),
+            // A document no file is: its places alone, then the default.
+            card("docs/gone.md", "lost"),
+        ],
+    );
+    let said: Vec<(&str, Kind, By)> = (owners.iter())
+        .map(|owning| (owning.name.as_str(), owning.kind, owning.by))
+        .collect();
+    assert_eq!(
+        said,
+        [
+            ("design", Kind::Group, By::Map),
+            ("bo", Kind::Person, By::Named),
+            ("bo", Kind::Person, By::Named),
+            ("design", Kind::Group, By::Map),
+            ("engineering", Kind::Group, By::Default),
+        ]
+    );
+    // On a board that names nobody, every card is the person at the machine's.
+    let nobody = waiting(
+        &People::default(),
+        &map,
+        &tree.path(""),
+        &[card("docs/design/palette.md", "new-type")],
+    );
+    assert_eq!(nobody[0].kind, Kind::Machine);
+    assert_eq!(main_route("/@scope/docs/a.md"), "docs/a.md");
+    assert_eq!(main_route("docs/a.md"), "docs/a.md");
+}

@@ -9,13 +9,12 @@ folder, never in a project's `symphony.toml`. The decision is
 
 ## What works today, and what waits
 
-The plugin sends the notice it is handed. Nothing hands it one yet: the server's part (who is
-told, of what and by which way, the settings that name each way's program, and its hand again
-after a `75`) is step 4 of
-[the way from one owner](../product/analysis/users-and-identity.md#the-way-from-one-owner), and
-the address it sends to is the first email in the person's profile, which they write on the
-People page held to the plugin's own rule ([TASKS](../workflow/TASKS.md#the-people-page)). Until
-then it is set up as below and [checked by hand](#checking-it).
+The plugin sends the notice it is handed. The machine's one server hands it each notice by email
+once it is [named for the way `email`](#naming-it-for-the-server): who is told, of what, and its
+hand again after a `75` are [the server's part](../engineering/NOTICES.md#the-servers-part). The
+address it sends to is the first email in the person's profile, which they write on the People
+page held to the plugin's own rule ([TASKS](../workflow/TASKS.md#the-people-page)). It is set up
+as below and [checked by hand](#checking-it).
 
 ## What it needs
 
@@ -91,6 +90,16 @@ touch "$folder/email.token" && chmod 600 "$folder/email.token"   # with a `user`
 
 then write the settings and the password in with an editor, never on a command line, where the
 shell's history keeps it.
+
+## Naming it for the server
+
+The machine folder's `notices/programs.toml` names each way's program by its absolute path, the
+file its owner's alone and written by nobody else
+([the server's part](../engineering/NOTICES.md#the-servers-part)):
+
+```toml
+email = "/Users/ana/.cargo/bin/symphony-notice-email"
+```
 
 ## What it sends
 

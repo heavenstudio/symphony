@@ -69,10 +69,6 @@ jsonschema = { version = "0.59", default-features = false }
 libc = "0.2"
 regex = "1"
 serde_json = "1"
-# Where in `people.json` a profile does not parse (crates/tasks/src/people.rs, `unparsed`): the
-# field's path, so the fault is said by its place and kind and never by the value serde's words
-# quote. Already in the lock through axum's `Json`.
-serde_path_to_error = "0.1"
 sha2 = "0.11"
 toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
 # The wire types' TypeScript declarations, for the web client (apps/symphony-web/src/wire.ts): the

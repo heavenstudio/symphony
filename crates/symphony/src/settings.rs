@@ -36,6 +36,7 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 pub mod stored;
 
@@ -57,13 +58,29 @@ use stored::Board;
 
 pub mod described;
 
-/// What of this machine the read looks at: where its programs are found.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// What of this machine the read looks at: where its programs are found, and how long one that
+/// describes itself has to answer.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Machine {
     /// The machine folder and the search path a program is looked for in.
     pub beyond: builds::Beyond,
     /// The program that drives Herdr's terminals (`HC_BIN`, else `hc`).
     pub hc: String,
+    /// How long a program that describes itself has to answer before it is killed and said not
+    /// to ([`described::ANSWERS_IN`] wherever the page is read): a test of what the page makes of
+    /// an answer waits for it on its own backstop instead ([`Machine::answering_in`]).
+    pub answers_in: Duration,
+}
+
+impl Default for Machine {
+    /// No machine folder, no search path, no `hc`, and [`described::ANSWERS_IN`].
+    fn default() -> Machine {
+        Machine {
+            beyond: builds::Beyond::default(),
+            hc: String::new(),
+            answers_in: described::ANSWERS_IN,
+        }
+    }
 }
 
 impl Machine {
@@ -75,6 +92,7 @@ impl Machine {
                 .ok()
                 .and_then(|hc| hc.split_whitespace().next().map(str::to_string))
                 .unwrap_or_else(|| "hc".into()),
+            answers_in: described::ANSWERS_IN,
         }
     }
 
@@ -86,6 +104,16 @@ impl Machine {
                 path,
             },
             hc: "hc".into(),
+            answers_in: described::ANSWERS_IN,
+        }
+    }
+
+    /// This machine, a program that describes itself given `within` to answer.
+    #[must_use]
+    pub fn answering_in(self, within: Duration) -> Machine {
+        Machine {
+            answers_in: within,
+            ..self
         }
     }
 

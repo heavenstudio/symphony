@@ -80,10 +80,15 @@ export default defineConfig({
         //
         // Keep cache.ts with live.tsx even if their importers differ: Reports uses the cache and
         // the page's notices, so splitting them would add a file to every page following the board.
+        // So too a task's kind (kind.ts, which Reports reads as well), whose a task is
+        // (owner-read.ts, which a document's cards read as well) and which Go to session control a
+        // holder is given (session-control.ts, which the agents page reads as well): each a few
+        // hundred bytes that two pages share, which as a file of its own costs a first visit more
+        // in its answer's headers than in its code.
         codeSplitting: {
           groups: [
             { name: "shared", minShareCount: PAGES.length - 1 },
-            { name: "kept", test: /\/src\/(cache|live)\.tsx?$/ },
+            { name: "kept", test: /\/src\/(cache|live|kind|owner-read|session-control)\.tsx?$/ },
           ],
         },
       },

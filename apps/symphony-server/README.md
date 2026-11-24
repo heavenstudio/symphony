@@ -118,7 +118,12 @@ releases installed on the machine are there too (`releases/NAME/`, with the `cur
 project add [DIR]` writes it, and every start runs it. The build and client stay in the
 starter's install folder (`--install`, `symphony/server/` in its git common dir), where a record
 an older server left is read once; a project's own state (asks, thumbnails,
-the queue order, the port record) stays in its artifacts folder.
+the queue order, the port record, the notices' record) stays in its artifacts folder.
+
+The one server alone tells each project's people of a card waiting, an agent's question and a
+reviewer's verdict, a worker of each project's hub beside its board ticks (`src/live/notices.rs`),
+handing each notice to the program the machine folder's `notices/programs.toml` names for its way
+([NOTICES](../../docs/engineering/NOTICES.md#the-servers-part)); a private server tells no one.
 
 Each registered project is served at `/<id>/` by its own read hub: its watcher, feed cursor,
 board snapshot and branch scan (`src/projects.rs`). `/<id>/theme.css` serves its theme
