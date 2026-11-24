@@ -77,7 +77,7 @@ pub use links::{app_path, linkable};
 pub use listing::{ListedCard, ListedProject, PROJECTS_PATH, ProjectList, TaskAsks, TaskVerdict};
 pub use people::{
     Addresses, GroupRow, NoticeWay, PEOPLE_CHANGE_PATH, PEOPLE_PATH, PROFILE_PATH, PeopleAction,
-    PeopleChange, PeopleLogLine, PeoplePage, PersonRow, ProfileWrite, WithheldPower,
+    PeopleChange, PeopleLogLine, PeoplePage, PersonRow, ProfileWrite,
 };
 pub use report_page::{Grain, REPORTS_LANDED_PATH, REPORTS_PATH, ReportBucket, ReportsPage};
 pub use reports::{REPORT_SCHEMA, ReportDay, ReportHour, report_file};
@@ -711,6 +711,10 @@ pub struct TaskPage {
     /// at none: a page draws their history only for a task that has some.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub attempts: usize,
+    /// The one reading may pass a held message on ([`TASK_PASS_ROUTE`]): the person at the machine,
+    /// or a person holding speak and direct agents.
+    #[serde(default)]
+    pub passes: bool,
 }
 
 /// A chunk of a long brief: its blocks, the byte it ends at, the bytes still left and the
@@ -735,7 +739,34 @@ pub struct TaskEntry {
     pub message: Message,
     pub stamp: String,
     pub blocks: Vec<Block>,
+    /// The message held for people this line is of: on the board's line that says it is held,
+    /// `id` its own, and on the line its words became once passed on, `id` the board's line. Only
+    /// a person's read of the thread carries it; none on every other line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<HeldWords>,
 }
+
+/// A message held for people: the words of someone who may speak and may not direct agents, which
+/// no agent is handed until someone who may passes them on ([`TASK_PASS_ROUTE`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct HeldWords {
+    /// The number of the board's line that says it is held, which a pass names.
+    pub id: i64,
+    /// Who wrote it, by their short name.
+    pub author: String,
+    pub text: String,
+    /// Whom it was written to: a role, a session's handle, or nobody.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
+    /// Who passed it on: none while it is held.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passed_by: Option<String>,
+}
+
+/// The route a held message is passed on by: `slug` and `id`, the number of the board's line for
+/// it ([`HeldWords::id`]). It needs speak and direct agents.
+pub const TASK_PASS_ROUTE: &str = "/api/task-pass";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]

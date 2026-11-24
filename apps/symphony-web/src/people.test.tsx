@@ -30,8 +30,6 @@ import {
   type Told,
   unreached,
   type Writes,
-  withheldSaid,
-  withheldWhy,
   writePeople,
 } from "./people";
 import { asking, CASES, elementOf, type Found, fire, reply, server } from "./testing";
@@ -127,11 +125,9 @@ describe("the read", () => {
       revision: 0,
       administers: true,
       machine: true,
-      withheld: SAMPLE.withheld,
       you: null,
       problem: null,
     });
-    expect(SAMPLE.withheld.map((power) => power.power)).toEqual(["direct_agents"]);
     expect(readPeople({ ...SAMPLE, you: "cy", problem: "down" })).toMatchObject({
       you: "cy",
       problem: "down",
@@ -157,9 +153,6 @@ describe("the read", () => {
       [["log", 0, "did"], 2],
       [["log", 0, "group"], 2],
       [["log", 0, "powers"], "decide"],
-      [["withheld"], undefined],
-      [["withheld", 0, "power"], 1],
-      [["withheld", 0, "why"], undefined],
       [["revision"], undefined],
       [["administers"], "yes"],
       [["machine"], undefined],
@@ -668,83 +661,50 @@ describe("a person's and a group's powers", () => {
     ]);
   });
 
-  it("draws a power the board gives no one yet as not givable, its reason its title, a press doing nothing", () => {
+  it("gives and takes direct agents as every other power, held by a group or of one's own", () => {
     const toggled: unknown[] = [];
-    const withheld = SAMPLE.withheld;
-    const why = withheldWhy("direct_agents", withheld);
-    expect(why).toBe(
-      "until a board speaks to its agents for a person, asking them for work is the person at the machine's",
-    );
-    expect(withheldWhy("speak", withheld)).toBeUndefined();
     const toggle = (word: string, given: boolean) => toggled.push([word, given]);
-    const tags = PowerTags({
-      held: ana().powers,
-      own: ana().own,
-      label: "ana",
+    const grouped = PowerTags({
+      held: ["read", "direct_agents"],
+      own: [],
+      label: "bo",
       busy: false,
       toggle,
-      withheld,
     });
-    expect(renderToStaticMarkup(tags)).toContain(
-      `data-held="none" data-withheld="true" aria-pressed="false" aria-label="direct agents for ana" title="Given to no one yet: ${why?.replace("'", "&#x27;")}" aria-disabled="true"`,
+    expect(renderToStaticMarkup(grouped)).toContain(
+      'data-held="group" aria-pressed="false" aria-label="direct agents for bo" title="Held by a group; give bo direct agents of their own"',
     );
-    fire(tags, labelled("direct agents for ana"), "onClick");
-    fire(tags, labelled("administer for ana"), "onClick");
-    expect(toggled).toEqual([["administer", false]]);
-    // Held by a group, it is no more givable as one's own.
-    const grouped = renderToStaticMarkup(
-      <PowerTags
-        held={["read", "direct_agents"]}
-        own={[]}
-        label="bo"
-        busy={false}
-        toggle={toggle}
-        withheld={withheld}
-      />,
-    );
-    expect(grouped).toContain('data-held="group" data-withheld="true"');
-    // Given already (a board from before the rule), it is taken back like any other.
+    fire(grouped, labelled("direct agents for bo"), "onClick");
     const given = PowerTags({
       held: ["read", "direct_agents"],
       own: ["direct_agents"],
       label: "cy",
       busy: false,
       toggle,
-      withheld,
     });
-    expect(renderToStaticMarkup(given)).not.toContain("data-withheld");
+    expect(renderToStaticMarkup(given)).toContain(
+      'data-held="own" aria-pressed="true" aria-label="direct agents for cy" title="Take direct agents from cy"',
+    );
     fire(given, labelled("direct agents for cy"), "onClick");
-    expect(toggled.at(-1)).toEqual(["direct_agents", true]);
+    expect(toggled).toEqual([
+      ["direct_agents", false],
+      ["direct_agents", true],
+    ]);
   });
 
-  it("says each withheld power once in words in a form's choice, which toggles the rest", () => {
-    expect(withheldSaid({ power: "direct_agents", why: "not yet" })).toBe(
-      "Direct agents is given to no one yet: not yet.",
-    );
+  it("chooses a form's powers as toggles, with no line beside them", () => {
     const chosen: string[][] = [];
     const choice = (
-      <Choose
-        chosen={["read"]}
-        label="the new person"
-        withheld={SAMPLE.withheld}
-        onChoose={(powers) => chosen.push(powers)}
-      />
+      <Choose chosen={["read"]} label="the new person" onChoose={(powers) => chosen.push(powers)} />
     );
     const html = renderToStaticMarkup(choice);
-    expect(html.match(/class="people-hint"/g)).toHaveLength(1);
-    expect(html).toContain(
-      '<p class="people-hint">Direct agents is given to no one yet: until a board speaks',
-    );
+    expect(html).not.toContain("<p");
     const tags = elementOf(choice.type(choice.props), (element) => element.type === PowerTags);
     const toggle = tags?.props.toggle as (word: string, given: boolean) => void;
     toggle("speak", false);
     toggle("read", true);
-    expect(chosen).toEqual([["read", "speak"], []]);
-    expect(
-      renderToStaticMarkup(
-        <Choose chosen={[]} label="the new group" withheld={[]} onChoose={() => {}} />,
-      ),
-    ).not.toContain("people-hint");
+    toggle("direct_agents", false);
+    expect(chosen).toEqual([["read", "speak"], [], ["read", "direct_agents"]]);
   });
 
   it("asks before a removal as the task page's Cancel does: an outlined control, then a named confirmation", () => {
@@ -787,7 +747,6 @@ describe("a person's and a group's powers", () => {
     const { sent, writes } = writing();
     const drawn = Person({ person: ana(), page: SAMPLE, writes });
     const tags = elementOf(drawn, (element) => element.type === PowerTags);
-    expect(tags?.props.withheld).toBe(SAMPLE.withheld);
     const removal = elementOf(drawn, (element) => element.type === Remove);
     expect([removal?.props.question, removal?.props.keep]).toEqual([
       "Take ana off the board?",
@@ -881,8 +840,9 @@ describe("the page", () => {
     expect(html).toContain('aria-label="Notices of ana"');
     expect(html).toContain('aria-label="Notices of cy"');
     expect(html).not.toContain('aria-label="Notices of bo"');
-    // Each add form says once why direct agents is given to no one, and the group's removal asks.
-    expect(html.match(/Direct agents is given to no one yet/g)).toHaveLength(2);
+    // Direct agents is given as every power is: no line says otherwise. The group's removal asks.
+    expect(html).not.toContain("given to no one");
+    expect(html).toContain('aria-label="direct agents for ana"');
     expect(html).toContain(">Remove the group</button>");
   });
 

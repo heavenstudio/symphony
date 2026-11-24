@@ -1637,12 +1637,18 @@ impl Hub {
             let rows = store
                 .messages_after_rows(since, latest)
                 .map_err(|e| e.to_string())?;
+            // A message held for people goes to the pages with the lines it is of.
+            let held = taskview::held_words(store, &rows.iter().collect::<Vec<_>>())
+                .map_err(|e| e.to_string())?;
             for row in &rows {
                 let record = taskview::message_row(row);
                 let mut data = json!(record);
                 let entry = taskview::entry(&record, &render);
                 data["blocks"] = json!(entry.blocks);
                 data["stamp"] = entry.stamp.into();
+                if let Some(words) = held.get(&row.id) {
+                    data["held"] = json!(words);
+                }
                 changed.push(region_event("message", data));
             }
             lines = rows

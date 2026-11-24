@@ -1,11 +1,11 @@
 //! The People page (apps/symphony-web/src/people.tsx, the web client's `people` kind), the release
 //! client against the stand-in server answering its read (`/api/people`) with the wire's own
 //! sample: on a desk and a phone every person, group and change drawn within the screen's width,
-//! the page lit in the header after Settings, direct agents drawn as given to no one yet, and
+//! the page lit in the header after Settings, direct agents a power to give as every other is, and
 //! nothing sent on opening; an add from its form (its fields cleared once it is done) and a
-//! power's toggle posted as one change each (`/api/people-change`), the page drawn from the
-//! write's answer and what it did said on the part that sent it, a refusal in the server's words,
-//! and a press on direct agents sending nothing; a person put in a group, a group made and a
+//! power's toggle, direct agents' among them, posted as one change each (`/api/people-change`),
+//! the page drawn from the write's answer and what it did said on the part that sent it, and a
+//! refusal in the server's words; a person put in a group, a group made and a
 //! removal (asked by a named confirmation, kept or confirmed) each posted as one change; a reader
 //! without administer shown no control but their own profile's and notices', which post to
 //! `/api/people-profile`, and no one's addresses but their own; a person's notices set on their
@@ -152,9 +152,9 @@ fn the_people_page_draws_every_person_group_and_change_within_a_desk_and_a_phone
                         log: [...document.querySelectorAll('.people-log li')].map(li => li.value),
                         newest: document.querySelector('.people-log li').textContent.endsWith('owner put cy on the board, holding read'),
                         adds: document.querySelectorAll('form[aria-label="Add a person"], form[aria-label="Make a group"]').length,
-                        // Given to no one yet: not pressable, its reason its title, said once in each add form.
-                        withheld: (b => [b.dataset.withheld, b.getAttribute('aria-disabled'), b.title.startsWith('Given to no one yet: until a board speaks to its agents'), getComputedStyle(b).opacity])(ana.querySelector("button[aria-label='direct agents for ana']")),
-                        said: [...document.querySelectorAll('.people-form .people-hint')].filter(p => p.textContent.startsWith('Direct agents is given to no one yet')).length,
+                        // Given as every power is, and no line beside a form says otherwise.
+                        direct: (b => [b.getAttribute('aria-disabled'), b.title, getComputedStyle(b).opacity])(ana.querySelector("button[aria-label='direct agents for ana']")),
+                        lines: document.querySelectorAll('.people-form p:not(.people-said)').length,
                         removals: [...document.querySelectorAll('.people-actions > .dx-button')].map(b => `${b.textContent}:${b.dataset.style}`),
                         withinTheScreen: document.documentElement.scrollWidth <= innerWidth,
                         withinThePage: [...page.querySelectorAll('*')].every(e => e.getBoundingClientRect().right <= innerWidth + 0.5),
@@ -167,8 +167,8 @@ fn the_people_page_draws_every_person_group_and_change_within_a_desk_and_a_phone
                 "log": [5, 4, 3, 2, 1],
                 "newest": true,
                 "adds": 2,
-                "withheld": ["true", "true", true, "0.5"],
-                "said": 2,
+                "direct": [null, "Give ana direct agents", "1"],
+                "lines": 0,
                 "removals": [
                     "Take off the board:outline", "Take off the board:outline",
                     "Take off the board:outline", "Remove the group:outline",
@@ -239,11 +239,28 @@ fn an_add_and_a_power_are_each_one_change_the_page_draws_from_its_answer_a_refus
         "[...document.querySelectorAll(\"form[aria-label='Add a person'] input\")].every(i => i.value === '')",
         SHOWN
     ));
-    // Direct agents, given to no one yet, sends nothing at a press.
+    // Direct agents is given at a press as any power is: one change of bo's own.
+    let mut given = after.clone();
+    given["people"][1]["powers"] = json!(["read", "direct_agents", "administer"]);
+    given["people"][1]["own"] = json!(["direct_agents", "administer"]);
+    given["log"].as_array_mut().unwrap().push(json!({
+        "n": 7, "at": 1_763_025_100.0, "by": "owner", "did": "grant", "name": "bo",
+        "powers": ["direct_agents"],
+    }));
+    given["revision"] = json!(7);
+    site.set_json(symphony_api::PEOPLE_CHANGE_PATH, &given);
     click(
         &mut chrome,
         "#person-bo button[aria-label='direct agents for bo']",
     );
+    assert_eq!(
+        said(&mut chrome, "person-bo", false),
+        "owner gave bo direct agents."
+    );
+    assert!(chrome.wait_for(
+        "document.querySelector(\"#person-bo button[aria-label='direct agents for bo']\").getAttribute('aria-pressed') === 'true'",
+        SHOWN
+    ));
     // A power's toggle is one change of the person's own; a refusal is said on their card.
     let refusal = "Forbidden: ana may not administer on this board";
     site.refuse_route(symphony_api::PEOPLE_CHANGE_PATH, Some(refusal));
@@ -251,10 +268,16 @@ fn an_add_and_a_power_are_each_one_change_the_page_draws_from_its_answer_a_refus
     assert!(said(&mut chrome, "person-bo", true).contains(refusal));
     assert_eq!(
         site.posts()[1..],
-        [(
-            symphony_api::PEOPLE_CHANGE_PATH.to_string(),
-            json!({"action": "grant", "name": "bo", "powers": ["decide"]})
-        )]
+        [
+            (
+                symphony_api::PEOPLE_CHANGE_PATH.to_string(),
+                json!({"action": "grant", "name": "bo", "powers": ["direct_agents"]})
+            ),
+            (
+                symphony_api::PEOPLE_CHANGE_PATH.to_string(),
+                json!({"action": "grant", "name": "bo", "powers": ["decide"]})
+            )
+        ]
     );
     assert_eq!(
         texts(&mut chrome, "#person-ana .people-said"),

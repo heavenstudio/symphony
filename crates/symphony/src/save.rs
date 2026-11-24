@@ -36,12 +36,13 @@ mod close_tests;
 #[cfg(test)]
 mod lock_tests;
 
-pub const ROUTES: [&str; 15] = [
+pub const ROUTES: [&str; 16] = [
     "/api/postpone",
     "/api/decision",
     "/api/comment",
     "/api/message",
     "/api/task-message",
+    symphony_api::TASK_PASS_ROUTE,
     "/api/task-priority",
     "/api/task-field",
     "/api/task-cancel",
@@ -63,8 +64,9 @@ pub const ROUTES: [&str; 15] = [
 pub const WORKFLOW_APPLY: &str = symphony_api::workflow::WORKFLOW_APPLY_ROUTE;
 
 /// The routes that write to one task, named by the payload's `slug`.
-const TASK_ROUTES: [&str; 6] = [
+const TASK_ROUTES: [&str; 7] = [
     "/api/task-message",
+    symphony_api::TASK_PASS_ROUTE,
     "/api/task-priority",
     "/api/task-field",
     "/api/task-cancel",
@@ -448,6 +450,7 @@ impl Saves {
                     value
                 }),
             "/api/task-message"
+            | symphony_api::TASK_PASS_ROUTE
             | "/api/task-priority"
             | "/api/task-field"
             | "/api/task-cancel"
@@ -881,10 +884,11 @@ impl Saves {
     }
 }
 
-/// A write to one task on the board `store` (a message, its priority, a field, its cancel, a board
-/// action), asked by `actor`, `plugins` the project's at `root`, read only by a field or an action:
-/// the actor's short name is the sender and the mover the board records, as it always was `owner`
-/// for the person at the machine.
+/// A write to one task on the board `store` (a message, a held message passed on, its priority, a
+/// field, its cancel, a board action), asked by `actor`, `plugins` the project's at `root`, read
+/// only by a field or an action: the actor's short name is the sender and the mover the board
+/// records, as it always was `owner` for the person at the machine. A message of a person who may
+/// not direct agents is held for people (`symphony_board::held`), and answers `"held"`: its id.
 fn on_task(
     store: &symphony_board::Store,
     plugins: impl FnOnce() -> crate::plugins::Plugins,
@@ -896,14 +900,22 @@ fn on_task(
     let slug = string(payload, "slug");
     match route {
         "/api/task-message" => {
-            // The board opens the task's ask in the message's own write.
+            // The board opens the task's ask in the message's own write, or holds it.
             let to = string(payload, "to");
-            store.say_asking_as(
+            let said = store.say_or_hold_as(
                 slug,
                 actor.name(),
                 string(payload, "text"),
                 (!to.is_empty()).then_some(to),
             )?;
+            Ok(match said {
+                symphony_board::held::Said::Line(_) => json!({"ok":true}),
+                symphony_board::held::Said::Held(held) => json!({"ok":true, "held": held.id}),
+            })
+        }
+        symphony_api::TASK_PASS_ROUTE => {
+            let id = (payload["id"].as_i64()).ok_or("id must be a held message's number".to_string())?;
+            store.pass(slug, id, actor.name())?;
             Ok(json!({"ok":true}))
         }
         "/api/task-priority" => {

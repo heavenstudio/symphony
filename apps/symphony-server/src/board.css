@@ -107,7 +107,7 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 #task-thread .entry::before, .ghost-entry::before { box-shadow:0 0 0 3px var(--background); }
 .entry img { max-width:min(100%,460px); vertical-align:top; margin:2px 4px 2px 0; border-radius:var(--r-sm); }
 .entry time { color:var(--muted-foreground); font-variant-numeric:tabular-nums; margin-right:6px; font-size:.92em; }
-.entry .entry-verdict { font-size:.66rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; margin-right:6px; padding:0 7px; border-radius:var(--r-pill); background:var(--muted); border:1px solid var(--border); vertical-align:1px; }
+.entry .entry-verdict, .entry .entry-held { font-size:.66rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; margin-right:6px; padding:0 7px; border-radius:var(--r-pill); background:var(--muted); border:1px solid var(--border); vertical-align:1px; }
 .entry .from { font-weight:600; margin-right:4px; }
 .entry.owner { --c:var(--primary); background:var(--accent); }
 .entry.agent { --c:var(--decision); }

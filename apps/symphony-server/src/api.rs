@@ -770,6 +770,9 @@ async fn board_read(
     // Whether a pane is focused or its screen shown depends on where the page was asked.
     let local = matches!(path.as_str(), "/api/agent-page" | "/api/task-page")
         && crate::session_go::local(shared, request).await;
+    // Who asks, for whether they may pass a held message on.
+    let actor = crate::front::Admitted::actor(shared, request.extensions());
+    let machine = crate::front::Admitted::machine(request.extensions());
     let read = crate::spawn::blocking(move || {
         let path = path.as_str();
         if matches!(path, "/api/agents" | "/api/agent-page") {
@@ -842,6 +845,7 @@ async fn board_read(
                             hub.observed_page(page)
                         };
                         page.local = local;
+                        page.passes = !hosted && passes(&store, machine, actor.name());
                         // The room its gates held last time, from what is kept: the page never
                         // waits on them.
                         page.gates = hub.gates.seen(&root, &record.slug);
@@ -858,6 +862,17 @@ async fn board_read(
         hub.read_on(&store, read)
     });
     answered(read.await, "")
+}
+
+/// Whether `name` may pass a held message on (`symphony_api::TASK_PASS_ROUTE`): the person at the
+/// machine, or a person holding what the route needs. A board whose people cannot be read gives
+/// no one but the machine's person the control, whose press the route would refuse.
+fn passes(store: &symphony_board::Store, machine: bool, name: &str) -> bool {
+    let needs = crate::powers::needs(symphony_api::TASK_PASS_ROUTE);
+    machine
+        || store.people().is_ok_and(|people| {
+            crate::powers::refused(name, &people.powers_of(name), needs).is_none()
+        })
 }
 
 /// The page of agents `/api/agent-page` was asked for.

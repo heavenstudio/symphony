@@ -192,6 +192,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "post on a task's thread, --to owner, @orchestrator or HANDLE",
             ),
             (
+                "pass",
+                "pass on a message held for people on a task, by its number",
+            ),
+            (
                 "verdict",
                 "as its reviewer: a review round's approve or changes edge",
             ),
@@ -636,9 +640,9 @@ Who is on this board and what each may do there, and the machine's profiles
 of them. With nobody added, the person at the machine is the only one on it,
 holding every power, as before. A person is on the board while they hold a
 power, their own or a group's, and every power includes read: read, speak,
-decide, direct_agents (direct-agents), administer. No one is given
-direct_agents yet: until a board speaks to its agents for a person, every
-route that asks them for work is the person at the machine's alone.
+decide, direct_agents (direct-agents), administer. The words of someone who
+may speak and may not direct agents are held for people until someone who
+may passes them on (`pass`).
 
 `list` prints each person with the powers they hold and their groups, and
 each group; `log` every change, numbered, with who made it. `add NAME` puts a
@@ -1167,6 +1171,28 @@ options:
                @reserved), or a session's HANDLE
   --file FILE  read the line from this file, or stdin for -: a long post needs
                no shell quoting
+"#,
+    ),
+    (
+        "pass",
+        r#"usage: just tasks pass [-h] [--as ACTOR] slug id
+"#,
+        r#"usage: just tasks pass [-h] [--as ACTOR] slug id
+
+Pass on a message held for people: the words of someone who may speak and may
+not direct agents, which no agent is handed until someone who may passes them
+on. Its words go on the thread under its author's name, `[passed on by ACTOR]`
+first, to whom they were written, and reach the task's agents as a person's
+message does. `just tasks show SLUG` counts the messages held; the board's
+line for each names its number (`a message is held for people: #ID`).
+
+positional arguments:
+  slug
+  id          the number of the board's line for the held message
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
 "#,
     ),
     ("launch", launch::USAGE, launch::HELP),

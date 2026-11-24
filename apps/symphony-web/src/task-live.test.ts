@@ -345,6 +345,15 @@ describe("a thread's page added to what is shown", () => {
     expect(ids(added)).toEqual([1, 3, 4, 5]);
     expect(added[1]).toBe(shown[0]);
   });
+
+  it("takes a held message as the page says it, as a later answer brings a pass", () => {
+    const words = { id: 3, author: "ana", text: "Cut", passed_by: null };
+    const shown = [{ ...anEntry(3, "w/a", "board"), held: words }];
+    const passed = { ...words, passed_by: "bo" };
+    const again = withEntries(shown, [{ ...anEntry(3, "w/a", "board"), held: passed }]);
+    expect(again[0]?.held).toEqual(passed);
+    expect(withEntries(shown, [anEntry(3)])[0]).toBe(shown[0]);
+  });
 });
 
 describe("what the board says of itself", () => {
@@ -549,6 +558,22 @@ describe("what the feed leaves of a task's thread", () => {
     ]);
     expect(ids(heard?.value?.entries ?? [])).toEqual([2, 3, 5]);
     expect(heard?.value?.before).toBe(1);
+  });
+
+  it("marks a held message passed on when the line its words became comes, and only then", () => {
+    const words = { id: 2, author: "ana", text: "Cut", passed_by: null };
+    const marker = { ...anEntry(2, "w/a", "board"), held: words };
+    const thread = { entries: [anEntry(1), marker], before: null, gap: null };
+    const passed = { ...words, passed_by: "owner" };
+    const heard = hearThread("w/a", thread, [message({ ...anEntry(5, "w/a", "ana"), held: passed })]);
+    const entries = heard?.value?.entries ?? [];
+    expect(ids(entries)).toEqual([1, 2, 5]);
+    expect(entries[0]).toBe(thread.entries[0]);
+    expect(entries[1]?.held).toEqual(passed);
+    // A line that names a held message not passed on, or one not shown, changes nothing.
+    const other = { ...anEntry(3, "w/a", "ana"), held: { ...words, id: 8, passed_by: "owner" } };
+    expect(hearThread("w/a", thread, [message(marker), message({ ...anEntry(2), held: words })])).toBeNull();
+    expect(hearThread("w/a", { ...thread, entries: [anEntry(1), marker, other] }, [message(other)])).toBeNull();
   });
 
   it("is nothing for a thread not drawn, or an event with none of its messages", () => {

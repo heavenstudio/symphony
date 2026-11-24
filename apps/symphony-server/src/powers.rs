@@ -4,13 +4,14 @@
 //! person at the machine holds every power and is never asked.
 //!
 //! A verdict, its note, a move, a field, Later and a setting are deciding. A line that reaches the
-//! board's agents (a comment, a message, a task's message, an ask and its reply, a quick chat, a
-//! quick task) is speaking that directs them, and an attempt's control or view deciding that
-//! directs them: no one is given direct agents until a board speaks to its agents for a person
-//! (step 5), so those stay the person at the machine's. An upload is speaking alone. A change of
-//! the board's people is administering; a profile's write needs no power beyond being on the
-//! board, as whose profile it may write is `symphony_board::people::change`'s to say. A route this
-//! table does not place is the person at the machine's alone, as the agent focus is.
+//! board's agents (a comment, a message, an ask and its reply, a quick chat, a quick task) is
+//! speaking that directs them, and so is passing a held message on; an attempt's control or view
+//! is deciding that directs them. A task's message is speaking alone: the board holds the words of
+//! one who may not direct agents for people until someone who may passes them on
+//! (`symphony_board::held`). An upload is speaking alone. A change of the board's people is
+//! administering; a profile's write needs no power beyond being on the board, as whose profile it
+//! may write is `symphony_board::people::change`'s to say. A route this table does not place is
+//! the person at the machine's alone, as the agent focus is.
 
 use symphony_board::people::{Power, Powers};
 
@@ -39,9 +40,9 @@ pub(crate) fn needs(route: &str) -> Needs {
         symphony_api::TASK_ACTION_ROUTE
         | symphony::save::WORKFLOW_APPLY
         | symphony_api::SETTING_WRITE_PATH => DECIDE,
-        "/api/comment" | "/api/message" | "/api/task-message" | "/api/ask" | "/api/ask-reply"
-        | "/api/quick-chat" | "/api/quick-task" => SPEAK_TO_AGENTS,
-        symphony_api::UPLOAD_PATH => SPEAK,
+        "/api/comment" | "/api/message" | "/api/ask" | "/api/ask-reply" | "/api/quick-chat"
+        | "/api/quick-task" | symphony_api::TASK_PASS_ROUTE => SPEAK_TO_AGENTS,
+        "/api/task-message" | symphony_api::UPLOAD_PATH => SPEAK,
         symphony_api::ATTEMPT_CONTROL_ROUTE | symphony_api::ATTEMPT_VIEW_ROUTE => DIRECT_ATTEMPTS,
         symphony_api::PEOPLE_CHANGE_PATH => ADMINISTER,
         symphony_api::PROFILE_PATH => ON_THE_BOARD,
@@ -54,12 +55,8 @@ pub(crate) fn refused(name: &str, held: &Powers, needs: Needs) -> Option<String>
     let Needs::Powers(powers) = needs else {
         return Some("Forbidden: this route answers the person at this machine alone".into());
     };
-    held.lacking(powers).map(|lacking| match lacking {
-        Power::DirectAgents => {
-            format!("Forbidden: this board holds no words for agents from {name} yet")
-        }
-        power => format!("Forbidden: {name} may not {} on this board", power.said()),
-    })
+    (held.lacking(powers))
+        .map(|power| format!("Forbidden: {name} may not {} on this board", power.said()))
 }
 
 #[cfg(test)]

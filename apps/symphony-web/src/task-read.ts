@@ -9,6 +9,7 @@ import { readGatesSeen } from "./gates-model";
 import { field } from "./shared";
 import { readTask } from "./task";
 import type {
+  HeldWords,
   Message,
   SessionGo,
   Task,
@@ -53,12 +54,43 @@ export function readMessage(value: unknown): Message | null {
     : null;
 }
 
-/** A message as the thread draws it: the message, its time as said, and its blocks. */
+/** A message held for people, or none: the number of the board's line for it, its author, text
+ * and recipient, and who passed it on (none while it is held). */
+export function readHeld(value: unknown): HeldWords | null {
+  const to = field(value, "to");
+  const passed = field(value, "passed_by");
+  return isId(field(value, "id")) &&
+    isText(field(value, "author")) &&
+    isText(field(value, "text")) &&
+    maybeText(to) &&
+    maybeText(passed)
+    ? {
+        id: field(value, "id") as number,
+        author: field(value, "author") as string,
+        text: field(value, "text") as string,
+        to: (to as string | undefined) ?? null,
+        passed_by: (passed as string | undefined) ?? null,
+      }
+    : null;
+}
+
+/** `entry` with the held message `value` names, read: as it was where none is sent, and none
+ * where one sent cannot be read. */
+function withHeld(entry: TaskEntry, value: unknown): TaskEntry | null {
+  if (absent(value)) return entry;
+  const held = readHeld(value);
+  return held === null ? null : { ...entry, held };
+}
+
+/** A message as the thread draws it: the message, its time as said, its blocks, and the message
+ * held for people it is of, where it is one's. */
 export function readEntry(value: unknown): TaskEntry | null {
   const message = readMessage(field(value, "message"));
   const blocks = readBlocks(field(value, "blocks"));
   const stamp = field(value, "stamp");
-  return message !== null && blocks !== null && isText(stamp) ? { message, stamp, blocks } : null;
+  return message !== null && blocks !== null && isText(stamp)
+    ? withHeld({ message, stamp, blocks }, field(value, "held"))
+    : null;
 }
 
 /** A page of a task's thread, or none: its messages, and the cursors before and after it. */
@@ -78,7 +110,8 @@ export function readHistory(value: unknown): TaskHistory | null {
 }
 
 /** The message the feed's `message` region brings: its record, with the thread's stamp and blocks
- * when it sends them (none sent are none to draw), or none when it is no message. */
+ * when it sends them (none sent are none to draw) and the message held for people it is of, or
+ * none when it is no message. */
 export function heardEntry(value: unknown): TaskEntry | null {
   const message = readMessage(value);
   if (message === null) return null;
@@ -86,7 +119,7 @@ export function heardEntry(value: unknown): TaskEntry | null {
   const sent = field(value, "blocks");
   const blocks = sent === undefined ? [] : readBlocks(sent);
   if (blocks === null) return null;
-  return { message, stamp: isText(stamp) ? stamp : "", blocks };
+  return withHeld({ message, stamp: isText(stamp) ? stamp : "", blocks }, field(value, "held"));
 }
 
 /** How a session is gone to: whose session, its web address and its pane, each when known. */
@@ -118,7 +151,8 @@ function readSessions(value: unknown): Record<string, SessionGo> | null {
 /**
  * A task's page, or none: its task, brief and subtasks, and what serde defaults when absent (the
  * machines' work, the brief's cut, the sessions, whether the page was asked on the server's own
- * machine, the gates the server last answered, and how many execution attempts it has had).
+ * machine, the gates the server last answered, how many execution attempts it has had, and
+ * whether the one reading may pass a held message on).
  */
 export function readTaskPage(value: unknown): TaskPage | null {
   const task = readTask(field(value, "task"));
@@ -139,6 +173,7 @@ export function readTaskPage(value: unknown): TaskPage | null {
   const attempts = count("attempts");
   const revision = field(value, "brief_revision") ?? "";
   const local = field(value, "local") ?? false;
+  const passes = field(value, "passes") ?? false;
   if (
     task === null ||
     blocks === null ||
@@ -152,7 +187,8 @@ export function readTaskPage(value: unknown): TaskPage | null {
     next === null ||
     attempts === null ||
     !isText(revision) ||
-    typeof local !== "boolean"
+    typeof local !== "boolean" ||
+    typeof passes !== "boolean"
   ) {
     return null;
   }
@@ -167,6 +203,7 @@ export function readTaskPage(value: unknown): TaskPage | null {
     brief_revision: revision,
     sessions,
     local,
+    passes,
     gates: seen,
     // Left out at none, as the server leaves it out, so a page read is the page it sent.
     ...(attempts > 0 && { attempts }),
