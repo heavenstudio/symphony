@@ -1,11 +1,13 @@
 //! The People page (apps/symphony-web/src/people.tsx, the web client's `people` kind), the release
 //! client against the stand-in server answering its read (`/api/people`) with the wire's own
 //! sample: on a desk and a phone every person, group and change drawn within the screen's width,
-//! the page lit in the header after Settings, and nothing sent on opening; an add from its form
-//! and a power's toggle posted as one change each (`/api/people-change`), the page drawn from the
-//! write's answer and what it did said on the part that sent it, a refusal in the server's words;
-//! a person put in a group, a group made and a removal (asked once, sent at its second press) each
-//! posted as one change; a reader without administer shown no control but their own profile's, which posts to
+//! the page lit in the header after Settings, direct agents drawn as given to no one yet, and
+//! nothing sent on opening; an add from its form (its fields cleared once it is done) and a
+//! power's toggle posted as one change each (`/api/people-change`), the page drawn from the
+//! write's answer and what it did said on the part that sent it, a refusal in the server's words,
+//! and a press on direct agents sending nothing; a person put in a group, a group made and a
+//! removal (asked by a named confirmation, kept or confirmed) each posted as one change; a reader
+//! without administer shown no control but their own profile's, which posts to
 //! `/api/people-profile`; and a read that fails said in the page's place.
 //!
 //! With `SYMPHONY_PEOPLE_SHOTS` naming a folder, the reader's page is saved there, whole, at each
@@ -149,6 +151,10 @@ fn the_people_page_draws_every_person_group_and_change_within_a_desk_and_a_phone
                         log: [...document.querySelectorAll('.people-log li')].map(li => li.value),
                         newest: document.querySelector('.people-log li').textContent.endsWith('owner put cy on the board, holding read'),
                         adds: document.querySelectorAll('form[aria-label="Add a person"], form[aria-label="Make a group"]').length,
+                        // Given to no one yet: not pressable, its reason its title, said once in each add form.
+                        withheld: (b => [b.dataset.withheld, b.getAttribute('aria-disabled'), b.title.startsWith('Given to no one yet: until a board speaks to its agents'), getComputedStyle(b).opacity])(ana.querySelector("button[aria-label='direct agents for ana']")),
+                        said: [...document.querySelectorAll('.people-form .people-hint')].filter(p => p.textContent.startsWith('Direct agents is given to no one yet')).length,
+                        removals: [...document.querySelectorAll('.people-actions > .dx-button')].map(b => `${b.textContent}:${b.dataset.style}`),
                         withinTheScreen: document.documentElement.scrollWidth <= innerWidth,
                         withinThePage: [...page.querySelectorAll('*')].every(e => e.getBoundingClientRect().right <= innerWidth + 0.5),
                     };
@@ -160,6 +166,12 @@ fn the_people_page_draws_every_person_group_and_change_within_a_desk_and_a_phone
                 "log": [5, 4, 3, 2, 1],
                 "newest": true,
                 "adds": 2,
+                "withheld": ["true", "true", true, "0.5"],
+                "said": 2,
+                "removals": [
+                    "Take off the board:outline", "Take off the board:outline",
+                    "Take off the board:outline", "Remove the group:outline",
+                ],
                 "withinTheScreen": true,
                 "withinThePage": true,
             }),
@@ -220,22 +232,28 @@ fn an_add_and_a_power_are_each_one_change_the_page_draws_from_its_answer_a_refus
             })
         )]
     );
-    // The page is the write's answer: no read follows it.
+    // The page is the write's answer: no read follows it; the form is cleared for the next one.
     assert!(chrome.wait_for("document.querySelector('#person-dora') !== null", SHOWN));
-    // A power's toggle is one change of the person's own; a refusal is said on their card.
-    let refusal = "Forbidden: direct agents is given to no one yet";
-    site.refuse_route(symphony_api::PEOPLE_CHANGE_PATH, Some(refusal));
+    assert!(chrome.wait_for(
+        "[...document.querySelectorAll(\"form[aria-label='Add a person'] input\")].every(i => i.value === '')",
+        SHOWN
+    ));
+    // Direct agents, given to no one yet, sends nothing at a press.
     click(
         &mut chrome,
         "#person-bo button[aria-label='direct agents for bo']",
     );
+    // A power's toggle is one change of the person's own; a refusal is said on their card.
+    let refusal = "Forbidden: ana may not administer on this board";
+    site.refuse_route(symphony_api::PEOPLE_CHANGE_PATH, Some(refusal));
+    click(&mut chrome, "#person-bo button[aria-label='decide for bo']");
     assert!(said(&mut chrome, "person-bo", true).contains(refusal));
     assert_eq!(
-        site.posts()[1],
-        (
+        site.posts()[1..],
+        [(
             symphony_api::PEOPLE_CHANGE_PATH.to_string(),
-            json!({"action": "grant", "name": "bo", "powers": ["direct_agents"]})
-        )
+            json!({"action": "grant", "name": "bo", "powers": ["decide"]})
+        )]
     );
     assert_eq!(
         texts(&mut chrome, "#person-ana .people-said"),
@@ -312,10 +330,19 @@ fn a_person_put_in_a_group_a_group_made_and_a_removal_are_each_one_change() {
         said(&mut chrome, "people-add-group", false),
         "It holds that already: nothing was written."
     );
-    // A removal asks once, and is sent at its second press.
+    // A removal asks by a named confirmation, which keeps or sends it.
     press(&mut chrome, "person-cy", "Take off the board");
     assert_eq!(site.posts().len(), 2, "the first press sends nothing");
-    press(&mut chrome, "person-cy", "Take off the board: yes");
+    let asked = "document.querySelector(\"#person-cy [role=group][aria-label='Take off the board: confirmation']\")";
+    assert_eq!(
+        chrome.eval(&format!("{asked}?.querySelector('span').textContent")),
+        json!("Take cy off the board?")
+    );
+    press(&mut chrome, "person-cy", "Keep cy");
+    assert_eq!(chrome.eval(&format!("{asked} === null")), json!(true));
+    press(&mut chrome, "person-cy", "Take off the board");
+    assert_eq!(site.posts().len(), 2, "nor does keeping");
+    press(&mut chrome, "person-cy", "Confirm removal");
     assert!(chrome.wait_for(
         "document.querySelector('#person-cy .people-said[data-refused]') !== null",
         SHOWN

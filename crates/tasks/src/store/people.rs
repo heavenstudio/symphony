@@ -435,18 +435,15 @@ fn named_powers(powers: &[Power]) -> Result<(), Error> {
     given(powers)
 }
 
-/// Refused where `powers` hold one no one is given yet: direct agents, until a board speaks to its
-/// agents for a person (docs/product/analysis/users-and-identity.md, "The way from one owner",
-/// step 5), so every route that asks them for work stays the person at the machine's.
+/// Refused where `powers` hold one no one is given yet ([`Power::withheld`]), in its words.
 fn given(powers: &[Power]) -> Result<(), Error> {
-    if powers.contains(&Power::DirectAgents) {
-        return Err(nothing(format!(
-            "{} is given to no one yet: until a board speaks to its agents for a person, asking \
-             them for work is the person at the machine's",
-            Power::DirectAgents.said()
-        )));
+    match (powers.iter()).find_map(|power| power.withheld().map(|why| (power, why))) {
+        Some((power, why)) => Err(nothing(format!(
+            "{} is given to no one yet: {why}",
+            power.said()
+        ))),
+        None => Ok(()),
     }
-    Ok(())
 }
 
 /// `powers` once each, in the order they are said.

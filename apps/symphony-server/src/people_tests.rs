@@ -132,6 +132,14 @@ fn a_page_lists_each_person_by_their_profile_and_names_no_sign_ins_subject() {
         ),
         ("add", ["speak".to_string()].as_slice(), 4)
     );
+    assert_eq!(
+        page.withheld,
+        [symphony_api::WithheldPower {
+            power: "direct_agents".into(),
+            why: Power::DirectAgents.withheld().unwrap().into(),
+        }],
+        "the board's own reason, which its refusal of a grant says"
+    );
     let said = serde_json::to_string(&page).unwrap();
     for private in [
         "ana@example.com",
@@ -174,6 +182,17 @@ fn a_board_or_profiles_not_read_are_said_and_the_page_lists_what_was() {
         )
     );
     assert!(page.people.is_empty() && page.log.is_empty());
+    // A reader who is not the person at the machine is told what was not read, never why, as a
+    // cause can name a local path.
+    let read = super::page(
+        Err("the database at /private/board/.s.PGSQL is down".into()),
+        Err("/Users/someone/machine/people.json: unreadable".into()),
+        &asker("ana", false),
+    );
+    assert_eq!(
+        read.problem.as_deref(),
+        Some("the board's people could not be read; the machine's profiles could not be read")
+    );
     let page = page_of_profiles_unread();
     assert_eq!(
         page.people[0].display, "ana",
@@ -411,21 +430,48 @@ async fn a_person_holding_administer_changes_the_board_and_one_without_it_is_ref
         "Bo",
         "a profile made for one with none"
     );
-    // A profile the machine holds is the machine's person's to change, even by an admin's add.
+    // A sign-in is the person at the machine's alone to give, to a name the machine holds a
+    // profile of or a new one, and her refusal names no one else's sign-in or profile.
     Board::store(&served.root)
         .remove_person("bo", "owner")
         .unwrap();
-    let (status, body) = served
-        .asked(
-            LAPTOP,
-            "POST",
-            PEOPLE_CHANGE_PATH,
-            r#"{"action":"add","name":"bo","signins":["tailscale:mallory@example.com"]}"#,
-        )
-        .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert!(body.contains("only the person at the machine"), "{body}");
+    for (name, subject) in [("bo", "mallory@example.com"), ("cy", "ana@laptop.example")] {
+        let (status, body) = served
+            .asked(
+                LAPTOP,
+                "POST",
+                PEOPLE_CHANGE_PATH,
+                &serde_json::json!({"action": "add", "name": name, "signins": [format!("tailscale:{subject}")]})
+                    .to_string(),
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(
+            body.contains("a sign-in is the person at the machine's to give")
+                && !body.contains("ana's"),
+            "{body}"
+        );
+    }
     assert_eq!(served.profiles().get("bo").unwrap().signins.len(), 0);
+    assert!(served.profiles().get("cy").is_none());
+    // A failure is told her without its cause, which names the machine folder; the person at the
+    // machine is told it whole.
+    let lock = served.machine.join(symphony_board::people::LOCK);
+    let _ = std::fs::remove_file(&lock);
+    std::fs::create_dir(&lock).unwrap();
+    let add = r#"{"action":"add","name":"dora"}"#;
+    let (status, body) = served.asked(LAPTOP, "POST", PEOPLE_CHANGE_PATH, add).await;
+    assert_eq!(
+        (status, body.as_str()),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            r#"{"error":"the machine's profiles could not be locked or read, so nothing was written"}"#
+        )
+    );
+    let (status, body) = served.asked(HERE, "POST", PEOPLE_CHANGE_PATH, add).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(body.contains(symphony_board::people::LOCK), "{body}");
+    std::fs::remove_dir(&lock).unwrap();
     // Administer taken, her next change is refused before its body is read, and nothing is
     // written; she still reads the page, without its controls.
     Board::store(&served.root)
@@ -589,6 +635,11 @@ async fn a_hosted_visitor_reads_no_one_and_changes_no_one() {
             PEOPLE_CHANGE_PATH,
             r#"{"action":"remove","name":"ana"}"#,
         ),
+        (
+            "POST",
+            PROFILE_PATH,
+            r#"{"name":"ana","display":"Mallory"}"#,
+        ),
     ] {
         let app = crate::front::router(served.shared.clone())
             .layer(MockConnectInfo(HERE.parse::<SocketAddr>().unwrap()));
@@ -614,6 +665,7 @@ async fn a_hosted_visitor_reads_no_one_and_changes_no_one() {
         );
     }
     assert_eq!(served.log().len(), 1, "ana is still on the board");
+    assert_eq!(served.profiles().people, [anas()], "her profile as it was");
 }
 
 /// A change the board refuses is a 400 in the board's words, and profiles that cannot be had (a

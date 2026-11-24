@@ -262,6 +262,7 @@ fn page_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::PeoplePage>(cfg),
         declared::<api::PersonRow>(cfg),
         declared::<api::GroupRow>(cfg),
+        declared::<api::WithheldPower>(cfg),
         declared::<api::PeopleLogLine>(cfg),
         declared::<api::PeopleAction>(cfg),
         declared::<api::PeopleChange>(cfg),
@@ -1445,6 +1446,7 @@ fn samples() -> Value {
         json!(api::PeoplePage {
             administers: true,
             machine: true,
+            withheld: withheld(),
             ..api::PeoplePage::default()
         }),
     );
@@ -2695,9 +2697,21 @@ fn people() -> api::PeoplePage {
         revision: 5,
         administers: true,
         machine: true,
+        withheld: withheld(),
         you: None,
         problem: None,
     }
+}
+
+/// The powers the board gives no one yet: direct agents, as `symphony_board::people::Power`
+/// says it.
+fn withheld() -> Vec<api::WithheldPower> {
+    vec![api::WithheldPower {
+        power: "direct_agents".into(),
+        why: "until a board speaks to its agents for a person, asking them for work is the person \
+              at the machine's"
+            .into(),
+    }]
 }
 
 /// A Settings page of every shape an entry takes: one with a state, a need met and one not, a

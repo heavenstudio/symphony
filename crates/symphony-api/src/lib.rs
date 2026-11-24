@@ -77,7 +77,7 @@ pub use links::{app_path, linkable};
 pub use listing::{ListedCard, ListedProject, PROJECTS_PATH, ProjectList, TaskAsks, TaskVerdict};
 pub use people::{
     GroupRow, PEOPLE_CHANGE_PATH, PEOPLE_PATH, PROFILE_PATH, PeopleAction, PeopleChange,
-    PeopleLogLine, PeoplePage, PersonRow, ProfileWrite,
+    PeopleLogLine, PeoplePage, PersonRow, ProfileWrite, WithheldPower,
 };
 pub use report_page::{Grain, REPORTS_LANDED_PATH, REPORTS_PATH, ReportBucket, ReportsPage};
 pub use reports::{REPORT_SCHEMA, ReportDay, ReportHour, report_file};
