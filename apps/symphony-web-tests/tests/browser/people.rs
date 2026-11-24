@@ -298,6 +298,26 @@ fn the_person_at_the_machine_names_themselves_asked_once_more_and_the_header_nam
             json!(true),
             "{view}"
         );
+        // The name at the row's end beside the bell: whole on a desk, a round initial on a phone.
+        assert_eq!(
+            chrome.eval(
+                r#"(() => {
+                    const link = document.querySelector('.app-you');
+                    const box = link.getBoundingClientRect();
+                    const bell = document.querySelector('#bell').getBoundingClientRect();
+                    return {
+                        size: innerWidth < 761 ? [Math.round(box.width), Math.round(box.height)] : link.scrollWidth <= link.clientWidth && box.width > 0,
+                        row: Math.abs(box.top + box.bottom - bell.top - bell.bottom) < 4,
+                    };
+                })()"#
+            ),
+            if mobile {
+                json!({"size": [32, 32], "row": true})
+            } else {
+                json!({"size": true, "row": true})
+            },
+            "{view}"
+        );
         shot(
             &mut chrome,
             &format!("people-you-named-{view}"),

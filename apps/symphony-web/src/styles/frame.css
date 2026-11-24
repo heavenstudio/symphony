@@ -22,7 +22,7 @@
 :where(.app-frame) button:focus-visible, .app-frame a:focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
 #appearance { margin-left:auto; width:36px; padding:0; border-color:transparent; background:none; }
 /* Who reads the page, at the row's end: a long name is cut at its ellipsis. */
-.app-you { max-width:14em; overflow:hidden; text-overflow:ellipsis; }
+.app-you { max-width:12rem; overflow:hidden; text-overflow:ellipsis; }
 #bell { display:inline-flex; gap:6px; align-items:center; border-color:transparent; background:none; font-weight:600; }
 #activity-panel { position:fixed; right:0; top:0; bottom:0; z-index:7; width:min(400px,100vw); overflow:auto; box-sizing:border-box; padding:14px 16px; background:var(--card); border-left:1px solid var(--border); box-shadow:var(--shadow-2); }
 .panel-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
@@ -88,8 +88,8 @@ html { scroll-padding-bottom:calc(var(--dock) + 8px); }
   .app-header > a.project-switch { margin-right:4px; }
   .app-header .crumbs { display:none; }
   #appearance { width:32px; height:32px; }
-  /* A round initial: a flex item takes its first letter as a block does. */
-  .app-header .app-you { width:32px; height:32px; padding:0; border-color:var(--border); border-radius:50%; font-size:0; line-height:30px; text-align:center; }
+  /* A round initial, 32px with its border: a flex item takes its first letter as a block does. */
+  .app-header .app-you { width:30px; height:30px; padding:0; border-color:var(--border); border-radius:50%; font-size:0; line-height:30px; text-align:center; }
   .app-you::first-letter { font-size:var(--fs-sm); }
   /* The row's own padding is the room a focused page's outline needs (2px, 2px off it), taken
      back from the header around it. */
@@ -106,11 +106,12 @@ html { scroll-padding-bottom:calc(var(--dock) + 8px); }
   .scroll-row > [data-cut] { color:transparent !important; border-color:var(--border) !important; pointer-events:none; }
   .scroll-row > [data-cut] *, .scroll-row > [data-cut]::before { visibility:hidden; }
 }
-/* A narrow phone draws the bell alone, its name kept for a reader that is told it, so the first
-   row has room for the project's name. */
-@media (max-width:374px) {
+/* A narrow phone draws the bell alone, its name kept for a reader that is told it, and the switch
+   a step tighter, so the first row has room for the project's name beside the reader's initial. */
+@media (max-width:419px) {
   #bell { padding:0 8px; gap:0; }
   #bell .bell-label { font-size:0; }
+  .app-header > a.project-switch { padding:4px 6px; margin-right:0; }
 }
 /* A plugin component's wrapper names its kind for a project stylesheet and lays out nothing. */
 [data-component] { display:contents; }
