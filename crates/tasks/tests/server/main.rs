@@ -1,4 +1,5 @@
-//! The board's server: the board's PostgreSQL started and stopped on scratch boards, read and
+//! The board's server: the board's PostgreSQL started and stopped on scratch boards, each holding
+//! one of the machine's slots for its life (a test's own here), read and
 //! exported as it runs, a snapshot put back over its board under the switch's journal, and its
 //! dead space reclaimed; a board still on SurrealDB refused by every command that would start
 //! it; the git common dir its board is kept in; in a repository of its own, a write's delivery by
@@ -33,3 +34,4 @@ mod port;
 mod postgres;
 mod reclaim;
 mod sessionless;
+mod slots;

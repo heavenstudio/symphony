@@ -48,7 +48,34 @@ on its way out after it has read its record: when `pg_ctl` finds the server's re
 stop waits for its end, which the kernel reports, under the same backstop, and the server is
 stopped. A record that still names that server is refused as still stopping; one naming
 another server, or one whose process `ps` could not be run to tell of, is refused, saying
-so, never waited for as gone. A command uses one connection
+so, never waited for as gone.
+
+Every PostgreSQL server holds one System V shared memory segment for its life, and a machine has
+few. macOS allows 32 (`kern.sysv.shmmni`), shared by the projects' own boards, every test's scratch
+board, other users' servers and the segments dead servers left behind, and `shmget` refuses one
+more ("could not create shared memory segment: No space left on device"). So a server on a scratch
+home, one that ends with its starter, holds one of the machine's slots for scratch boards' servers
+for its life: a locked file in `/tmp/symphony-pg-slots-UID/`, taken before `initdb` and handed to
+its supervisor, which the server and each of its backends inherit, so the slot is let go once the
+last of them has ended, however it ends. The slots are half the machine's limit, so the other half
+stays for the projects' own boards, and fewer while the segments of servers that hold no slot
+leave less room (each slot's file names its holder's pid, by which the count knows the slot's own
+segment). A start with no slot free says once what it waits on and waits on the slots' locks
+themselves for one to come free. One still waiting after 120 s is refused, naming the pids the
+held slots name, and one that finds no slot held and no room is refused at once. A project's own
+board, whose server outlives its starter, takes no slot and never waits for one. A test gives its
+homes slots of its own (`Home::slots`).
+
+PostgreSQL removes its segment at a clean end, and a later start on the same data removes one its
+predecessor left; but a scratch board's data goes with its test, and nothing comes back for it.
+So once a scratch server has ended, its supervisor removes the segment the server left if it was
+killed (a -9) or crashed: the one whose id is on the seventh line of the `postmaster.pid` still
+there, where that record's first line names its own server and `ipcs` says that server made it.
+A supervisor killed with its server leaves the segment, and so does a server killed between making
+its segment and writing its record. Those wait for a reboot, or for the owner (`ipcs -m` lists
+them and `ipcrm -m ID` removes one); no command of the board removes another process's segment.
+
+A command uses one connection
 for its lifetime; there is no pool. Its backend lives as long
 and keeps what memory its largest statement took, so a read of long lists (a whole board, the
 messages to the owner) is sent a statement a list and answered an item a row, all in one transaction
