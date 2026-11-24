@@ -459,9 +459,9 @@ pub fn owner_with_by(
         },
         Posted::Changed { cards, commit } => Reading {
             detail: format!(
-                "{}; {} approve of {} came before {}, which changes more than the owner's lines",
+                "{}; {}'s approve of {} came before {}, which changes more than the owner's lines",
                 reading.detail,
-                format!("{}'s", MachinePerson::said(&by, machine)),
+                MachinePerson::said(&by, machine),
                 on(&cards),
                 short(&commit)
             ),

@@ -1444,6 +1444,21 @@ fn samples() -> Value {
     );
     samples.insert("settings".into(), json!(settings()));
     samples.insert("emptySettings".into(), json!(api::SettingsPage::default()));
+    samples.extend(people_samples());
+    samples.extend(tokens_samples());
+    samples.insert("blocks".into(), json!(blocks()));
+    samples.extend(
+        documents()
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), value)),
+    );
+    Value::Object(samples)
+}
+
+/// The People page's reads, as [`samples`] holds them: the person at the machine's, an empty
+/// board's, and theirs once they gave themselves a name.
+fn people_samples() -> serde_json::Map<String, Value> {
+    let mut samples = serde_json::Map::new();
     samples.insert("people".into(), json!(people()));
     samples.insert(
         "emptyPeople".into(),
@@ -1471,14 +1486,7 @@ fn samples() -> Value {
             ..api::PeoplePage::default()
         }),
     );
-    samples.extend(tokens_samples());
-    samples.insert("blocks".into(), json!(blocks()));
-    samples.extend(
-        documents()
-            .into_iter()
-            .map(|(name, value)| (name.to_owned(), value)),
-    );
-    Value::Object(samples)
+    samples
 }
 
 /// A task's tokens and the cards' costs, as [`samples`] holds them.

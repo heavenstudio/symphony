@@ -217,7 +217,11 @@ fn the_person_at_the_machine_names_themselves_asked_once_more_and_the_header_nam
         screen(&mut chrome, width, height, mobile);
         open(&mut chrome, &site, "people");
         let view = if mobile { "phone" } else { "wide" };
-        shot(&mut chrome, &format!("people-you-unnamed-{view}"), (width, height, mobile));
+        shot(
+            &mut chrome,
+            &format!("people-you-unnamed-{view}"),
+            (width, height, mobile),
+        );
     }
     screen(&mut chrome, 1440, 900, false);
     open(&mut chrome, &site, "people");
@@ -231,7 +235,8 @@ fn the_person_at_the_machine_names_themselves_asked_once_more_and_the_header_nam
     type_into(&mut chrome, "Your git handles", "stefano-b");
     let keep = "document.querySelector(\"form[aria-label='Your name']\").requestSubmit()";
     chrome.eval(keep);
-    let asked = "document.querySelector(\"#you [role=group][aria-label='Your short name: confirmation']\")";
+    let asked =
+        "document.querySelector(\"#you [role=group][aria-label='Your short name: confirmation']\")";
     assert!(chrome.wait_for(&format!("{asked} !== null"), SHOWN));
     assert_eq!(
         chrome.eval(&format!("{asked}.querySelector('span').textContent")),
@@ -239,7 +244,11 @@ fn the_person_at_the_machine_names_themselves_asked_once_more_and_the_header_nam
     );
     press(&mut chrome, "you", "Change it");
     assert_eq!(chrome.eval(&format!("{asked} === null")), json!(true));
-    assert_eq!(site.posts(), [], "neither the first press nor changing it sends anything");
+    assert_eq!(
+        site.posts(),
+        [],
+        "neither the first press nor changing it sends anything"
+    );
     chrome.eval(keep);
     assert!(chrome.wait_for(&format!("{asked} !== null"), SHOWN));
     press(&mut chrome, "you", "Confirm the name");
@@ -281,7 +290,11 @@ fn the_person_at_the_machine_names_themselves_asked_once_more_and_the_header_nam
             json!(true),
             "{view}"
         );
-        shot(&mut chrome, &format!("people-you-named-{view}"), (width, height, mobile));
+        shot(
+            &mut chrome,
+            &format!("people-you-named-{view}"),
+            (width, height, mobile),
+        );
     }
 }
 
@@ -339,7 +352,9 @@ fn an_add_and_a_power_are_each_one_change_the_page_draws_from_its_answer_a_refus
     ));
     // Direct agents, given to no one yet, is offered by no control on anyone's card.
     assert_eq!(
-        chrome.eval("document.querySelector(\"#person-bo [aria-label='direct agents for bo']\") === null"),
+        chrome.eval(
+            "document.querySelector(\"#person-bo [aria-label='direct agents for bo']\") === null"
+        ),
         json!(true)
     );
     // A power's toggle is one change of the person's own; a refusal is said on their card.
