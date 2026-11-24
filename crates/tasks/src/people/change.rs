@@ -32,8 +32,9 @@ pub struct Given {
     pub display: Option<String>,
     pub signins: Vec<Signin>,
     pub git: Vec<String>,
-    /// Addresses by the way's word ([`ways::WAYS`]): the address for that way, the email's put
-    /// first among the profile's emails; an empty one takes the way's address away.
+    /// Addresses by the way's word ([`ways::WAYS`]): the address for that way, the email's in
+    /// place of the profile's first, those after it kept; an empty one takes the way's address
+    /// away, the first email for mail.
     pub addresses: BTreeMap<String, String>,
     /// Ways notices go by, by the kind's word ([`ways::KINDS`]): the way's word; an empty one sends
     /// that kind by none, as the page and the Mac app show every notice.
@@ -385,8 +386,9 @@ fn fill(profiles: &mut Profiles, name: &str, given: &Given) {
                 profile.emails.remove(0);
             }
         } else {
-            profile.emails.retain(|held| held != address);
-            profile.emails.insert(0, address.clone());
+            // It replaces the first; those beyond it stay, but for a copy of it.
+            let rest = profile.emails.iter().skip(1).filter(|held| *held != address);
+            profile.emails = std::iter::once(address).chain(rest).cloned().collect();
         }
     }
     for (kind, way) in &given.notices {

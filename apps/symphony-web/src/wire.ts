@@ -979,8 +979,8 @@ export type ProfileWrite = {
    */
   signins?: Array<string>;
   /**
-   * The email a notice by mail goes to, put first among their emails; an empty one takes the
-   * first away.
+   * The email a notice by mail goes to, in place of the first of their emails, those after it
+   * kept; an empty one takes the first away.
    */
   email?: string | null;
   /**
