@@ -584,15 +584,18 @@ fn under_the_unasked_recipes_marker_every_action_but_the_reads_is_refused() {
     assert_eq!(reads, ["list", "log"], "the reads alone run");
     // Wherever the command line puts the action, it is the one refused.
     let as_me = format!("--as={me}");
-    for args in [
-        vec!["people", "--display", "Bob", "add", "bob"],
-        vec!["people", "--", "add", "bob"],
-        vec![as_me.as_str(), "people", "grant", "ana", "decide"],
+    for (args, action) in [
+        (vec!["people", "--display", "Bob", "add", "bob"], "add"),
+        (vec!["people", "--", "add", "bob"], "add"),
+        (
+            vec![as_me.as_str(), "people", "grant", "ana", "decide"],
+            "grant",
+        ),
     ] {
         let (code, said) = fails(&c, &me, &args);
         assert_eq!(code, 1, "{args:?}: {said}");
         assert!(
-            said.contains("just tasks refuses people "),
+            said.contains(&format!("just tasks refuses people {action}: ")),
             "{args:?}: {said}"
         );
     }

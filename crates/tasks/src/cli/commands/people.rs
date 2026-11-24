@@ -6,6 +6,7 @@
 
 use super::{Context, Stop};
 use crate::Store;
+use crate::people::change::{self, Given, Stopped, Writer};
 use crate::people::{Change, Holder, People, Power, Profile, Profiles, Signin};
 use crate::sys::local_minute;
 use serde_json::{Value, json};
@@ -96,14 +97,13 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
 }
 
 /// `add NAME`: the person put on the board with the powers and groups given, and their profile
-/// made or given the sign-ins and git handles named, all under the profiles' lock
-/// ([`Profiles::change`]): two adds at once are decided one after the other, so a sign-in is never
-/// given two profiles. A sign-in another profile holds is refused before anything is written, on
-/// the board or in the machine folder, and a profile that cannot be written once the board took the
-/// person takes the board's change back.
+/// made or given the display name, sign-ins and git handles named, as the person at the machine
+/// writes it ([`change::add`], which the People page's add is too): a sign-in another profile holds
+/// is refused before anything is written, on the board or in the machine folder, and a profile that
+/// cannot be written once the board took the person takes the board's change back.
 fn add(store: &Store, c: &mut Context, name: &str) -> Result<(), Stop> {
     let actor = c.actor()?;
-    let given = parsed_powers(
+    let powers = parsed_powers(
         &c.parsed
             .all("power")
             .iter()
@@ -111,44 +111,20 @@ fn add(store: &Store, c: &mut Context, name: &str) -> Result<(), Stop> {
             .collect::<Vec<_>>(),
     )?;
     let groups: Vec<String> = c.parsed.all("group").to_vec();
-    let signins = parsed_signins(c)?;
+    let given = given(c)?;
     let dir = machine(c)?;
-    // The number of the board's change, once it is made: what a profile not written takes back.
-    let mut added = None;
-    let held = Profiles::change(&dir, |profiles| {
-        if let Err(why) = taken_signins(profiles, name, &signins) {
-            return Ok(Err(Stop::Refused(why)));
-        }
-        let line = match store.add_person(name, &groups, &given, &actor) {
-            Ok(line) => line,
-            Err(error) => return Ok(Err(Stop::from(error))),
-        };
-        added = Some(line.n);
-        fill(profiles, name, c, &signins)?;
-        let signed = profiles
-            .get(name)
-            .map_or(0, |profile| profile.signins.len());
-        Ok(Ok((line, signed)))
-    });
-    let (line, signed) = match (held, added) {
-        (Ok(decided), _) => decided?,
-        (Err(why), None) => {
-            return Err(Stop::Board(format!(
-                "the machine's profiles could not be locked or read ({why}): nothing was written"
-            )));
-        }
-        (Err(why), Some(n)) => {
-            let undone = store.remove_person(name, &actor).map(|_| "taken back");
-            return Err(Stop::Board(format!(
-                "{name}'s profile could not be written ({why}): the board's change {n} is {}",
-                undone.map_or_else(
-                    |_| format!("still on the board, which `{RECIPE} remove {name}` takes back"),
-                    str::to_string
-                )
-            )));
-        }
-    };
-    let reach = match signed {
+    let added = change::add(
+        store,
+        &dir,
+        name,
+        &groups,
+        &powers,
+        &given,
+        Writer::Machine,
+        &actor,
+    )
+    .map_err(stopped)?;
+    let reach = match added.signins {
         0 => format!(
             "no sign-in is theirs yet, so they reach no board until `{RECIPE} profile` gives one"
         ),
@@ -156,33 +132,42 @@ fn add(store: &Store, c: &mut Context, name: &str) -> Result<(), Stop> {
     };
     c.say(&format!(
         "{name} is on this board (change {}), holding {}: {reach}",
-        line.n,
-        said_powers(&crate::people::Powers::of(given).held())
+        added.line.n,
+        said_powers(&crate::people::Powers::of(powers).held())
     ));
     Ok(())
 }
 
 /// `profile NAME`: the machine's profile of `name` made or given what the options name, on no
-/// board. A name no board could add ([`crate::people::refused_person_name`]) is refused.
+/// board, as the person at the machine writes it ([`change::profile`]). A name no board could add
+/// ([`crate::people::refused_person_name`]) is refused.
 fn profile(c: &mut Context, name: &str) -> Result<(), Stop> {
-    if let Some(why) = crate::people::refused_person_name(name) {
-        return Err(Stop::Refused(format!("{why}: nothing was written")));
-    }
-    let signins = parsed_signins(c)?;
+    let given = given(c)?;
     let dir = machine(c)?;
-    let changed = Profiles::change(&dir, |profiles| {
-        taken_signins(profiles, name, &signins)?;
-        let before = profiles.clone();
-        fill(profiles, name, c, &signins)?;
-        Ok(*profiles != before)
-    })
-    .map_err(Stop::Refused)?;
+    let changed = change::profile(&dir, name, &given, Writer::Machine).map_err(stopped)?;
     c.say(&if changed {
         format!("{name}'s profile is written in the machine folder")
     } else {
         format!("{name}'s profile holds those already: nothing written")
     });
     Ok(())
+}
+
+/// What `--display`, `--signin` and `--git` give a profile.
+fn given(c: &Context) -> Result<Given, Stop> {
+    Ok(Given {
+        display: c.parsed.get("display").map(str::to_string),
+        signins: parsed_signins(c)?,
+        git: c.parsed.all("git").to_vec(),
+    })
+}
+
+/// A change's stop as the command's: a refusal exits 1, a failure 2.
+fn stopped(stopped: Stopped) -> Stop {
+    match stopped {
+        Stopped::Refused(why) => Stop::Refused(why),
+        Stopped::Failed(why) => Stop::Board(why),
+    }
 }
 
 /// `grant` and `revoke`: `NAME POWER…`, or `--group GROUP POWER…`.
@@ -380,69 +365,6 @@ fn parsed_signins(c: &Context) -> Result<Vec<Signin>, Stop> {
             Signin::parse(text).map_err(|why| Stop::Refused(format!("{why}: nothing was written")))
         })
         .collect()
-}
-
-/// Refused where one of `signins` is another profile's than `name`'s: a sign-in is one person's.
-fn taken_signins(profiles: &Profiles, name: &str, signins: &[Signin]) -> Result<(), String> {
-    for signin in signins {
-        if let Some(holder) = profiles.signed_in(&signin.service, &signin.subject)
-            && holder.name != name
-        {
-            return Err(format!(
-                "that {} sign-in is {}'s: a sign-in is one person's, so nothing was written",
-                signin.service, holder.name
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// `name`'s profile among `profiles`, made where there is none, given `--display`, `signins` and
-/// `--git` where it does not hold them.
-fn fill(
-    profiles: &mut Profiles,
-    name: &str,
-    c: &Context,
-    signins: &[Signin],
-) -> Result<(), String> {
-    let at = match profiles
-        .people
-        .iter()
-        .position(|profile| profile.name == name)
-    {
-        Some(at) => at,
-        None => {
-            profiles.people.push(Profile {
-                name: name.into(),
-                ..Profile::default()
-            });
-            profiles.people.len() - 1
-        }
-    };
-    let profile = &mut profiles.people[at];
-    if let Some(display) = c
-        .parsed
-        .get("display")
-        .map(str::trim)
-        .filter(|d| !d.is_empty())
-    {
-        profile.display = display.into();
-    }
-    for signin in signins {
-        if !profile
-            .signins
-            .iter()
-            .any(|held| held.is(&signin.service, &signin.subject))
-        {
-            profile.signins.push(signin.clone());
-        }
-    }
-    for git in c.parsed.all("git").iter().map(|git| git.trim()) {
-        if !git.is_empty() && !profile.git.iter().any(|held| held == git) {
-            profile.git.push(git.into());
-        }
-    }
-    Ok(())
 }
 
 /// The machine folder the command's environment names.

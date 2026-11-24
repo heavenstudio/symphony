@@ -108,7 +108,11 @@ fn the_person_at_the_machine_adds_a_person_with_a_profile_and_gives_an_existing_
     );
     let ana = machine.profiles().get("ana").cloned().unwrap();
     assert_eq!(ana.display, "Ana L.");
-    assert_eq!(ana.git, ["ana-lima", "ana-l"], "a handle it holds is kept once");
+    assert_eq!(
+        ana.git,
+        ["ana-lima", "ana-l"],
+        "a handle it holds is kept once"
+    );
     assert_eq!(named(&f.store), ["ana"]);
 }
 
@@ -136,7 +140,13 @@ fn a_boards_admin_makes_a_profile_for_someone_who_has_none() {
 fn a_boards_admin_adds_someone_with_a_profile_as_it_is_and_never_changes_it() {
     let f = board();
     let machine = Machine::new("admin-keeps").holding(&[anas()]);
-    let added = add(&f.store, &machine.0, "ana", &Given::default(), Writer::Other);
+    let added = add(
+        &f.store,
+        &machine.0,
+        "ana",
+        &Given::default(),
+        Writer::Other,
+    );
     assert_eq!(added.signins, 1, "she reaches the board by her own sign-in");
     assert_eq!(machine.profiles().people, [anas()]);
 
@@ -152,7 +162,11 @@ fn a_boards_admin_adds_someone_with_a_profile_as_it_is_and_never_changes_it() {
         BY,
     ));
     assert!(why.contains("only the person at the machine"), "{why}");
-    assert_eq!(machine.profiles().people, [anas()], "her profile is as it was");
+    assert_eq!(
+        machine.profiles().people,
+        [anas()],
+        "her profile is as it was"
+    );
     assert!(named(&f.store).is_empty(), "nor is anyone on the board");
     assert_eq!(f.store.people_log().unwrap(), []);
 }
@@ -232,7 +246,10 @@ fn what_the_board_refuses_writes_no_profile() {
         Writer::Machine,
         BY,
     ));
-    assert!(why.contains(BY), "a session's handle is never a person's: {why}");
+    assert!(
+        why.contains(BY),
+        "a session's handle is never a person's: {why}"
+    );
     assert!(!machine.0.join(FILE).exists());
 }
 
@@ -256,7 +273,7 @@ fn profiles_that_cannot_be_read_write_nothing_on_the_board() {
         panic!("expected a failure: {stopped:?}");
     };
     assert!(
-        why.starts_with("the machine's profiles could not be read") && why.contains(LOCK),
+        why.starts_with("the machine's profiles could not be locked or read") && why.contains(LOCK),
         "{why}"
     );
     assert!(why.ends_with("nothing was written"), "{why}");
@@ -314,7 +331,11 @@ fn the_person_at_the_machine_writes_any_profile_on_no_board() {
         &given("Ana", &["GITHUB:Ana"], &["ana-l"]),
         Writer::Machine,
     );
-    assert_eq!(again, Ok(false), "a profile holding those already is not written");
+    assert_eq!(
+        again,
+        Ok(false),
+        "a profile holding those already is not written"
+    );
     let made = change::profile(&machine.0, "cy", &Given::default(), Writer::Machine);
     assert_eq!(made, Ok(true), "a profile made for a name with none");
 }
@@ -322,7 +343,12 @@ fn the_person_at_the_machine_writes_any_profile_on_no_board() {
 #[test]
 fn a_person_writes_their_own_display_name_and_git_handles_and_no_sign_in() {
     let machine = Machine::new("profile-own").holding(&[anas()]);
-    let written = change::profile(&machine.0, "ana", &given("Ana", &[], &["ana-l"]), Writer::Own);
+    let written = change::profile(
+        &machine.0,
+        "ana",
+        &given("Ana", &[], &["ana-l"]),
+        Writer::Own,
+    );
     assert_eq!(written, Ok(true));
     assert_eq!(
         machine.profiles().get("ana").unwrap().git,
@@ -350,12 +376,15 @@ fn nobody_but_the_machines_person_and_the_person_themself_writes_a_profile_on_no
         &given("Mallory", &[], &[]),
         Writer::Other,
     ));
-    assert!(why.starts_with("only the person at the machine, or ana,"), "{why}");
+    assert!(
+        why.starts_with("only the person at the machine, or ana,"),
+        "{why}"
+    );
     assert_eq!(machine.profiles().people, [anas()]);
 }
 
 #[test]
-fn a_profile_refuses_no_short_name_and_a_sign_in_another_holds() {
+fn a_profile_refuses_no_persons_name_and_a_sign_in_another_holds() {
     let machine = Machine::new("profile-refused").holding(&[anas()]);
     let why = refused(change::profile(
         &machine.0,
@@ -363,7 +392,21 @@ fn a_profile_refuses_no_short_name_and_a_sign_in_another_holds() {
         &Given::default(),
         Writer::Machine,
     ));
-    assert_eq!(why, "\"Ana Lima\" is no short name: nothing was written");
+    assert!(
+        why.starts_with("\"Ana Lima\" is no short name:") && why.ends_with(": nothing was written"),
+        "{why}"
+    );
+    // A pair the board names sessions by is no person's name either, so a profile never takes one.
+    let why = refused(change::profile(
+        &machine.0,
+        "calm-ferret",
+        &Given::default(),
+        Writer::Machine,
+    ));
+    assert!(
+        why.starts_with("calm-ferret is a name a session's handle can take"),
+        "{why}"
+    );
     let why = refused(change::profile(
         &machine.0,
         "bo",
@@ -382,5 +425,8 @@ fn a_profile_that_cannot_be_written_says_so() {
     let Err(Stopped::Failed(why)) = stopped else {
         panic!("expected a failure: {stopped:?}");
     };
-    assert!(why.starts_with("ana's profile could not be written"), "{why}");
+    assert!(
+        why.starts_with("ana's profile could not be written"),
+        "{why}"
+    );
 }

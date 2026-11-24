@@ -105,26 +105,25 @@ pub fn add(
     };
     let Some(line) = taken else {
         return Err(Stopped::Failed(format!(
-            "the machine's profiles could not be read ({why}): nothing was written"
+            "the machine's profiles could not be locked or read ({why}): nothing was written"
         )));
     };
     let undone = store.remove_person(name, by).map(|_| "taken back");
     Err(Stopped::Failed(format!(
         "{name}'s profile could not be written ({why}): the board's change {} is {}",
         line.n,
-        undone.unwrap_or("still on the board, which `people remove` takes back")
+        undone.unwrap_or("still on the board, which a removal of them takes back")
     )))
 }
 
 /// The machine's profile of `name` in `dir` made or given `given`, as `writer` may, on no board:
-/// whether it changed. Refused, with nothing written: no short name, a profile not the writer's
+/// whether it changed. Refused, with nothing written: a name no board could give a person
+/// ([`super::refused_person_name`]), a profile not the writer's
 /// ([`Writer::Other`]), a sign-in from anyone but the person at the machine, and a sign-in another
 /// profile holds, read under the lock.
 pub fn profile(dir: &Path, name: &str, given: &Given, writer: Writer) -> Result<bool, Stopped> {
-    if !symphony_docs::syntax::is_short_name(name) {
-        return Err(Stopped::Refused(format!(
-            "{name:?} is no short name: nothing was written"
-        )));
+    if let Some(why) = super::refused_person_name(name) {
+        return Err(Stopped::Refused(format!("{why}: nothing was written")));
     }
     match writer {
         Writer::Other => {
@@ -167,11 +166,7 @@ fn addable(profiles: &Profiles, name: &str, given: &Given, writer: Writer) -> Re
 }
 
 /// Refused where one of `signins` is another profile's than `name`'s: a sign-in is one person's.
-fn taken_signins(
-    profiles: &Profiles,
-    name: &str,
-    signins: &[Signin],
-) -> Result<(), String> {
+fn taken_signins(profiles: &Profiles, name: &str, signins: &[Signin]) -> Result<(), String> {
     for signin in signins {
         if let Some(holder) = profiles.signed_in(&signin.service, &signin.subject)
             && holder.name != name
