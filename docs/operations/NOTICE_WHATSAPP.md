@@ -68,7 +68,9 @@ tools/cargo.sh build --release -p symphony-notice-whatsapp
 ```
 
 The program is `.target/release/symphony-notice-whatsapp`; keep it where the server's settings
-will name it. It needs `curl` on `PATH`, which it reaches Meta through.
+will name it. It needs `curl` on `PATH`, which it reaches Meta through. No proxy is used, whatever
+proxy variable the server's environment sets (`noproxy = "*"`), so the token goes to the API's host
+alone.
 
 ## Its folder, settings and token
 
@@ -76,8 +78,9 @@ Everything it keeps is in the machine folder's `notices/`: `~/Library/Applicatio
 Support/Symphony/notices/` on macOS, `$XDG_DATA_HOME/symphony/notices/` or
 `~/.local/share/symphony/notices/` elsewhere, and `$SYMPHONY_MACHINE_DIR/notices/` where that
 variable names the machine folder, as it does in a test. The folder is its owner's alone (mode
-700) and so is each file in it (mode 600); one open to anyone else is refused before anything in it
-is read.
+700) and so is each file in it (mode 600); one open to anyone else, or a link in the place of
+one, is refused before anything in it is read. Keep the folder and the files themselves there,
+and a token kept elsewhere at the path `token_file` names, which is held to the same.
 
 ```sh
 mkdir -p ~/Library/Application\ Support/Symphony/notices
@@ -110,9 +113,11 @@ verdict = "symphony_verdict"
 | `token_file` | `notices/whatsapp.token` | the absolute path of the file holding the token, held to the same mode 600 |
 | `api` | `https://graph.facebook.com/v27.0` | the Graph API and its version: an `https` URL, or `http://127.0.0.1:PORT` for a test's stand-in |
 
-A template's name is Meta's: lowercase letters, digits and underscores. A key the program does
-not know, a missing one and a value of another type or shape are each refused by the key's name,
-with the line they are on and never the value found there. The token file holds the one token and nothing else.
+A template's name is Meta's: lowercase letters, digits and underscores. Settings that do not read
+are refused by their line, never by what it holds: a missing key and a value of another type or
+shape are named by their key, and a key the program does not know is said only to be one, or, where
+it is one of the program's own keys written in the wrong table, named. The token file holds the one
+token and nothing else.
 
 ## What it answers
 
@@ -123,8 +128,8 @@ or the link: what Meta answers has each of them taken out.
 | Status | When |
 | --- | --- |
 | `0` | Meta took the message. It is delivered or not later, as Meta's own reports of it say; the program reads none of them |
-| `75` | Meta did not answer, answered `429` or `5xx`, or answered one of its errors that say to try later: `2`, `4`, `80007`, `130429`, `131000`, `131016`, `131056`, `131057`, `133004` |
-| `1` | anything else: Meta's other refusals (an expired token `190`, a template that does not exist in the language `132001`, a number not on WhatsApp `131026`, the account's payment `131042`); a notice of another way; a number without its `+` and country code, which is never sent, as Meta would put the business number's country code before it and could reach another person; settings or a token that do not read; no `curl` on `PATH`; a message the program does not read |
+| `75` | Meta did not answer (`curl` failed in any other way, or the machine ran short of processes, memory or open files to start it), answered `429` or `5xx`, or answered one of its errors that say to try later: `2`, `4`, `80007`, `130429`, `131000`, `131016`, `131056`, `131057`, `133004` |
+| `1` | anything else: Meta's other refusals (an expired token `190`, a template that does not exist in the language `132001`, a number not on WhatsApp `131026`, the account's payment `131042`); a notice of another way; a number without its `+` and country code, which is never sent, as Meta would put the business number's country code before it and could reach another person; settings or a token that do not read; no `curl` on `PATH`, or one that may not be run (not executable); `curl` failed in a way a second hand meets again, nothing sent (a certificate that does not verify, CA certificates it cannot read, a protocol, feature or option this `curl` lacks: its exits 1, 2, 3, 4, 26, 48, 60, 64 and 77); a message the program does not read |
 
 A refusal from Meta reads `WhatsApp refused the notice: HTTP 400, code 132001: …`, with Meta's
 code and its words. Meta's

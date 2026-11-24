@@ -13,14 +13,18 @@
 //! older plugin unread, and a kind it does not know is read as [`Kind::Other`]. A refusal names the
 //! field and its rule, never the value found, so a plugin that says why on stderr repeats no
 //! address and no link. A plugin's `main` is [`take`]: the one notice on stdin, handed to its send,
-//! and the exit status saying what came of it.
+//! and the exit status saying what came of it. A plugin keeps what it needs in the machine folder,
+//! which [`machine_folder`] finds by the server's rule, and [`unstarted`] says what came of a notice
+//! whose sending program did not start.
 
 #![forbid(unsafe_code)]
 
 use serde::Serialize;
 use serde_json::{Map, Value};
+use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, Read, Write};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 /// The format's major, written as the message's `notice`: a message of another is refused by name.
@@ -330,6 +334,69 @@ fn take_from(
     // Nothing is left to say it on when stderr is gone: the status still says it.
     let _ = writeln!(errors, "{why}");
     status
+}
+
+/// What came of a notice whose sending program (a plugin's `curl`) did not start for `error`, with
+/// `why` saying so. It is [`Unsent::Later`] where the machine ran short for a moment, as a second
+/// hand may find the room: of processes (`EAGAIN`), memory, open files, or the program being
+/// written as it was started (an upgrade). It is [`Unsent::Never`] for anything else: a program
+/// that is not there, that the server's user may not run, or that is no program at all fails the
+/// same on every hand.
+pub fn unstarted(error: &io::Error, why: String) -> Unsent {
+    use io::ErrorKind::{ExecutableFileBusy, OutOfMemory, WouldBlock};
+    // ENFILE and EMFILE, the same numbers on Linux and macOS, have no stable kind of their own.
+    let short = matches!(error.kind(), WouldBlock | OutOfMemory | ExecutableFileBusy)
+        || matches!(error.raw_os_error(), Some(23 | 24));
+    if short {
+        Unsent::Later(why)
+    } else {
+        Unsent::Never(why)
+    }
+}
+
+/// The variable that names the machine folder, as the server reads it.
+pub const MACHINE_DIR: &str = "SYMPHONY_MACHINE_DIR";
+
+/// The machine folder, where a plugin keeps what it needs, by the server's rule
+/// (`symphony_board::project::machine_folder`, repeated here so a plugin links no board crate;
+/// the tests hold the two the same): [`MACHINE_DIR`] when `var` names it, else on macOS (when
+/// `macos`) `~/Library/Application Support/Symphony`, elsewhere `$XDG_DATA_HOME/symphony` or
+/// `~/.local/share/symphony`. An empty variable is unset, and a relative `HOME` or
+/// `XDG_DATA_HOME` is passed over.
+///
+/// # Errors
+///
+/// [`MACHINE_DIR`] names a relative path, or the platform's folder needs a `HOME` the process does
+/// not have.
+pub fn machine_folder(
+    var: impl Fn(&str) -> Option<OsString>,
+    macos: bool,
+) -> Result<PathBuf, String> {
+    let set = |name: &str| {
+        var(name)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    };
+    if let Some(named) = set(MACHINE_DIR) {
+        return if named.is_absolute() {
+            Ok(named)
+        } else {
+            Err(format!(
+                "{MACHINE_DIR} names {}, not an absolute folder",
+                named.display()
+            ))
+        };
+    }
+    let absolute = |name: &str| set(name).filter(|path| path.is_absolute());
+    let home = absolute("HOME");
+    let found = if macos {
+        home.map(|home| home.join("Library/Application Support/Symphony"))
+    } else {
+        absolute("XDG_DATA_HOME")
+            .map(|data| data.join("symphony"))
+            .or_else(|| home.map(|home| home.join(".local/share/symphony")))
+    };
+    found.ok_or_else(|| "the machine folder needs HOME, an absolute folder".into())
 }
 
 /// What a printed notice shows in the place of its link and its address.

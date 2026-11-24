@@ -25,9 +25,11 @@ use symphony_notice::{Notice, Unsent, WHATSAPP};
 
 fn main() -> ExitCode {
     symphony_notice::take(|notice| {
-        let machine =
-            settings::machine_folder(|name| std::env::var_os(name), cfg!(target_os = "macos"))
-                .map_err(Unsent::Never)?;
+        let machine = symphony_notice::machine_folder(
+            |name| std::env::var_os(name),
+            cfg!(target_os = "macos"),
+        )
+        .map_err(Unsent::Never)?;
         send(notice, &machine, "curl")
     })
 }

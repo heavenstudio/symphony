@@ -475,3 +475,132 @@ fn take_exits_75_when_stdin_cannot_be_read_as_nothing_was_sent() {
         "{said}"
     );
 }
+
+/// The machine folder by the variables `set`, on macOS when `macos`.
+fn found(set: &[(&str, &str)], macos: bool) -> Result<PathBuf, String> {
+    machine_folder(
+        |name| {
+            (set.iter())
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| OsString::from(value))
+        },
+        macos,
+    )
+}
+
+#[test]
+fn the_machine_folder_is_the_one_named_else_the_platforms() {
+    let named = [("SYMPHONY_MACHINE_DIR", "/m"), ("HOME", "/h")];
+    assert_eq!(found(&named, true), Ok("/m".into()));
+    assert_eq!(found(&named, false), Ok("/m".into()));
+    assert_eq!(
+        found(&[("HOME", "/h")], true),
+        Ok("/h/Library/Application Support/Symphony".into())
+    );
+    assert_eq!(
+        found(&[("HOME", "/h"), ("XDG_DATA_HOME", "/d")], false),
+        Ok("/d/symphony".into())
+    );
+    assert_eq!(
+        found(&[("HOME", "/h"), ("XDG_DATA_HOME", "/d")], true),
+        Ok("/h/Library/Application Support/Symphony".into())
+    );
+    assert_eq!(
+        found(&[("HOME", "/h")], false),
+        Ok("/h/.local/share/symphony".into())
+    );
+}
+
+#[test]
+fn an_empty_variable_is_unset_and_a_relative_one_is_passed_over() {
+    let set = [
+        ("SYMPHONY_MACHINE_DIR", ""),
+        ("XDG_DATA_HOME", "data"),
+        ("HOME", "/h"),
+    ];
+    assert_eq!(found(&set, false), Ok("/h/.local/share/symphony".into()));
+    assert_eq!(
+        found(&[("SYMPHONY_MACHINE_DIR", ""), ("HOME", "/h")], true),
+        Ok("/h/Library/Application Support/Symphony".into())
+    );
+    assert_eq!(
+        found(&[("XDG_DATA_HOME", ""), ("HOME", "/h")], false),
+        Ok("/h/.local/share/symphony".into())
+    );
+}
+
+#[test]
+fn a_relative_machine_folder_or_no_home_is_refused() {
+    assert_eq!(
+        found(&[("SYMPHONY_MACHINE_DIR", "m"), ("HOME", "/h")], true),
+        Err("SYMPHONY_MACHINE_DIR names m, not an absolute folder".into())
+    );
+    let homeless = "the machine folder needs HOME, an absolute folder";
+    for set in [&[][..], &[("HOME", "h")], &[("HOME", "")]] {
+        for macos in [true, false] {
+            assert_eq!(found(set, macos), Err(homeless.into()), "{set:?} {macos}");
+        }
+    }
+    let data = [("XDG_DATA_HOME", "/d")];
+    assert_eq!(found(&data, true), Err(homeless.into()));
+    assert_eq!(found(&data, false), Ok("/d/symphony".into()));
+}
+
+#[test]
+fn the_machine_folder_is_the_servers() {
+    let cases: [&[(&str, &str)]; 10] = [
+        &[("SYMPHONY_MACHINE_DIR", "/machine"), ("HOME", "/home/ana")],
+        &[("SYMPHONY_MACHINE_DIR", "machine")],
+        &[("SYMPHONY_MACHINE_DIR", ""), ("HOME", "/home/ana")],
+        &[("HOME", "/home/ana")],
+        &[("HOME", "/home/ana"), ("XDG_DATA_HOME", "/data")],
+        &[("HOME", "/home/ana"), ("XDG_DATA_HOME", "data")],
+        &[("XDG_DATA_HOME", "/data")],
+        &[("HOME", "home")],
+        &[("HOME", "")],
+        &[],
+    ];
+    for case in cases {
+        let var = |name: &str| {
+            (case.iter())
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| OsString::from(value))
+        };
+        for macos in [true, false] {
+            assert_eq!(
+                machine_folder(var, macos),
+                symphony_board::project::machine_folder(var, macos),
+                "{case:?} on macOS {macos}"
+            );
+        }
+    }
+    assert_eq!(MACHINE_DIR, symphony_board::project::MACHINE_DIR);
+}
+
+#[test]
+fn a_program_that_did_not_start_is_later_where_the_machine_ran_short_and_never_else() {
+    use std::io::{Error, ErrorKind};
+    let said = |error: Error| unstarted(&error, "curl did not start".into());
+    let later = Unsent::Later("curl did not start".into());
+    let never = Unsent::Never("curl did not start".into());
+    // EAGAIN (a process limit), ENOMEM, ENFILE and EMFILE, ETXTBSY: the room comes back.
+    for short in [
+        Error::from(ErrorKind::WouldBlock),
+        Error::from(ErrorKind::OutOfMemory),
+        Error::from_raw_os_error(23),
+        Error::from_raw_os_error(24),
+        Error::from_raw_os_error(26),
+    ] {
+        assert_eq!(said(short), later);
+    }
+    // Not there, not to be run by this user (EACCES), no program (ENOEXEC), or anything else.
+    for lasting in [
+        Error::from(ErrorKind::NotFound),
+        Error::from_raw_os_error(13),
+        Error::from_raw_os_error(8),
+        Error::from(ErrorKind::InvalidInput),
+        Error::other("a reason of its own"),
+    ] {
+        assert_eq!(said(lasting), never);
+    }
+}

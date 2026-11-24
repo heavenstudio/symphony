@@ -1,5 +1,5 @@
 use super::*;
-use crate::stand_in::{Slack, TOKEN, folder, keep, unanswered};
+use crate::stand_in::{Folder, Slack, TOKEN, folder, keep, unanswered};
 use serde_json::{Value, json};
 use symphony_notice::{Kind, To};
 
@@ -12,7 +12,7 @@ fn notice(way: &str, address: &str) -> Notice {
 }
 
 /// A machine folder with the token kept.
-fn kept(name: &str) -> PathBuf {
+fn kept(name: &str) -> Folder {
     let machine = folder(name);
     keep(&machine, TOKEN);
     machine
@@ -30,7 +30,11 @@ fn why(unsent: &Unsent) -> &str {
 #[test]
 fn a_notice_is_sent_to_its_member_as_the_kept_tokens_app() {
     let slack = Slack::answering(200, r#"{"ok":true,"channel":"D024BE91L","ts":"1.2"}"#);
-    let sent = send(&notice("slack", ADDRESS), Ok(kept("sent")), &slack.api);
+    let sent = send(
+        &notice("slack", ADDRESS),
+        Ok(kept("sent").to_path_buf()),
+        &slack.api,
+    );
     assert_eq!(sent, Ok(()));
     let heard = slack.heard();
     assert_eq!(heard.head[0], "POST /api/chat.postMessage HTTP/1.1");
@@ -53,7 +57,12 @@ fn a_notice_is_sent_to_its_member_as_the_kept_tokens_app() {
 #[test]
 fn what_slack_refuses_is_never_sent() {
     let slack = Slack::answering(200, r#"{"ok":false,"error":"user_not_found"}"#);
-    let unsent = send(&notice("slack", ADDRESS), Ok(kept("refused")), &slack.api).unwrap_err();
+    let unsent = send(
+        &notice("slack", ADDRESS),
+        Ok(kept("refused").to_path_buf()),
+        &slack.api,
+    )
+    .unwrap_err();
     assert!(matches!(unsent, Unsent::Never(_)), "{unsent:?}");
     assert!(why(&unsent).starts_with("Slack refused it: user_not_found "));
     slack.heard();
@@ -62,14 +71,19 @@ fn what_slack_refuses_is_never_sent() {
 #[test]
 fn a_limited_or_unreached_slack_is_worth_handing_again() {
     let slack = Slack::answering(429, r#"{"ok":false,"error":"ratelimited"}"#);
-    let unsent = send(&notice("slack", ADDRESS), Ok(kept("limited")), &slack.api).unwrap_err();
+    let unsent = send(
+        &notice("slack", ADDRESS),
+        Ok(kept("limited").to_path_buf()),
+        &slack.api,
+    )
+    .unwrap_err();
     assert!(matches!(unsent, Unsent::Later(_)), "{unsent:?}");
     why(&unsent);
     slack.heard();
 
     let unsent = send(
         &notice("slack", ADDRESS),
-        Ok(kept("unreached")),
+        Ok(kept("unreached").to_path_buf()),
         &unanswered(),
     )
     .unwrap_err();
@@ -129,7 +143,7 @@ fn no_token_is_never_sent() {
 
     let unsent = send(
         &notice("slack", ADDRESS),
-        Ok(folder("tokenless")),
+        Ok(folder("tokenless").to_path_buf()),
         &unanswered(),
     )
     .unwrap_err();

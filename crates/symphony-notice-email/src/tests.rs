@@ -1,4 +1,5 @@
 use super::*;
+use crate::scratch::Scratch;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use symphony_notice::{Kind, To};
@@ -15,14 +16,10 @@ fn notice(way: &str, address: &str) -> Notice {
     .unwrap()
 }
 
-/// A sender whose machine folder holds settings for a relay on a loopback port nothing listens
-/// on, running `curl` as `program`.
-fn sender(name: &str, program: &str) -> Sender {
-    let folder = std::env::temp_dir().join(format!(
-        "symphony-notice-email-lib-{name}-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&folder);
+/// A sender whose machine folder, the scratch folder beside it, holds settings for a relay on a
+/// loopback port nothing listens on, running `curl` as `program`.
+fn sender(name: &str, program: &str) -> (Scratch, Sender) {
+    let folder = Scratch::new(name);
     let notices = folder.join(settings::FOLDER);
     fs::create_dir_all(&notices).unwrap();
     fs::set_permissions(&notices, fs::Permissions::from_mode(0o700)).unwrap();
@@ -33,10 +30,11 @@ fn sender(name: &str, program: &str) -> Sender {
     )
     .unwrap();
     fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
-    Sender {
-        folder,
+    let sender = Sender {
+        folder: folder.to_path_buf(),
         curl: program.into(),
-    }
+    };
+    (folder, sender)
 }
 
 fn never(sent: Result<(), Unsent>) -> String {
@@ -48,7 +46,7 @@ fn never(sent: Result<(), Unsent>) -> String {
 
 #[test]
 fn a_notice_by_another_way_is_never_sent_and_its_address_never_said() {
-    let sender = sender("way", "no-such-curl");
+    let (_folder, sender) = sender("way", "no-such-curl");
     let why = never(sender.send(&notice("slack", "U024BE7LH"), SystemTime::now()));
     assert_eq!(
         why,
@@ -58,7 +56,7 @@ fn a_notice_by_another_way_is_never_sent_and_its_address_never_said() {
 
 #[test]
 fn an_address_that_is_no_plain_email_address_is_never_sent() {
-    let sender = sender("address", "no-such-curl");
+    let (_folder, sender) = sender("address", "no-such-curl");
     let why = never(sender.send(&notice("email", "Ana <ana@example.com>"), SystemTime::now()));
     assert!(
         why.starts_with("the notice's address is no plain email address"),
@@ -69,7 +67,7 @@ fn an_address_that_is_no_plain_email_address_is_never_sent() {
 
 #[test]
 fn settings_that_do_not_read_are_never_sent_by() {
-    let mut sender = sender("unset", "no-such-curl");
+    let (_folder, mut sender) = sender("unset", "no-such-curl");
     sender.folder = sender.folder.join("elsewhere");
     let why = never(sender.send(&notice("email", "ana@example.com"), SystemTime::now()));
     assert!(why.contains("the email plugin is not set up"), "{why}");
@@ -77,14 +75,14 @@ fn settings_that_do_not_read_are_never_sent_by() {
 
 #[test]
 fn no_curl_says_to_install_it() {
-    let sender = sender("no-curl", "/nonexistent/curl");
+    let (_folder, sender) = sender("no-curl", "/nonexistent/curl");
     let why = never(sender.send(&notice("email", "ana@example.com"), SystemTime::now()));
     assert!(why.contains("/nonexistent/curl is not on PATH"), "{why}");
 }
 
 #[test]
 fn a_mail_server_nobody_answers_at_is_tried_again() {
-    let sender = sender("refused", "curl");
+    let (_folder, sender) = sender("refused", "curl");
     match sender.send(&notice("email", "ana@example.com"), SystemTime::now()) {
         Err(Unsent::Later(why)) => {
             assert!(why.contains("not reached"), "{why}");

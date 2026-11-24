@@ -1,19 +1,19 @@
 //! What the plugin keeps, in the machine folder's `notices/` (`docs/operations/NOTICE_WHATSAPP.md`):
 //! its settings, `notices/whatsapp.toml`, and its token, `notices/whatsapp.token` unless the
 //! settings name another file. The folder is its owner's alone (mode 700) and so is each file
-//! (mode 600), each refused otherwise before anything in it is read. A refusal names the file and
-//! what is wrong with it, with a key of the settings and its line, never a value the file holds.
+//! (mode 600), each refused otherwise, or where it is a link, before anything in it is read. So
+//! the mode checked is the mode of what is read: a link could lead to a file in a folder others
+//! write, swapped there for a link to another of the owner's secrets. A refusal names the file and
+//! what is wrong with it, with its line and a key of the settings' own, never a value the file
+//! holds nor a key it does not know ([`unread`]).
 
 use serde::Deserialize;
-use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use symphony_notice::Kind;
 
-/// The variable that names the machine folder in the place of the platform's, as a test's does.
-pub(crate) const MACHINE_DIR: &str = "SYMPHONY_MACHINE_DIR";
 /// The folder of the machine folder that every notice plugin keeps its files in.
 pub(crate) const FOLDER: &str = "notices";
 /// The settings, in [`FOLDER`].
@@ -23,52 +23,20 @@ pub(crate) const TOKEN: &str = "whatsapp.token";
 /// The Graph API it sends through where the settings name no other: Meta's newest version.
 pub(crate) const API: &str = "https://graph.facebook.com/v27.0";
 
-/// The machine folder, by the server's rule (`symphony_board::project::machine_folder`, which this
-/// program repeats rather than links): [`MACHINE_DIR`] when set, else the platform's data folder
-/// for the Symphony.
-pub(crate) fn machine_folder(
-    var: impl Fn(&str) -> Option<OsString>,
-    macos: bool,
-) -> Result<PathBuf, String> {
-    let absolute = |name: &str| {
-        var(name)
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute())
-    };
-    if let Some(named) = var(MACHINE_DIR).filter(|value| !value.is_empty()) {
-        let path = PathBuf::from(&named);
-        return if path.is_absolute() {
-            Ok(path)
-        } else {
-            Err(format!(
-                "{MACHINE_DIR} names {}, not an absolute folder",
-                path.display()
-            ))
-        };
-    }
-    let home = absolute("HOME");
-    let found = if macos {
-        home.map(|home| home.join("Library/Application Support/Symphony"))
-    } else {
-        absolute("XDG_DATA_HOME")
-            .map(|data| data.join("symphony"))
-            .or_else(|| home.map(|home| home.join(".local/share/symphony")))
-    };
-    found.ok_or_else(|| "the machine folder needs HOME, an absolute folder".into())
-}
-
 /// The folder `machine` keeps the notice plugins' files in, refused unless it is a folder its
-/// owner's alone.
+/// owner's alone, and no link.
 pub(crate) fn folder(machine: &Path) -> Result<PathBuf, String> {
     let folder = machine.join(FOLDER);
     let named = folder.display();
-    let meta = fs::metadata(&folder).map_err(|error| {
+    let meta = fs::symlink_metadata(&folder).map_err(|error| {
         format!(
             "{named}: {error}; it holds this program's settings and token \
              (docs/operations/NOTICE_WHATSAPP.md)"
         )
     })?;
+    if meta.file_type().is_symlink() {
+        return Err(format!("{named} is a link; keep the folder itself there"));
+    }
     if !meta.is_dir() {
         return Err(format!("{named} is not a folder"));
     }
@@ -80,10 +48,14 @@ pub(crate) fn folder(machine: &Path) -> Result<PathBuf, String> {
     Ok(folder)
 }
 
-/// What the file at `path` holds, refused unless it is a plain file its owner's alone.
+/// What the file at `path` holds, refused unless it is a plain file its owner's alone, and no
+/// link.
 fn private(path: &Path) -> Result<String, String> {
     let named = path.display();
-    let meta = fs::metadata(path).map_err(|error| format!("{named}: {error}"))?;
+    let meta = fs::symlink_metadata(path).map_err(|error| format!("{named}: {error}"))?;
+    if meta.file_type().is_symlink() {
+        return Err(format!("{named} is a link; keep the file itself there"));
+    }
     if !meta.is_file() {
         return Err(format!("{named} is not a file"));
     }
@@ -232,13 +204,16 @@ const KEYS: [&str; 9] = [
     "verdict",
 ];
 
-/// What a settings `text` that does not read is refused with: the line, and what is wrong there,
-/// naming a key and never a value.
+/// What a settings `text` that does not read is refused with: its line, and what is wrong there,
+/// naming no key but one of [`KEYS`] and never a value.
 ///
 /// toml's own rendering of an error quotes the line it is on, which may hold anything an operator
-/// pasted there, so its message alone is said, and only where it holds no value of the file's: a
-/// value of another type than its key takes (`invalid type: integer `106540352242922`, expected a
-/// string`) is said by the key the line names instead, where the key is one of [`KEYS`].
+/// pasted there, so its message alone is said, and only where it holds nothing of the file's:
+/// toml's syntax errors are fixed words, and a missing key is named by the program's own. serde's
+/// messages for a value of another type than its key takes (`invalid type: integer
+/// `106540352242922``) and for a key the program does not know (`unknown field `TOKEN``) quote
+/// what the file holds, so they are said in the program's own words, naming the key only where it
+/// is one of [`KEYS`].
 fn unread(text: &str, error: &toml::de::Error) -> String {
     let line = (error.span())
         .and_then(|at| text.get(..at.start))
@@ -247,7 +222,16 @@ fn unread(text: &str, error: &toml::de::Error) -> String {
     let quotes_a_value = ["invalid type", "invalid value", "unknown variant"]
         .iter()
         .any(|serde_says| message.starts_with(serde_says));
-    let said = if quotes_a_value {
+    let said = if let Some(unknown) = message.strip_prefix("unknown field `") {
+        let own = KEYS.iter().find(|key| {
+            (unknown.strip_prefix(**key))
+                .is_some_and(|after| after == "`" || after.starts_with("`,"))
+        });
+        match own {
+            Some(key) => format!("`{key}` is not a key where it is written"),
+            None => "a key this program does not know".into(),
+        }
+    } else if quotes_a_value {
         let key = (line.and_then(|line| text.lines().nth(line - 1)))
             .and_then(|written| written.split_once('='))
             .map(|(key, _)| key.trim())

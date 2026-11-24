@@ -147,3 +147,10 @@ this page. In it:
   all is a `75`, as nothing was read to send.
 - `EMAIL`, `SLACK`, `WHATSAPP`, `SENT`, `LATER`, `NEVER` and `FORMAT` name the words and numbers
   above.
+- `unstarted` says what came of a notice whose sending program did not start: `75` where the
+  machine ran short for a moment (of processes, memory or open files, or the program being
+  written as it was started), else `1`.
+- `machine_folder` finds the machine folder, where a plugin keeps what it needs, by the server's
+  rule: the folder `SYMPHONY_MACHINE_DIR` (`MACHINE_DIR`) names, else the platform's data folder
+  for the Symphony. It repeats the board's rule rather than linking it; its tests, the one place
+  the crate builds with the board, hold the two the same.
