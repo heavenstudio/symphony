@@ -266,6 +266,39 @@ fn holding() -> Fixture {
     candidate::holding(&delivering(""))
 }
 
+/// The run that holds a candidate on this line files its red in the delivered form: the project
+/// file main committed names `[land] delivery`, which the run reads as the land does, so the
+/// red's fix is rebased onto `release-candidate` and never merges it, and its client fix merges
+/// main once, from a second head. The direct form's clauses are not said
+/// (`candidate::a_red_run_holds_its_commit_until_its_reds_own_land_answers_it_and_the_rerun_releases_it`
+/// is the line that delivers nothing).
+#[test]
+fn a_candidates_red_on_a_line_delivered_by_pull_request_says_rebase_and_never_merge() {
+    let fixture = holding();
+    let red = candidate::held(&fixture);
+    let body = &fixture.reds()[RED].body;
+    for said in [
+        format!(
+            "The release candidate: this run holds {} as the commit to release",
+            &red[..12]
+        ),
+        "start this task's branch, named for its slug, at `release-candidate`, never at main; \
+         never merge `release-candidate`, as this project's land delivers by pull request"
+            .into(),
+        "is rebased onto `release-candidate` before its assessment and review".into(),
+        "Never merge main before its land, but for the one merge of a client fix.".into(),
+        "Its delivered land refuses that head and says how it lands".into(),
+    ] {
+        assert!(body.contains(&said), "{said}\n\n{body}");
+    }
+    for unsaid in [
+        "merge `release-candidate` again",
+        "the land keeps main's side of it",
+    ] {
+        assert!(!body.contains(unsaid), "{unsaid}\n\n{body}");
+    }
+}
+
 #[test]
 fn a_reds_fix_delivered_by_pull_request_advances_the_candidate_to_its_head_and_never_to_main() {
     let fixture = holding();

@@ -166,15 +166,26 @@ fn a_red_run_holds_its_commit_until_its_reds_own_land_answers_it_and_the_rerun_r
     assert_eq!(candidate["commit"], red.as_str());
     assert_eq!(candidate["reds"][0]["slug"], RED);
     assert_eq!(candidate["rounds"], 1);
+    let body = &fixture.reds()[RED].body;
     assert!(
-        fixture.reds()[RED].body.contains(&format!(
+        body.contains(&format!(
             "The release candidate: this run holds {} as the commit to release, the local branch \
              `release-candidate` (never pushed)",
             &red[..12]
         )),
-        "{}",
-        fixture.reds()[RED].body
+        "{body}"
     );
+    // A line whose land delivers nothing by pull request says the direct form: merge the
+    // candidate again, and the land keeps main's side of the client (`delivered` says the other).
+    for said in [
+        "merge `release-candidate` again before review",
+        "the land keeps main's side of it.",
+    ] {
+        assert!(body.contains(said), "{said}\n\n{body}");
+    }
+    for unsaid in ["pull request", "rebase", "never merge `release-candidate`"] {
+        assert!(!body.contains(unsaid), "{unsaid}\n\n{body}");
+    }
 
     // While its red waits, main's tip is not run: not by the schedule, not by `--rerun`.
     let status = fixture.run(NOW + 60.0, &["--status"], 0);

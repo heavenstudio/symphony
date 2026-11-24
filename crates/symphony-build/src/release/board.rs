@@ -2042,9 +2042,13 @@ mod tests {
              branch `release-candidate` (never pushed), so the release is that commit and its \
              reds' fixes alone",
             "start this task's branch, named for its slug, at `release-candidate`, never at main; \
-             merge `release-candidate` again before review",
-            "never merge main before its land",
-            "commit the distribution its own sources make (`just client-update`)",
+             merge `release-candidate` again before review, as it moves when another red's fix \
+             lands; and never merge main before its land.",
+            // The client sentence whole, to its last clause: the land keeps main's side.
+            "When the fix changes what the client is built from, commit the distribution its own \
+             sources make (`just client-update`): the one kind of branch that commits it, as no \
+             regenerator builds the candidate, and the land keeps main's side of it. Its approve, \
+             where it needs review, names the full tip it read.",
             "A land that conflicts comes back to its executor: merge main then and ask for a fresh \
              approve, and the candidate takes the commit approved before that merge; a fix that \
              needed no review has none, and drops it.",
