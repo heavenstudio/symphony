@@ -13,12 +13,15 @@
 // Its controls are the read's to give. Where it says the reader administers (the person at the
 // machine, or a person holding administer), each person's powers are toggles that grant or revoke
 // their own, their groups are joined and left, they are taken off the board, a group is made, given
-// powers and removed, and someone else is added (PEOPLE_CHANGE_PATH). A removal asks first, as the task page's Cancel does. A profile's form is shown
-// on the reader's own card, and on every card for the person at the machine, the one who gives a
-// sign-in, where this server knows a sign-in's service (the read's `signins`): the add's sign-in
-// field is theirs alone too. Each field is labelled, `(optional)` where it may be left empty. Each
-// write answers the page as it left it, which the page draws: no read follows it, and what the
-// write did is said on the part that sent it, in the log's words.
+// powers and removed, and someone else is added (PEOPLE_CHANGE_PATH). A reader without administer
+// is shown none of these, and no line saying why. A removal asks first, as the task page's Cancel
+// does. A profile's form is shown on the reader's own card, and on every card for the person at
+// the machine, the one who gives a sign-in, where this server knows a sign-in's service (the
+// read's `signins`): the add's sign-in field is theirs alone too, and no card of their own name
+// takes one, as they are known by where they are. Each field is labelled, `(optional)` where it
+// may be left empty, and no line explains a control. Each write answers the page as it left it,
+// which the page draws: no read follows it, and what the write did is said on the part that sent
+// it, in the log's words.
 //
 // A person's addresses (the email, Slack member id and WhatsApp number their notices go to) and
 // the way each kind of notice goes by are in the read only for those who may see them: the
@@ -605,8 +608,8 @@ export function Field({
   );
 }
 
-/** The sign-in field's label: what a sign-in is for, as the reader needs no more. */
-const SIGNIN_LABEL = "Sign-in, to open boards from their own device";
+/** The sign-in field's label, as its neighbours are labelled. */
+const SIGNIN_LABEL = "Sign-in";
 
 /** A person's profile, as the person at the machine or the person themself writes it. */
 function ProfileForm({
@@ -778,7 +781,7 @@ export function Person({
   const profiled = writes !== undefined && (page.machine || page.you === person.name);
   const reach =
     person.signins.length === 0
-      ? "No sign-in yet: reaches no board"
+      ? "No sign-in yet"
       : `Signs in by ${person.signins.join(", ")}`;
   return (
     <article className="people-person" id={part}>
@@ -842,7 +845,13 @@ export function Person({
       )}
       {(admin || profiled) && (
         <div className="people-actions">
-          {profiled && <ProfileForm person={person} signins={takesSignins(page)} writes={writes} />}
+          {profiled && (
+            <ProfileForm
+              person={person}
+              signins={takesSignins(page) && page.mine?.name !== person.name}
+              writes={writes}
+            />
+          )}
           {profiled && person.notices && (
             <NoticesForm person={person} notices={person.notices} writes={writes} />
           )}
@@ -1103,7 +1112,6 @@ export function Naming({ writes }: { writes: Writes }) {
         if (short !== "") setAsking(true);
       }}
     >
-      <p className="people-state">You write as owner.</p>
       <div className="people-fields">
         <Field id="you-name" label="Short name">
           <Input
@@ -1282,9 +1290,6 @@ export function PeopleView({ page, error, missing, writes, now = new Date() }: P
     >
       <header className="people-head">
         <h1>People</h1>
-        {page !== null && !page.administers && (
-          <p className="people-refused">Changing who is on the board needs administer.</p>
-        )}
       </header>
       {error !== null && (
         <p className="people-error" role="alert">

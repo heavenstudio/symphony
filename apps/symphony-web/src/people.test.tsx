@@ -844,7 +844,7 @@ describe("the page", () => {
     ).toEqual(["person-ana", "person-bo", "person-cy", "group-staff"]);
     expect(html).toContain('<h3>Ana Lima</h3><span class="people-name">ana</span>');
     expect(html).toContain("Signs in by tailscale, github · git ana-lima");
-    expect(html).toContain("No sign-in yet: reaches no board");
+    expect(html).toContain('<p class="people-reach">No sign-in yet</p>');
     expect(html).toContain('<span class="people-name">ana</span></header>');
     expect([...html.matchAll(/<li value="(\d)">/g)].map((f) => f[1])).toEqual([
       "5",
@@ -863,7 +863,7 @@ describe("the page", () => {
     expect(html).toContain('aria-label="Sign-in of bo"');
     expect(html).toContain('aria-label="Sign-in"');
     expect(html).toContain(
-      '<label for="people-add-signin">Sign-in, to open boards from their own device<span class="people-optional"> (optional)</span></label>',
+      '<label for="people-add-signin">Sign-in<span class="people-optional"> (optional)</span></label>',
     );
     expect(html).toContain('<label for="people-add-name">Short name</label>');
     expect(html).toContain('<label for="people-group-name">Group name</label>');
@@ -950,9 +950,8 @@ describe("the page", () => {
     expect(own.match(/<details class="people-profile people-notices">/g)).toHaveLength(1);
     expect(own).toContain('aria-label="Notices of cy"');
     const html = draw(READER, writing().writes);
-    expect(html).toContain(
-      '<header class="people-head"><h1>People</h1><p class="people-refused">Changing who is on the board needs administer.</p></header>',
-    );
+    // No line says why the controls are absent: the head is its title alone.
+    expect(html).toContain('<header class="people-head"><h1>People</h1></header>');
     expect(html).not.toContain('aria-label="Add someone else"');
     expect(html).not.toContain('id="you"');
     expect(html).not.toContain("Take off the board");
@@ -1014,7 +1013,11 @@ describe("the person at the machine's own profile", () => {
     const unnamed = draw(SAMPLE, writes);
     expect(unnamed.indexOf('id="you"')).toBeLessThan(unnamed.indexOf('id="people-people"'));
     expect(unnamed).toContain('<h2 id="people-you-head">You</h2>');
-    expect(unnamed).toContain('<p class="people-state">You write as owner.</p>');
+    // The header names who writes: no line here says it again.
+    expect(unnamed).not.toContain("You write as");
+    expect(unnamed).toContain(
+      '<form class="people-form people-person" aria-label="Your name"><div class="people-fields">',
+    );
     expect(unnamed).toContain('<label for="you-name">Short name</label>');
     expect(unnamed).toContain(
       '<label for="you-display">Display name<span class="people-optional"> (optional)</span></label>',
@@ -1028,7 +1031,15 @@ describe("the person at the machine's own profile", () => {
     expect(theirs).toContain(
       '<h3>Stefano</h3><span class="people-name">stefano</span></header><p class="people-reach">git stefano-b</p>',
     );
-    expect(theirs).not.toContain("You write as owner.");
+    expect(theirs).not.toContain("You write as");
+    // A card of their own name, which a board holds where they added themselves before naming
+    // themselves, takes no sign-in: they are known by where they are. Another's card takes one.
+    const row = { ...ana(), name: "stefano", display: "Stefano", signins: [], groups: [] };
+    const withRow = draw({ ...NAMED, people: [...SAMPLE.people, row] }, writes);
+    expect(withRow).toContain('id="person-stefano"');
+    expect(withRow).toContain('aria-label="Display name of stefano"');
+    expect(withRow).not.toContain('aria-label="Sign-in of stefano"');
+    expect(withRow).toContain('aria-label="Sign-in of bo"');
     expect(theirs).not.toContain('aria-label="Your short name"');
     // Another reader, or a page drawn with no writes, has no You section.
     expect(draw(READER, writes)).not.toContain('id="you"');

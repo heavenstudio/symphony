@@ -10,7 +10,10 @@
 //! seen at their next. A tagged node, a login no profile signs in, a profile no row of the board
 //! names or names with no power, and a board or a profile that cannot be read are none: on that
 //! board the visitor is nobody, and its project is one the server does not hold. A failed read is
-//! said in the server's log by the board's folder alone, never by the visitor's login.
+//! said in the server's log by the board's folder alone, never by the visitor's login. So is the
+//! person at the machine's own profile ([`Profiles::machine`]), which holds no sign-in but where
+//! `people.json` was written by hand: they are known by where they are, and a login under their
+//! name would write as them with another's powers.
 
 use crate::gate::{Roster, Visitor};
 use std::path::{Path, PathBuf};
@@ -64,6 +67,9 @@ fn member(
         }
     };
     let profile = profiles.signed_in(TAILSCALE, &login.name)?;
+    if profiles.machine.as_deref() == Some(profile.name.as_str()) {
+        return None;
+    }
     let held = match people(root) {
         Ok(people) => people.powers_of(&profile.name),
         Err(why) => {

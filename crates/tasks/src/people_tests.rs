@@ -740,6 +740,61 @@ mod naming {
         assert_eq!(Profiles::read(&machine.0).unwrap(), Profiles::default());
     }
 
+    /// Once named, the person at the machine's profile takes no sign-in from a write of profiles,
+    /// as naming takes none: a login under their name would write as them with another's powers.
+    /// The rest of it they still write, and another's profile still takes a sign-in.
+    #[test]
+    fn the_person_at_the_machine_s_profile_takes_no_sign_in_once_named() {
+        use super::super::change::{Writer, profile};
+        let machine = Machine::new("name-no-signin");
+        name_machine(&machine.0, "stefano", &given("Stefano", &[]), nothing).unwrap();
+        let named = Profiles::read(&machine.0).unwrap();
+        let signed = |subject: &str| Given {
+            signins: vec![Signin::parse(&format!("tailscale:{subject}")).unwrap()],
+            ..given("", &[])
+        };
+        match profile(
+            &machine.0,
+            "stefano",
+            &signed("phone@example.com"),
+            Writer::Machine,
+        ) {
+            Err(Stopped::Refused(why)) => assert_eq!(
+                why,
+                "the person at the machine is known by where they are, never by a sign-in: \
+                 stefano's profile takes none, so nothing was written"
+            ),
+            other => panic!("not refused: {other:?}"),
+        }
+        assert_eq!(
+            Profiles::read(&machine.0).unwrap(),
+            named,
+            "nothing was written"
+        );
+        let git = given("", &["stefano-b"]);
+        assert_eq!(
+            profile(&machine.0, "stefano", &git, Writer::Machine),
+            Ok(true)
+        );
+        assert!(
+            Profiles::read(&machine.0)
+                .unwrap()
+                .machine()
+                .unwrap()
+                .signins
+                .is_empty()
+        );
+        assert_eq!(
+            profile(
+                &machine.0,
+                "ana",
+                &signed("ana@example.com"),
+                Writer::Machine
+            ),
+            Ok(true)
+        );
+    }
+
     /// Profiles that cannot be read are never written over, and naming fails saying so.
     #[test]
     fn profiles_not_read_fail_the_name_and_are_kept() {

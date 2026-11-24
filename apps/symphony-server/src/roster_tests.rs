@@ -106,3 +106,26 @@ fn the_roster_of_a_machine_asks_the_board_at_the_root_it_is_given() {
     assert!(roster(&nowhere, &login("ana@example.com")).is_none());
     assert!(roster(&nowhere, &Visitor::Node("ci".into())).is_none());
 }
+
+/// The person at the machine's own profile admits no login, though `people.json` written by hand
+/// gives it a sign-in and the board a row of its name: the login would write as them with that
+/// row's powers.
+#[test]
+fn a_login_of_the_person_at_the_machines_profile_is_on_no_board() {
+    let machine = Machine::with_ana("machine");
+    Profiles::change(&machine.0, |profiles| {
+        profiles.machine = Some("ana".into());
+        Ok(())
+    })
+    .unwrap();
+    let root = Path::new("/a/project");
+    assert!(
+        member(
+            &machine.0,
+            root,
+            &login("ana@example.com"),
+            holding(&[Power::Speak, Power::Decide])
+        )
+        .is_none()
+    );
+}

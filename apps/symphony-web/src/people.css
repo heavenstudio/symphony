@@ -11,12 +11,6 @@
   font-size: var(--fs-2xl);
   line-height: 1.2;
 }
-.people-refused {
-  margin: 4px 0 0;
-  color: var(--muted-foreground);
-  font-size: var(--fs-sm);
-  overflow-wrap: anywhere;
-}
 .people-error {
   margin: 0;
   padding: var(--sp-3) var(--sp-4);
@@ -210,11 +204,6 @@ li.people-power[data-held="group"],
 .people-field .dx-select {
   width: 100%;
   max-width: none;
-}
-.people-state {
-  margin: 0;
-  color: var(--muted-foreground);
-  font-size: var(--fs-sm);
 }
 /* A person's Notices: their addresses on one row, then each kind of notice and its way. */
 .people-notices form {

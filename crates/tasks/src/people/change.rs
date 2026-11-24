@@ -121,6 +121,10 @@ fn writable(given: &Given, writer: Writer) -> Result<Given, Stopped> {
         .map_err(|why| Stopped::Refused(format!("{why}: nothing was written")))
 }
 
+/// Why the person at the machine's profile holds no sign-in: they are known by where they are.
+const KNOWN_BY_WHERE: &str =
+    "the person at the machine is known by where they are, never by a sign-in";
+
 /// Who writes a profile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Writer {
@@ -264,7 +268,9 @@ pub fn add(
 /// whether it changed. Refused, with nothing written: a name no board could give a person
 /// ([`super::refused_person_name`]), a profile not the writer's
 /// ([`Writer::Other`]), a sign-in from anyone but the person at the machine, an address or a way
-/// its rule refuses ([`ways`]), and a sign-in another profile holds, read under the lock.
+/// its rule refuses ([`ways`]), and, read under the lock, a sign-in another profile holds and one
+/// for the person at the machine's own profile ([`Profiles::machine`]), as [`name_machine`] refuses
+/// it: a login under their name would write as them with another's powers.
 pub fn profile(dir: &Path, name: &str, given: &Given, writer: Writer) -> Result<bool, Stopped> {
     if let Some(why) = super::refused_person_name(name) {
         return Err(Stopped::Refused(format!("{why}: nothing was written")));
@@ -285,6 +291,11 @@ pub fn profile(dir: &Path, name: &str, given: &Given, writer: Writer) -> Result<
     }
     let given = &writable(given, writer)?;
     Profiles::change(dir, |profiles| {
+        if !given.signins.is_empty() && profiles.machine.as_deref() == Some(name) {
+            return Ok(Err(format!(
+                "{KNOWN_BY_WHERE}: {name}'s profile takes none, so nothing was written"
+            )));
+        }
         if let Err(why) = taken_signins(profiles, name, &given.signins) {
             return Ok(Err(why));
         }
@@ -343,11 +354,9 @@ pub fn name_machine(
         return Err(Stopped::Refused(format!("{why}: nothing was written")));
     }
     if !given.signins.is_empty() {
-        return Err(Stopped::Refused(
-            "the person at the machine is known by where they are, never by a sign-in: give \
-             yourself a name with none, so nothing was written"
-                .into(),
-        ));
+        return Err(Stopped::Refused(format!(
+            "{KNOWN_BY_WHERE}: give yourself a name with none, so nothing was written"
+        )));
     }
     let written = Profiles::change(dir, |profiles| {
         if let Some(already) = profiles.machine() {

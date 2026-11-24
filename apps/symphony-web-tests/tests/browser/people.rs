@@ -156,13 +156,13 @@ fn the_people_page_draws_every_person_group_and_change_within_a_desk_and_a_phone
                         log: [...document.querySelectorAll('.people-log li')].map(li => li.value),
                         newest: document.querySelector('.people-log li').textContent.endsWith('owner put cy on the board, holding read'),
                         adds: document.querySelectorAll('form[aria-label="Add someone else"], form[aria-label="Make a group"]').length,
-                        // Given as every power is, and no line beside a form says otherwise: what is
-                        // said is what a write did, and whom the person at the machine writes as.
+                        // Given as every power is, and no line beside a form says otherwise.
                         direct: (b => [b.getAttribute('aria-disabled'), b.title, getComputedStyle(b).opacity])(ana.querySelector("button[aria-label='direct agents for ana']")),
-                        lines: document.querySelectorAll('.people-form p:not(.people-said, .people-state)').length,
+                        lines: document.querySelectorAll('.people-form p:not(.people-said)').length,
                         hints: page.querySelectorAll('.people-hint').length,
-                        // The person at the machine, named by no profile yet, is shown the form that names them.
-                        you: [document.querySelector('#you .people-state')?.textContent, [...document.querySelectorAll('#you label')].map(l => l.textContent)],
+                        // The person at the machine, named by no profile yet, is shown the form that
+                        // names them, and no line: the header names who writes.
+                        you: [document.querySelectorAll('#you p:not(.people-said)').length, [...document.querySelectorAll('#you label')].map(l => l.textContent)],
                         labels: [...document.querySelectorAll('#people-add label')].map(l => l.textContent),
                         removals: [...document.querySelectorAll('.people-actions > .dx-button')].map(b => `${b.textContent}:${b.dataset.style}`),
                         withinTheScreen: document.documentElement.scrollWidth <= innerWidth,
@@ -180,12 +180,12 @@ fn the_people_page_draws_every_person_group_and_change_within_a_desk_and_a_phone
                 "lines": 0,
                 "hints": 0,
                 "you": [
-                    "You write as owner.",
+                    0,
                     ["Short name", "Display name (optional)", "Git handles (optional)"],
                 ],
                 "labels": [
                     "Short name", "Display name (optional)",
-                    "Sign-in, to open boards from their own device (optional)",
+                    "Sign-in (optional)",
                     "Git handles (optional)", "Group (optional)",
                 ],
                 "removals": [
@@ -604,7 +604,8 @@ fn a_reader_without_administer_is_shown_no_control_but_their_own_profile() {
                         mine: [document.querySelector('#you'), document.querySelector("form[aria-label='Your name']")].every(e => e === null),
                         addresses: [...document.querySelectorAll('.people-addresses')].map(p => p.closest('.people-person').id),
                         notices: [...document.querySelectorAll('.people-notices')].map(d => d.closest('.people-person').id),
-                        said: document.querySelector('.people-refused').textContent === 'Changing who is on the board needs administer.',
+                        // No line says why the controls are absent: the head is its title alone.
+                        head: document.querySelector('.people-head').textContent,
                         // What a group holds, read among it, as each of its powers includes read.
                         staff: [...document.querySelectorAll('#group-staff .people-power')].map(t => `${t.textContent}:${t.dataset.held}`),
                         bo: [...document.querySelectorAll('#person-bo .people-power')].map(t => `${t.textContent}:${t.dataset.held}`),
@@ -612,7 +613,7 @@ fn a_reader_without_administer_is_shown_no_control_but_their_own_profile() {
                 })()"#
             ),
             json!({
-                "outside": 0, "signin": false, "you": "you", "mine": true, "said": true,
+                "outside": 0, "signin": false, "you": "you", "mine": true, "head": "People",
                 "addresses": ["person-cy"], "notices": ["person-cy"],
                 "staff": ["read:own", "decide:own"],
                 "bo": ["read:own", "administer:own"],

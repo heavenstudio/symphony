@@ -1150,13 +1150,17 @@ fn put_together(read: &Read<'_>, root: &Path, pending: &Pending, kept: &Kept) ->
             };
             let folder = read::folder(&project.artifacts, &record.slug);
             // The person at the machine decides on every board, under the name they gave
-            // themselves as under `owner`, which no row of the board says.
-            let machine = kept.machine_person();
-            let deciders = if needed.iter().any(|need| need == symphony_api::gates::OWNER) {
-                symphony_board::people::with_machine((read.deciders)(), machine.as_ref())
-            } else {
-                Vec::new()
-            };
+            // themselves as under `owner`, which no row of the board says: read from the machine
+            // folder only for a task that needs the owner's stamp, as the land reads it.
+            let (deciders, machine) =
+                if needed.iter().any(|need| need == symphony_api::gates::OWNER) {
+                    let machine = kept.machine_person();
+                    let deciders =
+                        symphony_board::people::with_machine((read.deciders)(), machine.as_ref());
+                    (deciders, machine)
+                } else {
+                    (Vec::new(), None)
+                };
             let by_cards = |tip: &str| {
                 let default_tip = default_tip.as_deref();
                 (kept.inputs).posted(root, &record.slug, tip, default_tip, &deciders)

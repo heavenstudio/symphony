@@ -2564,8 +2564,10 @@ the profile's write with `machine: true`. A profile of that name holding no sign
 theirs, with what it holds, so one they added to a board before naming themselves is theirs. A
 name someone signs in as, a group's, a person's that a board holds with no profile here, a second
 name or a sign-in is refused in words saying what to choose instead, with nothing written. Once
-named, the section shows how they read and a form for their display name and git handles. Nobody
-else sees it, and the write from anyone else is a 403, `Forbidden: only the person at the machine
+named, the section shows how they read and a form for their display name and git handles, and
+their profile takes no sign-in from any write: they are known by where they are, and a login
+under their name would write as them with another's powers. A card a board holds of their name
+draws no sign-in field, and the server admits no login by that profile. Nobody else sees it, and the write from anyone else is a 403, `Forbidden: only the person at the machine
 gives themselves its name`. The header shows the reader by how they are shown (`owner` until the
 person at the machine names themselves) and links to the You section, or to a person's own card.
 The pages draw a line written as `owner`, or under that short name, with the name the person at the
@@ -2574,7 +2576,8 @@ written.
 
 Who writes a profile:
 
-- the person at the machine writes any profile, its sign-ins among them;
+- the person at the machine writes any profile, its sign-ins among them, but their own, which
+  takes none;
 - a person writes their own display name, git handles, addresses and the ways their notices go
   by, from their own row, and no sign-in;
 - a board's admin makes a profile only for someone the machine holds none of, with a display
