@@ -1040,7 +1040,9 @@ A land keeps a journal of the delivery in the lands' folder, written before each
    eligible at its head is refused before anything is published.
 2. **Eligible.** `publish` makes the head and its evidence public and answers the pull request,
    which the task is bound to from then on. The evidence is read again: of another revision, it is
-   published again or refused, never merged as it was.
+   published again or refused, never merged as it was. Each `publish` names the pull request the
+   journal binds (`pull`), or none once the journal of one closed unmerged is dropped, so the
+   program binds another only once no journal names the one closed.
 3. **Armed.** `arm` turns on the host's own merge of that head, by the squash and the text a
    merge asks: the host merges it once every check it requires passes, `symphony/eligible` among
    them, and the watcher closes the task ([below](#a-land-dispatched-at-review)). A pull request

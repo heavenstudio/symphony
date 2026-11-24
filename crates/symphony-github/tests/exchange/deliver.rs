@@ -237,12 +237,17 @@ impl Delivery {
     }
 
     pub(crate) fn publish(&self, snapshot: &Value) -> Value {
+        self.publish_naming(snapshot, None)
+    }
+
+    /// [`Delivery::publish`] naming `pull`, the pull request the land's journal binds, or none.
+    pub(crate) fn publish_naming(&self, snapshot: &Value, pull: Option<i64>) -> Value {
         self.ask(
             "publish",
             &json!({
                 "verb": "publish", "slug": SLUG, "by": "amber-fox-1", "head": snapshot["head"],
                 "branch": "main", "title": "sim/jump: the private title",
-                "body": "the private brief", "snapshot": snapshot,
+                "body": "the private brief", "snapshot": snapshot, "pull": pull,
             }),
         )
     }
@@ -673,6 +678,161 @@ fn arm_and_merge_after_a_publish_see_the_head_it_pushed() {
         let answer = at(&d, verb, 100, NEXT);
         let done = if verb == "arm" { "mergeable" } else { "merged" };
         assert_eq!(answer["state"], done, "{verb}: {answer}");
+    }
+}
+
+/// Whether a request asked since the `from`th names pull request `number`, by its path or its
+/// node.
+fn asked_of(d: &Delivery, from: usize, number: i64) -> Vec<String> {
+    let node = format!("PR_node{number}");
+    let path = format!("/pulls/{number}");
+    (d.rig.github.asked().into_iter().skip(from))
+        .map(|(method, at, body)| format!("{method} {at} {}", body.unwrap_or_default()))
+        .filter(|asked| asked.contains(&node) || asked.contains(&format!("{path} ")))
+        .collect()
+}
+
+#[test]
+fn a_pull_request_closed_unmerged_is_forgotten_once_the_land_names_it_no_more() {
+    // Closed by someone at GitHub, or by the exchange's own `close`, then dispatched again at its
+    // head as it was or at a new one.
+    for (closed_by, next) in [("someone", HEAD), ("close", NEXT), ("someone", NEXT)] {
+        let case = format!("closed by {closed_by}, next at {}", next.get(..7).unwrap());
+        let d = Delivery::new("deliver-closed", "");
+        let first = d.publish(&snapshot(HEAD, "met", "r1"));
+        assert_eq!(first["pull"]["number"], 100, "{case}");
+        match closed_by {
+            "close" => assert_eq!(d.end("close", 100)["state"], "closed", "{case}"),
+            _ => d.rig.github.set_pull(100, &json!({"state": "closed"})),
+        }
+        // Named still by the land's journal: bound as it was, refused, and nothing opened. The
+        // land reads it closed next and drops its journal.
+        let named = d.publish_naming(&snapshot(next, "met", "r2"), Some(100));
+        assert_eq!(
+            named,
+            json!({
+                "state": "refused",
+                "why": "pull request #100 of o/n is closed: nothing more is published to it",
+            }),
+            "{case}"
+        );
+        assert_eq!(d.rig.state().pulls[SLUG].number, 100, "{case}");
+        assert_eq!(d.rig.github.pulls().len(), 1, "{case}");
+        assert_eq!(
+            d.result(100)["state"],
+            "closed",
+            "{case}: still read as the land asks"
+        );
+        // Its next publication names none: forgotten, journaled, and another opened and bound.
+        let from = d.rig.github.asked().len();
+        let answer = d.publish(&snapshot(next, "met", "r2"));
+        assert_eq!(
+            answer,
+            json!({
+                "state": "published", "repository": {"id": 77, "name": "o/n"}, "head": next,
+                "pull": {"number": 101, "url": "https://github.com/o/n/pull/101"},
+            }),
+            "{case}"
+        );
+        let kept = d.rig.state().pulls[SLUG].clone();
+        assert_eq!(
+            (kept.number, kept.task, kept.landed),
+            (101, 7, None),
+            "{case}"
+        );
+        let unbound: Vec<_> = (d.rig.journal().into_iter())
+            .filter(|entry| entry.kind == "unbound")
+            .map(|entry| (entry.target, entry.result))
+            .collect();
+        assert_eq!(unbound, [(SLUG.to_string(), json!(100))], "{case}");
+        // The one closed receives nothing: no request names it but the one read that found it
+        // closed, and it stays closed at the head it was closed at.
+        assert_eq!(
+            asked_of(&d, from, 100),
+            ["GET /repos/o/n/pulls/100 "],
+            "{case}: read once, written to never"
+        );
+        let pulls = d.rig.github.pulls();
+        assert_eq!(
+            (&pulls[0]["state"], &pulls[0]["head"]["sha"]),
+            (&json!("closed"), &json!(HEAD)),
+            "{case}"
+        );
+        assert_eq!(
+            (
+                &pulls[1]["state"],
+                &pulls[1]["head"]["sha"],
+                &pulls[1]["title"]
+            ),
+            (&json!("open"), &json!(next), &json!(SLUG)),
+            "{case}"
+        );
+        assert_eq!(d.rig.github.checks(next).len(), 5, "{case}");
+        // Asked again as the land now asks, naming the new one: found, and nothing made twice.
+        let writes = d.writes();
+        assert_eq!(
+            d.publish_naming(&snapshot(next, "met", "r2"), Some(101)),
+            answer
+        );
+        assert_eq!(d.writes(), writes, "{case}");
+        // What the land asks of it next reads the new one; the one closed is bound no more.
+        assert_eq!(d.result(101)["state"], "open", "{case}");
+        assert!(
+            (d.result(100)["why"].as_str().unwrap())
+                .contains("is bound to pull request #101 of o/n"),
+            "{case}"
+        );
+        d.assert_no_token();
+    }
+}
+
+#[test]
+fn a_pull_request_merged_landed_or_not_shown_unmerged_stays_bound() {
+    let squash = "5".repeat(40);
+    for case in ["merged", "landed", "unshown"] {
+        let d = Delivery::new("deliver-closed-kept", "");
+        d.publish(&snapshot(HEAD, "met", "r1"));
+        match case {
+            "merged" => assert_eq!(d.merge(100)["state"], "merged"),
+            "landed" => {
+                // Landed, then read closed unmerged, as it would were its merge undone by hand.
+                let request = json!({"verb": "landed", "slug": SLUG, "by": "amber-fox-1",
+                    "head": HEAD, "repository": 77, "pull": 100, "squash": squash});
+                assert_eq!(d.ask("landed", &request)["state"], "noted");
+                d.rig.github.set_pull(100, &json!({"state": "closed"}));
+            }
+            _ => {
+                d.rig
+                    .github
+                    .set_pull(100, &json!({"state": "closed", "merged": null}));
+            }
+        }
+        let answer = d.publish(&snapshot(NEXT, "met", "r2"));
+        let said = if case == "merged" { "merged" } else { "closed" };
+        assert_eq!(
+            answer["why"],
+            format!("pull request #100 of o/n is {said}: nothing more is published to it"),
+            "{case}"
+        );
+        assert_eq!(d.rig.github.pulls().len(), 1, "{case}: none opened");
+        assert_eq!(d.rig.state().pulls[SLUG].number, 100, "{case}");
+        assert!(
+            !(d.rig.journal().iter()).any(|entry| entry.kind == "unbound"),
+            "{case}"
+        );
+    }
+}
+
+#[test]
+fn an_open_pull_request_stays_bound_whatever_the_land_names() {
+    for named in [None, Some(100), Some(101)] {
+        let d = Delivery::new("deliver-open-kept", "");
+        d.publish(&snapshot(HEAD, "met", "r1"));
+        let answer = d.publish_naming(&snapshot(NEXT, "met", "r2"), named);
+        assert_eq!(answer["state"], "published", "{named:?}: {answer}");
+        assert_eq!(answer["pull"]["number"], 100, "{named:?}");
+        assert_eq!(d.rig.github.pulls().len(), 1, "{named:?}");
+        assert_eq!(d.rig.state().pulls[SLUG].number, 100, "{named:?}");
     }
 }
 

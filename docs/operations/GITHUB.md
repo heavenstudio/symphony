@@ -272,8 +272,10 @@ no worktree and no commit, and backed up with the repository's common dir or not
   task's number with the board's recovery generation, the issue's number and ids, each side's
   digest), the curated texts, and what pauses the exchange.
 - `state.json` holds as well the pull request each delivered task is bound to, with the task's
-  number and, once it landed, the commit, the issues dropped from each task's mapping, and the
-  GitHub Release each release's tag is published as, with its number, its page and the commit.
+  number and, once it landed, the commit (one closed unmerged is dropped, journaled as
+  `unbound`, at the publication that binds the next), the issues dropped from each task's
+  mapping, and the GitHub Release each release's tag is published as, with its number, its page
+  and the commit.
 - `preview.json`: the preview that waits.
 - `journal.jsonl`: a line before each operation is dispatched (its id, target, the digest of
   what it writes, what it expects to find, the settings' revision, who ran it) and a line with
@@ -347,7 +349,12 @@ evidence, and it reads no board for it.
   a few seconds after the push, so one still at the head it was read at before the push is read
   again after the same rests, once the checks stand, and `published` names the head pushed; one
   that has not moved then is answered `unavailable`, and the next run reads it first. A head
-  that is neither, as someone else pushed, is answered as it is, and the land refuses it.
+  that is neither, as someone else pushed, is answered as it is, and the land refuses it. A pull
+  request bound to the task that GitHub shows closed unmerged, never landed, is forgotten before
+  the push where the request's `pull` (the one the land's journal binds) does not name it, as the
+  land drops its journal once it reads one closed: the push finds or opens another, and nothing
+  is written to the one closed. One the request still names stays bound, and the publication is
+  refused as closed. A merged one is never forgotten.
 - **`arm`** reads the protection again, refusing as `publish` does, then turns on GitHub's
   auto-merge of the bound pull request at the head it is given (`expectedHeadOid`), by the method
   and commit text `merge` would ask for. GitHub then merges it itself once every check the branch

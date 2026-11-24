@@ -23,7 +23,10 @@
 //!   progress, which holds a required check and so GitHub's merge until it completes. A check
 //!   that stands is found by its name and what it says, so a second run writes none;
 //!   `symphony/eligible` is written last when it passes and first otherwise, so it never passes
-//!   over a stamp not yet written.
+//!   over a stamp not yet written. A pull request bound to the task that GitHub shows closed
+//!   unmerged, and that the request's `pull` (the one the land's journal binds) does not name, is
+//!   forgotten before the push, as the land drops its binding of one closed: another is found or
+//!   opened ([`Run::before`]).
 //! - `arm` turns on GitHub's auto-merge for the bound pull request at the head it is given
 //!   (`expectedHeadOid`), by the squash and the text `merge` would ask for, after reading the
 //!   protection as `merge` does: GitHub then merges it itself once every required check passes,
@@ -914,7 +917,7 @@ impl Run<'_> {
             Some(_) => self.upstream(&host, request, id)?,
             None => Value::Null,
         };
-        let before = self.before(&host, &snapshot)?;
+        let before = self.before(&host, &snapshot, request["pull"].as_i64())?;
         (remote.push(&head, &snapshot.slug)).map_err(|why| {
             refused(format!(
                 "{} was not pushed to the branch {} of {name}: {}",
@@ -965,12 +968,38 @@ impl Run<'_> {
 
     /// The head the pull request bound to the task of `snapshot` already is at, read before a
     /// push to its branch, which GitHub moves it from a little after; none where none is bound.
-    fn before(&self, host: &Host<'_>, snapshot: &Snapshot) -> Result<Option<Value>, Stopped> {
+    ///
+    /// One read closed unmerged, never landed, that the land no longer names (`named`, the pull
+    /// request its journal binds, which it drops once it reads that one closed) is forgotten
+    /// first, journaled, and none is bound: nothing is published to it again, and [`Run::pull`]
+    /// finds or opens another (docs/workflow/TASKS.md, "The pull request closed unmerged"). One
+    /// the land still names stays bound, and its publication is refused as closed until the land
+    /// reads it so. A merged one is never forgotten.
+    fn before(
+        &mut self,
+        host: &Host<'_>,
+        snapshot: &Snapshot,
+        named: Option<i64>,
+    ) -> Result<Option<Value>, Stopped> {
         let kept = (self.state.pulls.get(&snapshot.slug)).filter(|kept| kept.task == snapshot.task);
-        let Some(kept) = kept else {
+        let Some(kept) = kept.cloned() else {
             return Ok(None);
         };
         let was = host.read(&format!("/pulls/{}", kept.number), "the pull request")?;
+        let unmerged = was["state"] == json!("closed") && was["merged"] == json!(false);
+        if unmerged && kept.landed.is_none() && named != Some(kept.number) {
+            let number = kept.number.to_string();
+            self.journal(
+                Event::Ack,
+                "unbound",
+                &snapshot.slug,
+                &number,
+                json!(kept.number),
+            );
+            self.state.pulls.remove(&snapshot.slug);
+            self.store.save(&self.state).map_err(unavailable)?;
+            return Ok(None);
+        }
         Ok(Some(was["head"]["sha"].clone()))
     }
 
