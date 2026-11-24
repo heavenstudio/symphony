@@ -463,3 +463,23 @@ fn a_removed_name_is_retired_on_the_board_and_in_the_machines_profiles() {
         "a kept profile stays its person's to change"
     );
 }
+
+/// A removal whose name the machine's profiles cannot retire takes no one off the board: the board
+/// never frees a name the machine has not retired.
+#[test]
+fn a_removal_the_machine_cannot_retire_leaves_the_person_on_the_board() {
+    let (c, me, machine) = case("people-unretired");
+    c.ok(&me, &["people", "add", "ana", "--power", "speak"]);
+    std::fs::remove_file(machine.join(symphony_board::people::LOCK)).unwrap();
+    std::fs::create_dir_all(machine.join(symphony_board::people::LOCK)).unwrap();
+    let (code, said) = fails(&c, &me, &["people", "remove", "ana"]);
+    assert_eq!(code, 2, "a failure, not a refusal: {said}");
+    assert!(
+        said.contains("ana could not be retired in the machine's profiles"),
+        "{said}"
+    );
+    assert!(said.contains("nothing was written"), "{said}");
+    let listed = c.ok(&me, &["people", "list"]);
+    assert!(listed.starts_with("ana  read, speak"), "{listed}");
+    assert_eq!(c.ok(&me, &["people", "log"]).lines().count(), 1);
+}
