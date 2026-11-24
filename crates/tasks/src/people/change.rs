@@ -387,7 +387,11 @@ fn fill(profiles: &mut Profiles, name: &str, given: &Given) {
             }
         } else {
             // It replaces the first; those beyond it stay, but for a copy of it.
-            let rest = profile.emails.iter().skip(1).filter(|held| *held != address);
+            let rest = profile
+                .emails
+                .iter()
+                .skip(1)
+                .filter(|held| *held != address);
             profile.emails = std::iter::once(address).chain(rest).cloned().collect();
         }
     }
