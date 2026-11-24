@@ -4,7 +4,7 @@
 // figures, each a link to its chart, then four charts (chart.tsx): the dearest ten as bars, the
 // median by kind as bars, the mean by review rounds as columns, and every task as a dot of its cost
 // against the lines its landing changed. A kind is drawn in its own colour, a task given none grey
-// and last. What no figure counts is said under them, as is what every dollar is.
+// and last. What every dollar is, its unit, is said under them.
 
 import { type ReactNode, useState } from "react";
 import {
@@ -28,7 +28,6 @@ import { field } from "./shared";
 import { amount, dollars, estimate } from "./spend";
 import { NearViewport } from "./viewport";
 import type { Grain, KindRow, LandedFigures, LandedPage, LandedRow, ReviewRow } from "./wire";
-import { MONTHS } from "./words";
 
 /** Each kind's colour, the same on every chart: a red's the palette's red-orange. */
 const KIND_COLOURS: Record<string, string> = {
@@ -327,10 +326,6 @@ export function dearestChart(page: LandedPage, hidden: string[]): RowsData {
   return {
     id,
     title: "Dearest tasks",
-    note:
-      `${n > DEAREST ? `The ${DEAREST} top-level tasks landed in the window that cost the most` : "Every top-level task landed in the window, the dearest first"}, ` +
-      "each with its subtasks: the work up to its first review, and every round after it. Each " +
-      "name opens the task.",
     unit: "dollars",
     series: ["First round", "Review rounds"].map((name) => ({
       name,
@@ -366,27 +361,11 @@ function kindSaid(kind: KindRow): string[] {
   ];
 }
 
-/** The day a kind was first met in the window, as the By kind chart's note says it. */
-function day(at: number): string {
-  const date = new Date(at * 1000);
-  return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()] ?? ""} ${date.getUTCFullYear()}`;
-}
-
 /** The median a task of each kind as bars, each in its kind's colour, No kind last. */
 export function kindsChart(page: LandedPage): RowsData {
-  const none = page.kinds.some((kind) => kind.kind === null);
-  const from =
-    page.kinds_from === null
-      ? " No task landed in the window was filed with a kind."
-      : none
-        ? ` The first with a kind landed ${day(page.kinds_from)}.`
-        : "";
   return {
     id: "kinds",
     title: "By kind",
-    note:
-      "The median cost of a task landed in the window, by the kind it was filed with, the kinds " +
-      `that cost the most in all first; a task landed before kinds were kept counts under No kind.${from}`,
     unit: "dollars",
     series: [{ name: "Median a task", hidden: false }],
     rows: page.kinds.map((kind) => ({
@@ -446,9 +425,6 @@ export function roundsChart(page: LandedPage, hidden: string[]): ChartData {
   return {
     id,
     title: "By review rounds",
-    note:
-      "The mean cost of a task landed in the window, by how many reviews it took: its first " +
-      "round, and the review rounds after it.",
     unit: "dollars",
     series: (
       [
@@ -473,13 +449,6 @@ export function roundsChart(page: LandedPage, hidden: string[]): ChartData {
 /** The axis of `roundsChart`'s columns, each named as the readout says it. */
 export function roundsAxis(page: LandedPage) {
   return categoryAxis(page.reviews.map(landedAfter));
-}
-
-/** `parts` joined as a sentence lists them: `a`, `a and b`, `a, b and c`. */
-function listed(parts: string[]): string {
-  return parts.length < 2
-    ? (parts[0] ?? "")
-    : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
 /** Every task as a dot, its cost against its lines, in its kind's colour. */
@@ -511,14 +480,10 @@ export function spreadChart(page: LandedPage, hidden: string[]): DotsData {
   return {
     id,
     title: "Every task, cost against size",
-    note:
-      "Each top-level task landed in the window, its cost with its subtasks against the lines its " +
-      "landing changed, both on a log scale: a dot above the others cost more for its size. " +
-      "Generated files and lock files are left out." +
-      (left.length > 0 ? ` No dot for ${listed(left)}.` : ""),
     xUnit: "count",
     yUnit: "dollars",
     xName: "lines changed",
+    undrawn: left,
     series: kinds.map((kind) => ({
       name: kindName(kind),
       colour: kindColour(kind),
@@ -560,28 +525,11 @@ export function spreadChart(page: LandedPage, hidden: string[]): DotsData {
   };
 }
 
-/** What no figure of the tab counts, said under it. */
-export const LEFT_OUT =
-  "No figure here counts a Codex session's tokens, which no hook records, so a task a Codex " +
-  "agent worked looks cheap; the orchestrators' tokens, which are on no task and count only in " +
-  "All in, under Over time; or a session's last answer after its last tool call.";
-
-/** The sentence that opens the tab, saying what it counts. */
-export function landedIntro(page: LandedPage): string {
-  const n = page.tasks.length;
-  const tasks =
-    n === 1 ? "The one top-level task" : `The ${n.toLocaleString("en-US")} top-level tasks`;
-  return (
-    `${tasks} landed in the window with tokens recorded, each priced once with its subtasks, at ` +
-    `its landing: by task, not by ${page.grain}.`
-  );
-}
-
 /** What the tab says in place of its charts when no task landed with tokens recorded. */
 export function landedEmpty(page: LandedPage): string {
   return page.without === 0
     ? "No top-level task landed in the window."
-    : `${counted(page.without, "top-level task")} landed in the window, none with tokens recorded: no figure to draw.`;
+    : `${counted(page.without, "top-level task")} landed in the window, none with tokens recorded.`;
 }
 
 /** The four figures, each a link to its chart while the charts are drawn. */
@@ -638,7 +586,6 @@ export function LandedView({ page, hidden, onToggle, lands }: LandedViewProps) {
   );
   return (
     <section className="reports-section reports-landed" aria-label="Landed tasks">
-      {drawn && <p className="reports-sub">{landedIntro(page)}</p>}
       {unread > 0 && (
         <details className="reports-unread">
           <summary>
@@ -690,10 +637,8 @@ export function LandedView({ page, hidden, onToggle, lands }: LandedViewProps) {
         </section>
       )}
       <p className="reports-note">
-        {`Every dollar here is ${estimate(page.prices === "" ? "on a day not named" : page.prices)}; ` +
-          "a figure marked + unpriced leaves out the tokens of a model the price table does not name."}
+        {`Every dollar here is ${estimate(page.prices === "" ? "on a day not named" : page.prices)}.`}
       </p>
-      <p className="reports-note">{LEFT_OUT}</p>
     </section>
   );
 }

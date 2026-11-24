@@ -385,7 +385,7 @@ fn a_reader_without_administer_is_shown_no_control_but_their_own_profile() {
                         outside: controls.filter(e => !e.closest('#person-cy .people-profile')).length,
                         signin: document.querySelector('input[aria-label="Sign-in of cy"]') !== null,
                         you: document.querySelector('#person-cy .people-you')?.textContent,
-                        said: document.querySelector('.people-sub').textContent.includes('needs administer'),
+                        said: document.querySelector('.people-refused').textContent === 'Changing who is on the board needs administer.',
                         // What a group holds, read among it, as each of its powers includes read.
                         staff: [...document.querySelectorAll('#group-staff .people-power')].map(t => `${t.textContent}:${t.dataset.held}`),
                         bo: [...document.querySelectorAll('#person-bo .people-power')].map(t => `${t.textContent}:${t.dataset.held}`),

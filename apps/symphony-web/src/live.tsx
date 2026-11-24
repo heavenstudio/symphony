@@ -316,7 +316,7 @@ async function readBoard<B extends PageBoard>(
   return read;
 }
 
-const REMOVED_DOCUMENT_NOTICE = "This document was removed. Your draft is kept on this device.";
+const REMOVED_DOCUMENT_NOTICE = "This document was removed; your draft is kept.";
 
 export interface PageNoticesProps {
   reconnecting: boolean;

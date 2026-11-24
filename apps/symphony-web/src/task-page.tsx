@@ -498,7 +498,7 @@ export function Composer({ slug, roles, approval }: ComposerProps) {
       <Textarea
         id="task-message"
         value={draft}
-        placeholder="Message (⌘/Ctrl+Enter sends). Agents on this task hear it wherever they run."
+        placeholder="Message (⌘/Ctrl+Enter sends)"
         onChange={(event) => {
           const text = event.target.value;
           save(draftKey, text);
@@ -589,8 +589,7 @@ export function briefAdd(
   if (answer.revision !== revision) {
     return {
       ...held,
-      failed:
-        "The brief changed since this page was sent; the page shows the new one when it reloads.",
+      failed: "The brief changed since this page was sent: reload to read the new one.",
     };
   }
   return {
@@ -645,7 +644,7 @@ export function Brief({ slug, revision, blocks, omitted, next }: BriefProps) {
       {remaining > 0 && (
         <>
           <p className="brief-cut">
-            {`This brief is long; ${remaining} bytes of it are not shown yet. `}
+            {`${remaining} bytes of the brief are not shown yet. `}
             <Button id="brief-more" disabled={busy} onClick={() => void loadMore()}>
               Show more of the brief
             </Button>
@@ -958,7 +957,7 @@ export function LiveTaskPage({ live, connected }: { live: LiveTask; connected: b
       {missing ? (
         <Trouble
           title={`No task ${slug}`}
-          text="The board has no task by this name: it may have been removed, or the link names it wrongly."
+          text="The board has no task by this name."
           back={["/tasks", "All tasks"]}
           retry={() => live.again()}
         />

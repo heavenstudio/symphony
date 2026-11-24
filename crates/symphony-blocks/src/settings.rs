@@ -140,7 +140,10 @@ pub struct SettingsEntry {
     /// Stable among the page's entries: its anchor.
     pub id: String,
     pub name: String,
-    /// What it is for.
+    /// What it is for, which no page draws (RULES.md `code/pages-explain-nothing`): kept, and
+    /// read when left out, for the plugins that write it, until a later release removes it
+    /// (`code/consumer-api-two-releases`).
+    #[serde(default)]
     pub about: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<EntryState>,

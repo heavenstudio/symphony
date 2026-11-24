@@ -224,8 +224,7 @@ function AsksBody({ path, scope }: AsksProps) {
       <p className="muted">
         {recipient !== null
           ? `Chat goes to ${recipient}.`
-          : "Nobody is registered to receive chat. Your question is queued."}
-        {" Questions go after a day without activity."}
+          : "Nobody is registered to receive chat; your question is queued."}
       </p>
       {trouble !== null && <p role="status">{`Questions could not be refreshed: ${trouble}`}</p>}
       <NewAsk path={path} scope={scope} onSent={onSent} />

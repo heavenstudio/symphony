@@ -590,15 +590,7 @@ export type SettingsFile = {
   found: boolean;
 };
 
-export type SettingsSection = {
-  id: string;
-  title: string;
-  /**
-   * One line under the heading.
-   */
-  about: string;
-  entries: Array<SettingsEntry>;
-};
+export type SettingsSection = { id: string; title: string; entries: Array<SettingsEntry> };
 
 export type SettingsEntry = {
   /**
@@ -607,7 +599,9 @@ export type SettingsEntry = {
   id: string;
   name: string;
   /**
-   * What it is for.
+   * What it is for, which no page draws (RULES.md `code/pages-explain-nothing`): kept, and
+   * read when left out, for the plugins that write it, until a later release removes it
+   * (`code/consumer-api-two-releases`).
    */
   about: string;
   state?: EntryState | null;

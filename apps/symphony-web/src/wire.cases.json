@@ -4245,7 +4245,6 @@
         {
           "id": "integrations",
           "title": "Integrations and tools",
-          "about": "About Integrations and tools.",
           "entries": [
             {
               "id": "herdr",
@@ -4299,7 +4298,6 @@
         {
           "id": "models",
           "title": "Models and limits",
-          "about": "About Models and limits.",
           "entries": [
             {
               "id": "models",
@@ -4349,8 +4347,7 @@
         },
         {
           "id": "reviewed",
-          "title": "Shown here, changed by a reviewed task",
-          "about": "About Shown here, changed by a reviewed task.",
+          "title": "Reviewed settings",
           "entries": [
             {
               "id": "landing",
@@ -4394,7 +4391,6 @@
         {
           "id": "device",
           "title": "This device",
-          "about": "About This device.",
           "entries": [
             {
               "id": "appearance",

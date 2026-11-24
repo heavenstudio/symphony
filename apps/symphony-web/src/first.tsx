@@ -1,11 +1,11 @@
-// What an empty page says of how its first thing is made: one line, and the guide a new project
-// starts from.
+// What an empty page says: one line that it has nothing yet, and the guide a new project starts
+// from.
 
 import type { ReactNode } from "react";
 import { GETTING_STARTED } from "./wire";
 
-/** An empty page's one line on what makes its first thing (`children`), then the guide's link,
- * which leaves the Symphony and so opens beside it. */
+/** An empty page's one line (`children`), then the guide's link, which leaves the Symphony and so
+ * opens beside it. */
 export function FirstSteps({ children }: { children: ReactNode }) {
   return (
     <p className="first-steps">

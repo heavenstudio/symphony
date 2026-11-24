@@ -44,7 +44,7 @@ export function age(posted: string | null | undefined, now: number): string {
 export function lead(waiting: number, docs: number): string {
   if (waiting === 0) return "Your queue is empty.";
   const waits = waiting === 1 ? "card waits" : "cards wait";
-  return `${waiting} ${waits} on you across ${docs} ${plural(docs, "document")}. Start with the one below.`;
+  return `${waiting} ${waits} on you across ${docs} ${plural(docs, "document")}.`;
 }
 
 /** `part` of `whole` in percent; 0 of nothing. */
@@ -88,7 +88,7 @@ export function BoardView({
       <div className="dash-head page-head">
         <div>
           <h1>{greeting(now)}</h1>
-          <p className="lead">{lead(counts.waiting, counts.docs_waiting)}</p>
+          <p className="head-state">{lead(counts.waiting, counts.docs_waiting)}</p>
         </div>
         <p className="dash-links">
           <a className="pill" href={href("/queue")}>
@@ -146,16 +146,12 @@ const Hero = memo(function Hero({
         <div className="hero-text">
           <p className="eyebrow">Next up</p>
           <h2 className="hero-title">Nothing waits on you. ✦</h2>
-          <p className="hero-summary">
-            Every card has your verdict, and the agents have the next move. Enjoy the quiet.
-            {spot > 0 && (
-              <>
-                {" While you are here: "}
-                <a href={href("/queue#spot")}>{`${spot} auto-approved ${plural(spot, "card")}`}</a>
-                {" could use a glance."}
-              </>
-            )}
-          </p>
+          {spot > 0 && (
+            <p className="hero-summary">
+              <a href={href("/queue#spot")}>{`${spot} auto-approved ${plural(spot, "card")}`}</a>
+              {" to spot-check."}
+            </p>
+          )}
         </div>
       </section>
     );
@@ -271,7 +267,6 @@ const Tiles = memo(function Tiles({ counts }: { counts: Counts }) {
         value={String(counts.spot_check)}
         label="auto-approved to spot-check"
         tone="auto"
-        hint="your verdict overrides"
       />
       {/* Today's replies are listed in the activity panel, no page of their own: the tile opens
           that panel, as the header's activity button does. */}
@@ -283,7 +278,6 @@ const Tiles = memo(function Tiles({ counts }: { counts: Counts }) {
       >
         <b>{counts.answered_today}</b>
         <span>answered by agents today</span>
-        <small>replies to you</small>
       </button>
       {/* The status's count: the board's In progress column leaves out its Build and Test. */}
       <Tile
@@ -291,25 +285,24 @@ const Tiles = memo(function Tiles({ counts }: { counts: Counts }) {
         value={tasks ? `${tasks.in_progress} · ${tasks.in_review}` : "–"}
         label="tasks in progress · in review"
         tone="tasks"
-        hint="in progress includes Build and Test"
       />
       <Tile
         to="/agents"
         value={tasks ? String(tasks.agents_live) : "–"}
         label="agents live"
         tone="agents"
-        hint="working now"
       />
     </div>
   );
 });
 
-function Tile(props: { to: string; value: string; label: string; tone: string; hint: string }) {
+/** A count and its label, with `hint` under them where a value of its own says more. */
+function Tile(props: { to: string; value: string; label: string; tone: string; hint?: string }) {
   return (
     <a className={`tile card tone-${props.tone}`} href={href(props.to)}>
       <b>{props.value}</b>
       <span>{props.label}</span>
-      <small>{props.hint}</small>
+      {props.hint !== undefined && <small>{props.hint}</small>}
     </a>
   );
 }

@@ -119,7 +119,7 @@ where. A bar says when an agent held a role, not that it worked the whole time.
 
 **Messages, in send order**, under the lanes, picks one message, or steps through them with
 **Previous message** and **Next message**, and shows who sent it, to whom, and its text, with a
-link to its place in the thread.
+link to its place in the thread. Over no message it is not drawn, and over one it has no steps.
 
 Times are the server's clock. The timeline is read again every minute while the task is open.
 

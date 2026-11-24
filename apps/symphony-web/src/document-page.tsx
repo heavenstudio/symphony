@@ -898,12 +898,7 @@ export function bothShown(
 /** What a folder with no document says in their place: what makes the first one, and a card. */
 export function FirstDocument({ folder }: { folder: Folder }) {
   if (folder.intro !== null || folder.entries.length > 0) return null;
-  return (
-    <FirstSteps>
-      No document is here yet. A Markdown file in this folder is a page of its own, and a card in
-      its register waits for your verdict in the queue:
-    </FirstSteps>
-  );
+  return <FirstSteps>No document here yet.</FirstSteps>;
 }
 
 /** A folder's page: its head, its intro (a document drawn in it) and its entries. */

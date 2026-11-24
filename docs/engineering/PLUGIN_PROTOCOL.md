@@ -309,8 +309,10 @@ A plugin may describe its own entries on the project's Settings page
 (`Describer`, declared in `describers` by its id). The page's read asks each describer of each
 plugin the project selects, `describers.describe` (0.5), with the project's checkout, and its
 answer is one entry in the page's own shape (`SettingsEntry`, `symphony_plugin::vocabulary`): its
-name, what it is for, its state and why, what it needs and whether this machine has it, and its
-settings, each with its key, value, source, scopes and class. It is drawn after the Symphony's own
+name, its state and why, what it needs and whether this machine has it, and its settings, each with
+its key, value, source, scopes and class. Its `about`, what it is for, is read and drawn by no
+page, which explains nothing of itself (RULES.md `code/pages-explain-nothing`): a describer may
+leave it out. It is drawn after the Symphony's own
 entries in the integrations, by the component that draws theirs, its id the host's
 (`plugin-NAME-ID`, counted on from `-2` where an entry before took it, as two describers of one
 id do, or plugin `x`'s describer `y-z` beside plugin `x-y`'s `z`), and a plugin the project does

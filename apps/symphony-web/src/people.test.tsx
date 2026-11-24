@@ -691,9 +691,8 @@ describe("the page", () => {
     const html = draw({ ...SAMPLE, machine: false, you: "bo" }, writing().writes);
     expect(html).toContain('aria-label="Add a person"');
     expect(html).not.toContain('aria-label="Sign-in"');
-    expect(html).toContain(
-      "A profile is made for them where the machine holds none, with no sign-in: the person at the machine gives that",
-    );
+    // The form explains nothing of itself: no hint of what Add makes.
+    expect(html).not.toContain("A profile is made");
   });
 
   it("says a change of today by its time, and one of another day with its day", () => {
@@ -723,7 +722,9 @@ describe("the page", () => {
 
   it("draws a reader without administer no control but their own profile, and no sign-in to give", () => {
     const html = draw(READER, writing().writes);
-    expect(html).toContain("Changing who is on the board needs administer, which you do not hold.");
+    expect(html).toContain(
+      '<header class="people-head"><h1>People</h1><p class="people-refused">Changing who is on the board needs administer.</p></header>',
+    );
     expect(html).not.toContain('aria-label="Add a person"');
     expect(html).not.toContain("Take off the board");
     expect(html).not.toContain("aria-pressed");
@@ -737,9 +738,10 @@ describe("the page", () => {
 
   it("says an empty board, a problem, a failed read, and a write's words on the part that sent it", () => {
     const empty = draw(EMPTY, writing().writes);
-    expect(empty).toContain(
-      "Nobody is on this board but the person at the machine, who holds every power.",
-    );
+    // The head is its title alone, and an empty part says so in a line.
+    expect(empty).toContain('<header class="people-head"><h1>People</h1></header>');
+    expect(empty).toContain('<p class="people-empty">Nobody yet.</p>');
+    expect(empty).not.toContain("people-sub");
     expect(empty).toContain("No group yet.");
     expect(empty).toContain("No change yet.");
     expect(empty).not.toContain("needs administer");
