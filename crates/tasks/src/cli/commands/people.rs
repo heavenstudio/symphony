@@ -8,6 +8,7 @@
 use super::{Context, Stop};
 use crate::Store;
 use crate::people::change::{self, Given, Stopped, Writer};
+use crate::people::ownership::{Line, Map, Place};
 use crate::people::{Change, Holder, People, Power, Profile, Profiles, Signin, ways};
 use crate::sys::local_minute;
 use serde_json::{Value, json};
@@ -35,6 +36,30 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let change: Pending<'_> = match (action.as_str(), words.as_slice()) {
         ("list", []) => return list(store, c),
         ("log", []) => return log(store, c),
+        ("map", []) => return map(store, c),
+        ("map", [place, group]) => Box::new(move |c| {
+            let place = parsed_place(place)?;
+            let said = match store.map_place(&place, group, &c.actor()?)? {
+                Some(line) => format!(
+                    "{} maps to the group {group} (change {} of the map)",
+                    place.said(),
+                    line.n
+                ),
+                None => format!("{} maps to {group} already: nothing written", place.said()),
+            };
+            c.say(&said);
+            Ok(())
+        }),
+        ("unmap", [place]) => Box::new(move |c| {
+            let place = parsed_place(place)?;
+            let line = store.unmap_place(&place, &c.actor()?)?;
+            c.say(&format!(
+                "{} is off the map (change {} of the map): its things go to the board's default",
+                place.said(),
+                line.n
+            ));
+            Ok(())
+        }),
         ("add", [name]) => Box::new(move |c| add(store, c, name)),
         ("remove", [name]) => Box::new(move |c| {
             let line = store.remove_person(name, &c.actor()?)?;
@@ -84,8 +109,9 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             return Err(Stop::Refused(format!(
                 "people takes list, log, add NAME, remove NAME, join NAME GROUP, leave NAME \
                  GROUP, grant NAME POWER…, revoke NAME POWER…, grant --group GROUP POWER…, \
-                 revoke --group GROUP POWER…, group add GROUP [POWER…], group remove GROUP or \
-                 profile NAME, not {other:?} with those arguments"
+                 revoke --group GROUP POWER…, group add GROUP [POWER…], group remove GROUP, \
+                 profile NAME, map, map PLACE GROUP or unmap PLACE, not {other:?} with those \
+                 arguments"
             )));
         }
     };
@@ -267,6 +293,51 @@ fn log(store: &Store, c: &mut Context) -> Result<(), Stop> {
         c.say(&logged(change));
     }
     Ok(())
+}
+
+/// The map of places to groups, then every change of it and every hand-over, oldest first.
+fn map(store: &Store, c: &mut Context) -> Result<(), Stop> {
+    let lines = store.ownership_log()?;
+    let map = Map::of(&lines);
+    if c.parsed.flag("json") {
+        c.say(&serde_json::to_string_pretty(&mapped(&map, &lines)).expect("the map is JSON"));
+        return Ok(());
+    }
+    if map.is_empty() {
+        c.say(
+            "the map names no place: every card and task with no name written on it goes to the \
+             board's default, the person at the machine",
+        );
+    }
+    for (place, group) in map.entries() {
+        c.say(&format!("{place}  {group}"));
+    }
+    for line in &lines {
+        c.say(&format!(
+            "{}  {}  {}",
+            local_minute(line.at),
+            line.n,
+            line.said()
+        ));
+    }
+    Ok(())
+}
+
+/// What `people map --json` prints: each mapped place and its group, and the log's lines.
+pub fn mapped(map: &Map, lines: &[Line]) -> Value {
+    json!({
+        "revision": map.revision,
+        "map": map.entries().map(|(place, group)| json!({
+            "place": place.text(),
+            "group": group,
+        })).collect::<Vec<_>>(),
+        "log": lines,
+    })
+}
+
+/// The place `text` names, refused as a change that wrote nothing where it names none.
+fn parsed_place(text: &str) -> Result<Place, Stop> {
+    Place::parse(text).map_err(|why| Stop::Refused(format!("{why}: nothing was written")))
 }
 
 /// What `people list --json` prints.

@@ -19,6 +19,9 @@ export const SETTING_WRITE_PATH = "/api/setting";
 export const PEOPLE_PATH = "/api/people";
 export const PEOPLE_CHANGE_PATH = "/api/people-change";
 export const PROFILE_PATH = "/api/people-profile";
+export const CARD_OWNERS_PATH = "/api/card-owners";
+export const TASK_HAND_ROUTE = "/api/task-hand";
+export const CARD_HAND_ROUTE = "/api/card-hand";
 export const RUNS_PATH = "/api/runs";
 export const RUN_PATH = "/api/run";
 export const RUN_LOG_PATH = "/api/run-log";
@@ -1013,8 +1016,8 @@ export type ProfileWrite = {
    */
   signins?: Array<string>;
   /**
-   * The email a notice by mail goes to, put first among their emails; an empty one takes the
-   * first away.
+   * The email a notice by mail goes to, in place of the first of their emails, those after it
+   * kept; an empty one takes the first away.
    */
   email?: string | null;
   /**
@@ -1051,6 +1054,31 @@ export type MachineProfile = {
    */
   git?: Array<string>;
 };
+
+export type Owner = {
+  /**
+   * The group's or the person's short name, or `owner` for the person at the machine.
+   */
+  name: string;
+  /**
+   * `group`, `person` or `machine`.
+   */
+  kind: string;
+  /**
+   * What gave it: `named` (a name written on it), `map` or `default`.
+   */
+  by: string;
+  /**
+   * What gave it, as words a page shows beside the name: `named on it`, `from the area app`.
+   */
+  said: string;
+  /**
+   * Whom the one reading may hand it to, groups then people: empty where they may not.
+   */
+  hand_to?: Array<string>;
+};
+
+export type CardOwners = { cards: { [key in string]: Owner } };
 
 export type RunsPage = {
   /**
@@ -2561,6 +2589,10 @@ export type TaskPage = {
    * at none: a page draws their history only for a task that has some.
    */
   attempts?: number;
+  /**
+   * Whose the task is ([`Owner`]): none on a board that names nobody.
+   */
+  owner?: Owner | null;
 };
 
 export type TaskEntry = { message: Message; stamp: string; blocks: Array<Block> };

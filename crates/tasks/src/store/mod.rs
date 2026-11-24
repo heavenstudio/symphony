@@ -43,6 +43,7 @@ mod kept;
 mod launches;
 mod messages;
 mod opening;
+mod ownership;
 mod people;
 mod pool;
 mod postgres;

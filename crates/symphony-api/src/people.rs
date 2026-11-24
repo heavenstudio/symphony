@@ -235,8 +235,8 @@ pub struct ProfileWrite {
     /// Sign-ins added to it, each `SERVICE:SUBJECT`: the person at the machine's alone to give.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub signins: Vec<String>,
-    /// The email a notice by mail goes to, put first among their emails; an empty one takes the
-    /// first away.
+    /// The email a notice by mail goes to, in place of the first of their emails, those after it
+    /// kept; an empty one takes the first away.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
     /// Their Slack member id; an empty one takes it away.

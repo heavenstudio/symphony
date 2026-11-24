@@ -47,6 +47,53 @@ pub fn card_line(line: &str) -> Option<(char, &str, &str)> {
     Some((mark, slug, text))
 }
 
+/// How a card's text names the group or the person it is for, as `*Replaces:*` names the card it
+/// replaces: `*For:* design` (docs/product/analysis/users-and-identity.md, "Which group a thing
+/// belongs to"). The name overrides the board's map of places to groups where the board holds it.
+pub const FOR: &str = "*For:*";
+
+/// The name a card's `text` is written for ([`FOR`]): the first `*For:* NAME` in it, NAME a short
+/// name's letters, digits and hyphens ([`is_short_name`] judges it on a board, or `owner`). None
+/// where it names none.
+pub fn card_for(text: &str) -> Option<&str> {
+    let (_, rest) = text.split_once(FOR)?;
+    let name = rest.trim_start_matches(is_space);
+    if name.len() == rest.len() {
+        return None;
+    }
+    let length = name
+        .find(|c: char| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'))
+        .unwrap_or(name.len());
+    let name = name.get(..length)?.trim_end_matches('-');
+    (!name.is_empty()).then_some(name)
+}
+
+/// The card line `line` written for `name` ([`FOR`]): its `*For:* NAME` given the new name where
+/// it has one, else `*For:* NAME.` put first in its text, after the slug and its dash. None where
+/// `line` is no card's line or `name` no short name's form, nor `owner`.
+pub fn card_line_for(line: &str, name: &str) -> Option<String> {
+    if !(is_short_name(name) || name == "owner") {
+        return None;
+    }
+    let (_, _, text) = card_line(line)?;
+    // The card's text is the end of its line.
+    let head = line.strip_suffix(text)?;
+    if let Some(held) = card_for(text) {
+        let (before, rest) = text.split_once(FOR)?;
+        let name_at = rest.len() - rest.trim_start_matches(is_space).len();
+        let (gap, written) = rest.split_at_checked(name_at)?;
+        let after = written.strip_prefix(held)?;
+        return Some(format!("{head}{before}{FOR}{gap}{name}{after}"));
+    }
+    let gap = if head.ends_with(is_space) { "" } else { " " };
+    let rest = if text.is_empty() {
+        String::new()
+    } else {
+        format!(" {text}")
+    };
+    Some(format!("{head}{gap}{FOR} {name}.{rest}"))
+}
+
 /// The state a card's mark stands for.
 pub fn card_state(mark: char) -> &'static str {
     match mark {

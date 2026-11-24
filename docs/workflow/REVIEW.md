@@ -472,6 +472,11 @@ information its judgement call needs, and nothing more (`RULES.md`
 - A results or comparison card says how each option looks and how well it
   performs, one plain line each, such as "all three cost the same on the GPU,
   under 0.02 ms apart".
+- On a board that names people, a card that is a group's or a person's other
+  than its folder's says so first in its text: `- [ ] **new-palette** — *For:*
+  design. Which palette?`. The name is read where the board holds a group or a
+  person by it, and otherwise the folder's group decides; a hand-over from the
+  app rewrites it ([TASKS](TASKS.md#which-group-a-thing-belongs-to)).
 
 (`RULES.md` `docs/cards-clear-and-concise`.)
 

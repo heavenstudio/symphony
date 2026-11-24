@@ -114,6 +114,9 @@ pub struct NewTask {
     /// What its work is, one of [`crate::kind::KINDS`]; none leaves it without one, or `red` for a
     /// task filed with a red mark ([`crate::kind`]).
     pub kind: Option<String>,
+    /// The group or the person it is filed for, written on it ([`crate::people::ownership`]): none
+    /// leaves it to the group its area maps to.
+    pub group: Option<String>,
 }
 
 impl Default for NewTask {
@@ -132,6 +135,7 @@ impl Default for NewTask {
             instruction: false,
             red: None,
             kind: None,
+            group: None,
         }
     }
 }

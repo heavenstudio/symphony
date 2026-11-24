@@ -134,7 +134,7 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
             ),
             (
                 "people",
-                "people, groups and powers: list, log, add, grant, revoke",
+                "people, groups and powers: list, log, add, grant, revoke, map",
             ),
             (
                 "stamps",
@@ -641,37 +641,43 @@ direct_agents yet: until a board speaks to its agents for a person, every
 route that asks them for work is the person at the machine's alone.
 
 `list` prints each person with the powers they hold and their groups, and
-each group; `log` every change, numbered, with who made it. `add NAME` puts a
+each group; `log` every change, numbered, with who made it; `map` the map of
+places to groups, and every change of it and every hand-over. `add NAME` puts a
 person on the board, with --power and --group, and makes or fills their
 profile in the machine folder (people.json, mode 600) with --display,
 --signin SERVICE:SUBJECT (tailscale:LOGIN) and --git; `profile NAME` fills a
 profile alone. --email, --slack and --whatsapp set where notices reach them,
 each held to its sender's rule, an empty one taking it away; --notice
 KIND=WAY sends a card, question or verdict notice by email, slack or
-whatsapp, and KIND= by none, as the page and the Mac app show every notice. `remove NAME` takes a person off the board: their lines stay
-theirs, and their profile stays. `join NAME GROUP` and `leave NAME GROUP`;
+whatsapp, and KIND= by none, as the page and the Mac app show every notice.
+`remove NAME` takes a person off the board: their lines stay theirs, and
+their profile stays. `join NAME GROUP` and `leave NAME GROUP`;
 `grant NAME POWER...` and `revoke NAME POWER...`, or with --group GROUP the
 group's powers; `group add GROUP [POWER...]` and `group remove GROUP`, which
-takes its members out of it. People and groups share one name space, a short
+takes its members out of it. `map PLACE GROUP` gives a place a group and
+`unmap PLACE` takes it off the map, a place folder:ROUTE (a folder of
+documents, as docs/design), area:NAME (a task's area, as app), settings or
+default: a card or a task with no name written on it belongs to the group its
+place maps to, else the default's. People and groups share one name space, a short
 name no session's handle is, nor an adjective and a noun the board names
 sessions by (amber-heron). A refusal says why and writes nothing. Nothing
 printed or logged names a sign-in's subject, an address or which way a
 notice goes.
 
-Every action but list and log is a change, which runs as `just tasks-people
+Every action but list, log and map alone is a change, which runs as `just tasks-people
 ACTION ...`: no allow rule passes that recipe, so an agent's run of it asks
 first. `just tasks`, which an agent runs unasked, refuses each change however
 the command line is written.
 
 positional arguments:
   ACTION             list, log, add, remove, join, leave, grant, revoke,
-                     group or profile
-  WORDS              a name, a group, powers: what ACTION takes
+                     group, profile, map or unmap
+  WORDS              a name, a group, powers, a place: what ACTION takes
 
 options:
   -h, --help         show this help message and exit
   --as ACTOR         who a change is recorded as made by
-  --json             the people, or the log, as JSON (list, log)
+  --json             the people, the log or the map as JSON (list, log, map)
   --display DISPLAY  how the person is shown (add, profile)
   --signin SIGNIN    SERVICE:SUBJECT, a sign-in of theirs (add, profile)
   --git GIT          a git handle of theirs (add, profile)
@@ -695,6 +701,7 @@ options:
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
                          [--depends DEPENDS] [--link LINK] [--no-role]
                          [--arm ARM] [--kind {feature,fix,red,tests,docs}]
+                         [--group GROUP]
                          slug title
 "#,
         r#"usage: just tasks create [-h] [--as ACTOR] [--body BODY]
@@ -703,6 +710,7 @@ options:
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
                          [--depends DEPENDS] [--link LINK] [--no-role]
                          [--arm ARM] [--kind {feature,fix,red,tests,docs}]
+                         [--group GROUP]
                          slug title
 
 positional arguments:
@@ -745,6 +753,9 @@ options:
                         page groups the landed tasks by it; `kind` changes it
                         while it is open (default: none, or red for a task
                         filed red)
+  --group GROUP         the group or the person it is filed for, written on
+                        it: else the group its area maps to (`just
+                        tasks-people map`), or the board's default
 "#,
     ),
     (

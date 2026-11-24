@@ -32,8 +32,9 @@ pub const MAJOR: i64 = 2;
 /// `integration_state`; 2 added `evidence`; 3 added `import` to its `assessment`, where the
 /// assessment names one; 4 added `workflow_read`, `workflow_actions` and `workflow_apply`; 5 added
 /// `attempts`; 6 added `workflow_apply`'s `attestations` and `workflow_observe`; 7 added
-/// `create`'s `kind` ([`crate::kind`]).
-pub const MINOR: i64 = 7;
+/// `create`'s `kind` ([`crate::kind`]); 8 added `create`'s `group`
+/// ([`crate::people::ownership`]).
+pub const MINOR: i64 = 8;
 
 /// Why a call has no result.
 enum Fail {

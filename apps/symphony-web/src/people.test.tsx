@@ -38,7 +38,6 @@ import {
   takesSignins,
   unreached,
   type Writes,
-  wayName,
   writePeople,
   You,
   Yours,
@@ -381,13 +380,7 @@ describe("a person's notices", () => {
     return fields;
   };
 
-  it("says each way and kind as a sentence does, and a person's addresses in a line", () => {
-    expect(["email", "slack", "whatsapp", "sms"].map(wayName)).toEqual([
-      "email",
-      "Slack",
-      "WhatsApp",
-      "sms",
-    ]);
+  it("says each kind as the form names it, and a person's addresses in a line", () => {
     expect(["card", "question", "verdict", "poll"].map(kindName)).toEqual([
       "Cards",
       "Questions",

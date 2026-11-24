@@ -36,6 +36,7 @@ mod edit;
 mod execution;
 mod fast_fix;
 mod fields;
+mod ownership;
 // The adapter contract tests run once in `server`; this adapter uses the same spawn lock.
 #[path = "../../../../tools/test-support/script_board.rs"]
 #[expect(

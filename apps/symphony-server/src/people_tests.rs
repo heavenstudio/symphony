@@ -1159,7 +1159,8 @@ async fn a_person_writes_their_own_addresses_and_ways_and_no_one_elses() {
     let profiles = served.profiles();
     assert_eq!(
         profiles.get("ana").unwrap().emails,
-        ["ana@example.com", "ana@mail.example"]
+        ["ana@example.com"],
+        "the email set replaces the one she held"
     );
     let reach = profiles.reach("ana", "card").unwrap();
     assert_eq!((reach.way(), reach.address()), ("slack", "U024BE7LH"));

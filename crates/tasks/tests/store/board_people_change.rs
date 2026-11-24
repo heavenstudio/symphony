@@ -723,30 +723,15 @@ fn a_person_sets_their_own_addresses_and_ways_each_as_its_sender_takes_it() {
         Ok(false),
         "a profile holding those already is not written"
     );
-    // An email set is put first, the one a notice goes to; set again it moves, never twice.
-    let email = |text: &str| reaching(&[("email", text)], &[]);
-    change::profile(&machine.0, "ana", &email("ana@work.example"), Writer::Own).unwrap();
-    assert_eq!(
-        machine.profiles().get("ana").unwrap().emails,
-        ["ana@work.example", "ana@example.com"]
-    );
-    change::profile(&machine.0, "ana", &email("ana@example.com"), Writer::Own).unwrap();
-    assert_eq!(
-        machine.profiles().get("ana").unwrap().emails,
-        ["ana@example.com", "ana@work.example"]
-    );
-    // An empty one takes the address away (the first email), an empty way sends the kind by none,
-    // and what is not named stays.
-    let taken = reaching(
-        &[("email", ""), ("slack", " ")],
-        &[("card", ""), ("question", "email")],
-    );
+    // An empty address takes it away, an empty way sends the kind by none, and what is not named
+    // stays.
+    let taken = reaching(&[("slack", " ")], &[("card", ""), ("question", "email")]);
     assert_eq!(
         change::profile(&machine.0, "ana", &taken, Writer::Own),
         Ok(true)
     );
     let ana = machine.profiles().get("ana").cloned().unwrap();
-    assert_eq!(ana.emails, ["ana@work.example"]);
+    assert_eq!(ana.emails, ["ana@example.com"]);
     assert_eq!(
         serde_json::Value::Object(ana.chat),
         serde_json::json!({"whatsapp": "+15551234567"})
@@ -759,7 +744,7 @@ fn a_person_sets_their_own_addresses_and_ways_each_as_its_sender_takes_it() {
         reaches(&machine.0, "ana"),
         [
             None,
-            Some(("email", "ana@work.example".into())),
+            Some(("email", "ana@example.com".into())),
             Some(("whatsapp", "+15551234567".into()))
         ]
     );
@@ -769,6 +754,44 @@ fn a_person_sets_their_own_addresses_and_ways_each_as_its_sender_takes_it() {
         change::profile(&machine.0, "ana", &none, Writer::Own),
         Ok(false)
     );
+}
+
+#[test]
+fn an_email_set_replaces_the_first_and_a_clear_takes_it_leaving_those_after_it() {
+    let machine = Machine::new("reach-email").holding(&[anas()]);
+    let email = |text: &str| reaching(&[("email", text)], &[]);
+    let set = |text: &str| change::profile(&machine.0, "ana", &email(text), Writer::Own);
+    let emails = || machine.profiles().get("ana").unwrap().emails.clone();
+    // As the page's one field sets it: A then B holds B alone, and a clear holds none.
+    assert_eq!(set("ana@example.com"), Ok(true));
+    assert_eq!(set("ana@work.example"), Ok(true));
+    assert_eq!(emails(), ["ana@work.example"]);
+    assert_eq!(set("ana@work.example"), Ok(false), "set again it is held");
+    assert_eq!(set(""), Ok(true));
+    assert!(emails().is_empty());
+    assert_eq!(set(""), Ok(false), "a clear of none changes nothing");
+    // Emails after the first, as a file written by hand holds them, stay as the first is
+    // replaced: a copy of the new one among them is dropped, never held twice.
+    let three = Profile {
+        emails: ["ana@example.com", "ana@home.example", "ana@work.example"]
+            .map(String::from)
+            .to_vec(),
+        ..anas()
+    };
+    let machine = Machine::new("reach-emails").holding(&[three]);
+    let set = |text: &str| change::profile(&machine.0, "ana", &email(text), Writer::Own);
+    let emails = || machine.profiles().get("ana").unwrap().emails.clone();
+    assert_eq!(set("ana@new.example"), Ok(true));
+    assert_eq!(
+        emails(),
+        ["ana@new.example", "ana@home.example", "ana@work.example"]
+    );
+    assert_eq!(set("ana@work.example"), Ok(true));
+    assert_eq!(emails(), ["ana@work.example", "ana@home.example"]);
+    assert_eq!(set("ana@work.example"), Ok(false));
+    // A clear takes the first alone: the one after it is the one a notice goes to then.
+    assert_eq!(set(" "), Ok(true));
+    assert_eq!(emails(), ["ana@home.example"]);
 }
 
 #[test]

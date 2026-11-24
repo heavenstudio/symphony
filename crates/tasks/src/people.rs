@@ -23,11 +23,13 @@
 //! space ([`refused_name`]).
 //!
 //! What a person may do there is their own powers and their groups' ([`People::powers_of`]): every
-//! power includes read, and one who holds none is not on the board. Until step 4 a group owns
-//! nothing, so its powers hold on the whole board. The person at the machine is on every board with
-//! every power, and no row says so ([`Powers::all`]).
+//! power includes read, and one who holds none is not on the board. A group owns cards and tasks
+//! ([`ownership`]), which its members hand on, but its powers still hold on the whole board: who
+//! moves a group's task and whose answer settles are later parts of step 4. The person at the
+//! machine is on every board with every power, and no row says so ([`Powers::all`]).
 
 pub mod change;
+pub mod ownership;
 pub mod ways;
 
 use serde::{Deserialize, Serialize};

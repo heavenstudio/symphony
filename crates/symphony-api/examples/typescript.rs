@@ -110,6 +110,9 @@ fn constants() -> String {
         ("PEOPLE_PATH", text(api::PEOPLE_PATH)),
         ("PEOPLE_CHANGE_PATH", text(api::PEOPLE_CHANGE_PATH)),
         ("PROFILE_PATH", text(api::PROFILE_PATH)),
+        ("CARD_OWNERS_PATH", text(api::CARD_OWNERS_PATH)),
+        ("TASK_HAND_ROUTE", text(api::TASK_HAND_ROUTE)),
+        ("CARD_HAND_ROUTE", text(api::CARD_HAND_ROUTE)),
         ("RUNS_PATH", text(api::RUNS_PATH)),
         ("RUN_PATH", text(api::RUN_PATH)),
         ("RUN_LOG_PATH", text(api::RUN_LOG_PATH)),
@@ -271,6 +274,9 @@ fn page_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::PeopleChange>(cfg),
         declared::<api::ProfileWrite>(cfg),
         declared::<api::MachineProfile>(cfg),
+        // Whose a card or a task is.
+        declared::<api::Owner>(cfg),
+        declared::<api::CardOwners>(cfg),
         // The Runs page's, its schema updates too.
         declared::<api::RunsPage>(cfg),
         declared::<api::RunPage>(cfg),

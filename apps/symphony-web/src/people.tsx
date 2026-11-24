@@ -336,11 +336,6 @@ export const WAYS: [string, string][] = [
   ["whatsapp", "WhatsApp"],
 ];
 
-/** A way as a sentence says it: `Slack` for `slack`; one the page does not know as written. */
-export function wayName(word: string): string {
-  return WAYS.find(([way]) => way === word)?.[1] ?? word;
-}
-
 /** A kind of notice as the form names its choice: `Cards` for `card`; one it does not know as written. */
 export function kindName(kind: string): string {
   const names: Record<string, string> = {
