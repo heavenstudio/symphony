@@ -628,6 +628,11 @@ fn a_ready_task_is_squashed_by_its_pull_request_and_the_checkout_follows() {
     let published: evidence::Snapshot =
         serde_json::from_value(host.request("publish")["snapshot"].clone()).unwrap();
     assert_eq!(published, read);
+    assert_eq!(
+        host.request("publish")["pull"],
+        Value::Null,
+        "bound to none yet"
+    );
     let merge = host.request("merge");
     assert_eq!(merge["head"], tip.as_str());
     assert_eq!(merge["method"], "squash");
@@ -1421,6 +1426,10 @@ fn evidence_withdrawn_at_a_bound_head_is_published_as_blocking_before_the_land_r
         assert_eq!(host.verbs()[4..], ["result", "publish"], "{withdrawn}");
         let published = host.request("publish");
         assert_eq!(published["head"], now.as_str(), "{withdrawn}");
+        assert_eq!(
+            published["pull"], 3,
+            "{withdrawn}: the one its journal binds"
+        );
         assert_eq!(published["snapshot"]["eligible"], false, "{withdrawn}");
         assert_eq!(published["snapshot"]["head"], now.as_str());
         assert!(
@@ -1460,6 +1469,9 @@ fn evidence_that_stands_at_a_bound_head_is_published_once_by_the_delivery_itself
         ["result", "publish", "arm", "merge", "result", "landed"]
     );
     assert_eq!(host.request("publish")["snapshot"]["eligible"], true);
+    // Named by its journal, so a pull request closed meanwhile is refused, never replaced by
+    // another the journal does not name.
+    assert_eq!(host.request("publish")["pull"], 3);
 }
 
 #[test]
