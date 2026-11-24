@@ -40,7 +40,7 @@ import type {
   TaskTimeline,
 } from "./wire";
 import { TIMELINE_EVERY } from "./wire";
-import { fixed, plural } from "./words";
+import { fixed, plural, twoDigits } from "./words";
 
 /** How much of a row the longest step's bar takes on a phone, in percent: the rest is for the word
  * after it. */
@@ -213,8 +213,6 @@ export function lasted(seconds: number): string {
 function local(at: number, offset: number): number {
   return Math.floor((at + offset) / 60);
 }
-
-const twoDigits = (n: number) => String(n).padStart(2, "0");
 
 /** `at` on the server's local clock: "09:02". */
 export function clock(at: number, offset: number): string {

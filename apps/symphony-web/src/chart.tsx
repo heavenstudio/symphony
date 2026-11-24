@@ -11,9 +11,11 @@
 // no library: the same columns over categories in place of periods (`ChartData.categories`), each
 // column's total over it and its name under it; bars by row (`RowChart`), a row a name with its
 // parts stacked along one scale; and dots (`DotChart`), a point a thing on two log scales. A tap or
-// the arrow keys pick a row or a dot, as they pick a period.
+// the arrow keys pick a row or a dot, as they pick a period. Every shape draws its card, its legend
+// and its table's button with the same parts (`Frame`, `Legend`, `TableToggle`), and reads its
+// plot's keys through one `stepper`.
 
-import { type CSSProperties, type KeyboardEvent, useState } from "react";
+import { type CSSProperties, type KeyboardEvent, type ReactNode, useState } from "react";
 import { fixed } from "./words";
 
 /**
@@ -380,6 +382,96 @@ function Swatch({ series, mark }: { series: number; mark: Mark }) {
   );
 }
 
+/** What every shape of chart says over its plot. */
+interface Head {
+  id: string;
+  title: string;
+  note: string;
+}
+
+/** A chart's card, of every shape: its title and its note, then what `children` draw. */
+function Frame({
+  chart,
+  className,
+  children,
+}: {
+  chart: Head;
+  className: string;
+  children: ReactNode;
+}) {
+  const titleId = `chart-${chart.id}-title`;
+  return (
+    <figure className={className} id={`chart-${chart.id}`} aria-labelledby={titleId}>
+      <figcaption>
+        <h3 id={titleId}>{chart.title}</h3>
+        <p className="chart-note">{chart.note}</p>
+      </figcaption>
+      {children}
+    </figure>
+  );
+}
+
+/**
+ * The legend of a chart of more than one series, none for one: a button a series, each with its
+ * swatch, that hides it or shows it again.
+ */
+function Legend<T extends { name: string; hidden: boolean }>({
+  chart,
+  swatch,
+  onToggle,
+}: {
+  chart: Head & { series: T[] };
+  swatch: (data: T, series: number) => ReactNode;
+  onToggle: ((key: string) => void) | undefined;
+}) {
+  if (chart.series.length < 2) return null;
+  return (
+    <ul className="chart-legend" aria-label={`${chart.title}: series shown`}>
+      {chart.series.map((data, series) => (
+        <li key={data.name}>
+          <button
+            className="chart-key"
+            type="button"
+            aria-pressed={!data.hidden}
+            onClick={() => onToggle?.(seriesKey(chart.id, data.name))}
+          >
+            {swatch(data, series)}
+            {data.name}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** A chart's table under its button, which says `label` while it is closed: made once opened. */
+function TableToggle({ label, table }: { label: string; table: () => ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        className="chart-table-toggle"
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
+        {open ? "Hide the table" : label}
+      </button>
+      {open && table()}
+    </>
+  );
+}
+
+/** A plot's keys: the place `step` names for a key picked, and that key's own action prevented. */
+function stepper(step: (key: string) => number | null, onSelect: (at: number) => void) {
+  return (event: KeyboardEvent) => {
+    const next = step(event.key);
+    if (next === null) return;
+    event.preventDefault();
+    onSelect(next);
+  };
+}
+
 /**
  * The period the key `key` picks on a plot of `periods` showing `at`: the one before or after it,
  * the first or the last, else the last where none is shown; none for another key.
@@ -417,51 +509,24 @@ export interface ChartCardProps {
 
 /** One chart. */
 export function ChartCard({ chart, axis, selected, onSelect, onToggle }: ChartCardProps) {
-  const [table, setTable] = useState(false);
   const periods = axis.periods.length;
-  const titleId = `chart-${chart.id}-title`;
   if (chart.instead !== null) {
     return (
-      <figure className="chart" id={`chart-${chart.id}`} aria-labelledby={titleId}>
-        <figcaption>
-          <h3 id={titleId}>{chart.title}</h3>
-          <p className="chart-note">{chart.note}</p>
-        </figcaption>
+      <Frame chart={chart} className="chart">
         <p className="chart-instead">{chart.instead}</p>
-      </figure>
+      </Frame>
     );
   }
   const scale = scaleOf(chart);
   const at = shown(chart, selected, periods);
-  const onKeyDown = (event: KeyboardEvent) => {
-    const next = keyed(event.key, at, periods);
-    if (next === null) return;
-    event.preventDefault();
-    onSelect(next);
-  };
+  const onKeyDown = stepper((key) => keyed(key, at, periods), onSelect);
   return (
-    <figure className="chart" id={`chart-${chart.id}`} aria-labelledby={titleId}>
-      <figcaption>
-        <h3 id={titleId}>{chart.title}</h3>
-        <p className="chart-note">{chart.note}</p>
-      </figcaption>
-      {chart.series.length > 1 && (
-        <ul className="chart-legend" aria-label={`${chart.title}: series shown`}>
-          {chart.series.map((data, series) => (
-            <li key={data.name}>
-              <button
-                className="chart-key"
-                type="button"
-                aria-pressed={!data.hidden}
-                onClick={() => onToggle?.(seriesKey(chart.id, data.name))}
-              >
-                <Swatch series={series} mark={data.mark} />
-                {data.name}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+    <Frame chart={chart} className="chart">
+      <Legend
+        chart={chart}
+        swatch={(data, series) => <Swatch series={series} mark={data.mark} />}
+        onToggle={onToggle}
+      />
       <Readout chart={chart} axis={axis} at={at} />
       {/* biome-ignore lint/a11y/useSemanticElements: a group of periods, as the Dioxus page draws it */}
       <div
@@ -568,16 +633,8 @@ export function ChartCard({ chart, axis, selected, onSelect, onToggle }: ChartCa
           ))}
         </div>
       )}
-      <button
-        className="chart-table-toggle"
-        type="button"
-        aria-expanded={table}
-        onClick={() => setTable(!table)}
-      >
-        {table ? "Hide the table" : "Show the table"}
-      </button>
-      {table && <ChartTable chart={chart} axis={axis} />}
-    </figure>
+      <TableToggle label="Show the table" table={() => <ChartTable chart={chart} axis={axis} />} />
+    </Frame>
   );
 }
 
@@ -821,45 +878,18 @@ export interface RowChartProps {
 
 /** A chart of bars by row: a row a thing, its parts stacked along the one scale. */
 export function RowChart({ chart, selected, onSelect, onToggle }: RowChartProps) {
-  const [table, setTable] = useState(false);
   const count = chart.rows.length;
-  const titleId = `chart-${chart.id}-title`;
   const scale = rowScale(chart.unit, Math.max(0, ...chart.rows.map((row) => rowTotal(chart, row))));
   const at = selected !== null && selected < count ? selected : count > 0 ? 0 : null;
   const row = at === null ? undefined : chart.rows[at];
-  const onKeyDown = (event: KeyboardEvent) => {
-    const next = keyed(rowKey(event.key), at, count);
-    if (next === null) return;
-    event.preventDefault();
-    onSelect(next);
-  };
+  const onKeyDown = stepper((key) => keyed(rowKey(key), at, count), onSelect);
   return (
-    <figure
-      className={`chart hchart${chart.side ? " side" : ""}`}
-      id={`chart-${chart.id}`}
-      aria-labelledby={titleId}
-    >
-      <figcaption>
-        <h3 id={titleId}>{chart.title}</h3>
-        <p className="chart-note">{chart.note}</p>
-      </figcaption>
-      {chart.series.length > 1 && (
-        <ul className="chart-legend" aria-label={`${chart.title}: series shown`}>
-          {chart.series.map((data, series) => (
-            <li key={data.name}>
-              <button
-                className="chart-key"
-                type="button"
-                aria-pressed={!data.hidden}
-                onClick={() => onToggle?.(seriesKey(chart.id, data.name))}
-              >
-                <Swatch series={series} mark="bar" />
-                {data.name}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+    <Frame chart={chart} className={`chart hchart${chart.side ? " side" : ""}`}>
+      <Legend
+        chart={chart}
+        swatch={(_, series) => <Swatch series={series} mark="bar" />}
+        onToggle={onToggle}
+      />
       <div className="chart-readout" aria-live="polite">
         <p className="chart-when">
           <strong>{row?.label ?? ""}</strong>
@@ -942,16 +972,8 @@ export function RowChart({ chart, selected, onSelect, onToggle }: RowChartProps)
           </span>
         ))}
       </div>
-      <button
-        className="chart-table-toggle"
-        type="button"
-        aria-expanded={table}
-        onClick={() => setTable(!table)}
-      >
-        {table ? "Hide the table" : chart.tableToggle}
-      </button>
-      {table && <DataTable table={chart.table()} />}
-    </figure>
+      <TableToggle label={chart.tableToggle} table={() => <DataTable table={chart.table()} />} />
+    </Frame>
   );
 }
 
@@ -1053,8 +1075,6 @@ export interface DotChartProps {
 
 /** A chart of dots: a thing a point, its place on two log scales; a tap names it. */
 export function DotChart({ chart, selected, onSelect, onToggle }: DotChartProps) {
-  const [table, setTable] = useState(false);
-  const titleId = `chart-${chart.id}-title`;
   const shownDots = chart.dots.filter((dot) => chart.series[dot.series]?.hidden !== true);
   const across = logScale(
     shownDots.map((dot) => dot.x),
@@ -1066,39 +1086,16 @@ export function DotChart({ chart, selected, onSelect, onToggle }: DotChartProps)
   );
   const picked = selected === null ? undefined : chart.dots[selected];
   const dot = picked && chart.series[picked.series]?.hidden !== true ? picked : undefined;
-  const onKeyDown = (event: KeyboardEvent) => {
-    const next = dotStep(chart, selected, event.key);
-    if (next === null) return;
-    event.preventDefault();
-    onSelect(next);
-  };
+  const onKeyDown = stepper((key) => dotStep(chart, selected, key), onSelect);
   return (
-    <figure className="chart dchart" id={`chart-${chart.id}`} aria-labelledby={titleId}>
-      <figcaption>
-        <h3 id={titleId}>{chart.title}</h3>
-        <p className="chart-note">{chart.note}</p>
-      </figcaption>
-      {chart.series.length > 1 && (
-        <ul className="chart-legend" aria-label={`${chart.title}: series shown`}>
-          {chart.series.map((data) => (
-            <li key={data.name}>
-              <button
-                className="chart-key"
-                type="button"
-                aria-pressed={!data.hidden}
-                onClick={() => onToggle?.(seriesKey(chart.id, data.name))}
-              >
-                <span
-                  className="swatch dot"
-                  style={css({ "--c": data.colour })}
-                  aria-hidden="true"
-                />
-                {data.name}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+    <Frame chart={chart} className="chart dchart">
+      <Legend
+        chart={chart}
+        swatch={(data) => (
+          <span className="swatch dot" style={css({ "--c": data.colour })} aria-hidden="true" />
+        )}
+        onToggle={onToggle}
+      />
       <div className="chart-readout" aria-live="polite">
         {dot === undefined ? (
           <p className="chart-when">
@@ -1175,16 +1172,8 @@ export function DotChart({ chart, selected, onSelect, onToggle }: DotChartProps)
         ))}
       </div>
       <p className="chart-x-name">{chart.xName}</p>
-      <button
-        className="chart-table-toggle"
-        type="button"
-        aria-expanded={table}
-        onClick={() => setTable(!table)}
-      >
-        {table ? "Hide the table" : chart.tableToggle}
-      </button>
-      {table && <DataTable table={chart.table()} />}
-    </figure>
+      <TableToggle label={chart.tableToggle} table={() => <DataTable table={chart.table()} />} />
+    </Frame>
   );
 }
 
