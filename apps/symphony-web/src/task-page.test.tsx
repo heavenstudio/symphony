@@ -398,7 +398,13 @@ describe("a task's page", () => {
   it("says whose it is among its facts where the server says it, and nothing on a board naming nobody", async () => {
     // Its line's chunk, come as it comes once a page drew a task with an owner.
     await loadOwnerLine();
-    const owner = { name: "design", kind: "group", by: "map", said: "from the area app" };
+    const owner = {
+      name: "design",
+      kind: "group",
+      by: "map",
+      said: "from the area app",
+      decides: true,
+    };
     const owned = detail({ page: aPage(undefined, { owner: { ...owner, hand_to: ["bo"] } }) });
     expect(owned).toContain('<span class="owner-name">group: design</span>');
     expect(owned).toContain('<small class="owner-by">from the area app</small>');
@@ -409,10 +415,32 @@ describe("a task's page", () => {
     expect(detail({ page: aPage() })).not.toContain('class="owner"');
   });
 
+  it("draws its priority and cancel controls for whoever decides it, and its priority alone else", () => {
+    const owner = { name: "design", kind: "group", by: "map", said: "from the area app" };
+    const theirs = detail({ page: aPage(undefined, { owner: { ...owner, decides: true } }) });
+    expect(theirs).toContain('id="task-priority"');
+    expect(theirs).toContain(">Cancel task</button>");
+    expect(theirs).not.toContain('class="priority"');
+    const others = detail({ page: aPage(undefined, { owner: { ...owner, decides: false } }) });
+    expect(others).not.toContain('id="task-priority"');
+    expect(others).not.toContain("Cancel task");
+    expect(others).toContain(`<span class="priority">p${aPage().task.priority}</span>`);
+    // A board naming nobody says no owner, and every control is drawn as it always was.
+    const nobody = detail({ page: aPage() });
+    expect(nobody).toContain('id="task-priority"');
+    expect(nobody).toContain(">Cancel task</button>");
+  });
+
   it("holds the place of whose it is until its line's chunk has come, then draws it at once", async () => {
     vi.resetModules();
     const fresh = await import("./task-page");
-    const owner = { name: "design", kind: "group", by: "map", said: "from the area app" };
+    const owner = {
+      name: "design",
+      kind: "group",
+      by: "map",
+      said: "from the area app",
+      decides: true,
+    };
     const head = (hand_to: string[]) =>
       html(
         <fresh.TaskHead
@@ -509,6 +537,12 @@ describe("a task's page", () => {
     expect(asked).toEqual(["/api/task-offer?slug=fixture%2Ftask"]);
     expect(detail({}, "composer", parts)).toContain("✓ Land it");
     expect(detail({}, "composer")).not.toContain("Land it");
+    // Its approve is deciding: one the server says does not decide the task is offered none.
+    const owner = { name: "design", kind: "group", by: "map", said: "from the area app" };
+    const others = aPage(undefined, { owner: { ...owner, decides: false } });
+    expect(detail({ page: others }, "composer", parts)).not.toContain("Land it");
+    const theirs = aPage(undefined, { owner: { ...owner, decides: true } });
+    expect(detail({ page: theirs }, "composer", parts)).toContain("✓ Land it");
     answer = { ...offer, payload: null };
     await parts.read(part);
     expect(detail({}, "composer", parts)).not.toContain("Land it");

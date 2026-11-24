@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 /// A task as one read found it ([`Store::task_stamp`]): equal to another while nothing
 /// [`Store::get`] and [`Store::thread`] read of the task has changed between them, nor the tasks
-/// right under it, nor the board's people.
+/// right under it, nor the board's people, nor its map of places.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TaskStamp(Value);
 
@@ -18,7 +18,8 @@ impl Store {
     /// What tells the task `slug` from the one read before: everything [`Store::get`] makes its
     /// [`super::Task`] from (its row, links, roles and its executors' recorded branches), the
     /// tasks right under it, and its thread's newest line, which stands for [`Store::thread`]; and
-    /// the board's people, whom a reader of its `owner` stamp asks after ([`TaskStamp::deciders`]).
+    /// the board's people and its map of places, from which a reader of its `owner` stamp says who
+    /// decides it ([`TaskStamp::task_deciders`]).
     /// One read of the task's own rows and the people's, none of the board's sessions. `None` for a
     /// slug no task has.
     ///
@@ -33,13 +34,38 @@ impl Store {
 }
 
 impl TaskStamp {
-    /// The people who held decide on the board when it was read ([`Store::deciders`]): none on a
-    /// board without the step that keeps them, and none where its people cannot be read, so an
-    /// approve it would count is not counted.
+    /// The people who held decide anywhere on the board when it was read ([`Store::deciders`]):
+    /// none on a board without the step that keeps them, and none where its people cannot be read.
+    /// A task's `owner` stamp counts those of them of its owner ([`TaskStamp::task_deciders`]).
     pub fn deciders(&self) -> Vec<String> {
         (self.0.get("people"))
             .and_then(|people| super::people::answered(people).ok())
             .map(|people| people.holding(crate::people::Power::Decide))
             .unwrap_or_default()
+    }
+
+    /// The people whose approve meets the `owner` stamp of `task`, the task this stamp is of, as
+    /// the board held its people and its map when it was read ([`Store::task_deciders`]): none on
+    /// a board without the step that keeps people, and none where they cannot be read, so an
+    /// approve it would count is not counted. A board without the map's step maps nothing.
+    pub fn task_deciders(&self, task: &super::Task) -> Vec<String> {
+        use crate::people::ownership::{Line, Map, Thing, deciders, owning};
+        let Some(people) =
+            (self.0.get("people")).and_then(|people| super::people::answered(people).ok())
+        else {
+            return Vec::new();
+        };
+        if people.members.is_empty() {
+            return Vec::new();
+        }
+        let map = match self.0.get("map") {
+            None => Map::default(),
+            Some(lines) => match crate::objects::read::<Vec<Line>>(lines) {
+                Ok(lines) => Map::of(&lines),
+                Err(_) => return Vec::new(),
+            },
+        };
+        let places = Thing::Task(task.slug.clone()).places();
+        deciders(&people, &owning(&people, &map, task.group(), &places))
     }
 }

@@ -106,7 +106,7 @@ async fn a_member_reads_whose_a_card_is_and_hands_it_on_and_a_card_of_another_gr
     assert_eq!(
         owners["cards"]["one"],
         json!({"name": "design", "kind": "group", "by": "map", "said": "from the folder docs",
-               "hand_to": ["engineering", "ana", "bo", "owner"]})
+               "hand_to": ["engineering", "ana", "bo", "owner"], "decides": false})
     );
     let hand = json!({"path": "docs/TOPIC.md", "slug": "one", "to": "engineering"});
     let (status, body) = post(&shared, LAPTOP, "/api/card-hand", hand.clone()).await;
@@ -261,7 +261,8 @@ async fn a_card_handed_again_to_its_name_writes_nothing_and_a_hosted_visitor_is_
     let owners: Value = serde_json::from_str(&body).unwrap();
     assert_eq!(
         owners["cards"]["one"],
-        json!({"name": "ana", "kind": "person", "by": "named", "said": "named on it"})
+        json!({"name": "ana", "kind": "person", "by": "named", "said": "named on it",
+               "decides": false})
     );
 }
 

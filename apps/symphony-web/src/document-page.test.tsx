@@ -318,6 +318,7 @@ describe("a section", () => {
       by: "named",
       said: "named on it",
       hand_to: ["engineering"],
+      decides: true,
     };
     const owned = renderToStaticMarkup(
       <CardOwnersContext.Provider value={{ owners: { lamp: owner }, hand: async () => ({}) }}>
@@ -336,6 +337,43 @@ describe("a section", () => {
       '<div class="doc-actions"><span class="owner" data-by="named"><span class="owner-name">group: design</span><small class="owner-by">named on it</small>',
     );
     expect(owned).toContain('id="hand-docs%2FLAMPS.md%3Alamp"');
+    expect(owned).toContain(">Verdict / message</button>");
+    expect(owned).toContain(">✓ Approve</button>");
+  });
+
+  it("of a card its reader does not decide offers its message and Later, and no verdict", () => {
+    vi.stubGlobal("localStorage", memoryStorage());
+    const owner = {
+      name: "design",
+      kind: "group",
+      by: "map",
+      said: "from the folder docs",
+      hand_to: [],
+      decides: false,
+    };
+    const theirs = renderToStaticMarkup(
+      <CardOwnersContext.Provider value={{ owners: { lamp: owner }, hand: async () => ({}) }}>
+        <HydratedSection
+          section={section("card:lamp", 4, [paragraph("Which lamp?")])}
+          card={card("lamp", "decide")}
+          path="docs/LAMPS.md"
+          scope=""
+          thread={null}
+          gone={false}
+          ids={["colour"]}
+          postponed={false}
+        />
+      </CardOwnersContext.Provider>,
+    );
+    expect(theirs).toContain("group: design");
+    expect(theirs).toContain(">Message</button>");
+    expect(theirs).not.toContain("Verdict / message");
+    expect(theirs).toContain('aria-label="Message"');
+    expect(theirs).toContain(">Send message</button>");
+    for (const verdict of ["Approve", "Dismiss", "Reset to pending", "verdict-choices"]) {
+      expect(theirs).not.toContain(verdict);
+    }
+    expect(theirs).toContain(">Later</button>");
   });
 
   it("of a settled card is folded under its summary until opened", () => {

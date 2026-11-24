@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 use symphony_api::{CardOwners, Owner};
 use symphony_board::people::People;
-use symphony_board::people::ownership::{self, By, Kind, Map, Owning, Thing};
+use symphony_board::people::ownership::{self, By, Kind, Map, Owning, Place, Thing};
 use symphony_docs::syntax::card_for;
 
 use crate::register::{Decision, State};
@@ -19,9 +19,10 @@ use crate::register::{Decision, State};
 /// `owning` as the wire says it to `actor` (`machine`: the person at the machine), `open` whether
 /// the thing still waits on someone: whom they may hand it to, the board's groups, then its
 /// people, then `owner`, never the name it is written to now; none where it is closed or they may
-/// not ([`ownership::may_hand`]).
+/// not ([`ownership::of_owner`]); and whether they may decide it ([`ownership::may_decide`]), so a
+/// page draws its deciding controls for them alone.
 pub fn owner(people: &People, owning: &Owning, actor: &str, machine: bool, open: bool) -> Owner {
-    let hand_to = if open && ownership::may_hand(people, owning, actor, machine) {
+    let hand_to = if open && ownership::of_owner(people, owning, actor, machine) {
         (people.groups.iter().map(|group| group.name.as_str()))
             .chain(people.members.iter().map(|member| member.name.as_str()))
             .chain([ownership::MACHINE])
@@ -47,7 +48,89 @@ pub fn owner(people: &People, owning: &Owning, actor: &str, machine: bool, open:
         .into(),
         said: owning.said(),
         hand_to,
+        decides: ownership::may_decide(people, owning, actor, machine),
     }
+}
+
+/// The short name of the person a board named who asks as `actor`: the principal the board issues
+/// them ([`symphony_board::workflow::person`]), as the machine's roster admits every visitor it
+/// names and as the board grants a workflow's edges ([`symphony_board::Store::host_on`]). None for
+/// the person at the machine, whatever principal their gate gives them, never told by a name.
+pub fn person(actor: &symphony_plugin::Actor) -> Option<&str> {
+    (actor.principal.issuer == symphony_board::workflow::PEOPLE).then(|| actor.name())
+}
+
+/// Why `actor` may not decide the thing in `places` (the deciding first) with `written` the name
+/// written on it, on the board `store` ([`ownership::refused_decide`]): none for the person at
+/// the machine, who is never asked and for whom nothing is read, none on a board that names
+/// nobody, and none for one of its owner.
+fn refused(
+    store: &symphony_board::Store,
+    actor: &symphony_plugin::Actor,
+    written: Option<&str>,
+    places: &[Place],
+) -> Result<Option<String>, symphony_board::Error> {
+    let Some(name) = person(actor) else {
+        return Ok(None);
+    };
+    let people = store.people()?;
+    if people.members.is_empty() {
+        return Ok(None);
+    }
+    let owning = ownership::owning(&people, &store.ownership_map()?, written, places);
+    Ok(ownership::refused_decide(
+        &people, &owning, places, name, false,
+    ))
+}
+
+/// Why `actor` may not decide the task `task` (move, prioritize, change a field of, cancel or
+/// approve it): [`refused`].
+pub fn refused_task(
+    store: &symphony_board::Store,
+    task: &symphony_board::Task,
+    actor: &symphony_plugin::Actor,
+) -> Result<Option<String>, symphony_board::Error> {
+    let places = Thing::Task(task.slug.clone()).places();
+    refused(store, actor, task.group(), &places)
+}
+
+/// Why `actor` may not answer the card `card` of the document of route `rel`: [`refused`].
+pub fn refused_card(
+    store: &symphony_board::Store,
+    rel: &str,
+    card: &Decision,
+    actor: &symphony_plugin::Actor,
+) -> Result<Option<String>, symphony_board::Error> {
+    let places = thing(rel, card).places();
+    refused(store, actor, card_for(&card.text), &places)
+}
+
+/// Why `actor` may not change what the Settings page changes: [`refused`] of its place.
+pub fn refused_settings(
+    store: &symphony_board::Store,
+    actor: &symphony_plugin::Actor,
+) -> Result<Option<String>, symphony_board::Error> {
+    refused(store, actor, None, &[Place::Settings])
+}
+
+/// Whether the reader `reader`, a person a board named (none: the person at the machine), may
+/// change what the Settings page changes on the board `store`: the person at the machine always,
+/// and on a board that names nobody; else while they hold decide and are of the page's owner
+/// ([`ownership::may_decide`]). Not where the board cannot be read.
+pub fn changes_settings(store: &symphony_board::Store, reader: Option<&str>) -> bool {
+    let Some(name) = reader else {
+        return true;
+    };
+    let read = || -> Result<bool, symphony_board::Error> {
+        let people = store.people()?;
+        if people.members.is_empty() {
+            return Ok(true);
+        }
+        let map = store.ownership_map()?;
+        let owning = ownership::owning(&people, &map, None, &[Place::Settings]);
+        Ok(ownership::may_decide(&people, &owning, name, false))
+    };
+    read().unwrap_or(false)
 }
 
 /// Whose the task `task` is, said to `actor` (`machine`: the person at the machine): none on a

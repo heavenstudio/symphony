@@ -1,7 +1,9 @@
 //! What a person a board named may write through each route (docs/product/analysis/
 //! users-and-identity.md, "The way from one owner", step 3): the powers a write needs of them, read
 //! from the board's rows when it is asked, before its body is read ([`crate::write::answer`]). The
-//! person at the machine holds every power and is never asked.
+//! person at the machine holds every power and is never asked. Whether the thing a decision is on
+//! is theirs to decide, of its group (step 4), is the save's to say once the body names it
+//! (`symphony::owners::refused_task`, `refused_card`, `refused_settings`).
 //!
 //! A verdict, its note, a move, a field, Later and a setting are deciding. A line that reaches the
 //! board's agents (a comment, a message, an ask and its reply, a quick chat, a quick task) is

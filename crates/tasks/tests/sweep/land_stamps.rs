@@ -413,10 +413,12 @@ fn a_task_needing_the_owner_waits_on_the_owners_approve_of_its_tip() {
     assert_landed(&r, slug, &tip, result);
 }
 
-/// A person the board gives decide approves for the owner: her approve of the tip stands for the
-/// `owner` stamp once the board gives her decide, read at the land, and not before.
+/// A person the board gives decide approves for the owner where the task is her group's: her
+/// approve of the tip stands for the `owner` stamp once the board gives her decide and maps her
+/// group the task's, read at the land, and not before.
 #[test]
 fn a_task_needing_the_owner_lands_on_the_approve_of_one_the_board_gives_decide() {
+    use symphony_board::people::ownership::Place;
     use symphony_board::people::{Holder, Power};
     let r = Repo::new();
     manifest(&r, "");
@@ -445,6 +447,17 @@ fn a_task_needing_the_owner_lands_on_the_approve_of_one_the_board_gives_decide()
     assert_eq!(head(&r.root, "main"), before);
     store
         .grant(Holder::Person("ana"), &[Power::Decide], &staff.orch)
+        .unwrap();
+    let (_, result) = landed_by(&r, slug, &staff.orch);
+    assert!(
+        result.is_err(),
+        "the task is the person at the machine's while the board maps no group it keeps"
+    );
+    assert_eq!(head(&r.root, "main"), before);
+    store.add_group("ui", &[], &staff.orch).unwrap();
+    store.join_group("ana", "ui", &staff.orch).unwrap();
+    store
+        .map_place(&Place::Area("ui".into()), "ui", &staff.orch)
         .unwrap();
     let (said, result) = landed_by(&r, slug, &staff.orch);
     assert!(said.contains("owner: Approved by ana at "), "{said}");

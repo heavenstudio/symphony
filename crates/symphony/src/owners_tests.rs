@@ -146,6 +146,177 @@ fn a_pending_card_and_a_question_wait_and_an_answered_one_does_not() {
     }
 }
 
+/// [`people`] with both groups deciding: whom a page draws deciding controls for.
+#[test]
+fn a_member_holding_decide_decides_its_groups_thing_and_the_machine_every_thing() {
+    use symphony_board::people::Power;
+    let mut people = people();
+    for group in &mut people.groups {
+        group.powers = vec![Power::Decide];
+    }
+    let designs = ownership::owning(
+        &people,
+        &map(&[("area:app", "design")]),
+        None,
+        &[ownership::Place::Area("app".into())],
+    );
+    assert!(owner(&people, &designs, "ana", false, true).decides);
+    assert!(
+        !owner(&people, &designs, "bo", false, true).decides,
+        "bo decides, but not design's"
+    );
+    assert!(owner(&people, &designs, "owner", true, true).decides);
+    assert!(
+        owner(&people, &designs, "ana", false, false).decides,
+        "closed, it is still hers to decide: a page draws no hand-over, nothing else"
+    );
+    let machines = ownership::owning(&people, &Map::default(), None, &[]);
+    assert!(!owner(&people, &machines, "ana", false, true).decides);
+    let speaking = self::people();
+    assert!(
+        !owner(&speaking, &designs, "ana", false, true).decides,
+        "a member holding no decide"
+    );
+    assert!(owner(&people, &machines, "owner", true, true).decides);
+}
+
+/// A person the board named, as the machine's roster admits them.
+fn named(name: &str) -> symphony_plugin::Actor {
+    symphony_plugin::Actor::new(
+        symphony_plugin::Sender::new(name, name, vec![]),
+        symphony_board::workflow::person(name),
+    )
+}
+
+/// A board on a fixture naming ana in design and bo in engineering, each group deciding, with
+/// `mapped` places given to design.
+fn board(mapped: &[ownership::Place]) -> crate::taskview::page_tests::store_fixture::Fixture {
+    use symphony_board::people::Power;
+    let f = crate::taskview::page_tests::store_fixture::Fixture::empty();
+    for group in ["design", "engineering"] {
+        f.store.add_group(group, &[Power::Decide], "owner").unwrap();
+    }
+    for (name, group) in [("ana", "design"), ("bo", "engineering")] {
+        (f.store.add_person(name, &[group.into()], &[], "owner")).unwrap();
+    }
+    for place in mapped {
+        f.store.map_place(place, "design", "owner").unwrap();
+    }
+    f
+}
+
+#[test]
+fn a_person_is_the_principal_the_board_issues_and_never_the_machines_by_name() {
+    assert_eq!(person(&named("ana")), Some("ana"));
+    assert_eq!(person(&symphony_board::workflow::local_actor()), None);
+    let named_owner = symphony_plugin::Actor::new(
+        symphony_plugin::Sender::new("owner", "owner", vec![]),
+        symphony_board::workflow::local_owner(),
+    );
+    assert_eq!(person(&named_owner), None);
+    let elsewhere = symphony_plugin::Actor::new(
+        symphony_plugin::Sender::new("ana", "Ana", vec![]),
+        symphony_plugin::execution::Principal::new(
+            symphony_plugin::execution::PrincipalKind::Human,
+            "test-host".into(),
+            "u-ana".into(),
+        ),
+    );
+    assert_eq!(
+        person(&elsewhere),
+        None,
+        "a gate's own person at the machine"
+    );
+}
+
+#[test]
+fn a_task_card_and_the_settings_page_are_refused_a_non_member_and_never_the_machine() {
+    use ownership::Place;
+    let f = board(&[
+        Place::Folder("docs".into()),
+        Place::Area("app".into()),
+        Place::Settings,
+    ]);
+    let task = f.task("app/x");
+    let card = &decisions(&["# T", "", "- [ ] **one** — proposal."])[0];
+    let machine = symphony_board::workflow::local_actor();
+    for actor in [&named("ana"), &machine] {
+        assert_eq!(refused_task(&f.store, &task, actor).unwrap(), None);
+        assert_eq!(
+            refused_card(&f.store, "docs/TOPIC.md", card, actor).unwrap(),
+            None
+        );
+        assert_eq!(refused_settings(&f.store, actor).unwrap(), None);
+    }
+    let why = "bo is no member of the group design, whose it is, so may not decide it";
+    let bo = named("bo");
+    assert_eq!(
+        refused_task(&f.store, &task, &bo).unwrap().as_deref(),
+        Some(why)
+    );
+    assert_eq!(
+        refused_card(&f.store, "docs/TOPIC.md", card, &bo)
+            .unwrap()
+            .as_deref(),
+        Some(why)
+    );
+    assert_eq!(
+        refused_settings(&f.store, &bo).unwrap().as_deref(),
+        Some(why)
+    );
+    // A card written for engineering is bo's group's, wherever it sits.
+    let theirs = &decisions(&["# T", "", "- [ ] **two** — *For:* engineering. proposal."])[0];
+    assert_eq!(
+        refused_card(&f.store, "docs/TOPIC.md", theirs, &bo).unwrap(),
+        None
+    );
+    assert!(
+        refused_card(&f.store, "docs/TOPIC.md", theirs, &named("ana"))
+            .unwrap()
+            .is_some()
+    );
+
+    assert!(changes_settings(&f.store, None));
+    assert!(changes_settings(&f.store, Some("ana")));
+    assert!(!changes_settings(&f.store, Some("bo")));
+    assert!(!changes_settings(&f.store, Some("nobody")));
+}
+
+#[test]
+fn a_board_naming_nobody_refuses_no_one_and_lets_every_reader_change_settings() {
+    let f = crate::taskview::page_tests::store_fixture::Fixture::empty();
+    let task = f.task("app/x");
+    let card = &decisions(&["# T", "", "- [ ] **one** — proposal."])[0];
+    let ana = named("ana");
+    assert_eq!(refused_task(&f.store, &task, &ana).unwrap(), None);
+    assert_eq!(
+        refused_card(&f.store, "docs/T.md", card, &ana).unwrap(),
+        None
+    );
+    assert_eq!(refused_settings(&f.store, &ana).unwrap(), None);
+    assert!(changes_settings(&f.store, Some("ana")));
+}
+
+#[test]
+fn on_a_board_mapping_nothing_a_persons_refusal_says_which_group_to_map() {
+    let f = board(&[]);
+    let task = f.task("app/x");
+    let why = refused_task(&f.store, &task, &named("ana"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        why,
+        "it is the person at the machine's, as this board maps no group it keeps to the area app \
+         or to the board's default, so ana may not decide it until an admin maps one \
+         (just tasks-people map PLACE GROUP)"
+    );
+    assert!(!changes_settings(&f.store, Some("ana")));
+    assert_eq!(
+        refused_task(&f.store, &task, &symphony_board::workflow::local_actor()).unwrap(),
+        None
+    );
+}
+
 #[test]
 fn the_waiting_cards_are_owned_as_mains_file_holds_them_each_document_read_once() {
     let tree = crate::test_tree::Tree::checkout();

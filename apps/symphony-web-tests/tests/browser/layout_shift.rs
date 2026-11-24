@@ -876,12 +876,13 @@ fn the_activity_panel_holds_still_once_it_is_open() {
     holds_still("activity", "/", HOME, Some(ACTIVITY), plain());
 }
 
-/// A task whose owner, `hand_to` those it may be handed to, and whose holders' Go to session
+/// A task whose owner, `hand_to` those it may be handed to and `decides` whether its reader
+/// decides it (its priority a control or its words, drawn at once), and whose holders' Go to session
 /// controls are each a chunk of their own (task-page.tsx's `OwnerPart` and `SessionPart`). The page
 /// is asked from the server's machine, so a session with a pane is a button there: one holder's is
 /// a button (`pane`), one's a link (an address and no pane), one's none (neither), and two
 /// subagents' go to a parent's session, a button and a link, and say so.
-fn held_parts_site(hand_to: &Value) -> Site {
+fn held_parts_site(hand_to: &Value, decides: bool) -> Site {
     let site = super::site();
     let content = look_parity::responses();
     let mut page = content["/api/task-page"].clone();
@@ -893,7 +894,7 @@ fn held_parts_site(hand_to: &Value) -> Site {
         role("executor", "dune-sub"),
         role("reviewer", "elm-sub")
     ]);
-    page["owner"] = json!({"name":"design","kind":"group","by":"map","said":"from the folder docs","hand_to":hand_to});
+    page["owner"] = json!({"name":"design","kind":"group","by":"map","said":"from the folder docs","hand_to":hand_to,"decides":decides});
     page["sessions"] = json!({
         "amber": {"handle":"amber","url":null,"pane":"t1"},
         "birch": {"handle":"birch","url":"https://example.com/s/birch","pane":null},
@@ -962,8 +963,8 @@ const PARTS_GEOMETRY: &str = "document.fonts.ready.then(() => new Promise(done =
 /// A task's owner line and its holders' Go to session controls hold their place until their
 /// chunks come: the place each holds is the one it takes, so nothing in the head or under it moves
 /// when they come (the owner's goal, app/skeleton-loading). Each form, at a phone's width and a
-/// wide one: an owner who may hand it on (the select's box) and one who may not (a line of text);
-/// a holder's control as a button (its box), as a link (a bar in the chip's line) and none, and a
+/// wide one: an owner who may hand it on and decides it (the select's box, its priority's control)
+/// and one who may do neither (a line of text, its priority's words); a holder's control as a button (its box), as a link (a bar in the chip's line) and none, and a
 /// subagent's either way with whose session it is. A shift score cannot see a ghost's box against
 /// the element that takes its place, so the places are measured.
 #[test]
@@ -971,14 +972,15 @@ fn a_tasks_owner_and_session_controls_hold_their_place_until_their_chunks_come()
     let Some(mut browser) = chrome() else { return };
     let chunks = ["owner-part", "session-part"].map(chunk_path);
     let mut moved = Vec::new();
-    for (owner, hand_to) in [
+    for (owner, hand_to, decides) in [
         (
             "an owner it may be handed on from",
             json!(["engineering", "ana"]),
+            true,
         ),
-        ("an owner it may not", json!([])),
+        ("an owner it may not", json!([]), false),
     ] {
-        let site = held_parts_site(&hand_to);
+        let site = held_parts_site(&hand_to, decides);
         for width in [PHONE, WIDE] {
             browser.fresh_context();
             browser.viewport(width.width, width.height, width.mobile);

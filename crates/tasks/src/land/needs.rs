@@ -218,9 +218,10 @@ pub struct Evidence<'a> {
     /// The main checkout, where the `owner` stamp reads the cards the task's branch posted
     /// ([`read::owner_at`]).
     pub main: PathBuf,
-    /// The people who hold decide on the board, whose approve meets the `owner` stamp as the
-    /// owner's does ([`read::owner_at_by`]): read only when `owner` is needed, and none where the
-    /// board's people cannot be read, so the owner's approve alone meets it then.
+    /// The people of the task's owner who hold decide, whose approve meets the `owner` stamp as
+    /// the owner's does ([`read::owner_at_by`], [`Store::task_deciders`]): read only when `owner`
+    /// is needed, and none where the task, the board's people or its map cannot be read, so the
+    /// owner's approve alone meets it then.
     pub deciders: Vec<String>,
 }
 
@@ -228,7 +229,7 @@ impl<'a> Evidence<'a> {
     /// The evidence of the task `slug`, its `thread` read, for the stamps `needed`: the runs of the
     /// work folder the recorder keeps for `env`'s board ([`recorded::folder`]) and the tasks whose
     /// runs are the task's, both read only when `tests` is needed; the artifacts folder the main
-    /// checkout `main` names; the board's deciders, read only when `owner` is.
+    /// checkout `main` names; the task's deciders, read only when `owner` is.
     pub fn of(
         store: &Store,
         env: &Env,
@@ -247,7 +248,7 @@ impl<'a> Evidence<'a> {
         };
         let artifacts = crate::project::artifacts(main).unwrap_or_else(|| "artifacts".into());
         let deciders = if needed.has(OWNER) {
-            store.deciders()
+            store.task_deciders_of(slug)
         } else {
             Vec::new()
         };
