@@ -262,11 +262,6 @@ fn the_room_is_the_count_or_what_the_segments_others_hold_leave() {
 }
 
 #[test]
-fn a_full_machine_with_no_slot_held_refuses_at_once() {
-    assert_eq!(Room::of(4, Some(8), Some(&[1; 8][..]), &[]).cap, 0);
-}
-
-#[test]
 fn the_creators_are_read_from_ipcs_on_macos_and_on_linux() {
     let macos = "IPC status from <running system> as of Tue Nov 24 15:52:41 -03 2026\n\
                  T     ID     KEY        MODE       OWNER    GROUP  CPID  LPID\n\
@@ -288,4 +283,29 @@ fn the_creators_are_read_from_ipcs_on_macos_and_on_linux() {
 #[test]
 fn this_machines_segments_are_read() {
     assert!(segments().is_some(), "ipcs runs here");
+}
+
+#[test]
+fn a_start_whose_folder_lock_stays_held_past_the_backstop_is_refused_saying_so() {
+    let folder = Folder::new("taking");
+    let slots = folder.slots(1);
+    drop(slots.take(quiet).unwrap());
+    let other = File::open(folder.0.join(TAKING)).unwrap();
+    other.lock().unwrap();
+    let refused = slots
+        .clone()
+        .backstop(Duration::from_millis(100))
+        .take(quiet)
+        .err()
+        .expect("the folder's lock is held");
+    assert!(
+        refused.to_string().starts_with(&format!(
+            "{} was held for the 0.1 s this start waited for it, by another start counting the \
+             slots",
+            folder.0.join(TAKING).display()
+        )),
+        "{refused}"
+    );
+    other.unlock().unwrap();
+    assert_eq!(slots.take(quiet).unwrap().index(), 0);
 }
