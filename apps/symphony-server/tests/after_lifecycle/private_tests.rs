@@ -23,6 +23,46 @@ fn private_servers_clean_their_port_record_on_each_shutdown_signal() {
     }
 }
 
+/// How many servers of its own [`a_stop_sent_as_soon_as_a_server_can_be_seen_ends_it_by_the_stop_path_every_time`]
+/// starts and stops at the first moment it can be seen.
+const SEEN_RUNS: usize = 10;
+
+/// A stop sent at the first moment a server of its own can be seen, its port record's appearance,
+/// ends it by the stop path every time: its signals are watched before it can be seen, so it exits
+/// well, says it stopped and leaves no port record. The record is looked for by the tests' wait (a
+/// file's event is one the machine's watcher drops under load). The last moment of its start, its
+/// URL line, is `front::signals_tests::a_stop_sent_as_the_url_line_is_written_ends_it_by_the_stop_path`'s,
+/// which holds that line so that its stop comes before it every time.
+#[test]
+fn a_stop_sent_as_soon_as_a_server_can_be_seen_ends_it_by_the_stop_path_every_time() {
+    let repo = Repo::new("seen-stop");
+    let record = repo.tree.join("artifacts/docs-app.port");
+    for run in 1..=SEEN_RUNS {
+        let mut server = repo.private(&repo.tree);
+        until("its port record's appearance", || {
+            assert!(
+                server.child.try_wait().unwrap().is_none(),
+                "the server ended before its port record's appearance: {}",
+                server.output()
+            );
+            record.exists().then_some(())
+        });
+        eprintln!("· SIGTERM at its port record's appearance, run {run} of {SEEN_RUNS}");
+        server.signal(libc::SIGTERM);
+        server.success();
+        assert!(
+            !record.exists(),
+            "a stop at its port record's appearance left the record (run {run} of {SEEN_RUNS})"
+        );
+        assert!(
+            server.output().contains("· Symphony server stopped"),
+            "a stop at its port record's appearance did not run the stop path (run {run} of \
+             {SEEN_RUNS}): {}",
+            server.output()
+        );
+    }
+}
+
 #[test]
 fn private_shutdown_preserves_a_replaced_port_record_and_main_discovery_record() {
     let repo = Repo::new("port-record");

@@ -157,7 +157,10 @@ nothing, when the project's pin or schema is newer than the running build's and 
 cannot replace it. A project with no plugins, and a start of a release, never replaces it. A start
 whose build holds every registered linked plugin replaces it by hand-off: it writes
 `handover.json` (its executable, root and install folder) in the machine folder and sends
-`SIGUSR1`; the server hands its sockets to that build as a reload does. While a release is
+`SIGUSR1`; the server hands its sockets to that build as a reload does. That signal and a stop's
+(SIGTERM, SIGINT, SIGHUP) are watched before a server binds, records its port or prints its URL,
+so one sent as it starts is kept and acted on once it has started: a stop then still clears its
+port record. While a release is
 installed, every project naming a linked plugin says on its pages that it holds the machine's
 server on a project's build, naming the command that lets it go, and `just release --status` says
 the same ([RELEASES](../../docs/workflow/RELEASES.md#status)); a stop and a start then make the release
