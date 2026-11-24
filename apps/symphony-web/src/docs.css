@@ -431,6 +431,11 @@
   justify-content: flex-end;
   margin-top: 8px;
 }
+/* A card's owner on the left of its actions. */
+.doc-actions > .owner {
+  margin-right: auto;
+  font-size: var(--fs-sm);
+}
 .doc-actions button {
   font-size: 0.75rem;
 }

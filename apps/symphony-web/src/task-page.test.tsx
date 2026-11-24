@@ -393,6 +393,18 @@ describe("a task's page", () => {
     expect(kinded("chore")).not.toContain("kind:");
   });
 
+  it("says whose it is among its facts where the server says it, and nothing on a board naming nobody", () => {
+    const owner = { name: "design", kind: "group", by: "map", said: "from the area app" };
+    const owned = detail({ page: aPage(undefined, { owner: { ...owner, hand_to: ["bo"] } }) });
+    expect(owned).toContain('<span class="owner-name">group: design</span>');
+    expect(owned).toContain('<small class="owner-by">from the area app</small>');
+    expect(owned).toContain('id="task-hand"');
+    const seen = detail({ page: aPage(undefined, { owner: { ...owner, hand_to: [] } }) });
+    expect(seen).toContain("group: design");
+    expect(seen).not.toContain('id="task-hand"');
+    expect(detail({ page: aPage() })).not.toContain('class="owner"');
+  });
+
   it("offers its subtasks while it has some, to load or load more", () => {
     expect(detail({}, "subtasks")).not.toContain("Subtasks");
     const counted = aPage(undefined, { children_count: 2 });

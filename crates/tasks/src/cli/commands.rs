@@ -783,6 +783,7 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
         // Reds are marked by what files them (`tasks api` `create`); work under one is red work.
         red: None,
         kind: p.get("kind").map(str::to_string),
+        group: p.get("group").map(str::to_string),
         // No task is filed as a fast fix any more: what it needs to land is its assessor's.
     };
     let t = match p.get("arm") {
@@ -955,8 +956,21 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let tally = crate::usage::Tally::at(&spent, prices);
     // How many messages are held for people, never what they say (crate::held).
     let held_messages = store.held_count(&slug)?;
+    // Whose it is: the person at the machine's on a board with nobody named, which neither the
+    // text nor the JSON says, so such a board's show is as it was.
+    let people = store.people()?;
+    let owning = if people.members.is_empty() {
+        None
+    } else {
+        Some(crate::people::ownership::owning(
+            &people,
+            &store.ownership_map()?,
+            task.group(),
+            &crate::people::ownership::Thing::Task(task.slug.clone()).places(),
+        ))
+    };
     if c.parsed.flag("json") {
-        let json = json!({
+        let mut json = json!({
             "task": shape::task(&task),
             "thread": shape::messages(&thread),
             "held": held_messages,
@@ -964,6 +978,9 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
             "stages": shape::stages(&stages),
             "tokens": tally.json(&spent, prices),
         });
+        if let Some(owning) = &owning {
+            json["owning"] = json!(owning);
+        }
         c.say(&serde_json::to_string_pretty(&json).expect("JSON values serialize"));
         return Ok(());
     }
@@ -1015,6 +1032,9 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
     }
     if let Some(kind) = task.kind() {
         c.say(&format!("  kind: {kind}"));
+    }
+    if let Some(owning) = &owning {
+        c.say(&format!("  group: {} ({})", owning.name, owning.said()));
     }
     c.say(&format!("  {}", stages::summary_line(&stages)));
     if held_messages > 0 {

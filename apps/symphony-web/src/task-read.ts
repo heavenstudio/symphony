@@ -6,6 +6,7 @@
 
 import { readBlocks } from "./blocks-read";
 import { readGatesSeen } from "./gates-model";
+import { readOwner } from "./owner";
 import { field } from "./shared";
 import { readTask } from "./task";
 import type {
@@ -174,6 +175,8 @@ export function readTaskPage(value: unknown): TaskPage | null {
   const revision = field(value, "brief_revision") ?? "";
   const local = field(value, "local") ?? false;
   const passes = field(value, "passes") ?? false;
+  const said = field(value, "owner");
+  const owner = absent(said) ? null : readOwner(said);
   if (
     task === null ||
     blocks === null ||
@@ -188,7 +191,8 @@ export function readTaskPage(value: unknown): TaskPage | null {
     attempts === null ||
     !isText(revision) ||
     typeof local !== "boolean" ||
-    typeof passes !== "boolean"
+    typeof passes !== "boolean" ||
+    (!absent(said) && owner === null)
   ) {
     return null;
   }
@@ -207,6 +211,7 @@ export function readTaskPage(value: unknown): TaskPage | null {
     gates: seen,
     // Left out at none, as the server leaves it out, so a page read is the page it sent.
     ...(attempts > 0 && { attempts }),
+    ...(owner !== null && { owner }),
   };
 }
 

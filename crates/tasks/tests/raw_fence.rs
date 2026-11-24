@@ -28,7 +28,7 @@ const LIBRARY: &str = "runs the library's own statement";
 const AS_WRITTEN: &str = "a row written as the fixture cannot";
 
 /// Every test file that still sends a statement, by its path under the package.
-const STILL_SENDS: [(&str, &str); 28] = [
+const STILL_SENDS: [(&str, &str); 29] = [
     ("tests/cli/attach.rs", ENGINE),
     ("tests/cli/launch_rollback.rs", ENGINE),
     ("tests/cli/pg_lifecycle.rs", ENGINE),
@@ -49,6 +49,7 @@ const STILL_SENDS: [(&str, &str); 28] = [
     ("tests/store/common.rs", ENGINE),
     ("tests/store/compatible_ahead.rs", ENGINE),
     ("tests/store/copy.rs", ENGINE),
+    ("tests/store/ownership.rs", ENGINE),
     ("tests/store/pg_client.rs", ENGINE),
     ("tests/store/round_trip.rs", ENGINE),
     ("tests/store/schema.rs", ENGINE),

@@ -17,6 +17,7 @@ import {
   SANDBOX,
   Versions,
 } from "./document-page";
+import { CardOwnersContext } from "./owner";
 import { memoryStorage } from "./testing";
 import type { Block, Document, DocumentCard, Folder, Section } from "./wire";
 
@@ -302,6 +303,39 @@ describe("a section", () => {
     expect(html).toContain(">Verdict / message</button>");
     expect(html).toContain(">Undo Later</button>");
     expect(html).toContain('<form class="verdict" hidden=""');
+  });
+
+  it("of a card says whose it is where the page read its owners, and nothing before", () => {
+    vi.stubGlobal("localStorage", memoryStorage());
+    const props = {
+      section: section("card:lamp", 4, [paragraph("Which lamp?")]),
+      card: card("lamp", "decide"),
+    };
+    expect(drawn(props)).not.toContain('class="owner"');
+    const owner = {
+      name: "design",
+      kind: "group",
+      by: "named",
+      said: "named on it",
+      hand_to: ["engineering"],
+    };
+    const owned = renderToStaticMarkup(
+      <CardOwnersContext.Provider value={{ owners: { lamp: owner }, hand: async () => ({}) }}>
+        <HydratedSection
+          {...props}
+          path="docs/LAMPS.md"
+          scope=""
+          thread={null}
+          gone={false}
+          ids={["colour"]}
+          postponed={false}
+        />
+      </CardOwnersContext.Provider>,
+    );
+    expect(owned).toContain(
+      '<div class="doc-actions"><span class="owner" data-by="named"><span class="owner-name">group: design</span><small class="owner-by">named on it</small>',
+    );
+    expect(owned).toContain('id="hand-docs%2FLAMPS.md%3Alamp"');
   });
 
   it("of a settled card is folded under its summary until opened", () => {

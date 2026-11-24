@@ -220,6 +220,13 @@ describe("a task's page", () => {
     expect(page?.gates).toEqual({ count: 2, waiting: 1, unsigned: 1 });
   });
 
+  it("keeps whose the task is where the server says it, and none where it is null", () => {
+    const owner = { name: "design", kind: "group", by: "named", said: "named on it" };
+    expect(readTaskPage({ ...BARE_PAGE, owner })?.owner).toEqual({ ...owner, hand_to: [] });
+    expect(readTaskPage({ ...BARE_PAGE, owner: null })).not.toHaveProperty("owner");
+    expect(readTaskPage({ ...BARE_PAGE, owner: { name: "design" } })).toBeNull();
+  });
+
   it("reads gates sent as null as none", () => {
     expect(readTaskPage({ ...BARE_PAGE, gates: null })?.gates).toBeNull();
   });

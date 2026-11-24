@@ -20,6 +20,7 @@ import { taskKind } from "./kind";
 import { PageNotices } from "./live";
 import { useMount } from "./mount";
 import type { NextActionsProps } from "./nextactions";
+import { OwnerLine } from "./owner";
 import { PartsContext, type Shown, usePart } from "./parts";
 import { href, scoped } from "./project";
 import { getJson, post, said } from "./request";
@@ -45,7 +46,7 @@ import type {
   TaskEntry,
   TaskOffer,
 } from "./wire";
-import { TASK_ACTION_ROUTE, TASK_PASS_ROUTE } from "./wire";
+import { TASK_ACTION_ROUTE, TASK_HAND_ROUTE, TASK_PASS_ROUTE } from "./wire";
 import { CHECKING } from "./words";
 import { statusWords, WorkPhases } from "./work-phases";
 
@@ -786,6 +787,15 @@ export function TaskHead({ page, scope, connected }: TaskHeadProps) {
       <ul className="facts">
         {taskKind(task.fields) !== null && (
           <li className="kind">{`kind: ${taskKind(task.fields)}`}</li>
+        )}
+        {page.owner && (
+          <li>
+            <OwnerLine
+              owner={page.owner}
+              id="task-hand"
+              hand={(to) => post(url(TASK_HAND_ROUTE), { slug, to })}
+            />
+          </li>
         )}
         {task.parent !== null && (
           <li>

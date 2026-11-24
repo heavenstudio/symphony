@@ -338,6 +338,8 @@ pub fn page(
             .attempt_count(&record.slug)
             .map_err(|e| e.to_string())?,
         passes: false,
+        // Said to who asks ([`crate::owners::task`]), which the server puts here.
+        owner: None,
     })
 }
 

@@ -38,7 +38,8 @@
 //! read at each read of the settings. The second additive step on schema 28 is the index of
 //! `session` by `handle` (`session_handle`), where a session is read by its handle rather than by
 //! its id. The third marks a person's line ([`PERSON_LINES`]), the fourth keeps a board's people
-//! ([`PEOPLE`]) and the fifth the words held for people ([`HELD`]).
+//! ([`PEOPLE`]), the fifth which group a thing belongs to ([`OWNERSHIP`]) and the sixth the words
+//! held for people ([`HELD`]).
 //!
 //! `writer` holds a program that opens the board to write, the schema it was built at and when it
 //! was last seen (`store/writers.rs`), from schema 18: builds of other schemas write it, and a line
@@ -128,6 +129,7 @@ pub const ADDED: &[Addition] = &[
     },
     PERSON_LINES,
     PEOPLE,
+    OWNERSHIP,
     HELD,
 ];
 
@@ -162,6 +164,19 @@ pub const PEOPLE: Addition = Addition {
           every build before them did, and no rule on a table there before reads them",
 };
 
+/// The step that keeps which group a thing belongs to ([`crate::people::ownership`]): the table
+/// `ownership`, the board's map of places to groups and every hand-over, a row a line of its log,
+/// numbered, whole in its `doc`.
+pub const OWNERSHIP: Addition = Addition {
+    postgres: "CREATE TABLE IF NOT EXISTS ownership (id jsonb PRIMARY KEY, \
+               doc jsonb NOT NULL CHECK (jsonb_typeof(doc) = 'object'));",
+    tables: &["ownership"],
+    why: "the table ownership, the board's map of places to groups and its hand-overs \
+          (crate::people::ownership): a build without it never reads or writes the table, so it \
+          gives no card or task a group, as every build before it, and no rule on a table there \
+          before reads it",
+};
+
 /// The step that holds the words of a person who may not direct agents ([`crate::held`]): the table
 /// `held_message`, a row a message held for people, whole in its `doc`, with an index by its task.
 /// Its key is the number of the line the board puts on the task's thread for it, which says a
@@ -182,7 +197,18 @@ pub const HELD: Addition = Addition {
 /// The number of [`PEOPLE`] among [`ADDED`], counted from 1: 0 once a breaking step made its tables
 /// the contract's own, which every board of it has.
 pub(crate) fn people_step() -> i64 {
-    let at = ADDED.iter().position(|step| *step == PEOPLE);
+    step_of(PEOPLE)
+}
+
+/// The number of [`OWNERSHIP`] among [`ADDED`], counted from 1: 0 once a breaking step made its
+/// table the contract's own.
+pub(crate) fn ownership_step() -> i64 {
+    step_of(OWNERSHIP)
+}
+
+/// The number of `step` among [`ADDED`], counted from 1: 0 where it is not there.
+fn step_of(step: Addition) -> i64 {
+    let at = ADDED.iter().position(|added| *added == step);
     at.map_or(0, |at| i64::try_from(at + 1).unwrap_or(i64::MAX))
 }
 

@@ -273,6 +273,7 @@ const COMMANDS: &[Command] = &[
             opt("--no-role", "no_role", Takes::Bool),
             opt("--arm", "arm", STR),
             choice("--kind", "kind", &crate::kind::KINDS),
+            opt("--group", "group", STR),
         ],
     },
     Command {

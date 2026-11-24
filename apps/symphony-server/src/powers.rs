@@ -45,7 +45,9 @@ pub(crate) fn needs(route: &str) -> Needs {
         "/api/task-message" | symphony_api::UPLOAD_PATH => SPEAK,
         symphony_api::ATTEMPT_CONTROL_ROUTE | symphony_api::ATTEMPT_VIEW_ROUTE => DIRECT_ATTEMPTS,
         symphony_api::PEOPLE_CHANGE_PATH => ADMINISTER,
-        symphony_api::PROFILE_PATH => ON_THE_BOARD,
+        symphony_api::PROFILE_PATH
+        | symphony_api::TASK_HAND_ROUTE
+        | symphony_api::CARD_HAND_ROUTE => ON_THE_BOARD,
         _ => Needs::Machine,
     }
 }

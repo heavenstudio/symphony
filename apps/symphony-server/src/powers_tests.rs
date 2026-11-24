@@ -66,6 +66,14 @@ fn deciding_speaking_to_agents_uploading_and_directing_attempts_need_what_the_ru
     for route in ["/api/task-message", symphony_api::UPLOAD_PATH] {
         assert_eq!(needs(route), Needs::Powers(&[Power::Speak]), "{route}");
     }
+    // A hand-over needs only being on the board: the board refuses one by a non-member.
+    for route in [
+        symphony_api::PROFILE_PATH,
+        symphony_api::TASK_HAND_ROUTE,
+        symphony_api::CARD_HAND_ROUTE,
+    ] {
+        assert_eq!(needs(route), Needs::Powers(&[]), "{route}");
+    }
     for route in [
         symphony_api::ATTEMPT_CONTROL_ROUTE,
         symphony_api::ATTEMPT_VIEW_ROUTE,

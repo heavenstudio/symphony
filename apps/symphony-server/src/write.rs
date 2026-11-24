@@ -496,6 +496,9 @@ mod pending_tests;
 mod actor_tests;
 
 #[cfg(test)]
+mod hand_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use axum::http::HeaderValue;

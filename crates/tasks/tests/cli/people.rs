@@ -594,6 +594,7 @@ fn forms(said: &str) -> Vec<Vec<String>> {
                     "NAME" => "bob".to_string(),
                     "GROUP" => "staff".to_string(),
                     "POWER…" | "[POWER…]" => "speak".to_string(),
+                    "PLACE" => "area:app".to_string(),
                     word => word.to_string(),
                 })
                 .collect()
@@ -615,8 +616,8 @@ fn help_actions(help: &str) -> Vec<String> {
         .collect()
 }
 
-/// Under the marker `just tasks` sets, as an agent runs it unasked, every action but the two reads
-/// is refused with nothing written: the forms are read from the command's own usage line, checked
+/// Under the marker `just tasks` sets, as an agent runs it unasked, every action but the three
+/// reads (`list`, `log` and `map` alone) is refused with nothing written: the forms are read from the command's own usage line, checked
 /// against the help's list of actions, and each run, so an action added later is refused until it
 /// is written as a read. A word that is no action, or an action without its words, keeps its usage
 /// error, and the reads run. A change runs by `just tasks-people`, which sets no marker.
@@ -624,7 +625,9 @@ fn help_actions(help: &str) -> Vec<String> {
 fn under_the_unasked_recipes_marker_every_action_but_the_reads_is_refused() {
     let (mut c, me, machine) = case("people-unasked");
     c.ok(&me, &["people", "add", "ana", "--power", "speak"]);
+    c.ok(&me, &["people", "group", "add", "staff"]);
     let before = c.ok(&me, &["people", "log"]);
+    let map_before = c.ok(&me, &["people", "map"]);
     (c.env.vars).insert("SYMPHONY_UNASKED".into(), "1".into());
     let (code, unknown) = fails(&c, &me, &["people", "frobnicate"]);
     assert_eq!(code, 1, "{unknown}");
@@ -659,7 +662,7 @@ fn under_the_unasked_recipes_marker_every_action_but_the_reads_is_refused() {
             ran.err
         );
     }
-    assert_eq!(reads, ["list", "log"], "the reads alone run");
+    assert_eq!(reads, ["list", "log", "map"], "the reads alone run");
     // Wherever the command line puts the action, it is the one refused.
     let as_me = format!("--as={me}");
     for (args, action) in [
@@ -684,9 +687,132 @@ fn under_the_unasked_recipes_marker_every_action_but_the_reads_is_refused() {
         before,
         "nothing on the board"
     );
+    assert_eq!(c.ok(&me, &["people", "map"]), map_before, "nothing mapped");
     let profiles = symphony_board::people::Profiles::read(&machine).unwrap();
     assert!(
         profiles.get("bob").is_none(),
         "nothing in the machine folder"
     );
+}
+
+/// The map of places to groups, kept from the command line as the other changes are: `map PLACE
+/// GROUP` and `unmap PLACE`, each a numbered line of the map's log as `--as`'s, read back by `map`
+/// and `map --json`; a task filed `--group` is written to that group, and `show` says whose a task
+/// is and what said so once the board names anyone.
+#[test]
+fn the_map_is_kept_from_the_command_line_and_show_says_whose_a_task_is() {
+    let (c, me, _machine) = case("people-map");
+    assert_eq!(
+        c.ok(&me, &["people", "map"]),
+        "the map names no place: every card and task with no name written on it goes to the \
+         board's default, the person at the machine\n"
+    );
+    c.ok(&me, &["create", "app/unnamed", "Unnamed"]);
+    let shown = c.ok(&me, &["show", "app/unnamed"]);
+    assert!(
+        !shown.contains("group:"),
+        "a board naming nobody says no group: {shown}"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&c.ok(&me, &["show", "app/unnamed", "--json"])).unwrap();
+    assert!(json.get("owning").is_none(), "nor its JSON: {json}");
+    c.ok(&me, &["people", "group", "add", "design"]);
+    c.ok(&me, &["people", "group", "add", "engineering"]);
+    c.ok(
+        &me,
+        &[
+            "people", "add", "ana", "--group", "design", "--power", "speak",
+        ],
+    );
+    assert_eq!(
+        c.ok(&me, &["people", "map", "area:app", "engineering"]),
+        "the area app maps to the group engineering (change 1 of the map)\n"
+    );
+    assert_eq!(
+        c.ok(&me, &["people", "map", "area:app", "engineering"]),
+        "the area app maps to engineering already: nothing written\n"
+    );
+    assert_eq!(
+        c.ok(&me, &["people", "map", "settings", "design"]),
+        "the Settings page maps to the group design (change 2 of the map)\n"
+    );
+    assert_eq!(
+        c.ok(&me, &["people", "unmap", "settings"]),
+        "the Settings page is off the map (change 3 of the map): its things go to the board's \
+         default\n"
+    );
+    let (code, said) = fails(&c, &me, &["people", "map", "area:app", "marketing"]);
+    assert_eq!(code, 1, "{said}");
+    assert!(said.contains("keeps no group marketing"), "{said}");
+    let (code, said) = fails(&c, &me, &["people", "map", "docs/design", "design"]);
+    assert_eq!(code, 1, "{said}");
+    assert!(said.contains("is no place"), "{said}");
+    let map = c.ok(&me, &["people", "map"]);
+    let lines: Vec<&str> = map.lines().collect();
+    assert_eq!(lines[0], "area:app  engineering", "{map}");
+    assert!(
+        lines[1].ends_with(&format!("  1  {me}: map area:app engineering")),
+        "{map}"
+    );
+    assert!(
+        lines[3].ends_with(&format!("  3  {me}: unmap settings")),
+        "{map}"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&c.ok(&me, &["people", "map", "--json"])).unwrap();
+    assert_eq!(json["revision"], 3);
+    assert_eq!(
+        json["map"],
+        serde_json::json!([{"place": "area:app", "group": "engineering"}])
+    );
+    assert_eq!(json["log"][1]["did"], "map");
+    assert_eq!(json["log"][2]["did"], "unmap");
+
+    assert!(
+        c.ok(&me, &["show", "app/unnamed"])
+            .contains("  group: engineering (from the area app)\n")
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&c.ok(&me, &["show", "app/unnamed", "--json"])).unwrap();
+    assert_eq!(
+        json["owning"],
+        serde_json::json!({
+            "name": "engineering", "kind": "group", "by": "map", "place": "area:app",
+        })
+    );
+    c.ok(
+        &me,
+        &[
+            "create",
+            "app/for-design",
+            "For design",
+            "--group",
+            "design",
+        ],
+    );
+    assert!(
+        c.ok(&me, &["show", "app/for-design"])
+            .contains("  group: design (named on it)\n")
+    );
+    c.ok(
+        &me,
+        &[
+            "create",
+            "app/for-nobody",
+            "For nobody",
+            "--group",
+            "marketing",
+        ],
+    );
+    assert!(c.ok(&me, &["show", "app/for-nobody"]).contains(
+        "  group: engineering (from the area app, as this board holds no group or person \
+         marketing)\n"
+    ));
+    let (code, said) = fails(
+        &c,
+        &me,
+        &["create", "app/bad", "Bad", "--group", "Two Words"],
+    );
+    assert_eq!(code, 1, "{said}");
+    assert!(said.contains("short name, or owner"), "{said}");
 }

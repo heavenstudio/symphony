@@ -60,6 +60,13 @@ fn seeded(f: &Fixture) {
             "name": "staff", "powers": ["speak"],
         }))
         .unwrap();
+    // The map of places to groups, a line of its log: the board's own word too.
+    raw.row("ownership", json!(1))
+        .create(json!({
+            "n": 1, "at": 1_800_000_004.5, "by": "amber-heron", "did": "map",
+            "place": "area:app", "name": "staff",
+        }))
+        .unwrap();
     // A message held for people: the board's alone until someone passes it on.
     raw.row("held_message", json!(41))
         .create(json!({

@@ -1891,6 +1891,9 @@ description, and anything more for its agent goes on the task's thread.
 A consuming project's optional wait guard refuses a loop waiting on machine-wide process state
 (`pgrep`/`ps` for verify, test-sim, godot): wait on your own run's log or PID.
 
+- `--group NAME` writes the group or the person it belongs to on it
+  ([Which group a thing belongs to](#which-group-a-thing-belongs-to)): a short name, or `owner`.
+  It is unrelated to `--for`, which names the session it is reserved for.
 - `--for HANDLE` reserves it for that handle with no lapse of the hour (the
   handle is one the orchestrator registered for the agent). `next` offers it to no
   one else, and only that handle can claim it. The reservation still drops when
@@ -2395,8 +2398,9 @@ as it did before. That person stays `owner`, with every power, once others are n
   comment, a message, an ask, its reply, the quick chat, a quick task and passing a held message on
   (`/api/task-pass`) need `speak` and `direct_agents`; a task's message needs `speak`, held for
   people where its writer lacks `direct_agents`; an upload needs `speak`; an attempt's controls
-  need `decide` and `direct_agents`; a change of the board's people needs `administer`, and a profile's write from the
-  People page being on the board; anything else is the person at the machine's alone. A refusal is a
+  need `decide` and `direct_agents`; a change of the board's people needs `administer`, and a
+  profile's write from the People page and a hand-over ([below](#which-group-a-thing-belongs-to))
+  being on the board; anything else is the person at the machine's alone. A refusal is a
   403 naming the power, `Forbidden: ana may not decide on this board`, and nothing is written. A
   custom workflow's `owner` capability is held by each person holding `decide`, as by the person at
   the machine.
@@ -2431,6 +2435,55 @@ could match each spelling, and Codex's rules take no word but those they name.
   (those after it stay), `--slack` and `--whatsapp` set those addresses, each an empty one taking
   it away, and `--notice card=slack` sends that kind by that way, `card=` by none. `add` takes them
   too.
+- `map [--json]`: the map of places to groups and its log; `map PLACE GROUP`, `unmap PLACE`
+  ([below](#which-group-a-thing-belongs-to)), changes by someone holding `administer`.
+
+### Which group a thing belongs to
+
+Every card and every task belongs to one group or person, by step 4 of [the way from one
+owner](../product/analysis/users-and-identity.md#the-way-from-one-owner). It is, in this order:
+
+1. **the name written on it**, where the board holds a group or a person by it: a card's
+   `*For:* NAME` in its text ([REVIEW](REVIEW.md#writing-a-card)), a task's `--group NAME`
+   (`just tasks create … --group design`, kept as `fields._board.group`). `owner` names the person
+   at the machine;
+2. **its place's group**, from the board's map: a card's document folder, the deepest one mapped
+   (`folder:docs/design`), or a task's area, the word before its slug's first `/` (`area:app`);
+   the Settings page (`settings`) is a place for the settings work to come;
+3. **the board's default** group (`default`), where one is mapped;
+4. otherwise the person at the machine.
+
+A name the board holds no group or person by falls through to the map, and is said as unheld. A
+group the board no longer keeps gives nothing, and the next place decides. On a board that names
+nobody, every thing is the person at the machine's, and nothing of this is drawn or printed.
+
+- **The map** is the board's own, in schema 28's additive step `OWNERSHIP`: one table,
+  `ownership`, whose lines (numbered from 1, the newest the map's revision) map a place to a group,
+  take one off the map, or hand a thing on. A place's group is its newest map or unmap line. A line
+  is written only on the newest line it read; two at once each take a number of their own, the
+  second decided again. A copy carries the table. A build without the step never reads it: it
+  gives no thing a group, as every build before it did. A board made without the step reads an
+  empty map and refuses a change, `the map of places is not on this board yet`, with nothing
+  written.
+- **Who keeps it.** `just tasks-people map PLACE GROUP --as HANDLE` maps a place to a group the
+  board keeps, and `unmap PLACE` takes it off: someone holding `administer`, refused under
+  `SYMPHONY_UNASKED` as every change of the people is. A map of a place to the group it maps to
+  already writes nothing. `just tasks people map` reads the map and its log unasked.
+- **A hand-over.** A member of a thing's group, the person it is written for, or the person at the
+  machine hands it to another group or person of the board: on a task's page or a card's, with the
+  **Hand to** select drawn for them alone. A task's name is written on it, with the board's line
+  on its thread (`ana handed it to engineering (it was design, from the area app)`); a card's
+  `*For:*` is written in its file, as its verdict is, the board's line naming who did, as the
+  commit does not, and taken back where the file is not written. Anyone else is refused, `bo is no
+  member of the group design, whose it is, so may not hand it on` (or `it is ana's, so bo may not
+  hand it on: only ana or the person at the machine does`), with nothing written; so is a name the
+  board does not hold, a closed task and a card that waits on no answer. A session hands nothing: a
+  thing is handed on by a person. Two hand-overs at once take a line number each, the second
+  decided again on what the first left.
+- **What is read.** `just tasks show SLUG` prints `group: NAME (WHAT GAVE IT)` and `--json` its
+  `owning`, on a board that names someone. The task page shows the same line among its facts,
+  and a card shows it beside its actions (`/api/card-owners?path=DOC`), each with what gave it:
+  `named on it`, `from the folder docs/design`, `the board's default group`.
 
 ### Words held for people
 
