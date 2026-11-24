@@ -264,8 +264,24 @@ fn every_statement_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() 
         vec!["wait", "--timeout", "0", "--as", &writer],
         // A change of the board's people, fenced on its log, and the log read back: the machine
         // folder is never reached, as only a person's profile is kept there.
-        vec!["people", "group", "add", "perf-staff", "speak", "--as", &writer],
-        vec!["people", "grant", "--group", "perf-staff", "decide", "--as", &writer],
+        vec![
+            "people",
+            "group",
+            "add",
+            "perf-staff",
+            "speak",
+            "--as",
+            &writer,
+        ],
+        vec![
+            "people",
+            "grant",
+            "--group",
+            "perf-staff",
+            "decide",
+            "--as",
+            &writer,
+        ],
         vec!["people", "log", "--as", &writer],
     ];
     let calls = [
