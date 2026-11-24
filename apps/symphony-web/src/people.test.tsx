@@ -919,6 +919,8 @@ describe("the page", () => {
     expect(html).toContain('aria-label="Add someone else"');
     expect(html).not.toContain('aria-label="Sign-in"');
     expect(html).not.toContain("people-hint");
+    // The form explains nothing of itself: no hint of what Add makes.
+    expect(html).not.toContain("A profile is made");
     // Sent others' addresses and not their ways, as the server sends an admin, it draws the
     // addresses and no one's notices to write.
     const people = SAMPLE.people.map(({ notices: _, ...person }) => person);
@@ -977,7 +979,9 @@ describe("the page", () => {
     expect(own.match(/<details class="people-profile people-notices">/g)).toHaveLength(1);
     expect(own).toContain('aria-label="Notices of cy"');
     const html = draw(READER, writing().writes);
-    expect(html).toContain("Changing who is on the board needs administer, which you do not hold.");
+    expect(html).toContain(
+      '<header class="people-head"><h1>People</h1><p class="people-refused">Changing who is on the board needs administer.</p></header>',
+    );
     expect(html).not.toContain('aria-label="Add someone else"');
     expect(html).not.toContain('id="you"');
     expect(html).not.toContain("Take off the board");
@@ -992,9 +996,10 @@ describe("the page", () => {
 
   it("says an empty board, a problem, a failed read, and a write's words on the part that sent it", () => {
     const empty = draw(EMPTY, writing().writes);
-    expect(empty).toContain(
-      "Nobody is on this board but the person at the machine, who holds every power.",
-    );
+    // The head is its title alone, and an empty part says so in a line.
+    expect(empty).toContain('<header class="people-head"><h1>People</h1></header>');
+    expect(empty).toContain('<p class="people-empty">Nobody yet.</p>');
+    expect(empty).not.toContain("people-sub");
     expect(empty).toContain("No group yet.");
     expect(empty).toContain("No change yet.");
     expect(empty).not.toContain("needs administer");

@@ -3,9 +3,11 @@
 // preference the board's store keeps, which writes it there (SETTING_WRITE_PATH): in force at
 // once, the store named as its source with the committed value it stands over.
 //
-// The page knows no entry by name. The server describes each thing in one shape (its name, what
-// it is for, its state and why, what it needs and whether this machine has it, and its settings,
-// each with its key, kind, value, source, scopes and class), and `Entry` draws every one of them.
+// The page knows no entry by name. The server describes each thing in one shape (its name, its
+// state and why, what it needs and whether this machine has it, and its settings, each with its
+// key, kind, value, source, scopes and class), and `Entry` draws every one of them. An entry's
+// `about` is drawn nowhere: the page explains nothing of itself (RULES.md
+// `code/pages-explain-nothing`).
 // What it writes is the read's `stored` list, by each setting's key: a setting it names, written
 // in the board's scope, gets a control chosen by its kind (a switch, a choice, a number, a text),
 // never by its name, and a value the store holds gets "Make it the project's" and "Remove" beside
@@ -101,7 +103,6 @@ function isEntry(value: unknown): value is SettingsEntry {
   return (
     isText(field(value, "id")) &&
     isText(field(value, "name")) &&
-    isText(field(value, "about")) &&
     (absent(state) || isState(state)) &&
     listOf(field(value, "needs"), isNeed) &&
     listOf(field(value, "settings"), isSetting) &&
@@ -114,7 +115,6 @@ function isSection(value: unknown): value is SettingsSection {
   return (
     isText(field(value, "id")) &&
     isText(field(value, "title")) &&
-    isText(field(value, "about")) &&
     Array.isArray(entries) &&
     entries.every(isEntry)
   );
@@ -299,9 +299,7 @@ export function writtenValue(kind: string, text: string): SettingValue | null {
 
 /** Why a control's text writes nothing (`writtenValue`), said on its row. */
 export function unwritable(kind: string): string {
-  return kind === "number"
-    ? "Write a whole number; Remove takes the board's entry out."
-    : "Write a value; Remove takes the board's entry out.";
+  return kind === "number" ? "Write a whole number." : "Write a value.";
 }
 
 /**
@@ -451,6 +449,7 @@ export function Control(props: ControlProps) {
             type="button"
             size="sm"
             disabled={state.busy || waiting || !absent(stored.refused)}
+            title="Commits it to symphony.toml, delivered by a pull request"
             onClick={() => write("commit")}
           >
             Make it the project&apos;s
@@ -468,7 +467,7 @@ export function Control(props: ControlProps) {
       )}
       {waiting && (
         <p className="setting-waiting">
-          {`Waiting for its delivery by pull request (${stored.waiting}); the board's entry stays in force until it is proved.`}
+          {`Waiting for its delivery by pull request (${stored.waiting}).`}
         </p>
       )}
       {!absent(stored.refused) && (
@@ -588,7 +587,7 @@ export function Entry({ entry, writes }: { entry: SettingsEntry; writes?: Writes
           </span>
         )}
       </header>
-      <p className="setting-about">{state ? `${entry.about} ${state.why}` : entry.about}</p>
+      {state && state.why !== "" && <p className="setting-why">{state.why}</p>}
       {needs.length > 0 && (
         <ul className="setting-needs">
           {needs.map((need) => (
@@ -624,15 +623,6 @@ function Ghost() {
   );
 }
 
-const LEGEND: [string, string, string][] = [
-  ["project", "project", "committed in the project file, for everyone"],
-  ["board", "this board", "kept in the board's store, in force at once"],
-  ["machine", "this machine", "the local settings file, never committed"],
-  ["device", "this device", "kept in this browser"],
-  ["default", "default", "no file writes it"],
-  ["reviewed", "reviewed", "runs a command or decides what lands: changed by a task"],
-];
-
 export interface SettingsViewProps {
   page: Page | null;
   /** Why the read did not bring the page, said whole. */
@@ -659,12 +649,6 @@ export function SettingsView({ page, error, missing, reread }: SettingsViewProps
     >
       <header className="settings-head">
         <h1>Settings</h1>
-        <p className="settings-sub">
-          What is in force for this project and where each value comes from. A preference the
-          board&apos;s store keeps is changed here, in force at once; make it the project&apos;s to
-          commit it. A reviewed setting is changed by a task, and this page writes no file of this
-          machine&apos;s.
-        </p>
       </header>
       {error !== null && (
         <p className="settings-error" role="alert">
@@ -684,16 +668,6 @@ export function SettingsView({ page, error, missing, reread }: SettingsViewProps
               </ul>
             </section>
           )}
-          <ul className="settings-legend" aria-label="What each tag means">
-            {LEGEND.map(([scope, name, what]) => (
-              <li key={scope}>
-                <span className="setting-tag" data-scope={scope}>
-                  {name}
-                </span>
-                {what}
-              </li>
-            ))}
-          </ul>
           <ul className="settings-files" aria-label="The files read">
             {page.files.map((file) => (
               <li key={file.name} data-found={file.found}>
@@ -711,7 +685,6 @@ export function SettingsView({ page, error, missing, reread }: SettingsViewProps
               aria-labelledby={`settings-${section.id}`}
             >
               <h2 id={`settings-${section.id}`}>{section.title}</h2>
-              <p className="settings-sub">{section.about}</p>
               <div className="settings-panel">
                 {section.entries.map((entry) => (
                   <Entry key={entry.id} entry={entry} writes={writes} />

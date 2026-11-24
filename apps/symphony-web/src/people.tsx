@@ -1323,13 +1323,9 @@ export function PeopleView({ page, error, missing, writes, now = new Date() }: P
     >
       <header className="people-head">
         <h1>People</h1>
-        <p className="people-sub">
-          Who is on this board besides the person at the machine, who holds every power: what each
-          may do, their own and by their groups, and every change of them.
-          {page !== null &&
-            !page.administers &&
-            " Changing who is on the board needs administer, which you do not hold."}
-        </p>
+        {page !== null && !page.administers && (
+          <p className="people-refused">Changing who is on the board needs administer.</p>
+        )}
       </header>
       {error !== null && (
         <p className="people-error" role="alert">
@@ -1348,11 +1344,7 @@ export function PeopleView({ page, error, missing, writes, now = new Date() }: P
           <section className="people-section" aria-labelledby="people-people">
             <h2 id="people-people">People</h2>
             <div className="people-panel">
-              {page.people.length === 0 && (
-                <p className="people-empty">
-                  Nobody is on this board but the person at the machine, who holds every power.
-                </p>
-              )}
+              {page.people.length === 0 && <p className="people-empty">Nobody yet.</p>}
               {page.people.map((person) => (
                 <Person key={person.name} person={person} page={page} writes={writes} />
               ))}
@@ -1366,9 +1358,6 @@ export function PeopleView({ page, error, missing, writes, now = new Date() }: P
           </section>
           <section className="people-section" aria-labelledby="people-groups">
             <h2 id="people-groups">Groups</h2>
-            <p className="people-sub">
-              Each member holds what their groups hold, beside their own.
-            </p>
             <div className="people-panel">
               {page.groups.length === 0 && <p className="people-empty">No group yet.</p>}
               {page.groups.map((group) => (

@@ -239,7 +239,6 @@ fn a_setting_given_the_boards_scope_alone_is_left_with_none_and_drawn_with_no_co
     let page = [SettingsSection {
         id: "plugins".into(),
         title: "Plugins".into(),
-        about: String::new(),
         entries: vec![judged],
     }];
     assert!(stored::list(&page, &stored::Board::default(), None, "main").is_empty());

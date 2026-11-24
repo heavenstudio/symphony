@@ -269,12 +269,14 @@ export interface QuickThreadProps {
 }
 
 /**
- * The sheet's thread: on the chat's tab the conversation, its ghost while it is read, or the
- * invitation to ask; on the Add task tab what the last save came to, and with nothing to say it is
- * quiet and takes no room, so the form sits under the tabs.
+ * The sheet's thread: on the chat's tab the conversation, or its ghost while it is read; on the Add
+ * task tab what the last save came to. With nothing to say it is quiet and takes no room, so the
+ * form sits under the tabs.
  */
 export function QuickThread({ draft, shown, readError, checking, created }: QuickThreadProps) {
-  const quiet = draft.task && checking === null && draft.request === "" && created === null;
+  const quiet = draft.task
+    ? checking === null && draft.request === "" && created === null
+    : draft.ask === 0 && readError === null;
   return (
     <div className={quiet ? "quick-thread quiet" : "quick-thread"} aria-live="polite">
       {!draft.task && readError !== null && (
@@ -315,9 +317,7 @@ export function QuickThread({ draft, shown, readError, checking, created }: Quic
               ))}
             </>
           )
-        ) : (
-          <p className="muted">Ask about this page.</p>
-        )
+        ) : null
       ) : checking !== null ? (
         <p role="status">{`Checking save… ${checking}`}</p>
       ) : draft.request !== "" ? (
@@ -493,9 +493,7 @@ export function QuickPanel({ route, draft, change }: QuickPanelProps) {
           );
           setThread(null);
           setReadError(null);
-          setError(
-            "This conversation is no longer available. Your text is kept; send again to start a new conversation.",
-          );
+          setError("This conversation is gone; send again to start a new one.");
         } else {
           setError(said(failure));
         }

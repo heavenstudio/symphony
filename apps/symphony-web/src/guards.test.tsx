@@ -248,9 +248,7 @@ describe("a guard the owner's take was refused by", () => {
         "a blocker is still open [task w/a](/task/w/a) · " +
         "[the release check failed](https://ci.example/runs/7)",
     );
-    expect(row.record.title).toBe(
-      "What the board read from your Pass review at 13:40:07 UTC · kept on this page until the task moves or the page reloads",
-    );
+    expect(row.record.title).toBe("What the board read from your Pass review at 13:40:07 UTC");
     expect(row.record.lines.map((line) => [line.label, text(line.parts)])).toEqual([
       ["ledger's word", "refuse · decided at generation 41 · 2026"],
       [

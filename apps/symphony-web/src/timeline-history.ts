@@ -96,7 +96,7 @@ export function endpointWords(endpoint: MessageEndpoint): string {
     case "ambiguous":
       return `Ambiguous endpoint${candidates ? `: ${candidates}` : ""}.`;
     case "everyone":
-      return "Everyone on task; historical recipients are not recorded.";
+      return "Everyone on task.";
     case "outside":
       return "Outside the recorded task roles.";
     default:
@@ -104,13 +104,14 @@ export function endpointWords(endpoint: MessageEndpoint): string {
   }
 }
 
-export function historyWords(history: History | null | undefined): string {
+/** What the role history lacks, said over the messages; none for a whole one. */
+export function historyWords(history: History | null | undefined): string | null {
   if (!history) return "Role and address history unavailable.";
   const incomplete = history.sources.filter((s) => s.state !== "complete");
   if (!history.sources_complete || incomplete.length > 0) {
     return `Incomplete role history; individual endpoints may be unknown.${incomplete.map((s) => ` ${s.slug}: ${s.state === "partial" ? "partial" : "unavailable"}.`).join("")}`;
   }
-  return "Recorded role holds, not continuous work or connection. Arrows mean addressed to, not delivered or read.";
+  return null;
 }
 
 /** Exact numeric time remains available even outside JavaScript's calendar range. */

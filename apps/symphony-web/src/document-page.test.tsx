@@ -138,9 +138,7 @@ describe("a document no file has at its route", () => {
         <Missing path="docs/GONE.md" scope="" moved={moved} hash="" retry={() => {}} />,
       );
       expect(html).toContain("<h1>Document not found</h1>");
-      expect(html).toContain(
-        "<p>There is no document at docs/GONE.md: it may have been moved, renamed or removed.</p>",
-      );
+      expect(html).toContain("<p>There is no document at docs/GONE.md.</p>");
       expect(html).toContain('<a class="trouble-back" href="/docs/">');
       expect(html).toContain(">Retry</button>");
       expect(html).not.toContain("trouble-choices");
@@ -182,11 +180,9 @@ describe("a folder with no document", () => {
     intro: null,
     entries: [],
   };
-  it("says in one line what makes the first one and a card, with the guide's link", () => {
+  it("says in one line that none is here, with the guide's link", () => {
     const html = renderToStaticMarkup(<FirstDocument folder={folder} />);
-    expect(html).toContain(
-      '<p class="first-steps">No document is here yet. A Markdown file in this folder is a page of its own, and a card in its register waits for your verdict in the queue: <a href="',
-    );
+    expect(html).toContain('<p class="first-steps">No document here yet. <a href="');
     expect(html).toContain('/docs/operations/GETTING_STARTED.md" target="_blank"');
   });
   it("says nothing once it lists a document or a folder, or draws an intro", () => {

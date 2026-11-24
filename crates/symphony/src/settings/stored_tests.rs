@@ -82,7 +82,6 @@ fn sections(settings: Vec<Setting>) -> Vec<SettingsSection> {
     vec![SettingsSection {
         id: "models".into(),
         title: "Models".into(),
-        about: String::new(),
         entries: vec![SettingsEntry {
             id: "models".into(),
             name: "Models".into(),

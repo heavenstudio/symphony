@@ -71,7 +71,7 @@ const pressing = () => import("./session-press");
  * What a control says where what a press does did not come, once the shell said the page's build is
  * there (where it is gone, the page loads again).
  */
-export const UNPRESSED = "This page could not load the session's control. Try again.";
+export const UNPRESSED = "The session's control could not load; try again.";
 
 /**
  * A press of `control`'s button for `handle`'s session (session-press.ts `press`), once what a press

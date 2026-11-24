@@ -106,6 +106,9 @@ Each is one a lint or a test does not hold by itself, or names the one that does
   `NO_ANSWER`, and is tried again through `tryAgain` (`state.ts`) while nothing is drawn. Such a
   part looks on this device again (`parts.ts`), so a database that opened after the store's
   500 ms deadline still gives the copy when the server does not answer.
+- **A page explains nothing of itself** (RULES.md `code/pages-explain-nothing`): no lead, legend
+  or note says what it shows, a heading is a short label, and a control that cannot act is not
+  drawn.
 - **No wait by a number** (RULES.md `code/no-timed-waits`): a wait is for its event, and a number
   paces one only through `timing.ts`'s helpers. Biome refuses the rest.
 - **Every key the browser stores goes through `stored`, and every link through `href`**

@@ -879,7 +879,7 @@ fn reconnect_pills_are_statuses_and_leave_document_reading_layout_unchanged() {
                 4183,
                 &json!({"version":4183,"changes":[{"region":"document","data":{"path":"docs/PROBE.md","removed":true}}]}).to_string(),
             );
-            assert!(browser.wait_for("document.querySelector('.page-notices .document-removed')?.textContent==='This document was removed. Your draft is kept on this device.'", SHOWN), "{path}: a live removal must display its alert");
+            assert!(browser.wait_for("document.querySelector('.page-notices .document-removed')?.textContent==='This document was removed; your draft is kept.'", SHOWN), "{path}: a live removal must display its alert");
             assert_notice_surface(&mut browser, ".page-notices .document-removed", "alert");
             assert_eq!(
                 browser.eval("scrollY"),

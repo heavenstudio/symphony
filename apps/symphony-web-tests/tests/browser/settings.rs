@@ -60,7 +60,7 @@ fn the_settings_page_draws_every_entry_within_a_desk_and_a_phone_with_the_stores
             [
                 "Integrations and tools",
                 "Models and limits",
-                "Shown here, changed by a reviewed task",
+                "Reviewed settings",
                 "This device"
             ],
             "{width}"
@@ -106,16 +106,18 @@ fn the_settings_page_draws_every_entry_within_a_desk_and_a_phone_with_the_stores
             json!({"reviewed":true,"over":true,"stored":true,"rows":3,"outside":0,"waiting":[true],"withinTheScreen":true,"withinThePage":true}),
             "{width}"
         );
+        // The page explains nothing of itself: its head is its title, with no legend of the tags
+        // and no line under a section's heading or an entry's name but its state.
         assert_eq!(
-            texts(&mut chrome, ".settings-legend .setting-tag"),
-            [
-                "project",
-                "this board",
-                "this machine",
-                "this device",
-                "default",
-                "reviewed"
-            ],
+            chrome.eval(
+                r#"(() => ({
+                    head: document.querySelector('.settings-head').textContent,
+                    legend: document.querySelector('.settings-legend') !== null,
+                    leads: document.querySelectorAll('.settings-section > h2 + p').length,
+                    abouts: document.querySelectorAll('.setting-about').length,
+                }))()"#
+            ),
+            json!({"head":"Settings","legend":false,"leads":0,"abouts":0}),
             "{width}"
         );
     }

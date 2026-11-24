@@ -101,7 +101,7 @@ describe("the page's notices", () => {
 
   it("say a document was removed", () => {
     expect(notices({ reconnecting: false, documentRemoved: true })).toContain(
-      "This document was removed.",
+      "This document was removed; your draft is kept.",
     );
   });
 

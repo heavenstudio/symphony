@@ -42,51 +42,58 @@ export function MessagePanel({
   const index = messages.findIndex((m) => m.id === selected);
   const message = messages[index];
   const entry = thread?.entries.find((e) => e.message.id === selected);
+  const lacks = historyWords(timeline.history);
+  // A control that cannot act is not drawn: no picker over no message, no stepping through one.
   return (
     <section className="tl-message-panel" aria-label="Timeline messages">
-      <p className="tl-note">{historyWords(timeline.history)}</p>
-      <div className="tl-message-controls">
-        <label htmlFor="tl-message-choice">Messages, in send order</label>
-        <select
-          id="tl-message-choice"
-          disabled={messages.length === 0}
-          value={selected ?? ""}
-          onChange={(e) => choose(Number(e.currentTarget.value))}
-          onKeyDown={(event) => {
-            const direction = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
-            const next = messages[index + direction];
-            if (direction && next) {
-              event.preventDefault();
-              choose(next.id);
-            }
-          }}
-        >
-          <option value="" disabled>
-            Select a message
-          </option>
-          {messages.map((m) => (
-            <option key={m.id} value={m.id}>{`#${m.id} · ${address(m)}`}</option>
-          ))}
-        </select>
-        <Button
-          disabled={index <= 0}
-          onClick={() => {
-            const m = messages[index - 1];
-            if (m) choose(m.id);
-          }}
-        >
-          Previous message
-        </Button>
-        <Button
-          disabled={index >= messages.length - 1}
-          onClick={() => {
-            const m = messages[index + 1];
-            if (m) choose(m.id);
-          }}
-        >
-          Next message
-        </Button>
-      </div>
+      {lacks !== null && <p className="tl-note">{lacks}</p>}
+      {messages.length > 0 && (
+        <div className="tl-message-controls">
+          <label htmlFor="tl-message-choice">Messages, in send order</label>
+          <select
+            id="tl-message-choice"
+            value={selected ?? ""}
+            onChange={(e) => choose(Number(e.currentTarget.value))}
+            onKeyDown={(event) => {
+              const direction = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+              const next = messages[index + direction];
+              if (direction && next) {
+                event.preventDefault();
+                choose(next.id);
+              }
+            }}
+          >
+            <option value="" disabled>
+              Select a message
+            </option>
+            {messages.map((m) => (
+              <option key={m.id} value={m.id}>{`#${m.id} · ${address(m)}`}</option>
+            ))}
+          </select>
+          {messages.length > 1 && (
+            <>
+              <Button
+                disabled={index <= 0}
+                onClick={() => {
+                  const m = messages[index - 1];
+                  if (m) choose(m.id);
+                }}
+              >
+                Previous message
+              </Button>
+              <Button
+                disabled={index >= messages.length - 1}
+                onClick={() => {
+                  const m = messages[index + 1];
+                  if (m) choose(m.id);
+                }}
+              >
+                Next message
+              </Button>
+            </>
+          )}
+        </div>
+      )}
       {messages.length === 0 && <p>No recorded messages in the available range.</p>}
       {error && !message && <p role="alert">{error}</p>}
       {message && (
@@ -107,8 +114,7 @@ export function MessagePanel({
               ? "Sent after task closure."
               : message.after_close === null
                 ? "Closure state at send time is unknown."
-                : "Sent while the task was open."}{" "}
-            Arrows mean addressed to; delivery, reading and reply causality are not recorded.
+                : "Sent while the task was open."}
           </p>
           {entry ? (
             thread?.render(entry)
