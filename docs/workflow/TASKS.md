@@ -2378,15 +2378,15 @@ as it did before. That person stays `owner`, with every power, once others are n
   a file written before they had a meaning reads as it did: a value is an address or a way only
   where it is text its rule takes. `Profiles::reach` is the server's read of where one notice of
   theirs goes, the way and the address, which nothing prints: `list` shows no address and no way,
-  and no agent or project plugin is handed one. A git handle is not one person's alone: a person writes their own, and nothing checks
-  that no other profile holds it, so nothing decides by a git handle alone whose commit or write
-  something is (a plugin is told them as the sender's, never as proof). A board and its copies hold
-  none of it. The board's log and the server's log lines name the short name, never a sign-in's
-  subject or an email. A `people.json` that does not parse is said by its line and column, the field
-  (`people[0].signins`, a profile's own names alone) and the kind of fault, never a value found in
-  it, and none of its profiles is read or written over. An add holds the lock from its check of the
-  sign-ins through the board's change and the profile's write, so of two adds of one sign-in at once
-  the second is refused, with nothing written.
+  and no agent or project plugin is handed one. A git handle is not one person's alone: a person
+  writes their own, and nothing checks that no other profile holds it, so nothing decides by a git
+  handle alone whose commit or write something is (a plugin is told them as the sender's, never as
+  proof). A board and its copies hold none of it. The board's log and the server's log lines name
+  the short name, never a sign-in's subject or an email. A `people.json` that does not parse is said
+  by its line and column, the field (`people[0].signins`, a profile's own names alone) and the kind
+  of fault, never a value found in it, and none of its profiles is read or written over. An add
+  holds the lock from its check of the sign-ins through the board's change and the profile's write,
+  so of two adds of one sign-in at once the second is refused, with nothing written.
 - **Who reaches a board.** A visitor under another Tailscale login is the profile holding that
   `tailscale` sign-in, on each board that gives its short name a power, as that name
   ([the server guide](../../apps/symphony-server/README.md#who-a-request-is-from)).
@@ -2426,9 +2426,10 @@ could match each spelling, and Codex's rules take no word but those they name.
   GROUP POWER…`, `revoke --group GROUP POWER…`, `group add GROUP [POWER…]`, `group remove GROUP`
   (its members are out of it).
 - `profile NAME [--display D] [--signin …]… [--git H]… [--email E] [--slack ID] [--whatsapp N]
-  [--notice KIND=WAY]…`: the profile alone, on no board. `--email` puts the email first,
-  `--slack` and `--whatsapp` set those addresses, each an empty one taking it away, and `--notice
-  card=slack` sends that kind by that way, `card=` by none. `add` takes them too.
+  [--notice KIND=WAY]…`: the profile alone, on no board. `--email` replaces the first email
+  (those after it stay), `--slack` and `--whatsapp` set those addresses, each an empty one taking
+  it away, and `--notice card=slack` sends that kind by that way, `card=` by none. `add` takes them
+  too.
 
 ### The People page
 

@@ -14,8 +14,8 @@ told, of what and by which way, the settings that name each way's program, and i
 after a `75`) is step 4 of
 [the way from one owner](../product/analysis/users-and-identity.md#the-way-from-one-owner), and
 the address it sends to is the first email in the person's profile, which they write on the
-People page held to the plugin's own rule ([TASKS](../workflow/TASKS.md#the-people-page)). Until then it is set up as
-below and [checked by hand](#checking-it).
+People page held to the plugin's own rule ([TASKS](../workflow/TASKS.md#the-people-page)). Until
+then it is set up as below and [checked by hand](#checking-it).
 
 ## What it needs
 
@@ -54,10 +54,10 @@ there, each named for its way.
 
 A folder or a file that is a link, or that others can read, is refused before anything in it is
 read, and nothing is sent: keep the folder and the files themselves there. A file is opened without
-following a link, and its mode is read from the file opened, so the file checked is the file read. Settings that do not
-read are refused by their line, never by what it holds: a key the settings do not know (a
-password in `email.toml` is such a key) is said only to be one, and a value of another type than
-its key takes is named by its key.
+following a link, and its mode is read from the file opened, so the file checked is the file read.
+Settings that do not read are refused by their line, never by what it holds: a key the settings do
+not know (a password in `email.toml` is such a key) is said only to be one, and a value of another
+type than its key takes is named by its key.
 
 | Key | What it sets |
 | --- | --- |

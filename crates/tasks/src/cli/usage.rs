@@ -648,8 +648,9 @@ profile in the machine folder (people.json, mode 600) with --display,
 profile alone. --email, --slack and --whatsapp set where notices reach them,
 each held to its sender's rule, an empty one taking it away; --notice
 KIND=WAY sends a card, question or verdict notice by email, slack or
-whatsapp, and KIND= by none, as the page and the Mac app show every notice. `remove NAME` takes a person off the board: their lines stay
-theirs, and their profile stays. `join NAME GROUP` and `leave NAME GROUP`;
+whatsapp, and KIND= by none, as the page and the Mac app show every notice.
+`remove NAME` takes a person off the board: their lines stay theirs, and
+their profile stays. `join NAME GROUP` and `leave NAME GROUP`;
 `grant NAME POWER...` and `revoke NAME POWER...`, or with --group GROUP the
 group's powers; `group add GROUP [POWER...]` and `group remove GROUP`, which
 takes its members out of it. People and groups share one name space, a short
