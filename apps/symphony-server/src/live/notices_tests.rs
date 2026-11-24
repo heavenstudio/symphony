@@ -162,6 +162,7 @@ fn profiles() -> Profiles {
                 ..Profile::default()
             },
         ],
+        machine: None,
     }
 }
 
