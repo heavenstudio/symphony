@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   addition,
+  Choose,
   doneLine,
   listed,
   logLine,
@@ -14,10 +15,13 @@ import {
   powerState,
   powersSaid,
   profileWrite,
+  Remove,
   readPeople,
   type Said,
   type Told,
   type Writes,
+  withheldSaid,
+  withheldWhy,
   writePeople,
 } from "./people";
 import { asking, CASES, elementOf, type Found, fire, reply, server } from "./testing";
@@ -78,9 +82,11 @@ describe("the read", () => {
       revision: 0,
       administers: true,
       machine: true,
+      withheld: SAMPLE.withheld,
       you: null,
       problem: null,
     });
+    expect(SAMPLE.withheld.map((power) => power.power)).toEqual(["direct_agents"]);
     expect(readPeople({ ...SAMPLE, you: "cy", problem: "down" })).toMatchObject({
       you: "cy",
       problem: "down",
@@ -106,6 +112,9 @@ describe("the read", () => {
       [["log", 0, "did"], 2],
       [["log", 0, "group"], 2],
       [["log", 0, "powers"], "decide"],
+      [["withheld"], undefined],
+      [["withheld", 0, "power"], 1],
+      [["withheld", 0, "why"], undefined],
       [["revision"], undefined],
       [["administers"], "yes"],
       [["machine"], undefined],
@@ -442,10 +451,114 @@ describe("a person's and a group's powers", () => {
     ]);
   });
 
+  it("draws a power the board gives no one yet as not givable, its reason its title, a press doing nothing", () => {
+    const toggled: unknown[] = [];
+    const withheld = SAMPLE.withheld;
+    const why = withheldWhy("direct_agents", withheld);
+    expect(why).toBe(
+      "until a board speaks to its agents for a person, asking them for work is the person at the machine's",
+    );
+    expect(withheldWhy("speak", withheld)).toBeUndefined();
+    const toggle = (word: string, given: boolean) => toggled.push([word, given]);
+    const tags = PowerTags({
+      held: ana().powers,
+      own: ana().own,
+      label: "ana",
+      busy: false,
+      toggle,
+      withheld,
+    });
+    expect(renderToStaticMarkup(tags)).toContain(
+      `data-held="none" data-withheld="true" aria-pressed="false" aria-label="direct agents for ana" title="Given to no one yet: ${why?.replace("'", "&#x27;")}" aria-disabled="true"`,
+    );
+    fire(tags, labelled("direct agents for ana"), "onClick");
+    fire(tags, labelled("administer for ana"), "onClick");
+    expect(toggled).toEqual([["administer", false]]);
+    // Held by a group, it is no more givable as one's own.
+    const grouped = renderToStaticMarkup(
+      <PowerTags
+        held={["read", "direct_agents"]}
+        own={[]}
+        label="bo"
+        busy={false}
+        toggle={toggle}
+        withheld={withheld}
+      />,
+    );
+    expect(grouped).toContain('data-held="group" data-withheld="true"');
+    // Given already (a board from before the rule), it is taken back like any other.
+    const given = PowerTags({
+      held: ["read", "direct_agents"],
+      own: ["direct_agents"],
+      label: "cy",
+      busy: false,
+      toggle,
+      withheld,
+    });
+    expect(renderToStaticMarkup(given)).not.toContain("data-withheld");
+    fire(given, labelled("direct agents for cy"), "onClick");
+    expect(toggled.at(-1)).toEqual(["direct_agents", true]);
+  });
+
+  it("says each withheld power once in words in a form's choice, which toggles the rest", () => {
+    expect(withheldSaid({ power: "direct_agents", why: "not yet" })).toBe(
+      "Direct agents is given to no one yet: not yet.",
+    );
+    const chosen: string[][] = [];
+    const choice = (
+      <Choose
+        chosen={["read"]}
+        label="the new person"
+        withheld={SAMPLE.withheld}
+        onChoose={(powers) => chosen.push(powers)}
+      />
+    );
+    const html = renderToStaticMarkup(choice);
+    expect(html.match(/class="people-hint"/g)).toHaveLength(1);
+    expect(html).toContain(
+      '<p class="people-hint">Direct agents is given to no one yet: until a board speaks',
+    );
+    const tags = elementOf(choice.type(choice.props), (element) => element.type === PowerTags);
+    const toggle = tags?.props.toggle as (word: string, given: boolean) => void;
+    toggle("speak", false);
+    toggle("read", true);
+    expect(chosen).toEqual([["read", "speak"], []]);
+    expect(
+      renderToStaticMarkup(
+        <Choose chosen={[]} label="the new group" withheld={[]} onChoose={() => {}} />,
+      ),
+    ).not.toContain("people-hint");
+  });
+
+  it("asks before a removal as the task page's Cancel does: an outlined control, then a named confirmation", () => {
+    const props = {
+      label: "Take off the board",
+      question: "Take cy off the board?",
+      keep: "Keep cy",
+      busy: false,
+      onRemove: () => {},
+    };
+    expect(renderToStaticMarkup(<Remove {...props} />)).toBe(
+      '<button class="dx-button" data-style="outline" data-size="xs" type="button">Take off the board</button>',
+    );
+    expect(renderToStaticMarkup(<Remove {...props} asking />)).toBe(
+      '<div class="people-confirm" role="group" aria-label="Take off the board: confirmation">' +
+        "<span>Take cy off the board?</span>" +
+        '<button class="dx-button" data-style="destructive" data-size="xs" type="button">Confirm removal</button>' +
+        '<button class="dx-button" data-style="outline" data-size="xs" type="button">Keep cy</button></div>',
+    );
+  });
+
   it("sends a person's grant, revoke, join, leave and removal for an admin, by the person's part", () => {
     const { sent, writes } = writing();
     const drawn = Person({ person: ana(), page: SAMPLE, writes });
     const tags = elementOf(drawn, (element) => element.type === PowerTags);
+    expect(tags?.props.withheld).toBe(SAMPLE.withheld);
+    const removal = elementOf(drawn, (element) => element.type === Remove);
+    expect([removal?.props.question, removal?.props.keep]).toEqual([
+      "Take ana off the board?",
+      "Keep ana",
+    ]);
     const toggle = tags?.props.toggle as (word: string, given: boolean) => void;
     toggle("speak", true);
     toggle("administer", false);
@@ -523,7 +636,45 @@ describe("the page", () => {
     expect(html).toContain('aria-label="Make a group"');
     expect(html.match(/<details class="people-profile">/g)).toHaveLength(3);
     expect(html).toContain('aria-label="Sign-in of bo"');
+    expect(html).toContain('aria-label="Sign-in"');
     expect(html).toContain("<summary>Make a profile</summary>");
+    // Each add form says once why direct agents is given to no one, and the group's removal asks.
+    expect(html.match(/Direct agents is given to no one yet/g)).toHaveLength(2);
+    expect(html).toContain(">Remove the group</button>");
+  });
+
+  it("offers an admin who is not the person at the machine no sign-in to give in the add", () => {
+    const html = draw({ ...SAMPLE, machine: false, you: "bo" }, writing().writes);
+    expect(html).toContain('aria-label="Add a person"');
+    expect(html).not.toContain('aria-label="Sign-in"');
+    expect(html).toContain(
+      "A profile is made for them where the machine holds none, with no sign-in: the person at the machine gives that",
+    );
+  });
+
+  it("says a change of today by its time, and one of another day with its day", () => {
+    const at = (...date: [number, number, number, number, number]) =>
+      new Date(...date).getTime() / 1000;
+    const log = [
+      [1, at(2025, 10, 13, 9, 30)],
+      [2, at(2026, 2, 2, 9, 30)],
+      [3, at(2026, 10, 23, 9, 30)],
+      [4, at(2026, 10, 24, 9, 30)],
+    ].map(([n, when]) => ({ n, at: when, by: "owner", did: "remove", name: "cy", powers: [] }));
+    const html = renderToStaticMarkup(
+      <PeopleView
+        page={{ ...EMPTY, log: log as PeopleLogLine[] }}
+        error={null}
+        missing={false}
+        now={new Date(2026, 10, 24, 18, 0)}
+      />,
+    );
+    expect([...html.matchAll(/<time [^>]*>([^<]*)<\/time>/g)].map((found) => found[1])).toEqual([
+      "09:30",
+      "yesterday 09:30",
+      "2 Mar 09:30",
+      "13 Nov 2025 09:30",
+    ]);
   });
 
   it("draws a reader without administer no control but their own profile, and no sign-in to give", () => {

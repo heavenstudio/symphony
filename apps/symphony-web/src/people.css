@@ -136,6 +136,11 @@ li.people-power[data-held="group"],
 .dx-button.people-power[aria-disabled="true"] {
   cursor: default;
 }
+/* A power the board gives no one yet: drawn as a disabled control is, its reason as its title. */
+.dx-button.people-power[data-withheld="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .dx-button.people-power[data-held="none"] {
   color: var(--muted-foreground);
 }
@@ -171,6 +176,8 @@ li.people-power[data-held="group"],
 }
 .people-confirm {
   display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
 }
 .people-profile {
