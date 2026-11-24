@@ -18,5 +18,10 @@ repository.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
 
+[dev-dependencies]
+# The machine folder's rule, which the crate repeats rather than links: its tests hold the two the
+# same.
+symphony-board = { path = "../tasks" }
+
 [lints]
 workspace = true

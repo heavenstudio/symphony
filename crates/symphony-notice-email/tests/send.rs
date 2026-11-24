@@ -7,12 +7,16 @@
     reason = "the helpers beside the tests assert as they do: an unwrap is the failure"
 )]
 
+#[path = "../src/scratch.rs"]
+mod scratch;
+
+use scratch::Scratch;
+use std::ffi::OsStr;
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread;
 
@@ -125,15 +129,10 @@ fn serve(stream: TcpStream, answer: Answer) -> Vec<String> {
     }
 }
 
-/// A machine folder whose `notices/` sends by the mail server at `port`, logging in.
-fn machine(port: u16) -> PathBuf {
-    static NEXT: AtomicUsize = AtomicUsize::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "symphony-notice-email-send-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
+/// A machine folder whose `notices/` sends by the mail server at `port`, logging in, removed
+/// when it is dropped.
+fn machine(port: u16) -> Scratch {
+    let dir = Scratch::new("send");
     let notices = dir.join("notices");
     std::fs::create_dir_all(&notices).unwrap();
     std::fs::set_permissions(&notices, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -154,17 +153,15 @@ fn machine(port: u16) -> PathBuf {
 }
 
 /// The program's exit status and stderr, handed `message` on stdin with `machine` as its machine
-/// folder and `path` as its `PATH` where some.
-fn run(machine: &Path, message: &str, path: Option<&Path>) -> (i32, String) {
+/// folder and each of `env` set in its environment.
+fn run(machine: &Path, message: &str, env: &[(&str, &OsStr)]) -> (i32, String) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_symphony-notice-email"));
     command
         .env("SYMPHONY_MACHINE_DIR", machine)
+        .envs(env.iter().copied())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    if let Some(path) = path {
-        command.env("PATH", path);
-    }
     let mut child = command.spawn().unwrap();
     child
         .stdin
@@ -192,7 +189,7 @@ fn run(machine: &Path, message: &str, path: Option<&Path>) -> (i32, String) {
 #[test]
 fn a_notice_is_sent_as_one_mail_to_its_address() {
     let fake = Fake::start(Answer::Takes);
-    let (code, said) = run(&machine(fake.port), &message("email"), None);
+    let (code, said) = run(&machine(fake.port), &message("email"), &[]);
     assert_eq!((code, said.as_str()), (0, ""));
     let heard = fake.heard();
     let has = |line: &str| heard.iter().any(|heard| heard == line);
@@ -254,7 +251,7 @@ fn a_refusal_for_now_is_tried_again_and_a_refusal_is_not() {
         (Answer::Greeting(554), 1, "answered 554 on connecting"),
     ] {
         let fake = Fake::start(answer);
-        let (code, said) = run(&machine(fake.port), &message("email"), None);
+        let (code, said) = run(&machine(fake.port), &message("email"), &[]);
         assert_eq!(code, status, "{said}");
         assert!(said.contains(words), "{said}");
         let heard = fake.heard();
@@ -270,7 +267,7 @@ fn a_mail_server_nobody_answers_at_is_tried_again() {
         .local_addr()
         .unwrap()
         .port();
-    let (code, said) = run(&machine(port), &message("email"), None);
+    let (code, said) = run(&machine(port), &message("email"), &[]);
     assert_eq!(code, 75, "{said}");
     assert!(
         said.contains("not reached") && said.contains("curl: (7)"),
@@ -282,24 +279,57 @@ fn a_mail_server_nobody_answers_at_is_tried_again() {
 fn what_cannot_be_sent_is_refused_before_anything_is_reached() {
     let empty = machine(9);
     std::fs::remove_dir_all(empty.join("notices")).unwrap();
-    let (code, said) = run(&empty, &message("email"), None);
+    let (code, said) = run(&empty, &message("email"), &[]);
     assert_eq!(code, 1);
     assert!(said.contains("the email plugin is not set up"), "{said}");
 
-    let (code, said) = run(&machine(9), &message("slack"), None);
+    let (code, said) = run(&machine(9), &message("slack"), &[]);
     assert_eq!(code, 1);
     assert_eq!(
         said,
         "this plugin sends a notice by `email`, and this one is by `slack`\n"
     );
 
-    let (code, said) = run(&machine(9), "{\"notice\":2}\n", None);
+    let (code, said) = run(&machine(9), "{\"notice\":2}\n", &[]);
     assert_eq!(code, 1);
     assert!(said.contains("format 2"), "{said}");
 
-    let nowhere = machine(9).join("bin");
+    let machine = machine(9);
+    let nowhere = machine.join("bin");
     std::fs::create_dir_all(&nowhere).unwrap();
-    let (code, said) = run(&machine(9), &message("email"), Some(&nowhere));
+    let (code, said) = run(
+        &machine,
+        &message("email"),
+        &[("PATH", nowhere.as_os_str())],
+    );
     assert_eq!(code, 1);
     assert!(said.contains("curl is not on PATH"), "{said}");
+}
+
+#[test]
+fn a_proxy_the_servers_environment_names_is_never_used() {
+    // Every variable curl takes a proxy for SMTP from names a loopback port nothing listens on: a
+    // curl that took one would reach no mail server at all.
+    let proxy = format!(
+        "http://127.0.0.1:{}",
+        TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    );
+    let proxy = OsStr::new(&proxy);
+    let fake = Fake::start(Answer::Takes);
+    let (code, said) = run(
+        &machine(fake.port),
+        &message("email"),
+        &[
+            ("smtp_proxy", proxy),
+            ("SMTP_PROXY", proxy),
+            ("all_proxy", proxy),
+            ("ALL_PROXY", proxy),
+        ],
+    );
+    assert_eq!((code, said.as_str()), (0, ""));
+    assert!(fake.heard().iter().any(|line| line == LINK));
 }

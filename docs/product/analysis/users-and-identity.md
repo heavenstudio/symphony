@@ -1410,7 +1410,8 @@ Each step can ship alone, and a machine with one person sees none of them.
    the server's plugins for Slack, WhatsApp and email send them, each shipping on its own.
    Built: the notice message's format and its hand-off, which a plugin builds on
    ([NOTICES](../../engineering/NOTICES.md)); the Slack plugin
-   ([NOTICE_SLACK](../../operations/NOTICE_SLACK.md)) and the email plugin
+   ([NOTICE_SLACK](../../operations/NOTICE_SLACK.md)), the WhatsApp plugin
+   ([NOTICE_WHATSAPP](../../operations/NOTICE_WHATSAPP.md)) and the email plugin
    ([NOTICE_EMAIL](../../operations/NOTICE_EMAIL.md)); the board's map of places to groups, kept by
    its admins, a card's `*For:*` and a task's `--group`, the read of whose a thing is and what gave
    it, drawn on a task's page and a card, and its hand-over by a member of its group

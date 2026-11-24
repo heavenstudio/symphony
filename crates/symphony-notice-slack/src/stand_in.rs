@@ -5,6 +5,7 @@
 use std::fs;
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::TcpListener;
+use std::ops::Deref;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -101,8 +102,25 @@ pub(crate) fn unanswered() -> String {
     format!("http://127.0.0.1:{port}/api")
 }
 
+/// An empty folder of the test's own, removed with all it holds when it is dropped.
+pub(crate) struct Folder(PathBuf);
+
+impl Deref for Folder {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Folder {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
 /// An empty folder of the test's own, named for `name`.
-pub(crate) fn folder(name: &str) -> PathBuf {
+pub(crate) fn folder(name: &str) -> Folder {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
         "symphony-notice-slack-{name}-{}-{}",
@@ -111,7 +129,7 @@ pub(crate) fn folder(name: &str) -> PathBuf {
     ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
-    dir
+    Folder(dir)
 }
 
 /// `token` kept in the machine folder `machine` as the program keeps it: `notices/slack.token`,

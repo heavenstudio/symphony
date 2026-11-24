@@ -21,7 +21,7 @@ mod settings;
 
 use std::path::PathBuf;
 use std::time::SystemTime;
-use symphony_notice::{EMAIL, Notice, Unsent};
+use symphony_notice::{EMAIL, Notice, Unsent, machine_folder};
 
 /// Sends `notice` by mail, by the settings the machine folder's `notices/` holds, through the
 /// `curl` on `PATH`.
@@ -33,7 +33,7 @@ use symphony_notice::{EMAIL, Notice, Unsent};
 /// not one this plugin sends, and where its settings are missing or do not read. The reason names
 /// neither the address, the link nor the password.
 pub fn send(notice: &Notice) -> Result<(), Unsent> {
-    let folder = settings::machine_folder(|name| std::env::var_os(name), cfg!(target_os = "macos"))
+    let folder = machine_folder(|name| std::env::var_os(name), cfg!(target_os = "macos"))
         .map_err(Unsent::Never)?;
     Sender {
         folder,
@@ -67,6 +67,9 @@ impl Sender {
         curl::send(&self.curl, &settings, notice, &mail)
     }
 }
+
+#[cfg(test)]
+mod scratch;
 
 #[cfg(test)]
 mod tests;

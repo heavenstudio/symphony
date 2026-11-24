@@ -58,15 +58,16 @@ struct Ran {
 /// The program run as the server runs it, with `machine` as its machine folder and `message` on
 /// its stdin: no argument, and no environment but `PATH`, so no proxy is read and no other folder.
 fn run(machine: &Scratch, message: &str) -> Ran {
-    run_in(machine.path().as_os_str(), message)
+    run_in(machine.path().as_os_str(), message, &[])
 }
 
-/// [`run`] with `SYMPHONY_MACHINE_DIR` naming `machine`, whatever it is.
-fn run_in(machine: &OsStr, message: &str) -> Ran {
+/// [`run`] with `SYMPHONY_MACHINE_DIR` naming `machine`, whatever it is, and each of `env` set.
+fn run_in(machine: &OsStr, message: &str, env: &[(&str, &str)]) -> Ran {
     let mut child = Command::new(env!("CARGO_BIN_EXE_symphony-notice-whatsapp"))
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .env("SYMPHONY_MACHINE_DIR", machine)
+        .envs(env.iter().copied())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -115,6 +116,36 @@ fn a_card_is_sent_by_its_template_to_the_number_with_the_link_and_nothing_is_sai
         })
     );
     assert!(fake.read_none(), "one request for one notice");
+}
+
+#[test]
+fn a_proxy_the_servers_environment_names_is_never_used() {
+    // Every variable curl takes a proxy from names a loopback port nothing listens on: a curl that
+    // took one would reach no API at all.
+    let port = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let proxy = format!("http://127.0.0.1:{port}");
+    let fake = Fake::answering(200, TAKEN);
+    let machine = machine(&fake.api);
+    let ran = run_in(
+        machine.path().as_os_str(),
+        &notice("card", "whatsapp", NUMBER),
+        &[
+            ("http_proxy", &proxy),
+            ("https_proxy", &proxy),
+            ("HTTPS_PROXY", &proxy),
+            ("all_proxy", &proxy),
+            ("ALL_PROXY", &proxy),
+        ],
+    );
+    assert_eq!((ran.status, ran.said.as_str()), (Some(0), ""));
+    assert_eq!(
+        fake.request().headers["authorization"],
+        format!("Bearer {TOKEN}")
+    );
 }
 
 #[test]
@@ -272,7 +303,7 @@ fn settings_or_a_token_that_do_not_read_are_a_1_naming_the_file_and_reach_nothin
     assert_eq!(ran.status, Some(1));
     assert!(ran.said.contains("NOTICE_WHATSAPP.md"), "{}", ran.said);
 
-    let ran = run_in(OsStr::new("relative/machine"), &card);
+    let ran = run_in(OsStr::new("relative/machine"), &card, &[]);
     assert_eq!(
         (ran.status, ran.said.as_str()),
         (
