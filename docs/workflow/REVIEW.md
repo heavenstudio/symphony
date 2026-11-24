@@ -150,9 +150,9 @@ and previous/next navigation keep the same global view while a branch document i
 
 **A worktree with an owner line no commit has is never removed.** The worktree sweep (`just tasks sweep`) and
 `land`'s cleanup keep it and say so: the board reads the owner's dated lines under a card, and any person's (every
-dated line not an agent's), in the documents of the project's entrypoint folders, that the worktree's HEAD does not hold, and keeps a worktree it cannot read as well;
-commit the verdict first. A consuming project's own gate asks the Symphony with
-`symphony::landing::owner_lines_left`, which names the documents holding such a line.
+dated line not an agent's), in the documents of the project's entrypoint folders, that the worktree's HEAD does
+not hold, and keeps a worktree it cannot read as well; commit the verdict first. A consuming project's own gate
+asks the Symphony with `symphony::landing::owner_lines_left`, which names the documents holding such a line.
 
 ## Start with the decision register
 
@@ -526,7 +526,8 @@ on the document like any other.
 
 The first line is the tag and a short title; the `>` lines under it are the
 body. A comment a person a board names left carries their short name before
-the title, `> [!comment] ana · 141 lamps`; the owner's names nobody. `comment`, `question` and `decision` are open work until an agent nests
+the title, `> [!comment] ana · 141 lamps`; the owner's names nobody.
+`comment`, `question` and `decision` are open work until an agent nests
 a resolution under them. Older documents also hold `like` (what to keep, no
 answer needed) and `dislike` (open, like `comment`); the app no longer offers
 them. A resolution looks like this:

@@ -531,9 +531,10 @@ END IF;"
 }
 
 /// Whether the row `row` of `message` is a person's line, read through the row
-/// ([`crate::schema::PERSON_LINES`]): a board without the step has no column, and reads none.
+/// ([`crate::schema::PERSON_LINES`]): a board without the step has no column, and every row there
+/// reads false, never null, which a [`crate::rows::MessageRow`] would refuse.
 pub(in crate::store) fn person(row: &str) -> String {
-    format!("(to_jsonb({row}) -> 'person') = 'true'::jsonb")
+    format!("coalesce((to_jsonb({row}) -> 'person') = 'true'::jsonb, false)")
 }
 
 /// A row read as SurrealDB gives it, `row` a table's row or a query's: its unset columns and id

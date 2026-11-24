@@ -5,10 +5,10 @@
 //! them writes so: the same name from any other store is a session's, refused as an unknown one is,
 //! and a name a session holds on the board is never a person's.
 
-use super::common::{Backend, Fixture, Seed};
+use super::common::{Backend, Fixture, HOST, NOW, Seed};
 use symphony_board::rows::MessageRow;
 use symphony_board::schema::{ADDED, PERSON_LINES};
-use symphony_board::{Error, NewTask, Store};
+use symphony_board::{Error, NewSession, NewTask, Opening, Schema, Store};
 
 /// The person every case writes as.
 const ANA: &str = "ana";
@@ -165,5 +165,47 @@ fn a_board_without_the_step_takes_no_persons_write_and_every_other(backend: Back
     assert!(why.contains("this write names `message.person`"), "{why}");
     f.store.say("tools/x", "owner", "still here", None).unwrap();
     assert_eq!(newest(&f, "tools/x").text, "still here");
+}
+
+/// A board made before the step, which no column of `message.person` was ever added to, as a build
+/// of this code meets it when it may not move the board: a writer of the contract before the step
+/// and every reader. Each line reads as no person's, the owner's as the owner's, and every read of
+/// the thread takes it: the window the task page draws, the rows, the feed, the inbox and the
+/// questions waiting on the owner.
+fn a_board_made_without_the_step_reads_every_line_and_takes_a_sessions_post(backend: Backend) {
+    let db = backend.database();
+    let open = |how: &Opening| {
+        Store::opening_on(db.another(), Box::new(|| NOW), Box::new(|_| false), HOST, how).unwrap()
+    };
+    let step = ADDED.iter().position(|step| *step == PERSON_LINES).unwrap();
+    let step = i64::try_from(step).unwrap();
+    let before = Opening::write().at(Schema::of_this_contract(step));
+    let writer = open(&before);
+    let worker = writer.register(&NewSession::new("worker")).unwrap().row.handle;
+    writer.create(&NewTask::new("tools/x", "Jump departure", "owner")).unwrap();
+    writer.claim("tools/x", &worker).unwrap();
+    let asked = writer.say_asking_as("tools/x", "owner", "how far along?", None).unwrap();
+    let heard: Vec<String> = writer.inbox(&worker).unwrap().into_iter().map(|m| m.text).collect();
+    assert!(heard.contains(&"how far along?".to_string()), "{heard:?}");
+    let answer = writer.say("tools/x", &worker, "Does the larger font fit?", Some("owner")).unwrap();
+    let why = refused(open(&before).for_person(ANA).say("tools/x", ANA, "hello", None));
+    assert!(why.contains("this write names `message.person`"), "{why}");
+
+    let reader = open(&Opening::read());
+    assert_eq!(reader.additions().unwrap(), step, "nothing moved the board");
+    for store in [&writer, &reader] {
+        let window = store.thread_window("tools/x", None).unwrap();
+        assert!(window.by_person.is_empty(), "{:?}", window.by_person);
+        let ids: Vec<i64> = window.lines.iter().map(|m| m.id).collect();
+        assert!(ids.ends_with(&[asked.id, answer.id]), "{ids:?}");
+        let rows = store.thread_rows("tools/x").unwrap();
+        assert!(rows.iter().all(|row| !row.person), "{rows:?}");
+        let owners: Vec<i64> = rows.iter().filter(|row| row.by_person()).map(|row| row.id).collect();
+        assert!(owners.contains(&asked.id) && !owners.contains(&answer.id), "{owners:?}");
+        let feed = store.messages_after_rows(asked.id - 1, answer.id).unwrap();
+        assert_eq!(feed.iter().map(|row| (row.id, row.person)).collect::<Vec<_>>(), [(asked.id, false), (answer.id, false)]);
+        let waiting = store.questions_waiting("owner", &["tools/x".to_string()]).unwrap();
+        assert_eq!(waiting.iter().map(|m| m.id).collect::<Vec<_>>(), [answer.id]);
+    }
 }
 }

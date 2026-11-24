@@ -628,7 +628,9 @@ alone: it concerns people the board already knows, however they signed in.
 What follows for the rules that say "the owner":
 
 - **The `owner` stamp** on a task is the approve of any one member of the group the task belongs
-  to, naming the tip, under that member's name.
+  to, naming the tip, under that member's name. Until a board holds its people and their powers,
+  it is the owner's own approve alone, on a card or a thread: a named person's `ana · approved`
+  meets no stamp, and her later word that is no approve keeps the owner's from standing.
 - **An approved card decides a later one** whoever of its group approved it. An agent checking
   earlier verdicts reads the verdict, not who gave it.
 - **A line no commit has yet** keeps its worktree from being removed, whoever's line it is.

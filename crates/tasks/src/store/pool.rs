@@ -235,4 +235,52 @@ mod tests {
             "at the cursor: {person}"
         );
     }
+
+    /// A board made before [`crate::schema::PERSON_LINES`], which has no column for the mark, read
+    /// by a build of this code that may not move it: the pool's read takes every row as no
+    /// person's, and a pass hears the owner's word from it as from the message table.
+    #[test]
+    fn a_pool_on_a_board_made_without_the_step_hears_the_owners_word_and_no_other() {
+        use crate::schema::{ADDED, PERSON_LINES, Schema};
+        use crate::store_fixture::{Backend, HOST, NOW};
+        use crate::{NewSession, NewTask, Opening, Store};
+        let step = ADDED.iter().position(|step| *step == PERSON_LINES).unwrap();
+        let before = Opening::write().at(Schema::of_this_contract(i64::try_from(step).unwrap()));
+        for backend in [Backend::SurrealDb, Backend::PostgreSql] {
+            let db = backend.database();
+            let store = Store::opening_on(
+                db.another(),
+                Box::new(|| NOW),
+                Box::new(|_| false),
+                HOST,
+                &before,
+            )
+            .unwrap();
+            let worker = store
+                .register(&NewSession::new("worker"))
+                .unwrap()
+                .row
+                .handle;
+            store
+                .create(&NewTask::new("tools/x", "Jump departure", "owner"))
+                .unwrap();
+            store.claim("tools/x", &worker).unwrap();
+            store.inbox(&worker).unwrap();
+            let own = store.say("tools/x", &worker, "on it", None).unwrap().id;
+            assert!(
+                !store.could_hear(&worker, own - 1, own).unwrap(),
+                "{backend:?}"
+            );
+            let owners = store
+                .say("tools/x", "owner", "how far along?", None)
+                .unwrap();
+            assert!(
+                store.could_hear(&worker, own, owners.id).unwrap(),
+                "{backend:?}"
+            );
+            let heard = store.inbox_pooled(&worker, own - 1, owners.id).unwrap();
+            let heard: Vec<&str> = heard.iter().map(|m| m.text.as_str()).collect();
+            assert_eq!(heard, ["how far along?"], "{backend:?}");
+        }
+    }
 }
