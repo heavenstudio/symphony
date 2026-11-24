@@ -265,7 +265,7 @@ fn a_waiting_card_a_question_and_a_verdict_reach_each_member_of_its_group_once_b
 #[test]
 fn a_held_messages_line_tells_its_tasks_group_as_a_question_and_its_pass_tells_no_one() {
     let telling = Telling::new(false);
-    let mut passes = Passes::default();
+    let mut passes = turns();
     passes.pass(&telling.hub);
     let ana = telling.f.other().for_person("ana");
     let held = (ana.hold_words("app/x", "ana", "Cut the header", None)).unwrap();
