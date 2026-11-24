@@ -17,6 +17,7 @@ fn thread_window_caps_rows_continues_exclusively_and_omits_post_bodies() {
             kind: "msg".into(),
             text: format!("body {n}"),
             ts: NOW,
+            person: false,
         })
         .collect();
     seed.dump.messages.push(MessageRow {
@@ -83,4 +84,34 @@ fn thread_window_clips_system_text_marks_uncertainty_and_keeps_verdict_words() {
     assert_eq!(page.lines[0].text, "o joined as orchestrator");
     assert_eq!(page.lines[1].text.chars().count(), 2048);
     assert_eq!(page.lines[2].text, "approve: details");
+}
+
+#[test]
+fn thread_window_names_the_lines_a_person_wrote_by_their_mark() {
+    let mut seed = Seed::default().task("window", "ready");
+    seed.dump.messages = [("ana", true), ("ana", false), ("owner", false)]
+        .into_iter()
+        .enumerate()
+        .map(|(n, (sender, person))| MessageRow {
+            id: n as i64 + 1,
+            slug: "window".into(),
+            sender: sender.into(),
+            kind: "msg".into(),
+            text: "said".into(),
+            ts: NOW,
+            person,
+            ..MessageRow::default()
+        })
+        .collect();
+    let f = Fixture::new(seed);
+    let window = f.store.thread_window("window", None).unwrap();
+    assert_eq!(
+        window.lines.iter().map(|line| line.id).collect::<Vec<_>>(),
+        [1, 2, 3]
+    );
+    assert_eq!(
+        window.by_person.into_iter().collect::<Vec<_>>(),
+        [1],
+        "the mark, not the name"
+    );
 }

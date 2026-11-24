@@ -543,9 +543,10 @@ END;",
     Pg::script(guarding(fenced, &body, guarded))
 }
 
-/// The owner's tasks saved under the receipt `receipt`, two at most.
+/// The tasks the owner, or the person `by_person`, saved under the receipt `receipt`, two at most.
 pub(in crate::store) const OWNER_SAVED: Pg<'static> = Pg::Read(Cow::Borrowed(
-    "coalesce((SELECT jsonb_agg(o.slug) FROM (SELECT slug FROM task WHERE created_by = 'owner' \
+    "coalesce((SELECT jsonb_agg(o.slug) FROM (SELECT slug FROM task \
+    WHERE (created_by = 'owner' OR created_by = v ->> 'by_person') \
     AND fields #>> '{_symphony,owner_save}' = v ->> 'receipt' ORDER BY slug LIMIT 2) AS o), '[]')",
 ));
 

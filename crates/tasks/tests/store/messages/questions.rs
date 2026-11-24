@@ -145,3 +145,35 @@ fn the_newest_verdict_is_the_newest_reviewers_approve_or_changes() {
         .unwrap();
     assert_eq!(f.store.newest_verdict().unwrap(), Some(approve));
 }
+
+#[test]
+fn a_persons_post_answers_the_question_to_the_owner_and_a_sessions_unmarked_line_does_not() {
+    let f = Fixture::new(Seed::default());
+    let worker = f.session("worker");
+    f.task("sim/jump");
+    f.task("sim/dock");
+    for slug in ["sim/jump", "sim/dock"] {
+        f.store
+            .say(
+                slug,
+                &worker,
+                &format!("which curve on {slug}?"),
+                Some("owner"),
+            )
+            .unwrap();
+    }
+    f.other()
+        .for_person("ana")
+        .say("sim/jump", "ana", "flat", None)
+        .unwrap();
+    assert_eq!(
+        waiting(&f, &["sim/jump", "sim/dock"]),
+        ["which curve on sim/dock?"],
+        "her word answers it as the owner's would"
+    );
+    // A line the board did not mark is a session's, whatever its handle's shape: it answers
+    // nothing.
+    let other = f.session("worker");
+    f.store.say("sim/dock", &other, "flat", None).unwrap();
+    assert_eq!(waiting(&f, &["sim/dock"]), ["which curve on sim/dock?"]);
+}

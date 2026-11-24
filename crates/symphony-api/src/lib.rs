@@ -661,6 +661,11 @@ pub struct Message {
     pub kind: String,
     pub text: String,
     pub ts: f64,
+    /// A person a board named wrote it, `sender` their short name: drawn as a person's line, as
+    /// the owner's is. False for the owner's, whose sender says so, and for a session's; an older
+    /// server sends none.
+    #[serde(default)]
+    pub person: bool,
 }
 
 /// Task metadata and its brief. Thread pages and the landing offer are fetched separately

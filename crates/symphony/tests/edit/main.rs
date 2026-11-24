@@ -6,6 +6,7 @@ mod common;
 
 mod comment;
 mod message;
+mod person;
 mod section;
 mod thread;
 mod verdict;

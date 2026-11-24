@@ -124,3 +124,18 @@ fn a_refusal_is_an_ask_error_and_a_store_that_cannot_open_is_a_store_error() {
     let broken = call(json!({"fn": "asks_all", "db": tree.path("file/asks.db")}));
     assert_eq!(broken["error"], "store", "{broken}");
 }
+
+#[test]
+fn a_persons_ask_and_follow_up_are_theirs() {
+    let tree = Tree::new();
+    let db = tree.path("asks/asks.db");
+    let id = ok(
+        json!({"fn": "asks_ask", "db": db, "path": "docs/A.md", "question": "Why five?", "anchor": "", "quote": "", "by": "ana"}),
+    );
+    ok(json!({"fn": "asks_reply", "db": db, "id": id, "text": "And six?", "by": "ana"}));
+    let thread = ok(json!({"fn": "asks_thread", "db": db, "id": id}));
+    let said: Vec<(&str, &str)> = (thread["messages"].as_array().unwrap().iter())
+        .map(|m| (m["kind"].as_str().unwrap(), m["by"].as_str().unwrap()))
+        .collect();
+    assert_eq!(said, [("question", "ana"), ("question", "ana")], "{thread}");
+}

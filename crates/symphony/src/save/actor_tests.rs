@@ -4,9 +4,10 @@
 //! submission a board action's plugin receives, while a read reaches the plugin with no one; and
 //! no save path is left that writes the constant where an actor is in hand.
 //!
-//! The board knows one person, `owner`, and refuses any other actor that is no session of its
-//! own until it holds people: the other actor here is named by a session the scratch board
-//! registers, so what it records shows the name the save handed it.
+//! The board takes a person the saves vouch for by their short name
+//! ([`symphony_board::Store::for_person`]), marking each line of theirs a person's, and refuses
+//! a name one of its sessions holds as its handle: the other actor here is `ana`, whom no
+//! session's handle names.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -127,12 +128,27 @@ fn thread(f: &Fixture, slug: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Each of a task's writes asked by `actor` on a board holding `sim/a` and `sim/held`, both ready
-/// and filed by `actor`: what the project's board action was asked.
+/// The senders of `slug`'s lines the board marks a person's a board named.
+fn marked(f: &Fixture, slug: &str) -> Vec<String> {
+    (f.store.thread_rows(slug).unwrap().into_iter())
+        .filter(|row| row.person)
+        .map(|row| row.sender)
+        .collect()
+}
+
+/// The board as the saves reach it for `actor`, who asked: vouched for by their short name, as
+/// [`Saves::store_by`] reaches it.
+fn board_for(f: &Fixture, actor: &Actor) -> symphony_board::Store {
+    f.other().for_person(actor.name())
+}
+
+/// Each of a task's writes asked by `actor` on a board holding `sim/a` and `sim/held`, both ready:
+/// what the project's board action was asked.
 fn on_the_board(f: &Fixture, actor: &Actor, root: &Path) -> Vec<String> {
     let plugins = || Plugins::new(vec![&SIGNING]);
+    let store = board_for(f, actor);
     let write =
-        |route: &str, payload: Value| ok(on_task(&f.store, plugins, root, actor, route, &payload));
+        |route: &str, payload: Value| ok(on_task(&store, plugins, root, actor, route, &payload));
     write(
         "/api/task-message",
         json!({"slug": "sim/a", "text": "Ready when you are"}),
@@ -163,48 +179,55 @@ fn seeded(f: &Fixture, by: &str) {
 }
 
 #[test]
-fn a_test_hosts_actor_is_the_sender_and_mover_the_board_records_and_the_plugins_sender() {
+fn a_person_a_host_admitted_is_the_sender_and_mover_the_board_records_and_the_plugins_sender() {
     let (f, tree) = (Fixture::empty(), Tree::new());
-    let handle = f.session("worker");
-    seeded(&f, &handle);
-    // Work the actor's session holds blocked, which the action releases back to review.
-    f.store.claim("sim/held", &handle).unwrap();
-    f.store.hold_blocked("sim/held", &handle).unwrap();
-    let actor = ana(&handle);
-    let asked = on_the_board(&f, &actor, &tree.root);
+    seeded(&f, "owner");
+    // Work an executor holds blocked, which the action releases back to review.
+    let worker = f.session("worker");
+    f.store.claim("sim/held", &worker).unwrap();
+    f.store.hold_blocked("sim/held", &worker).unwrap();
+    let asked = on_the_board(&f, &ana("ana"), &tree.root);
     assert_eq!(
         asked,
-        [
-            "offer sim/a".to_string(),
-            format!("submit sim/a from {handle} (Ana Lima, ana-l al)")
-        ],
+        ["offer sim/a", "submit sim/a from ana (Ana Lima, ana-l al)"],
         "the read carries nobody, the submission its sender"
     );
     let lines = thread(&f, "sim/a");
     let by_ana: Vec<&str> = (lines.iter())
-        .filter(|(sender, _)| *sender == handle)
+        .filter(|(sender, _)| sender == "ana")
         .map(|(_, text)| text.as_str())
         .collect();
     assert!(by_ana.contains(&"Ready when you are"), "{lines:?}");
     assert!(by_ana.contains(&"signed tip for Ana Lima"), "{lines:?}");
     assert!(
-        (lines.iter()).all(|(sender, _)| sender != "owner"),
-        "no line is the owner's: {lines:?}"
+        (lines.iter().skip(1)).all(|(sender, _)| sender != "owner"),
+        "no line but the seed's filing is the owner's: {lines:?}"
     );
+    // Every line of hers is marked a person's, and no other line is.
+    let marks = marked(&f, "sim/a");
+    assert!(
+        !marks.is_empty() && marks.iter().all(|sender| sender == "ana"),
+        "{marks:?}"
+    );
+    assert_eq!(marks.len(), by_ana.len(), "{lines:?}");
     let task = f.store.get("sim/a").unwrap();
     assert_eq!((task.status.as_str(), task.priority), ("cancelled", 0));
     assert!(
-        (lines.iter()).any(|(_, text)| text.contains(&handle) && text.contains("cancelled")),
+        (lines.iter()).any(|(_, text)| text.contains("ana") && text.contains("cancelled")),
         "the cancel is the actor's: {lines:?}"
     );
-    // Released work is moved back to review as the actor: its thread names them as the mover.
+    // Released work is moved back to review as the actor: its thread names her as the mover.
     assert_eq!(f.store.get("sim/held").unwrap().status, "review");
-    let moved = format!("{handle} moved it blocked → review");
+    let moved = (
+        "ana".to_string(),
+        "ana moved it blocked → review".to_string(),
+    );
     assert!(
-        thread(&f, "sim/held").contains(&(handle.clone(), moved)),
+        thread(&f, "sim/held").contains(&moved),
         "{:?}",
         thread(&f, "sim/held")
     );
+    assert_eq!(marked(&f, "sim/held"), ["ana"]);
 }
 
 #[test]
@@ -231,12 +254,12 @@ fn the_local_owner_writes_every_board_line_as_owner_as_before() {
 #[test]
 fn a_board_actions_note_its_own_approve_and_a_field_are_the_actors_and_an_unknown_action_none() {
     let (f, tree) = (Fixture::empty(), Tree::new());
-    let handle = f.session("worker");
-    seeded(&f, &handle);
-    let actor = ana(&handle);
+    seeded(&f, "owner");
+    let actor = ana("ana");
+    let store = board_for(&f, &actor);
     let write = |route: &str, payload: Value| {
         on_task(
-            &f.store,
+            &store,
             || Plugins::new(vec![&SIGNING]),
             &tree.root,
             &actor,
@@ -279,36 +302,64 @@ fn a_board_actions_note_its_own_approve_and_a_field_are_the_actors_and_an_unknow
     );
     let lines = thread(&f, "sim/a");
     let said = |by: &str, text: &str| (lines.iter()).any(|(s, t)| s == by && t.contains(text));
-    assert!(said(&handle, "signed tip for Ana Lima"), "{lines:?}");
-    assert!(said(&handle, "approve c0ffee1"), "{lines:?}");
+    assert!(said("ana", "signed tip for Ana Lima"), "{lines:?}");
+    assert!(said("ana", "approve c0ffee1"), "{lines:?}");
     let set = |by: &str, value: &str| said(by, &format!("{by} set signing.effort to {value}"));
-    assert!(set(&handle, "3.0"), "{lines:?}");
+    assert!(set("ana", "3.0"), "{lines:?}");
     assert!(set(&other, "5.0"), "{lines:?}");
+    // The session's own field write is its own, never marked a person's.
+    assert!(marked(&f, "sim/a").iter().all(|sender| sender == "ana"));
     assert!(
-        (lines.iter()).all(|(sender, _)| sender != "owner"),
-        "{lines:?}"
+        (lines.iter().skip(1)).all(|(sender, _)| sender != "owner"),
+        "no line but the seed's filing is the owner's: {lines:?}"
+    );
+    assert_eq!(
+        lines[0],
+        ("owner".to_string(), "created by owner".to_string())
     );
 }
 
 #[test]
-fn a_person_the_board_does_not_know_is_refused_and_nothing_is_written() {
+fn a_name_no_person_may_take_is_refused_and_nothing_is_written() {
     let (f, tree) = (Fixture::empty(), Tree::new());
     seeded(&f, "owner");
     let before = thread(&f, "sim/a");
-    let refused = on_task(
-        &f.store,
-        || Plugins::new(Vec::new()),
-        &tree.root,
-        &ana("ana"),
-        "/api/task-message",
-        &json!({"slug": "sim/a", "text": "hello"}),
-    )
-    .unwrap_err();
+    let say = |store: &symphony_board::Store, actor: &Actor| {
+        on_task(
+            store,
+            || Plugins::new(Vec::new()),
+            &tree.root,
+            actor,
+            "/api/task-message",
+            &json!({"slug": "sim/a", "text": "hello"}),
+        )
+        .unwrap_err()
+    };
+    // A person the saves did not vouch for is no session of the board's.
+    let refused = say(&f.store, &ana("ana"));
     assert!(
         refused.error.contains(&f.no_session("ana")),
         "{}",
         refused.error
     );
+    // A word that is no short name is never vouched for: it stays a session's, which none is.
+    let capital = ana("Ana");
+    let refused = say(&board_for(&f, &capital), &capital);
+    assert!(
+        refused.error.contains(&f.no_session("Ana")),
+        "{}",
+        refused.error
+    );
+    // A name one of the board's sessions holds as its handle never writes as a person, nor as
+    // that session.
+    let handle = f.session("worker");
+    assert!(
+        symphony_docs::syntax::is_short_name(&handle),
+        "{handle} could be a person's name"
+    );
+    let named = ana(&handle);
+    let refused = say(&board_for(&f, &named), &named);
+    assert!(refused.error.contains(&handle), "{}", refused.error);
     assert_eq!(thread(&f, "sim/a"), before);
 }
 

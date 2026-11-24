@@ -4,7 +4,7 @@
 use super::postgres::depends as pg;
 use super::resume::back_to;
 use super::statement::Statement;
-use super::work::{BLOCK_LINE, OWNER, no_task};
+use super::work::{BLOCK_LINE, no_task};
 use super::{Error, Failure, Opens, Store, Task, Which, executors_or, refused};
 use crate::slots::OPEN;
 use crate::stages::UNBLOCK_LINE;
@@ -112,7 +112,7 @@ impl Store {
         if let Some(both) = add.intersection(&remove).next() {
             return Err(refused(format!("{both} cannot be both added and removed")));
         }
-        let acts = by != OWNER;
+        let acts = !self.is_person(by);
         let mut said = format!("{by} changed its dependencies:");
         for (verb, slugs) in [("removed", &remove), ("added", &add)] {
             if !slugs.is_empty() {

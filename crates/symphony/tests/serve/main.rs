@@ -614,3 +614,68 @@ fn a_relative_path_is_read_from_the_callers_directory_and_named_as_given() {
         json!({"error": "review", "message": "no docs/ directory under ."})
     );
 }
+
+#[test]
+fn a_persons_calls_carry_their_name_and_a_name_no_person_may_take_is_refused() {
+    let lines = [
+        "- [ ] **a** — one.",
+        "  [2026-09-24 10:00] ana · approved — at least 21",
+        "  [2026-09-24 11:00] agent — Done.",
+    ];
+    let cards = ok(json!({"fn": "parse_decisions", "lines": lines}));
+    assert_eq!(
+        cards[0]["entries"],
+        json!([
+            {"ts": "2026-09-24 10:00", "who": "owner", "name": "ana", "verdict": "approved", "text": "at least 21"},
+            {"ts": "2026-09-24 11:00", "who": "agent", "verdict": null, "text": "Done."}
+        ])
+    );
+    let text = "# D\n\n- [ ] **one** — first.\n";
+    let decided = ok(
+        json!({"fn": "set_decision", "text": text, "slug": "one", "state": "approved", "note": "Fine.", "now": "2026-10-06 09:00", "by": "ana"}),
+    );
+    assert!(
+        (decided.to_string()).contains("[2026-10-06 09:00] ana · approved — Fine."),
+        "{decided}"
+    );
+    let hers = "# D\n\n- [x] **one** — first.\n  [2026-10-06 09:00] ana · approved — Fine.\n";
+    let repeat = |by: &str| {
+        ok(
+            json!({"fn": "is_repeat_decision", "text": hers, "slug": "one", "state": "approved", "note": "Fine.", "now": "2026-10-06 09:00", "by": by}),
+        )
+    };
+    assert_eq!(repeat("ana"), json!(true), "her own verdict again");
+    assert_eq!(repeat("owner"), json!(false), "the same words from another");
+    assert_eq!(
+        ok(
+            json!({"fn": "add_message", "text": text, "slug": "one", "message": "Hm", "now": "t", "who": "ana"})
+        ),
+        json!("# D\n\n- [ ] **one** — first.\n  [t] ana — Hm\n")
+    );
+    assert_eq!(
+        ok(
+            json!({"fn": "insert_comment", "text": "a\n", "after_line": 1, "kind": "like", "title": "keep", "body": "", "by": "ana"})
+        ),
+        json!("a\n\n> [!like] ana · keep\n")
+    );
+    for (field, call_with) in [
+        (
+            "who",
+            json!({"fn": "add_message", "text": text, "slug": "one", "message": "Hm", "now": "t", "who": "Ana"}),
+        ),
+        (
+            "by",
+            json!({"fn": "set_decision", "text": text, "slug": "one", "state": "approved", "note": "", "now": "t", "by": "board"}),
+        ),
+        (
+            "by",
+            json!({"fn": "insert_comment", "text": "a\n", "after_line": 1, "kind": "like", "title": "keep", "body": "", "by": "unknown"}),
+        ),
+    ] {
+        let refused = call(call_with.clone());
+        assert!(
+            refused.get("error").is_some(),
+            "{field} of {call_with}: {refused}"
+        );
+    }
+}

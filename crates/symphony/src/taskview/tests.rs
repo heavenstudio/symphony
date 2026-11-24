@@ -193,6 +193,7 @@ fn the_activity_says_answered_of_exactly_the_owners_questions_no_longer_waiting(
             kind: kind.into(),
             text: format!("line {id}"),
             ts: NOW + f64::from(id),
+            person: false,
         }
     };
     let (agent, owner, to_owner) = ("amber-heron", "owner", Some("owner"));
@@ -381,6 +382,7 @@ fn agent_post(text: &str) -> Message {
         kind: "msg".into(),
         text: text.into(),
         ts: 1_795_132_459.79,
+        person: false,
     }
 }
 

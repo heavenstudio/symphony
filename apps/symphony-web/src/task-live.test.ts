@@ -74,7 +74,7 @@ function aPage(
 /** Message `id` of `slug`'s thread, by `sender`, of `kind`. */
 function anEntry(id: number, slug = "w/a", sender = "owner", kind = "message"): TaskEntry {
   return {
-    message: { id, slug, sender, recipient: null, kind, text: `Said ${id}`, ts: id },
+    message: { id, slug, sender, recipient: null, kind, text: `Said ${id}`, ts: id, person: false },
     stamp: "",
     blocks: [],
   };

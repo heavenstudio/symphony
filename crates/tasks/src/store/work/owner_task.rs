@@ -22,15 +22,19 @@ impl Store {
         self.create_with_receipt(new, None, Some(arm), true)
     }
 
-    /// The slugs of the owner's tasks saved under `receipt` ([`Store::create_owner_task`]), two
-    /// at most: none when the save never reached the board, one when it did, and two when the
-    /// receipt does not say which task it made.
+    /// The slugs of the owner's tasks saved under `receipt` ([`Store::create_owner_task`]), and of
+    /// the person's this store writes for ([`Store::for_person`]), two at most: none when the save
+    /// never reached the board, one when it did, and two when the receipt does not say which task
+    /// it made.
     pub fn owner_saved(&self, receipt: &str) -> Result<Vec<String>, Error> {
         let read = || Statement::from(pg::OWNER_SAVED);
-        self.retrying(|| self.read(read(), json!({"receipt": receipt})))
+        let person = self.person.as_deref().filter(|name| self.is_person(name));
+        let vars = json!({"receipt": receipt, "by_person": person});
+        self.retrying(|| self.read(read(), vars.clone()))
     }
 
-    /// Create an owner's task with an opaque save receipt in the task's private fields.
+    /// Create an owner's task with an opaque save receipt in the task's private fields: one the
+    /// owner files, or a person this store writes for ([`Store::is_person`]).
     /// The receipt, task and creation message commit together; edits retain the receipt. Then the
     /// board gives it an orchestrator ([`Store::give_filed`]): a give that fails is said on stderr
     /// and fails nothing, the task saved, and the board's next read of the whole board gives it
@@ -55,7 +59,7 @@ impl Store {
     }
 
     fn owner_task(&self, new: &NewTask, receipt: &str, deliver: bool) -> Result<Task, Error> {
-        if new.by != OWNER || receipt.is_empty() {
+        if !self.is_person(&new.by) || receipt.is_empty() {
             return Err(refused(format!(
                 "owner task receipt {} requires actor owner and a nonempty receipt; actor is {}",
                 repr(receipt),
@@ -126,7 +130,7 @@ impl Store {
         }
         let file_as = |placing: Option<crate::workflow::Transition>| {
             let creating = pg::Creating {
-                acts: new.by != OWNER,
+                acts: !self.is_person(&new.by),
                 receipt: receipt.is_some(),
                 red: red.is_some(),
                 arm: arm.is_some(),

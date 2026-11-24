@@ -8,7 +8,6 @@ use serde_json::json;
 
 use super::postgres::waits as pg;
 use super::statement::Statement;
-use super::work::OWNER;
 use super::{Error, REFUSED, Store, Task, refused, repr};
 use crate::alarm::{ASSESSED, FIXED, Tip, WAITS, WAITS_SET, Waits, Written};
 use crate::red::FIELDS;
@@ -132,7 +131,7 @@ impl Store {
                 "a landing's assessment must have an identity".into(),
             ));
         }
-        let acting = handle != OWNER;
+        let acting = !self.is_person(handle);
         self.retrying(|| {
             let observed = match source.as_mut().map_or(Ok(true), |check| check()) {
                 Ok(current) => SourceObservation { current, unavailable: None },

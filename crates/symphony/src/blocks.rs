@@ -667,6 +667,10 @@ impl Parser<'_> {
         {
             if child.class("entry-text") {
                 blocks.extend(self.blocks(&child.children));
+            } else if child.class(crate::render::BY_CLASS) {
+                // A person's name, first of the entry's blocks: the kit's thread entry has no
+                // field for it, and the client draws it before the verdict.
+                blocks.insert(0, by_block(&child.plain()));
             } else {
                 blocks.extend(self.block(child));
             }
@@ -1185,6 +1189,20 @@ fn count(
             }
         }
         _ => (),
+    }
+}
+
+/// The first block of a person's thread entry, which names them: a paragraph of one span classed
+/// [`crate::render::BY_CLASS`] holding the short name their line carries.
+pub(crate) fn by_block(name: &str) -> Block {
+    Block::Paragraph {
+        spans: vec![Span::Styled {
+            tag: InlineKind::Span,
+            presentation: Presentation::class(crate::render::BY_CLASS),
+            spans: vec![Span::Text {
+                text: name.to_string(),
+            }],
+        }],
     }
 }
 

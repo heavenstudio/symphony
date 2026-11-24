@@ -144,6 +144,22 @@ pub fn insert_comment(
     title: &str,
     body: &str,
 ) -> Result<String, EditError> {
+    insert_comment_by(text, after_line, kind, title, body, Who::Owner.as_str())
+}
+
+/// [`insert_comment`] left by `by`, the short name of who asked: the person at the machine's,
+/// `owner`, names nobody, as a comment always has; a person a board named is named before the
+/// title, `> [!dislike] ana · Too many lamps`, as their line on a card reads
+/// ([`crate::callouts::Comment::by`]). Refused for a `by` that names no person.
+pub fn insert_comment_by(
+    text: &str,
+    after_line: i64,
+    kind: &str,
+    title: &str,
+    body: &str,
+    by: &str,
+) -> Result<String, EditError> {
+    person(by)?;
     if !KINDS.contains(&kind) {
         return Err(EditError(format!(
             "unknown comment kind {}; use one of {}",
@@ -190,7 +206,11 @@ pub fn insert_comment(
             card_end(&lines, first)
         )));
     }
-    let title = format!("> [!{kind}] {}", strip(title));
+    let title = if by == Who::Owner.as_str() {
+        format!("> [!{kind}] {}", strip(title))
+    } else {
+        format!("> [!{kind}] {by} · {}", strip(title))
+    };
     let mut callout = vec![title];
     callout.extend(
         splitlines(body)
@@ -224,8 +244,10 @@ pub fn set_decision(
 
 /// [`set_decision`] given by `by`, the short name of who asked (`symphony_plugin::Actor`), which
 /// the entry carries in the owner's place: `owner` for the person at the machine, whose entry reads
-/// as [`set_decision`]'s. The record's readers know `owner` and `agent` alone until a board names
-/// people (docs/product/analysis/users-and-identity.md, "How a person's name is written").
+/// as [`set_decision`]'s, `ana · approved — A` for a person a board named
+/// (docs/product/analysis/users-and-identity.md, "How a person's name is written"). A `by` that is
+/// neither `owner` nor a short name ([`symphony_docs::syntax::is_short_name`]) is refused: no reader
+/// would take its line for a person's.
 pub fn set_decision_by(
     text: &str,
     slug: &str,
@@ -235,6 +257,7 @@ pub fn set_decision_by(
     plugins: &crate::plugins::Plugins,
     by: &str,
 ) -> Result<String, EditError> {
+    person(by)?;
     let Some(state) = State::parse(state).filter(|s| OWNER_STATES.contains(s)) else {
         let owner: Vec<&str> = OWNER_STATES.iter().map(|s| s.as_str()).collect();
         return Err(EditError(format!(
@@ -258,6 +281,22 @@ pub fn set_decision_by(
     out.extend(note.iter().skip(1).map(|line| continued(line)));
     out.extend(lines[end..].iter().map(|line| line.to_string()));
     sort_register(&(out.join("\n") + "\n"), plugins).map_err(|problem| EditError(problem.0))
+}
+
+/// Refused unless `by` names a person on a line: `owner`, or a short name
+/// ([`symphony_docs::syntax::is_short_name`]), which is never `agent`, `board` or `unknown`.
+fn person(by: &str) -> Result<(), EditError> {
+    if by == Who::Owner.as_str() || symphony_docs::syntax::is_short_name(by) {
+        return Ok(());
+    }
+    Err(EditError(format!(
+        "{} is no person's short name: a person's line carries `owner` or a short name \
+         (lowercase letters and digits joined by hyphens, starting with a letter, at most {} \
+         long, not ending in a number, and none of {})",
+        repr(by),
+        symphony_docs::syntax::SHORT_NAME_MAX,
+        symphony_docs::syntax::RESERVED_NAMES.join(", ")
+    )))
 }
 
 fn unreadable_time(stamp: &str) -> EditError {
@@ -333,7 +372,7 @@ pub fn add_message(
 }
 
 /// [`add_message`] said by `by`: `agent`, or the short name of the person who asked, which the line
-/// carries in the owner's place, as [`set_decision_by`]'s entry does.
+/// carries in the owner's place, as [`set_decision_by`]'s entry does, and refused for any other.
 pub fn add_message_by(
     text: &str,
     slug: &str,
@@ -342,6 +381,9 @@ pub fn add_message_by(
     by: &str,
     verdict: Option<&str>,
 ) -> Result<String, EditError> {
+    if by != Who::Agent.as_str() {
+        person(by)?;
+    }
     let message = note_lines(message)?;
     let Some(first) = message.first() else {
         return Err(EditError("a message needs some text".to_string()));

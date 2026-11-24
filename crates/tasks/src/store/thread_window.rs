@@ -23,6 +23,9 @@ pub struct ThreadWindow {
     pub lines: Vec<Message>,
     pub more: bool,
     pub uncertain: bool,
+    /// The ids of its lines a person a board named wrote, by the board's mark of each
+    /// ([`MessageRow::person`]): their senders are people, never sessions of the task's.
+    pub by_person: std::collections::BTreeSet<i64>,
 }
 
 impl Store {
@@ -58,6 +61,10 @@ impl Store {
             .take(THREAD_WINDOW_LIMIT)
             .collect();
         let uncertain = rows.iter().any(|row| row.cut);
+        let by_person = (rows.iter())
+            .filter(|row| row.message.person)
+            .map(|row| row.message.id)
+            .collect();
         let mut lines: Vec<_> = rows.into_iter().map(|row| message(row.message)).collect();
         lines.reverse();
         Ok(ThreadWindow {
@@ -66,6 +73,7 @@ impl Store {
             lines,
             more,
             uncertain,
+            by_person,
         })
     }
 }

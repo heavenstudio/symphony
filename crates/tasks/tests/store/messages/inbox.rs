@@ -43,6 +43,7 @@ fn acknowledgements_keep_adjacent_large_integer_ids_and_recipients_distinct() {
             kind: "msg".into(),
             text: format!("message {id}"),
             ts: NOW,
+            person: false,
         })
         .collect();
     seed.dump.deliveries = [
@@ -93,6 +94,7 @@ fn a_recipient_far_behind_the_board_reads_its_inbox_from_its_cursor() {
             kind: "msg".into(),
             text: format!("line {id}"),
             ts: NOW,
+            person: false,
         })
         .collect();
     let f = Fixture::new(seed);

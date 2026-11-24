@@ -81,13 +81,21 @@ pub(super) fn callout(lines: &[String], ctx: &Ctx<'_>) -> String {
     out.join("\n")
 }
 
-/// A note under a card, the owner's or an agent's, drawn as a document's body is, so it can link,
-/// show pictures and files, and use components; its line breaks stay and no line is a heading.
+/// A note under a card, a person's or an agent's, drawn as a document's body is, so it can link,
+/// show pictures and files, and use components; its line breaks stay and no line is a heading. A
+/// person's line that carries a short name, not `owner`, names them after its time
+/// (`<span class="entry-by">`), as the line reads in the file; its class stays `owner`, a person's.
 fn entry_html(entry: &Entry, ctx: &Ctx<'_>) -> String {
     let body = single_paragraph(ctx.convert_note(&entry.text));
     let mut parts = Vec::new();
     if let Some(ts) = &entry.ts {
         parts.push(format!("<time>{}</time>", escape(ts)));
+    }
+    if entry.who == crate::register::Who::Owner && entry.name != entry.who.as_str() {
+        parts.push(format!(
+            "<span class=\"{BY_CLASS}\">{}</span>",
+            escape(&entry.name)
+        ));
     }
     if let Some(verdict) = entry.verdict.as_deref().filter(|v| !v.is_empty()) {
         parts.push(format!("<b>{}</b>", escape(verdict)));
@@ -101,6 +109,10 @@ fn entry_html(entry: &Entry, ctx: &Ctx<'_>) -> String {
         parts.join(" ")
     )
 }
+
+/// The class of the name a person's line carries under a card ([`entry_html`]), which a thread
+/// entry's first block keeps (`crate::blocks`) and the client draws before its verdict.
+pub(crate) const BY_CLASS: &str = "entry-by";
 
 /// Owner words as literal text, each line that names an upload drawn as the picture or link it is
 /// ([`crate::uploads::owner_html`]), through the same Markdown path as an agent's picture.

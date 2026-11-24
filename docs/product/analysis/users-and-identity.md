@@ -628,7 +628,9 @@ alone: it concerns people the board already knows, however they signed in.
 What follows for the rules that say "the owner":
 
 - **The `owner` stamp** on a task is the approve of any one member of the group the task belongs
-  to, naming the tip, under that member's name.
+  to, naming the tip, under that member's name. Until a board holds its people and their powers,
+  it is the owner's own approve alone, on a card or a thread: a named person's `ana · approved`
+  meets no stamp, and her later word that is no approve keeps the owner's from standing.
 - **An approved card decides a later one** whoever of its group approved it. An agent checking
   earlier verdicts reads the verdict, not who gave it.
 - **A line no commit has yet** keeps its worktree from being removed, whoever's line it is.
@@ -1037,9 +1039,12 @@ What follows:
   can be an email: no project plugin is handed an email or a chat address.
 - **Mail and chat are no project plugin's to send**, since only the server knows where a person
   is reached. The server's [notice plugins](#who-sends-a-notice) send them.
-- **The kit's `Submission` gains who sent it**, shipped beside what it holds today under the
-  kit's version rules, so a plugin built against an older kit keeps working. The line the board
-  says on the task for a submission names the person.
+- **Who sent a submission is handed beside it**, not added to the kit's `Submission`: the host
+  calls `BoardAction::submit_from` with the submission and its `Sender`, the protocol's
+  `Submit.sender`, and `submit_from` answers by `submit` unless an action implements it, so a
+  plugin built against an older kit keeps working
+  ([PLUGIN_PROTOCOL](../../engineering/PLUGIN_PROTOCOL.md)). The line the board says on the task
+  for a submission names the person.
 - **A plugin's commands** are run in a terminal, as the machine's account, as today.
 
 - [r] **plugin-told-who** — A project's plugin is told nothing of who asked today: a board action's answer is taken as yours. With several people the core admits every call before a plugin is asked, so who may do what is settled before the plugin runs. What is left is what the plugin is told. A: nothing; the board's own line names the person, and the plugin's own commit is authored as the machine. B: on every call made for a person, their public part (short name, display name, git handles) and their groups and powers there. C: the public part on a write alone, a board action's answer; reads carry nobody, and no call carries powers. Recommended: C. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#What a plugin is told of who asked]]
@@ -1102,6 +1107,36 @@ What follows:
 - **The record's format changes for every project**, so the build that brings names says so to
   consuming projects, as any change to what a project's tools read does. A project with nobody
   named writes as it does today.
+
+What is not settled is the person at the machine once others are named: they keep writing as
+`owner` on every board, holding every power there, until the card below decides otherwise.
+
+- [ ] **machine-person-name** — Once a board names other people, your own lines there still read `owner ·`, beside `ana ·` and the others'. What is left is whether you take a short name of your own, and when. A: never; you are `owner` on every board, the one line that names no profile. B: on a board that names anyone else, your new lines carry your own short name, from a profile you give yourself, and on a board with nobody named they read `owner ·` as today. C: once you give yourself a short name, every new line of yours carries it, on every board, named or not. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#How a person's name is written]]
+  [2026-11-23 19:40] agent — Posted for the board task `app/names-on-lines`. A concept: nothing is built by this card.
+
+    **Base (today, with names on lines built).** A person a board names writes `ana · approved — A`, a thread's sender `ana` and a comment `ana · title`. You, the person at the machine, write `owner` on every board, and hold every power there. A line already written is never rewritten: the lines written as `owner` read as yours.
+
+    **A, `owner` always.**
+    - Your lines read `owner ·` on every board, beside the named people's.
+    - Nothing more to build. A reader who meets `owner` must know it is the machine's person.
+
+    **B, your name where others have theirs.**
+    - On a board that names anyone else, your new lines read with your own short name (`stefano ·`), taken from a profile you give yourself; you still hold every power there.
+    - On a board with nobody named, your lines read `owner ·` as today.
+    - Your older `owner` lines stay as written, and still read as yours.
+
+    **C, your name everywhere once you set it.**
+    - Once you give yourself a short name, every new line of yours carries it, on every board.
+    - A consuming project with nobody named starts writing your name, where it writes `owner ·` today.
+
+    **Why B.** Once several people decide on a board, `owner` names nobody a reader can find in its people, which is why names on lines took the owner's place. B gives that board your name and leaves every board with nobody named as it is. A costs a reader the knowledge that `owner` is the machine's. C changes the record of projects where nobody but you writes.
+
+    **Earlier verdicts checked.**
+    - **person-name-on-lines** (A) reads the lines written as `owner` as the machine's person's, and keeps `owner ·` on a board with nobody named. It does not say what your new lines read once others are named.
+    - **person-profile-where** (B) gives a person a profile with their short name. It does not say whether the person at the machine has one.
+    - **people-kept-where** (B) gives the person at the machine every power on a board with nobody named. It does not say how their lines read once others are.
+
+    None of them decides this.
 
 - [r] **person-name-on-lines** — Once several people are on a board, each line a person writes on a card carries their short name where it says `owner` today. The choice is how it is written. A: the name takes the owner's place, `ana · approved — A`; a person's line is any line that is not an agent's, and `agent` and `owner` are never anyone's name. B: the word stays and the name follows, `owner ana · approved — A`. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#How a person's name is written]]
   [2026-11-23 00:52] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.

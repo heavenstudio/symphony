@@ -141,6 +141,29 @@ fn an_owners_entry_names_no_one_and_an_agents_names_its_session() {
 }
 
 #[test]
+fn a_persons_entry_names_them_and_the_owners_or_any_word_no_short_name_names_no_one() {
+    let tree = repository();
+    let ana = Delivery::saved_by(&tree.root, "ana");
+    assert_eq!((ana.acting(), ana.whose().as_str()), ("ana", "ana's"));
+    let written = serde_json::to_string(&ana).unwrap();
+    assert!(written.contains("\"person\":\"ana\""), "{written}");
+    assert_eq!(serde_json::from_str::<Delivery>(&written).unwrap(), ana);
+    // The machine's person, and a word that is no short name (a session's handle, a reserved
+    // word, a capital), stand as the owner's save did before a board named anyone.
+    for none in ["owner", " owner ", "fox-12", "board", "Ana", ""] {
+        let saved = Delivery::saved_by(&tree.root, none);
+        assert_eq!(
+            (saved.acting(), saved.whose().as_str()),
+            ("owner", "the owner's"),
+            "{none:?}"
+        );
+        let written = serde_json::to_string(&saved).unwrap();
+        assert!(!written.contains("person"), "{none:?}: {written}");
+    }
+    assert_eq!(Delivery::saved_by(&tree.root, " ana ").acting(), "ana");
+}
+
+#[test]
 fn an_agents_save_takes_the_later_agents_saves_whose_turn_has_come_of_any_document() {
     let tree = repository();
     entry(&tree, 1, "docs/a.md", "fox-1", Delivery::default());

@@ -2296,6 +2296,12 @@ export type Message = {
   kind: string;
   text: string;
   ts: number;
+  /**
+   * A person a board named wrote it, `sender` their short name: drawn as a person's line, as
+   * the owner's is. False for the owner's, whose sender says so, and for a session's; an older
+   * server sends none.
+   */
+  person: boolean;
 };
 
 export type TaskHistory = {

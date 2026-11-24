@@ -1753,14 +1753,16 @@ landing](#the-default-landing)).
   register, that the merge base of T with the default branch holds no copy of in any document, the
   owner's lines and its mark aside, as the pages read a branch's posted cards), each card it posted
   has `approved` as its newest owner verdict at T, committed (a reject, a question, pending,
-  dismissed or none, on any of them, and it does not), and nothing came after the newest of those
-  approves but the owner's lines: every commit on T's first-parent line after the one the owner's
-  page showed when the owner gave it (the commit before the first that carries the approve) adds the
-  owner's lines under those cards and nothing else, or is a merge of the default branch that is
-  git's own merge of its two parents. Any other commit after it, code, a document or a card's text,
-  keeps it from standing, whoever reviewed it: the owner asked for a look of their own, and its
-  reading names that commit. Met by the cards, the reading names them, `Approved by the owner on
-  card NAME, at 1a2b3c4`, which the task page shows and the land's line carries. It is never waived.
+  dismissed or none, on any of them, and it does not; a person a board named decides no stamp, so
+  her approve is none and her later word that is no approve stops it), and nothing came after the
+  newest of those approves but the owner's lines: every commit on T's first-parent line after the
+  one the owner's page showed when the owner gave it (the commit before the first that carries the
+  approve) adds the owner's lines under those cards and nothing else, or is a merge of the default
+  branch that is git's own merge of its two parents. Any other commit after it, code, a document or
+  a card's text, keeps it from standing, whoever reviewed it: the owner asked for a look of their
+  own, and its reading names that commit. Met by the cards, the reading names them, `Approved by the
+  owner on card NAME, at 1a2b3c4`, which the task page shows and the land's line carries. It is
+  never waived.
 - **The needs** are the board's own field `fields._board.needs`, out of `just tasks field`'s
   reach as the red mark is: the stamps, the tip the assessment read (none, from
   the brief), who made it and why. `just tasks needs SLUG STAMP… [--tip TIP] --why WHY --as
@@ -2238,7 +2240,9 @@ Who opens and closes them:
   task's ask in the message's own write. A line on the thread by a session
   holding a role on the task, or by the one the owner's last line there was
   sent to, answers it. A line the app posts as the owner for a board action with
-  no note opens none.
+  no note opens none. A person a board named writes here as the owner does: her
+  line, marked on its row as a person's (`message.person`), opens or joins the
+  ask, and answers a question an agent sent the owner.
 - **The shared server's clock.** It closes an ask once its answer can be read:
   one on a card once main's page holds the card, on the branch's page the owner
   saw it on or as main's, waiting on no agent; one on a comment once the comment

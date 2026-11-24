@@ -48,11 +48,8 @@ pub(crate) fn chunks(raw: &[String]) -> Vec<Chunk> {
         let start = if unseen_reply(line).is_some() || text.is_empty() || continues {
             None
         } else if let Some(entry) = syntax::entry_line(line) {
-            let who = if entry.who == "owner" {
-                Who::Owner
-            } else {
-                Who::Agent
-            };
+            // Any line not an agent's is a person's, whatever name it carries.
+            let who = Who::of(entry.who);
             let sets = entry
                 .verdict
                 .as_deref()

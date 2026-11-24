@@ -468,7 +468,8 @@ pub fn history(
     root: &Path,
 ) -> Result<symphony_api::TaskHistory, symphony_board::Error> {
     store.get(slug)?;
-    let all = store.thread(slug)?;
+    // As the board holds its lines, each with whether a person a board named wrote it.
+    let all = store.thread_rows(slug)?;
     let selected: Vec<_> = all
         .iter()
         .filter(|m| before.is_none_or(|id| m.id < id) && after.is_none_or(|id| m.id > id))
@@ -486,7 +487,7 @@ pub fn history(
     let render = Render::new(root);
     let entries: Vec<_> = selected[start..end]
         .iter()
-        .map(|record| entry(&message(record), &render))
+        .map(|record| entry(&message_row(record), &render))
         .collect();
     Ok(symphony_api::TaskHistory {
         before: if start > 0 {
@@ -503,12 +504,13 @@ pub fn history(
     })
 }
 
-/// A message's display data. The client owns its markup; owner/system words remain literal. An
-/// owner message that attached files has blocks: its literal lines and the files they name.
+/// A message's display data. The client owns its markup; a person's words (the owner's, or a
+/// person's a board named) and the system's remain literal. A person's message that attached files
+/// has blocks: its literal lines and the files they name.
 pub fn entry(message: &Message, render: &Render) -> symphony_api::TaskEntry {
     let blocks = if message.kind == "system" {
         Vec::new()
-    } else if message.sender == "owner" {
+    } else if message.sender == "owner" || message.person {
         if crate::uploads::has_reference(&message.text) {
             typed_blocks(render.typed_owner(&message.text, &task_doc(render)), render)
         } else {
@@ -570,6 +572,8 @@ fn session(s: &symphony_board::Session) -> Session {
     }
 }
 
+/// `m` on the wire, read with no mark of a person a board named: the owner's line says so by its
+/// sender, and a reader that may meet a named person's reads rows ([`message_row`]).
 pub fn message(m: &symphony_board::Message) -> Message {
     Message {
         id: m.id,
@@ -579,6 +583,23 @@ pub fn message(m: &symphony_board::Message) -> Message {
         kind: m.kind.clone(),
         text: m.text.clone(),
         ts: m.ts,
+        person: false,
+    }
+}
+
+/// `m`, a line as the board holds it, on the wire, with whether a person a board named wrote it:
+/// the board's mark of the row, never its sender's shape, as a session's handle may be a word a
+/// person's name could be.
+pub fn message_row(m: &symphony_board::rows::MessageRow) -> Message {
+    Message {
+        id: m.id,
+        slug: m.slug.clone(),
+        sender: m.sender.clone(),
+        recipient: m.recipient.clone(),
+        kind: m.kind.clone(),
+        text: m.text.clone(),
+        ts: m.ts,
+        person: m.person,
     }
 }
 
@@ -599,7 +620,7 @@ pub fn activity(store: &symphony_board::Store) -> Result<Vec<ActivityItem>, symp
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    let threads = store.threads(&slugs)?;
+    let threads = store.threads_rows(&slugs)?;
     Ok(said
         .iter()
         .map(|m| ActivityItem {
@@ -612,14 +633,15 @@ pub fn activity(store: &symphony_board::Store) -> Result<Vec<ActivityItem>, symp
             href: format!("/task/{}", m.slug),
             answered: threads
                 .get(&m.slug)
-                .is_some_and(|thread| thread.iter().any(|o| o.sender == "owner" && o.id > m.id)),
+                .is_some_and(|thread| thread.iter().any(|o| o.by_person() && o.id > m.id)),
         })
         .collect())
 }
 
-/// A quick-task outcome read must identify the owner's intended task before confirming it.
-pub(crate) fn is_quick_task(task: &symphony_board::Task, receipt: &str) -> bool {
-    task.created_by == "owner"
+/// A quick-task outcome read must identify the intended task of `by`, who filed it (the owner, or
+/// a person a board named), before confirming it.
+pub(crate) fn is_quick_task(task: &symphony_board::Task, receipt: &str, by: &str) -> bool {
+    task.created_by == by
         && task
             .fields
             .get("_symphony")

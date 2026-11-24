@@ -561,6 +561,15 @@ pub fn local_owner() -> Principal {
     Principal::new(PrincipalKind::Human, "local".into(), "owner".into())
 }
 
+/// The issuer of a person a board named ([`person`]).
+pub const PEOPLE: &str = "people";
+
+/// A person a board named, `name` their short name, as the board takes their write
+/// ([`crate::Store::for_person`]): a human, never a session the write checks.
+pub fn person(name: &str) -> Principal {
+    Principal::new(PrincipalKind::Human, PEOPLE.into(), name.into())
+}
+
 /// The local owner as the actor of a write ([`symphony_plugin::Actor`]): the person at this
 /// machine, whose lines carry `owner` while a board names nobody, shown as `owner`, with no git
 /// handles of their own (a save is authored by the machine's git identity, as always), and the

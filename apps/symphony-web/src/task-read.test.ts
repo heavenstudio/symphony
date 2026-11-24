@@ -20,6 +20,7 @@ const MESSAGE = {
   kind: "message",
   text: "Said",
   ts: 1.5,
+  person: false,
 };
 const PARAGRAPH = { type: "paragraph", spans: [{ type: "text", text: "Said" }] };
 const ENTRY = { message: MESSAGE, stamp: "Nov 11 10:00", blocks: [PARAGRAPH] };
@@ -32,6 +33,13 @@ describe("a task's message", () => {
     expect(readMessage({ ...MESSAGE, recipient: "amber" })?.recipient).toBe("amber");
     const { recipient: _, ...unaddressed } = MESSAGE;
     expect(readMessage(unaddressed)?.recipient).toBeNull();
+  });
+
+  it("is a person's only when it says so: an older server's names nobody", () => {
+    expect(readMessage({ ...MESSAGE, sender: "ana", person: true })?.person).toBe(true);
+    const { person: _, ...older } = MESSAGE;
+    expect(readMessage(older)?.person).toBe(false);
+    expect(readMessage({ ...MESSAGE, person: "yes" })?.person).toBe(false);
   });
 
   it("is none without a whole id, its words or its time", () => {

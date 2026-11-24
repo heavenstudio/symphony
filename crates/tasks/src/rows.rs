@@ -213,6 +213,18 @@ pub struct MessageRow {
     pub kind: String,
     pub text: String,
     pub ts: f64,
+    /// A person's line: one a person a board named wrote ([`crate::Store::for_person`]), never the
+    /// owner's or a session's. A board without the step that adds it holds none
+    /// ([`crate::schema::ADDED`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub person: bool,
+}
+
+impl MessageRow {
+    /// Whether a person wrote it: the owner, or a person a board named ([`MessageRow::person`]).
+    pub fn by_person(&self) -> bool {
+        self.sender == "owner" || self.person
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

@@ -33,7 +33,7 @@ CALLBACK delivery failed: ...
 ```
 
 - `at` is the minute the owner saved it: one saved while nobody heard chat arrives late, so read
-  it against what has happened since.
+  it against what has happened since. `by=ana` after `scope=` names a person a board named.
 - `/api/message` is a chat message (💬 Send): conversation, never a verdict or an approval.
 - `/api/decision` carries a verdict from the buttons (`approved`, `rejected`, `question`,
   `pending`), with or without a note; `dismissed` means the card is not needed.

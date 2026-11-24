@@ -136,14 +136,22 @@ impl Store {
                 // whole-board copy (its staging and its swap) and a rebind are held to the store's
                 // own schema, a reader's too.
                 let ahead = self.reader && matches!(run, Run::Guarded { .. });
+                let steps = self.steps_taken(body, run, vars.get("by_person").is_some());
                 schema::guard_vars(
                     &mut vars,
                     self.schema,
                     ahead,
                     &self.refusal,
-                    &self.steps_taken(body, run),
+                    &steps,
                     REFUSED,
                 );
+                if let Some(name) = vars.get("by_person").and_then(Value::as_str) {
+                    vars["by_person_session"] = format!(
+                        "{REFUSED}{name} is a session's handle on this board, so it cannot write \
+                         as a person: nothing was written"
+                    )
+                    .into();
+                }
                 (true, matches!(run, Run::Guarded { dispatch: true }))
             }
             Run::Unguarded => (false, false),
@@ -168,19 +176,25 @@ impl Store {
     /// least the highest step whose table its statement says it names ([`Statement::names`]), the
     /// first of this store's steps of that number. Whatever it does not say the database refuses
     /// itself, before anything of the transaction is written: an undefined table on a STRICT
-    /// board, an undefined field.
-    fn steps_taken(&self, body: &Statement, run: Run) -> schema::Steps {
+    /// board, an undefined field. A write for a person (`personal`, [`Store::for_person`]) marks
+    /// its lines theirs, which takes the step of that field ([`schema::PERSON_LINES`]).
+    fn steps_taken(&self, body: &Statement, run: Run, personal: bool) -> schema::Steps {
         let board = &self.refusal.board;
         match run {
             Run::Staging | Run::Own => schema::Steps::exactly(self.additions, board, self.schema),
             Run::Guarded { .. } | Run::Unguarded => {
-                let named =
-                    (self.added.iter()).filter(|(table, _)| body.names.contains(&table.as_str()));
-                let needed = named.fold(None, |most: Option<&(String, i64)>, added| match most {
-                    Some(most) if most.1 >= added.1 => Some(most),
-                    _ => Some(added),
-                });
-                match needed.map(|(table, step)| (table.as_str(), *step)) {
+                let named = (self.added.iter())
+                    .filter(|(table, _)| body.names.contains(&table.as_str()))
+                    .map(|(table, step)| (table.as_str(), *step));
+                let person = (personal.then(|| ("message.person", schema::person_step())))
+                    .filter(|(_, step)| *step > 0);
+                let needed = named
+                    .chain(person)
+                    .fold(None, |most: Option<(&str, i64)>, added| match most {
+                        Some(most) if most.1 >= added.1 => Some(most),
+                        _ => Some(added),
+                    });
+                match needed {
                     Some((table, step)) => schema::Steps::naming(table, step, board, self.schema),
                     None => schema::Steps::any(),
                 }

@@ -21,11 +21,45 @@ fn source(_slug: &str, parent: Option<&str>, lines: Vec<Message>, more: bool) ->
         lines,
         more,
         uncertain: false,
+        by_person: BTreeSet::new(),
     })
 }
 
 fn history(sources: BTreeMap<String, Source>) -> History {
     project("child", Vec::new(), &sources)
+}
+
+#[test]
+fn a_persons_line_is_outside_the_tasks_lanes_by_its_mark_and_an_unmarked_one_is_a_sessions() {
+    let lines = vec![
+        system(1, "e claimed it"),
+        message(2, 2.0, "msg", "from her", "ana", Some("e")),
+        message(3, 3.0, "msg", "from a session", "ana", Some("e")),
+    ];
+    let source = Source::new(ThreadWindow {
+        status: "ready".into(),
+        lines,
+        by_person: BTreeSet::from([2]),
+        ..ThreadWindow::default()
+    });
+    let h = history(BTreeMap::from([("child".into(), source)]));
+    let from: Vec<_> = h
+        .messages
+        .iter()
+        .map(|m| (m.id, m.sender.as_str(), m.from.state))
+        .collect();
+    assert_eq!(
+        from,
+        [
+            (2, "ana", EndpointState::Outside),
+            (3, "ana", EndpointState::Unknown)
+        ]
+    );
+    assert!(
+        h.messages
+            .iter()
+            .all(|m| m.to.state == EndpointState::Known)
+    );
 }
 
 #[test]

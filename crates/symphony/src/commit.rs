@@ -2148,14 +2148,16 @@ impl OutputJob {
         Ok(folder)
     }
 
-    fn new(root: &Path, job: Job) -> Result<Self, String> {
+    /// The journal entry of `job`, a save of `person`'s (their short name, `owner` for the
+    /// machine's person), written before anything commits it.
+    fn new(root: &Path, job: Job, person: &str) -> Result<Self, String> {
         let path = Self::folder(root)?.join(format!("{:020}.json", job.backlog.sequence));
         let saved = QueuedPublication {
             edit: job.edit.clone(),
             publication: None,
             dirty_retry: false,
             dirty_reported: false,
-            delivery: delivers(root).then(|| pending::Delivery::saved(root)),
+            delivery: delivers(root).then(|| pending::Delivery::saved_by(root, person)),
         };
         let held = Self::write_journal(&path, &saved)?;
         Ok(Self {
@@ -2725,6 +2727,18 @@ impl Committer {
     }
 
     pub fn submit(&self, edit: Edit) -> Result<(), String> {
+        self.submit_as(edit, crate::postpone::OWNER)
+    }
+
+    /// [`Self::submit`], the save `person`'s, by the short name their lines carry (`owner` for
+    /// the machine's person): kept for delivery by pull request ([`pending`]), its task is filed
+    /// and sent to review as theirs, and the store entries a settings edit made the project's are
+    /// cleared as theirs.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::submit`].
+    pub fn submit_as(&self, edit: Edit, person: &str) -> Result<(), String> {
         let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let backlog = Arc::new(Backlog::new(&self.root)?);
         // Publish the immutable edit before registering it as a page another publication
@@ -2736,6 +2750,7 @@ impl Committer {
                 edit: edit.clone(),
                 backlog,
             },
+            person,
         )?));
         self.waiting.lock().recover().insert(id, edit.clone());
         self.send

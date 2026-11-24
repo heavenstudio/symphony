@@ -302,7 +302,7 @@ impl Saves {
         if delivers {
             self.committer
                 .get_or_init(|| commit::Committer::start(root, self.writes.clone()))
-                .submit(edit)?;
+                .submit_as(edit, by)?;
             drop(file);
             drop(saving);
             return Ok(SettingWritten {

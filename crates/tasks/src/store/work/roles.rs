@@ -79,7 +79,7 @@ impl Store {
     /// --for` names another orchestrator ([`Store::give_filed`]); a refusal of the role (a cap,
     /// [`Store::take_role`]) leaves the task filed for the board to give.
     pub fn orchestrate_filed(&self, slug: &str, handle: &str) -> Result<bool, Error> {
-        if handle == super::OWNER {
+        if self.is_person(handle) {
             return Ok(false);
         }
         match self.session(handle) {
@@ -251,7 +251,7 @@ impl Store {
     /// the task's and the work below it nobody else orchestrates, takes `to`'s slots: refused, as
     /// [`Store::take_role`] is, when that raises `to`'s open tasks past the cap. The owner's is not.
     pub fn hand_over(&self, slug: &str, from: &str, to: &str) -> Result<Task, Error> {
-        let capped = from != super::OWNER;
+        let capped = !self.is_person(from);
         let board = self.board_command();
         self.ruling(slug, from, capped, |view| {
             view.actor(from)?;

@@ -37,8 +37,6 @@ use crate::store::{Board, Error, Failure, Store, Task, Which};
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 
-use super::OWNER;
-
 /// What a pass of giving did: each task given and to whom, and each task marked waiting for an
 /// orchestrator, none that stays being there.
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -248,7 +246,7 @@ impl Store {
         if pass.is_empty() {
             return Ok(());
         }
-        let session = by.filter(|by| *by != OWNER);
+        let session = by.filter(|by| !self.is_person(by));
         let acts = session.is_some();
         let body = Statement::from(pg::give_pass(acts)).posting();
         let now = (self.clock)();
@@ -436,7 +434,7 @@ impl Store {
         to: Option<&str>,
     ) -> Result<Filed, Error> {
         let mut refused = None;
-        if to.is_none() && by != OWNER {
+        if to.is_none() && !self.is_person(by) {
             match self.orchestrate_filed(slug, by) {
                 Ok(true) => {
                     return Ok(Filed {
@@ -652,7 +650,7 @@ impl Store {
     /// owner's task, whose give is the board's and no word of the owner's; a filer that left; a
     /// name no session has).
     fn give_actor(&self, by: &str) -> Result<Option<String>, Error> {
-        if by == OWNER {
+        if self.is_person(by) {
             return Ok(None);
         }
         match self.session(by) {

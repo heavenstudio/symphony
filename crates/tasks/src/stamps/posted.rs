@@ -13,7 +13,11 @@
 //!    posted.
 //! 2. **Approved.** Each card it posted has `approved` as its newest owner verdict at T
 //!    ([`newest`]): a reject, a question, pending, dismissed or none, on any of them, and it does
-//!    not stand.
+//!    not stand. The owner's own: a person a board named writes as the owner does
+//!    (`ana · approved`), but decides no stamp until the board gives her the decide power
+//!    (docs/product/analysis/users-and-identity.md), so her approve is none, and her later word
+//!    that is no approve keeps the owner's from standing, as it opens the card again on every page
+//!    ([`decided`]).
 //! 3. **Nothing since.** Let B be the commit before the first commit that carries the newest of
 //!    those approves: the commit the owner's page showed when the owner gave it. Each commit after
 //!    B up to T, on T's first-parent line, adds the owner's lines under the posted cards and
@@ -30,8 +34,8 @@ use crate::sweep::git::{ancestor, blobs, git, pathspecs, rev, stdout, under};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use symphony_docs::syntax::{
-    CARD_LINE, Card, Entry, REGION_END, REGION_START, cards, entry_line, is_continuation, lines,
-    unseen_owner,
+    CARD_LINE, Card, REGION_END, REGION_START, Said, cards, entry_line, is_continuation, lines,
+    said, unseen_owner,
 };
 
 /// Who writes the owner's lines under a card.
@@ -105,15 +109,15 @@ fn approval(main: &Path, tip: &str) -> Option<Posted> {
         return Some(Posted::Nothing);
     }
     // The newest approve of them all, with the card it is under.
-    let mut approve: Option<(&str, Entry)> = None;
+    let mut approve: Option<(&str, Said)> = None;
     for card in &posted {
         let verdict = newest(card)?;
-        if verdict.verdict.as_deref() != Some(APPROVED) {
+        if verdict.entry.verdict.as_deref() != Some(APPROVED) || !decided(card) {
             return Some(Posted::Nothing);
         }
         if approve
             .as_ref()
-            .is_none_or(|(_, kept)| kept.ts <= verdict.ts)
+            .is_none_or(|(_, kept)| kept.entry.ts <= verdict.entry.ts)
         {
             approve = Some((&card.slug, verdict));
         }
@@ -130,7 +134,7 @@ fn approval(main: &Path, tip: &str) -> Option<Posted> {
         .flatten()
         .any(|text| {
             (cards(&lines(&text)).iter())
-                .any(|card| card.slug == slug && card.entries().contains(&line))
+                .any(|card| card.slug == slug && said(&card.raw).contains(&line))
         });
     Some(if carried {
         Posted::Changed {
@@ -167,12 +171,26 @@ fn fork(main: &Path, tip: &str, default_tip: &str) -> Option<String> {
     Some(base.trim().to_string())
 }
 
-/// The owner's newest verdict under `card`: the latest by its time of the owner's dated lines that
-/// give one, the last written of one minute; none where there is none.
-fn newest(card: &Card) -> Option<Entry> {
-    (card.entries().into_iter())
-        .filter(|entry| entry.who == OWNER && entry.ts.is_some() && entry.verdict.is_some())
-        .max_by(|a, b| a.ts.cmp(&b.ts))
+/// The owner's newest verdict under `card`: the latest by its time of the owner's own dated lines
+/// that give one, the last written of one minute; none where there is none. A person's a board
+/// named is none of the owner's (the module's doc).
+fn newest(card: &Card) -> Option<Said> {
+    newest_of(card, |said| said.name == OWNER)
+}
+
+/// Whether `card`'s newest verdict of every person's, the owner's and any a board named, is an
+/// approve: a person's word after the owner's approve that is none keeps it from standing.
+fn decided(card: &Card) -> bool {
+    newest_of(card, |_| true).is_some_and(|said| said.entry.verdict.as_deref() == Some(APPROVED))
+}
+
+/// The newest verdict under `card` of a person's dated lines that `whose` takes, as [`newest`]
+/// reads the owner's.
+fn newest_of(card: &Card, whose: impl Fn(&Said) -> bool) -> Option<Said> {
+    (said(&card.raw).into_iter())
+        .filter(|said| said.entry.who == OWNER && whose(said))
+        .filter(|said| said.entry.ts.is_some() && said.entry.verdict.is_some())
+        .max_by(|a, b| a.entry.ts.cmp(&b.entry.ts))
 }
 
 /// The newest commit on `tip`'s first-parent line past `base` that neither adds only the owner's
@@ -270,7 +288,8 @@ impl Written {
 /// The lines `raw` under a card, as the owner's dated entries (each with the lines that continue
 /// it, as one) and every other line, blank lines in neither: a line a card's entries read as an
 /// owner's dated line ([`symphony_docs::syntax::entries`]) starts one of the owner's, a deeper-indented line goes with
-/// the dated line above it, and the hidden `review:unseen-owner` line is an agent's.
+/// the dated line above it, and the hidden `review:unseen-owner` line is an agent's. A person's a
+/// board named goes with the owner's: a word on the card, never what the branch posted.
 fn split(raw: &[String]) -> (Vec<String>, Vec<String>) {
     let (mut owner, mut rest): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
     // Whose dated entry the lines under it continue: the owner's, an agent's, or none.

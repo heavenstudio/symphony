@@ -282,6 +282,27 @@ fn unseen_reply_lookup_uses_the_last_duplicate_card_on_each_side() {
 }
 
 #[test]
+fn a_persons_words_a_reply_had_not_seen_are_marked_and_stay_unanswered_as_the_owners() {
+    let plugins = super::Plugins::default();
+    let current = "- [ ] **a** — A.\n  [2026-10-20 11:00] agent — Existing answer.\n";
+    let mut marks = Vec::new();
+    for name in ["owner", "ana"] {
+        let new = format!("- [ ] **a** — A.\n  [2026-10-20 10:00] {name} — New question.\n");
+        let merged = format!("{new}  [2026-10-20 11:00] agent — Existing answer.\n");
+        let marked = super::mark_unseen_replies(current, &new, &merged, &plugins)
+            .unwrap_or_else(|_| panic!("valid histories must merge"));
+        let mark = (marked.lines())
+            .find(|line| line.contains("review:unseen-owner"))
+            .unwrap_or_else(|| panic!("{name}: {marked}"));
+        marks.push(mark.to_string());
+        let card = crate::register::parse_decisions(&crate::text::splitlines(&marked)).remove(0);
+        assert_eq!(card.unanswered(), ["New question."], "{name}: {marked}");
+    }
+    // Each person's line is its own: the mark names hers apart from the owner's same words.
+    assert_ne!(marks[0], marks[1]);
+}
+
+#[test]
 fn duplicate_card_histories_on_any_side_are_refused() {
     let one = "- [ ] **a** — A.\n  [2026-10-20 10:00] agent — Existing answer.\n";
     let duplicate = format!("{one}{one}");

@@ -324,7 +324,13 @@ fn project(
                 sender: message.sender.clone(),
                 recipient: message.recipient.clone(),
                 kind: message.kind.clone(),
-                from: endpoint(sources, slug, message, Some(&message.sender)),
+                // A person a board named, by the board's mark of the line, holds no lane of the
+                // task's, as the owner does not.
+                from: if source.window.by_person.contains(&message.id) {
+                    endpoint(sources, slug, message, Some("owner"))
+                } else {
+                    endpoint(sources, slug, message, Some(&message.sender))
+                },
                 to: endpoint(sources, slug, message, message.recipient.as_deref()),
                 after_close: source.closed_before(message.id),
             });

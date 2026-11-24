@@ -96,13 +96,24 @@ impl Env {
 }
 
 /// Board-state writes, including JSON calls, act as agents. Derived-cache maintenance has no
-/// agent identity; owner saves call the store directly.
+/// agent identity; owner saves call the store directly, and so do a person's
+/// ([`crate::Store::for_person`]), which the command line never makes: a name it is given is a
+/// session's handle, refused by the board where no session holds it. A word no person is given
+/// ([`symphony_docs::syntax::RESERVED_NAMES`]) is refused here, before the board is read; a
+/// person's own name is refused once a board holds people, with their powers (step 3 of
+/// docs/product/analysis/users-and-identity.md).
 fn check_actor(actor: &str) -> Result<(), crate::Error> {
     if actor == "owner" {
         return Err(crate::Error::Refused(
             "the owner acts from the Symphony; use a registered agent handle on the command line"
                 .into(),
         ));
+    }
+    if symphony_docs::syntax::RESERVED_NAMES.contains(&actor) {
+        return Err(crate::Error::Refused(format!(
+            "{actor} names no session: it is a word the board keeps for its lines; use a \
+             registered agent handle on the command line"
+        )));
     }
     Ok(())
 }
@@ -867,6 +878,24 @@ fn parts(clock: &Clock) -> (Box<dyn Fn() -> f64 + Send + Sync>, Probe, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_command_line_refuses_every_word_the_board_keeps_and_takes_a_handle() {
+        let refused = |actor| match check_actor(actor) {
+            Err(crate::Error::Refused(why)) => why,
+            other => panic!("{actor}: {other:?}"),
+        };
+        assert!(refused("owner").starts_with("the owner acts from the Symphony"));
+        for word in ["agent", "board", "unknown"] {
+            assert!(
+                refused(word).starts_with(&format!("{word} names no session")),
+                "{word}"
+            );
+        }
+        for actor in ["amber-heron", "solar-finch-320", "ana", "Owner"] {
+            assert!(check_actor(actor).is_ok(), "{actor}");
+        }
+    }
 
     /// Only a live board opened to write follows its project's committed workflow.
     #[test]

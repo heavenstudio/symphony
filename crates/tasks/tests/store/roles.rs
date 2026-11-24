@@ -1020,6 +1020,7 @@ fn an_executor_that_joined_and_left_is_remembered_too() {
             kind: "system".into(),
             text: text.into(),
             ts: NOW,
+            person: false,
         });
     }
     let f = Fixture::new(seed);

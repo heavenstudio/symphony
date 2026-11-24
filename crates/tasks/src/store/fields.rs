@@ -8,7 +8,6 @@ use serde_json::{Value, json};
 
 use super::postgres::fields as pg;
 use super::statement::Statement;
-use super::work::OWNER;
 use super::{Error, REFUSED, Store, Task, refused, repr};
 
 impl Store {
@@ -48,7 +47,7 @@ impl Store {
                 )));
             }
         };
-        let acts = handle != OWNER;
+        let acts = !self.is_person(handle);
         let body = || Statement::from(pg::set_field(acts)).posting();
         self.retrying(|| {
             let vars = self.acting(

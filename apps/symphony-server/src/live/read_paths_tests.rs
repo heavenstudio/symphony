@@ -1105,6 +1105,7 @@ fn activity_order_study_keeps_native_forty_plus_forty_merge_and_refresh_payload(
             kind: "msg".into(),
             text: format!("Task payload {id}"),
             ts: NOW + f64::from(i32::try_from(id).unwrap()),
+            person: false,
         });
     }
     let f = Fixture::new(seed);

@@ -76,6 +76,7 @@ fn thread() -> Vec<MessageRow> {
         kind: kind.into(),
         text: text.into(),
         ts: shifted(ts),
+        person: false,
     };
     vec![
         line(
@@ -301,6 +302,7 @@ fn the_pictures_task_gives_the_timeline_they_draw_and_a_task_with_no_runs_has_no
         kind: "msg".into(),
         text: format!("Full text of message {id}"),
         ts: NOW,
+        person: false,
     }));
     let f = Fixture::new(seed);
     let (shared, send) = served_with(&root, hub(&root, &f));

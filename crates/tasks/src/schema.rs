@@ -125,7 +125,29 @@ pub const ADDED: &[Addition] = &[
               channel's session are read by handle, not by the row's id: a build without it reads \
               the same rows by scanning the table, and writes them as it did",
     },
+    PERSON_LINES,
 ];
+
+/// The step that marks a person's line ([`crate::rows::MessageRow::person`]): the nullable column
+/// `person` on `message`, an open table, set on a line a person a board named wrote
+/// ([`crate::Store::for_person`]) and on no other. It names no table of its own, so no write is
+/// refused for naming one; a write for a person needs it ([`crate::Store::is_person`]).
+pub const PERSON_LINES: Addition = Addition {
+    postgres: "ALTER TABLE message ADD COLUMN IF NOT EXISTS person boolean;",
+    tables: &[],
+    why: "the nullable column person on message, true on a line a person a board named wrote: a \
+          build without it writes a line with none, as every line before it was written, and \
+          reads one with it past the column it does not know (OPEN), as the owner's word it does \
+          not hear; a build with it sets the column only for a person, which needs the step, and \
+          reads it through the row, so a board without it reads every line as no person's",
+};
+
+/// The number of [`PERSON_LINES`] among [`ADDED`], counted from 1: 0 once a breaking step made the
+/// field the contract's own, which every board of it has.
+pub(crate) fn person_step() -> i64 {
+    let at = ADDED.iter().position(|step| *step == PERSON_LINES);
+    at.map_or(0, |at| i64::try_from(at + 1).unwrap_or(i64::MAX))
+}
 
 /// How many additive steps this build has on its contract: [`ADDED`]'s length.
 pub const ADDITIONS: i64 = {

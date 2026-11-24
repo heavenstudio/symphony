@@ -20,6 +20,14 @@ fn hub(tree: &Tree) -> Hub {
 
 /// The task asks one observation of `store` sent on the main page's feed, each event's data.
 fn observe(hub: &Hub, store: &symphony_board::Store) -> Vec<Value> {
+    (changes(hub, store).into_iter())
+        .filter(|change| change["region"] == "task-asks")
+        .map(|change| change["data"].clone())
+        .collect()
+}
+
+/// Every change one observation of `store` sent on the main page's feed.
+fn changes(hub: &Hub, store: &symphony_board::Store) -> Vec<Value> {
     let last = |hub: &Hub| {
         hub.pages.read().unwrap()[""]
             .history
@@ -37,8 +45,6 @@ fn observe(hub: &Hub, store: &symphony_board::Store) -> Vec<Value> {
             let value: Value = serde_json::from_str(&event.json).unwrap();
             value["changes"].as_array().unwrap().clone()
         })
-        .filter(|change| change["region"] == "task-asks")
-        .map(|change| change["data"].clone())
         .collect()
 }
 
@@ -171,4 +177,48 @@ fn a_board_with_no_verdict_and_no_question_says_so_for_the_owner() {
     let asks = hub.task_asks().unwrap();
     assert_eq!(asks.questions["owner"], 0);
     assert!(asks.verdicts.is_empty());
+}
+
+#[test]
+fn a_persons_line_goes_out_on_the_feed_marked_as_theirs_and_answers_as_the_owners_would() {
+    let tree = Tree::new();
+    let f = Fixture::new(
+        Seed::default()
+            .session("worker")
+            .task("tools/ask", "in_progress")
+            .role("tools/ask", "worker", "executor"),
+    );
+    let hub = hub(&tree);
+    assert_eq!(observe(&hub, &f.store), [waiting(0)]);
+    f.store
+        .say("tools/ask", "worker", "flat or falling?", Some("owner"))
+        .unwrap();
+    assert_eq!(observe(&hub, &f.store), [waiting(1)]);
+    let ana = f.other().for_person("ana");
+    ana.say("tools/ask", "ana", "flat", None).unwrap();
+    f.store.say("tools/ask", "worker", "on it", None).unwrap();
+    let changes = changes(&hub, &f.store);
+    let lines: Vec<_> = (changes.iter())
+        .filter(|change| change["region"] == "message")
+        .map(|change| {
+            let line = &change["data"];
+            (
+                line["sender"].as_str(),
+                line["person"].as_bool(),
+                line["text"].as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            (Some("ana"), Some(true), Some("flat")),
+            (Some("worker"), Some(false), Some("on it"))
+        ]
+    );
+    let asks: Vec<_> = (changes.iter())
+        .filter(|change| change["region"] == "task-asks")
+        .map(|change| change["data"].clone())
+        .collect();
+    assert_eq!(asks, [waiting(0)], "her word answers it");
 }

@@ -1,22 +1,27 @@
-//! The owner's answers a worktree holds that no commit has ([`answers`]): the owner's dated lines
+//! The owner's answers a worktree holds that no commit has ([`answers`]): a person's dated lines
 //! under a card that the Symphony saved into a worktree's document and nobody committed, which
-//! removing the worktree, or landing its branch's commits, would leave behind.
+//! removing the worktree, or landing its branch's commits, would leave behind. A person's line is
+//! any line not an agent's (docs/product/analysis/users-and-identity.md, "How a person's name is
+//! written"): `owner ·` and a named person's `ana ·` alike.
 //!
 //! A card and its lines are read as the Symphony reads them (`symphony_docs::syntax`), and a line
 //! counts only where no copy of its card in the commits it is compared with holds it: so a line a
 //! regroup only moved or copied (within the file, or from any committed register) is no answer,
 //! and an agent's own note is none either. A card's slug is its identity: renaming a card carrying
 //! owner lines needs those lines committed under the new slug before a land. Git's text grep
-//! selects files containing the owner marker before any file or blob is materialized here, so
+//! selects files holding a dated line ([`DATED`]) before any file or blob is materialized here, so
 //! unrelated text and binaries are never loaded into the register parser, even at the root.
 
 use super::command::{blobs, grep, told};
 use std::collections::BTreeMap;
 use std::path::Path;
-use symphony_docs::syntax::{cards, entries, lines};
+use symphony_docs::syntax::{Said, cards, lines, said, said_line};
 
-/// What marks a file that may hold an owner's dated line: `[2026-10-06 10:00] owner · approved — …`.
-const OWNER: &str = "] owner";
+/// What marks a file that may hold a person's dated line, as git's extended pattern: an indented
+/// stamp and a lowercase name after it, `  [2026-10-06 10:00] owner · approved — …` or `ana ·`.
+/// An agent's line matches too, and the register's reader tells them apart.
+const DATED: &str =
+    r"^[[:space:]]+\[[0-9]{4}-[0-9]{2}-[0-9]{2}( [0-9]{2}:[0-9]{2})?\][[:space:]]+[a-z]";
 
 /// An owner's line no commit has: the file holding it, project-relative, and the card it is under.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -25,23 +30,24 @@ pub struct Answer {
     pub card: String,
 }
 
-/// One owner's dated line under a card: the card's slug and the line as the register reads it (its
-/// stamp, verdict and words, the lines that continue it among them).
-type Line = (String, String, Option<String>, String);
+/// One person's dated line under a card: the card's slug and the line as the register reads it
+/// (the name it carries, its stamp, verdict and words, the lines that continue it among them).
+type Line = (String, String, String, Option<String>, String);
 
-/// The owner's dated lines of `text`, by card, in the file's order.
+/// The people's dated lines of `text`, by card, in the file's order.
 fn owner_lines(text: &str) -> Vec<Line> {
-    if !text.contains(OWNER) {
+    let persons = |line: &str| said_line(line).is_some_and(|said| said.entry.who == "owner");
+    if !text.lines().any(persons) {
         return Vec::new();
     }
     cards(&lines(text))
         .into_iter()
         .flat_map(|card| {
-            entries(&card.raw)
+            said(&card.raw)
                 .into_iter()
-                .filter_map(move |entry| {
+                .filter_map(move |Said { entry, name }| {
                     let ts = entry.ts.filter(|_| entry.who == "owner")?;
-                    Some((card.slug.clone(), ts, entry.verdict, entry.text))
+                    Some((card.slug.clone(), name, ts, entry.verdict, entry.text))
                 })
                 .collect::<Vec<_>>()
         })
@@ -74,10 +80,10 @@ fn names(out: &[u8]) -> Vec<String> {
         .collect()
 }
 
-/// Text files containing the owner marker, in the worktree (including untracked files) or `rev`.
+/// Text files holding a dated line ([`DATED`]), in the worktree (including untracked files) or `rev`.
 /// Git prints only names, excluding binary files; exit 1 means no matches, not a failed read.
 fn candidates(path: &Path, specs: &[&str], rev: Option<&str>) -> Result<Vec<String>, String> {
-    let mut args = vec!["grep", "-I", "-l", "-z", "-F", "-e", OWNER];
+    let mut args = vec!["grep", "-I", "-l", "-z", "-E", "-e", DATED];
     if let Some(rev) = rev {
         args.push(rev);
     } else {
@@ -206,11 +212,13 @@ mod tests {
                     - [x] **lamp** — Lamp.\n  [2026-10-06 09:00] agent — Posted.\n  \
                     [2026-10-06 10:00] owner · approved — warm\n      and bright\n  \
                     an owner's undated note\n  ↳ an agent's answer\n\
-                    - [ ] **fan** — Fan.\n  [2026-10-07] owner — Why?\n\
+                    - [ ] **fan** — Fan.\n  [2026-10-07] owner — Why?\n  \
+                    [2026-10-07 11:00] ana · question — and when?\n\
                     ```\n- [ ] **code** — C.\n  [2026-10-08 08:00] owner — in a fence\n```\n";
-        let line = |slug: &str, ts: &str, verdict: Option<&str>, words: &str| {
+        let line = |slug: &str, name: &str, ts: &str, verdict: Option<&str>, words: &str| {
             (
                 slug.to_string(),
+                name.to_string(),
                 ts.to_string(),
                 verdict.map(str::to_string),
                 words.to_string(),
@@ -221,14 +229,27 @@ mod tests {
             [
                 line(
                     "lamp",
+                    "owner",
                     "2026-10-06 10:00",
                     Some("approved"),
                     "warm\nand bright"
                 ),
-                line("fan", "2026-10-07", None, "Why?"),
+                line("fan", "owner", "2026-10-07", None, "Why?"),
+                line(
+                    "fan",
+                    "ana",
+                    "2026-10-07 11:00",
+                    Some("question"),
+                    "and when?"
+                ),
             ]
         );
         assert!(owner_lines("- [ ] **x** — X.\n  [2026-10-06 09:00] agent — y\n").is_empty());
+        // A named person's line alone marks the file, as an owner's does.
+        assert_eq!(
+            owner_lines("- [ ] **x** — X.\n  [2026-10-06 09:00] ana · approved — y\n"),
+            [line("x", "ana", "2026-10-06 09:00", Some("approved"), "y")]
+        );
     }
 
     #[test]
@@ -341,6 +362,27 @@ mod tests {
         assert_eq!(
             answers(&root, &docs, None).unwrap(),
             [answer("docs/E.md", "x")]
+        );
+        // A named person's line, the only one a file holds, is an answer as an owner's is; the
+        // same words of another person's are no copy of it.
+        write(&root, "docs/E.md", register);
+        write(
+            &root,
+            "docs/P.md",
+            "- [ ] **z** — Z.\n  [2026-11-14 03:00] ana · approved — go\n",
+        );
+        assert_eq!(
+            answers(&root, &docs, None).unwrap(),
+            [answer("docs/P.md", "z")]
+        );
+        write(
+            &root,
+            "docs/E.md",
+            &format!("{register}  [2026-11-14 01:52] ana · approved — go\n"),
+        );
+        assert_eq!(
+            answers(&root, &docs, None).unwrap(),
+            [answer("docs/E.md", "x"), answer("docs/P.md", "z")]
         );
         std::fs::remove_dir_all(&root).unwrap();
     }

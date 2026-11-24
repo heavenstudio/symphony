@@ -114,6 +114,56 @@ fn branches(root: &Path) -> Vec<String> {
     .collect()
 }
 
+/// A person a board named, `ana`, as a host that admitted them hands them to the saves.
+fn ana() -> symphony_plugin::Actor {
+    use symphony_plugin::execution::{Principal, PrincipalKind};
+    symphony_plugin::Actor::new(
+        symphony_plugin::Sender::new("ana", "Ana Lima", vec!["ana-l".into()]),
+        Principal::new(PrincipalKind::Human, "test-host".into(), "u-ana".into()),
+    )
+}
+
+pub(super) fn a_persons_save_is_filed_and_sent_to_review_as_theirs(f: &Fixture) {
+    let root = delivering(f);
+    let saves = ClosingSaves::start(&root);
+    let answer = saves.post_as(&ana(), "", "/api/decision", payload(APPROVE));
+    assert_eq!(answer, json!({"ok":true,"delivery":"pending"}));
+    drop(saves);
+    let pending = pending::saves(&root);
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    let branch = pending[0].branch.clone();
+    let delivered = git(&root, &["show", &format!("{branch}:docs/a.md")]);
+    assert!(delivered.contains("] ana · approved — yes"), "{delivered}");
+    // Filed as hers, and sent to review by her: no line of it is the owner's.
+    let store = f.store();
+    let task = store.get(&branch).unwrap();
+    assert_eq!(
+        (task.status.as_str(), task.created_by.as_str()),
+        ("review", "ana")
+    );
+    assert_eq!(task.title, "Deliver ana's save of docs/a.md");
+    assert!(
+        task.body.starts_with("ana saved an answer on docs/a.md"),
+        "{}",
+        task.body
+    );
+    assert!(
+        task.body.contains("of ana's save of docs/a.md"),
+        "{}",
+        task.body
+    );
+    let thread = store.thread(&branch).unwrap();
+    assert!(
+        (thread.iter()).any(|m| m.sender == "ana" && m.text.contains("→ review")),
+        "{thread:?}"
+    );
+    assert!((thread.iter()).all(|m| m.sender != "owner"), "{thread:?}");
+    // The filing is found again by its receipt: a restart files nothing twice.
+    pass(&root);
+    assert_eq!(store.thread(&branch).unwrap().len(), thread.len());
+    f.clean_workers();
+}
+
 pub(super) fn kept_pending_on_a_branch_and_filed_as_the_owners_task(f: &Fixture) {
     let root = delivering(f);
     let tip = git(&root, &["rev-parse", "main"]);

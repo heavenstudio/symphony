@@ -202,7 +202,10 @@ impl Group {
     }
 }
 
-/// Who said a line under a card.
+/// Who said a line under a card: an agent, or a person (docs/product/analysis/users-and-identity.md,
+/// "How a person's name is written": a person's line is any line that is not an agent's).
+/// `Owner` is every person's line, the person at the machine's (`owner ·`) and a person's a board
+/// named (`ana ·`) alike; [`Entry::name`] says whose.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Who {
     Owner,
@@ -226,6 +229,33 @@ pub struct Entry {
     pub who: Who,
     pub verdict: Option<String>,
     pub text: String,
+    /// The name the line carries: `agent`, `owner`, or a person's short name.
+    pub name: String,
+}
+
+impl Entry {
+    /// The entry `said` reads: an agent's line by `agent`, any other a person's.
+    pub(crate) fn of(said: syntax::Said) -> Entry {
+        Entry {
+            ts: said.entry.ts,
+            who: Who::of(said.entry.who),
+            verdict: said.entry.verdict,
+            text: said.entry.text,
+            name: said.name,
+        }
+    }
+}
+
+impl Who {
+    /// The author a line's name word (`agent`, `owner`, a person's short name) reads as: an
+    /// agent's for `agent`, a person's for any other.
+    pub(crate) fn of(name: &str) -> Who {
+        if name == Who::Agent.as_str() {
+            Who::Agent
+        } else {
+            Who::Owner
+        }
+    }
 }
 
 /// Hidden card metadata pairs an owner entry with a reply written without seeing it.
@@ -235,9 +265,10 @@ pub(crate) fn entry_keys(entries: &[Entry]) -> Vec<String> {
     entries
         .iter()
         .map(|entry| {
-            let data =
-                serde_json::to_vec(&(&entry.ts, entry.who.as_str(), &entry.verdict, &entry.text))
-                    .expect("entry fields serialize");
+            // By the name, which is `owner` or `agent` for every line written before names, so a
+            // key kept on a page reads as it was made.
+            let data = serde_json::to_vec(&(&entry.ts, &entry.name, &entry.verdict, &entry.text))
+                .expect("entry fields serialize");
             let hash = Sha256::digest(data)
                 .iter()
                 .map(|byte| format!("{byte:02x}"))
@@ -279,19 +310,7 @@ impl Decision {
         } else {
             &self.raw
         };
-        syntax::entries(lines)
-            .into_iter()
-            .map(|entry| Entry {
-                ts: entry.ts,
-                who: if entry.who == "owner" {
-                    Who::Owner
-                } else {
-                    Who::Agent
-                },
-                verdict: entry.verdict,
-                text: entry.text,
-            })
-            .collect()
+        syntax::said(lines).into_iter().map(Entry::of).collect()
     }
 
     /// Everything the card's thread says, from one read of its entries. The project's card kinds
