@@ -208,9 +208,12 @@ moves, and posts `took EDGE (SLUG@REVISION): FROM → TO, workflow revision N` o
 the attempt whose failure it answered for an automatic edge, then `HANDLE joined as ROLE` for each
 role the edge gives, as the board's own join says it, so every reader of who held the task's roles
 (a fresh reviewer's rule among them) reads it there. It answers the transition's id, its effects and the
-principal's next actions. A key is its principal's: a request repeating it answers the first
-result when it is the same request, whatever attestations come with it, and is refused when it is
-another; `tasks workflow apply` sends the receipt's request again when its command is repeated.
+principal's next actions, read after the write commits. The write stands whatever that read meets,
+so where the board moved on in between (a return leaves no workflow to preview) the next actions
+are the snapshot the write left, with no edge open, and never a refusal. A key is its principal's:
+a request repeating it answers the first result when it is the same request, whatever attestations
+come with it, and is refused when it is another; `tasks workflow apply` sends the receipt's request
+again when its command is repeated.
 
 `Store::workflow_actions` previews each edge leaving the task's pair with what stops the principal
 taking it now, its authority named without saying who holds it: never a permit. A guarded edge
