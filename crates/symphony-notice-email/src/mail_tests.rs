@@ -54,6 +54,10 @@ fn each_kind_has_its_words_and_one_this_build_does_not_know_says_something_waits
         sentence(Kind::Verdict, "p"),
         "A reviewer gave a verdict in p"
     );
+    assert_eq!(
+        sentence(Kind::Held, "p"),
+        "A person's words wait on you to pass on in p"
+    );
     assert_eq!(sentence(Kind::Other, "p"), "Something waits on you in p");
     let read = Notice::read(
         r#"{"notice":1,"id":"n","kind":"poll","project":"p","link":"https://h/","to":{"way":"email","address":"a@b"}}"#,

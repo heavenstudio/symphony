@@ -24,6 +24,18 @@ impl From<Failure> for Refused {
     }
 }
 
+impl Failure {
+    /// A write refused as `why` says, the board's words on who may decide a thing
+    /// ([`crate::owners::refused_task`]): a 403, as a write lacking a power is refused, with
+    /// nothing written.
+    pub fn forbidden(why: &str) -> Self {
+        Self {
+            status: 403,
+            error: format!("Forbidden: {why}: nothing was written"),
+        }
+    }
+}
+
 /// How the board refuses a slug no task has (`no task 'x'`), as the board's reads refuse it.
 const NO_TASK: &str = symphony_board::Error::NO_TASK;
 

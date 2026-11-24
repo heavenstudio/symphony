@@ -37,6 +37,7 @@ import { appPath } from "./links";
 import { PageNotices } from "./live";
 import { useMount } from "./mount";
 import { CardOwnersContext, type CardOwnersValue, OwnerLine, readCardOwners } from "./owner";
+import { decides } from "./owner-read";
 import { PostponeControls } from "./postpone";
 import { documentsHref, entrypoints, fileAddress, href, project, scoped } from "./project";
 import { ComparisonNote, DocumentWithTasks, SectionDifference } from "./related";
@@ -716,6 +717,8 @@ function DocSection({
   const [editing, setEditing] = useState(false);
   const cardOwners = useContext(CardOwnersContext);
   const owner = card !== null ? (cardOwners?.owners[card.slug] ?? null) : null;
+  // Its verdicts are its deciders' alone; its message, and Later in the queue, everyone's.
+  const decidesCard = decides(owner);
   const settled = isSettled(card);
   const summary = settledSummary(section) ?? [];
   const only = section.blocks.length === 1 ? section.blocks[0] : undefined;
@@ -768,7 +771,7 @@ function DocSection({
             aria-expanded={editing}
             onClick={() => setEditing(!editing)}
           >
-            {editing ? "Close" : "Verdict / message"}
+            {editing ? "Close" : decidesCard ? "Verdict / message" : "Message"}
           </Button>
         </div>
       ) : (
@@ -800,6 +803,7 @@ function DocSection({
         opener={opener}
         gone={gone}
         later={later}
+        decides={decidesCard}
       />
     </>
   );

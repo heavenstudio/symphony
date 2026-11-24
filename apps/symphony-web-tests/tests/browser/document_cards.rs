@@ -51,7 +51,7 @@ const COMMENT_TITLE: &str = "141 lamps: the count includes the two prototype lam
 /// The document `docs/PROBE.md`: a heading, a paragraph, a pending card waiting on the owner with
 /// its history and a link to its own section, and an approved card waiting for the owner to
 /// confirm it.
-fn probe_site() -> Site {
+pub(super) fn probe_site() -> Site {
     let site = crate::site();
     let link = json!({"type":"link","href":"/docs/PROBE.md#lamps","target":{"path":DOC,"anchor":"lamps"},"title":"","spans":[text("Lamps")]});
     let (alpha, pending) = card(
@@ -112,7 +112,7 @@ fn probe_site() -> Site {
 }
 
 /// Opens the card `slug`'s editor with its own button and waits for its form.
-fn open_editor(page: &mut Chrome, slug: &str) {
+pub(super) fn open_editor(page: &mut Chrome, slug: &str) {
     let toggle = format!("[data-doc-key=\"card:{slug}\"] .doc-actions button");
     // As a reader would, once the card shows: under the document's ghost its editor takes no focus.
     assert!(

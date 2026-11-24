@@ -4,9 +4,11 @@ use super::people::{people_held, people_object};
 use super::{Pg, row};
 
 /// The task `slug`'s row, its links, its roles, the branches its executors' sessions recorded,
-/// the tasks right under it and its thread's newest line; and, on a board with the step that keeps
-/// them, the board's people (`people`), whom a reader of the task's `owner` stamp asks after: one
-/// request, a block that names the people's tables only where the board has them.
+/// the tasks right under it and its thread's newest line; and, on a board with the steps that keep
+/// them, the board's people (`people`) and the lines of its map of places (`map`, its maps and
+/// unmaps: a hand-over of the task changes its row), from which a reader of the task's `owner`
+/// stamp says who decides it: one request, a block that names the people's and the map's tables
+/// only where the board has them.
 pub(in crate::store) fn read() -> Pg<'static> {
     Pg::script(format!(
         "board_answer := jsonb_build_object( \
@@ -24,6 +26,10 @@ pub(in crate::store) fn read() -> Pg<'static> {
     'newest', (SELECT max(sid) FROM message WHERE slug = v ->> 'slug'));
 IF {held} THEN
     board_answer := board_answer || jsonb_build_object('people', {people});
+END IF;
+IF to_regclass('ownership') IS NOT NULL THEN
+    board_answer := board_answer || jsonb_build_object('map', coalesce((SELECT jsonb_agg(doc \
+        ORDER BY id) FROM ownership WHERE doc ->> 'did' <> 'hand'), '[]'::jsonb));
 END IF;",
         row("t"),
         held = people_held!(),

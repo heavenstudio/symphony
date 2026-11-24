@@ -16,11 +16,13 @@ impl Store {
     /// `sender`'s message on `slug`'s thread, which waits on an agent's answer: said as
     /// [`Store::say_asking_as`] says it where they may direct agents (the owner always does), and
     /// held for people ([`Store::hold_words`]) where they are a person a board named who may not.
-    /// A person who may direct agents and may not decide is refused a line that would read as an
-    /// approve ([`crate::stamps::read::reads_as_approve`]), with nothing written: the `owner` stamp
-    /// counts a decider's approve by their powers when it is read, so it would count once they
-    /// were given decide. Their held words, passed on, read as the passer's first
-    /// ([`crate::held::passed_text`]), never as an approve.
+    /// A person who may direct agents and may not decide the task is refused a line that would
+    /// read as an approve ([`crate::stamps::read::reads_as_approve`]), with nothing written: one
+    /// without decide, and one holding it who is not of the task's owner
+    /// ([`crate::people::ownership::refused_decide`]). The `owner` stamp counts the approve of the
+    /// task's deciders as they are when it is read ([`Store::task_deciders`]), so it would count
+    /// once they were given decide, joined its group or a remap made it theirs. Their held words,
+    /// passed on, read as the passer's first ([`crate::held::passed_text`]), never as an approve.
     pub fn say_or_hold_as(
         &self,
         slug: &str,
@@ -35,11 +37,19 @@ impl Store {
         if !powers.holds(Power::DirectAgents) {
             return self.hold_words(slug, sender, text, to).map(Said::Held);
         }
-        if !powers.holds(Power::Decide) && crate::stamps::read::reads_as_approve(text) {
-            return Err(refused(format!(
-                "{sender} may not decide on this board, and a line of theirs that starts with \
-                 approve reads as one: nothing was written"
-            )));
+        if crate::stamps::read::reads_as_approve(text) {
+            if !powers.holds(Power::Decide) {
+                return Err(refused(format!(
+                    "{sender} may not decide on this board, and a line of theirs that starts \
+                     with approve reads as one: nothing was written"
+                )));
+            }
+            if let Some(why) = self.refused_task_decide(slug, sender)? {
+                return Err(refused(format!(
+                    "{why}, and a line of theirs that starts with approve reads as one: nothing \
+                     was written"
+                )));
+            }
         }
         self.say_asking_as(slug, sender, text, to).map(Said::Line)
     }

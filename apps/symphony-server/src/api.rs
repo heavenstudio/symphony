@@ -476,9 +476,15 @@ async fn off_board(
         // descriptions: a read, which writes nothing (`symphony::settings`). The board is read on
         // the store the page reads share ([`Hub::on_reader`]), never one opened anew, its entries
         // and its running sessions on that one store; one that does not answer is said on the page
-        // for both, and the files' settings hold.
+        // for both, and the files' settings hold. A person a board named who is not of the
+        // Settings page's owner is answered no preference to write, so the page draws the values
+        // alone (`symphony::owners::changes_settings`).
         symphony_api::SETTINGS_PATH => {
             let hub = shared.hub()?;
+            let reader = (!crate::front::Admitted::machine(request.extensions())).then(|| {
+                let actor = crate::front::Admitted::actor(shared, request.extensions());
+                actor.name().to_string()
+            });
             let read = crate::spawn::blocking(move || {
                 let machine = symphony::settings::Machine::of_process();
                 let (entries, running) = match hub.on_reader(|store| {
@@ -489,9 +495,17 @@ async fn off_board(
                     Err(why) => (Err(why.clone()), Err(why)),
                 };
                 let board = symphony::settings::stored::Board::with(&hub.root, entries, running);
-                Ok(Json(symphony::settings::page_with(
-                    &hub.root, &machine, &board,
-                )))
+                let mut page = symphony::settings::page_with(&hub.root, &machine, &board);
+                let changes = reader.is_none()
+                    || hub
+                        .on_reader(|store| {
+                            Ok(symphony::owners::changes_settings(store, reader.as_deref()))
+                        })
+                        .unwrap_or(false);
+                if !changes {
+                    page.stored.clear();
+                }
+                Ok(Json(page))
             });
             answered(read.await, "the settings could not be read: ")
         }
@@ -886,11 +900,7 @@ async fn board_read(
 /// machine, or a person holding what the route needs. A board whose people cannot be read gives
 /// no one but the machine's person the control, whose press the route would refuse.
 fn passes(store: &symphony_board::Store, machine: bool, name: &str) -> bool {
-    let needs = crate::powers::needs(symphony_api::TASK_PASS_ROUTE);
-    machine
-        || store.people().is_ok_and(|people| {
-            crate::powers::refused(name, &people.powers_of(name), needs).is_none()
-        })
+    machine || (store.people()).is_ok_and(|people| crate::powers::may_pass(&people, name))
 }
 
 /// A document's cards' owners refused: a route no page is, 404, as a document's read answers it,
@@ -1365,7 +1375,7 @@ fn next_actions(
     asker: &symphony_plugin::execution::Principal,
 ) -> Result<symphony_api::workflow::ActionsRead, symphony_board::Error> {
     let (next, outputs) =
-        store.workflow_actions_with_outputs(slug, asker, &store.host_for(asker)?)?;
+        store.workflow_actions_with_outputs(slug, asker, &store.host_on(asker, slug)?)?;
     let takes = (outputs.takes.into_iter())
         .map(|(task, output)| symphony_api::workflow::TakenOutput { task, output })
         .collect();

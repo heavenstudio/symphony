@@ -104,7 +104,7 @@ fn task_line(people: &People, id: i64, kind: Kind, group: &str) -> Line {
         id,
         kind,
         page: "/task/app/x".into(),
-        owning: owned_by(people, group),
+        told: ownership::told(people, &owned_by(people, group)),
     }
 }
 
@@ -562,6 +562,73 @@ fn a_notice_whose_way_address_or_program_moved_since_it_was_made_is_dropped_unha
     assert!(hands.log.borrow()[0].ends_with("dropped: no program is named for its way now"));
 }
 
+/// A held message's notice goes by the way each person chose for questions, as no profile chooses
+/// one for it: made by it, handed as `held`, and dropped once that way moved, whatever the way
+/// chosen for another kind. Who it tells is the line's alone, here ana and not bo.
+#[test]
+fn a_held_messages_notice_goes_by_the_way_chosen_for_questions_to_whom_its_line_names() {
+    let tree = Tree::new();
+    let people = people();
+    let mut runner = started(&tree, &people, vec![]);
+    let held = Line {
+        id: 11,
+        kind: Kind::Held,
+        page: "/task/app/x#message-11".into(),
+        told: vec!["ana".into()],
+    };
+    let mut by_kind = profiles();
+    for (kind, way) in [("card", "email"), ("verdict", "email")] {
+        by_kind.people[0]
+            .preferences
+            .insert(kind.into(), json!(way));
+    }
+    by_kind.people[0].emails = vec!["ana@example.com".into()];
+    let look_at = Look {
+        people: &people,
+        cards: None,
+        lines: vec![held.clone()],
+        latest: 11,
+    };
+    let mut origin = || ORIGIN.to_string();
+    (runner.look(&look_at, &by_kind, &programs(), 0.0, &mut origin)).unwrap();
+    let pending = &record(&runner).pending;
+    assert_eq!(pending.len(), 1);
+    assert_eq!(
+        (
+            pending[0].kind.as_str(),
+            pending[0].person.as_str(),
+            pending[0].way.as_str()
+        ),
+        ("held", "ana", "slack")
+    );
+    assert_eq!(
+        pending[0].link,
+        format!("{ORIGIN}/symphony/task/app/x#message-11")
+    );
+    let hands = Hands::default();
+    hands.with(&mut runner, 0.0, &by_kind, &programs(), &|| Handed::Sent);
+    let read = hands.read();
+    assert_eq!(
+        (read[0].1.as_str(), read[0].2.as_str(), read[0].3.as_str()),
+        ("held", "slack", ANA_SLACK)
+    );
+
+    // Its question way moved after it was made: dropped, though no other kind's way moved.
+    let second = Tree::new();
+    let mut runner = started(&second, &people, vec![]);
+    look(&mut runner, &people, None, vec![held], 11);
+    let mut moved = profiles();
+    (moved.people[0].preferences).insert("question".into(), json!("email"));
+    let hands = Hands::default();
+    hands.with(&mut runner, 0.0, &moved, &programs(), &|| Handed::Sent);
+    assert!(hands.given.borrow().is_empty());
+    assert!(
+        hands.log.borrow()[0].contains("held for ana by slack: dropped"),
+        "{:?}",
+        hands.log.borrow()
+    );
+}
+
 #[test]
 fn a_board_that_names_nobody_sends_nothing() {
     let tree = Tree::new();
@@ -577,7 +644,7 @@ fn a_board_that_names_nobody_sends_nothing() {
         id: 11,
         kind: Kind::Question,
         page: "/task/app/x".into(),
-        owning: owning.clone(),
+        told: ownership::told(&nobody, &owning),
     };
     look(
         &mut runner,

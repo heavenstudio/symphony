@@ -48,9 +48,15 @@ impl Host {
     /// who holds decide there ([`crate::people::People::holding`]), as the person at the machine
     /// holds it, so a custom workflow's owner edges admit them by its own admission.
     pub fn local_with(people: &crate::people::People) -> Host {
+        Host::local_granting(&people.holding(crate::people::Power::Decide))
+    }
+
+    /// [`Host::local`] with `owner` granted as well to each person of `names`, as the person at
+    /// the machine holds it: a task's deciders ([`crate::Store::host_on`]).
+    pub fn local_granting(names: &[String]) -> Host {
         let mut host = Host::local();
-        for name in people.holding(crate::people::Power::Decide) {
-            host.grants = host.grants.grant("owner", super::person(&name));
+        for name in names {
+            host.grants = host.grants.grant("owner", super::person(name));
         }
         host
     }

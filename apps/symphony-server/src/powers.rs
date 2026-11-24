@@ -1,7 +1,9 @@
 //! What a person a board named may write through each route (docs/product/analysis/
 //! users-and-identity.md, "The way from one owner", step 3): the powers a write needs of them, read
 //! from the board's rows when it is asked, before its body is read ([`crate::write::answer`]). The
-//! person at the machine holds every power and is never asked.
+//! person at the machine holds every power and is never asked. Whether the thing a decision is on
+//! is theirs to decide, of its group (step 4), is the save's to say once the body names it
+//! (`symphony::owners::refused_task`, `refused_card`, `refused_settings`).
 //!
 //! A verdict, its note, a move, a field, Later and a setting are deciding. A line that reaches the
 //! board's agents (a comment, a message, an ask and its reply, a quick chat, a quick task) is
@@ -13,7 +15,7 @@
 //! may write is `symphony_board::people::change`'s to say. A route this table does not place is
 //! the person at the machine's alone, as the agent focus is.
 
-use symphony_board::people::{Power, Powers};
+use symphony_board::people::{People, Power, Powers};
 
 /// What a write route needs of a person a board named.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +66,13 @@ pub(crate) fn refused(name: &str, held: &Powers, needs: Needs) -> Option<String>
     };
     (held.lacking(powers))
         .map(|power| format!("Forbidden: {name} may not {} on this board", power.said()))
+}
+
+/// Whether `name`, a person of the board `people`, may pass a held message on: they hold what
+/// `symphony_api::TASK_PASS_ROUTE` needs. The person at the machine always may, and is no row here.
+pub(crate) fn may_pass(people: &People, name: &str) -> bool {
+    let needs = needs(symphony_api::TASK_PASS_ROUTE);
+    refused(name, &people.powers_of(name), needs).is_none()
 }
 
 #[cfg(test)]
