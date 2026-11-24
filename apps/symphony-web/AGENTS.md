@@ -144,15 +144,13 @@ Each is one a lint or a test does not hold by itself, or names the one that does
 `/` and `/tasks` each have a 300 KB first-visit gzip cap and a 20 KB return-visit cap, the
 owner's, which no agent loosens. Under them the first visits of home, the task board and a task's
 page are held to `HOME_FIRST_VISIT_BYTES`, `TASKS_FIRST_VISIT_BYTES` and `TASK_FIRST_VISIT_BYTES`
-(`apps/symphony-web-tests/tests/browser/main.rs`, whose `budget` tests print each page's requests
-and say what a visit counts). Every change to what the client is built from runs them at its tip
-(`just test-rs -p symphony-web-tests --test browser -- budget`), whatever page it is for: shared
-code lands in each entry page's first visit. One is raised only by its task's orchestrator's
-recorded decision once the cut came first, naming the constant (`just tasks gate SLUG
+(`apps/symphony-web-tests/tests/browser/main.rs`), whose `budget` tests print each page's requests
+and run at the tip of every client change
+(`just test-rs -p symphony-web-tests --test browser -- budget`). One is raised only by its task's
+orchestrator once the cut came first (`just tasks gate SLUG
 apps/symphony-web-tests/tests/browser/main.rs:NAME --raise NEW`,
-[TASKS](../../docs/workflow/TASKS.md#gate-decisions)), never by an agent's own word. `report.sh OUT` says
-what each kind of a build makes a browser fetch and why a kind grew; the budget test stays the
-measure of a visit.
+[TASKS](../../docs/workflow/TASKS.md#gate-decisions)). `report.sh OUT` says what each kind of a build
+makes a browser fetch and why a kind grew; the budget test stays the measure of a visit.
 
 ## The tools
 
